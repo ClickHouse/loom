@@ -70,6 +70,28 @@ def bind_request(op_name: str, request_id: str) -> None:
     set_query_tag(f"{op_name} {request_id}")
 
 
+def sli_columns(op_name: str, transport: str) -> dict[str, Any]:
+    """The ledger row's SLI columns for a call of `op_name` (`emit_agent_event`
+    keywords): its transport, its op class and the budget it is held to."""
+    from server.observability import sli
+    from server.observability.budgets import effective_budget_ms
+    from server.operations.base import Role
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    op = OPERATIONS_BY_NAME.get(op_name)
+    if op is None:
+        return {"transport": transport}
+    return {
+        "transport": transport,
+        "op_class": sli.op_class(
+            op.name,
+            writes=op.required_role == Role.WRITER,
+            admin=op.required_role >= Role.ADMIN,
+        ),
+        "budget_ms": effective_budget_ms(op.name, op.budget_p99_ms),
+    }
+
+
 def begin_request() -> RequestWork:
     """Bind everything a request accumulates, in one call for both transports:
     the cost accumulator (tokens and dollars), the degradation notes (what the

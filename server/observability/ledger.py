@@ -137,6 +137,9 @@ def emit_agent_event(
     consumer: str | None = None,
     traffic_class: str | None = None,
     subject: str | None = None,
+    transport: str = "",
+    op_class: str = "",
+    budget_ms: int = 0,
 ) -> None:
     """Drain the op-scoped cost accumulator and emit one AgentEvent.
 
@@ -154,11 +157,14 @@ def emit_agent_event(
     `args.error_class` / `args.error`, so an INTERNAL_ERROR is attributable
     from the ledger without a trace lookup. Ignored on success.
 
+    `transport`, `op_class`, `budget_ms`: the SLI columns a transport fills
+    (`server.observability.sli`); the row's `status_class` is derived here.
+
     Absent accumulator → zero cost/token attribution. `raw_args` is the
     request's argument object; only its allow-listed projection reaches the
     row (event_args.project_args). Never the text.
     """
-    from server.observability import cost_accumulator
+    from server.observability import cost_accumulator, sli
     from server.observability.event_args import (
         bounded_error,
         project_args,
@@ -248,6 +254,10 @@ def emit_agent_event(
         # transports already hand this function; 0 on failure.
         response_tokens=(response_tokens_of(result) if success else 0),
         traffic_class=attribution["traffic_class"],
+        transport=transport,
+        op_class=op_class,
+        status_class=sli.status_class(success, error_code, error),
+        budget_ms=budget_ms,
     )
     if _event_hold is None or not _event_hold(event):
         get_emitter().emit(event)

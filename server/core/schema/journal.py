@@ -117,20 +117,22 @@ def split_statements(sql: str) -> list[str]:
 
 _OBJECT_DDL = re.compile(
     r"\b(CREATE)\s+(?:OR\s+REPLACE\s+)?(?:TABLE|MATERIALIZED\s+VIEW|VIEW|DICTIONARY)\s+"
-    r"(?:IF\s+NOT\s+EXISTS\s+)?(?:`?loom`?\.)?`?([A-Za-z_]\w*)`?"
-    r"|\b(DROP)\s+(?:TABLE|VIEW|DICTIONARY)\s+(?:IF\s+EXISTS\s+)?(?:`?loom`?\.)?`?([A-Za-z_]\w*)`?",
+    r"(?:IF\s+NOT\s+EXISTS\s+)?(?:`?(\w+)`?\.)?`?([A-Za-z_]\w*)`?"
+    r"|\b(DROP)\s+(?:TABLE|VIEW|DICTIONARY)\s+(?:IF\s+EXISTS\s+)?(?:`?(\w+)`?\.)?`?([A-Za-z_]\w*)`?",
     re.IGNORECASE,
 )
 
 
 def object_ddl(sql: str) -> Iterator[tuple[str, str]]:
     """`("create" | "drop", name)` for each loom object `sql` creates or drops,
-    in order, comment lines skipped."""
+    in order, comment lines skipped. An object another database qualifies
+    (`loom_telemetry.x`) is not a loom object."""
     for m in _OBJECT_DDL.finditer(without_comments(sql)):
-        if m.group(1):
-            yield "create", m.group(2)
-        else:
-            yield "drop", m.group(4)
+        op, db, name = (
+            ("create", m.group(2), m.group(3)) if m.group(1) else ("drop", m.group(5), m.group(6))
+        )
+        if db is None or db == "loom":
+            yield op, name
 
 
 def created_objects(sql: str) -> tuple[str, ...]:

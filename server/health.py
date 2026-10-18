@@ -111,6 +111,13 @@ def _health_provider_fields(
     }
 
 
+def health_problems() -> list[dict[str, object]]:
+    """This process's `/v1/health` problems without a ClickHouse round trip,
+    for the `loom.health.problems` gauge."""
+    problems = _health_provider_fields(True)["problems"]
+    return problems if isinstance(problems, list) else []
+
+
 async def _ping_clickhouse() -> tuple[bool, str | None]:
     """(answered, error): `SELECT 1`, the only liveness-load-bearing check."""
     from server.core.ch import get_client

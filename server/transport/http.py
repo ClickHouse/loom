@@ -52,6 +52,7 @@ from server.transport._common import (
     bind_request,
     ledger_identity,
     request_identity,
+    sli_columns,
     validation_errors,
     validation_note,
 )
@@ -120,9 +121,16 @@ def _extract_auth(request: Request) -> AuthInfo | None:
     Raises HTTPException(401) on present-but-invalid tokens, or on missing
     tokens when auth_required=True.
     """
-    auth = verify_bearer_header(request.headers.get("Authorization"))
+    from server.observability.metrics import record_auth_refusal
+
+    try:
+        auth = verify_bearer_header(request.headers.get("Authorization"))
+    except HTTPException as e:
+        record_auth_refusal(e.__cause__, transport="http")
+        raise
     if auth is None:
         if settings.auth_actually_required():
+            record_auth_refusal(None, transport="http")
             raise HTTPException(
                 status_code=401,
                 detail={"code": "AUTH_INVALID", "message": "missing bearer token"},
@@ -790,6 +798,7 @@ def _emit_event(
         raw_args=raw_body,
         result=result,
         error=error,
+        **sli_columns(op.name, "http"),
     )
 
 

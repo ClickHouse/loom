@@ -202,6 +202,10 @@ def _reject_unauthenticated(
     spec has invalid or expired tokens answered with 401 — and does not depend
     on whether this deployment runs an authorization server.
     """
+    if invalid_token_reason is None:  # a refused token was counted by _token_refused
+        from server.observability.metrics import record_auth_refusal
+
+        record_auth_refusal(None, transport="mcp")
     response.status_code = 401
     response.headers["WWW-Authenticate"] = _bearer_challenge(
         request, invalid_token_reason=invalid_token_reason
@@ -216,7 +220,9 @@ def _token_refused(
     not loaded yet is a 503 + Retry-After: the token may be good, and a 401 would
     make the client discard it and re-authenticate."""
     from server.auth.jwt import AuthUnavailable
+    from server.observability.metrics import record_auth_refusal
 
+    record_auth_refusal(error, transport="mcp")
     if isinstance(error, AuthUnavailable):
         response.status_code = 503
         response.headers["Retry-After"] = "5"

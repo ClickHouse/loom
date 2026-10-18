@@ -1,0 +1,107 @@
+"""The request SLI path: a ledger row carries its transport, op class, status
+class and budget, and `loom_telemetry.sli_minute` rolls the rows up per minute."""
+
+from __future__ import annotations
+
+import sys
+import uuid
+from pathlib import Path
+
+import httpx
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "sdk" / "python"))
+sys.path.insert(0, str(ROOT))
+
+from tests.integration._eventually import eventually  # noqa: E402
+from tests.integration._resources import unique_org  # noqa: E402
+
+ORG = unique_org("sli")
+
+
+def _ledger(ch_client, ns: str) -> list[tuple]:
+    return ch_client.query(
+        "SELECT operation, transport, op_class, status_class, budget_ms, success "
+        "FROM loom.agent_events WHERE org = {org:String} AND namespace = {ns:String} "
+        "ORDER BY operation, success",
+        parameters={"org": ORG, "ns": ns},
+    ).result_rows
+
+
+@pytest.mark.asyncio
+async def test_ledger_rows_carry_the_sli_columns_and_roll_up(
+    control_plane_url: str, ch_client
+) -> None:
+    from loom import Agent
+
+    ns = f"sli-{uuid.uuid4().hex[:6]}"
+    async with Agent(org=ORG, namespace=ns, agent="a", base_url=control_plane_url) as a:
+        await a.memory.set("k", "the sli path")
+        await a.memory.search("sli path")
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=10.0) as c:
+        r = await c.post(
+            "/v1/memory.get",
+            json={"org": ORG, "namespace": ns, "agent": "a"},  # no memory_key
+        )
+        assert r.status_code == 422, r.text
+
+    async def _three() -> list[tuple] | None:
+        rows = _ledger(ch_client, ns)
+        return rows if len(rows) >= 3 else None
+
+    rows = await eventually(_three, max_wait=10.0, description="three ledger rows")
+    by_op = {r[0]: r for r in rows}
+    assert by_op["memory.set"][1:4] == ("http", "write", "ok")
+    assert by_op["memory.search"][1:4] == ("http", "search", "ok")
+    assert by_op["memory.get"][1:4] == ("http", "read", "client")
+    assert all(r[4] > 0 for r in rows), rows
+
+    rolled = ch_client.query(
+        "SELECT operation, sum(requests), sum(server_errors), sum(client_errors) "
+        "FROM loom_telemetry.sli_minute WHERE org = {org:String} "
+        "AND minute > now() - INTERVAL 10 MINUTE AND operation IN "
+        "('memory.set', 'memory.search', 'memory.get') GROUP BY operation ORDER BY operation",
+        parameters={"org": ORG},
+    ).result_rows
+    counts = {op: (int(n), int(s), int(c)) for op, n, s, c in rolled}
+    assert counts["memory.get"][2] >= 1
+    assert counts["memory.set"][0] >= 1 and counts["memory.set"][1] == 0
+    assert counts["memory.search"][0] >= 1 and counts["memory.search"][1] == 0
+
+
+@pytest.mark.asyncio
+async def test_an_mcp_call_is_ledgered_with_its_transport(
+    control_plane_url: str, ch_client
+) -> None:
+    from server.auth.jwt import mint_token
+
+    ns = f"sli-mcp-{uuid.uuid4().hex[:6]}"
+    token = mint_token(
+        subject="sli-test", org=ORG, namespaces=[ns], roles=["writer"], ttl_seconds=300
+    )
+    call = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "loom_memory_set",
+            "arguments": {
+                "org": ORG,
+                "namespace": ns,
+                "agent": "a",
+                "memory_key": "k",
+                "value": "v",
+            },
+        },
+    }
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=10.0) as c:
+        r = await c.post("/mcp", json=call, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200 and r.json()["result"]["isError"] is False, r.text
+
+    async def _row() -> list[tuple] | None:
+        return _ledger(ch_client, ns) or None
+
+    rows = await eventually(_row, max_wait=10.0, description="the MCP ledger row")
+    assert rows[0][:4] == ("memory.set", "mcp", "write", "ok")
+    assert rows[0][4] > 0

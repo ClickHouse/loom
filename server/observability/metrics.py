@@ -67,6 +67,7 @@ _tracker_section_ms: Any = None
 _llm_response_cache: Any = None
 _worker_passes: Any = None
 _worker_pass_duration: Any = None
+_auth_refusals: Any = None
 
 _initialized = False
 
@@ -120,8 +121,9 @@ def init_domain_metrics(meter: Any) -> None:
         _init_build_cost_instruments(meter)
         _init_cost_instruments(meter)
         _init_worker_instruments(meter)
+        _init_auth_instruments(meter)
         _initialized = True
-        log.info("loom domain metrics initialized (%d instruments)", 11)
+        log.info("loom domain metrics initialized")
     except Exception as e:  # noqa: BLE001 — metrics init must not stop startup
         log.warning("domain metrics init failed: %s", e)
 
@@ -349,6 +351,58 @@ def _init_worker_instruments(meter: Any) -> None:
         description="Wall-clock duration of one background worker pass",
         unit="ms",
     )
+
+
+def _init_auth_instruments(meter: Any) -> None:
+    """The authentication instruments."""
+    global _auth_refusals
+    # A refused bearer never reaches loom.agent_events (the request has no
+    # principal yet), so this counter is the only trace of a 401 storm or of
+    # every caller getting 503 while the revocation list is unloaded.
+    _auth_refusals = meter.create_counter(
+        name="loom.auth.refusals",
+        description="Requests refused before a principal was known, by reason and transport",
+        unit="1",
+    )
+
+
+AUTH_REFUSAL_REASONS = ("missing", "malformed", "expired", "revoked", "invalid", "unavailable")
+
+
+def auth_refusal_reason(error: BaseException | None) -> str:
+    """The bounded reason for a refused bearer: `missing` when there was
+    none, `unavailable` when the revocation list is not loaded, else what the
+    token's verification said."""
+    from server.auth.jwt import AuthUnavailable
+
+    if error is None:
+        return "missing"
+    if isinstance(error, AuthUnavailable):
+        return "unavailable"
+    text = str(error)
+    if text.startswith("authorization header must be"):
+        return "malformed"
+    if text.startswith("token expired"):
+        return "expired"
+    if "revoked" in text:
+        return "revoked"
+    return "invalid"
+
+
+def record_auth_refusal(error: BaseException | None, *, transport: str) -> None:
+    """One tick of `loom.auth.refusals`. Never raises."""
+    if _auth_refusals is None:
+        return
+    try:
+        _auth_refusals.add(
+            1,
+            attributes={
+                "reason": auth_refusal_reason(error),
+                "loom.transport": transport if transport in ("http", "mcp") else "other",
+            },
+        )
+    except Exception:  # noqa: BLE001 — telemetry must never fail the caller
+        pass
 
 
 def record_search_quality(

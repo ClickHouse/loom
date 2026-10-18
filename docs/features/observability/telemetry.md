@@ -21,6 +21,14 @@ changed what, with tamper evidence.
 passes write rows with `kind='worker'`. [Cost and usage](./cost-and-usage.md) is built on
 this table.
 
+Each request row also carries its service-level columns: `transport` (`http` or `mcp`),
+`op_class` (`write`, `search`, `read`, `code`, `admin`), `status_class` (`ok`, `client`
+for a refused request, `server` for a failure) and `budget_ms`, the latency budget the
+request was held to. A materialized view rolls them up per minute into
+`loom_telemetry.sli_minute` (requests, server and client errors, rate-limited and
+over-budget counts, latency quantiles, kept 400 days), the table the SLO tiles and alert
+rules read ([monitoring](../../operations/monitoring.md)).
+
 The emitter is batched and never fails a request; a crash can lose the unflushed queue.
 
 Every process that writes rows names its launcher. The compose files set
@@ -53,7 +61,7 @@ observability tables. `LOOM_OTEL_ENABLED=false` turns emission off.
 | Setting                                           | Default       | Effect                                                                                                                                                                 |
 | ------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LOOM_OTEL_EXPORTER`                              | `""`          | `ch` writes straight into the `default.otel_*` tables on Loom's own ClickHouse service; `otlp` ships to a collector; empty = `otlp` when an endpoint is set, else `ch` |
-| `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT`                | `""`          | OTLP/HTTP collector base URL (`/v1/traces` is appended)                                                                                                                |
+| `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT`                | `""`          | OTLP/HTTP collector base URL (`/v1/traces` and `/v1/metrics` are appended)                                                                                             |
 | `LOOM_OTEL_EXPORTER_OTLP_HEADERS`                 | `""`          | comma-separated `K=V` headers, e.g. `Authorization=Bearer <token>`                                                                                                     |
 | `LOOM_OTEL_SERVICE_NAME`, `LOOM_OTEL_ENVIRONMENT` | `loom`, `dev` | `service.name` and `deployment.environment` on every span, log and metric                                                                                              |
 | `LOOM_OTEL_METRICS_EXPORT_INTERVAL_S`             | `60`          | metric export cadence; spans keep their own 3-second batch delay                                                                                                       |
@@ -69,7 +77,8 @@ dashboards with no collector. See [ClickStack](../integrations/clickstack.md) an
 
 Metrics are exported every `LOOM_OTEL_METRICS_EXPORT_INTERVAL_S`. With the `ch` exporter
 they are written into `default.otel_metrics_sum`, `default.otel_metrics_histogram` and
-`default.otel_metrics_gauge`. Dashboard definitions are in `deploy/dashboards/` and
+`default.otel_metrics_gauge`; with `otlp` they go to the collector's `/v1/metrics`.
+Dashboard definitions are in `deploy/dashboards/` and
 `deploy/hyperdx_dashboards.md`.
 
 Labels come from a closed set (operation, namespace, bounded enums). Keys, user ids,
@@ -85,18 +94,19 @@ retention census every `LOOM_OTEL_RETENTION_CENSUS_S` (3600 s), and code-plane c
 
 ### Requests and cost
 
-| Metric                          | Type      | Meaning                                                    |
-| ------------------------------- | --------- | ---------------------------------------------------------- |
-| `loom.requests`                 | counter   | operations processed, per operation, namespace and success |
-| `loom.request.duration`         | histogram | operation wall time, ms                                    |
-| `loom.cost.usd`                 | counter   | upstream provider spend attributed to an operation         |
-| `loom.tokens`                   | counter   | tokens by `kind` (`embed`, `llm_input`, `llm_output`)      |
-| `loom.ops.paid_errors`          | counter   | failed requests that had already spent upstream            |
-| `loom.llm.fallback`             | counter   | LLM calls answered by `LOOM_LLM_FALLBACK_MODEL`            |
-| `loom.llm.response_cache`       | counter   | exact-prompt LLM cache lookups by outcome                  |
-| `loom.memory.build.tokens`      | counter   | LLM tokens spent building memory, by stage and direction   |
-| `loom.memory.extraction_yield`  | histogram | prompt tokens per memory written, by `messages` range      |
-| `loom.extract.cost_per_row_usd` | histogram | USD per memory row written by one extraction               |
+| Metric                          | Type      | Meaning                                                                                                                                                                         |
+| ------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom.requests`                 | counter   | operations processed, per operation, namespace and success                                                                                                                      |
+| `loom.request.duration`         | histogram | operation wall time, ms                                                                                                                                                         |
+| `loom.cost.usd`                 | counter   | upstream provider spend attributed to an operation                                                                                                                              |
+| `loom.tokens`                   | counter   | tokens by `kind` (`embed`, `llm_input`, `llm_output`)                                                                                                                           |
+| `loom.ops.paid_errors`          | counter   | failed requests that had already spent upstream                                                                                                                                 |
+| `loom.llm.fallback`             | counter   | LLM calls answered by `LOOM_LLM_FALLBACK_MODEL`                                                                                                                                 |
+| `loom.llm.response_cache`       | counter   | exact-prompt LLM cache lookups by outcome                                                                                                                                       |
+| `loom.memory.build.tokens`      | counter   | LLM tokens spent building memory, by stage and direction                                                                                                                        |
+| `loom.memory.extraction_yield`  | histogram | prompt tokens per memory written, by `messages` range                                                                                                                           |
+| `loom.extract.cost_per_row_usd` | histogram | USD per memory row written by one extraction                                                                                                                                    |
+| `loom.auth.refusals`            | counter   | requests refused before a principal was known, by `reason` (`missing`, `malformed`, `expired`, `revoked`, `invalid`, `unavailable`) and transport; these never reach the ledger |
 
 ### Retrieval quality
 
@@ -148,6 +158,8 @@ A level is expected to be non-zero and to drain.
 | `loom.ch.view_refresh.scheduled`, `loom.ch.view_refresh.age_s`                                                               | gauge     | per refreshable view (`loom.view`): 1 while scheduled without error; seconds since its last success                                         |
 | `loom.audit.checkpoint_lag_windows`                                                                                          | gauge     | hourly audit windows not yet sealed into the checkpoint chain ([audit log](./audit.md#checkpoint-lag))                                      |
 | `loom.langfuse.breaker`                                                                                                      | gauge     | Langfuse circuit breaker: 0 closed, 1 half-open, 2 open (traces dropped)                                                                    |
+| `loom.health.problems`                                                                                                       | gauge     | 1 per open `/v1/health` problem on this process, by `code` and `severity` (`provider` for `provider_failing`)                               |
+| `loom.ledger.dropped_total`                                                                                                  | gauge     | ledger rows this process lost since it started, by `reason` (`queue_full`, `flush_failed`); the SLIs undercount by as much                  |
 | `loom.worker.passes`                                                                                                         | counter   | passes by `worker` and `outcome`                                                                                                            |
 | `loom.worker.pass_duration_ms`                                                                                               | histogram | pass wall time                                                                                                                              |
 | `loom.worker.consecutive_failures`                                                                                           | gauge     | current failure streak per worker; alert at 3                                                                                               |

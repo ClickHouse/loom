@@ -86,6 +86,13 @@ class AgentEvent:
     # subject's class, so neither could answer "when was this token last
     # used". Projected away on an older table.
     subject: str = ""
+    # The SLI columns (server/observability/sli.py): `http` | `mcp` | '' for
+    # rows no transport wrote, the op's class, `ok` | `client` | `server`, and
+    # the latency budget the request was held to (0 = none).
+    transport: str = ""
+    op_class: str = ""
+    status_class: str = ""
+    budget_ms: int = 0
 
     def to_row(self) -> dict[str, Any]:
         row: dict[str, Any] = {
@@ -117,6 +124,10 @@ class AgentEvent:
             "response_tokens": self.response_tokens,
             "consumer": self.consumer,
             "traffic_class": self.traffic_class,
+            "transport": self.transport,
+            "op_class": self.op_class,
+            "status_class": self.status_class,
+            "budget_ms": self.budget_ms,
             # Which build wrote the row (the /v1/health field);
             # Which process (hostname:pid) and which launcher
             # label. `stamp_row` adds build_commit, instance, instance_label.

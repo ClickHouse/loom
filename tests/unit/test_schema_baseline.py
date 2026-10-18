@@ -96,6 +96,7 @@ def test_the_journal_files() -> None:
         "036_shared_replica_state.sql",
         "037_carry_acks.sql",
         "038_embedding_write_sha.sql",
+        "039_request_sli.sql",
     ]
 
 
@@ -126,11 +127,13 @@ def test_the_dump_declares_exactly_what_the_journal_leaves() -> None:
     live = live_objects(MIGRATIONS.glob("*.sql"))
     dumped = objects()
     assert dumped == {name for name in live if not name.startswith("_")}
-    n_tables = len(tables())
-    assert (
-        f"-- Counts: {n_tables} tables + {len(dumped) - n_tables} materialized views."
-        in schema_text()
+    # The loom_telemetry objects are dumped and counted beside loom's.
+    telemetry = re.findall(
+        r"^CREATE (TABLE|MATERIALIZED VIEW) IF NOT EXISTS loom_telemetry\.", schema_text(), re.M
     )
+    n_tables = len(tables()) + telemetry.count("TABLE")
+    n_views = len(dumped) - len(tables()) + telemetry.count("MATERIALIZED VIEW")
+    assert f"-- Counts: {n_tables} tables + {n_views} materialized views." in schema_text()
 
 
 def test_removed_objects_stay_removed() -> None:

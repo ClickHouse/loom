@@ -724,6 +724,64 @@ def _register_worker_gauges(meter: Any) -> None:
     )
 
 
+def health_problem_series(problems: list[dict[str, Any]]) -> list[tuple[int, dict[str, str]]]:
+    """One point per open `/v1/health` problem. `provider_failing:<name>`
+    splits into its code and a `provider` label, so every label stays bounded."""
+    out: list[tuple[int, dict[str, str]]] = []
+    for p in problems:
+        code, _, provider = str(p.get("code", "")).partition(":")
+        attrs = {"code": code, "severity": str(p.get("severity", ""))}
+        if provider:
+            attrs["provider"] = provider[:32]
+        out.append((1, attrs))
+    return out
+
+
+def _register_health_gauges(meter: Any) -> None:
+    """This process's health problems and its lost ledger rows; in-process only."""
+
+    def _problems(_options: Any) -> Any:
+        from opentelemetry.metrics import Observation
+
+        try:
+            from server.health import health_problems
+
+            series = health_problem_series(health_problems())
+        except Exception:  # noqa: BLE001 — a health read must not fail export
+            return []
+        return [Observation(v, attributes=a) for v, a in series]
+
+    # A fake provider fallback, a revocation list that never loaded or a
+    # drifted configuration is a problem on one process; this makes each one
+    # alertable without polling every replica's /v1/health.
+    meter.create_observable_gauge(
+        name="loom.health.problems",
+        callbacks=[_problems],
+        description="Open /v1/health problems on this process, by code and severity (1 = open)",
+        unit="1",
+    )
+
+    def _dropped(_options: Any) -> Any:
+        from opentelemetry.metrics import Observation
+
+        from server.observability.events import get_emitter
+
+        stats = get_emitter().stats()
+        return [
+            Observation(stats["dropped_queue_full"], attributes={"reason": "queue_full"}),
+            Observation(stats["dropped_flush_failed"], attributes={"reason": "flush_failed"}),
+        ]
+
+    # Rows lost here are missing from loom.agent_events and from every SLI
+    # rolled up from it, so the SLO tiles read better than the service was.
+    meter.create_observable_gauge(
+        name="loom.ledger.dropped_total",
+        callbacks=[_dropped],
+        description="Ledger rows this process lost since it started, by reason",
+        unit="1",
+    )
+
+
 def register_state_gauges(
     meter: Any,
     *,
@@ -768,7 +826,8 @@ def register_state_gauges(
         _register_retention_gauges(meter, _rseries)
         _register_code_plane_gauges(meter, _series)
         _register_worker_gauges(meter)
-        log.info("loom state gauges registered (21 gauges: 4 level, 8 invariant, 7 code, 2 worker)")
+        _register_health_gauges(meter)
+        log.info("loom state gauges registered")
     except Exception as e:  # noqa: BLE001 — gauge wiring must not stop startup
         log.warning("state gauge registration failed: %s", e)
 
