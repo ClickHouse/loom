@@ -11,9 +11,8 @@ ALTER TABLE loom.agent_events
 -- Telemetry Loom derives from its own tables lives outside `loom`.
 CREATE DATABASE IF NOT EXISTS loom_telemetry;
 
--- Requests per minute, SLO class, operation and tenant: the table the SLO
--- alerts and tiles read, so an evaluation scans minutes rather than the
--- ledger. `slow` counts successful requests over their budget; `latency` holds
+-- Requests per minute, SLO class, operation and tenant, for SLO dashboards and
+-- alert rules to read, so an evaluation scans minutes rather than the ledger. `slow` counts successful requests over their budget; `latency` holds
 -- the quantile state of successful requests; `ts_hwm` is the newest ledger row
 -- folded in, where the next refresh resumes.
 CREATE TABLE IF NOT EXISTS loom_telemetry.sli_minute

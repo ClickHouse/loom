@@ -65,11 +65,12 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   profile of its own name) and logs in with `LOOM_CH_PASSWORD`; anything else of that name
   is left alone.
 - **Without admin rights.** When the user cannot create the database, read the system
-  tables the migrations read, or create the reader or its settings profile, `ch-setup`
+  tables the migrations read, hold the `loom_telemetry` grants the migrations need, or
+  create the reader or its settings profile, `ch-setup`
   stops and prints the SQL for an admin, with the password as a placeholder.
   `loom ch-setup --print-sql` prints it without connecting. The SQL grants the Loom user
-  everything the admin holds on `loom.*` through `GRANT CURRENT GRANTS` (ClickHouse Cloud
-  does not accept `GRANT ALL`), `SELECT` on the system tables Loom reads, and
+  everything the admin holds on `loom.*` and on `loom_telemetry.*` through
+  `GRANT CURRENT GRANTS` (ClickHouse Cloud does not accept `GRANT ALL`), `SELECT` on the system tables Loom reads, and
   `READ ON REMOTE`, which `clusterAllReplicas` needs to ask every replica for its version
   (a self-managed server shows it as `REMOTE` in `SHOW GRANTS`; writes through `remote()`
   are still refused). It creates the reader with `OR REPLACE`, so check that no other
@@ -98,7 +99,9 @@ that migrates also needs `CREATE DATABASE`, `CREATE TABLE`, `CREATE VIEW`, `INSE
 `SELECT` on `loom_telemetry.*` (`GRANT CURRENT GRANTS ON loom_telemetry.*`), the database
 of the request SLI rollup. Only the replica-version and system-table reads and the
 `loom_telemetry` grants, which only migrations need, relax while nothing is pending or
-when boot migrations are off.
+when boot migrations are off. A server that does not migrate warns without `SELECT` on `loom_telemetry.*`:
+`/v1/admin/schema.status` then reports the rollup missing and the view refresh gauges
+leave its refresh out.
 `loom doctor` reports the checks as `clickhouse_preflight`.
 
 ### Local stack from a clone

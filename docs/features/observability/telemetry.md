@@ -26,8 +26,8 @@ Each request row also carries its service-level columns: `transport` (`http` or 
 for a refused request, `server` for a failure) and `budget_ms`, the latency budget the
 request was held to. A refreshable materialized view folds rows older than 10 seconds
 into `loom_telemetry.sli_minute` once a minute (requests, server and client errors,
-rate-limited and over-budget counts, latency quantiles, kept 400 days), the table the SLO
-tiles and alert rules read ([monitoring](../../operations/monitoring.md)). Requests from a
+rate-limited and over-budget counts, latency quantiles, kept 400 days), for SLO
+dashboards and alert rules to read without scanning the ledger. Requests from a
 build without these columns, and calls that name no registered op, are left out. A
 minute can arrive as several rows until they merge, so a reader groups by its keys with
 `sum()` for the counts and `quantilesTDigestMerge(0.5, 0.95, 0.99)(latency)` for the

@@ -1,4 +1,4 @@
-"""server/observability/sli.py and the telemetry that feeds the alert rules:
+"""server/observability/sli.py and the telemetry an alert rule reads:
 op and status classes, the auth refusal reasons, the health-problem series."""
 
 from __future__ import annotations
@@ -161,8 +161,11 @@ def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
     from starlette.requests import Request
 
     from server.auth import routes
-    from server.identity.app import me_callers
+    from server.identity.app import me_callers, me_setup
+    from server.insights.app import admin_routes
+    from server.knowledge.app import download_routes
     from server.observability import metrics
+    from server.operations.base import Role
     from server.tasks.app import watch_routes
     from server.transport import http
 
@@ -170,11 +173,19 @@ def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
     monkeypatch.setattr(metrics, "_auth_refusals", counter)
     monkeypatch.setattr(type(http.settings), "auth_actually_required", lambda self: True)
     request = Request({"type": "http", "headers": []})
-    for refuse in (http._extract_auth, me_callers._authed, watch_routes._bearer_auth):
+    refusals = (
+        http._extract_auth,
+        me_callers._authed,
+        watch_routes._bearer_auth,
+        lambda r: admin_routes._verified_admin(r, Role.ADMIN),
+        lambda r: me_setup._setup_parent(r, {}),
+        lambda r: asyncio.run(download_routes.knowledge_download(r, "o", "n", "s")),
+    )
+    for refuse in refusals:
         with pytest.raises(HTTPException) as e:
             refuse(request)
         assert e.value.status_code == 401
-    assert counter.calls == [{"reason": "missing", "loom.transport": "http"}] * 3
+    assert counter.calls == [{"reason": "missing", "loom.transport": "http"}] * len(refusals)
 
     # The token check counts a refused token, not a signed-out caller.
     counter.calls.clear()

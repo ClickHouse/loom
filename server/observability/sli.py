@@ -3,7 +3,7 @@
 `slo_class` groups operations the way their SLOs are set, `status_class` says
 whose fault a failure was, and `budget_ms` is the latency budget the request
 was held to (`budgets.effective_budget_ms`). `loom_telemetry.sli_minute` rolls
-the rows up per minute; the alert rules and the SLO tiles read that table.
+the rows up per minute for SLO dashboards and alert rules to read.
 """
 
 from __future__ import annotations

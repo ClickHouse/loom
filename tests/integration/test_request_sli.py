@@ -58,14 +58,10 @@ async def test_ledger_rows_carry_the_sli_columns(control_plane_url: str, ch_clie
 
 @pytest.mark.asyncio
 async def test_an_mcp_call_is_ledgered_with_its_transport(
-    control_plane_url: str, ch_client
+    control_plane_url: str, ch_client, mint_test_token
 ) -> None:
-    from server.auth.jwt import mint_token
-
     ns = f"sli-mcp-{uuid.uuid4().hex[:6]}"
-    token = mint_token(
-        subject="sli-test", org=ORG, namespaces=[ns], roles=["writer"], ttl_seconds=300
-    )
+    token = mint_test_token(org=ORG, namespaces=[ns], subject="sli-test")
     call = {
         "jsonrpc": "2.0",
         "id": 1,

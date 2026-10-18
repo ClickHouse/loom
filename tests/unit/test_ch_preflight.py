@@ -826,6 +826,13 @@ def test_the_telemetry_grants_warn_with_nothing_pending_and_are_not_a_reader_s(
     assert not any(sql.endswith(" ON loom_telemetry.*") for sql in ch.ran)
 
 
+def test_a_server_that_does_not_migrate_warns_when_it_cannot_read_the_telemetry() -> None:
+    server = preflight.check(_NoTelemetryGrants(), need="server", migrates=False)
+    assert server.no_telemetry_read
+    assert "may not SELECT on loom_telemetry.*" in preflight.warnings(server)
+    assert not preflight.check(FakeCH(), need="server", migrates=False).no_telemetry_read
+
+
 def test_the_setup_sql_grants_the_telemetry_database_but_not_to_the_reader() -> None:
     sql = ch_setup.admin_sql("loom_app", "loom_reader")
     assert "GRANT CURRENT GRANTS ON loom_telemetry.* TO `loom_app`" in sql

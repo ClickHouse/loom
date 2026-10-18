@@ -121,6 +121,9 @@ class Server:
     unreadable: tuple[str, ...] = ()
     # May not SYSTEM REFRESH VIEW: purged code lingers until the next refresh.
     no_refresh: bool = False
+    # A server that does not migrate and may not read loom_telemetry.*: the
+    # schema status and the refresh gauges cannot see the SLI rollup.
+    no_telemetry_read: bool = False
     # What the next migration will refuse, passed now only because nothing
     # is pending.
     next_migration: tuple[PreflightError, ...] = ()
@@ -337,6 +340,10 @@ def check(
     # Strict even with nothing pending: the running server uses them too.
     _require(ch, user, GRANTS[need])
     no_refresh = need == "server" and not _granted(ch, REFRESH_GRANT)
+    # A migrating process checks every telemetry grant below.
+    no_telemetry_read = (
+        need == "server" and not migrates and not _granted(ch, "SELECT", TELEMETRY_DATABASE)
+    )
 
     if migrates:
         refused = [t for t in RUNNER_SYSTEM_TABLES if not _readable(ch, f"system.{t}")]
@@ -382,6 +389,7 @@ def check(
         database=database or create_database,
         unreadable=unreadable,
         no_refresh=no_refresh,
+        no_telemetry_read=no_telemetry_read,
         next_migration=tuple(later),
     )
 
@@ -402,9 +410,19 @@ def warnings(server: Server) -> str:
             f"may not {REFRESH_GRANT} on {DATABASE}.*, so purged code stays in the "
             "refreshable views until their next scheduled refresh"
         )
+    if server.no_telemetry_read:
+        parts.append(
+            f"may not SELECT on {TELEMETRY_DATABASE}.*, so /v1/admin/schema.status reports the "
+            "SLI rollup missing and the view refresh gauges leave it out"
+        )
     # Each reason may end in its own SQL advice: " | " keeps them apart.
     line = " | ".join(parts)
-    if server.unreadable or server.no_refresh or any(g.needs_admin for g in server.next_migration):
+    if (
+        server.unreadable
+        or server.no_refresh
+        or server.no_telemetry_read
+        or any(g.needs_admin for g in server.next_migration)
+    ):
         line += " (`loom ch-setup --print-sql` prints the SQL)"
     return line
 
