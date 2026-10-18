@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from server.auth.grant_claims import account_change
 from server.core import grant_cache
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now_seconds
@@ -157,76 +158,82 @@ async def handle_namespace_restore(
     # auto-registered owner (a restore writes grants), before anything about the
     # target is read or answered. Fresh target ⇒ caller becomes admin via the auto-grant
     # below.
-    target_existing = await namespaces_repo.fetch_row(input.org, input.target_namespace, ch=ch)
-    if target_existing is not None:
-        await _registry.require_admin_of_existing(
-            target_existing,
-            input.org,
-            input.target_namespace,
-            caller,
-            visibility=None,
-            owner_may_complete=False,
-        )
+    # Held from the read to the namespace row's write: a release landing between
+    # them must not be written back over.
+    async with account_change(input.org, input.target_namespace):
+        target_existing = await namespaces_repo.fetch_row(input.org, input.target_namespace, ch=ch)
+        if target_existing is None:
+            _registry.refuse_sso_name(input.target_namespace)
+        if target_existing is not None:
+            await _registry.require_admin_of_existing(
+                target_existing,
+                input.org,
+                input.target_namespace,
+                caller,
+                visibility=None,
+                owner_may_complete=False,
+            )
 
-    # Idempotency: if this snapshot_id already appears as a restore
-    # event on the target namespace's audit log, skip.
-    existing = await ch.query_one(
-        """
-        SELECT 1 AS x FROM loom.audit_log
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND event_type = 'namespace.restore'
-          AND positionCaseInsensitive(subject, {sid:String}) > 0
-        LIMIT 1
-        """,
-        params={
-            "org": input.org,
-            "ns": input.target_namespace,
-            "sid": payload.snapshot_id,
-        },
-    )
-    if existing is not None:
-        return NamespaceRestoreOutput(
-            restored=False,
-            target_namespace=input.target_namespace,
-            snapshot_id=payload.snapshot_id,
-            counts={
-                "memories": payload.memory_count,
-                "types": payload.type_count,
-                "grants": payload.grant_count,
+        # Idempotency: if this snapshot_id already appears as a restore
+        # event on the target namespace's audit log, skip.
+        existing = await ch.query_one(
+            """
+            SELECT 1 AS x FROM loom.audit_log
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND event_type = 'namespace.restore'
+              AND positionCaseInsensitive(subject, {sid:String}) > 0
+            LIMIT 1
+            """,
+            params={
+                "org": input.org,
+                "ns": input.target_namespace,
+                "sid": payload.snapshot_id,
             },
         )
+        if existing is not None:
+            return NamespaceRestoreOutput(
+                restored=False,
+                target_namespace=input.target_namespace,
+                snapshot_id=payload.snapshot_id,
+                counts={
+                    "memories": payload.memory_count,
+                    "types": payload.type_count,
+                    "grants": payload.grant_count,
+                },
+            )
 
-    now = naive_utc_now_seconds()
+        now = naive_utc_now_seconds()
 
-    # Only CREATE the namespace row when absent — an RMT insert over an
-    # existing namespace would reset its config to defaults. Restoring
-    # into an existing namespace touches only the rows below, except a
-    # soft-deleted one, which is reactivated with every other column
-    # carried forward. Reuses the probe above; nothing between them
-    # mutates loom.namespaces.
-    if target_existing is not None and not bool(target_existing.get("active", False)):
-        await ch.insert("loom.namespaces", [{**target_existing, "active": True, "updated_at": now}])
-        grant_cache.invalidate(input.org)  # the claim cap reads account ties from this table
-    elif target_existing is None:
-        await ch.insert(
-            "loom.namespaces",
-            [
-                {
-                    "org": input.org,
-                    "namespace": input.target_namespace,
-                    "owner_email": caller,
-                    "description": (f"Restored from {payload.org}/{payload.source_namespace}"),
-                    "tags": [],
-                    "active": True,
-                    "conflict_threshold": None,
-                    "retention_days": 0,
-                    "warm_days": 0,
-                    "visibility": "private",
-                    "created_at": now,
-                    "updated_at": now,
-                }
-            ],
-        )
+        # Only CREATE the namespace row when absent — an RMT insert over an
+        # existing namespace would reset its config to defaults. Restoring
+        # into an existing namespace touches only the rows below, except a
+        # soft-deleted one, which is reactivated with every other column
+        # carried forward. Reuses the probe above.
+        if target_existing is not None and not bool(target_existing.get("active", False)):
+            await ch.insert(
+                "loom.namespaces", [{**target_existing, "active": True, "updated_at": now}]
+            )
+            grant_cache.invalidate(input.org)  # the claim cap reads account ties from this table
+        elif target_existing is None:
+            await ch.insert(
+                "loom.namespaces",
+                [
+                    {
+                        "org": input.org,
+                        "namespace": input.target_namespace,
+                        "owner_email": caller,
+                        "description": (f"Restored from {payload.org}/{payload.source_namespace}"),
+                        "tags": [],
+                        "active": True,
+                        "conflict_threshold": None,
+                        "retention_days": 0,
+                        "warm_days": 0,
+                        "visibility": "private",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                ],
+            )
     await _registry.insert_admin_grant(ch, input.org, input.target_namespace, caller)
 
     # Bump versions off a single base so restored rows win against any

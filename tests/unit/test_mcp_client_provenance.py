@@ -330,6 +330,9 @@ async def test_caller_defaults_seeds_default_from_token_namespace_claim(
         async def query_one(self, *a: Any, **k: Any) -> None:
             return None  # no saved user_state default, no DB grants
 
+        async def query_all(self, *a: Any, **k: Any) -> list[Any]:
+            return []  # no restricted namespace
+
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
 
     claimed = AuthInfo(

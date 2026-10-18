@@ -551,6 +551,11 @@ async def drain_writes() -> None:
     the service-side tasks, then the drop ledger (last of the services: the
     side effects before it record their drops too), the events stream and
     the buffered write marks."""
+    # A request cancelled by the shutdown left its Keeper release or its
+    # credential put-back running: they land first.
+    from server.auth import shielded
+
+    await shielded.drain(timeout_s=5.0)
     # Restricted-access audit rows and policy decision rows (an enforced
     # denial among them) still being written land first.
     from server.identity.app import policy_gate as _policy_gate

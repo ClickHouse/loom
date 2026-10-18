@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // --- bounds -------------------------------------------------------------------
 // The request bound comes from the round trip SessionStart measured against
@@ -128,10 +129,13 @@ export function loomConfig() {
   return _loomConfigCache;
 }
 
-/** Resolve the Loom bearer token: env, then ~/.loom/config.json, then ~/.loom/token. */
+/** Resolve the Loom bearer token: env, an agent's exchanged token, then
+ *  ~/.loom/config.json, then ~/.loom/token. */
 export function resolveToken() {
   const fromEnv = (process.env.LOOM_API_KEY || "").trim();
   if (fromEnv) return fromEnv;
+  // An agent signs in as itself or not at all: never as a credential a person left here.
+  if (agentMode()) return agentToken();
   // The plugin's install-time option: Claude Code exports
   // `userConfig` values to hook processes as CLAUDE_PLUGIN_OPTION_<KEY>.
   const fromOption = (process.env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
@@ -145,6 +149,88 @@ export function resolveToken() {
     // no token file; caller decides whether to no-op
   }
   return "";
+}
+
+// --- an agent with no Loom token of its own ------------------------------------
+// LOOM_CLIENT_ID names a workload trust (`loom bot create --agent-claim`), and
+// LOOM_WORKLOAD_TOKEN or LOOM_WORKLOAD_TOKEN_FILE holds the OIDC token the
+// agent's control plane issued it. bin/loom-agent-token.mjs exchanges that for
+// a Loom token (RFC 8693; it never outlives the workload token) and saves it
+// here, so nothing long-lived sits on the agent's machine.
+
+export function agentMode(env = process.env) {
+  return Boolean(env.LOOM_CLIENT_ID && (env.LOOM_WORKLOAD_TOKEN || env.LOOM_WORKLOAD_TOKEN_FILE));
+}
+
+/** The workload token as the agent holds it now; "" when unreadable. */
+export function workloadToken(env = process.env) {
+  try {
+    return (env.LOOM_WORKLOAD_TOKEN || readFileSync(env.LOOM_WORKLOAD_TOKEN_FILE, "utf8")).trim();
+  } catch {
+    return "";
+  }
+}
+
+export function agentTokenPath(env = process.env) {
+  const key = createHash("sha256").update(String(env.LOOM_CLIENT_ID)).digest("hex").slice(0, 16);
+  return join(env.HOME || homedir(), ".loom", `agent-token-${key}.json`);
+}
+
+/** The saved token is bound to the workload token it was exchanged for, so it
+ *  serves only the agent holding that proof: one sharing this home, or one
+ *  handed another agent's token, never gets it. A new proof is a new exchange
+ *  (the Loom token never outlives the proof anyway). */
+export function proofHash(env = process.env, token = workloadToken(env)) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+// Renewed halfway through its life, at most five minutes before it runs out
+// (a workload token may live only minutes), and used to its last half-minute
+// while Loom is away; a failed renewal is not tried again for half a minute.
+const AGENT_RENEW_S = 300;
+const AGENT_LAST_S = 30;
+const AGENT_RETRY_S = 30;
+
+function usable(saved, env, now, minLeft) {
+  const ours =
+    saved.client_id === env.LOOM_CLIENT_ID && saved.server === resolveServerUrl() && saved.proof === proofHash(env);
+  return ours && Number(saved.exp) - now > minLeft && Boolean(saved.token);
+}
+
+function renewDue(saved) {
+  return Math.min(AGENT_RENEW_S, Number(saved.ttl) / 2 || AGENT_RENEW_S);
+}
+
+/** In agent mode, the saved token, renewed first when it is due. */
+export function agentToken({ env = process.env, renew = renewAgentToken, now = Date.now() / 1000 } = {}) {
+  if (!agentMode(env)) return "";
+  const path = agentTokenPath(env);
+  let saved = readConfigFile(path);
+  if (usable(saved, env, now, renewDue(saved))) return String(saved.token);
+  // The retry mark names the proof that failed, never the saved token's.
+  if (!(Number(saved.retry_at) > now && saved.retry_proof === proofHash(env))) {
+    renew(env);
+    saved = readConfigFile(path);
+    if (usable(saved, env, now, renewDue(saved))) return String(saved.token);
+    try {
+      writePrivateFile(path, JSON.stringify({ ...saved, retry_proof: proofHash(env), retry_at: now + AGENT_RETRY_S }));
+    } catch {
+      // nowhere to note it: the next call tries again
+    }
+  }
+  return usable(saved, env, now, AGENT_LAST_S) ? String(saved.token) : "";
+}
+
+function renewAgentToken(env) {
+  // A child, so every caller stays synchronous; once per half-life of the token.
+  // A path, not the URL's pathname: that is percent-encoded (a space) and,
+  // on Windows, starts with a slash before the drive.
+  const script = fileURLToPath(new URL("../bin/loom-agent-token.mjs", import.meta.url));
+  try {
+    execFileSync(process.execPath, [script], { env, timeout: 3000, stdio: "ignore" });
+  } catch {
+    // Loom away or the workload token refused: what is saved still serves.
+  }
 }
 
 // A plugin may ship `plugin-defaults.json` at its root
@@ -347,7 +433,8 @@ export function resolveScope(cwd) {
   // workspace) so we fall back to the 'coding' default.
   const claims = decodeTokenClaims(resolveToken());
   const claimNs = Array.isArray(claims.namespaces) ? claims.namespaces.find((n) => n && n !== "*") : "";
-  const cfg = loomConfig();
+  // An agent's identity is its own token's: never the scope a person saved here.
+  const cfg = agentMode() ? {} : loomConfig();
   const org = (process.env.LOOM_ORG || String(cfg.org || "") || claims.org || "default").trim();
   const agent = (process.env.LOOM_AGENT || String(cfg.agent || "") || hookClient()).trim();
   const baseNs = (process.env.LOOM_NAMESPACE || String(cfg.namespace || "") || claimNs || "coding").trim();

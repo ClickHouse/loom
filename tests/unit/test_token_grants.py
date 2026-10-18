@@ -188,7 +188,12 @@ async def test_grants_revoke_handler_calls_the_cascade(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(grants_repo, "find_any_grant", _find)
     monkeypatch.setattr(grants_repo, "insert_row", _insert)
+
+    async def _same(org: str, subject: str) -> str:
+        return subject
+
     monkeypatch.setattr(tg, "cascade_revoke_to_created_tokens", _cascade)
+    monkeypatch.setattr("server.auth.aliases.canonical_subject", _same)
     out = await grants_mod.handle_grants_revoke(
         GrantsRevokeInput(org=ORG, namespace="code-private", subject="alice@x")
     )

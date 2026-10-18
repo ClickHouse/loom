@@ -49,7 +49,7 @@ class _Resp:
         self.status_code = status
         self._body = body
         self.text = str(body)
-        self.request = httpx.Request("POST", oa._ENDPOINT)
+        self.request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
 
     def json(self) -> dict:
         return self._body

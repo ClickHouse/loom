@@ -15,6 +15,7 @@ from typing import Any
 from server.auth import login
 from server.core import leases
 from server.core.ch import get_client
+from server.core.naming import SSO_NAMESPACE_PREFIX
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ async def _registry_row(org: str, namespace: str) -> dict[str, Any] | None:
     with own_write_reads():
         row = await get_client().query_one(
             """
-            SELECT active, toString(contact_email) AS contact_email
+            SELECT active, toString(contact_email) AS contact_email, password_hash = '' AS sso
             FROM loom.namespaces FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
             LIMIT 1
@@ -46,7 +47,8 @@ async def _accounts_naming(org: str, ident: str) -> list[dict[str, Any]]:
     with own_write_reads():
         rows = await get_client().query_all(
             """
-            SELECT namespace, toString(owner_email) AS owner, active, tags
+            SELECT namespace, toString(owner_email) AS owner, active, tags,
+                   password_hash = '' AS sso
             FROM loom.namespaces FINAL
             WHERE org = {org:String} AND contact_email = {ident:String}
             """,
@@ -129,7 +131,7 @@ async def jit_provision_for_email(email: str) -> login.Identity | None:
     # hash so two different emails can never collide onto one account.
     local = ident.split("@", 1)[0]
     slug = "".join(c if c.isalnum() else "-" for c in local).strip("-")[:40] or "user"
-    base = f"u-{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
+    base = f"{SSO_NAMESPACE_PREFIX}{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
     org = _settings.oidc_jit_org
     # One sign-up per email at a time on any replica, under self-signup's claim of
     # the email: a second sign-in waits and finds the account the first wrote.
@@ -167,10 +169,22 @@ async def finish_unfinished_account(email: str) -> None:
 async def _provision_jit(org: str, ident: str, base: str) -> login.Identity | None:
     """`jit_provision_for_email` past its gates, under the email's claim."""
     from server.auth.self_signup import provision_account
+    from server.observability import audit
 
     accounts = await _accounts_naming(org, ident)
-    if any(a["active"] for a in accounts):
+    # A password account naming the email is no proof the person owns it
+    # (self-signup never verified the address), so it is not theirs here.
+    if any(a["active"] and a["sso"] for a in accounts):
         return await _resolve_as_written(ident)  # their account, whatever its name
+    # Nor is it someone else's to sit beside: two active accounts naming one
+    # email tie both to every grant made to it (`server.auth.aliases`). The
+    # address is freed by releasing that account (`loom claim-release`).
+    if any(a["active"] for a in accounts):
+        log.info("oidc jit: a password account names %r in %s; not provisioning", ident, org)
+        return None
+    # Any account naming the email counts, a password one too: its owner may
+    # be the person offboarded. A squatter's is released (`loom claim-release`
+    # clears its email), not revoked, to free the address.
     if await _any_revoked(accounts):
         # Offboarded: a fresh name would be a new subject past the revoke.
         log.info("oidc jit: an account of %r in %s is revoked; not provisioning", ident, org)
@@ -190,6 +204,13 @@ async def _provision_jit(org: str, ident: str, base: str) -> login.Identity | No
         description="Auto-provisioned via OIDC SSO.",
         tags=[JIT_TAG],
     )
+    await audit.emit(
+        "auth.jit_provisioned",
+        org=org,
+        namespace=name,
+        actor=ident,
+        subject={"provider": "oidc", "namespace": name},
+    )
     # Two processes that both found the name free write the same row, and
     # ReplacingMergeTree keeps one.
     return await _resolve_as_written(ident)
@@ -206,7 +227,7 @@ async def _free_name(org: str, ident: str, base: str) -> tuple[_Name, str]:
         row = await _registry_row(org, ns)
         if row is None:
             return _Name.FREE, ns
-        if row["active"] and row["contact_email"] == ident:
+        if row["active"] and row["sso"] and row["contact_email"] == ident:
             return _Name.THEIRS, ns
     return _Name.NONE_FREE, ""
 

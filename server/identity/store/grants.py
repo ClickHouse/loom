@@ -205,44 +205,23 @@ async def count_active_admins(
     return int((row or {}).get("n") or 0)
 
 
-async def best_live_role(
-    org: str, namespace: str, subjects: list[str], *, ch: _CHClient | None = None
-) -> str:
-    """The highest live grant role any of `subjects` holds on (org, namespace),
-    "" when none."""
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-        SELECT g.role AS role
-        FROM (SELECT * FROM loom.namespace_grants FINAL) AS g
-        WHERE g.org = {org:String}
-          AND g.subject IN {subs:Array(String)}
-          AND g.namespace = {ns:String}
-          AND {live}
-        ORDER BY {rank} DESC
-        LIMIT 1
-        """.replace("{live}", LIVE_GRANT).replace("{rank}", GRANT_RANK_SQL),
-        params={"org": org, "subs": subjects, "ns": namespace},
-    )
-    return str((row or {}).get("role") or "")
-
-
 async def ranked_live_grants(
     org: str, subjects: list[str], *, limit: int = 200, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
     """`subjects`' live grants in `org` (namespace, role), highest role
-    first, then the most recent."""
+    first, then the most recent. A subject matches whatever its case, as
+    at the gate (`authz.grant_role_for`)."""
     ch = ch or _default_client()
     rows = await ch.query_all(
         """
         SELECT namespace, role
         FROM (SELECT * FROM loom.namespace_grants FINAL) AS g
         WHERE g.org = {org:String}
-          AND g.subject IN {subs:Array(String)}
+          AND lower(g.subject) IN {subs:Array(String)}
           AND {live}
         ORDER BY {rank} DESC, g.granted_at DESC
         LIMIT {lim:UInt32}
         """.replace("{live}", LIVE_GRANT).replace("{rank}", GRANT_RANK_SQL),
-        params={"org": org, "subs": subjects, "lim": int(limit)},
+        params={"org": org, "subs": [s.lower() for s in subjects], "lim": int(limit)},
     )
     return list(rows or [])

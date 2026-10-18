@@ -12,7 +12,8 @@
     "auto_run",
     "retry",
     "consumer",
-    "mentor_brief"
+    "mentor_brief",
+    "profile"
   ],
   "Agent.methods": {
     "call": [
@@ -93,7 +94,8 @@
     "auto_run",
     "retry",
     "consumer",
-    "mentor_brief"
+    "mentor_brief",
+    "profile"
   ],
   "SyncAgent.__init__": [
     "org",
@@ -109,9 +111,35 @@
     "auto_run",
     "retry",
     "consumer",
-    "mentor_brief"
+    "mentor_brief",
+    "profile"
   ],
   "clients": {
+    "account": {
+      "class": "AccountClient",
+      "methods": {
+        "create_service_account": [
+          "name",
+          "namespaces",
+          "role",
+          "ttl_days"
+        ],
+        "mcp_config": [
+          "client",
+          "namespace",
+          "restricted_namespaces",
+          "ttl_days"
+        ],
+        "revoke_service_account": [
+          "name"
+        ],
+        "service_accounts": [],
+        "set_default_namespace": [
+          "namespace"
+        ],
+        "sharing_summary": []
+      }
+    },
     "audit": {
       "class": "AuditClient",
       "methods": {
@@ -1982,6 +2010,31 @@
         ]
       }
     },
+    "deployment": {
+      "class": "DeploymentClient",
+      "methods": {
+        "health": [],
+        "models": [],
+        "release_claim": [
+          "org",
+          "namespace",
+          "reason"
+        ],
+        "reset_models": [
+          "expected_version"
+        ],
+        "retry_models": [
+          "config_id"
+        ],
+        "save_models": [
+          "setup"
+        ],
+        "validate_models": [
+          "setup"
+        ],
+        "workers_status": []
+      }
+    },
     "erasure": {
       "class": "ErasureClient",
       "methods": {
@@ -2107,6 +2160,9 @@
           "confirm_duplicate_uri"
         ],
         "delete": [
+          "source_uri"
+        ],
+        "download": [
           "source_uri"
         ],
         "get": [
@@ -3276,6 +3332,9 @@
     "ValidationError",
     "__version__",
     "decode_token_claims",
-    "tool_definitions"
+    "login",
+    "logout",
+    "tool_definitions",
+    "whoami"
   ]
 }

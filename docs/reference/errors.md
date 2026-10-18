@@ -175,7 +175,7 @@ Raised in `server/auth/bearer.py`, `server/auth/login.py`, `server/identity/app/
 
 #### `AUTH_UNAVAILABLE`
 
-Raised in `server/auth/bearer.py`, `server/auth/routes.py`.
+Raised in `server/auth/bearer.py`.
 
 #### `BACKEND_TIMEOUT`
 
@@ -545,6 +545,10 @@ HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retr
 
 HTTP 409, raised as `server.core.runtime_overrides.OverrideNotStoredError`. 409 — ClickHouse refused to store the override (a read-only user, for example), so no process changed; the server log has the reason.
 
+#### `PASSWORD_LOGIN_SSO`
+
+Raised in `server/auth/login.py`.
+
 #### `PINNED_CONFLICT`
 
 Raised in `server/memory/app/set_commit.py`, `server/memory/app/update.py`, `server/memory/app/write.py`. What to do: [common errors](#common-errors-and-what-to-do).
@@ -688,6 +692,10 @@ Raised in `server/code/app/member_writes.py`.
 #### `TIMELINE_REQUIRES_FILTER`
 
 Raised in `server/memory/app/curation.py`.
+
+#### `TOKEN_NAME_TAKEN`
+
+Raised in `server/identity/app/me_service_accounts.py`.
 
 #### `UNKNOWN_ARGUMENT`
 

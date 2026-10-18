@@ -21,6 +21,7 @@
  *     const answer = await bot.ask("which seat should I book?", { userId: "u1" });
  */
 
+import type { AccountClient } from "./account.js";
 import { LoomClient, type LoomClientOptions, type OpInput, type OpOutput } from "./client.js";
 import type { OpName } from "./generated/ops.js";
 import { envVar, scriptName } from "./runtime.js";
@@ -134,6 +135,11 @@ export class Agent {
     this.mentorBriefStarted = true;
     if ((envVar("LOOM_MENTOR_BRIEF") ?? "").toLowerCase() !== "on") return;
     void this.mentor().catch(() => undefined);
+  }
+
+  /** Your own tokens, through this Agent's client: see `AccountClient`. */
+  get account(): AccountClient {
+    return this.client.account;
   }
 
   /** The consumer label the transport stamps on every body; `""` = none. */

@@ -14,12 +14,9 @@ import httpx
 from server.clients._http import get_client as _http_client
 from server.clients._http_errors import raise_for_status_with_detail as _raise_for_status
 from server.core.provider_keys import provider_key
-from server.llm import traits
+from server.llm import gateway, traits
 from server.llm._retry import retrying
 from server.llm.client import LLMResult
-
-_ENDPOINT = "https://api.openai.com/v1/chat/completions"
-
 
 # Fields a model may refuse; server/llm/traits.py learns which, per model, from
 # the 400s that name them. Loom's calls are structured extraction, judging and
@@ -124,7 +121,10 @@ async def _post(
     from server.settings import settings
 
     r: httpx.Response = await client.post(
-        _ENDPOINT, headers=headers, json=payload, timeout=settings.llm_request_timeout_s
+        f"{settings.openai_base_url.rstrip('/')}/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=settings.llm_request_timeout_s,
     )
     return r
 
@@ -140,7 +140,7 @@ class OpenAILLMClient:
         self.model = model
         self.reasoning_effort = reasoning_effort
         self._api_key = provider_key("openai") if api_key is None else api_key
-        if not self._api_key:
+        if not self._api_key and not gateway.exchanging():
             raise RuntimeError(
                 "OPENAI_API_KEY not set; OpenAILLMClient requires a key. "
                 "Use LOOM_LLM_PROVIDER=fake for local dev."
@@ -165,13 +165,15 @@ class OpenAILLMClient:
         # single attempt would under-report latency by up to 4x.
         from server.observability.genai import generation_span
         from server.observability.provider_health import recording
-
-        headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
+        from server.settings import settings
 
         with generation_span(provider=self.provider, model=self.model) as _gen:
             # A failure after the retries (or a non-retryable one, or an
             # unreadable answer) marks the provider failing for /v1/health.
             with recording("openai:chat"):
+                url = f"{settings.openai_base_url.rstrip('/')}/chat/completions"
+                bearer = await gateway.bearer(self._api_key, url)  # an outage is the provider's
+                headers = {"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"}
                 async for attempt in retrying():
                     with attempt:
                         _gen.note_attempt()

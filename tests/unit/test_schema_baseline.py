@@ -96,12 +96,16 @@ def test_the_journal_files() -> None:
         "036_shared_replica_state.sql",
         "037_carry_acks.sql",
         "038_embedding_write_sha.sql",
-        "039_entity_triple_rows.sql",
-        "040_projection_failure_abandoned.sql",
-        "041_entity_triple_seen_at.sql",
-        "042_graph_restore_id.sql",
-        "043_entity_edge_rows.sql",
-        "044_entity_edge_close_id.sql",
+        "039_oauth_sessions.sql",
+        "040_oauth_signin_state.sql",
+        "041_sso_links.sql",
+        "042_machine_identities.sql",
+        "043_entity_triple_rows.sql",
+        "044_projection_failure_abandoned.sql",
+        "045_entity_triple_seen_at.sql",
+        "046_graph_restore_id.sql",
+        "047_entity_edge_rows.sql",
+        "048_entity_edge_close_id.sql",
     ]
 
 

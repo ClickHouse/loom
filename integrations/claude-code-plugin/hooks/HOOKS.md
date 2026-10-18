@@ -250,6 +250,21 @@ reach the hooks as `CLAUDE_PLUGIN_OPTION_<KEY>`: `server_url` and `token`
 (`LOOM_API_KEY_FILE`, token only), then the plugin's `plugin-defaults.json`
 (URL only), then http://localhost:7777.
 
+An agent with no Loom token of its own sets `LOOM_CLIENT_ID` (a workload trust,
+`loom bot create --agent-claim`) and `LOOM_WORKLOAD_TOKEN` or
+`LOOM_WORKLOAD_TOKEN_FILE` (the OIDC token its control plane issued it). Right
+after `LOOM_API_KEY`, the hooks and the MCP headers helper then use the token
+`bin/loom-agent-token.mjs` exchanges it for (RFC 8693), which never outlives the
+workload token: saved 0600 in ~/.loom/agent-token-<hash of LOOM_CLIENT_ID>.json,
+bound to the workload token it was exchanged for, renewed halfway through its
+life, and not retried for 30 s after a failed renewal. Agents of one client that
+share a home overwrite each other's file and exchange on every call; give each
+its own `HOME`. Use the file form for a workload token that lives minutes and is
+rotated: one in `LOOM_WORKLOAD_TOKEN` serves only until it expires. When the
+exchange fails the agent has no credential: never `~/.loom/config.json`, never
+`~/.loom/token`, never a sign-up, and the scope a person saved there is not used
+either; SessionStart says so once.
+
 Switches read on/true/1/yes and off/false/0/no. Defaults in parentheses.
 
 | Setting                                                                                                                                       | Read by                       | Meaning                                                                                  |

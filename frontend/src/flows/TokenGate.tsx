@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { PasswordField } from "@clickhouse/click-ui/PasswordField";
@@ -33,8 +33,53 @@ export const DOCS_MCP_URL = `${REPO_DOCS}/features/integrations/mcp-clients.md`;
  * boot flag). No token surfaces: the server mints the JWT and the client
  * stores it without showing it. Operators who need a raw token use the
  * `loom mint-token` CLI, which is not exposed here.
+ *
+ * With SSO on (the `__LOOM_SSO` boot flag) the gate is one button instead:
+ * the server refuses password sign-in and sign-up there.
  */
 export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
+  if (window.__LOOM_SSO === true) return <SsoGate reason={reason} />;
+  return <PasswordGate onLogin={onLogin} reason={reason} />;
+}
+
+/** Sends the browser to the identity provider; it comes back to `/me#token=…`. */
+function SsoGate({ reason }: { reason?: GateReason }) {
+  return (
+    <GateShell>
+      <Panel className="space-y-4">
+        {reason === "expired" && <Alert role="status" state="neutral" text="Your session expired — sign in again." />}
+        <a
+          href="/oauth/sso"
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-on-accent hover:opacity-90"
+        >
+          <Icon name="lock" size="sm" aria-hidden="true" /> Sign in with SSO
+        </a>
+      </Panel>
+    </GateShell>
+  );
+}
+
+/** The sign-in page around either gate: the logo and its tagline. */
+function GateShell({ children }: { children: ReactNode }) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-bg px-4">
+      <div className="w-full max-w-md">
+        <header className="mb-6 flex items-center gap-2">
+          <div className="grid h-10 w-10 place-items-center rounded-lg bg-accent text-on-accent" aria-hidden="true">
+            <Icon name="tree-structure" size="md" aria-hidden="true" />
+          </div>
+          <div>
+            <h1 className="m-0 text-xl">Loom</h1>
+            <div className="text-xs text-text-muted">memory for your AI agents</div>
+          </div>
+        </header>
+        {children}
+      </div>
+    </main>
+  );
+}
+
+function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   // Sign-in fields
   const [signinIdent, setSigninIdent] = useState("");
@@ -111,165 +156,153 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-bg px-4">
-      <div className="w-full max-w-md">
-        <header className="mb-6 flex items-center gap-2">
-          <div className="grid h-10 w-10 place-items-center rounded-lg bg-accent text-on-accent" aria-hidden="true">
-            <Icon name="tree-structure" size="md" aria-hidden="true" />
-          </div>
-          <div>
-            <h1 className="m-0 text-xl">Loom</h1>
-            <div className="text-xs text-text-muted">memory for your AI agents</div>
-          </div>
-        </header>
-
-        <Panel className="space-y-4">
-          {reason === "expired" && <Alert role="status" state="neutral" text="Your session expired — sign in again." />}
-          <Tabs
-            value={mode}
-            onValueChange={(v) => {
-              setErr(null);
-              setErrRequestId("");
-              if (v === "signin" || v === "signup") setMode(v);
-            }}
-          >
-            <Tabs.TriggersList aria-label="Sign in or sign up">
-              <TabTrigger value="signin" icon="enter">
-                Sign in
+    <GateShell>
+      <Panel className="space-y-4">
+        {reason === "expired" && <Alert role="status" state="neutral" text="Your session expired — sign in again." />}
+        <Tabs
+          value={mode}
+          onValueChange={(v) => {
+            setErr(null);
+            setErrRequestId("");
+            if (v === "signin" || v === "signup") setMode(v);
+          }}
+        >
+          <Tabs.TriggersList aria-label="Sign in or sign up">
+            <TabTrigger value="signin" icon="enter">
+              Sign in
+            </TabTrigger>
+            {signupAvailable !== false && (
+              <TabTrigger value="signup" icon="users">
+                Sign up
               </TabTrigger>
-              {signupAvailable !== false && (
-                <TabTrigger value="signup" icon="users">
-                  Sign up
-                </TabTrigger>
-              )}
-            </Tabs.TriggersList>
+            )}
+          </Tabs.TriggersList>
 
-            <Tabs.Content value="signin">
-              <form onSubmit={doSignin} className="space-y-3 pt-5">
-                <div>
-                  <TextField
-                    id="gate-signin-ident"
-                    label="Email or namespace"
-                    aria-describedby="gate-signin-ident-help"
-                    value={signinIdent}
-                    onChange={setSigninIdent}
-                    placeholder="you@example.com"
-                    autoComplete="username"
-                    autoFocus
-                  />
-                  <p id="gate-signin-ident-help" className="mt-1 text-xs text-text-muted">
-                    The email you signed up with, or the name you picked at sign-up.
-                  </p>
-                </div>
-                <PasswordField
-                  id="gate-signin-password"
-                  label="Password"
-                  value={signinPassword}
-                  onChange={setSigninPassword}
-                  placeholder="•••••••"
-                  autoComplete="current-password"
-                />
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  fillWidth
-                  loading={busy}
-                  disabled={busy || !signinIdent.trim() || !signinPassword}
-                >
-                  Sign in
-                </Button>
-              </form>
-            </Tabs.Content>
-
-            <Tabs.Content value="signup">
-              <form onSubmit={doSignup} className="space-y-3 pt-5">
-                <div>
-                  <TextField
-                    id="gate-signup-name"
-                    label="Pick a name"
-                    aria-describedby="gate-signup-name-help"
-                    value={name}
-                    onChange={setName}
-                    placeholder="alice"
-                  />
-                  <p id="gate-signup-name-help" className="mt-1 text-xs text-text-muted">
-                    Used as your identity. Examples: <span className="font-mono">alice</span>,{" "}
-                    <span className="font-mono">clickhouse-eng</span>.
-                  </p>
-                </div>
+          <Tabs.Content value="signin">
+            <form onSubmit={doSignin} className="space-y-3 pt-5">
+              <div>
                 <TextField
-                  id="gate-signup-email"
-                  label="Email"
-                  type="email"
-                  value={signupEmail}
-                  onChange={setSignupEmail}
+                  id="gate-signin-ident"
+                  label="Email or namespace"
+                  aria-describedby="gate-signin-ident-help"
+                  value={signinIdent}
+                  onChange={setSigninIdent}
                   placeholder="you@example.com"
-                  autoComplete="email"
+                  autoComplete="username"
+                  autoFocus
                 />
-                <div>
-                  <PasswordField
-                    id="gate-signup-password"
-                    label="Password"
-                    aria-describedby="gate-signup-password-help"
-                    value={signupPassword}
-                    onChange={setSignupPassword}
-                    placeholder="•••••••"
-                    autoComplete="new-password"
-                  />
-                  <p id="gate-signup-password-help" className="mt-1 text-xs text-text-muted">
-                    At least 8 characters. Save it in your password manager — Loom has no reset flow.
-                  </p>
-                </div>
-                {name.trim() && (
-                  <p className="rounded bg-surface-2 px-3 py-2 text-xs text-text-muted">
-                    You'll own <span className="font-mono text-text">{name.trim()}</span> — your private space. You can
-                    create more namespaces later from the dashboard.
-                  </p>
-                )}
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  fillWidth
-                  loading={busy}
-                  disabled={busy || !name.trim() || !signupEmail.trim() || signupPassword.length < 8}
-                >
-                  Sign up
-                </Button>
-              </form>
-            </Tabs.Content>
-          </Tabs>
+                <p id="gate-signin-ident-help" className="mt-1 text-xs text-text-muted">
+                  The email you signed up with, or the name you picked at sign-up.
+                </p>
+              </div>
+              <PasswordField
+                id="gate-signin-password"
+                label="Password"
+                value={signinPassword}
+                onChange={setSigninPassword}
+                placeholder="•••••••"
+                autoComplete="current-password"
+              />
+              <Button
+                type="primary"
+                htmlType="submit"
+                fillWidth
+                loading={busy}
+                disabled={busy || !signinIdent.trim() || !signinPassword}
+              >
+                Sign in
+              </Button>
+            </form>
+          </Tabs.Content>
 
-          {err && (
-            <Alert
-              role="alert"
-              state="danger"
-              text={
-                <>
-                  {err}
-                  {errRequestId && <div className="mt-1 font-mono">request id {errRequestId}</div>}
-                </>
-              }
-            />
-          )}
-        </Panel>
+          <Tabs.Content value="signup">
+            <form onSubmit={doSignup} className="space-y-3 pt-5">
+              <div>
+                <TextField
+                  id="gate-signup-name"
+                  label="Pick a name"
+                  aria-describedby="gate-signup-name-help"
+                  value={name}
+                  onChange={setName}
+                  placeholder="alice"
+                />
+                <p id="gate-signup-name-help" className="mt-1 text-xs text-text-muted">
+                  Used as your identity. Examples: <span className="font-mono">alice</span>,{" "}
+                  <span className="font-mono">clickhouse-eng</span>.
+                </p>
+              </div>
+              <TextField
+                id="gate-signup-email"
+                label="Email"
+                type="email"
+                value={signupEmail}
+                onChange={setSignupEmail}
+                placeholder="you@example.com"
+                autoComplete="email"
+              />
+              <div>
+                <PasswordField
+                  id="gate-signup-password"
+                  label="Password"
+                  aria-describedby="gate-signup-password-help"
+                  value={signupPassword}
+                  onChange={setSignupPassword}
+                  placeholder="•••••••"
+                  autoComplete="new-password"
+                />
+                <p id="gate-signup-password-help" className="mt-1 text-xs text-text-muted">
+                  At least 8 characters. Save it in your password manager — Loom has no reset flow.
+                </p>
+              </div>
+              {name.trim() && (
+                <p className="rounded bg-surface-2 px-3 py-2 text-xs text-text-muted">
+                  You'll own <span className="font-mono text-text">{name.trim()}</span> — your private space. You can
+                  create more namespaces later from the dashboard.
+                </p>
+              )}
+              <Button
+                type="primary"
+                htmlType="submit"
+                fillWidth
+                loading={busy}
+                disabled={busy || !name.trim() || !signupEmail.trim() || signupPassword.length < 8}
+              >
+                Sign up
+              </Button>
+            </form>
+          </Tabs.Content>
+        </Tabs>
 
-        <p className="mt-5 text-center text-xs text-text-muted">
-          Loom doesn't email-verify on signup. Run it behind a VPN, intranet, or auth proxy if exposed.
-        </p>
-        <div className="mt-2 text-center text-xs leading-relaxed text-text-muted">
-          Running this yourself? Mint a token with <code>loom mint-token …</code> and open{" "}
-          <code>&lt;server&gt;/#token=&lt;jwt&gt;</code>, or set <code>LOOM_AUTH_REQUIRED=false</code> for a single-user
-          install. See{" "}
-          <ExternalLink href={DOCS_TOKENS_URL} size="sm">
-            Tokens and grants
-          </ExternalLink>{" "}
-          and the{" "}
-          <ExternalLink href={DOCS_QUICKSTART_URL} size="sm">
-            Quickstart
-          </ExternalLink>
-          .
-        </div>
+        {err && (
+          <Alert
+            role="alert"
+            state="danger"
+            text={
+              <>
+                {err}
+                {errRequestId && <div className="mt-1 font-mono">request id {errRequestId}</div>}
+              </>
+            }
+          />
+        )}
+      </Panel>
+
+      <p className="mt-5 text-center text-xs text-text-muted">
+        Loom doesn't email-verify on signup. Run it behind a VPN, intranet, or auth proxy if exposed.
+      </p>
+      <div className="mt-2 text-center text-xs leading-relaxed text-text-muted">
+        Running this yourself? Mint a token with <code>loom mint-token …</code> and open{" "}
+        <code>&lt;server&gt;/#token=&lt;jwt&gt;</code>, or set <code>LOOM_AUTH_REQUIRED=false</code> for a single-user
+        install. See{" "}
+        <ExternalLink href={DOCS_TOKENS_URL} size="sm">
+          Tokens and grants
+        </ExternalLink>{" "}
+        and the{" "}
+        <ExternalLink href={DOCS_QUICKSTART_URL} size="sm">
+          Quickstart
+        </ExternalLink>
+        .
       </div>
-    </main>
+    </GateShell>
   );
 }

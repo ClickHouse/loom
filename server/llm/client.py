@@ -79,9 +79,10 @@ def log_llm_provider_resolution() -> None:
 
 def _key_absent(provider: str) -> bool:
     from server.core.provider_keys import provider_key
+    from server.llm import gateway
 
     env = KEY_ENV_BY_PROVIDER.get(provider)
-    return bool(env) and not provider_key(provider)
+    return bool(env) and not provider_key(provider) and not gateway.exchanging()
 
 
 def log_conflict_resolver_resolution() -> None:

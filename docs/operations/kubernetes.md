@@ -211,7 +211,10 @@ reseal`, which seals the stored credentials, signing keys and rebuild recipes ag
   the new root (the publish Job checks first that it can, so a failing one publishes
   nothing). The previous root only opens sealed values; it never verifies a token. Remove
   it in a later upgrade once `kubectl exec deploy/loom -- loom secrets reseal --check`
-  exits 0. A value it lists as opening with neither root was lost before this rotation:
+  exits 0. Until then it also counts the SSO sign-ins in flight (a code, a device grant,
+  an approval or link awaiting its click) whose identity-provider token only the old root
+  opens: they are not rewritten, and expire within minutes; the check names when the last
+  one does. A value it lists as opening with neither root was lost before this rotation:
   enter it again. Without it, the stored credentials stop opening: enter them again.
   If the old root leaked, also rotate the signing keys and retire the old kids
   ([tokens and grants](../guides/tokens-and-grants.md#revoke-and-rotate)).
@@ -252,7 +255,9 @@ render with a token set would publish again, so never set `mustMatchChange.publi
 A publish is then `loom secrets reseal --dry-run && loom signing-key record-root && loom
 deployment publish --yes` in a pod with the new env (the dry run checks the previous root
 while the old one is still the recorded root), then `loom secrets reseal` once the new pods
-serve.
+serve. A `loom login` code shown while the root changes stops matching (its key derives
+from the root): run `loom login` again. So does an SSO sign-in started on a pod with the
+other root: start it again.
 
 ## Cache and git mirrors
 
@@ -341,6 +346,63 @@ helm test loom -n loom                       # live, ready and /v1/health throug
 kubectl -n loom exec deploy/loom -- loom doctor
 kubectl -n loom logs -l app.kubernetes.io/instance=loom --tail=-1 | grep -E "WorkerSupervisor: starting|supervisor lease: acquired"
 ```
+
+## Sign-in
+
+SSO is configured as on any host ([single sign-on](sso.md)): the issuer and client id
+in `env`, the client secret in the Secret.
+
+```yaml
+env:
+  LOOM_OAUTH_LOGIN_PROVIDER: oidc
+  LOOM_OAUTH_ISSUER: https://loom.example.com # the ingress host; the callback is built from it
+  LOOM_OIDC_ISSUER: https://your-org.okta.com/oauth2/default
+  LOOM_OIDC_CLIENT_ID: your-client-id
+secrets:
+  extra:
+    LOOM_OIDC_CLIENT_SECRET: your-client-secret # or a key of secrets.existingSecret
+```
+
+Register `<LOOM_OAUTH_ISSUER>/oauth/callback` with the identity provider. Every
+replica must run the same provider: set it in one place, and roll it out like any
+other change; a sign-in whose steps land on two replicas that disagree is started
+again. Run `loom sso adopt` (see the SSO page) from one pod, after the rollout:
+
+```bash
+kubectl -n loom exec deploy/loom -- loom sso adopt --domain example.com
+```
+
+## Model calls through an inference gateway
+
+To send Loom's own model calls through a gateway that takes a workload token instead
+of a provider key ([models and keys](../getting-started/models-and-keys.md#through-an-inference-gateway)),
+mount a projected service-account token and point Loom at it:
+
+```yaml
+env:
+  LOOM_OPENAI_BASE_URL: https://gateway.example/v1
+  LOOM_ANTHROPIC_BASE_URL: https://gateway.example
+  LOOM_INFERENCE_TOKEN_URL: https://gateway.example/oauth/token
+  LOOM_INFERENCE_WORKLOAD_TOKEN_FILE: /var/run/secrets/inference/token
+extraVolumes:
+  - name: inference-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            audience: gateway.example # what the gateway expects
+            expirationSeconds: 3600
+            path: token
+extraVolumeMounts:
+  - name: inference-token
+    mountPath: /var/run/secrets/inference
+    readOnly: true
+```
+
+The kubelet renews the file before it expires and Loom rereads it on each exchange,
+so nothing restarts. The gateway trusts the cluster's OIDC issuer for this service
+account (`serviceAccount.name`); that trust is set up on the gateway's side. The
+NetworkPolicy's egress to port 443 already covers the gateway and the identity
+provider.
 
 ## Related
 

@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import json
 import sys
+from datetime import UTC, datetime
 from typing import Any
 
 from server.cli._ch import run_connected
@@ -30,6 +31,16 @@ SEALED: tuple[tuple[str, str, tuple[str, ...], str, str], ...] = (
         "provider-rebuild-views",
         "",
     ),
+    # A live session's identity-provider refresh token. Keeper's sealed copies
+    # (a code, a device grant, an approval or link in flight) are not rewritten
+    # here, see `in_flight`; a `family:<id>` key holds only "<generation>:<rid>".
+    (
+        "loom.oauth_state",
+        "upstream_refresh",
+        (),
+        "oidc refresh token",
+        "record_type = 'session_refresh' AND expires_at > toUnixTimestamp(now())",
+    ),
 )
 # Each table's key, to name a row whose value opens with neither root.
 _KEYS = {
@@ -37,6 +48,7 @@ _KEYS = {
     "loom.code_repos": ("org", "namespace"),
     "loom.qa_sources": ("org", "name"),
     "loom.provider_configuration": ("config_id",),
+    "loom.oauth_state": ("record_type", "id"),
 }
 # A rebuild in these states rewrites its configuration row from one it read
 # earlier, which would put back what the reseal replaced.
@@ -129,6 +141,33 @@ async def reseal_all(
     return counts, lost, checked
 
 
+async def in_flight(ch: Any) -> tuple[int, int]:
+    """Sign-ins in flight in Keeper whose IdP refresh token opens only with the
+    previous root: how many, and when the last expires (epoch seconds). Not
+    resealed: the request holding the value it read would lose its own
+    compare-and-set to the rewrite. They live minutes."""
+    from server.auth.oauth_store import UPSTREAM_PURPOSE
+    from server.core.secrets_at_rest import resealed
+
+    rows = await ch.query_all(
+        "SELECT value, expires_at FROM loom.oauth_signin_state WHERE expires_at > toUInt32(now())"
+    )
+    n, last = 0, 0
+    for row in rows:
+        try:
+            doc = json.loads(row["value"])
+        except ValueError:
+            continue  # a session's "<generation>:<rid>"
+        if not isinstance(doc, dict) or doc.get("spent"):
+            continue  # a spent code or grant has no sign-in left to finish
+        # A code's or a device grant's at the top, an approval's or a link's in its data.
+        data = doc["data"] if isinstance(doc.get("data"), dict) else {}
+        sealed = doc.get("upstream_refresh") or data.get("upstream_refresh")
+        if isinstance(sealed, str) and resealed(UPSTREAM_PURPOSE, sealed) is not None:
+            n, last = n + 1, max(last, int(row["expires_at"]))
+    return n, last
+
+
 def _cmd_reseal(args: argparse.Namespace) -> int:
     from server.settings import settings
 
@@ -149,14 +188,27 @@ def _cmd_reseal(args: argparse.Namespace) -> int:
         except Exception as e:  # noqa: BLE001 — reported with a failing exit
             print(f"✗ reseal failed: {e}", file=sys.stderr)
             return 1
+        try:
+            pending, until = await in_flight(ch)
+        except Exception as e:  # noqa: BLE001 — only the check needs it; a reseal goes on
+            print(f"! cannot read the sign-ins in flight: {e}", file=sys.stderr)
+            if args.check:
+                return 1
+            pending, until = 0, 0
         for where, n in counts.items():
             print(f"  {where}: {n} {'to reseal' if dry else 'resealed'}")
+        if pending:
+            last = datetime.fromtimestamp(until, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            print(
+                f"  loom.oauth_signin_state: {pending} sign-in{'s' * (pending > 1)} in flight "
+                f"under the previous root, the last expiring at {last}"
+            )
         for where, keys in lost.items():
             print(f"! {where}: opens with neither root, enter it again: {', '.join(keys)}")
         if lost and not checked:
             print("✗ no recorded root to check LOOM_JWT_SECRET_PREVIOUS against", file=sys.stderr)
             return 1
-        if args.check and any(counts.values()):
+        if args.check and (any(counts.values()) or pending):
             print("✗ values still open only with LOOM_JWT_SECRET_PREVIOUS", file=sys.stderr)
             return 1
         print("✓ dry run, nothing written" if dry else "✓ resealed under LOOM_JWT_SECRET")
@@ -176,6 +228,7 @@ def register_secrets_cli(sub: Any) -> None:
     rs.add_argument(
         "--check",
         action="store_true",
-        help="Write nothing; exit 1 while a value opens only with LOOM_JWT_SECRET_PREVIOUS",
+        help="Write nothing; exit 1 while a value, or a sign-in in flight, opens only with "
+        "LOOM_JWT_SECRET_PREVIOUS",
     )
     rs.set_defaults(func=_cmd_reseal)

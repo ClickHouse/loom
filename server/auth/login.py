@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from server.auth import attempts
-from server.auth.attempts import Attempts, client_address
+from server.auth.attempts import Attempts, address_key, client_address
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password, verify_password_off_loop
 from server.core.ch import get_client
@@ -104,7 +104,8 @@ async def resolve_user_credentials(
     password hash so response timing doesn't leak account existence.
     """
     ident = identifier.strip().lower()
-    gates = [(_by_identifier, ident)] + ([(_by_address, address)] if address else [])
+    by_address = [(_by_address, address_key(address))] if address else []
+    gates = [(_by_identifier, ident), *by_address]
     try:
         async with attempts.slot():
             admitted = await attempts.admit(gates)
@@ -131,6 +132,11 @@ async def _release_quietly(admitted: attempts.Admission) -> None:
 
 
 async def _check_credentials(ident: str, password: str) -> Identity | None:
+    if not ident:
+        # Unclaimed agents' rows name no email: a blank identifier would test
+        # the password against every one of them. Timed as an unknown account.
+        await verify_password_off_loop(await asyncio.to_thread(_unknown_account_hash), password)
+        return None
     ch = get_client()
     # Email first (one email may own several namespaces → mint with all of them).
     rows = await ch.query_all(
@@ -294,16 +300,25 @@ async def resolve_identity_for_email(
 ) -> Identity | None:
     """Map an externally-verified email (e.g. an OIDC id_token's) to a loom
     identity. No password — the IdP already authenticated the user. Matches
-    active namespaces by contact_email; password_hash is NOT required, so
-    SSO-only accounts (no local password) resolve. None when nothing matches.
+    active SSO-only accounts (no password) by contact_email, and password
+    accounts linked to the email (`sso_links`). An unlinked password account
+    is never matched: self-signup takes any typed email unverified, so
+    matching it would hand a stranger's namespace to whoever owns the address
+    at the IdP. None when nothing matches.
     """
-    ch = get_client()
     ident = email.strip().lower()
+    if not ident:  # rows with no email (agents', bots') are nobody's to sign in as
+        return None
+    ch = get_client()
     rows = await ch.query_all(
         """
         SELECT namespace, owner_email, org, password_hash, contact_email
         FROM loom.namespaces FINAL
         WHERE contact_email = {ident:String} AND active = 1
+          AND (password_hash = '' OR (org, namespace) IN (
+              SELECT org, namespace FROM loom.sso_links FINAL
+              WHERE email = {ident:String} AND linked = 1
+          ))
         ORDER BY org, namespace
         """,
         params={"ident": ident},
@@ -316,11 +331,28 @@ async def resolve_identity_for_email(
     # capture the login). Same email may own several namespaces in ONE org.
     if len({r["org"] for r in rows}) > 1:
         return None
+    # Likewise two owners (a password account linked beside another's): the
+    # first row's subject would win, and with it the other's namespaces.
+    if len({r["owner_email"] for r in rows}) > 1:
+        return None
     return await _with_restricted_grants(_identity_from_rows(rows, verified_email=ident))
 
 
 @router.post("/v1/auth/login", response_model=LoginOutput)
 async def login(input: LoginInput, request: Request) -> LoginOutput:
+    from server.settings import settings
+
+    # With SSO on, the identity provider is the only way in: a local password
+    # would skip its MFA and outlive a deactivation there. An operator who is
+    # locked out mints a token on the host (`loom mint-token`).
+    if settings.oauth_login_provider == "oidc":
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "PASSWORD_LOGIN_SSO",
+                "message": "this deployment uses SSO; sign in via your identity provider",
+            },
+        )
     try:
         resolved = await resolve_user_credentials(
             input.identifier, input.password, address=client_address(request)

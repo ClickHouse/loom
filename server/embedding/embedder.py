@@ -11,6 +11,7 @@ from typing import Protocol
 from server.core.embedding_space import inferred_provider
 from server.core.provider_keys import provider_key
 from server.embedding.alias import PREFIX as ALIAS_PREFIX
+from server.llm import gateway
 from server.settings import settings
 
 
@@ -102,7 +103,7 @@ def _served(name: str) -> Embedder:
         # Labels over the served model, never the served model itself.
         raise ValueError(f"unknown embedding model: {name!r}")
     keys = KEY_ENVS.get(provider, ())
-    if keys and not provider_key(provider):
+    if keys and not provider_key(provider) and not (provider == "openai" and gateway.exchanging()):
         logging.getLogger(__name__).error(
             "No real embedder configured. LOOM_EMBEDDING_MODEL=%s but %s is not set — "
             "falling back to fake-ngram-%d (NOT production-quality; will mis-rank "

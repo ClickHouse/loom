@@ -423,6 +423,16 @@ _WORKERS: tuple[_Worker, ...] = (
         "task_lease_sweep_interval_seconds",
         idle_interval="task_lease_sweep_idle_interval_seconds",
     ),
+    # oauth_signin_state_sweep: always-on; drops loom.oauth_signin_state keys past
+    # their credential's expiry.
+    _Worker(
+        "oauth_signin_state_sweep",
+        "server.auth.claims",
+        None,
+        "SWEEP_INTERVAL_SECONDS",
+        interval_in_module=True,
+        pass_attr="sweep",
+    ),
     _Worker(
         "mcp_session_run_sweep",
         "server.tasks.workers.session_run_sweep",

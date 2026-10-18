@@ -46,6 +46,14 @@ def derive_personal_slug(sub: str) -> str:
     return f"personal-{slug}"
 
 
+def personal_candidates(sub: str) -> list[str]:
+    """The names `ensure_personal_namespace` tries for `sub`, in order."""
+    base = derive_personal_slug(sub)
+    if sub.startswith("personal-"):
+        return [base]
+    return [base, f"{base}-{hashlib.sha1(sub.encode('utf-8')).hexdigest()[:6]}"]
+
+
 async def ensure_personal_namespace(
     ch: Any,
     org: str,
@@ -63,21 +71,15 @@ async def ensure_personal_namespace(
     candidate is owned by someone else. Raises PersonalNamespaceBusy while
     another process holds a candidate's claim.
     """
-    base = derive_personal_slug(sub)
-    candidates = [base]
-    if not sub.startswith("personal-"):
-        sub_hash = hashlib.sha1(sub.encode("utf-8")).hexdigest()[:6]
-        candidates.append(f"{base}-{sub_hash}")
-
     from server.core import leases
 
-    for cand in candidates:
+    for cand in personal_candidates(sub):
         # One claimant per name across replicas; while another holds it (likely
         # this subject's own concurrent first request) nothing is decided here.
         async with leases.holding(f"personal-ns:{org}:{cand}", ttl_s=CLAIM_TTL_S, ch=ch) as held:
             if not held:
                 raise PersonalNamespaceBusy(cand)
-            owner = await _owner(ch, org, cand)
+            owner = await namespace_owner(ch, org, cand)
             if owner is None:
                 from server.auth.self_signup import provision_account
 
@@ -101,7 +103,8 @@ async def ensure_personal_namespace(
     return None
 
 
-async def _owner(ch: Any, org: str, namespace: str) -> str | None:
+async def namespace_owner(ch: Any, org: str, namespace: str) -> str | None:
+    """Who owns `namespace` (its row's `owner_email`), None with no row."""
     from server.core.ch import sequential_reads
 
     with sequential_reads():  # a row another replica just provisioned
@@ -115,6 +118,12 @@ async def _owner(ch: Any, org: str, namespace: str) -> str | None:
             params={"org": org, "ns": namespace},
         )
     return None if row is None else str(row.get("owner") or "")
+
+
+def provisioning_pending(org: str, subject: str) -> bool:
+    """Whether the next `ensure_personal_namespace_cached` call for this pair
+    reads and may provision; False once this process has resolved it."""
+    return (org, subject) not in _seen
 
 
 async def ensure_personal_namespace_cached(
@@ -158,17 +167,18 @@ async def ensure_personal_namespace_cached(
         from server.core.grant_sql import LIVE_GRANT
 
         ch = get_client()
-        # Any spelling of the person counts, as it does at the gate: a person
-        # granted under their email already has a namespace.
+        # Any spelling of the person, in any case, counts, as it does at the
+        # gate: a person granted under their email already has a namespace.
+        subjects = [s.lower() for s in await subject_aliases(org, subject, ch=ch)]
         owned = await ch.query_one(
             """
             SELECT 1 FROM loom.namespace_grants FINAL
             WHERE org = {org:String}
-              AND subject IN {subs:Array(String)}
+              AND lower(subject) IN {subs:Array(String)}
               AND {live}
             LIMIT 1
             """.replace("{live}", LIVE_GRANT),
-            params={"org": org, "subs": await subject_aliases(org, subject, ch=ch)},
+            params={"org": org, "subs": subjects},
         )
         if owned is None:
             await ensure_personal_namespace(ch, org, subject)
