@@ -57,7 +57,6 @@ async def test_active_request_prevents_ack(setup):
     record.assert_not_awaited()
     assert await barrier.acknowledge_drain(transition)
     assert record.call_args.args[1:] == (transition, "drained")
-    assert record.call_args.kwargs["stale_after_s"] == barrier.STALE_AFTER_S
 
 
 @pytest.mark.asyncio
@@ -434,3 +433,25 @@ async def test_shutdown_retirement_never_outlives_its_budget(setup, monkeypatch,
     started = time.monotonic()
     assert not await barrier.retire_at_shutdown(object(), budget_s=0.05)
     assert time.monotonic() - started < 0.5
+
+
+def test_a_participant_row_expires_after_the_heartbeat_window_by_default():
+    import inspect
+
+    default = inspect.signature(pp.record_participant).parameters["stale_after_s"].default
+    assert default == pp.STALE_AFTER_S > barrier.HEARTBEAT_S
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("columns", [0, 1])
+async def test_boot_enrolls_before_migrating_only_once_the_heartbeat_columns_exist(
+    monkeypatch, columns
+):
+    """A database whose migrations stopped before the heartbeat columns would
+    refuse the first heartbeat and fail the boot before it could migrate."""
+    register = AsyncMock()
+    monkeypatch.setattr(barrier, "register_process", register)
+    ch = SimpleNamespace(query_one=AsyncMock(return_value={"n": columns}))
+    await barrier.enroll_before_migrations(ch)
+    assert "host_proof" in ch.query_one.call_args.args[0]
+    assert register.await_count == columns

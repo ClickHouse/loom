@@ -23,7 +23,7 @@ export interface TierCard {
 
 const ICONS: Record<string, TierIcon> = { clang: "cpp", typescript: "typescript", go: "go", python: "python" };
 
-export function tierCards(st: Pick<CodeIndexStatus, "compiler_tiers" | "state">): TierCard[] {
+export function tierCards(st: Pick<CodeIndexStatus, "compiler_tiers">): TierCard[] {
   const tiers = st.compiler_tiers;
   if (tiers.length === 0) {
     return [

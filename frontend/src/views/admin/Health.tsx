@@ -582,7 +582,7 @@ export function OpMixPanel() {
       <EmptyState
         icon="pie-chart"
         title="Operation mix unavailable"
-        description="ops.health needs an org-admin token, or the server predates the op_mix check."
+        description="ops.health needs an org-admin token."
       />
     );
   }

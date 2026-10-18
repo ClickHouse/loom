@@ -14,7 +14,7 @@ def _cmd_signing_key(args: argparse.Namespace) -> int:
     from server.auth import keyring
     from server.settings import settings
 
-    if args.signing_cmd in ("rotate", "record-root") and (settings.jwt_secret_is_dev_default()):
+    if args.signing_cmd in ("rotate", "record-root") and settings.jwt_secret_is_dev_default():
         # The servers would not unseal it: every token of the key would be refused.
         print(
             "✗ LOOM_JWT_SECRET here is the dev default; run with the servers' root secret",
@@ -58,8 +58,8 @@ def _too_soon(activate_in: float, refresh_s: float, whose: str) -> bool:
 async def _signing_key_cmd(args: argparse.Namespace, keyring: Any, ch: Any) -> int:
     from server.settings import settings
 
-    servers = await _servers_refresh_s(keyring, ch)
     if args.signing_cmd == "rotate":
+        servers = await _servers_refresh_s(keyring, ch)
         if servers is not None:
             if _too_soon(args.activate_in, servers, "the servers' slowest"):
                 return 1

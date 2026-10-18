@@ -63,7 +63,13 @@ const detail = (thread_id: string, title: string): ConversationThreadDetail => (
   created_at: null,
   updated_at: null,
   messages: [
-    { msg_id: `${thread_id}-m1`, role: "user", content: `body of ${thread_id}`, ts: new Date().toISOString() },
+    {
+      msg_id: `${thread_id}-m1`,
+      agent: "a",
+      role: "user",
+      content: `body of ${thread_id}`,
+      ts: new Date().toISOString(),
+    },
   ],
 });
 
@@ -255,6 +261,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(await screen.findByText("body of thread-s")).toBeInTheDocument();
     expect(getConversationThread.mock.calls.map((c) => c[1])).toEqual(["*"]);
   });
+
   it("says a missing thread is not found, with no message count", async () => {
     listConversationThreads.mockResolvedValue({ threads: [] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });

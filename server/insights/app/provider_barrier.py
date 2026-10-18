@@ -163,10 +163,12 @@ async def register_process() -> None:
 
 
 async def enroll_before_migrations(ch: Any) -> None:
-    """A reconfiguration activated while this process migrates then waits for it."""
+    """A reconfiguration activated while this process migrates then waits for it.
+    Skipped on a database whose migrations stopped before the heartbeat columns:
+    the heartbeat could not land, and the boot enrolls after migrating anyway."""
     row = await ch.query_one(
-        "SELECT count() AS n FROM system.tables "
-        "WHERE database = 'loom' AND name = '_provider_participants'"
+        "SELECT count() AS n FROM system.columns "
+        "WHERE database = 'loom' AND table = '_provider_participants' AND name = 'host_proof'"
     )
     if row is not None and row.get("n") == 1:
         await register_process()
@@ -199,9 +201,7 @@ async def acknowledge_drain(transition: UUID) -> bool:
     if not await _server_side_settled():
         return False
     _, _, version = _OWN.stamp(transition, "drained")
-    await record_participant(
-        process_identity(), transition, "drained", version=version, stale_after_s=STALE_AFTER_S
-    )
+    await record_participant(process_identity(), transition, "drained", version=version)
     return True
 
 
