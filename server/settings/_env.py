@@ -120,7 +120,7 @@ def unknown_env_keys(fields: Iterable[str], env_file: str | None) -> list[str]:
 _SECRET_FIELD = re.compile(
     "|".join(
         (
-            r"(?:^|_)secret(?:s_json)?$",
+            r"(?:^|_)secret$",
             r"(?:^|_)password$",
             r"(?:^|_)(?:admin|github)_token$",
             r"(?:^|_)key$",

@@ -47,7 +47,7 @@ def clear_holder(ch: Any, holder: str) -> str:
         return "live"
     participant = holder.split("/", 1)[0]
     row = participant_sync(ch, participant)
-    if row is not None and not row["expired"]:
+    if row is not None and row["state"] != "retired" and not row["expired"]:
         return "live"
     if running_queries_sync(ch, participant) != 0:
         return "running"

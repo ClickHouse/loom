@@ -13,8 +13,9 @@ reports it.
 
 The leader rewrites the snapshot only when it agrees with the stored one on
 what must match and no other live instance still runs the stored one, so a
-drifted leader never publishes itself over the deployment and a mixed env
-during a rollout never flips the published configuration back and forth. A
+drifted leader never publishes itself over the deployment and builds whose
+snapshots differ in shape (N-1 and N during a rollout) never flip the published
+configuration back and forth. A
 new root secret or MUST_MATCH value is published by the operator, with
 `loom deployment publish`.
 """

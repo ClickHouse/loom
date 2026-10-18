@@ -303,6 +303,11 @@ def signing_key() -> SigningKey:
     return key
 
 
+def _wire_kid(kid: str) -> str:
+    """The kid tokens carry: a PEM root's internal kid is `default`."""
+    return ROOT_KID if kid == ROOT_RS256_KID else kid
+
+
 def status(rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """This process's view of the keyring, for `/v1/health`: the kid that
     signs ('' for none), the kids that do not unseal, and the `default` row's
@@ -313,7 +318,7 @@ def status(rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     signer = _signer(view) if loaded else None
     return {
         "loaded": loaded,
-        "signing_kid": signer.kid if signer else "",
+        "signing_kid": "" if signer is None else _wire_kid(signer.kid),
         "unsealable": sorted(view.unsealable),
         "root_row": view.root_row,
     }
@@ -324,8 +329,8 @@ def verification_keys(kid: str, algorithm: str) -> list[str]:
     order: a keyring key or the root secret, then a gateway's public key of
     that kid (`jwt_public_keys_json`). An RS256 token of kid `default` (the PEM
     root's, or a gateway's without a kid) tries `ROOT_RS256_KID` and the
-    gateway's `default` both. A retire
-    stops this deployment's keys only: the gateway's are its operator's."""
+    gateway's `default` both. A retire stops this deployment's keys only: the
+    gateway's are its operator's."""
     keys = _keys(_view)  # never a retired kid
     key = None if kid == ROOT_RS256_KID else keys.get(kid)
     if key is None and kid == ROOT_KID:

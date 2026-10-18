@@ -162,6 +162,16 @@ def test_clear_refuses_while_the_holder_is_live(ch):
     assert provider_lock.LOCK_NAME not in ch.keys
 
 
+def test_clear_frees_a_retired_holder_before_its_row_expires(ch):
+    a = str(uuid4())
+    ch.participant(a)
+    holder = f"{a}/{uuid4()}"
+    ch.seed(provider_lock.LOCK_NAME, holder, ttl=provider_lock.LOCK_TTL_S)
+    ch.advance(provider_lock.LOCK_TTL_S + 1)
+    ch.participants[a].update(state="retired", beat=ch.now())
+    assert provider_lock.clear_holder(ch, holder) == "cleared"
+
+
 def test_the_cli_clears_only_a_stopped_holder(ch, monkeypatch, capsys):
     from server.cli.app import main
     from server.core.schema import migrate

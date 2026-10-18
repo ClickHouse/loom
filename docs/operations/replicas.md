@@ -67,8 +67,8 @@ The lease holder never publishes over a snapshot it drifts from: a replica
 with the wrong root secret or embedding model that wins the lease stays not
 ready, and the replicas on the published env stay ready. On the other settings
 it rewrites the snapshot only when no other live replica still runs the stored
-one, so a rollout with a mixed env never flips the published configuration
-back and forth. Once the last replica on the old env is gone, the lease holder
+one, so builds whose snapshots differ in shape (N-1 and N during a rollout)
+never flip the published configuration back and forth. Once the last replica on the old env is gone, the lease holder
 publishes the new one within a heartbeat.
 
 **Changing a MUST_MATCH setting or `LOOM_JWT_SECRET`** cannot roll: replicas on
