@@ -66,12 +66,11 @@ async def run_pass(
                     limit=STATUS_MIRROR_BATCH, status_mirror=True, after=after
                 )
                 await retry_each(batch, mirrored, until=until)
+                if len(batch) < STATUS_MIRROR_BATCH or time.monotonic() >= until:
+                    break
                 # Past the batch's last row: a row left pending, or retried and not marked
                 # yet, is not read again this pass.
-                last = batch[-1] if len(batch) == STATUS_MIRROR_BATCH else None
-                if last is None or last.created_at is None or time.monotonic() >= until:
-                    break
-                after = (last.created_at, last.failure_id)
+                after = batch[-1]
         finally:
             # One mark per org for the whole loop; a pass cut short marks what it did.
             await mark_retried(mirrored)

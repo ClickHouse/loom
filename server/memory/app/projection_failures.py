@@ -465,13 +465,13 @@ async def scan_active_projection_failures(
     *,
     limit: int = 50,
     status_mirror: bool = False,
-    after: tuple[datetime, str] | None = None,
+    after: ProjectionFailureRow | None = None,
     ch: Any | None = None,
 ) -> list[ProjectionFailureRow]:
     """Return active failures across orgs for the repair worker, oldest first: the
     STATUS_MIRROR intents with `status_mirror`, else every other kind. Each judged
     retirement queues one, so they get their own budget and order. `after`: only rows
-    past that (created_at, failure_id), the last row of the previous batch."""
+    past its (created_at, failure_id), the last row of the previous batch."""
 
     ch = ch or get_client()
     kind = "=" if status_mirror else "!="
@@ -500,7 +500,7 @@ async def scan_active_projection_failures(
         LIMIT {{lim:UInt32}}
         """,
         params={"lim": int(limit), "mirror_kind": STATUS_MIRROR}
-        | ({"at": after[0], "fid": after[1]} if after else {}),
+        | ({"at": after.created_at, "fid": after.failure_id} if after else {}),
     )
     return [_row_from_ch(dict(row)) for row in rows]
 

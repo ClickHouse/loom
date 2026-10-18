@@ -256,7 +256,11 @@ async def test_a_pass_reads_mirror_batches_until_one_comes_back_short(
     ) -> list[ProjectionFailureRow]:
         if not status_mirror:
             return [_failure(999, "entity_edges")]
-        return [f for f in mirrors if after is None or (f.created_at, f.failure_id) > after][:limit]
+        return [
+            f
+            for f in mirrors
+            if after is None or (f.created_at, f.failure_id) > (after.created_at, after.failure_id)
+        ][:limit]
 
     retried: list[str] = []
 
@@ -304,7 +308,11 @@ def _paged(rows: list[ProjectionFailureRow], *, fail_after: int = 0) -> Any:
         if fail_after and batches == fail_after:
             raise ConnectionError("clickhouse unreachable")
         batches += 1
-        return [f for f in rows if after is None or (f.created_at, f.failure_id) > after][:limit]
+        return [
+            f
+            for f in rows
+            if after is None or (f.created_at, f.failure_id) > (after.created_at, after.failure_id)
+        ][:limit]
 
     return scan
 
