@@ -152,6 +152,19 @@ Deciding that takes a strong model: on 200 real pairs the resolver's judge
 to 0.44 on the hard band. That call takes 5.6 s at the median, so it runs on the leader, after the write
 (`memory/workers/conflict_resolver.py`, `memory/app/conflict_resolver.py`).
 
+What the resolver keeps, whatever runs beside it
+(`tests/integration/test_conflict_resolver_invariants_ch.py` checks each under concurrent
+memory.set, memory.pin, memory.delete, Undo and erasure requests):
+
+- No user write or pin is lost: every resolver write re-reads its row under the row's key
+  lock and lands at the read version + 1, so a write that started after the read is newer.
+- Every retirement has a `memory.auto_supersede` record and can be undone.
+- Nothing changes below confidence 0.90.
+- No other user's or tenant's text reaches a prompt.
+- Nothing is written in an org under erasure: it is read right before each write.
+- A row is judged once per written version: after a paid call the row is stamped judged,
+  or the pass stops (a provider or lock outage) with the row owed.
+
 **The queue** is `loom.memory_embeddings.conflict_checked_at`, which every write already
 emits (`memory/store/conflict_resolver.py`):
 
