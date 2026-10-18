@@ -321,9 +321,9 @@ class ConversationThreadsOutput(BaseModel):
 
 
 class ConversationCompactInput(BaseModel):
-    """Summarize messages older than `keep_recent` into one embedded system message, then
-    tombstone the originals and their embeddings.
+    """Summarize old turns into one embedded system turn and tombstone the originals.
 
+    The turns are those older than `keep_recent`; their embeddings are tombstoned too.
     The summary carries metadata.compacted_from=[msg_ids]; when its embed fails,
     nothing is written (`reason="embed-failed"`).
 

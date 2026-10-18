@@ -7435,7 +7435,7 @@ class ConversationAppendOutput(TypedDict, total=False):
 
 
 class ConversationCompactInput(TypedDict, total=False):
-    "Summarize messages older than `keep_recent` into one embedded system message, then"
+    "Summarize old turns into one embedded system turn and tombstone the originals."
 
     org: Required[str]
     namespace: Required[str]
@@ -7446,7 +7446,7 @@ class ConversationCompactInput(TypedDict, total=False):
 
 
 class ConversationCompactBody(TypedDict, total=False):
-    "Summarize messages older than `keep_recent` into one embedded system message, then"
+    "Summarize old turns into one embedded system turn and tombstone the originals."
 
     org: NotRequired[str]
     namespace: NotRequired[str]

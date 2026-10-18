@@ -178,8 +178,8 @@ def test_fitting_prefix_keeps_at_least_one_line() -> None:
 
 
 def test_a_long_thread_is_tombstoned_in_chunks() -> None:
-    """Each mutation names at most one chunk of turns, so a long thread's delete stays
-    within one HTTP parameter per statement."""
+    """Each mutation names at most `_TOMBSTONE_CHUNK` turns, so every statement's id
+    list stays bounded however long the thread."""
     from server.knowledge.store import conversations as repo
 
     due = [f"m{i}" for i in range(2 * repo._TOMBSTONE_CHUNK + 5)]
