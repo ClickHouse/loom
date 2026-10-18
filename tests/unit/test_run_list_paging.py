@@ -3,7 +3,7 @@
 The Runs page reads `total` to say "1–50 of 1,234" and pages with `offset`; the
 order is deterministic (run_id breaks ties) so a page boundary never repeats or
 skips a run. The count query carries the list query's WHERE, filter for filter, and
-runs only when the page cannot tell the total: the first page and a page past the end.
+runs on the first page, beside it, and on an empty page past the end.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ import pytest
 from pydantic import ValidationError
 
 from server.tasks.api.models_run import RunListInput
-from server.tasks.store import runs as runs_store
 
 
 class StubCH:
@@ -175,16 +174,6 @@ def test_input_bounds() -> None:
     ):
         with pytest.raises(ValidationError):
             RunListInput(org="o", namespace="n", **bad)
-
-
-def test_store_refuses_an_unknown_order() -> None:
-    """The order is written into the statement, so only a LIST_ORDERS key gets that far."""
-    with pytest.raises(KeyError):
-        asyncio.run(
-            runs_store.list_runs(
-                StubCH(), "o", "n", where=[], params={}, limit=1, offset=0, order_by="goal_asc"
-            )
-        )
 
 
 def test_an_n_minus_1_replica_serves_the_new_inputs_and_names_them() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -17,15 +18,23 @@ class TagFilter:
     tags: tuple[str, ...]
     match: TagMatch
 
+    def __post_init__(self) -> None:
+        # No filter is None, so an empty tuple never reaches the SQL.
+        if not self.tags:
+            raise ValueError("a TagFilter needs at least one tag")
 
-def list_tag_match(every: bool) -> TagMatch:
-    """A list op's match: every tag when `tags_every` is set, otherwise any one, in any case."""
-    return "folded_all" if every else "folded_any"
+
+def list_tag_filter(tags: Sequence[str], every: bool) -> TagFilter | None:
+    """A list op's filter: every tag when `tags_every` is set, otherwise any one, in any case."""
+    kept = tuple(str(t) for t in tags if t)
+    if not kept:
+        return None
+    return TagFilter(kept, "folded_all" if every else "folded_any")
 
 
 def tag_where(tag_filter: TagFilter, params: dict[str, Any]) -> str:
     """The predicate for rows carrying the filter's tags under its match; binds `tags`."""
-    params["tags"] = [str(t) for t in tag_filter.tags]
+    params["tags"] = list(tag_filter.tags)
     if tag_filter.match == "exact_any":
         return "hasAny(tags, {tags:Array(String)})"
     fn = "hasAll" if tag_filter.match == "folded_all" else "hasAny"

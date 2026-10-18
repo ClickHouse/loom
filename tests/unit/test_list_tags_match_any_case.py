@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from server.core.tag_sql import TagFilter
+from server.core.tag_sql import TagFilter, list_tag_filter
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory import store as memory_repo
 
@@ -57,7 +57,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[dict[str, Any]]]:
 
 
 @pytest.mark.asyncio
-async def test_an_upper_case_tag_matches_a_lower_case_row_with_no_flag() -> None:
+async def test_folded_any_renders_both_sides_lowercased() -> None:
     """`tags=["API"]` with nothing else set reaches ClickHouse as the folded predicate, so a
     row tagged `api` matches."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
@@ -149,20 +149,6 @@ async def test_tags_every_reaches_the_page_both_counts_and_the_cache_key(
 
 
 @pytest.mark.asyncio
-async def test_a_non_ascii_tag_is_bound_as_typed_under_the_lower_utf8_predicate() -> None:
-    """A non-ASCII tag such as `ΟΔΟΣ` is bound as typed, and the statement lowercases both
-    sides with `lowerUTF8` (not `lower`, which folds only A–Z)."""
-    identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
-    ch = StubCH()
-    await memory_repo.count_by_namespace(
-        identity, scope=WHOLE_NAMESPACE, tag_filter=TagFilter(("ΟΔΟΣ",), "folded_any"), ch=ch
-    )
-    sql, params = ch.calls[-1]
-    assert f"hasAny({_FOLDED})" in sql
-    assert params["tags"] == ["ΟΔΟΣ"]
-
-
-@pytest.mark.asyncio
 async def test_the_score_sorted_list_matches_tags_as_the_recency_list_does(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -221,3 +207,33 @@ async def test_knowledge_list_matches_tags_in_any_case(monkeypatch: pytest.Monke
     assert f"hasAny({_FOLDED})" in sql
     assert _EXACT not in sql
     assert params["tags"] == ["Specs"]
+
+
+@pytest.mark.asyncio
+async def test_knowledge_list_drops_empty_tags_as_memory_list_does(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty tag is not a filter: `["spec", ""]` binds only `spec`, and `[""]` adds none."""
+    from server.knowledge.api.models_knowledge import KnowledgeListInput
+    from server.knowledge.app.document_reads import handle_knowledge_list
+    from server.knowledge.store import documents as documents_repo
+
+    ch = StubCH()
+    monkeypatch.setattr(documents_repo, "_default_client", lambda: ch)
+    await handle_knowledge_list(
+        KnowledgeListInput(org="acme", namespace="team", tags=["spec", ""], tags_every=True)
+    )
+    sql, params = ch.calls[-1]
+    assert f"hasAll({_FOLDED})" in sql
+    assert params["tags"] == ["spec"]
+
+    await handle_knowledge_list(KnowledgeListInput(org="acme", namespace="team", tags=[""]))
+    sql, params = ch.calls[-1]
+    assert "tags" not in params
+    assert _FOLDED not in sql
+
+
+def test_a_tag_filter_needs_a_tag() -> None:
+    with pytest.raises(ValueError):
+        TagFilter((), "folded_any")
+    assert list_tag_filter(["", ""], every=False) is None

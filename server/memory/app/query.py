@@ -14,7 +14,7 @@ from server.core.ch import caller_shaped, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value_json as _sha256_value_json
-from server.core.tag_sql import TagFilter, list_tag_match, tag_where
+from server.core.tag_sql import TagFilter, list_tag_filter, tag_where
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_where
 from server.memory.api.models_bulk import MemoryBulkGetInput, MemoryBulkGetOutput
@@ -252,8 +252,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         list(input.fields or []),
         always=read_projection.LIST_ENTRY_ALWAYS,
     )
-    tags = tuple(str(t) for t in (input.tags or []) if t)
-    tag_filter = TagFilter(tags, list_tag_match(input.tags_every)) if tags else None
+    tag_filter = list_tag_filter(input.tags or [], input.tags_every)
 
     identity = memory_repo.Identity(
         org=input.org,

@@ -7,7 +7,7 @@ from typing import Any
 
 from server.core.cursors import decode_cursor as _decode_list_cursor
 from server.core.cursors import encode_cursor as _encode_list_cursor
-from server.core.tag_sql import TagFilter, list_tag_match
+from server.core.tag_sql import list_tag_filter
 from server.embedding import get_embedder
 from server.knowledge.api.models_knowledge import (
     KnowledgeGetInput,
@@ -47,11 +47,7 @@ async def handle_knowledge_list(
             input.org,
             input.namespace,
             include_superseded=input.include_superseded,
-            tag_filter=(
-                TagFilter(tuple(input.tags), list_tag_match(input.tags_every))
-                if input.tags
-                else None
-            ),
+            tag_filter=list_tag_filter(input.tags or [], input.tags_every),
             uri_prefixes=list(input.uri_prefix) if input.uri_prefix else None,
             cursor=cursor,
             limit=input.limit + 1,

@@ -348,8 +348,7 @@ class RunClient:
         `grade="ungraded"` the closed runs still owed a verdict (`"graded"`,
         `"pass"`, `"fail"` also work). Filters apply before `limit`.
 
-        `offset`, `order_by` and `q` are sent only when set; `total` is None on a
-        full page after the first."""
+        `total` is None on a full page after the first."""
         payload: dict[str, Any] = {
             "org": self._agent.org,
             "namespace": self._agent.namespace,

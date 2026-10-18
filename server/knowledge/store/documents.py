@@ -195,7 +195,7 @@ async def list_with_chunk_counts(
     # FINAL subquery below, not the post-join scope.
     if not include_superseded:
         extra_where += " AND superseded_at IS NULL"
-    if tag_filter is not None and tag_filter.tags:
+    if tag_filter is not None:
         extra_where += f" AND {tag_where(tag_filter, params)}"
     live_prefixes = [p for p in (uri_prefixes or []) if p]
     if live_prefixes:

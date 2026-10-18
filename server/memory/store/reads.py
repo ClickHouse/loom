@@ -706,7 +706,7 @@ async def list_by_namespace(
     if source_trace is not None:
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
-    if tag_filter is not None and tag_filter.tags:
+    if tag_filter is not None:
         where.append(tag_where(tag_filter, params))
     if contains:
         where.append(CONTAINS_PREDICATE)
@@ -876,7 +876,7 @@ async def count_by_namespace(
     if source_trace is not None:
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
-    if tag_filter is not None and tag_filter.tags:
+    if tag_filter is not None:
         where.append(tag_where(tag_filter, params))
     if contains:
         where.append(CONTAINS_PREDICATE)
