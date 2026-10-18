@@ -848,6 +848,29 @@ describe("Tasks page", () => {
     await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "t24"));
   });
 
+  it("on the board, a key acts on the card that has focus, not the one selected before", async () => {
+    vi.mocked(listTasks).mockResolvedValue({
+      tasks: [task("t-a", { created_at: iso(3) }), task("t-b", { created_at: iso(2) })],
+      truncated: false,
+    });
+    localStorage.setItem("loom_tasks_mode", "board");
+    try {
+      seed(admin, [row("admin")]);
+      const user = userEvent.setup();
+      render(<Tasks />);
+      await screen.findByRole("region", { name: "Tasks board" });
+      await user.click(document.querySelector<HTMLElement>('[data-task-id="t-a"]') as HTMLElement);
+      await screen.findByRole("complementary", { name: "Task detail" });
+      await user.keyboard("{Escape}");
+      document.querySelector<HTMLElement>('[data-task-id="t-b"]')?.focus();
+      await user.keyboard("s");
+      await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "t-b"));
+      expect(claimTask).not.toHaveBeenCalledWith(expect.anything(), "t-a");
+    } finally {
+      localStorage.removeItem("loom_tasks_mode");
+    }
+  });
+
   it("a selected row a filter hid, with no panel open, takes no keys", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();

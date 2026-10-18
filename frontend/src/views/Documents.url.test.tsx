@@ -11,6 +11,11 @@ const api = vi.hoisted(() => ({
   fetchKnowledgeInlineUrl: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
+const toastError = vi.hoisted(() => vi.fn());
+vi.mock("../components/Toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../components/Toast")>()),
+  toastError,
+}));
 
 const ROWS = [
   {
@@ -83,6 +88,71 @@ describe("Library keeps the open document in its URL", () => {
     );
     expect(screen.getByRole("dialog", { name: "Late doc" })).toBeInTheDocument();
     expect(new URLSearchParams(location.search).get("doc")).toBe("docs/late.md");
+  });
+
+  it("reads a linked document page by page until it finds the exact one", async () => {
+    const late = { ...ROWS[0], source_uri: "notes", title: "Notes" };
+    const newer = { ...ROWS[0], source_uri: "notes/a.md", title: "A" };
+    api.listKnowledge.mockImplementation(async (_id: unknown, opts: { uriPrefix?: string[]; cursor?: string }) => {
+      if (!opts.uriPrefix) return { rows: ROWS, next_cursor: "c-2" };
+      return opts.cursor ? { rows: [late], next_cursor: null } : { rows: [newer], next_cursor: "p-2" };
+    });
+    history.replaceState(null, "", "/library?doc=notes");
+    useStore.getState().bootView("knowledge");
+    render(<Documents />);
+    await settle();
+    expect(screen.getByRole("dialog", { name: "Notes" })).toBeInTheDocument();
+  });
+
+  it("a failed read of a linked document says so and keeps the link", async () => {
+    api.listKnowledge.mockImplementation(async (_id: unknown, opts: { uriPrefix?: string[] }) => {
+      if (opts.uriPrefix) throw new Error("down");
+      return { rows: ROWS, next_cursor: "c-2" };
+    });
+    history.replaceState(null, "", "/library?doc=docs%2Flate.md");
+    useStore.getState().bootView("knowledge");
+    render(<Documents />);
+    await settle();
+    expect(toastError).toHaveBeenCalledWith("Open failed", expect.any(Error));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(new URLSearchParams(location.search).get("doc")).toBe("docs/late.md");
+  });
+
+  it("a linked document's read that lands after the page closed opens nothing and leaves the URL alone", async () => {
+    let answer: (v: unknown) => void = () => {};
+    api.listKnowledge.mockImplementation(async (_id: unknown, opts: { uriPrefix?: string[] }) =>
+      opts.uriPrefix ? new Promise((r) => (answer = r)) : { rows: ROWS, next_cursor: "c-2" },
+    );
+    history.replaceState(null, "", "/library?doc=docs%2Flate.md");
+    useStore.getState().bootView("knowledge");
+    const view = render(<Documents />);
+    await settle();
+    view.unmount();
+    history.replaceState(null, "", "/memories");
+    await act(async () =>
+      answer({ rows: [{ ...ROWS[0], source_uri: "docs/late.md", title: "Late doc" }], next_cursor: null }),
+    );
+    expect(api.getKnowledge).not.toHaveBeenCalled();
+    expect(location.search).toBe("");
+  });
+
+  it("a linked document's read that lands after a namespace switch opens nothing", async () => {
+    let answer: (v: unknown) => void = () => {};
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: { uriPrefix?: string[] }) => {
+      if (opts.uriPrefix) return new Promise((r) => (answer = r));
+      return id.namespace === "team" ? { rows: ROWS, next_cursor: "c-2" } : { rows: [], next_cursor: null };
+    });
+    history.replaceState(null, "", "/library?doc=docs%2Flate.md");
+    useStore.getState().bootView("knowledge");
+    render(<Documents />);
+    await settle();
+    act(() => useStore.setState({ identity: { org: "acme", namespace: "other", agent: "loom-ui" } }));
+    await settle();
+    await act(async () =>
+      answer({ rows: [{ ...ROWS[0], source_uri: "docs/late.md", title: "Late doc" }], next_cursor: null }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.getKnowledge).not.toHaveBeenCalled();
   });
 
   it("a ?doc= link to a document the namespace does not hold opens nothing and leaves the URL", async () => {

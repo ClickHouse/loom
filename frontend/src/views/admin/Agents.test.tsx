@@ -109,6 +109,19 @@ describe("Agents: count and failure", () => {
 // A read started by Refresh or Retry is dropped when a newer read overtakes it, so an answer
 // for the window the page has left never lands after the new window's and draws stale rows.
 describe("Agents: late answers", () => {
+  it("an empty window switched for another reads as loading until the new window answers", async () => {
+    listConnectedAgents.mockResolvedValueOnce({ rows: [] });
+    render(<Agents />);
+    expect(await screen.findByText("No client has written in this window")).toBeInTheDocument();
+    let answer: (v: unknown) => void = () => {};
+    listConnectedAgents.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    fireEvent.click(within(screen.getByRole("group", { name: "Time window" })).getByRole("button", { name: "7 days" }));
+    await waitFor(() => expect(screen.queryByText("No client has written in this window")).toBeNull());
+    expect(screen.queryByText("0 clients")).toBeNull();
+    await act(async () => answer({ rows: [ROW] }));
+    expect(await screen.findByText("claude-code")).toBeInTheDocument();
+  });
+
   it("drops a Refresh's answer that lands after a new window's", async () => {
     listConnectedAgents.mockResolvedValueOnce({ rows: [ROW] });
     render(<Agents />);

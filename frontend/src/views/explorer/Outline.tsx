@@ -112,8 +112,10 @@ export function Outline({
   const selectedEntity = selection?.kind === "node" ? selection.entity : null;
   const selectedEdgeChild = selection?.kind === "edge" ? selection.child : null;
   const selectedAt = rows.findIndex((r) => r.entity === selectedEntity || r.entity === selectedEdgeChild);
-  // The cap never hides the selected row or the row holding the tree's one tab stop.
+  // The cap never hides the selected row or the row holding the tree's one tab stop; once
+  // either lands past it, the whole tree stays drawn for this walk.
   const activeAt = rows.findIndex((r) => r.entity === active);
+  if (!all && (selectedAt >= CAP || activeAt >= CAP)) setAll(true);
   const capped = !all && rows.length > CAP && selectedAt < CAP && activeAt < CAP;
   const shown = capped ? rows.slice(0, CAP) : rows;
 

@@ -434,7 +434,7 @@ describe("RepositoryCard: the branch table", () => {
       ["master", "Up to date", "—", "2h ago", "31,539", "400,000", "Reading", ""],
       ["25.8", "Behind 412 commits", "412", "2h ago", "30,000", "1", "—", ""],
       ["25.7", "Up to date", "—", "2h ago", "31,539", "400,000", "Requested", ""],
-      ["click-ui", "Not indexed", "—", "", "—", "—", "—", ""],
+      ["click-ui", "Not indexed", "—", "—", "—", "—", "—", ""],
     ]);
     expect(await axeViolations(container)).toEqual([]);
   });

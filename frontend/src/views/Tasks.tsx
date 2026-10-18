@@ -529,9 +529,16 @@ export function Tasks() {
         const r = list[Math.max(0, Math.min(list.length - 1, to))];
         if (r) stateRef.current.selectRow(r);
       };
-      // The selected row as drawn, else the task open in the panel (a deep link past a lane's
-      // first rows); a selection a filter hid, with no panel open, takes no keys.
-      const row = i >= 0 ? list[i] : open && open.task_id === sel ? (stateRef.current.rowsById.get(sel) ?? open) : null;
+      // A key pressed on a row or card acts on that one (focus and selection can part: a card
+      // Tabbed to, the row Show all focused). Else the selected row as drawn, else the task
+      // open in the panel (a deep link past a lane's first rows); a selection a filter hid,
+      // with no panel open, takes no keys.
+      const focusedId =
+        e.target instanceof Element ? e.target.closest<HTMLElement>("[data-task-id]")?.dataset.taskId : undefined;
+      const focused = focusedId ? stateRef.current.rowsById.get(focusedId) : undefined;
+      const row =
+        focused ??
+        (i >= 0 ? list[i] : open && open.task_id === sel ? (stateRef.current.rowsById.get(sel) ?? open) : null);
       const origin: Origin = e.target instanceof Element && e.target.closest(".tq-panel") ? "panel" : "list";
       const keyed: Record<string, TaskAction> = { a: "accept", s: "start", c: "complete", x: "wont_do", d: "defer" };
       switch (e.key) {

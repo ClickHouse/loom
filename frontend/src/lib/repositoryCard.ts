@@ -70,8 +70,6 @@ export function branchOrder(a: Pick<CodeRepoSummary, "branch">, b: Pick<CodeRepo
   return PLAIN.compare(a.branch, b.branch);
 }
 
-const isTrunk = (branch: string): boolean => branch === "master" || branch === "main";
-
 /** The Code facet: one repository's branches (the `RepoGroup`, kept field-for-field so
  *  the Choose-branches and Add-branch dialogs read it). */
 export interface CodeFacet {
@@ -113,23 +111,6 @@ export function buildCodeFacet(repo: string, list: readonly CodeRepoSummary[]): 
     pendingCount: pending.length,
     maintained: branches.some((b) => b.my_role === "admin"),
   };
-}
-
-/** The branch chips shown before "Show N more": the trunk, the branches
- *  you read or requested, and — when that leaves the row short — the next
- *  ones in order, up to `min`. */
-export function visibleBranches(facet: Pick<CodeFacet, "branches">, expanded: boolean, min = 4): CodeRepoSummary[] {
-  if (expanded || facet.branches.length <= min) return facet.branches;
-  const keep = new Set(
-    facet.branches
-      .filter((b) => isTrunk(b.branch) || branchState(b) === "member" || branchState(b) === "pending")
-      .map((b) => b.namespace),
-  );
-  for (const b of facet.branches) {
-    if (keep.size >= min) break;
-    keep.add(b.namespace);
-  }
-  return facet.branches.filter((b) => keep.has(b.namespace));
 }
 
 /** A record namespace is named by its scope, not its slug. */
@@ -287,8 +268,6 @@ interface PrimaryAction {
   facet: FacetKind;
   branch?: CodeRepoSummary;
   record?: RecordNamespace;
-  /** What the verb acts on, said after it: the branch, or "issues & PRs". */
-  qualifier: string;
 }
 
 function codeTarget(code: CodeFacet, st: JoinState): CodeRepoSummary | undefined {
@@ -305,32 +284,20 @@ export function primaryAction(card: Pick<RepositoryCard, "code" | "record">): Pr
   const { code, record } = card;
   const rec = (st: TrackerNamespaceState) => record?.namespaces.find((n) => n.state === st);
   const readBranch = code?.joined[0];
-  if (readBranch) return { verb: "Open", facet: "code", branch: readBranch, qualifier: readBranch.branch };
+  if (readBranch) return { verb: "Open", facet: "code", branch: readBranch };
   const readRecord = rec("member");
-  if (readRecord) return { verb: "Open", facet: "record", record: readRecord, qualifier: RECORD_NOUN };
+  if (readRecord) return { verb: "Open", facet: "record", record: readRecord };
   for (const [st, verb] of [
     ["open", "Join"],
     ["approval", "Request access"],
     ["pending", "Withdraw request"],
   ] as const) {
     const b = code ? codeTarget(code, st) : undefined;
-    if (b) return { verb, facet: "code", branch: b, qualifier: b.branch };
+    if (b) return { verb, facet: "code", branch: b };
     const r = rec(st);
-    if (r) return { verb, facet: "record", record: r, qualifier: RECORD_NOUN };
+    if (r) return { verb, facet: "record", record: r };
   }
   return null;
-}
-
-/** The header's one quiet link: Leave, when exactly one thing on the card
- *  is read; with more, each facet row carries its own Leave. */
-export function soleMembership(
-  card: Pick<RepositoryCard, "code" | "record">,
-): { facet: FacetKind; branch?: CodeRepoSummary; record?: RecordNamespace; qualifier: string } | null {
-  const branches = card.code?.joined ?? [];
-  const records = card.record?.joined ?? [];
-  if (branches.length + records.length !== 1) return null;
-  if (branches.length === 1) return { facet: "code", branch: branches[0], qualifier: branches[0].branch };
-  return { facet: "record", record: records[0], qualifier: RECORD_NOUN };
 }
 
 /**

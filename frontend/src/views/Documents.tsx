@@ -69,6 +69,23 @@ const LIBRARY_LIST_FIELDS = [
 // Documents per read; "Load more" asks for the next 50 (knowledge.list has a cursor, no total).
 const LIBRARY_PAGE = 50;
 
+/** The document at exactly `uri`, read through its prefix page by page (newer documents
+ *  under the same prefix come first), or null when the namespace does not hold it. */
+async function findDocument(
+  id: { org: string; namespace: string },
+  uri: string,
+  signal: AbortSignal,
+): Promise<KnowledgeEntry | null> {
+  let cursor: string | undefined;
+  do {
+    const r = await listKnowledge(id, { uriPrefix: [uri], fields: LIBRARY_LIST_FIELDS, limit: 500, cursor, signal });
+    const found = (r.rows || []).find((d) => d.source_uri === uri);
+    if (found) return found;
+    cursor = r.next_cursor ?? undefined;
+  } while (cursor && !signal.aborted);
+  return null;
+}
+
 export function Documents() {
   const identity = useIdentity();
   const phone = useMedia(PHONE_QUERY);
@@ -210,20 +227,30 @@ export function Documents() {
       return;
     }
     // Not among the rows loaded (a link past the first page): read that one document. A
-    // link to one the namespace does not hold opens nothing, and the URL stops naming it.
-    const scope = scopeRef.current;
-    listKnowledge(
-      { org: identity.org, namespace: identity.namespace },
-      { uriPrefix: [uri], fields: LIBRARY_LIST_FIELDS, limit: LIBRARY_PAGE },
-    )
-      .then((r) => (r.rows || []).find((d) => d.source_uri === uri) ?? null)
-      .catch(() => null)
+    // link to one the namespace does not hold opens nothing, and the URL stops naming it;
+    // a failed read says so and keeps the link.
+    linkRead.current?.abort();
+    const ac = new AbortController();
+    linkRead.current = ac;
+    const scope = `${identity.org}/${identity.namespace}`;
+    // Nor in another namespace than the one it was read in.
+    const stale = () => {
+      const now = useStore.getState().identity;
+      return ac.signal.aborted || `${now?.org}/${now?.namespace}` !== scope;
+    };
+    void findDocument({ org: identity.org, namespace: identity.namespace }, uri, ac.signal)
       .then((found) => {
-        if (scopeRef.current !== scope) return;
+        if (stale()) return;
         if (found) void onOpenRef.current(found);
         else setViewParam("doc", null);
+      })
+      .catch((e) => {
+        if (!stale()) toastError("Open failed", e);
       });
   }, [pendingDocSourceUri, rows, clearPendingDoc, identity.org, identity.namespace]);
+  // A link's read ends with the page: its answer opens nothing on another one.
+  const linkRead = useRef<AbortController | null>(null);
+  useEffect(() => () => linkRead.current?.abort(), []);
 
   const onDelete = async (source_uri: string) => {
     if (

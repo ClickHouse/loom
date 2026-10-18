@@ -27,8 +27,8 @@ function node(entity: string, over: Partial<XNode> = {}): XNode {
   };
 }
 
-function mount(order: XNode[] = [], props: Partial<OutlineProps> = {}) {
-  return render(
+function outline(order: XNode[] = [], props: Partial<OutlineProps> = {}) {
+  return (
     <Outline
       model={{ seed: "loom", seedCommunityId: null, nodes: new Map(order.map((n) => [n.entity, n])), truncated: false }}
       visible={{ nodes: order, hiddenUnder: new Map(), filteredOut: 0 }}
@@ -49,8 +49,12 @@ function mount(order: XNode[] = [], props: Partial<OutlineProps> = {}) {
       onCollapse={() => {}}
       onPin={() => {}}
       {...props}
-    />,
+    />
   );
+}
+
+function mount(order: XNode[] = [], props: Partial<OutlineProps> = {}) {
+  return render(outline(order, props));
 }
 
 describe("Outline", () => {
@@ -89,6 +93,15 @@ describe("Outline", () => {
       { selection: { kind: "node", entity: "e25" } },
     );
     expect(screen.getAllByRole("treeitem")).toHaveLength(31);
+  });
+
+  it("stays whole once the selection went past the 20th, when it moves back up", () => {
+    const order = Array.from({ length: 30 }, (_, i) => node(`e${i}`));
+    const view = mount(order, { selection: { kind: "node", entity: "e25" } });
+    expect(screen.getAllByRole("treeitem")).toHaveLength(31);
+    view.rerender(outline(order, { selection: { kind: "node", entity: "e3" } }));
+    expect(screen.getAllByRole("treeitem")).toHaveLength(31);
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
   });
 
   // Past the 20-row cap, the tree keeps its one tab stop: a move to a row not drawn draws it

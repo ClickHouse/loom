@@ -102,7 +102,11 @@ export function Agents() {
 
       <ListToolbar
         label="Time window and count"
-        count={!error && rows !== null ? `${rows.length} client${rows.length === 1 ? "" : "s"}` : undefined}
+        count={
+          !error && rows !== null && !(refreshing && rows.length === 0)
+            ? `${rows.length} client${rows.length === 1 ? "" : "s"}`
+            : undefined
+        }
       >
         <ButtonGroup
           aria-label="Time window"
@@ -115,7 +119,8 @@ export function Agents() {
       {!!error && (
         <ListState kind="error" things="connected clients" error={error} onRetry={() => setReads((n) => n + 1)} />
       )}
-      {!error && rows === null && (
+      {/* Another window's read: its rows are not this window's, so it reads as loading. */}
+      {!error && (rows === null || (refreshing && rows.length === 0)) && (
         <Table
           aria-label="Connected clients"
           aria-busy
@@ -125,7 +130,7 @@ export function Agents() {
           noDataMessage={<TableSkeleton label="Loading connected clients" />}
         />
       )}
-      {!error && rows !== null && rows.length === 0 && (
+      {!error && rows !== null && rows.length === 0 && !refreshing && (
         <ListState
           kind="empty"
           icon="plug"

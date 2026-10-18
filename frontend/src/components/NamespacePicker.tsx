@@ -656,7 +656,7 @@ function NamespaceRow({
 
 function RoleIcon({ role }: { role: MyNamespaceEntry["role"] }) {
   if (role === "admin") {
-    return <Icon name="star" size="xs" color="var(--global-color-text-muted)" aria-label="You're admin" />;
+    return <Icon name="star" size="xs" color="var(--color-text-muted)" aria-label="You're admin" />;
   }
   return <Icon name="user" size="xs" color="var(--color-text-muted)" aria-label={role} />;
 }

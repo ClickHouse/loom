@@ -7,9 +7,7 @@ import {
   canBeApproved,
   maintainsOutOfScope,
   primaryAction,
-  soleMembership,
   verbForState,
-  visibleBranches,
 } from "./repositoryCard";
 import type { TrackerSource, TrackerSourceNamespace } from "./trackerSources";
 import { must } from "../test/must";
@@ -188,20 +186,20 @@ describe("buildCards joins code.repos and tracker.source.list by repository", ()
 describe("primaryAction: exactly one primary button", () => {
   it("Open the branch you read, before anything else", () => {
     const [c] = buildCards([branch({ my_status: "member" })], [source()]);
-    expect(primaryAction(c)).toMatchObject({ verb: "Open", facet: "code", qualifier: "master" });
+    expect(primaryAction(c)).toMatchObject({ verb: "Open", facet: "code", branch: { branch: "master" } });
   });
   it("Open the record when only the record is read", () => {
     const [c] = buildCards(
       [branch({ join_policy: "approval" })],
       [source({ namespaces: [ns({ member_role: "viewer" })] })],
     );
-    expect(primaryAction(c)).toMatchObject({ verb: "Open", facet: "record", qualifier: "tracker" });
+    expect(primaryAction(c)).toMatchObject({ verb: "Open", facet: "record" });
   });
   it("Join the open branch first; the record's Join when the code is restricted; Request access when nothing is open", () => {
     expect(primaryAction(buildCards([branch()], [source()])[0])).toMatchObject({
       verb: "Join",
       facet: "code",
-      qualifier: "master",
+      branch: { branch: "master" },
     });
     expect(primaryAction(buildCards([branch({ join_policy: "approval" })], [source()])[0])).toMatchObject({
       verb: "Join",
@@ -231,25 +229,7 @@ describe("primaryAction: exactly one primary button", () => {
   });
 });
 
-describe("soleMembership: the header's one quiet Leave", () => {
-  it("is the one thing read; null with none or several", () => {
-    expect(soleMembership(buildCards([branch({ my_status: "member" })], [source()])[0])).toMatchObject({
-      facet: "code",
-      qualifier: "master",
-    });
-    expect(
-      soleMembership(buildCards([branch()], [source({ namespaces: [ns({ member_role: "viewer" })] })])[0]),
-    ).toMatchObject({ facet: "record" });
-    expect(
-      soleMembership(
-        buildCards([branch({ my_status: "member" })], [source({ namespaces: [ns({ member_role: "viewer" })] })])[0],
-      ),
-    ).toBeNull();
-    expect(soleMembership(buildCards([branch()], [source()])[0])).toBeNull();
-  });
-});
-
-describe("the Code facet keeps the 6830 group shape and hides the long tail of branches", () => {
+describe("the Code facet keeps the group shape", () => {
   it("master first, release branches newest first; primary is master; head is the first read branch", () => {
     const f = buildCodeFacet(
       "ClickHouse/ClickHouse",
@@ -261,15 +241,6 @@ describe("the Code facet keeps the 6830 group shape and hides the long tail of b
     expect(f.head.branch).toBe("25.6");
     expect(f.joinedCount).toBe(1);
     expect(f.joinable).toHaveLength(9);
-  });
-  it("visibleBranches shows the trunk, what you read or requested, and fills to four; expanded shows all", () => {
-    const rows = TEN.map((b, i) =>
-      i === 7 ? { ...b, my_status: "member" as const } : i === 9 ? { ...b, my_status: "pending" as const } : b,
-    );
-    const f = buildCodeFacet("r", rows);
-    expect(visibleBranches(f, false).map((b) => b.branch)).toEqual(["master", "25.9", "25.8", "25.7"]);
-    expect(visibleBranches(f, true)).toHaveLength(10);
-    expect(visibleBranches(buildCodeFacet("r", TEN.slice(0, 3)), false)).toHaveLength(3);
   });
 });
 

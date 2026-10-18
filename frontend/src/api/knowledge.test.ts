@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { downloadKnowledge, fetchKnowledgeInlineUrl, previewKind } from "./knowledge";
+import { downloadKnowledge, fetchKnowledgeInlineUrl, listKnowledge, previewKind } from "./knowledge";
 import { ApiError } from "../lib/errors";
 
 // knowledge.download is a GET the browser then saves; it rides the shared request path,
@@ -190,5 +190,16 @@ describe("downloadKnowledge blob", () => {
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     await downloadKnowledge(id, "doc://a", "a.html");
     expect(blobs.map((b) => b.type)).toEqual(["application/octet-stream"]);
+  });
+});
+
+describe("listKnowledge", () => {
+  it("sends a uri prefix as uri_prefix, and none when unset", async () => {
+    const fetchMock = stubFetch(200, '{"rows":[],"next_cursor":null}', { "Content-Type": "application/json" });
+    await listKnowledge(id, { uriPrefix: ["docs/late.md"] });
+    await listKnowledge(id);
+    const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies[0].uri_prefix).toEqual(["docs/late.md"]);
+    expect(bodies[1]).not.toHaveProperty("uri_prefix");
   });
 });
