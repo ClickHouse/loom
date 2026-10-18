@@ -139,7 +139,7 @@ def _pinned_dry_run_output(
     )
 
 
-async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
+async def handle_memory_set(input: MemorySetInput, *, op: str = "memory.set") -> MemorySetOutput:
     """Count the write outcome for every terminal shape, then delegate.
 
     Successful shapes are counted inside `_handle_memory_set` where the conflict
@@ -149,7 +149,7 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     non-HTTPException failures a ClickHouse outage actually raises — is `error`.
     """
     try:
-        out = await _handle_memory_set(input)
+        out = await _handle_memory_set(input, op=op)
     except HTTPException as e:
         code = e.detail.get("code", "") if isinstance(e.detail, dict) else ""
         outcome = _WRITE_OUTCOME_BY_ERROR_CODE.get(str(code))
@@ -599,21 +599,21 @@ def _set_build_memory_row(w: _SetWrite) -> None:
     w.memory_row = memory_row
 
 
-async def _handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
+async def _handle_memory_set(input: MemorySetInput, *, op: str = "memory.set") -> MemorySetOutput:
     """memory.set; a conditional write and a pin hold the key's write lock from their read
     to their insert, as a resolver write does, so a retirement never lands between them."""
     if not (input.if_match_sha256 or input.pinned):
         return await _memory_set_phases(input)
-    if not input.if_match_sha256:  # a pin: its own retry message when the key is busy
-        async with key_write_lock.hold_to(
-            "the pin",
-            "memory.pin",
+    if not input.if_match_sha256:  # a pin: busy, the answer says what to retry
+        async with key_write_lock.key_lock_for(
             input.org,
             input.namespace,
             input.agent,
             input.user_id,
             input.session_id,
             input.memory_key,
+            what="the pin" if op == "memory.pin" else "the write",
+            operation=op,
         ):
             return await _memory_set_phases(input)
     async with key_write_lock.key_write_locks.hold(

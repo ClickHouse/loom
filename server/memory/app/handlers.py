@@ -552,7 +552,7 @@ async def handle_memory_pin(input: MemorySetInput) -> MemorySetOutput:
     """Explicit-save variant. Forces `pinned=True`; otherwise shares the
     `memory.set` write path."""
     input.pinned = True
-    return await handle_memory_set(input)
+    return await handle_memory_set(input, op="memory.pin")
 
 
 async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
@@ -587,17 +587,17 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
         return MemoryUnpinOutput(unpinned=False, reason="not_found")
     assert_own_row(existing, op="memory.unpin")
     # Read again and written under the key's lock, as a pin and a resolver write are.
-    from server.memory.store.key_write_lock import hold_to
+    from server.memory.store.key_write_lock import key_lock_for
 
-    async with hold_to(
-        "the unpin",
-        "memory.unpin",
+    async with key_lock_for(
         input.org,
         existing.namespace,
         existing.agent,
         existing.user_id,
         existing.session_id,
         existing.memory_key,
+        what="the unpin",
+        operation="memory.unpin",
     ):
         head = await memory_repo.get_by_id(
             str(existing.memory_id), org=input.org, scope=WHOLE_NAMESPACE, fresh=True, strong=True

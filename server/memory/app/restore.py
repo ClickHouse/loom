@@ -49,16 +49,16 @@ async def _read_restorable(input: MemoryRestoreInput) -> MemoryRow | None:
 
 
 def _undo_lock(input: MemoryRestoreInput) -> AbstractAsyncContextManager[None]:
-    """The key's write lock for an Undo (`key_write_lock.hold_to`)."""
-    return key_write_lock.hold_to(
-        "the Undo",
-        "memory.restore",
+    """The key's write lock for an Undo (`key_write_lock.key_lock_for`)."""
+    return key_write_lock.key_lock_for(
         input.org,
         input.namespace,
         input.agent,
         input.user_id,
         input.session_id,
         input.memory_key,
+        what="the Undo",
+        operation="memory.restore",
     )
 
 

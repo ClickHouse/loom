@@ -260,7 +260,11 @@ async def test_a_writer_queued_in_this_process_past_its_wait_asks_no_keeper(
     await holding
 
 
-async def test_a_busy_key_tells_a_pin_to_retry_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(("op", "what"), [("memory.pin", "the pin"), ("memory.set", "the write")])
+async def test_a_busy_key_names_what_to_retry(
+    monkeypatch: pytest.MonkeyPatch, op: str, what: str
+) -> None:
+    """memory.pin, or a memory.set with pinned=true: each says to retry itself."""
     from server.core.errors import PreconditionFailedError
     from server.memory.store import key_write_lock as kl
 
@@ -272,5 +276,5 @@ async def test_a_busy_key_tells_a_pin_to_retry_the_pin(monkeypatch: pytest.Monke
     monkeypatch.setattr(write_mod, "_memory_set_phases", phases)
     held = _set_input("x", "", pinned=True)
     async with kl.key_write_locks.hold("org", "ns", "agent", "-", "-", _IDENT[5]):
-        with pytest.raises(PreconditionFailedError, match="retry the pin"):
-            await write_mod._handle_memory_set(held)
+        with pytest.raises(PreconditionFailedError, match=f"retry {what}"):
+            await write_mod._handle_memory_set(held, op=op)

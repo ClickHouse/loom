@@ -144,15 +144,16 @@ key_write_locks = KeyWriteLocks()
 
 
 @asynccontextmanager
-async def hold_to(
-    what: str,
-    operation: str,
+async def key_lock_for(
     org: str,
     namespace: str,
     agent: str,
     user_id: str,
     session_id: str,
     memory_key: str,
+    *,
+    what: str,
+    operation: str,
 ) -> AsyncIterator[None]:
     """The key's write lock for `what` (an Undo, a pin, an unpin). When it cannot be
     taken, the answer keeps its status (409 while another write holds the key, 503 while
@@ -177,4 +178,11 @@ async def hold_to(
         ) from e
 
 
-__all__ = ["KeyWriteLocks", "LeaseBusy", "LeaseLost", "hold_to", "key_write_locks", "lock_name"]
+__all__ = [
+    "KeyWriteLocks",
+    "LeaseBusy",
+    "LeaseLost",
+    "key_lock_for",
+    "key_write_locks",
+    "lock_name",
+]
