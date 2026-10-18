@@ -535,14 +535,21 @@ class Scenario:
         if "N-1" not in electing:
             print("  note  N-1 elects its workers per host (a file lock), outside the lease")
         # N takes the lease first and hands it over once N+1's beats name it.
+        # N+1 can win the lease before an older build's next heartbeat has read
+        # N+1's row, so wait for every older build to name the newer one too.
         deadline = time.monotonic() + SETTLE_S
         steady = 0
         holders: list[str] = []
+        reasons: dict[str, str] = {}
         while time.monotonic() < deadline and steady < 3:
-            holders = [k for k, s in electing.items() if s.leader()[0]]
-            steady = steady + 1 if holders == ["N+1"] else 0
+            leases = {k: s.leader() for k, s in electing.items()}
+            holders = [k for k, (held, _) in leases.items() if held]
+            reasons = {k: reason for k, (_, reason) in leases.items()}
+            settled = holders == ["N+1"] and all(
+                "to a newer build" in reason for k, reason in reasons.items() if k != "N+1"
+            )
+            steady = steady + 1 if settled else 0
             time.sleep(2)
-        reasons = {k: s.leader()[1] for k, s in electing.items()}
         self.check(
             holders == ["N+1"],
             f"one process of the newest build runs the workers ({holders}; {reasons})",
