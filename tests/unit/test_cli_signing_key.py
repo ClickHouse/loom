@@ -16,7 +16,6 @@ from server.core import leases
 class _CH:
     def __init__(self) -> None:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
-        self.executed: list[tuple[str, Any]] = []
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         if "sealed_key" in sql:  # the keyring read: k1 signs
@@ -41,9 +40,6 @@ class _CH:
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         self.inserts.append((table, rows))
-
-    async def execute(self, sql: str, params: Any = None, **_: Any) -> None:
-        self.executed.append((sql, params))
 
 
 @pytest.fixture

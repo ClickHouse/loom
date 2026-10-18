@@ -591,11 +591,6 @@ def test_restore_exclude_leaves_tables_out(monkeypatch: pytest.MonkeyPatch, tmp_
     assert _restore(monkeypatch, client, ["--in-dir", str(b), "--exclude", "nope"]) == 2
 
 
-def test_the_restore_checks_the_views_its_manifest_recorded() -> None:
-    edge = {"view": "memory_versions_mv", "source": "memory", "target": "memory_versions"}
-    assert restore_loom.view_edges({"views": [edge]}) == [edge]
-
-
 def test_each_restore_stages_under_its_own_run_id(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

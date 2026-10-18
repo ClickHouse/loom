@@ -22,8 +22,8 @@ commands and `loom mint-token` refuse to run there and `/v1/health` and
 `loom doctor` say so. The workers leader (or a keyring command) writes it.
 
 A PEM RSA `LOOM_JWT_SECRET` seals, and signs and verifies RS256 as kid
-`default`: it is held as `ROOT_RS256_KID` unless `default` is retired. A gateway key of
-kid `default` (`jwt_public_keys_json`) verifies beside it.
+`default`: it is held as `ROOT_RS256_KID` unless `default` is retired. A
+gateway key of kid `default` (`jwt_public_keys_json`) verifies beside it.
 """
 
 from __future__ import annotations

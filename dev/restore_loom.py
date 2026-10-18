@@ -162,11 +162,6 @@ def select_tables(
     return [by_name[t] for t in in_load_order(list(by_name))]
 
 
-def view_edges(manifest: dict[str, Any]) -> list[dict[str, str]]:
-    """The backup's [{view, source, target}]."""
-    return list(manifest["views"])
-
-
 # Tables no view joins that are restored together all the same: (table, partner, why).
 _PAIRED = (
     ("documents", "document_blobs", "every original a restored document names answers 410"),
@@ -685,7 +680,7 @@ def main(argv: list[str] | None = None) -> int:
         print_plan(target.describe(), target.database, plans, state)
         try:
             if not args.allow_view_split:
-                check_view_split(plans, view_edges(manifest))
+                check_view_split(plans, manifest["views"])
             check_refusals(
                 target.database,
                 live_databases(),

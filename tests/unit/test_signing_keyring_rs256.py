@@ -77,11 +77,6 @@ def rsa_pair() -> tuple[str, str]:
     return keyring._new_key("RS256")
 
 
-def _loaded_from(ch: _CH) -> None:
-    ch.rows = [{**r, "retired": r.get("retired_at") is not None} for r in ch.inserted]
-    asyncio.run(keyring.refresh(ch=ch))
-
-
 # -- gateway RS256 tokens of kid `default` ------------------------------------
 
 

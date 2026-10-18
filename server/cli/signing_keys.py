@@ -34,7 +34,7 @@ def _cmd_signing_key(args: argparse.Namespace) -> int:
 
 async def _servers_refresh_s(keyring: Any, ch: Any) -> float | None:
     """The slowest keyring refresh interval any serving process recorded; None
-    when none did (no process of this build serves yet, or a read-only user)."""
+    when none did (no process serves yet, or a read-only user)."""
     try:
         slowest = await keyring.slowest_refresh_s(ch=ch)
     except Exception:  # noqa: BLE001 — the table is advisory; the caller falls back
