@@ -1859,14 +1859,15 @@ async def test_a_row_flagged_against_thousands_of_rows_is_still_judged(ch, wired
     assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
 
 
-async def test_the_resolver_stops_at_the_namespace_cap_within_one_round_in_flight(
+async def test_the_resolver_stops_at_its_share_of_the_cap_within_one_round_in_flight(
     ch, wired, monkeypatch
 ) -> None:
-    """A namespace capped at $0.05 a day holds 30 owed rows, each judged by a call that
-    bills about $0.0106 (1,300 tokens in, 800 out on gpt-6.1-sol) and takes 0.5 s. The
-    cap is read from loom.agent_events as in production. The worker stops within one
-    round of calls in flight past the cap; the rest stay owed, and the next pass leaves
-    the namespace out of its read."""
+    """A namespace capped at $0.40 a day holds 30 owed rows, each judged by a call that
+    bills about $0.0106 (1,300 tokens in, 800 out on gpt-6.1-sol) and takes 0.5 s: $0.32
+    in all, under the cap. The resolver may spend its share of the cap (a quarter), read
+    from loom.agent_events as in production: it stops within one round of calls in
+    flight past $0.10, the rest stay owed, the next pass leaves the namespace out of its
+    read, and the requests still have the rest of the cap."""
     from datetime import UTC, datetime
 
     from server.memory.app import after_write, conflicts
@@ -1877,7 +1878,8 @@ async def test_the_resolver_stops_at_the_namespace_cap_within_one_round_in_fligh
     from server.settings import settings
 
     org, llm = wired
-    cap, rows_n, concurrency = 0.05, 30, int(settings.memory_conflict_resolver_concurrency)
+    cap, rows_n, concurrency = 0.40, 30, int(settings.memory_conflict_resolver_concurrency)
+    share = float(settings.memory_conflict_resolver_cap_share)
     per_call = cost_accumulator.llm_cost_usd("gpt-6.1-sol", 1300, 800)
     scripted = llm.complete
 
@@ -1933,11 +1935,16 @@ async def test_the_resolver_stops_at_the_namespace_cap_within_one_round_in_fligh
         await get_emitter().flush_now()
     marks = await _marks(ch, org)
     owed = sum(1 for v in marks.values() if v == 1)
-    assert after_first >= cap, "the pass ran until the cap was crossed"
-    assert after_first <= cap + concurrency * per_call + 1e-9, "at most one round past the cap"
+    assert after_first >= share * cap, "the pass ran until its share was crossed"
+    assert after_first <= share * cap + concurrency * per_call + 1e-9, "one round past it"
     assert first["skipped_budget"] > 0 and owed > 0
     assert after_second == after_first, "the next pass spends nothing"
     assert second["capped_namespaces"] >= 1 and second["judged"] == 0
+    # A request reads the whole spend against the whole cap: it is not capped.
+    from server.observability.budget import namespace_budget_ratio, namespace_over_cap
+
+    assert not await namespace_over_cap(org, NS)
+    assert await namespace_budget_ratio(org, NS) < 1
 
 
 async def test_a_flag_against_a_row_no_longer_live_is_cleared(ch, wired) -> None:

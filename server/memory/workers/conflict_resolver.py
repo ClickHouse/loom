@@ -59,6 +59,14 @@ class _Pass:
         self.refusals_in_a_row = 0
 
 
+def _cap_share() -> dict[str, Any]:
+    """The resolver's own spend against its share of the namespace's daily cap: the
+    rest of the cap stays for the requests (memory.ask, extraction), which read the
+    whole spend against the whole cap."""
+    share = float(settings.memory_conflict_resolver_cap_share)
+    return {"operation": f"worker.{NAME}", "share": share}
+
+
 async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]], bool]:
     """The pass's rows, each identity once, grouped by (org, namespace), and whether the
     owed read came back full. A namespace over its cost cap is left out of the read, so
@@ -69,7 +77,7 @@ async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]]
     recheck = int(settings.memory_conflict_resolver_recheck_batch)
     due = recheck > 0 and time.monotonic() >= _recheck_after
     pairs = await queue.queued_namespaces(recheck=due)
-    over = await namespaces_over_cap(pairs) if pairs else {}
+    over = await namespaces_over_cap(pairs, **_cap_share()) if pairs else {}
     capped = sorted(pair for pair, is_over in over.items() if is_over)
     p.counts.capped_namespaces = len(capped)
     batch = int(settings.memory_conflict_resolver_batch)
@@ -107,7 +115,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
         cost_accumulator.begin_op()
         try:
             # Read before every call: the rows in flight at once can cross the cap together.
-            if await namespace_over_cap(org, namespace):
+            if await namespace_over_cap(org, namespace, **_cap_share()):
                 p.counts.skipped_budget += 1
                 return
             await resolver.resolve_row(r, policy=policy, counts=p.counts)

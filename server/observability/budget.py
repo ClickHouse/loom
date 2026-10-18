@@ -19,7 +19,11 @@ log = logging.getLogger(__name__)
 
 
 async def namespaces_over_cap(
-    pairs: Iterable[tuple[str, str]], *, ch: Any | None = None
+    pairs: Iterable[tuple[str, str]],
+    *,
+    operation: str = "",
+    share: float = 1.0,
+    ch: Any | None = None,
 ) -> dict[tuple[str, str], bool]:
     """`namespace_over_cap` for a set of namespaces in ONE statement: the
     24 h spend per namespace grouped over the set, its cap joined on. A
@@ -28,8 +32,10 @@ async def namespaces_over_cap(
     namespace without a `namespaces` row, or with cap 0, takes
     `settings.default_daily_cost_cap_usd`; cap 0 on both tiers is uncapped. The
     entity extractor asks once per pass for the namespaces of the rows it is
-    about to extract, instead of two point reads per namespace. Fail-open like
-    the single form: on any error every pair reads False."""
+    about to extract, instead of two point reads per namespace. With `operation`,
+    only that operation's spend counts, against `share` of the cap (a worker held
+    to its part of the cap). Fail-open like the single form: on any error every pair
+    reads False."""
     wanted = sorted({(str(o), str(n)) for o, n in pairs})
     if not wanted:
         return {}
@@ -45,6 +51,7 @@ async def namespaces_over_cap(
                     FROM loom.agent_events
                     WHERE (org, namespace) IN {pairs:Array(Tuple(String, String))}
                       AND ts > now() - INTERVAL 1 DAY
+                      AND ({op:String} = '' OR operation = {op:String})
                     GROUP BY org, namespace
                 ),
                 caps AS (
@@ -56,14 +63,15 @@ async def namespaces_over_cap(
             FROM spend AS s
             LEFT JOIN caps AS c ON s.org = c.org AND s.namespace = c.namespace
             """,
-            params={"pairs": wanted},
+            params={"pairs": wanted, "op": operation},
         )
         out = dict.fromkeys(wanted, False)
         for r in rows:
             cap, _ = effective_cap(r.get("cap"))
             if cap <= 0:
                 continue
-            out[(str(r["org"]), str(r["namespace"]))] = float(r.get("spent") or 0.0) >= cap
+            spent = float(r.get("spent") or 0.0)
+            out[(str(r["org"]), str(r["namespace"]))] = spent >= share * cap
         return out
     except Exception:
         log.warning(
@@ -86,10 +94,11 @@ def effective_cap(ns_cap: Any) -> tuple[float, Literal["namespace", "global", "u
     return (default, "global") if default > 0 else (0.0, "uncapped")
 
 
-async def _cap_and_spend(org: str, namespace: str) -> tuple[float, float]:
+async def _cap_and_spend(org: str, namespace: str, operation: str = "") -> tuple[float, float]:
     """(cap, 24 h spend) for one namespace: the namespace's cap, else the
-    server default; (0.0, 0.0) when uncapped, without reading the spend.
-    Raises on a read error; the public forms fail open."""
+    server default; (0.0, 0.0) when uncapped, without reading the spend. With
+    `operation`, that operation's spend alone. Raises on a read error; the public
+    forms fail open."""
     from server.core.ch import get_client
 
     ch = get_client()
@@ -111,17 +120,21 @@ async def _cap_and_spend(org: str, namespace: str) -> tuple[float, float]:
         WHERE org = {org:String}
           AND namespace = {ns:String}
           AND ts > now() - INTERVAL 1 DAY
+          AND ({op:String} = '' OR operation = {op:String})
         """,
-        params={"org": org, "ns": namespace},
+        params={"org": org, "ns": namespace, "op": operation},
     )
     return cap, float((spent_row or {}).get("spent") or 0.0)
 
 
-async def namespace_over_cap(org: str, namespace: str) -> bool:
-    """True iff this namespace has hit its 24h upstream-cost ceiling."""
+async def namespace_over_cap(
+    org: str, namespace: str, *, operation: str = "", share: float = 1.0
+) -> bool:
+    """True iff this namespace has hit its 24h upstream-cost ceiling; with
+    `operation`, iff that operation's spend has reached `share` of it."""
     try:
-        cap, spent = await _cap_and_spend(org, namespace)
-        return cap > 0 and spent >= cap
+        cap, spent = await _cap_and_spend(org, namespace, operation)
+        return cap > 0 and spent >= share * cap
     except Exception:  # fail open: a budget-read blip never halts the caller
         log.warning(
             "budget guard failed for %s/%s — proceeding without cap",

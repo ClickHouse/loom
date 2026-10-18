@@ -139,8 +139,10 @@ leader-only worker judges each write that has a live peer of its type at cosine
 
 It also re-checks pairs flagged before it judged them, so a false flag is cleared once.
 A pinned row is never touched, a row that changed since it was judged is left to its
-next judgement, and each written version is judged once. A judgement costs about $0.005;
-a namespace over its daily cost cap waits. The design is in [memory
+next judgement, and each written version is judged once. A judgement costs about $0.005,
+and the resolver spends at most a quarter of a namespace's daily cost cap
+(`LOOM_MEMORY_CONFLICT_RESOLVER_CAP_SHARE`), leaving the rest for requests; past it the
+namespace waits. The design is in [memory
 architecture](../../architecture/memory-architecture.md#the-conflict-resolver).
 
 ### The Review queue

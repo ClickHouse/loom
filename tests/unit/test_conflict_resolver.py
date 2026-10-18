@@ -1111,10 +1111,14 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         e.seeds.append(("recheck", kw.get("seed")))
         return [r for r in e.recheck if _ns(r) not in capped][:limit]
 
+    e.cap_reads = []
+
     async def over_all(pairs, **kw):
+        e.cap_reads.append(kw)
         return {p: p in e.over for p in pairs}
 
-    async def over(org, namespace):
+    async def over(org, namespace, **kw):
+        e.cap_reads.append(kw)
         return (org, namespace) in e.over
 
     async def resolve(q, *, policy, counts):
@@ -1201,6 +1205,16 @@ async def test_each_pass_draws_a_new_namespace_order_for_both_reads(
     assert pass_env.seeds == [("owed", 11), ("recheck", 11), ("owed", 22), ("recheck", 22)]
 
 
+async def test_the_resolver_reads_its_own_spend_against_its_share_of_the_cap(
+    pass_env: NS,
+) -> None:
+    """The rest of a namespace's daily cap stays for the requests (memory.ask)."""
+    pass_env.owed = [_q(memory_key="k1")]
+    await pass_env.run()
+    own = {"operation": "worker.conflict_resolver", "share": 0.25}
+    assert pass_env.cap_reads == [own, own], "the pass's read and the read before the call"
+
+
 async def test_a_namespace_over_its_cap_is_left_out_of_the_read(pass_env: NS) -> None:
     pass_env.owed = [_q(org="o1", memory_key="k1"), _q(org="o2", memory_key="k2")]
     pass_env.over = {("o2", "ns")}
@@ -1229,7 +1243,7 @@ async def test_a_refused_request_is_stamped_and_a_transient_failure_stays_owed(
 async def test_a_failed_cap_read_stays_inside_its_row(pass_env: NS, monkeypatch) -> None:
     from server.observability import budget
 
-    async def over(org: str, namespace: str) -> bool:
+    async def over(org: str, namespace: str, **kw: Any) -> bool:
         if org == "o1":
             raise RuntimeError("ClickHouse timed out")
         return False
@@ -1374,7 +1388,7 @@ async def test_the_cost_cap_is_read_before_every_call(pass_env: NS, monkeypatch)
 
     monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", 1)
 
-    async def over(org, namespace):
+    async def over(org, namespace, **kw):
         return len(pass_env.resolved) >= 1
 
     monkeypatch.setattr(budget, "namespace_over_cap", over)

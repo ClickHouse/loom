@@ -293,8 +293,8 @@ actions, verdicts and confidences, never the text.
   deadlocks; a key held past the lock's wait leaves the row's remaining pairs, and the
   row stays owed: that write may change only metadata, or fail, and bring no new mark.
   The record and the follow of a retirement run after the locks are released.
-- The queue reads leave out a namespace over its daily LLM cost cap
-  (`observability.budget`) and an org with an erasure queued, running or failed and due a
+- The queue reads leave out a namespace whose resolver spend has reached its share of the
+  daily LLM cost cap (`observability.budget`) and an org with an erasure queued, running or failed and due a
   retry (an abandoned saga does not count), so their rows stay owed without taking places
   in a pass. The erasure is read again right before each write (under the pair's locks,
   and before each stamp): an org whose erasure was requested meanwhile gets no write,
@@ -317,11 +317,14 @@ actions, verdicts and confidences, never the text.
 
 **Cost.** About $0.005 per judged row on `gpt-6.1-sol`, judged once per written
 version, and only rows with a peer at cosine 0.60 or more, or a flag, are judged. The
-resolver shares the namespace's daily cost cap with the other workers
-(`daily_cost_cap_usd`, else `LOOM_DEFAULT_DAILY_COST_CAP_USD`, $1): about 200 judged rows a
-day per namespace, so a large import needs that namespace's cap raised. The cap is read
-before each call, and each call's cost is flushed before the next row starts, so a pass
-goes past the cap by at most the calls already in flight
+resolver may spend a quarter of the namespace's daily cost cap
+(`LOOM_MEMORY_CONFLICT_RESOLVER_CAP_SHARE`, 0.25, of `daily_cost_cap_usd`, else
+`LOOM_DEFAULT_DAILY_COST_CAP_USD`, $1), counted over its own calls, and never takes the
+rest: the requests (`memory.ask`, extraction) read the whole spend against the whole cap,
+so a backlog the resolver drains never leaves them capped. That is about 50 judged rows a
+day per namespace at the default cap, so a large import needs that namespace's cap raised.
+The share is read before each call, and each call's cost is flushed before the next row
+starts, so a pass goes past it by at most the calls already in flight
 (`LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY`). A pass whose
 owed read comes back full reads the next batch at once, for up to five minutes, instead
 of waiting the interval.

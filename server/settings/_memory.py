@@ -106,6 +106,9 @@ class MemorySettings(BaseModel):
     # Rows already `conflicted` that no resolver judged (a cosine flag, or an older build's
     # judge) re-checked per pass, after the marked rows. 0 = no re-check.
     memory_conflict_resolver_recheck_batch: int = Field(default=8, ge=0)
+    # The share of a namespace's daily LLM cost cap the conflict resolver may spend,
+    # counted over its own calls; the rest stays for the requests.
+    memory_conflict_resolver_cap_share: float = Field(default=0.25, gt=0.0, le=1.0)
     # Rows of a pass judged at once (LLM calls in flight). 1 judges them one at a time;
     # doubling it roughly doubles the rows judged a minute, up to the provider's rate limit.
     memory_conflict_resolver_concurrency: int = Field(default=8, ge=1)
