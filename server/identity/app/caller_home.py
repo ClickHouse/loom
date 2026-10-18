@@ -193,6 +193,16 @@ async def _restricted_off_limits(auth: Any, org: str) -> frozenset[str]:
         return frozenset()
 
 
+async def readable_claims(auth: Any, org: str) -> list[str]:
+    """The namespaces a token names that the gate lets it read: its claims
+    less `*` and the restricted ones it is refused on."""
+    if auth is None:
+        return []
+    off_limits = await _restricted_off_limits(auth, org)
+    claims = getattr(auth, "namespaces", None) or ()
+    return [ns for ns in claims if ns and ns != "*" and ns not in off_limits]
+
+
 async def claimed_home_default(
     auth_info: Any,
     org: str,

@@ -435,6 +435,8 @@ function TokensSection({
     /** The namespace the mint named ("" for the `*` default). */
     named?: string;
     readScope?: "inherited_grants" | "named_namespaces";
+    /** The minted claim. */
+    claim?: string[];
   } | null>(null);
   const [dialogClient, setDialogClient] = useState<ClientId>(() => {
     // Blocked storage throws on read; the default client stands in.
@@ -641,6 +643,7 @@ function TokensSection({
         restricted: r.restricted_namespaces,
         named: mcpNamespace,
         readScope: r.read_scope,
+        claim: r.namespaces,
       });
       onMinted({ token: r.token, mcpUrl: r.mcp_url });
       setMintedAtMs(Date.now());
@@ -1097,7 +1100,7 @@ function TokensSection({
               </>
             )}
             {mcpResult?.readScope === "named_namespaces" ? (
-              <>; reads only {namedReads(mcpResult).join(", ")}.</>
+              <>; {namedReads(mcpResult)}.</>
             ) : (
               <>
                 ; reads every namespace and repository you belong to, including ones you join later
@@ -1426,11 +1429,12 @@ function Field({ hint, children }: { hint: string; children: (hintId: string) =>
   );
 }
 
-/** What a `named_namespaces` agent token reads: the namespace it was minted for,
- *  then the restricted ones it names. */
-function namedReads(r: { named?: string; namespace?: string; restricted?: string[] }): string[] {
+/** What a `named_namespaces` agent token reads: its minted claim. A server that does
+ *  not send the claim: the namespace it was minted for, then the restricted ones it names. */
+function namedReads(r: { named?: string; namespace?: string; restricted?: string[]; claim?: string[] }): string {
   const home = r.named || r.namespace;
-  return [...(home ? [home] : []), ...(r.restricted ?? [])];
+  const reads = r.claim ?? [...(home ? [home] : []), ...(r.restricted ?? [])];
+  return reads.length ? `reads only ${reads.join(", ")}` : "reads no namespace";
 }
 
 const ROLE_LABELS: Record<GrantRole, string> = { viewer: "Viewer", writer: "Writer", admin: "Admin" };

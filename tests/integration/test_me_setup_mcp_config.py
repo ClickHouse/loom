@@ -119,6 +119,7 @@ async def test_setup_mcp_config_claude_desktop(control_plane_url: str, ch_client
     # bearer is wildcard ("all"); the UI always names one ("single").
     assert body["namespace_scope"] == "all"
     assert body["read_scope"] == "inherited_grants"
+    assert "*" in body["namespaces"]
 
     # Config shape — top-level mcpServers wrapper with the loom entry.
     # Claude Desktop is stdio-only, so the entry is the `npx mcp-remote`

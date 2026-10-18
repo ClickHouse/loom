@@ -142,6 +142,38 @@ describe("Setup's MCP home namespace", () => {
     expect(scope).not.toHaveTextContent(/every namespace/);
   });
 
+  it("lists the minted claim when `*` was narrowed to the person's own namespaces", async () => {
+    const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
+    vi.mocked(generateMcpConfig).mockClear();
+    vi.mocked(generateMcpConfig).mockResolvedValueOnce({
+      ...minted,
+      read_scope: "named_namespaces",
+      namespaces: ["ns-a", "ns-b", "ns-c"],
+    });
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
+    expect(scope).toHaveTextContent(/reads only ns-a, ns-b, ns-c\.$/);
+  });
+
+  it("says a token with an empty claim reads no namespace", async () => {
+    const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
+    vi.mocked(generateMcpConfig).mockClear();
+    vi.mocked(generateMcpConfig).mockResolvedValueOnce({
+      ...minted,
+      namespace: "",
+      read_scope: "named_namespaces",
+      namespaces: [],
+    });
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
+    expect(scope).toHaveTextContent(/reads no namespace\.$/);
+    expect(scope).not.toHaveTextContent(/reads only/);
+  });
+
   it("says a `*` token reads every namespace, including ones joined later", async () => {
     const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
     vi.mocked(generateMcpConfig).mockClear();

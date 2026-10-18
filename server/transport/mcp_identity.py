@@ -13,7 +13,12 @@ from contextvars import ContextVar
 from typing import Any
 
 from server.core.naming import slugify
-from server.identity.app.caller_home import caller_org, default_namespace, home_subject
+from server.identity.app.caller_home import (
+    caller_org,
+    default_namespace,
+    home_subject,
+    readable_claims,
+)
 from server.transport.mcp_config import _DEFAULT_MCP_AGENT, _MCP_SESSION_AGENT_CAP
 
 # Bounded session→agent cache (sessions are short-lived; cap so a churning
@@ -134,19 +139,40 @@ async def _caller_defaults(
     }
 
 
-async def _caller_default_context(auth: Any) -> str:
+async def with_readable_claims(auth: Any, defaults: dict[str, str] | None) -> dict[str, Any] | None:
+    """`defaults` for the session instructions: plus `readable` (the namespaces
+    the token can name) when it has no default namespace."""
+    if defaults and not defaults["namespace"]:
+        return {**defaults, "readable": await readable_claims(auth, defaults["org"])}
+    return defaults
+
+
+def no_default_namespace_line(defaults: dict[str, Any]) -> str:
+    """What a token with no default namespace names on its calls."""
+    readable = defaults.get("readable") or []
+    if not readable:
+        return "This token has no default namespace and can read no namespace."
+    names = ", ".join(f"`{ns}`" for ns in readable)
+    return (
+        f"This token has no default namespace: name one of {names} on each memory "
+        f"or tracker call; `loom_search` searches `{readable[0]}`."
+    )
+
+
+async def _caller_default_context(auth: Any, defaults: dict[str, Any] | None = None) -> str:
     """The "Default Loom workspace: ..." block, delivered once via the
     `initialize` result's `instructions` field. Surfaces only `namespace`
     and `agent` — `org` is single-tenant per caller and filled from the JWT
-    automatically, so it'd be noise in the LLM's context.
+    automatically, so it'd be noise in the LLM's context. ``defaults`` are
+    resolved here when not passed.
     """
-    defaults = await _caller_defaults(auth)
+    defaults = defaults or await with_readable_claims(auth, await _caller_defaults(auth))
     if not defaults:
         return ""
     if not defaults["namespace"]:
         return (
-            f"\n\n**Default Loom workspace:** none for this token; every call must "
-            f"name its `namespace`. agent=`{defaults['agent']}` is filled in when omitted."
+            f"\n\n**Default Loom workspace:** none. {no_default_namespace_line(defaults)} "
+            f"agent=`{defaults['agent']}` is filled in when omitted."
         )
     return (
         f"\n\n**Default Loom workspace:** "

@@ -370,6 +370,9 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         # Restricted namespaces this token reads by name, each with a direct grant of its own
         # that dies with the token.
         "restricted_namespaces": restricted_names,
+        # The namespace claim as minted: `*`, or the namespaces the token reads (a `*`
+        # request under a narrower sign-in becomes that sign-in's list).
+        "namespaces": list(delegated.namespaces),
         "mcp_url": mcp_url,
         "sa_subject": sa_subject,
         "expires_at": expires_at.isoformat() if expires_at else None,

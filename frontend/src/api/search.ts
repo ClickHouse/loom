@@ -166,6 +166,9 @@ export interface McpConfigResponse {
   read_scope?: "inherited_grants" | "named_namespaces";
   /** Restricted namespaces this token reads by name. */
   restricted_namespaces?: string[];
+  /** The namespace claim the token was minted with. Under `named_namespaces` these are
+   * all it reads; `*` reads wherever the person holds a grant. */
+  namespaces?: string[];
   mcp_url: string;
   /** The token's subject in the Tokens list (service_accounts, kind="mcp"). */
   sa_subject?: string;

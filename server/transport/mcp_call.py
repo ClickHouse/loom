@@ -19,7 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
-from server.identity.app.caller_home import home_namespace
+from server.identity.app.caller_home import home_namespace, readable_claims
 from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import _MCP_HIDDEN_OPS
@@ -152,30 +152,14 @@ async def _address_home(arguments: dict[str, Any], auth: Any) -> None:
         )
 
 
-def _search_needs_namespace(
-    op: Operation, arguments: dict[str, Any], defaults: dict[str, Any] | None
-) -> bool:
-    """A `loom_search` naming no namespace from a token with no default one."""
-    if op.name != SEARCH_OP or not defaults:
-        return False
-    return not defaults["namespace"] and not arguments.get("namespace")
-
-
-def _namespace_required(
-    req_id: Any, op: Operation, arguments: dict[str, Any], request_id: str
-) -> dict[str, Any]:
-    """The refusal for `_search_needs_namespace`. The tool's schema has no
-    namespace field, so the generic validation feedback would not say how to fix it."""
-    _emit_mcp_event(
-        op.name, arguments, 0, success=False, error_code="VALIDATION_FAILED", request_id=request_id
-    )
-    msg = (
-        "This token has no default namespace. Call `loom_search` again with a `namespace` argument."
-    )
-    errors = [{"loc": ["namespace"], "msg": "no default namespace", "type": "missing"}]
-    return _ok(
-        req_id, tool_error(msg, {"code": "VALIDATION_FAILED", "op": op.name, "errors": errors})
-    )
+async def _address_first_claim(arguments: dict[str, Any], auth: Any, org: str) -> bool:
+    """A `loom_search` naming no namespace from a token with no default one
+    searches the token's first readable claim; the gate still checks it.
+    True when it filled one in."""
+    readable = await readable_claims(auth, org)
+    if readable:
+        arguments["namespace"] = readable[0]
+    return bool(readable)
 
 
 # History and related name a KEY — a key another client
@@ -232,8 +216,6 @@ async def _call_tool(
     op = tool
 
     request_id, defaults = await _bind_caller_identity(op, arguments, auth, client_name)
-    if _search_needs_namespace(op, arguments, defaults):
-        return _namespace_required(req_id, op, arguments, request_id)
 
     run_caller, stamped_run = _stamp_session_run(op, arguments, defaults, mcp_session_id)
 
@@ -498,6 +480,9 @@ async def _bind_caller_identity(
     if defaults and defaults["namespace"] and "lesson_namespaces" in op.input_model.model_fields:
         # a code read's lessons include the caller's own memories, from its memory home
         arguments.setdefault("lesson_namespaces", [defaults["namespace"]])
+    if op.name == SEARCH_OP and defaults and not defaults["namespace"]:
+        if not gates.present(arguments.get("namespace")):
+            filled_ns = await _address_first_claim(arguments, auth, defaults["org"])
     note_default_namespace(filled_ns, str(arguments.get("namespace") or ""), auth)
     _scope_arguments(op.name, arguments, defaults, explicit_agent)
     if op.name == SEARCH_OP and filled_ns:

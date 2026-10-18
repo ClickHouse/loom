@@ -28,7 +28,12 @@ from server.transport.mcp_config import (
     _ok,
     cache_hints,
 )
-from server.transport.mcp_identity import _caller_default_context, _caller_defaults
+from server.transport.mcp_identity import (
+    _caller_default_context,
+    _caller_defaults,
+    no_default_namespace_line,
+    with_readable_claims,
+)
 from server.transport.mcp_op import reachable as loom_op_reachable
 from server.transport.mcp_tools import _emit_mcp_event, listed_ops
 
@@ -231,7 +236,11 @@ def _fenced(text: str) -> str:
 
 
 async def _loom_primer_text(
-    auth: Any, *, include_profile: bool = True, toolset: str | None = None
+    auth: Any,
+    *,
+    include_profile: bool = True,
+    toolset: str | None = None,
+    defaults: dict[str, Any] | None = None,
 ) -> str:
     """Render the Loom-first-mode primer with the caller's default workspace
     baked in. Single source of truth for the `loom` prompt, the
@@ -241,9 +250,10 @@ async def _loom_primer_text(
     surfaces reachable without a verified bearer (initialize in
     discovery_only/open modes), which must not carry profile content.
     ``toolset`` is the connection's ``?toolset=``: the primer names the tools
-    that listing carries."""
+    that listing carries. ``defaults`` (`_workspace_defaults`) are resolved
+    here when not passed."""
     tool = _tool_refs(toolset)
-    defaults = await _caller_defaults(auth)
+    defaults = defaults or await _workspace_defaults(auth)
 
     # Inline authored profile sections into the primer — "call profile.render
     # at conversation start" nudges don't fire reliably, so bundling the
@@ -285,7 +295,7 @@ async def _loom_primer_text(
         "decisions, family/relationships, work, bills, contracts, "
         "documents I've uploaded, or 'what is X' / 'what do I know "
         "about Y':\n"
-        f"   a. Call {_recall_call(defaults)}. It searches memory, profile, "
+        "   a. Call `loom_search` once. It searches memory, profile, "
         "knowledge, and conversations server-side in one round trip.\n"
         "   b. If it returns nothing relevant, fall through to "
         "native memory / past-conversation context — don't surface "
@@ -305,10 +315,10 @@ async def _loom_primer_text(
     )
 
 
-def _defaults_clause(defaults: dict[str, str] | None) -> str:
+def _defaults_clause(defaults: dict[str, Any] | None) -> str:
     """Rule 5: the caller's default namespace, or that the token has none."""
     if defaults and not defaults["namespace"]:
-        return "This token has no default Loom namespace: name one on every call."
+        return no_default_namespace_line(defaults)
     if defaults:
         return (
             f"My default Loom namespace is **`{defaults['namespace']}`** "
@@ -321,12 +331,9 @@ def _defaults_clause(defaults: dict[str, str] | None) -> str:
     )
 
 
-def _recall_call(defaults: dict[str, str] | None) -> str:
-    """The recall call: `loom_search` once, naming a namespace when the token has
-    no default (an unaddressed search is refused)."""
-    if defaults and not defaults["namespace"]:
-        return "`loom_search` with a `namespace`"
-    return "`loom_search` once"
+async def _workspace_defaults(auth: Any) -> dict[str, Any] | None:
+    """The caller's defaults for the session instructions (`with_readable_claims`)."""
+    return await with_readable_claims(auth, await _caller_defaults(auth))
 
 
 INITIALIZE_OP = "mcp.initialize"
@@ -360,10 +367,12 @@ async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str
     inline only with a verified bearer — an anonymous probe (discovery_only /
     open modes) must not read profile content.
     """
-    if _is_coding_toolset(toolset):
-        primer = await _coding_instructions(auth, include_profile=auth is not None, toolset=toolset)
-    else:
-        primer = await _loom_primer_text(auth, include_profile=auth is not None, toolset=toolset)
+    defaults = await _workspace_defaults(auth)
+    coding = _is_coding_toolset(toolset)
+    render = _coding_instructions if coding else _loom_primer_text
+    primer = await render(
+        auth, include_profile=auth is not None, toolset=toolset, defaults=defaults
+    )
     scope = current_code_scope()
     scope_line = (
         f"\n\n**Code index scope for this connection:** `{scope[0]}/{scope[1]}` — "
@@ -374,20 +383,19 @@ async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str
     # The compact coding form names the default namespace in one clause; the full primer
     # carries the default-workspace paragraph.
     workspace = (
-        await _coding_workspace_line(auth)
-        if _is_coding_toolset(toolset)
-        else await _caller_default_context(auth)
+        _coding_workspace_line(defaults)
+        if coding
+        else await _caller_default_context(auth, defaults)
     )
-    return primer + workspace + scope_line + await _mentor_line(auth)
+    return primer + workspace + scope_line + await _mentor_line(auth, defaults)
 
 
-async def _coding_workspace_line(auth: Any) -> str:
+def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:
     """The default workspace in one clause: the server fills it in on every call."""
-    defaults = await _caller_defaults(auth)
     if not defaults:
         return ""
     if not defaults["namespace"]:
-        return " No default namespace for this token: every call must name its `namespace`."
+        return f" {no_default_namespace_line(defaults)} loom_code_* calls use the code scope."
     return f" Default namespace `{defaults['namespace']}`, filled in when a call names none."
 
 
@@ -400,7 +408,11 @@ def _is_coding_toolset(toolset: str | None) -> bool:
 
 
 async def _coding_instructions(
-    auth: Any, *, include_profile: bool = True, toolset: str | None = None
+    auth: Any,
+    *,
+    include_profile: bool = True,
+    toolset: str | None = None,
+    defaults: dict[str, Any] | None = None,
 ) -> str:
     """The `initialize` instructions over the `coding` toolset: the memory rules in a few
     lines. A coding agent re-reads these on every turn of every session, and the
@@ -408,7 +420,9 @@ async def _coding_instructions(
     Loom-first primer (`_loom_primer_text`) stays on every other listing and on
     `loom_activate`."""
     tool = _tool_refs(toolset)
-    full = await _loom_primer_text(auth, include_profile=include_profile, toolset=toolset)
+    full = await _loom_primer_text(
+        auth, include_profile=include_profile, toolset=toolset, defaults=defaults
+    )
     # The profile, when the caller authored one, is the one part kept whole.
     profile = ""
     marker = "**0. My always-loaded context"
@@ -418,8 +432,7 @@ async def _coding_instructions(
         )
         profile += "Don't re-fetch — it's been delivered."
     save = tool["memory.set"]
-    recall = _recall_call(await _caller_defaults(auth))
-    memory = f"Recall before answering from memory: call {recall}. " + (
+    memory = "Recall before answering from memory: call `loom_search` once. " + (
         f"On a remember/save intent call {save} with one plain-text claim per readable "
         "key (`<scope>/<kind>/<id>`)."
         if save
@@ -433,14 +446,14 @@ async def _coding_instructions(
     )
 
 
-async def _mentor_line(auth: Any) -> str:
+async def _mentor_line(auth: Any, defaults: dict[str, Any] | None = None) -> str:
     """The top mentor hint for the caller's default workspace,
     only when its profile is already cached — never a ledger read on the
     handshake. "" otherwise, and on any failure."""
     try:
         from server.insights.app import mentor as _mentor
 
-        defaults = await _caller_defaults(auth, None)
+        defaults = defaults or await _caller_defaults(auth, None)
         if not defaults:
             return ""
         org = str(defaults.get("org") or "")

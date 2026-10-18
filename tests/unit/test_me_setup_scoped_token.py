@@ -74,6 +74,7 @@ async def test_the_default_token_follows_live_grants_and_drops_org_wide_roles(
     assert token.expires_at is not None
     assert token.expires_at - time.time() > (delegation.DEFAULT_TTL_DAYS - 1) * 86400
     assert (out["namespace_scope"], out["read_scope"]) == ("all", "inherited_grants")
+    assert out["namespaces"] == ["*"]
 
 
 @pytest.mark.asyncio
@@ -86,6 +87,7 @@ async def test_a_scoped_caller_gets_its_own_list_not_the_org(
     token = verify_token(out["token"])
     assert token.namespaces == ("a",) and token.roles == (Role.VIEWER,)
     assert out["namespace_scope"] == "single"
+    assert (out["read_scope"], out["namespaces"]) == ("named_namespaces", ["a"])
 
 
 @pytest.mark.asyncio

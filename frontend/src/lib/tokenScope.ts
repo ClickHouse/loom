@@ -87,15 +87,17 @@ export function describeTokenScope(t: Pick<ServiceAccountEntry, "kind" | "namesp
   const ns = t.namespaces || [];
   const roles = t.roles || [];
   if (t.kind === "mcp") {
-    // The first claim is the home namespace; any further ones are restricted
-    // namespaces the token reads by name with a grant of its own. A `*` claim
-    // reads wherever the person holds a grant (the server's `inherited_grants`);
-    // without one the token reads only what it names (`named_namespaces`).
-    const home = ns.length >= 1 && ns[0] !== "*" ? ns[0] : null;
-    const extras = ns.slice(1).filter((n) => n !== "*");
+    // The first claim is the home namespace. A `*` claim reads wherever the person
+    // holds a grant (the server's `inherited_grants`), and its further claims are
+    // restricted namespaces the token reads by name. Without `*` the token reads only
+    // its claim (`named_namespaces`), which may be a `*` narrowed to the person's own
+    // namespaces, so the row cannot say which of them are restricted.
+    if (ns.length === 0) return "reads no namespace";
+    const home = ns[0] !== "*" ? ns[0] : null;
     const writes = home ? `writes ${home}` : "writes any namespace you can write";
+    if (!ns.includes("*")) return `${writes} · reads only ${ns.join(", ")}`;
+    const extras = ns.slice(1).filter((n) => n !== "*");
     const restricted = extras.length ? ` · plus restricted: ${extras.join(", ")}` : "";
-    if (home && !ns.includes("*")) return `${writes} · reads only ${home}${restricted}`;
     return `${writes} · reads every namespace and repository you belong to${restricted}`;
   }
   if (ns.length === 0) return roles.join(", ");

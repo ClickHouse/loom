@@ -275,7 +275,7 @@ def test_an_unaddressed_write_from_a_qa_only_token_asks_for_a_namespace(
     assert "namespace" not in args
     assert out["code"] == "VALIDATION_FAILED"
     assert ["namespace"] in [list(e["loc"]) for e in out["errors"]]
-    assert "must name its `namespace`" in asyncio.run(mi._caller_default_context(token))
+    assert "name one of `qa-clickhouse`" in asyncio.run(mi._caller_default_context(token))
 
 
 def _primer_text(token: Any) -> str:
@@ -287,13 +287,7 @@ def _primer_text(token: Any) -> str:
 def _coding_line(token: Any) -> str:
     from server.transport import mcp_primer
 
-    return asyncio.run(mcp_primer._coding_workspace_line(token))
-
-
-def _coding_text(token: Any) -> str:
-    from server.transport import mcp_primer
-
-    return asyncio.run(mcp_primer._coding_instructions(token, include_profile=False))
+    return mcp_primer._coding_workspace_line(asyncio.run(mcp_primer._workspace_defaults(token)))
 
 
 @pytest.mark.parametrize(
@@ -309,41 +303,85 @@ def test_no_default_namespace_is_never_rendered_as_an_empty_one(_wired, render) 
         assert phrase not in text
 
 
-@pytest.mark.parametrize("render", [_primer_text, _coding_text])
-def test_with_no_default_namespace_recall_names_one(_wired, render) -> None:
+def _initialize_text(token: Any, toolset: str | None = None) -> str:
+    from server.transport import mcp_primer
+
+    return asyncio.run(mcp_primer._initialize_instructions(token, toolset=toolset))
+
+
+@pytest.mark.parametrize("toolset", ["coding", None])
+def test_with_no_default_namespace_the_instructions_name_the_readable_claims(
+    _wired, toolset: str | None
+) -> None:
     _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
-    text = render(_token(("qa-clickhouse",)))
-    assert "`loom_search` with a `namespace`" in text
-    assert "`loom_search` once" not in text
+    text = _initialize_text(_token(("qa-clickhouse",)), toolset)
+    assert "name one of `qa-clickhouse` on each memory or tracker call" in text
+    assert "`loom_search` once" in text  # it takes no namespace, and needs none
 
 
-def test_loom_search_from_a_token_with_no_default_namespace_says_to_name_one(
-    _wired, monkeypatch: pytest.MonkeyPatch
+def test_a_token_that_can_read_no_claim_is_told_so(_wired) -> None:
+    # `secret-team` is restricted and an org-`*` token is refused there even named.
+    _wired(_SetupTokenCH(saved=None, grants=["secret-team"]))
+    text = _initialize_text(_token(("secret-team",), org="*"), "coding")
+    assert "can read no namespace" in text
+    assert "`secret-team`" not in text
+
+
+def test_the_coding_instructions_never_tell_code_calls_to_name_a_namespace(_wired) -> None:
+    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    text = _initialize_text(_token(("qa-clickhouse",)), "coding")
+    assert "every call" not in text
+    assert "loom_code_* calls use the code scope" in text
+
+
+@pytest.mark.parametrize("toolset", ["coding", None])
+def test_one_initialize_resolves_the_caller_defaults_once(
+    _wired, monkeypatch: pytest.MonkeyPatch, toolset: str | None
+) -> None:
+    from server.transport import mcp_primer
+
+    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    calls: list[Any] = []
+    real = mcp_primer._caller_defaults
+
+    async def _counted(auth: Any, client_name: str | None = None) -> Any:
+        calls.append(auth)
+        return await real(auth, client_name)
+
+    monkeypatch.setattr(mcp_primer, "_caller_defaults", _counted)
+    monkeypatch.setattr(mi, "_caller_defaults", _counted)  # the workspace block's own
+    _initialize_text(_token(("qa-clickhouse",)), toolset)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("named", [None, "", "-"])
+def test_loom_search_from_a_qa_only_token_searches_its_claim(
+    _wired, monkeypatch: pytest.MonkeyPatch, named: str | None
 ) -> None:
     from server.operations.registry import OPERATIONS_BY_NAME
-    from server.transport import mcp_call
+    from server.transport import gates, mcp_call
 
     _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
     monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
-    params = {"name": "loom_search", "arguments": {"query": "what did we decide"}}
-    token = _token(("qa-clickhouse",))
-    out = asyncio.run(mcp_call._call_tool(1, params, token, "claude-code"))
-    result = out["result"]
-    assert result["isError"] is True
-    assert result["structuredContent"]["code"] == "VALIDATION_FAILED"
-    assert ["namespace"] in [e["loc"] for e in result["structuredContent"]["errors"]]
-    assert "no default namespace" in result["content"][0]["text"]
-    assert "`loom_search` again with a `namespace`" in result["content"][0]["text"]
-
-    # The retry it asks for validates.
     op = OPERATIONS_BY_NAME[mcp_call.SEARCH_OP]
-    args: dict[str, Any] = {"query": "what did we decide", "namespace": "qa-clickhouse"}
+    args: dict[str, Any] = {"query": "what did we decide"}
+    if named is not None:
+        args["namespace"] = named
+    token = _token(("qa-clickhouse",))
 
-    async def _retry() -> Any:
+    async def _call() -> Any:
         request_id, _ = await mcp_call._bind_caller_identity(op, args, token, "claude-code")
-        return mcp_call._validated_input(1, op, args, request_id)
+        input_obj = mcp_call._validated_input(1, op, args, request_id)
+        assert not isinstance(input_obj, dict), input_obj
+        target = gates.authz_target(
+            op, org=input_obj.org, namespace=input_obj.namespace, auth=token
+        )
+        await gates.authorize(op, token, target, transport="mcp")
+        return target
 
-    assert not isinstance(asyncio.run(_retry()), dict)
+    target = asyncio.run(_call())
+    assert args["namespace"] == "qa-clickhouse"
+    assert target.namespace == "qa-clickhouse"
 
 
 def test_a_restricted_namespace_is_off_limits_to_a_token_of_another_org(_wired) -> None:
