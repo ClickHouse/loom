@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
+
 from server.core.ch import set_query_tag
 from server.core.leases import LeaseUnavailable
 from server.memory.app import conflict_resolver as resolver
@@ -170,8 +172,6 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
 
 def _transient(e: Exception) -> bool:
     """A provider failure that made no paid call: the row stays owed, uncounted."""
-    import httpx
-
     if isinstance(e, httpx.HTTPStatusError):
         status = e.response.status_code
         return status in (408, 409, 429) or status >= 500

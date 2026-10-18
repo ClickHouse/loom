@@ -1,12 +1,6 @@
-"""The conflict resolver: one LLM judgement per marked row, against its nearest live
-peers, and what it does about each pair (`domain.conflict_resolution.action_for`):
-retire the peer behind the row (`apply_refines`, recorded and followed), flag the pair,
-clear a flag between them, or nothing.
-
-Every write follows one rule: re-read the row under its key's write lock, check the
-org's erasure, and write at the read version + 1, only while the row still holds the
-content judged. A pinned row is never touched. The row is then stamped judged at its
-content hash. The invariants are listed in docs/architecture/memory-architecture.md."""
+"""The conflict resolver: one LLM judgement per marked row against its nearest live
+peers, and the action on each pair (`domain.conflict_resolution.action_for`). Its
+invariants are in docs/architecture/memory-architecture.md (the conflict resolver)."""
 
 from __future__ import annotations
 
@@ -21,12 +15,17 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
+
 import server.memory.store as memory_repo
 from server.core.datetimes import naive_utc_now, to_naive_utc
+from server.core.errors import PreconditionFailedError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.llm.fake import FakeLLMClient
 from server.memory.domain import conflict_resolution as cr
 from server.memory.domain.conflicts import ConflictPeer
 from server.memory.store import conflict_resolver as queue
+from server.observability.genai import llm_stage
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -99,8 +98,6 @@ def _client() -> Any:
 def model_missing() -> str | None:
     """Why no call can be made, known before any read: no key for the model (the
     client is the fake stand-in). None when a call can be made."""
-    from server.llm.fake import FakeLLMClient
-
     if isinstance(_client(), FakeLLMClient):
         return f"no key for {settings.conflict_resolver_model}"
     return None
@@ -112,11 +109,6 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
     `ModelUnavailable` when the provider refuses the model or the key, `Unjudgeable`
     when it refuses this request, `Unanswered` when the answer has nothing usable even
     with twice the room, and any other failure as it came."""
-    import httpx
-
-    from server.llm.fake import FakeLLMClient
-    from server.observability.genai import llm_stage
-
     llm = _client()
     if isinstance(llm, FakeLLMClient):
         # The stand-in for a missing key: its echo is no judgement. The rows stay owed.
@@ -444,10 +436,8 @@ def _identity(r: Any) -> tuple[str, str, str, str]:
 
 @asynccontextmanager
 async def _pair_locks(org: str, namespace: str, row: Any, peer: Any) -> AsyncIterator[None]:
-    """Both rows' key write locks, taken in lock-name order: every resolver write to a
-    row is made under its key's lock, from its re-read to its write, as a conditional
-    revision holds it from its read to its insert. A writer takes one key, and two
-    settles of a pair take the two in the same order, so none waits on another."""
+    """Both rows' key write locks, in lock-name order, so two settles of one pair never
+    wait on each other."""
     from server.memory.store.key_write_lock import key_write_locks, lock_name
 
     keys = sorted({_identity(row), _identity(peer)}, key=lambda k: lock_name(org, namespace, *k))
@@ -578,8 +568,6 @@ async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> b
     head is no longer the queued write is skipped unstamped: its new write carries
     its own mark. A provider failure raises, and the row stays owed. True when the
     row was judged and left owed all the same (a flagged peer the answer left out)."""
-    from server.core.errors import PreconditionFailedError
-
     org, namespace, sha = str(q["org"]), str(q["namespace"]), str(q.get("content_sha256") or "")
     row = await _current(q)
     if row is not None and sha and str(row.content_sha256 or "") != sha:

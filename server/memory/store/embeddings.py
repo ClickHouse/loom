@@ -80,30 +80,17 @@ async def mirror_status_to_embeddings(
     strict: bool = False,
     judged: bool = False,
 ) -> int:
-    """Re-emit each identity's live memory_embeddings rows with the memory
-    row's `status` (and `invalid_at`, and `tombstoned_at` when the memory row is
-    a tombstone), at the memory row's `version` — a status that hides the row is
-    a retire — skipping embedding rows at or above it (a newer write's); a memory
-    row without a version falls back to read + 1. Every path that flips status
-    through `write_versions_by_ids` mirrors here. Returns the number
-    of embedding rows re-emitted (or, with `dry_run`, the number that would
-    be); a row already carrying the status is left alone. The mirror is read
-    by the FULL identity tuple (org, namespace, agent, user_id, session_id,
-    memory_key): one memory_key can live under hundreds of identities, each
-    with its own status, so a read by key would paint every identity's
-    mirror row with one identity's status. One keyed read per `batch`
-    identities and one insert. Never raises past a logged warning: the
-    memory write already landed, the mirror is a projection. `strict` raises
-    instead, for a caller (the repair) that must not count a failed mirror done.
+    """Re-emit each identity's live vector rows with its memory row's `status` (and
+    `invalid_at`, and `tombstoned_at` for a tombstone), at the memory row's `version`, or
+    at read + 1 without one; a vector at or above that version (a newer write's) and one
+    already mirrored are left alone. Read by the full identity: a key repeats across
+    identities, each with its own status. Returns the rows re-emitted (with `dry_run`,
+    the rows it would). Never raises, unless `strict`.
 
-    `judged` (the resolver's verdict, its memory row at the judged version + 1): only
-    vector rows of the memory row's `content_sha256` are copied, at a version
-    drawn before a sequential read. Every metadata copy of that vector sits at
-    its read + 1, far below, on either side of the mirror; a newer revision's
-    vector has another hash, or was written after the draw and stays newer. A
-    vector a retire hid meanwhile (status not served) is left hidden. The draw
-    also outranks the vector of a same-content write still in flight (an unlocked
-    pin): the caller queues the repair's status mirror for the rows it retired."""
+    `judged` (a verdict reached after the write): only the vectors of the memory row's
+    `content_sha256` are copied, at a version drawn before a sequential read, so a
+    metadata copy stays below it and a newer revision's vector stays above it; a vector
+    a retire hid meanwhile stays hidden."""
     ch = ch or _default_client()
     drawn = next_version() if judged else 0
     wanted: dict[EmbeddingKey, dict[str, Any]] = {}

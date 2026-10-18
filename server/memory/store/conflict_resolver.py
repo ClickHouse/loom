@@ -187,10 +187,8 @@ def _owed(row: Mapping[str, Any]) -> bool:
 async def stamp_judged(
     judged: Mapping[str, Any], *, keep_owed: bool = False, ch: _CHClient | None = None
 ) -> int:
-    """Stamp the vector rows of the judged write (`judged`: a queue row) `JUDGED_MARK`.
-    A newer write's row keeps its own mark, and with `keep_owed` (another row's
-    judgement stamping this one) so does a row still owed its own turn. Nothing under
-    erasure: the row stays owed."""
+    """Stamp the judged write's vector rows `JUDGED_MARK` (`judged`: a queue row); with
+    `keep_owed`, a row still owed its own turn keeps its mark. Nothing under erasure."""
     ch = ch or _default_client()
     if await under_erasure(str(judged["org"]), ch=ch):
         return 0
