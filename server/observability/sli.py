@@ -83,6 +83,11 @@ def status_class(success: bool, error_code: str, error: BaseException | str | No
     A failure whose status is unknown counts against the server."""
     if success:
         return "ok"
+    # A policy denial no enforcing rule made is a write refused because the
+    # policy could not be evaluated (fail closed): the server's failure.
+    decision = getattr(error, "decision", None)
+    if decision is not None and not decision.enforcing_rules:
+        return "server"
     status = getattr(error, "status_code", None) if isinstance(error, BaseException) else None
     if not isinstance(status, int):
         status = _coded_statuses().get(error_code)

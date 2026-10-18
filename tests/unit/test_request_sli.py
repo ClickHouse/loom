@@ -42,6 +42,19 @@ def test_status_class_comes_from_the_raised_status_then_the_code() -> None:
     # No exception: the code decides.
     assert sli.status_class(False, ValidationError.code, None) == "client"
     assert sli.status_class(False, "POLICY_FORBIDDEN", None) == "client"
+    # A rule that denies is the caller's; a policy that could not be evaluated
+    # (fail closed on a write) is the server's.
+    from server.identity.app.policy_gate import PolicyForbiddenError
+    from server.identity.domain.policy_rules import PolicyDecision
+
+    denied = PolicyDecision("deny", ["r"], [], [], enforcing_rules=["r"])
+    unread = PolicyDecision("deny", [], ["history read timed out"], [], enforcing_errors=["x"])
+    assert sli.status_class(False, "POLICY_FORBIDDEN", PolicyForbiddenError("no", denied)) == (
+        "client"
+    )
+    assert sli.status_class(False, "POLICY_FORBIDDEN", PolicyForbiddenError("no", unread)) == (
+        "server"
+    )
     assert sli.status_class(False, "HTTP_401", None) == "client"
     # An exception with no status (a bug, a timeout) is the server's.
     assert sli.status_class(False, "TimeoutError", TimeoutError()) == "server"

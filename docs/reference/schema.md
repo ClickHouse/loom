@@ -1,7 +1,7 @@
 # Schema reference
 
-Loom keeps all of its state in one ClickHouse database, `loom`, and the telemetry it
-derives from that state (the per-minute SLI rollup) in `loom_telemetry`. The shape of
+Loom keeps its state in the ClickHouse database `loom`, and the telemetry it derives
+from that state (the per-minute SLI rollup) in `loom_telemetry`. The shape of
 both is defined by the numbered migrations in `schemas/migrations/`;
 `schemas/schema.sql` is the result of applying all of them, dumped from a live
 server. The table at the end of this page is generated from `schema.sql`.

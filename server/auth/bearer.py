@@ -10,7 +10,8 @@ registry (`/v1/me/*`, `/v1/admin/*`, the task-watch stream) answer a bad
 token the same way: 401 AUTH_INVALID, and 503 AUTH_UNAVAILABLE with
 Retry-After while the revocation list has not loaded yet — a 401 then would
 tell the client to discard a good token. Every refusal here is counted in
-`loom.auth.refusals`, since none of them reaches the request ledger.
+`loom.auth.refusals`: the op ledger has no row for it (a `/v1/me/*` route
+writes its own `me.*` row) and the SLI rollup none at all.
 """
 
 from __future__ import annotations

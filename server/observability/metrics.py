@@ -356,9 +356,10 @@ def _init_worker_instruments(meter: Any) -> None:
 def _init_auth_instruments(meter: Any) -> None:
     """The authentication instruments."""
     global _auth_refusals
-    # A refused bearer never reaches loom.agent_events (the request has no
-    # principal yet), so this counter is the only trace of a 401 storm or of
-    # every caller getting 503 while the revocation list is unloaded.
+    # A refused bearer has no op ledger row (the request has no principal yet;
+    # a /v1/me/* route writes only its own me.* row) and never reaches the SLI
+    # rollup, so this counter is the trace of a 401 storm or of every caller
+    # getting 503 while the revocation list is unloaded.
     _auth_refusals = meter.create_counter(
         name="loom.auth.refusals",
         description="Requests refused before a principal was known, by reason and transport",

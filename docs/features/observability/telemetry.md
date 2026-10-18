@@ -26,12 +26,12 @@ Each request row also carries its service-level columns: `transport` (`http` or 
 for a refused request, `server` for a failure) and `budget_ms`, the latency budget the
 request was held to. A refreshable materialized view folds rows older than 10 seconds
 into `loom_telemetry.sli_minute` once a minute (requests, server and client errors,
-rate-limited requests, which are among the client errors, over-budget successes, latency quantiles, kept 400 days), for SLO
-dashboards and alert rules to read without scanning the ledger. Requests from a
-build without these columns, and calls that name no registered op, are left out. A
-minute can arrive as several rows until they merge, so a reader groups by its keys with
-`sum()` for the counts and `quantilesTDigestMerge(0.5, 0.95, 0.99)(latency)` for the
-latencies.
+rate-limited requests, which are among the client errors, over-budget successes, latency
+quantiles, kept 400 days), for SLO dashboards and alert rules to read without scanning
+the ledger. Requests from a build without these columns, and calls that name no
+registered op, are left out. A minute can arrive as several rows until they merge, so a
+reader groups by its keys with `sum()` for the counts and
+`quantilesTDigestMerge(0.5, 0.95, 0.99)(latency)` for the latencies.
 
 The emitter is batched and never fails a request; a crash can lose the unflushed queue.
 
@@ -98,19 +98,19 @@ retention census every `LOOM_OTEL_RETENTION_CENSUS_S` (3600 s), and code-plane c
 
 ### Requests and cost
 
-| Metric                          | Type      | Meaning                                                                                                                                                                         |
-| ------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom.requests`                 | counter   | operations processed, per operation, namespace and success                                                                                                                      |
-| `loom.request.duration`         | histogram | operation wall time, ms                                                                                                                                                         |
-| `loom.cost.usd`                 | counter   | upstream provider spend attributed to an operation                                                                                                                              |
-| `loom.tokens`                   | counter   | tokens by `kind` (`embed`, `llm_input`, `llm_output`)                                                                                                                           |
-| `loom.ops.paid_errors`          | counter   | failed requests that had already spent upstream                                                                                                                                 |
-| `loom.llm.fallback`             | counter   | LLM calls answered by `LOOM_LLM_FALLBACK_MODEL`                                                                                                                                 |
-| `loom.llm.response_cache`       | counter   | exact-prompt LLM cache lookups by outcome                                                                                                                                       |
-| `loom.memory.build.tokens`      | counter   | LLM tokens spent building memory, by stage and direction                                                                                                                        |
-| `loom.memory.extraction_yield`  | histogram | prompt tokens per memory written, by `messages` range                                                                                                                           |
-| `loom.extract.cost_per_row_usd` | histogram | USD per memory row written by one extraction                                                                                                                                    |
-| `loom.auth.refusals`            | counter   | requests refused before a principal was known, by `reason` (`missing`, `malformed`, `expired`, `revoked`, `invalid`, `unavailable`) and transport; these never reach the ledger |
+| Metric                          | Type      | Meaning                                                                                                                                                                        |
+| ------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `loom.requests`                 | counter   | operations processed, per operation, namespace and success                                                                                                                     |
+| `loom.request.duration`         | histogram | operation wall time, ms                                                                                                                                                        |
+| `loom.cost.usd`                 | counter   | upstream provider spend attributed to an operation                                                                                                                             |
+| `loom.tokens`                   | counter   | tokens by `kind` (`embed`, `llm_input`, `llm_output`)                                                                                                                          |
+| `loom.ops.paid_errors`          | counter   | failed requests that had already spent upstream                                                                                                                                |
+| `loom.llm.fallback`             | counter   | LLM calls answered by `LOOM_LLM_FALLBACK_MODEL`                                                                                                                                |
+| `loom.llm.response_cache`       | counter   | exact-prompt LLM cache lookups by outcome                                                                                                                                      |
+| `loom.memory.build.tokens`      | counter   | LLM tokens spent building memory, by stage and direction                                                                                                                       |
+| `loom.memory.extraction_yield`  | histogram | prompt tokens per memory written, by `messages` range                                                                                                                          |
+| `loom.extract.cost_per_row_usd` | histogram | USD per memory row written by one extraction                                                                                                                                   |
+| `loom.auth.refusals`            | counter   | requests refused before a principal was known, by `reason` (`missing`, `malformed`, `expired`, `revoked`, `invalid`, `unavailable`) and transport; none reaches the SLI rollup |
 
 ### Retrieval quality
 

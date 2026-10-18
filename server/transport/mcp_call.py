@@ -713,6 +713,7 @@ async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
             success=False,
             error_code="POLICY_FORBIDDEN",
             request_id=request_id,
+            error=e,
         )
         return _ok(
             req_id,

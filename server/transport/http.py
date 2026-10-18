@@ -437,6 +437,7 @@ async def _bind_context_and_policy(
             0,
             success=False,
             error_code="POLICY_FORBIDDEN",
+            error=e,
         )
         raise HTTPException(status_code=403, detail=e.to_detail()) from e
     return payload
