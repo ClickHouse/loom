@@ -224,7 +224,7 @@ def token_shadow_check(token: str, source: str, home: Path, env: dict[str, str])
 
 
 def auth_check(
-    base_url: str, token: str, claims: dict[str, Any], post_json: PostJson, agent: bool
+    base_url: str, token: str, claims: dict[str, Any], post_json: PostJson, *, agent: bool
 ) -> tuple[Check, list[dict[str, Any]]]:
     name = "client:auth"
     if not token:
@@ -237,7 +237,7 @@ def auth_check(
         msg = _detail(body)
         if agent:
             fix = _agent_token_fix(base_url)
-            why = "the hooks send LOOM_API_KEY before the workload token"
+            why = "the hooks send LOOM_API_KEY, when set, before the workload token"
         else:
             fix = (
                 "mint a new token (`loom mint-token --save`, Settings → Tokens in the "
@@ -916,7 +916,7 @@ def client_checks(
     checks.extend(token_shadow_check(token, tok_src, home, env))
     checks.extend(hook_override_check(home, env))
     auth, rows = (
-        auth_check(base_url, token, claims, post_json, agent)
+        auth_check(base_url, token, claims, post_json, agent=agent)
         if server[1] != FAIL
         else (
             ("client:auth", WARN, "skipped: the server was not reachable"),
