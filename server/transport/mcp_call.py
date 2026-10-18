@@ -197,7 +197,7 @@ async def _call_tool(
     if not isinstance(arguments, dict):
         return _err(req_id, INVALID_PARAMS, "tools/call 'arguments' must be an object")
 
-    _begin_call()
+    begin_call()
 
     tool = await _resolve_tool(req_id, name, auth, client_name, toolset)
     if isinstance(tool, dict):
@@ -307,7 +307,7 @@ async def _call_tool(
     )
 
 
-def _begin_call() -> None:
+def begin_call() -> None:
     """Reset the request-scoped state a `tools/call` writes to."""
     # Op-scoped cost accumulator so embedder / LLM spend during this call is
     # attributed in agent_events (mirrors HTTP). _emit_mcp_event drains it.

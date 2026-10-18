@@ -1,10 +1,14 @@
-"""MCP transport — tool descriptors + the `loom_search` rendering.
+"""MCP transport — tool descriptors, the `loom_search` rendering and the
+per-call ledger rows.
 
-Leaf module: builds the `tools/list` descriptors (registry-derived +
-synthetic) and renders the `search.query` op's result as the `loom_search`
-tool answers it (a text summary plus the lean sections). Imports from
+Builds the `tools/list` descriptors (registry-derived + synthetic), renders
+the `search.query` op's result as the `loom_search` tool answers it (a text
+summary plus the lean sections), and writes a call's ledger row
+(`_emit_mcp_event`) or a refusal's before dispatch (`emit_refusal`, which
+resets the call's state through ``mcp_call.begin_call``). Imports from
 ``mcp_config`` / ``mcp_schemas`` / ``mcp_identity`` / ``mcp_descriptions``
-and the operations registry — never back into ``server.transport.mcp``.
+and the operations registry at module level, ``mcp_call`` only inside
+`emit_refusal`, and never ``server.transport.mcp``.
 """
 
 from __future__ import annotations
@@ -459,9 +463,9 @@ def emit_refusal(op_name: str, code: str, auth: Any, org: str = "") -> None:
     from server.observability.consumer import bind_current_consumer
     from server.observability.ledger import emit_agent_event
     from server.transport._common import sli_columns
-    from server.transport.mcp_call import _begin_call
+    from server.transport.mcp_call import begin_call
 
-    _begin_call()
+    begin_call()
     bind_current_consumer(None, auth)
     org = org or str(getattr(auth, "org", "") or "")
     if org in ("", "*"):
