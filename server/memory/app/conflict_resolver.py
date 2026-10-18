@@ -484,6 +484,8 @@ async def _settle_locked_pair(
         return None, None  # nothing flagged between them: nothing to clear
     if action == cr.RETIRE:
         # Read under the locks: a valid_at corrected during the call moves the order.
+        # On purpose, though a failed read here leaves the row unstamped, so the next
+        # pass judges (and pays for) it again.
         order = await _assertion_order(org, namespace, [row, head])
         if not order[str(head.memory_id)] < order[str(row.memory_id)]:
             action = cr.FLAG  # the order does not show the judged row is newer: a person decides
