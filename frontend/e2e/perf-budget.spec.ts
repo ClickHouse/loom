@@ -11,9 +11,10 @@ const LCP_BUDGET_MS = 1500;
 // What a page of a hundred rows costs the browser — DOM nodes, and the main-thread time
 // in long tasks after the rows land.
 const ROWS = 100;
-// The node count does not vary between runs, so each budget is the measured count (3,150
-// for Memories, 3,413 for Library) plus a small margin: about two more nodes per row trip
-// it. A Library row's More button is always drawn, since its menu shows without a hover.
+// The node count does not vary between runs, so each budget is the count this spec
+// measured (its `dom_nodes` annotation: 3,150 for Memories, 3,413 for Library) plus a small
+// margin: about two more nodes per row trip it. A Library row's More button is always
+// drawn, since its menu shows without a hover.
 const NODE_BUDGET = { memories: 3400, library: 3600 };
 // Long tasks vary with the runner, so their budget is about four times what the pages cost
 // at 4x CPU.
