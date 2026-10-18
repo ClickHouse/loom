@@ -78,9 +78,7 @@ describe("describeTokenScope", () => {
     );
   });
   it("an agent token for a named namespace reads only that one", () => {
-    expect(describeTokenScope({ kind: "mcp", namespaces: ["me"], roles: ["writer"] })).toBe(
-      "writes me · reads only me",
-    );
+    expect(describeTokenScope({ kind: "mcp", namespaces: ["me"], roles: ["writer"] })).toBe("reads only me");
   });
   it("a wildcard agent token writes anywhere the person can", () => {
     expect(describeTokenScope({ kind: "mcp", namespaces: ["*"], roles: ["writer"] })).toMatch(
@@ -90,7 +88,7 @@ describe("describeTokenScope", () => {
   it("an agent token without `*` reads only its claim", () => {
     expect(
       describeTokenScope({ kind: "mcp", namespaces: ["me", "code-private", "code-private-26-8"], roles: ["writer"] }),
-    ).toBe("writes me · reads only me, code-private, code-private-26-8");
+    ).toBe("reads only me, code-private, code-private-26-8");
   });
   it("a `*` agent token's further claims are restricted namespaces it reads by name", () => {
     expect(describeTokenScope({ kind: "mcp", namespaces: ["me", "*", "code-private"], roles: ["writer"] })).toBe(

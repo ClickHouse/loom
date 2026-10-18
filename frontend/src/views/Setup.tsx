@@ -1093,7 +1093,7 @@ function TokensSection({
           />
           <div className="text-xs text-text-muted" data-testid="minted-token-scope">
             {mcpResult?.namespace === "" ? (
-              <>Has no default namespace: calls from this client must name one</>
+              <>Has no default namespace{mustName(mcpResult)}</>
             ) : (
               <>
                 Writes to <span className="font-mono text-text">{mcpResult?.namespace || mcpScope.home}</span>
@@ -1429,12 +1429,32 @@ function Field({ hint, children }: { hint: string; children: (hintId: string) =>
   );
 }
 
+type MintedScope = {
+  named?: string;
+  namespace?: string;
+  restricted?: string[];
+  claim?: string[];
+  readScope?: "inherited_grants" | "named_namespaces";
+};
+
 /** What a `named_namespaces` agent token reads: its minted claim. A server that does
  *  not send the claim: the namespace it was minted for, then the restricted ones it names. */
-function namedReads(r: { named?: string; namespace?: string; restricted?: string[]; claim?: string[] }): string {
+function namedReadList(r: MintedScope): string[] {
   const home = r.named || r.namespace;
-  const reads = r.claim ?? [...(home ? [home] : []), ...(r.restricted ?? [])];
+  return r.claim ?? [...(home ? [home] : []), ...(r.restricted ?? [])];
+}
+
+function namedReads(r: MintedScope): string {
+  const reads = namedReadList(r);
   return reads.length ? `reads only ${reads.join(", ")}` : "reads no namespace";
+}
+
+/** What a token with no default namespace names on its calls: one of its claim
+ *  (any, for a `*` token); nothing to say when its claim is empty. */
+function mustName(r: MintedScope): string {
+  if (r.readScope !== "named_namespaces") return ": memory and tracker calls must name one";
+  const reads = namedReadList(r);
+  return reads.length ? `: memory and tracker calls must name one of ${reads.join(", ")}` : "";
 }
 
 const ROLE_LABELS: Record<GrantRole, string> = { viewer: "Viewer", writer: "Writer", admin: "Admin" };

@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from server.auth.authz import claim_cap, live_claims, names_namespace
+from server.auth.authz import claim_cap, names_namespace
+from server.auth.context import readable_named_claims
 from server.auth.personal_namespace import derive_personal_slug
 from server.identity.app import caller_defaults
 from server.operations.base import Role, grant_rank
@@ -194,13 +195,11 @@ async def _restricted_off_limits(auth: Any, org: str) -> frozenset[str]:
 
 
 async def readable_claims(auth: Any, org: str) -> list[str]:
-    """The namespaces a token names that the gate lets it read: its claims
-    less `*` and the restricted ones it is refused on."""
+    """The namespaces a token names that the gate lets it read, in claim
+    order (`readable_named_claims`)."""
     if auth is None:
         return []
-    off_limits = await _restricted_off_limits(auth, org)
-    claims = getattr(auth, "namespaces", None) or ()
-    return [ns for ns in claims if ns and ns != "*" and ns not in off_limits]
+    return await readable_named_claims(auth, org)
 
 
 async def claimed_home_default(
@@ -266,29 +265,27 @@ async def default_namespace(auth: Any, org: str) -> str:
     them: its calls must name a namespace."""
     from server.settings import settings
 
-    claimed: list[str] = []
-    if auth is not None:
-        named = [n for n in (getattr(auth, "namespaces", None) or ()) if n and n != "*"]
-        try:
-            claimed = await live_claims(auth, org, named)
-        except Exception:  # noqa: BLE001 — defaults fail open; the gate still decides access
-            claimed = named
+    try:
+        claimed = await readable_claims(auth, org)
+    except Exception:  # noqa: BLE001 — defaults fail open; the gate still decides access
+        claimed = [n for n in (getattr(auth, "namespaces", None) or ()) if n and n != "*"]
     if settings.effective_identity_provider() == "single-user":
         return claimed[0] if claimed else settings.default_namespace
     home = home_subject(auth) or "you"
     try:
         return await _multi_user_default(auth, org, claimed, home)
     except Exception:  # noqa: BLE001 — default namespace falls back to claim or personal slug
-        return _reachable(auth, org, claimed[0] if claimed else derive_personal_slug(home))
+        return _reachable(auth, claimed, claimed[0] if claimed else derive_personal_slug(home))
 
 
-def _reachable(auth: Any, org: str, namespace: str) -> str:
-    """`namespace`, or "" when a delegated token cannot reach it: such a token
-    reads only its claim, so a default outside it would only be refused.
-    With no default, a call must name its namespace."""
-    if getattr(auth, "creator", "") and not auth.can_access(org, namespace):
-        return ""
-    return namespace
+def _reachable(auth: Any, claimed: list[str], namespace: str) -> str:
+    """`namespace`, or "" when a delegated token that names its namespaces
+    cannot read it: such a token reads only the claims its creator still
+    holds (`claimed`), so a default outside them would only be refused. With
+    no default, a call must name its namespace."""
+    if not getattr(auth, "creator", "") or "*" in auth.namespaces:
+        return namespace
+    return namespace if namespace in claimed else ""
 
 
 async def _multi_user_default(auth: Any, org: str, claimed: list[str], home: str) -> str:
@@ -302,7 +299,6 @@ async def _multi_user_default(auth: Any, org: str, claimed: list[str], home: str
         subs += await subject_aliases(org, home, ch=ch)
     kinds = await _kinds_or_empty(org)  # only a memory plane is a home
     off_limits = await _restricted_off_limits(auth, org)
-    claimed = [n for n in claimed if n not in off_limits]  # refused even when named
     saved = await caller_defaults.saved_default(org, home, ch=ch)
     namespace = await _saved_pick(auth, org, saved, subs, kinds, claimed, off_limits, ch)
     if not namespace and auth is not None:
@@ -318,7 +314,7 @@ async def _multi_user_default(auth: Any, org: str, claimed: list[str], home: str
     namespace = namespace or (claimed[0] if claimed else derive_personal_slug(home))
     if not is_memory_home(kinds, namespace):  # never a shared plane by default
         namespace = derive_personal_slug(home)
-    return _reachable(auth, org, namespace)
+    return _reachable(auth, claimed, namespace)
 
 
 async def _saved_pick(

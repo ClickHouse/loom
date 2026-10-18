@@ -153,9 +153,10 @@ def no_default_namespace_line(defaults: dict[str, Any]) -> str:
     if not readable:
         return "This token has no default namespace and can read no namespace."
     names = ", ".join(f"`{ns}`" for ns in readable)
+    searched = f"them, starting with `{readable[0]}`" if len(readable) > 1 else f"`{readable[0]}`"
     return (
         f"This token has no default namespace: name one of {names} on each memory "
-        f"or tracker call; `loom_search` searches `{readable[0]}`."
+        f"or tracker call; `loom_search` searches {searched}."
     )
 
 

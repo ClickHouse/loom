@@ -455,3 +455,73 @@ def test_a_creator_without_grants_is_refused_in_the_unprovisioned_default(
     body = mcp_call._forbidden_result(op, refused.value, token, "clickhouse", ns)
     assert body["structuredContent"]["code"] == "AUTH_INSUFFICIENT"
     assert ns in body["structuredContent"]["error"]
+
+
+def _revoke_subject_grant(monkeypatch: pytest.MonkeyPatch, namespace: str) -> None:
+    """The token's own subject held a grant on `namespace`, now revoked: its
+    claim there is capped at nothing (`authz.claim_cap` 0)."""
+    import server.core.grant_cache as grant_cache
+
+    async def _grant_map(org: str, subject: str) -> Any:
+        return grant_cache.GrantMap(ranks={namespace: 0})
+
+    monkeypatch.setattr(grant_cache, "grant_map", _grant_map)
+
+
+def test_a_revoked_first_claim_is_neither_named_nor_the_default(
+    _wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _revoke_subject_grant(monkeypatch, "agent-box-claude-code")
+    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse", "alice"]))
+    token = _token(("agent-box-claude-code", "alice"))
+    assert _defaults(token)["namespace"] == "alice"
+    assert asyncio.run(home.readable_claims(token, "clickhouse")) == ["alice"]
+
+
+def test_a_claim_the_creator_no_longer_holds_is_not_named(_wired) -> None:
+    # alice left the team behind `gone-team`; the token still claims it first.
+    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    token = _token(("gone-team", "qa-clickhouse"))
+    assert asyncio.run(home.readable_claims(token, "clickhouse")) == ["qa-clickhouse"]
+    text = _initialize_text(token, "coding")
+    assert "name one of `qa-clickhouse` on" in text
+    assert "`gone-team`" not in text
+
+
+def test_a_creator_who_lost_every_claimed_grant_has_no_default(_wired) -> None:
+    _wired(_SetupTokenCH(saved=None, grants=["alice"]))
+    token = _token(("agent-box-claude-code", "qa-clickhouse"))
+    assert _defaults(token)["namespace"] == ""
+    assert "can read no namespace" in _initialize_text(token, "coding")
+
+
+def test_the_agent_box_claim_is_no_default_once_its_creator_lost_it(_wired) -> None:
+    _wired(_SetupTokenCH(saved=None, grants=["qa-clickhouse"]))
+    token = _token(("agent-box-claude-code", "qa-clickhouse"))
+    assert _defaults(token)["namespace"] == ""
+    text = _initialize_text(token, "coding")
+    assert "name one of `qa-clickhouse` on" in text
+    assert "`agent-box-claude-code`" not in text
+
+
+def test_loom_search_over_several_claims_says_where_it_starts() -> None:
+    line = mi.no_default_namespace_line({"readable": ["qa-clickhouse", "qa-example-private"]})
+    assert "`loom_search` searches them, starting with `qa-clickhouse`" in line
+    one = mi.no_default_namespace_line({"readable": ["qa-clickhouse"]})
+    assert "`loom_search` searches `qa-clickhouse`." in one
+
+
+@pytest.mark.parametrize("named", ["", "-", " "])
+def test_a_blank_or_dash_namespace_gets_the_default(
+    _wired, monkeypatch: pytest.MonkeyPatch, named: str
+) -> None:
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp_call
+
+    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    token = _token(("agent-box-claude-code", "qa-clickhouse"))
+    for op_name in ("memory.set", mcp_call.SEARCH_OP):
+        args: dict[str, Any] = {"memory_key": "a/b/c", "value": "v", "namespace": named}
+        op = OPERATIONS_BY_NAME[op_name]
+        asyncio.run(mcp_call._bind_caller_identity(op, args, token, "claude-code"))
+        assert args["namespace"] == "agent-box-claude-code", op_name

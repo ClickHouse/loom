@@ -167,17 +167,36 @@ async def _delegated_namespaces(auth: AuthInfo, org: str) -> list[str]:
     return [ns for ns in auth.namespaces if ns in granted]
 
 
-async def _without_unreadable_restricted(org: str, namespaces: list[str]) -> list[str]:
+async def readable_named_claims(auth: AuthInfo, org: str) -> list[str]:
+    """The namespaces `auth` names (no `*`), in claim order, that the gate
+    lets it read: its live claims, for a delegated token only those its
+    creator still holds, less the restricted ones it fails the two-factor
+    check on. The MCP transport names these and picks a default from them."""
+    from server.auth.authz import live_claims, may_act_in_org
+
+    if not may_act_in_org(auth, org):
+        return []
+    named = await live_claims(auth, org, auth.namespaces)
+    if auth.creator:
+        held = set(await _delegated_namespaces(auth, org))
+        named = [ns for ns in named if ns in held]
+    return await _without_unreadable_restricted(org, named, auth)
+
+
+async def _without_unreadable_restricted(
+    org: str, namespaces: list[str], auth: AuthInfo | None = None
+) -> list[str]:
     """A restricted namespace stays in a caller's list only
     when the caller passes the two-factor read check for it. Membership,
     grants, inheritance and wildcards put it in the list; this takes it out
-    again. Order is preserved. With auth disabled nothing is removed."""
+    again. Order is preserved. `auth` defaults to the request's caller; with
+    auth disabled nothing is removed."""
     if not namespaces:
         return namespaces
     from server.auth.authz import restricted_allows
     from server.operations.base import Role
 
-    auth = current_auth()
+    auth = auth or current_auth()
     if auth is None:
         return namespaces
     try:
@@ -278,6 +297,7 @@ __all__ = [
     "OrgScopeFilter",
     "current_auth",
     "current_auth_var",
+    "readable_named_claims",
     "resolve_my_namespaces",
     "resolve_org_scope",
     "restricted_namespaces_hidden_from",

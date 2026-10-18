@@ -122,8 +122,24 @@ describe("Setup's MCP home namespace", () => {
     await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
     await mintedNamespace();
     const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
-    expect(scope).toHaveTextContent(/calls from this client must name one/);
+    expect(scope).toHaveTextContent(/memory and tracker calls must name one;/);
     expect(scope).not.toHaveTextContent(/Writes to/);
+  });
+
+  it("names the claim a token with no default namespace must name one of", async () => {
+    const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
+    vi.mocked(generateMcpConfig).mockClear();
+    vi.mocked(generateMcpConfig).mockResolvedValueOnce({
+      ...minted,
+      namespace: "",
+      read_scope: "named_namespaces",
+      namespaces: ["qa-a", "qa-b"],
+    });
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
+    expect(scope).toHaveTextContent(/memory and tracker calls must name one of qa-a, qa-b;/);
   });
 
   it("says a token minted for a named namespace reads only that one", async () => {
@@ -170,7 +186,7 @@ describe("Setup's MCP home namespace", () => {
     await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
     await mintedNamespace();
     const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
-    expect(scope).toHaveTextContent(/reads no namespace\.$/);
+    expect(scope).toHaveTextContent(/^Has no default namespace; reads no namespace\.$/);
     expect(scope).not.toHaveTextContent(/reads only/);
   });
 

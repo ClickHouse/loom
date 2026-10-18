@@ -91,11 +91,12 @@ export function describeTokenScope(t: Pick<ServiceAccountEntry, "kind" | "namesp
     // holds a grant (the server's `inherited_grants`), and its further claims are
     // restricted namespaces the token reads by name. Without `*` the token reads only
     // its claim (`named_namespaces`), which may be a `*` narrowed to the person's own
-    // namespaces, so the row cannot say which of them are restricted.
+    // namespaces, so the row cannot say which of them are restricted, nor which one
+    // its writes default to (the server decides), so it names none.
     if (ns.length === 0) return "reads no namespace";
+    if (!ns.includes("*")) return `reads only ${ns.join(", ")}`;
     const home = ns[0] !== "*" ? ns[0] : null;
     const writes = home ? `writes ${home}` : "writes any namespace you can write";
-    if (!ns.includes("*")) return `${writes} · reads only ${ns.join(", ")}`;
     const extras = ns.slice(1).filter((n) => n !== "*");
     const restricted = extras.length ? ` · plus restricted: ${extras.join(", ")}` : "";
     return `${writes} · reads every namespace and repository you belong to${restricted}`;
