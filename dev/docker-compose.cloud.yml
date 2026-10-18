@@ -151,4 +151,3 @@ services:
       timeout: 5s
       retries: 6
       start_period: 900s
-
