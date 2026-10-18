@@ -181,8 +181,7 @@ def test_a_refused_bearer_is_counted_once_on_each_transport(monkeypatch) -> None
     ]
 
     # A token that cannot be checked yet is a 503, counted once, also on the
-    # auth-off service-account routes.
-    from server.auth import revocation
+    # auth-off service-account and setup-token routes.
     from server.identity.app.me_service_accounts import dev_bearer
 
     counter.calls.clear()

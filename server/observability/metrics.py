@@ -363,8 +363,8 @@ def _init_auth_instruments(meter: Any) -> None:
     _auth_refusals = meter.create_counter(
         name="loom.auth.refusals",
         description=(
-            "Requests refused for their bearer token (none, or one that failed"
-            " verification), by reason and transport"
+            "Requests refused for their bearer token (none, one that failed"
+            " verification, or one that could not be checked yet), by reason and transport"
         ),
         unit="1",
     )
