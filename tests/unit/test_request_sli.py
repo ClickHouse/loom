@@ -491,3 +491,67 @@ def test_health_problems_need_no_clickhouse(monkeypatch) -> None:
     points = meter.callbacks["loom.health.problems"](None)
     # A test process runs on fake providers, so there is always a problem.
     assert {p.attributes["code"] for p in points} >= {"fake_embedder", "fake_llm"}
+
+
+def test_a_flood_of_unauthenticated_calls_writes_no_ledger_row(monkeypatch) -> None:
+    """A 401 is counted on one closed label set and never reaches the ledger
+    queue, so a flood of them adds no rows."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.observability import metrics
+    from server.transport import http
+
+    counter = _Counter()
+    rows: list[Any] = []
+    monkeypatch.setattr(metrics, "_auth_refusals", counter)
+    monkeypatch.setattr(http, "emit_agent_event", lambda *a, **k: rows.append(k))
+    monkeypatch.setattr(type(http.settings), "auth_actually_required", lambda self: True)
+    app = FastAPI()
+    app.include_router(http.build_router())
+    client = TestClient(app)
+    for i in range(200):
+        headers = {"Authorization": f"Bearer junk-{i}"} if i % 2 else {}
+        assert client.post("/v1/memory.get", json={"key": "k"}, headers=headers).status_code == 401
+    assert rows == []
+    assert len(counter.calls) == 200
+    assert {c["reason"] for c in counter.calls} <= {"missing", "invalid", "malformed"}
+    assert {c["loom.transport"] for c in counter.calls} == {"http"}
+
+
+def test_otlp_metrics_reach_a_collector() -> None:
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+
+    from server.observability.otel import _make_metric_exporter
+
+    received: list[tuple[str, bytes]] = []
+
+    class Collector(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            received.append((self.path, body))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Collector)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        exporter = _make_metric_exporter("otlp", f"http://127.0.0.1:{server.server_port}/")
+        reader = PeriodicExportingMetricReader(exporter, export_interval_millis=3_600_000)
+        provider = MeterProvider(metric_readers=[reader])
+        provider.get_meter("test").create_counter("loom.auth.refusals").add(
+            1, {"reason": "missing"}
+        )
+        provider.force_flush()
+        provider.shutdown()
+    finally:
+        server.shutdown()
+    assert received and received[0][0] == "/v1/metrics"
+    assert b"loom.auth.refusals" in received[0][1]
