@@ -91,23 +91,25 @@ def test_a_deactivation_on_one_replica_ends_tokens_on_the_other(replicas) -> Non
     assert created.status_code == 201, created.text
     uid = created.json()["id"]
     assert _set_active(a, uid, False)["active"] is False
-    # The replica that served the request refuses at once; the other within a refresh.
+    # The replica that served the request refuses at once.
     assert not _authenticated(a, session) and not _authenticated(a, bot)
-    window = _seconds_until(
-        lambda: not _authenticated(b, session) and not _authenticated(b, bot), 3 * _REFRESH_S
-    )
-    assert window <= _REFRESH_S + 1.5, window
-    # B mints nothing for them either: its mint checks read ClickHouse.
-    child = httpx.post(
+    # B, before its refresh, may still take the session and mint with it: what
+    # it mints names the person in its chain, so it dies with the rest.
+    late = httpx.post(
         f"{b}/v1/me/service_accounts.create",
-        headers=_bearer(bot),
+        headers=_bearer(session),
         json={"name": "late-bot", "namespaces": [ns], "role": "viewer"},
     )
-    assert child.status_code in (401, 403), child.text
+    minted = [late.json()["token"]] if late.status_code == 200 else []
+    assert not any(_authenticated(a, t) for t in minted)
+    window = _seconds_until(
+        lambda: not any(_authenticated(b, t) for t in [session, bot, *minted]), 3 * _REFRESH_S
+    )
+    assert window <= _REFRESH_S + 1.5, window
 
     assert _set_active(a, uid, True)["active"] is True
     again = _token(_sign_in(a))
     assert _authenticated(a, again)
     # B may hold the deactivation until its next refresh: it fails closed, then lets them in.
     _seconds_until(lambda: _authenticated(b, again), 3 * _REFRESH_S)
-    assert not _authenticated(b, session) and not _authenticated(b, bot)  # still dead
+    assert not any(_authenticated(b, t) for t in [session, bot, *minted])  # still dead

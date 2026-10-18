@@ -63,6 +63,7 @@ def test_the_served_filters_are_parsed(text: str, parsed: tuple[str, str]) -> No
         'userName co "lee"',
         'externalId eq "lee"',
         'emails[type eq "work"].display eq "lee"',
+        'emails[type eq "home"].value eq "lee@example.com"',  # Loom keeps no home entry
         'userName eq "a" or userName eq "b"',
         "userName eq lee@example.com",
         'userName eq "bad \\x"',
@@ -1976,7 +1977,11 @@ async def test_a_push_without_active_finishes_a_failed_reactivation(world) -> No
     world.table.fail_revoke = False
     assert world.ours == {"lee": None}
     await scim.update(uid, user_name="lee.renamed@example.com")
-    assert not await world.keeps_out("lee", issued_at=_issued(60)) and world.waits == []
+    assert not await world.keeps_out("lee", issued_at=_issued(60))
+    # It lifted, so it answers once every replica is past the cutoff, as a reactivation does.
+    assert len(world.waits) == 1 and world.waits[0] > 0
+    await scim.update(uid, user_name="lee.again@example.com")  # lifts nothing: no wait
+    assert len(world.waits) == 1
 
 
 async def test_a_sign_in_once_the_row_says_active_lives_after_the_lift(world, monkeypatch) -> None:
@@ -2026,6 +2031,11 @@ def test_groups_is_an_empty_list(client: TestClient) -> None:
 def test_a_start_index_past_any_offset_is_an_empty_page(client: TestClient, world) -> None:
     r = client.get("/scim/v2/Users", params={"startIndex": str(2**40), "count": "10"})
     assert r.status_code == 200 and r.json()["Resources"] == []
+
+
+def test_a_method_not_served_names_the_ones_that_are(client: TestClient) -> None:
+    r = client.post("/scim/v2/Users/x")
+    assert r.status_code == 405 and r.headers["allow"] == "DELETE, GET, PATCH, PUT"
 
 
 def test_unknown_paths_and_methods_answer_scim_errors(client: TestClient) -> None:

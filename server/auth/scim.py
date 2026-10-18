@@ -331,13 +331,12 @@ async def _wait_out(cutoff: datetime | None) -> None:
 async def _set_active(
     row: dict[str, Any], active: bool | None, **changes: Any
 ) -> tuple[dict[str, Any], datetime | None]:
-    """The row as written, and a reactivation's cutoff for the caller to wait
-    out once it lets its leases go. `active` None keeps the user as they are:
-    an active one converges (and waits on none), an inactive one repeats its
-    deactivation."""
+    """The row as written, and the cutoff of what it lifted for the caller to
+    wait out once it lets its leases go (one long past costs nothing). `active`
+    None keeps the user as they are: an active one converges, an inactive one
+    repeats its deactivation."""
     if active or (active is None and row["active"]):
-        new, cutoff = await _converge_active(row, **changes)
-        return new, cutoff if active else None
+        return await _converge_active(row, bool(active), **changes)
     return await _deactivate(row, **changes), None
 
 
@@ -374,18 +373,18 @@ async def _deactivate(row: dict[str, Any], **changes: Any) -> dict[str, Any]:
 
 
 async def _converge_active(
-    row: dict[str, Any], **changes: Any
+    row: dict[str, Any], reactivating: bool, **changes: Any
 ) -> tuple[dict[str, Any], datetime | None]:
     """The only way a user ends active: write the row, then lift what SCIM still
     revokes outright of every subject the email reaches, whatever a failed
-    request left. The cutoff is the newest SCIM narrowed them to, for the
-    caller to wait out (a retry waits out the rest)."""
+    request left. The cutoff is for the caller to wait out: what this call
+    lifted, and for a reactivation (or its retry) the newest SCIM narrowed to."""
     new = {**row, **changes, "active": 1}
     subjects = sorted(set(row["subjects"]) | set(await _subjects(row["email"])))
     rows = await revocation.scim_revocations(subjects)
     if not _outright(rows):  # nothing to lift, as on most pushes: no subject lease
         await _write_audited(row, new)
-        return new, _newest_cutoff(rows)
+        return new, _newest_cutoff(rows) if reactivating else None
     async with subject_leases(subjects):
         # Taken before the row: a token a sign-in gets once the row says active
         # is past it from the next second on. No skew ahead: sign-in is refused
@@ -394,9 +393,9 @@ async def _converge_active(
         # The row first: a lift that fails leaves the user active and still
         # revoked, never inactive with a subject let go. A retry lifts the rest.
         await _write_audited(row, new)
-        cutoff = await _lift(row, subjects, lift_to)
+        lifted = await _lift(row, subjects, lift_to)
     await revocation.refresh()
-    return new, cutoff
+    return new, lift_to if lifted else _newest_cutoff(rows) if reactivating else None
 
 
 async def _write_audited(row: dict[str, Any], new: dict[str, Any]) -> None:
@@ -488,11 +487,10 @@ async def _orgs_beyond(subject: str, orgs: set[str]) -> list[str]:
     return [r["org"] for r in rows]
 
 
-async def _lift(row: dict[str, Any], subjects: list[str], cutoff: datetime) -> datetime | None:
+async def _lift(row: dict[str, Any], subjects: list[str], cutoff: datetime) -> bool:
     """Narrow SCIM's outright revocations of `subjects` to the tokens issued
-    before `cutoff`; the newest cutoff of its narrowed ones, also when a try
-    this one retries narrowed them. A subject another deactivated (or deleted)
-    user also reaches stays revoked: lifting it would let that one back in."""
+    before `cutoff`; whether it narrowed any. A subject another deactivated (or
+    deleted) user also reaches stays revoked: lifting it would let that one back in."""
     rows = await revocation.scim_revocations(subjects)  # again, under the leases
     lifted = False
     for subject in sorted(_outright(rows)):
@@ -508,12 +506,12 @@ async def _lift(row: dict[str, Any], subjects: list[str], cutoff: datetime) -> d
             subject, issued_before=cutoff, reason=REACTIVATED, revoked_by=_BY, reread=False
         )
         lifted = True
-    return cutoff if lifted else _newest_cutoff(rows)
+    return lifted
 
 
 def _outright(rows: dict[str, dict[str, Any]]) -> set[str]:
-    """The subjects SCIM revokes outright: an operator's `--scim` row is not its own."""
-    return {s for s, r in rows.items() if r["issued_before"] is None and r["revoked_by"] == _BY}
+    """The subjects SCIM revokes outright (an operator's `--scim` row always narrows)."""
+    return {s for s, r in rows.items() if r["issued_before"] is None}
 
 
 def _newest_cutoff(rows: dict[str, dict[str, Any]]) -> datetime | None:

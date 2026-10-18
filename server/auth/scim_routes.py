@@ -45,9 +45,12 @@ log = logging.getLogger(__name__)
 class ScimError(Exception):
     """An RFC 7644 §3.12 error response."""
 
-    def __init__(self, status: int, detail: str, scim_type: str = "") -> None:
+    def __init__(
+        self, status: int, detail: str, scim_type: str = "", headers: dict[str, str] | None = None
+    ) -> None:
         super().__init__(detail)
         self.status, self.detail, self.scim_type = status, detail, scim_type
+        self.headers = headers or {}
 
 
 async def _authorized(request: Request) -> None:
@@ -69,7 +72,7 @@ def _error_response(e: ScimError) -> JSONResponse:
     if e.scim_type:
         body["scimType"] = e.scim_type
     body["detail"] = e.detail
-    headers = {"WWW-Authenticate": "Bearer"} if e.status == 401 else {}
+    headers = {**e.headers, **({"WWW-Authenticate": "Bearer"} if e.status == 401 else {})}
     if e.status == 503:
         headers["Retry-After"] = "5"
     return _answer(body, e.status, **headers)
@@ -111,7 +114,7 @@ router = APIRouter(prefix="/scim/v2", dependencies=[Depends(_authorized)], route
 # The filters served: `userName eq "x"`, and on the email, what Entra sends when
 # it matches users on `mail`: `emails[type eq "work"].value eq "x"` or `emails.value eq "x"`.
 _FILTER = re.compile(
-    r'\s*(userName|emails(?:\[\s*type\s+eq\s+"[^"]*"\s*\])?\.value)\s+eq\s+"((?:[^"\\]|\\.)*)"\s*',
+    r'\s*(userName|emails(?:\[\s*type\s+eq\s+"work"\s*\])?\.value)\s+eq\s+"((?:[^"\\]|\\.)*)"\s*',
     re.IGNORECASE,
 )
 
@@ -545,12 +548,18 @@ async def delete_user(uid: str) -> Response:
 )
 async def unknown(rest: str, request: Request) -> Response:
     path = request.url.path
-    known = any(
-        isinstance(r, APIRoute) and r.endpoint is not unknown and r.path_regex.match(path)
-        for r in router.routes
+    allowed = sorted(
+        {
+            method
+            for r in router.routes
+            if isinstance(r, APIRoute) and r.endpoint is not unknown and r.path_regex.match(path)
+            for method in r.methods
+        }
     )
-    if known:
-        raise ScimError(405, f"{request.method} is not served here")
+    if allowed:
+        raise ScimError(
+            405, f"{request.method} is not served here", headers={"Allow": ", ".join(allowed)}
+        )
     raise ScimError(
         404, "this server serves only Users, an empty Groups list and ServiceProviderConfig"
     )

@@ -409,11 +409,11 @@ def _nobody_deactivated_over_scim() -> Iterator[None]:
     no such table. test_scim.py drives the real read. No `monkeypatch`, as above."""
     from server.auth import scim
 
-    async def active(email: str) -> bool:
+    async def not_deactivated(email: str) -> bool:
         return False
 
     before = scim.deactivated
-    scim.deactivated = active  # type: ignore[assignment]
+    scim.deactivated = not_deactivated  # type: ignore[assignment]
     yield
     scim.deactivated = before
 
