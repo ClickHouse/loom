@@ -517,7 +517,7 @@ async def run_one(
                 token,
             )
             turns = list(rr.get("turns") or [])
-        except Exception as e:  # noqa: BLE001 — the op may be absent on an older server
+        except Exception as e:  # noqa: BLE001 — one arm's failure must not end the run
             out["search_recall_error"] = str(e)[:120]
         lines = _mem_lines(hs) + [
             f"- [{str(t.get('observed_at') or '')[:10]}] (said) {t.get('content', '')}"

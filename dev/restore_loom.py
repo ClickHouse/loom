@@ -125,6 +125,8 @@ def load_manifest(in_dir: Path) -> dict[str, Any]:
             f"backup_version {version!r} is not {BACKUP_VERSION}; take a new backup with "
             "dev/backup_loom.py"
         )
+    if "views" not in manifest:
+        raise Refused(f"{path} lists no views; the backup is incomplete")
     return manifest
 
 
@@ -139,8 +141,8 @@ def select_tables(
     exclude: str | None = None,
 ) -> list[dict[str, Any]]:
     """The manifest entries to restore, in manifest order with `FIRST_TABLES`
-    first (a backup older than that order lists them alphabetically). Refuses
-    a selected table that failed at backup time or is not in the manifest."""
+    first. Refuses a selected table that failed at backup time or is not in
+    the manifest."""
     entries = [e for e in manifest["tables"] if "skipped" not in e]
     for arg, keep in ((tables, True), (exclude, False)):
         named = _names(arg)
@@ -160,24 +162,6 @@ def select_tables(
         )
     by_name = {e["name"]: e for e in entries}
     return [by_name[t] for t in in_load_order(list(by_name))]
-
-
-def view_edges(client: Any, manifest: dict[str, Any]) -> list[dict[str, str]]:
-    """The backup's [{view, source, target}]. A manifest from before they were
-    recorded reads them from its source database, when the target server has
-    it; else there are none to check."""
-    if "views" in manifest:
-        return list(manifest["views"])
-    from dev.backup_loom import view_edges as read_edges
-
-    db = str(manifest.get("source_database") or "")
-    if not _IDENT.match(db):
-        return []
-    try:
-        return read_edges(client, db)
-    except Exception as e:  # noqa: BLE001 — an unreadable view list skips the check, said aloud
-        print(f"! could not read the views of {db} ({e}); the view-split check is skipped")
-        return []
 
 
 # Tables no view joins that are restored together all the same: (table, partner, why).
@@ -595,10 +579,9 @@ def execute(
         try:
             ddl, ddl_settings = staging_ddl(client, database, p.name, staging)
             client.command(ddl, settings=ddl_settings or None)
-            # A merge in staging would collapse rows before the attach; the
-            # rows are the same to a FINAL read, but the restored count would
-            # no longer match the manifest's. Needs the SYSTEM STOP MERGES
-            # grant; without it the restore runs as before.
+            # A merge in staging would collapse rows before the attach, so the
+            # restored count would not match the manifest's (a FINAL read sees
+            # the same rows). Best effort: it needs the SYSTEM STOP MERGES grant.
             with contextlib.suppress(Exception):
                 client.command(f"SYSTEM STOP MERGES {staging}")
             with p.path.open("rb") as f:
@@ -698,7 +681,7 @@ def main(argv: list[str] | None = None) -> int:
         print_plan(target.describe(), target.database, plans, state)
         try:
             if not args.allow_view_split:
-                check_view_split(plans, view_edges(client, manifest))
+                check_view_split(plans, manifest["views"])
             check_refusals(
                 target.database,
                 live_databases(),

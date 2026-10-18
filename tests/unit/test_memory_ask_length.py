@@ -1,5 +1,5 @@
 """memory.ask answer-budget: max_answer_chars scales max_tokens, adds a concise
-instruction, and hard-truncates the answer. 0 = unbounded (legacy)."""
+instruction, and hard-truncates the answer. 0 = unbounded."""
 
 from __future__ import annotations
 
@@ -37,8 +37,8 @@ def test_bounded_truncates_and_scales() -> None:
     assert "200 characters" in llm.system
 
 
-def test_unbounded_is_legacy() -> None:
+def test_zero_leaves_the_answer_unbounded() -> None:
     llm = _FakeLLM()
     out = asyncio.run(_synthesize(llm, "q", [_Mem()], max_answer_chars=0))
     assert len(out) == 5000  # hard cap 6000, answer 5000 -> untouched
-    assert llm.max_tokens == 600  # default window (15) -> legacy budget
+    assert llm.max_tokens == 600  # default window (15) -> the default budget

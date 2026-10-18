@@ -25,7 +25,7 @@ from server.cli.maintenance import (
     _add_reextract_parser,
 )
 from server.cli.ops import (
-    _add_recalibrate_and_chunks_parsers,
+    _add_recalibrate_parser,
     _add_sensitivity_sweep_parser,
     _cmd_integrity_repair,
     _cmd_lexical_stats_rebuild,
@@ -138,9 +138,9 @@ _SPLIT_PARSERS: tuple[Any, ...] = (
 )
 
 
-def _add_code_okf_up_parsers(sub: Any) -> None:
-    """The `code`, `okf`, `up`, `participant`, `deployment`, `signing-key`,
-    `blobs` and `provider-lock` subcommands, registered by their own modules."""
+def _add_module_parsers(sub: Any) -> None:
+    """Subcommands registered by their own modules: code, okf, up, ch-setup,
+    participant, deployment, secrets, signing-key and provider-lock."""
     from server.cli.code import register_code_cli
 
     register_code_cli(sub)
@@ -169,9 +169,9 @@ def _add_code_okf_up_parsers(sub: Any) -> None:
 
     register_secrets_cli(sub)
 
-    from server.cli.portability import register_portability_cli
+    from server.cli.signing_keys import register_signing_key_cli
 
-    register_portability_cli(sub)
+    register_signing_key_cli(sub)
 
     from server.cli.provider_lock import register_provider_lock_cli
 
@@ -296,13 +296,13 @@ def _add_sso_parsers(sub: Any) -> None:
 # Every subcommand `main` registers, in `loom --help` order (the order the
 # parsers are added is the order argparse lists them).
 _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
-    _add_code_okf_up_parsers,
+    _add_module_parsers,
     _add_reembed_parser,
     *_SPLIT_PARSERS,
     _add_serve_and_migrate_parsers,
     _add_memory_repair_parsers,
     _add_activity_trivia_parser,
-    _add_recalibrate_and_chunks_parsers,
+    _add_recalibrate_parser,
     _add_clickgap_import_parser,
     _add_recall_import_parser,
     _add_brain_import_parser,

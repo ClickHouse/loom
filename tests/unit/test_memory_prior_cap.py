@@ -7,7 +7,7 @@ from __future__ import annotations
 from server.memory.app.retrieval.fact_rank import _prior_group_expr
 
 
-def test_uncapped_is_legacy_additive_group() -> None:
+def test_a_zero_cap_keeps_the_additive_group() -> None:
     expr, capped = _prior_group_expr("0.3 * frac", "0.3", 0.0)
     assert not capped
     assert "least(" not in expr

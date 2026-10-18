@@ -25,8 +25,8 @@ async def test_participant_ack_is_full_row_and_expiry_is_on_the_server_clock():
     await ch.connect()
     identity, transition = uuid4(), uuid4()
     try:
-        await record_participant(identity, transition, "running", stale_after_s=60, ch=ch)
-        await record_participant(identity, transition, "drained", stale_after_s=60, ch=ch)
+        await record_participant(identity, transition, "running", ch=ch)
+        await record_participant(identity, transition, "drained", ch=ch)
         rows = [r for r in await participants(ch=ch) if str(r["participant_id"]) == str(identity)]
         assert len(rows) == 1
         assert rows[0]["state"] == "drained" and not rows[0]["expired"]

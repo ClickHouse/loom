@@ -324,10 +324,10 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   (`clone3` answers `ENOSYS`, so the C library falls back to `clone`);
 - only system directories, the toolchains and the job's own paths are mounted. A
   toolchain is mounted only where it exposes none of Loom's data: never a directory
-  that is or holds `var/`, the mirrors and checkouts, `LOOM_BLOB_DIR`, the env file, the
+  that is or holds `var/`, the mirrors and checkouts, the env file, the
   install root or `HOME`, nor one inside `var/` or under `HOME` (the default
   `var/bin/scip-clang` is mounted as that one file). Where one of those paths lies
-  inside any other mounted directory (`LOOM_BLOB_DIR` inside the server's Python
+  inside any other mounted directory (a mirror inside the server's Python
   prefix, `var/` under a system path), an empty mount covers it inside the sandbox.
   The install root is the exception, since the server's Python may run from it. A host
   whose Python prefix or a system path is, or sits inside, one of Loom's data paths
@@ -472,8 +472,7 @@ under it is known only once a host has loaded it. CI is where that first happens
 Ubuntu 24.04 with `kernel.apparmor_restrict_unprivileged_userns=1` left on and runs the
 probe and the hostile suite in the production image with the colours' options. On a
 deploy host, check it in a throwaway container from the build about to be deployed, not
-the serving one: an image from before the `--disable-userns` fallback prints `False`
-under this profile (`True` means the sandbox runs):
+the serving one (`True` means the sandbox runs):
 
 ```bash
 docker build -q -t loom:sandbox-check .

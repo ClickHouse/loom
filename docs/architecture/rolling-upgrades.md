@@ -20,8 +20,6 @@ schema. These rules keep that safe. The operator procedure is in
    key (`server/core/rmt_carry.py`), so N-1's touch, revision or tombstone keeps the
    values N wrote to N's new columns. This costs a cached lookup while every build agrees
    with the schema, and one extra keyed read per insert while a newer column exists.
-   Builds before this one reset such columns, so N may write a new column, but nothing
-   correct may depend on it until N-1 carries it.
    - Each process checks `loom._migrations` and the carried tables' metadata time
      every 2 s in the background and then re-reads the column lists.
    - A write that took the lists before the `ALTER` would still drop the column. So
@@ -92,27 +90,19 @@ schema. These rules keep that safe. The operator procedure is in
    rows): N reads the old and the new format, and only N+1 writes the new one.
 5. **Signing keys:** rotate with `--activate-in` of at least twice the slowest keyring
    refresh interval (the command refuses less), so no process signs with a kid an N-1
-   replica cannot verify yet. A build before 033 reads no keyring, so `rotate` and an
-   `import` of any kid but `default` wait until no such replica serves: its tokens
-   would 401 there whatever the delay.
+   replica cannot verify yet.
 6. **Workers:** one leader runs them, elected by a ClickHouse lease. Workers stay
    idempotent under one overlapping in-flight statement, since there are no fencing
    tokens. An older build leaves the lease to a newer one only when their schema
    versions differ (each build's last migration number): a code-only release never
    hands over, and the old leader keeps the workers until it stops. Either way the
    order replicas are replaced in does not matter.
-7. **Settings:** a removed setting warns at boot rather than refusing to start, unless
-   ignoring it would break the deployment: this build refuses to start while the former
-   signing-key map (`LOOM_JWT_SECRETS_JSON` and its siblings) is set, since every token
-   of its kids would 401 (`KeyMapEnvRefused`). A new setting's default accepts what N-1
-   is configured with.
+7. **Settings:** a removed setting warns at boot rather than refusing to start. A new
+   setting's default accepts what N-1 is configured with.
 8. **Retiring a column or table:** stop using it in N, drop it in N+1 or later.
 9. **No state outside ClickHouse.** Anything a replica must agree on (leases, runs,
-   the conflict resolver's queue, the similarity calibration, the frontend bundle of every live
-   build) is in a table, so a request can land on any replica of either build. This
-   holds from this build onward: a build before 033 serves its dashboard from `/me`
-   and publishes no bundle, so the upgrade from it needs a colour swap or a sticky load
-   balancer for the dashboard ([upgrades](../operations/upgrades.md)).
+   the conflict resolver's queue, the similarity calibration, the frontend bundle of every
+   live build) is in a table, so a request can land on any replica of either build.
 10. **An exclusion N adds holds only among N's replicas.** `task.create` with an
     idempotency key and the coverage watch's ready-event delivery hold a lease from this
     build on (`insert_created_task`, `insert_ready_event`). One whose lease ran out
@@ -188,21 +178,17 @@ this build, which applies its migrations, then the base again on the newer schem
 a third process of this build with a changed dashboard bundle and one no-op migration
 more (N+1). It checks:
 
-- each build that has `/v1/health/ready` answers ready after the cross-boot;
-
+- each build answers ready after the cross-boot;
 - memories, a run begun on one build and completed on the other, and a conflict verdict
   through the other build's version write read back whole across builds;
-- a column added as N+1's migration would survives a version write by each build that
-  carries, made as soon as every carrying process has acknowledged the column (rule 2). A base before this build does not carry, so against it only this
-  build's side is checked;
+- a column added as N+1's migration would survives a version write by each build, made
+  as soon as every process has acknowledged the column (rule 2);
 - a build on a ledger newer than itself logs the WARNING;
-- every asset each dashboard page names loads from a replica of the other build, between
-  builds that publish their bundle (rule 9; against a base before 033, only between this
-  build and its changed bundle);
-- with every process on `LOOM_BACKGROUND_WORKERS=auto`, one process that elects through
-  ClickHouse runs the workers, and it is N+1: N, which took the lease first, hands it
-  over to the higher schema version (rule 6). A base before 033 elects one leader per
-  host with a file lock, outside the lease.
+- every asset each dashboard page names loads from a replica of the other build
+  (rule 9);
+- with every process on `LOOM_BACKGROUND_WORKERS=auto`, exactly one process runs the
+  workers, and it is N+1: N, which took the lease first, hands it over to the
+  higher schema version (rule 6).
 
 It does not check new enum values (rule 3), wire formats (rule 4), signing keys other
 than `default` (rule 5), or a process killed mid-migration. It skips with exit 0

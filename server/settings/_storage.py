@@ -1,4 +1,4 @@
-"""Storage: the legacy blob directory, per-table retention and warm-tier moves."""
+"""Storage: document originals, per-table retention and warm-tier moves."""
 
 from __future__ import annotations
 
@@ -6,13 +6,6 @@ from pydantic import BaseModel
 
 
 class StorageSettings(BaseModel):
-    # ---- host directory ----
-    # Where an earlier build kept uploaded document originals on this host.
-    # Nothing writes here now (originals live in loom.document_blobs); the
-    # repository-job sandbox still hides it until `loom blobs import` has moved
-    # what it holds. A relative path resolves from the server's working directory.
-    blob_dir: str = "var/blobs"
-
     # ---- document originals (loom.document_blobs) ----
     # The sweep that deletes originals no live document points at: those of
     # deleted and re-uploaded documents, and of documents that retention

@@ -275,7 +275,7 @@ def test_coverage_fields_come_from_the_counts_read() -> None:
         {"code_chunks": 120, "code_chunks_embedded": 41, "code_chunks_embeddable": 100}
     )
     assert f == {"chunks_total": 120, "chunks_embedded": 41, "embedding_coverage": 0.41}
-    # a deployment whose counts read predates the change: fully covered, no note
+    # a stored counts row without the coverage keys: fully covered, no note
     assert coverage_fields({"code_chunks": 5})["embedding_coverage"] == 1.0
     assert coverage_fields({})["embedding_coverage"] == 1.0
 

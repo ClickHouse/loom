@@ -691,7 +691,7 @@ class MemoryListOutput(BaseModel):
     entries: list[_MemoryListEntry]
     truncated: bool  # true if more entries exist beyond `limit`
     # Total rows matching this scope (ignores `limit`), so callers can show
-    # "N of TOTAL". 0 when not computed (older callers / error path).
+    # "N of TOTAL". 0 on an `unchanged` poll, which carries no counts.
     total: int = 0
     # Of `total`, how many were created since UTC midnight today — the true
     # "today" count (not the truncated page count the day-group headers show).

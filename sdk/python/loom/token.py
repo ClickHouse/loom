@@ -29,7 +29,7 @@ class TokenClaims:
     subject: str | None = None
     org: str | None = None
     namespaces: tuple[str, ...] = ()
-    #: Flat roles (legacy / wildcard tokens), lowercased.
+    #: Flat roles (unscoped and wildcard tokens), lowercased.
     roles: tuple[str, ...] = ()
     #: Per-namespace role for scoped tokens, authoritative where present.
     ns_roles: tuple[tuple[str, str], ...] = field(default_factory=tuple)

@@ -89,19 +89,19 @@ def test_a_producer_owns_its_languages_paths(producer: str, path: str, owned: bo
 
 
 def test_only_projects_with_a_package_manifest_need_installing(tmp_path: Path) -> None:
-    from server.code.workers.scip_ts_delta import _install_roots
+    from server.code.app.index.typescript_dependencies import install_roots
 
     (tmp_path / "frontend").mkdir()
     (tmp_path / "frontend" / "package-lock.json").write_text("{}")
     (tmp_path / "frontend" / "package.json").write_text("{}")
     (tmp_path / "plugin").mkdir()
-    roots = _install_roots(tmp_path, ("frontend", "plugin"))
+    roots = install_roots(tmp_path, ("frontend", "plugin"))
     assert roots == [tmp_path / "frontend"]
-    assert _install_roots(tmp_path, ()) == []
+    assert install_roots(tmp_path, ()) == []
 
 
 def test_named_projects_in_a_workspace_are_installed_from_the_root(tmp_path: Path) -> None:
-    from server.code.workers.scip_ts_delta import _install_roots
+    from server.code.app.index.typescript_dependencies import install_roots
 
     (tmp_path / "package.json").write_text('{"workspaces": ["packages/*"]}')
-    assert _install_roots(tmp_path, ("packages/app", "packages/lib")) == [tmp_path]
+    assert install_roots(tmp_path, ("packages/app", "packages/lib")) == [tmp_path]

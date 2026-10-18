@@ -623,7 +623,7 @@ async function installDemoApi(page: Page): Promise<void> {
       case "/v1/me/setup/mcp_config":
         return json(MCP_CONFIG);
       case "/v1/tracker.source.list":
-        return json({ sources: TRACKER_SOURCES });
+        return json({ sources: TRACKER_SOURCES, self_service: true });
       case "/v1/code.repos":
         return json({ repos: CODE_REPOS });
       case "/v1/me/sharing-summary":
