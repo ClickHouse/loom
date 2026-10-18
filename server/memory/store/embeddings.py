@@ -151,7 +151,9 @@ async def mirror_status_to_embeddings(
             if judged and str(r.get("status") or "") not in SERVED_STATUSES:
                 continue  # a retire (a refines supersede) won meanwhile
             if want is None or (
-                str(r.get("status") or "") == str(want["status"]) and "tombstoned_at" not in want
+                str(r.get("status") or "") == str(want["status"])
+                and "tombstoned_at" not in want
+                and ("invalid_at" not in want or r.get("invalid_at") == want["invalid_at"])
             ):
                 continue  # not asked for, or already mirrored
             row = _copy_row(r, want)

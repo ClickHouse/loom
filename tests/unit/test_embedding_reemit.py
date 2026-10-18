@@ -416,6 +416,19 @@ async def test_a_status_retire_writes_the_memory_rows_version_and_keeps_newer_ro
 
 
 @pytest.mark.asyncio
+async def test_an_active_vector_still_carrying_invalid_at_is_rewritten() -> None:
+    """Status alone matches: the vector kept a retirement's end the served head dropped."""
+    ch = _RMTCH()
+    ch.emb.append({**_LIVE, "invalid_at": datetime(2026, 1, 1, tzinfo=UTC)})
+    head = {**_LIVE, "invalid_at": None}
+    head.pop("version")
+    assert await M.mirror_status_to_embeddings([head], ch=ch) == 1
+    (live,) = ch.live_emb()
+    assert (live["status"], live["invalid_at"]) == ("active", None)
+    assert await M.mirror_status_to_embeddings([head], ch=ch) == 0, "now mirrored"
+
+
+@pytest.mark.asyncio
 async def test_an_explicit_version_override_is_kept() -> None:
     ch = _CH([dict(_LIVE)])
     await M.reemit_embedding_rows_for_key(*_KEY, ch=ch, tombstoned_at=datetime.now(), version=99)
