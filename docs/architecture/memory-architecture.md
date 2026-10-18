@@ -246,7 +246,9 @@ winner does not stay on the review queue against a retired row. The follow and t
 committed `triples_follow_owed` projection-failure row holds the pair and the record's
 entry, and is resolved once both land, so a failure or a crash in between leaves them for
 the projection repair, which follows a pair, and writes its record when none exists, only
-while its loser is retired behind its winner. The acting of a
+while its loser is retired behind its winner. While a loser is still live and the intent is
+under ten minutes old, the supersede may not have committed yet: the repair leaves the
+intent as it is. The acting of a
 judged row (its pairs, records, follows and audit row) is shielded from cancellation, and
 a cancelled pass ends only once it has finished. A flag is
 `mark_peers_conflicted`; a clear removes the pair from each side's `conflict_with`, and a
