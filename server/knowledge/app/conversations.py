@@ -694,14 +694,15 @@ def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, str] 
     if all(folded):
         return None
     lines = list(lines)
+    if folded[0]:
+        lines[0] = lines[0][:_FOLDED_SUMMARY_CHARS]
     free = [False] * len(lines)
     allowance = _FOLDED_SUMMARY_CHARS
     for i, (line, f) in enumerate(zip(lines, folded, strict=True)):
-        if f and i == 0:
-            lines[0] = line[:allowance]
-        elif not f or len(line) > allowance:
+        if not f or len(line) > allowance:
             break
-        free[i], allowance = True, allowance - len(lines[i])
+        free[i] = True
+        allowance -= len(line)
     fit = _fitting_prefix(
         ["" if f else line for line, f in zip(lines, free, strict=True)],
         _COMPACT_TRANSCRIPT_CHARS,
