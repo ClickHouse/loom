@@ -196,7 +196,8 @@ async def stamp_judged(
 
 # The row's subject's live vectors of its type, its own left out. What would drop a
 # candidate later is applied here, before a LIMIT, so closer rows of another type,
-# expired or superseded ones cannot take every place.
+# expired or superseded ones cannot take every place. A 'high' row has no live vector:
+# its write retires it.
 _LIVE_VECTORS = """
         SELECT agent, user_id, session_id, memory_key,
                cosineDistance(embedding, {emb:Array(Float32)}) AS dist

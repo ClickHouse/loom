@@ -1493,6 +1493,42 @@ async def test_a_key_held_in_thousands_of_sessions_is_read_within_bounds(ch, wir
         await _drop_vectors(ch, org, NS, "office_location")
 
 
+async def test_high_sensitivity_rows_of_the_key_do_not_take_the_live_rows_place(
+    ch, wired, monkeypatch
+) -> None:
+    """Five rows of the key labelled 'high', which no prompt shows, sit nearer than its
+    live row of s1, which is below the floor: the live row is still judged."""
+    from server.memory.app import after_write
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    for i in range(5):
+        await _set(org, f"high{i}", "office", f"The office code is {i}")
+    await _pair(ch, org, "office", "office", 144)
+    await after_write.drain()
+    await _place(ch, org, "s1", "office", _vec((154, 1.0)), owed=False)
+    for i in range(5):
+        near = _vec((144, 0.8), (145, 0.6), (146 + i, 0.01))
+        await _place(ch, org, f"high{i}", "office", near, owed=False)
+        # Relabelled with the same bytes: the vector row stays as it was.
+        await _set(org, f"high{i}", "office", f"The office code is {i}", sensitivity="high")
+    await after_write.drain()
+    prompts: list[str] = []
+    real = llm.complete
+
+    async def complete(system: str, user: str, **kw: Any) -> Any:
+        prompts.append(user)
+        return await real(system, user, **kw)
+
+    monkeypatch.setattr(llm, "complete", complete)
+    try:
+        await run_pass()
+        assert llm.calls == ["office"] and "Paris" in prompts[0]
+        assert "office code" not in prompts[0]
+    finally:
+        await _drop_vectors(ch, org, NS, "office")
+
+
 async def test_dead_rows_of_the_key_do_not_take_the_live_rows_place(ch, wired, monkeypatch) -> None:
     """Six vector rows of the key that a peer read drops (superseded, expired, past
     valid_to, another type) sit nearer than its live row of s1, which is below the
