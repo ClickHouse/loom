@@ -439,12 +439,9 @@ function RunTable({
   order,
   onOrder,
   busy,
-  keys,
   hideHeader = false,
   loading = false,
-}: RunListProps & { keys: boolean }) {
-  // One tab stop for the table's runs, as for every row list (lib/useRowNav).
-  const nav = useRowNav({ enabled: keys && rows.length > 0 });
+}: RunListProps) {
   // Click UI's sort arrow is named after its icon, so the header would read "Started
   // arrow-down"; `aria-sort` already says it. Click UI draws a new arrow on every sort.
   const table = useRef<HTMLTableElement>(null);
@@ -452,33 +449,30 @@ function RunTable({
     for (const svg of table.current?.querySelectorAll("thead svg") ?? []) svg.setAttribute("aria-hidden", "true");
   });
   return (
-    <div ref={nav}>
-      <Table
-        ref={table}
-        aria-label={label}
-        aria-busy={loading || busy || undefined}
-        noDataMessage={loading ? <TableSkeleton label="Loading runs" /> : undefined}
-        headers={runHeaders(order, !hideHeader)}
-        onSort={(dir, _header, index) => {
-          const key = SORT_AT[index];
-          if (!key) return;
-          // A column not sorted yet starts at its largest (newest, longest, most relied on).
-          onOrder(`${key}_${splitOrder(order)[0] === key ? dir : "desc"}` as RunOrder);
-        }}
-        rows={rows.map((r) => runRow(r, onOpen))}
-        size="sm"
-        className={hideHeader ? "table-header-sr-only" : undefined}
-      />
-    </div>
+    <Table
+      ref={table}
+      aria-label={label}
+      aria-busy={loading || busy || undefined}
+      noDataMessage={loading ? <TableSkeleton label="Loading runs" /> : undefined}
+      headers={runHeaders(order, !hideHeader)}
+      onSort={(dir, _header, index) => {
+        const key = SORT_AT[index];
+        if (!key) return;
+        // A column not sorted yet starts at its largest (newest, longest, most relied on).
+        onOrder(`${key}_${splitOrder(order)[0] === key ? dir : "desc"}` as RunOrder);
+      }}
+      rows={rows.map((r) => runRow(r, onOpen))}
+      size="sm"
+      className={hideHeader ? "table-header-sr-only" : undefined}
+    />
   );
 }
 
 /** Under 769 px: a list row per run. Line 1 the goal and its status; line 2 agent ·
- *  started · took. The list is one tab stop (`useRowNav`). */
-function RunRows({ label, rows, onOpen, busy, keys }: RunListProps & { keys: boolean }) {
-  const nav = useRowNav({ enabled: keys && rows.length > 0 });
+ *  started · took. */
+function RunRows({ label, rows, onOpen, busy }: RunListProps) {
   return (
-    <ul ref={nav} aria-label={label} aria-busy={busy || undefined} className="space-y-2">
+    <ul aria-label={label} aria-busy={busy || undefined} className="space-y-2">
       {rows.map((r) => {
         const inferred = metaBool(r.metadata, "implicit");
         return (
@@ -742,6 +736,8 @@ export function Runs() {
         ) || undefined
       : undefined;
   const groups = groupBy ? bySession(rows) : [];
+  // One tab stop for every run on the page, grouped by session or not (lib/useRowNav).
+  const nav = useRowNav({ enabled: open === null && rows.length > 0 });
   const clearFilters = () => {
     setQuery("");
     setQ("");
@@ -752,9 +748,9 @@ export function Runs() {
 
   const list = (props: Omit<RunListProps, "order" | "onOrder" | "onOpen">) =>
     narrow ? (
-      <RunRows {...props} order={order} onOrder={refilter(setOrder)} onOpen={openRun} keys={open === null} />
+      <RunRows {...props} order={order} onOrder={refilter(setOrder)} onOpen={openRun} />
     ) : (
-      <RunTable {...props} order={order} onOrder={refilter(setOrder)} onOpen={openRun} keys={open === null} />
+      <RunTable {...props} order={order} onOrder={refilter(setOrder)} onOpen={openRun} />
     );
 
   // Five statuses are wider than a phone: there the status is a select beside the agent's.
@@ -910,7 +906,7 @@ export function Runs() {
             <RowSkeleton />
           </LoadingSkeleton>
         ) : (
-          <RunTable label="Runs" rows={[]} onOpen={openRun} order={order} onOrder={() => {}} keys={false} loading />
+          <RunTable label="Runs" rows={[]} onOpen={openRun} order={order} onOrder={() => {}} loading />
         ))}
       {/* Said only of a read of what is asked now: a new filter's read in flight is not it. */}
       {nothingShown && searching && (
@@ -946,7 +942,7 @@ export function Runs() {
       )}
 
       {/* A new page scrolls here and takes focus. */}
-      <div id="runs-list" tabIndex={-1} className="outline-none">
+      <div id="runs-list" ref={nav} tabIndex={-1} className="outline-none">
         {error === null && rows.length > 0 && !groupBy && list({ label: "Runs", rows, busy })}
 
         {/* Grouped: a heading per session, its runs under it. */}

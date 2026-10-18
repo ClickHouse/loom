@@ -114,6 +114,22 @@ describe("Runs table", () => {
     expect(goals[1]).toHaveFocus();
   });
 
+  // Grouped by session, the runs of every group are still one list: one tab stop, and j
+  // moves from run to run inside a group and across groups.
+  it("grouped by session, is one tab stop and j moves to the next run", async () => {
+    listRuns.mockResolvedValue([run("r-1", "first", "s-1"), run("r-2", "second", "s-2"), run("r-3", "third", "s-2")]);
+    render(<Runs />);
+    await screen.findByRole("button", { name: "first" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Group by session" }));
+    await waitFor(() => expect(screen.getAllByRole("table")).toHaveLength(2));
+    const goals = ["first", "second", "third"].map((n) => screen.getByRole("button", { name: n }));
+    expect(goals.map((g) => g.tabIndex)).toEqual([0, -1, -1]);
+    act(() => goals[1].focus());
+    fireEvent.keyDown(goals[1], { key: "j" });
+    expect(goals[2]).toHaveFocus();
+    expect(goals.map((g) => g.tabIndex)).toEqual([-1, -1, 0]);
+  });
+
   it("draws the column header over the first session only, and keeps it for the rest", async () => {
     listRuns.mockResolvedValue([run("r-1", "first", "s-1"), run("r-2", "second", "s-2"), run("r-3", "third", "s-3")]);
     render(<Runs />);
