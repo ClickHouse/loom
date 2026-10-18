@@ -335,7 +335,8 @@ resolver may spend a quarter of the namespace's daily cost cap
 (`LOOM_MEMORY_CONFLICT_RESOLVER_CAP_SHARE`, 0.25, of `daily_cost_cap_usd`, else
 `LOOM_DEFAULT_DAILY_COST_CAP_USD`, $1), counted over its own calls, and never takes the
 rest: the requests (`memory.ask`, extraction) read the whole spend against the whole cap,
-so a backlog the resolver drains never leaves them capped. That is about 50 judged rows a
+so a backlog the resolver drains never leaves them capped; and once the requests have spent
+the whole cap, the resolver stops too. That is about 50 judged rows a
 day per namespace at the default cap: raise `LOOM_DEFAULT_DAILY_COST_CAP_USD` (or the
 namespace's `daily_cost_cap_usd`) or `LOOM_MEMORY_CONFLICT_RESOLVER_CAP_SHARE` for a busier
 one.

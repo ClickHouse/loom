@@ -2501,3 +2501,44 @@ async def test_a_clickhouse_error_before_the_call_never_stamps_the_row(
         for _ in range(3):
             await run_pass()
     assert llm.calls == [] and (await _marks(ch, org))["office_location"] == 1
+
+
+async def test_the_resolver_pays_nothing_once_the_requests_spent_the_cap(ch, wired) -> None:
+    """Requests spent the whole daily cap: the resolver's own share is untouched, but the
+    namespace is over its cap, and the resolver makes no call."""
+    from datetime import UTC, datetime
+
+    from server.memory.workers.conflict_resolver import run_pass
+    from server.observability.budget import namespace_over_cap
+
+    org, llm = wired
+    now = datetime.now(UTC)
+    await ch.insert(
+        "loom.namespaces",
+        [
+            {
+                "org": org,
+                "namespace": NS,
+                "created_at": now,
+                "updated_at": now,
+                "active": True,
+                "daily_cost_cap_usd": 0.40,
+            }
+        ],
+    )
+    await ch.insert(
+        "loom.agent_events",
+        [
+            {
+                "org": org,
+                "namespace": NS,
+                "ts": now,
+                "operation": "memory.ask",
+                "upstream_cost_usd": 0.50,
+            }
+        ],
+    )
+    assert await namespace_over_cap(org, NS)
+    await _pair(ch, org, "office_city", "office_location", 1200)
+    out = await run_pass()
+    assert llm.calls == [] and out["capped_namespaces"] == 1, out

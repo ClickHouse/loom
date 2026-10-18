@@ -33,9 +33,9 @@ async def namespaces_over_cap(
     namespace without a `namespaces` row, or with cap 0, takes
     `settings.default_daily_cost_cap_usd`; cap 0 on both tiers is uncapped. The
     entity extractor asks once per pass for the namespaces of the rows it is
-    about to extract, instead of two point reads per namespace. With `operation`,
-    only that operation's spend counts, against `share` of the cap (a worker held
-    to its part of the cap). Fail-open like the single form: on any error every pair
+    about to extract, instead of two point reads per namespace. With `operation`, a
+    namespace is also over once that operation's own spend reaches `share` of the cap
+    (a worker held to its part of the cap). Fail-open like the single form: on any error every pair
     reads False, or True with `fail_open=False` (a background spender)."""
     wanted = sorted({(str(o), str(n)) for o, n in pairs})
     if not wanted:
@@ -48,11 +48,11 @@ async def namespaces_over_cap(
             """
             WITH
                 spend AS (
-                    SELECT org, namespace, sum(upstream_cost_usd) AS spent
+                    SELECT org, namespace, sum(upstream_cost_usd) AS spent,
+                           sumIf(upstream_cost_usd, operation = {op:String}) AS own
                     FROM loom.agent_events
                     WHERE (org, namespace) IN {pairs:Array(Tuple(String, String))}
                       AND ts > now() - INTERVAL 1 DAY
-                      AND ({op:String} = '' OR operation = {op:String})
                     GROUP BY org, namespace
                 ),
                 caps AS (
@@ -60,7 +60,8 @@ async def namespaces_over_cap(
                     FROM loom.namespaces FINAL
                     WHERE (org, namespace) IN {pairs:Array(Tuple(String, String))}
                 )
-            SELECT s.org AS org, s.namespace AS namespace, s.spent AS spent, c.cap AS cap
+            SELECT s.org AS org, s.namespace AS namespace, s.spent AS spent, s.own AS own,
+                   c.cap AS cap
             FROM spend AS s
             LEFT JOIN caps AS c ON s.org = c.org AND s.namespace = c.namespace
             """,
@@ -71,8 +72,8 @@ async def namespaces_over_cap(
             cap, _ = effective_cap(r.get("cap"))
             if cap <= 0:
                 continue
-            spent = float(r.get("spent") or 0.0)
-            out[(str(r["org"]), str(r["namespace"]))] = spent >= share * cap
+            spent, own = float(r.get("spent") or 0.0), float(r.get("own") or 0.0)
+            out[(str(r["org"]), str(r["namespace"]))] = _over(cap, spent, own, operation, share)
         return out
     except Exception:
         log.warning(
@@ -96,11 +97,17 @@ def effective_cap(ns_cap: Any) -> tuple[float, Literal["namespace", "global", "u
     return (default, "global") if default > 0 else (0.0, "uncapped")
 
 
-async def _cap_and_spend(org: str, namespace: str, operation: str = "") -> tuple[float, float]:
-    """(cap, 24 h spend) for one namespace: the namespace's cap, else the
-    server default; (0.0, 0.0) when uncapped, without reading the spend. With
-    `operation`, that operation's spend alone. Raises on a read error; the public
-    forms fail open."""
+def _over(cap: float, spent: float, own: float, operation: str, share: float) -> bool:
+    """Over the whole cap, or, for `operation`, its own spend over its share of it."""
+    return spent >= cap or (bool(operation) and own >= share * cap)
+
+
+async def _cap_and_spend(
+    org: str, namespace: str, operation: str = ""
+) -> tuple[float, float, float]:
+    """(cap, 24 h spend, `operation`'s part of it) for one namespace: the namespace's cap,
+    else the server default; zeros when uncapped, without reading the spend. Raises on
+    a read error; the public forms fail open."""
     from server.core.ch import get_client
 
     ch = get_client()
@@ -114,19 +121,20 @@ async def _cap_and_spend(org: str, namespace: str, operation: str = "") -> tuple
     )
     cap, _ = effective_cap((row or {}).get("daily_cost_cap_usd"))
     if cap <= 0:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
     spent_row = await ch.query_one(
         """
-        SELECT sum(upstream_cost_usd) AS spent
+        SELECT sum(upstream_cost_usd) AS spent,
+               sumIf(upstream_cost_usd, operation = {op:String}) AS own
         FROM loom.agent_events
         WHERE org = {org:String}
           AND namespace = {ns:String}
           AND ts > now() - INTERVAL 1 DAY
-          AND ({op:String} = '' OR operation = {op:String})
         """,
         params={"org": org, "ns": namespace, "op": operation},
     )
-    return cap, float((spent_row or {}).get("spent") or 0.0)
+    got = spent_row or {}
+    return cap, float(got.get("spent") or 0.0), float(got.get("own") or 0.0)
 
 
 async def namespace_over_cap(
@@ -137,8 +145,8 @@ async def namespace_over_cap(
     under the cap (a budget-read blip never halts a request), or over it with
     `fail_open=False` (a background spender)."""
     try:
-        cap, spent = await _cap_and_spend(org, namespace, operation)
-        return cap > 0 and spent >= share * cap
+        cap, spent, own = await _cap_and_spend(org, namespace, operation)
+        return cap > 0 and _over(cap, spent, own, operation, share)
     except Exception:  # the caller chose which way a failed read goes
         log.warning(
             "budget guard failed for %s/%s (%s)",
@@ -160,7 +168,7 @@ async def namespace_budget_ratio(org: str, namespace: str) -> float:
     derive the boolean, not pay the reads twice.
     """
     try:
-        cap, spent = await _cap_and_spend(org, namespace)
+        cap, spent, _ = await _cap_and_spend(org, namespace)
         return spent / cap if cap > 0 else 0.0
     except Exception:  # fail open: a budget-read blip never halts the caller
         log.warning(
