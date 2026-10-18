@@ -209,7 +209,15 @@ def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
 def test_mcp_refusals_before_dispatch_are_ledgered_as_the_token_alone(monkeypatch) -> None:
     """Refused before the caller is bound: each row is the token's org,
     subject and consumer with `-` for the rest and no arguments, whatever the
-    call named, and carries nothing a batch's previous entry left behind."""
+    call named, and carries nothing a batch's previous entry left behind.
+    Run in a copied context: the previous entry it stands up (a run, a
+    consumer, spend) must not reach the tests after it."""
+    import contextvars
+
+    contextvars.copy_context().run(_mcp_refusals_before_dispatch, monkeypatch)
+
+
+def _mcp_refusals_before_dispatch(monkeypatch) -> None:
     import asyncio
 
     from server.auth.jwt import AuthInfo
