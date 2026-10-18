@@ -296,7 +296,7 @@ async def test_code_repo_add_restricted_is_never_open_and_stores_the_token_encry
             branch="main",
             join_policy="open",
             classification="restricted",
-            github_token="ghp_zzz",
+            access_token="ghp_zzz",
         )
     )
     assert out.join_policy == "approval" and out.classification == "restricted"

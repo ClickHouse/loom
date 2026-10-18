@@ -122,9 +122,8 @@ seals every stored credential and every other signing key ([Security](../archite
 The other keys live in `loom.signing_keys`, added by `loom signing-key rotate`
 ([rotate](#revoke-and-rotate)). Every process re-reads them every
 `LOOM_JWT_KEYRING_REFRESH_SECONDS` and records that interval in `loom.keyring_readers`;
-the newest active key signs. A PEM `LOOM_JWT_SECRET` (an RS256 deployment of an earlier
-build) seals, and signs RS256 as kid `default` as that build did
-([upgrades](../operations/upgrades.md#from-a-build-that-kept-state-on-the-host)).
+the newest active key signs. A PEM `LOOM_JWT_SECRET` seals, and signs RS256 as kid
+`default`.
 
 | Setting                            | Meaning                                                                                                                             |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
@@ -512,7 +511,7 @@ needs no step on them.
 
 Run the keyring commands with the servers' `LOOM_JWT_SECRET`. The keyring's `default`
 row records an HMAC of that root secret, written by the workers leader or the first
-keyring command; `rotate`, `import`, `retire` and `loom mint-token` refuse to run where
+keyring command; `rotate`, `retire` and `loom mint-token` refuse to run where
 it does not match (a key sealed or a token signed there would not open on the servers),
 and the keyring commands refuse when the keyring cannot be read. `/v1/health` reports a
 server that never read the keyring (`keyring_not_loaded`), one whose root differs

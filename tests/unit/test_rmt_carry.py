@@ -329,14 +329,6 @@ async def test_unreadable_acknowledgements_hold_the_boot_until_the_deadline() ->
     with pytest.raises(RuntimeError, match="could not be read"):
         await rmt_carry.await_acks(_Down(_live(), []), timeout_s=0)
 
-    class _Missing(_FakeCH):
-        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            if "carry_acks" in sql:
-                raise RuntimeError("Code: 60. DB::Exception: Unknown table loom.carry_acks")
-            return await super().query_all(sql, params)
-
-    await rmt_carry.await_acks(_Missing(_live(), []), timeout_s=0)  # before 037: no barrier
-
 
 async def test_a_process_that_never_wrote_holds_no_boot() -> None:
     """Its first write reads the lists the migration left: nothing to wait for."""

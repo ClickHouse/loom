@@ -524,7 +524,7 @@ EMBEDDING_PERSISTED_COLS: dict[str, Any] = {
     "run_id": "-",
     "entities": [],
     "conflict_checked_at": None,
-    # The content_sha256 of the write this row mirrors; '' on rows written before 038.
+    # The content_sha256 of the write this row mirrors; '' on a row stored without one.
     "content_sha256": "",
     "tags": [],
     "status": "active",

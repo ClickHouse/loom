@@ -23,7 +23,7 @@ export interface TierCard {
 
 const ICONS: Record<string, TierIcon> = { clang: "cpp", typescript: "typescript", go: "go", python: "python" };
 
-export function tierCards(st: Pick<CodeIndexStatus, "compiler_tiers" | "state">): TierCard[] {
+export function tierCards(st: Pick<CodeIndexStatus, "compiler_tiers">): TierCard[] {
   const tiers = st.compiler_tiers;
   if (tiers.length === 0) {
     return [
@@ -44,9 +44,7 @@ export function tierCards(st: Pick<CodeIndexStatus, "compiler_tiers" | "state">)
     icon: ICONS[t.producer] ?? "none",
     watermark: t.commit,
     lag: t.lag,
-    // the server reads updated_at off the same state row; fall back to it for
-    // a status whose tier row predates the field
-    updatedAt: t.updated_at || st.state?.[t.watermark_key]?.updated_at || undefined,
+    updatedAt: t.updated_at || undefined,
     workers: t.workers,
     note: t.note,
   }));

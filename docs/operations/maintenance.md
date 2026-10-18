@@ -57,7 +57,6 @@ operator step.
 | `loom integrity-repair`          | prints the integrity gauges and the rows behind them; re-emits `dim0_with_vector` rows so search sees them (drift and `valid_to` rows are listed only)    | `--apply`  |
 | `loom sensitivity-sweep`         | counts live unlabelled rows the sensitivity detector would label; writing labels them and tombstones a `high` row's embedding rows                        | `--apply`  |
 | `loom reconcile-status`          | re-emits `memory_embeddings` rows whose status diverged from `loom.memory`                                                                                | `--apply`  |
-| `loom backfill-chunks`           | fills `loom.memory_chunks` from existing memory rows in one namespace; idempotent by `content_sha256`; writes unless `--dry-run`                          | none       |
 | `loom demote-activity-narration` | finds extracted facts that narrate tool activity with no durable outcome and demotes or labels them through `memory.apply`; never deletes                 | `--apply`  |
 | `loom namespaces-adopt`          | gives namespaces with live memory and no registry row an owner row                                                                                        | `--apply`  |
 | `loom namespaces-gc`             | finds idle benchmark namespaces by prefix (or runs one `namespace_gc` pass with `--worker-pass`); submits their erasure                                   | `--erase`  |

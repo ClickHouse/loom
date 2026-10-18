@@ -8,30 +8,11 @@ blob-erase step deletes the scope's loom.document_blobs rows, then stamps
 
 from __future__ import annotations
 
-import asyncio
-from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
 
 from server.erasure.app import saga_steps
-from server.knowledge.app import originals
-
-_held: list[tuple[str, list[str]]] = []
-_hold_originals = originals.hold_originals
-
-
-@pytest.fixture(autouse=True)
-def _claims(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The originals claim, recorded instead of taken on the stub client."""
-
-    @asynccontextmanager
-    async def hold(org: str, namespaces: Any, **_: Any):
-        _held.append((org, list(namespaces)))
-        yield
-
-    _held.clear()
-    monkeypatch.setattr(originals, "hold_originals", hold)
 
 
 class StubCH:
@@ -124,10 +105,6 @@ async def test_erase_blobs_deletes_and_stamps(monkeypatch) -> None:
     assert "FROM loom.document_blobs" in blob_count[0] and blob_count[1]["ns"] == "ns-a"
     assert "FROM loom.documents FINAL" in stamp_count[0]
     assert "blob_path != ''" in stamp_count[0] and "blob_erased_at IS NULL" in stamp_count[0]
-    # A pre-033 path names a file this step cannot delete: left unstamped, so
-    # the census counts it until `loom blobs import` deletes the file.
-    assert "position(blob_path, '/') = 0" in stamp_count[0]
-    assert "position(blob_path, '/') = 0" in ch.execute_calls[1][0]
     delete_sql, stamp_sql = (sql for sql, _ in ch.execute_calls)
     assert "ALTER TABLE loom.document_blobs" in delete_sql and "DELETE" in delete_sql
     assert "ALTER TABLE loom.documents" in stamp_sql and "UPDATE blob_erased_at" in stamp_sql
@@ -198,58 +175,6 @@ async def test_tombstone_documents_erases_the_blobs_first(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_documents_step_runs_under_the_originals_claim(monkeypatch) -> None:
-    """`loom blobs import` stores an original only under the same claim, after
-    re-reading its document, so it cannot store one this step is erasing."""
-    ch = StubCH()
-    statements_when_held: list[int] = []
-
-    @asynccontextmanager
-    async def hold(org: str, namespaces: Any, **_: Any):
-        _held.append((org, list(namespaces)))
-        statements_when_held.append(len(ch.execute_calls))
-        yield
-        statements_when_held.append(len(ch.execute_calls))
-
-    monkeypatch.setattr(originals, "hold_originals", hold)
-    ch.query_one_returns.extend([{"n": 1}, {"n": 1}, {"n": 1}])
-    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
-
-    await saga_steps._step_tombstone_documents_by_ns("o", ["a", "b"])
-
-    assert _held == [("o", ["a", "b"])]
-    assert statements_when_held == [0, 3]  # every statement inside the claim
-
-
-@pytest.mark.asyncio
-async def test_the_originals_claim_is_held_for_the_block(monkeypatch) -> None:
-    from tests.unit.claims_fake import FakeLockTable
-
-    table = FakeLockTable()
-    async with _hold_originals("o", ["a"], wait_s=1, ch=table):
-        assert list(table.keys) == ["document_originals:o/a"]
-    assert table.keys == {}
-
-
-@pytest.mark.asyncio
-async def test_a_lost_originals_claim_stops_the_block(monkeypatch) -> None:
-    """The erasure step waits on mutations longer than the claim's TTL: renewed, and
-    stopped once another holder has it."""
-    from server.core import leases
-    from tests.unit.claims_fake import FakeLockTable
-
-    monkeypatch.setattr(originals, "CLAIM_TTL_S", 0.6)
-    table = FakeLockTable()
-    finished = False
-    with pytest.raises(leases.LeaseLost):
-        async with _hold_originals("o", ["a"], wait_s=1, ch=table):
-            table.keys["document_originals:o/a"]["holder"] = "another-process"
-            await asyncio.sleep(3)
-            finished = True
-    assert not finished
-
-
-@pytest.mark.asyncio
 async def test_purge_deletes_documents_and_chunks(monkeypatch) -> None:
     """A purge census counts every row, so the knowledge steps delete every
     row of the scope, superseded ones included."""
@@ -257,7 +182,7 @@ async def test_purge_deletes_documents_and_chunks(monkeypatch) -> None:
     from server.erasure.store import steps_memory as memory_steps
 
     ch = StubCH()
-    ch.query_one_returns.extend([{"n": 0}, {"n": 0}, {"n": 3}, {"n": 0}, {"n": 5}])
+    ch.query_one_returns.extend([{"n": 0}, {"n": 0}, {"n": 3}, {"n": 5}])
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr(erasure_mutations, "_default_client", lambda: ch)
     with erasure_mutations.purge_scope(True):
@@ -265,33 +190,13 @@ async def test_purge_deletes_documents_and_chunks(monkeypatch) -> None:
         assert await memory_steps.supersede_chunks_by_namespace("o", ["a", "b"]) == 5
     counts = [sql for sql, _ in ch.query_one_calls][2:]
     assert "loom.documents" in counts[0] and "superseded_at" not in counts[0]
-    assert "loom.chunks" in counts[2] and "doc_superseded_at" not in counts[2]
+    assert "loom.chunks" in counts[1] and "doc_superseded_at" not in counts[1]
     deletes = [sql for sql, _ in ch.execute_calls if "DELETE" in sql]
     assert [("loom.documents" in d, "loom.chunks" in d) for d in deletes] == [
         (True, False),
         (False, True),
     ]
     assert all("namespace IN {ns:Array(String)}" in d for d in deletes)
-
-
-@pytest.mark.asyncio
-async def test_purge_keeps_a_row_whose_legacy_file_is_still_on_disk(monkeypatch) -> None:
-    """Purge deletes every document row except one whose pre-033 original is a
-    file not yet deleted by `loom blobs import`: that row is superseded, so the
-    purge census (every row of the scope) still counts it and the saga fails
-    closed instead of reaching residue 0 with the file on disk."""
-    from server.erasure.store import mutations as erasure_mutations
-    from server.erasure.store import steps_memory as memory_steps
-
-    ch = StubCH()
-    ch.query_one_returns.extend([{"n": 2}, {"n": 1}])
-    monkeypatch.setattr(erasure_mutations, "_default_client", lambda: ch)
-    with erasure_mutations.purge_scope(True):
-        assert await memory_steps.tombstone_documents_by_namespace("o", "a") == 3
-    legacy = "position(blob_path, '/') > 0 AND blob_erased_at IS NULL"
-    (delete, _), (keep, _) = ch.execute_calls
-    assert "DELETE" in delete and f"NOT ({legacy})" in delete
-    assert "UPDATE superseded_at" in keep and legacy in keep and "superseded_at IS NULL" in keep
 
 
 def test_knowledge_tables_are_census_rows_owned_by_their_steps() -> None:

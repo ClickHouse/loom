@@ -399,7 +399,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     # -- configuration, not content ------------------------------------------
     "loom.deployment_config": (
         "The deployment's published settings every replica checks itself against (one "
-        "JSON row, secrets stripped) — configuration, keyed by name, holding no memory, "
+        "JSON row, no secrets) — configuration, keyed by name, holding no memory, "
         "conversation, document or code content."
     ),
     "loom.provider_configuration": (
@@ -426,8 +426,8 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "label, fence, lease_until) — identifiers only, deleted on the terminal transition."
     ),
     "loom.task_claims": (
-        "The claim arbitration log a build before 033 wrote without a Keeper "
-        "(task id, fence, claimant label, timestamp) — identifiers only, no task text."
+        "A task claim arbitration log that no code path writes (task id, fence, "
+        "claimant label, timestamp) — identifiers only, no task text."
     ),
     "loom.task_webhook_cursor": (
         "The signed-webhook delivery cursor per inbox (last acknowledged "
@@ -469,8 +469,8 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.sso_links": "auth plane: which password accounts SSO sign-ins reach; no memory.",
     "loom.oauth_signin_state": "auth plane: sign-in state in Keeper (codes, sessions); no memory.",
     "loom.oauth_state": "auth plane: OAuth client registrations and codes; no memory rows.",
-    "loom.oauth_claims": "auth plane: an earlier release's OAuth exchange claims; unused.",
-    "loom.grant_claims": "auth plane: the grant change in flight per (org, namespace, subject).",
+    "loom.oauth_claims": "auth plane: no code path writes it; never holds memory content.",
+    "loom.grant_claims": "auth plane: no code path writes it; never holds memory content.",
     "loom.service_accounts": "auth plane: service-account definitions.",
     "loom.user_state": "per-subject UI state (default namespace).",
     "loom.subject_last_seen": (

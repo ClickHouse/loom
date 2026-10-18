@@ -180,7 +180,7 @@ async def handle_code_repo_remote_branches(input: Any) -> Any:
         repo, git_remote, provider = reg.normalize_remote(input.repo)
     except ValueError as e:
         raise ValidationError(str(e), code="BAD_REPO") from None
-    token = str(input.access_token or input.github_token or "")
+    token = input.access_token
     try:
         remote = await reg.remote_branches(repo, token, git_remote=git_remote)
     except ValueError as e:
@@ -278,7 +278,7 @@ async def _add_extra_branches(
             head = await reg.remote_has_branch(
                 repo,
                 branch,
-                input.access_token or input.github_token,
+                input.access_token,
                 git_remote=git_remote,
             )
         except ValueError as e:
@@ -293,7 +293,7 @@ async def _add_extra_branches(
             branch=branch,
             classification=classification,
             join_policy=join_policy,
-            github_token=input.access_token or input.github_token,
+            github_token=input.access_token,
             path_prefixes=[p.strip() for p in input.path_prefixes if p.strip()],
             exclude=[p.strip() for p in input.exclude if p.strip()],
             remote_head=head,
@@ -312,7 +312,7 @@ async def handle_code_repo_add(input: CodeRepoAddInput) -> CodeRepoAddOutput:
         repo, git_remote, provider = reg.normalize_remote(input.repo)
     except ValueError as e:
         raise ValidationError(str(e), code="BAD_REPO") from None
-    token = input.access_token or input.github_token
+    token = input.access_token
     branch = input.branch.strip()
     if not branch:
         try:

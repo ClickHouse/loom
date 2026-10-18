@@ -246,38 +246,6 @@ def _doctor_keyring_check(settings: Any) -> tuple[str, str, str]:
     return ("signing_keyring", PASS, f"signs as {st['signing_kid']}; {len(rows)} row(s)")
 
 
-def _doctor_legacy_blobs_check(settings: Any) -> tuple[str, str, str]:
-    """The `legacy_blobs` doctor line: documents whose original is still a file of
-    the old blob directory. Erasure cannot verify those until `loom blobs import`
-    has moved or deleted them."""
-    from server.knowledge.store.documents import LEGACY_BLOB_PATH
-
-    sql = (
-        "SELECT count() AS n FROM loom.documents FINAL "
-        f"WHERE {LEGACY_BLOB_PATH} AND blob_erased_at IS NULL FORMAT JSONEachRow"
-    )
-    try:
-        rows = _doctor_ch_query(settings, sql, {})
-    except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
-        return ("legacy_blobs", WARN, f"could not read loom.documents: {e}")
-    n = int(rows[0]["n"]) if rows else 0
-    # Files the rows no longer show: another host's import or an older erasure
-    # stamped or deleted their rows while the files stayed on this host.
-    from pathlib import Path
-
-    from server.cli.portability import _legacy_files
-
-    files = len(_legacy_files(Path(settings.blob_dir)))
-    if n or files:
-        return (
-            "legacy_blobs",
-            WARN,
-            f"{n} document(s) still on the old blob directory, {files} old-layout file(s) "
-            "in this host's LOOM_BLOB_DIR; run `loom blobs import` on every host that holds one",
-        )
-    return ("legacy_blobs", PASS, "every original is in loom.document_blobs")
-
-
 # The attempt kinds keyed by the caller's address (`server.auth.attempts.client_address`).
 _ADDRESS_KINDS = ("login.address", "signup.human", "signup.agent")
 # Fewer address-keyed attempts than this in the window is too little to judge by.
@@ -395,7 +363,6 @@ def _doctor_ch_read_checks(settings: Any | None) -> list[tuple[str, str, str]]:
             for name in (
                 "otel_erasure_index",
                 "signing_keyring",
-                "legacy_blobs",
                 "trusted_proxies",
                 "keeper",
                 "replica_consistency",
@@ -404,7 +371,6 @@ def _doctor_ch_read_checks(settings: Any | None) -> list[tuple[str, str, str]]:
     return [
         _doctor_otel_erasure_index_check(settings),
         _doctor_keyring_check(settings),
-        _doctor_legacy_blobs_check(settings),
         _doctor_trusted_proxies_check(settings),
         _doctor_keeper_check(settings),
         _doctor_replica_consistency_check(settings),

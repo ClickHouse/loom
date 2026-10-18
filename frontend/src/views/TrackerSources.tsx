@@ -83,8 +83,7 @@ export function useTrackerSources(org: string): {
         const r = await listTrackerSources(org, { signal, fresh });
         if (!live()) return;
         setStatus({ kind: "ready", sources: sortSources(r.sources ?? []) });
-        // A server that predates the field serves the tracker-source write ops too
-        setSelfService(r.self_service ?? true);
+        setSelfService(r.self_service);
       } catch (e) {
         if (!live()) return;
         if (isOpAbsent(e)) setStatus({ kind: "absent" });

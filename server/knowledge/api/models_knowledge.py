@@ -61,9 +61,9 @@ class KnowledgeAddOutput(BaseModel):
 
 class KnowledgeUpsertInput(KnowledgeAddInput):
     """Same fields as knowledge.add. Behavior: replaces existing chunks for
-    the same (org, namespace, source_uri); old chunks are soft-superseded
-    via lightweight UPDATE of doc_superseded_at, so searches return the latest
-    content by default while preserving history for audit / time-travel."""
+    the same (org, namespace, source_uri); old chunks are superseded by listing
+    their ingestion in loom.chunk_supersessions, so searches return the latest
+    content while the rows stay for audit and time-travel."""
 
 
 class KnowledgeUpsertOutput(BaseModel):

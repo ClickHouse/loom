@@ -97,7 +97,6 @@ class ConversationSetLoggingOutput(BaseModel):
 class _ConversationEntry(BaseModel):
     msg_id: str
     # The agent that wrote this turn; a thread read with agent "*" holds several.
-    # Empty from a server of the previous release, which does not send it.
     agent: str = ""
     role: ConversationRole
     content: str
@@ -240,7 +239,7 @@ class ConversationListOutput(BaseModel):
     rows: list[_ConversationEntry]
     # Pass as `cursor` for the next page; None when this is the last page. Read with "*",
     # two agents' different turns that share a millisecond and an id across a page
-    # boundary lose the second to the cursor; the next release's cursor carries the text.
+    # boundary lose the second to the cursor, which carries only (ts, msg_id).
     next_cursor: str | None = None
 
 

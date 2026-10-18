@@ -89,8 +89,7 @@ helm install loom deploy/helm/loom -n loom -f deploy/helm/loom/values-eks.yaml
   deregistration delay (50 s, `readyDelaySeconds` + `gracefulSeconds`) lets it finish
   what it holds. The 300 s idle timeout covers long calls, and Loom keeps idle
   connections open longer (`keepAliveSeconds`, 310 s), so the ALB never reuses one Loom
-  has just closed. The image reads it as `LOOM_KEEP_ALIVE_S` from the release that ships
-  this chart; an older image keeps uvicorn's 5 s.
+  has just closed. The image reads it as `LOOM_KEEP_ALIVE_S`.
 
 - **`trustedProxies`.** Set it to the ALB's subnets, or every client counts as the ALB
   for the per-address sign-in limits. Not the whole VPC: any pod there could then set
@@ -234,8 +233,7 @@ revision's env, and refuses a rollback whose root secret or embedding settings a
 published ones: its pods would never be ready, and the Secret it re-applies would drift
 every pod that restarts. Helm then leaves the release `pending-rollback`; a
 `helm rollback loom <current revision>` passes the check and clears it. To go back past a
-publish, upgrade with the old values and a new token instead. The check needs an image with `--check` (the release that ships this
-chart); for an older target, `helm rollback --no-hooks` skips it.
+publish, upgrade with the old values and a new token instead.
 
 Installing onto a ClickHouse whose deployment already published another root secret or
 embedding space (a move from another install, a restore) brings up only drifted pods, as

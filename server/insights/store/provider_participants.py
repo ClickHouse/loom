@@ -1,8 +1,4 @@
-"""Full-row process registrations, heartbeats and explicit transition acknowledgements.
-
-A row whose `stale_after_s` is 0 (written by a build without heartbeats)
-never expires; only an acknowledgement or a retirement clears it.
-"""
+"""Full-row process registrations, heartbeats and explicit transition acknowledgements."""
 
 from time import time_ns
 from typing import Any
@@ -15,17 +11,19 @@ from server.core.repo_base import _CHClient, _default_client
 from server.settings import settings
 
 TABLE = "loom._provider_participants"
+# A participant whose last heartbeat is older than this may count as stopped.
+STALE_AFTER_S = 60
 
 # `expired` is decided on the server's clock, like the leases.
 PARTICIPANTS_SQL = (
-    "SELECT participant_id, transition_id, state, version, stale_after_s, heartbeat_at, "
+    "SELECT participant_id, transition_id, state, version, heartbeat_at, "
     "host_proof, "
-    "stale_after_s > 0 AND heartbeat_at + toIntervalSecond(stale_after_s) < now64(3) AS expired "
+    "heartbeat_at + toIntervalSecond(stale_after_s) < now64(3) AS expired "
     f"FROM {TABLE} FINAL WHERE state != 'retired'"
 )
 ONE_SQL = (
-    "SELECT state, version, stale_after_s, "
-    "stale_after_s > 0 AND heartbeat_at + toIntervalSecond(stale_after_s) < now64(3) AS expired "
+    "SELECT state, version, "
+    "heartbeat_at + toIntervalSecond(stale_after_s) < now64(3) AS expired "
     f"FROM {TABLE} FINAL WHERE participant_id = {{id:UUID}}"
 )
 OWN_VERSION_SQL = f"SELECT max(version) AS v FROM {TABLE} WHERE participant_id = {{id:UUID}}"
@@ -78,7 +76,6 @@ async def record_participant(
     *,
     after: int = 0,
     version: int | None = None,
-    stale_after_s: int = 0,
     ch: _CHClient | None = None,
 ) -> None:
     """`heartbeat_at` takes the server's clock (its column default); this process's
@@ -86,7 +83,7 @@ async def record_participant(
     if state not in ("running", "drained", "retired"):
         raise ValueError("Unknown participant state")
     own = str(identity) == str(process_identity())
-    await (ch or _default_client()).insert(  # type: ignore[call-arg]
+    await (ch or _default_client()).insert(
         TABLE,
         [
             {
@@ -94,12 +91,12 @@ async def record_participant(
                 "transition_id": transition,
                 "state": state,
                 "version": version if version is not None else max(time_ns(), after + 1),
-                "stale_after_s": stale_after_s,
+                # A retired row is stopped at once, so every build's `provider-lock clear`
+                # frees its holder without waiting out the heartbeat window.
+                "stale_after_s": 0 if state == "retired" else STALE_AFTER_S,
                 "host_proof": host_proof() if own else "",
             }
         ],
-        # A schema without the heartbeat columns (boot before 033) still enrolls.
-        project_onto_table=True,
     )
 
 
@@ -152,10 +149,9 @@ def participant_sync(ch: Any, identity: UUID | str) -> dict[str, Any] | None:
     rows = ch.query(ONE_SQL, parameters={"id": str(identity)}, settings=SEQUENTIAL).result_rows
     if not rows:
         return None
-    state, version, stale_after_s, expired = rows[0]
+    state, version, expired = rows[0]
     return {
         "state": str(state),
         "version": int(version),
-        "stale_after_s": int(stale_after_s),
         "expired": bool(expired),
     }

@@ -36,8 +36,8 @@ def test_a_new_table_is_created_private_to_the_user(tmp_path: Path) -> None:
 
 
 def test_a_world_readable_table_is_tightened_on_open(tmp_path: Path) -> None:
-    """A file an older build created 0644 is reused — the header
-    still agrees — and its mode is narrowed the first time this build opens it."""
+    """An existing 0644 file is reused — the header still agrees — and
+    its mode is narrowed the first time it is opened."""
     p = tmp_path / "t"
     p.write_bytes(b"")
     os.chmod(p, 0o644)

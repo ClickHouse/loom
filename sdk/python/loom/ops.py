@@ -6042,7 +6042,6 @@ class CodeRepoAddInput(TypedDict, total=False):
     branch: NotRequired[str]
     join_policy: NotRequired[Literal["open", "approval"]]
     classification: NotRequired[Literal["standard", "restricted"]]
-    github_token: NotRequired[str]
     access_token: NotRequired[str]
     path_prefixes: NotRequired[list[str]]
     exclude: NotRequired[list[str]]
@@ -6059,7 +6058,6 @@ class CodeRepoAddBody(TypedDict, total=False):
     branch: NotRequired[str]
     join_policy: NotRequired[Literal["open", "approval"]]
     classification: NotRequired[Literal["standard", "restricted"]]
-    github_token: NotRequired[str]
     access_token: NotRequired[str]
     path_prefixes: NotRequired[list[str]]
     exclude: NotRequired[list[str]]
@@ -6105,7 +6103,6 @@ class CodeRepoRemoteBranchesInput(TypedDict, total=False):
 
     org: Required[str]
     repo: Required[str]
-    github_token: NotRequired[str]
     access_token: NotRequired[str]
     query: NotRequired[str]
     limit: NotRequired[int]
@@ -6116,7 +6113,6 @@ class CodeRepoRemoteBranchesBody(TypedDict, total=False):
 
     org: NotRequired[str]
     repo: Required[str]
-    github_token: NotRequired[str]
     access_token: NotRequired[str]
     query: NotRequired[str]
     limit: NotRequired[int]

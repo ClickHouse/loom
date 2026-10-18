@@ -1124,7 +1124,6 @@ Add a repository's branch as a new read-only index.
 | `branch` | `str` | `''` | Blank asks the remote for its symbolic default branch. |
 | `join_policy` | `Literal['open', 'approval']` | `'open'` | `open`: any org member joins at once; `approval`: a maintainer approves each request. |
 | `classification` | `Literal['standard', 'restricted']` | `'standard'` | `standard` or `restricted` (a reader needs an approved grant and a token that names the namespace). |
-| `github_token` | `str` | `''` | Deprecated alias of access_token. |
 | `access_token` | `str` | `''` | Token for a private HTTPS remote; stored encrypted, never returned. |
 | `path_prefixes` | `list[str]` | *(computed)* | Path prefixes to index (`src/`, `lib/`); blank entries are dropped, [] indexes the whole tree. |
 | `exclude` | `list[str]` | *(computed)* | Globs never indexed for this repository (`vendor/`, `*.generated.go`); [] keeps the deployment's default exclude list. |
@@ -1186,7 +1185,6 @@ What a Git remote shows before anything is written — every branch with its hea
 | --- | --- | --- | --- |
 | `org` | `str` | required | The org adding the repository. |
 | `repo` | `str` | required | GitHub owner/name or an HTTPS/SSH Git URL. |
-| `github_token` | `str` | `''` | Deprecated alias of access_token. |
 | `access_token` | `str` | `''` | Token for a private HTTPS remote; used once. |
 | `query` | `str` | `''` | Case-insensitive substring of the branch name to match. |
 | `limit` | `int` | `60` | How many matching branches to return (default 60). |

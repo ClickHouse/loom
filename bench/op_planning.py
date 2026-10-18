@@ -30,9 +30,9 @@ does not expose is a GAP, not a failure. A task whose gold is empty
 leniently when it only reads.
 
 bench/fixtures/op_planning_tasks_retired.jsonl holds seven memory.apply
-tasks that left the main set when the revision cohort joined; with
-`--tasks` it re-scores them, and the main file's legacy cohort plus it is the older
-37-task set, so a new score can be read against earlier ones. Both files
+tasks outside the main set; with `--tasks` it re-scores them, and with the
+main file's `legacy` cohort they make up the 37-task set earlier scores used,
+so a new score can be read against those. Both files
 are hand written; their unit test keeps the ids disjoint.
 
 Usage:

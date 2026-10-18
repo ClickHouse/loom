@@ -316,7 +316,7 @@ describe("Extraction quality Refresh", () => {
 
 describe("OpMixPanel", () => {
   // A check the server ran but could not compute is a failure with a reason, not the
-  // "needs an org-admin token" state an absent check or a refused request reads as.
+  // "needs an org-admin token" state a request that did not answer reads as.
   beforeEach(() =>
     useStore.setState({
       identity: { org: "dev", namespace: "team-a", agent: "loom-ui" },

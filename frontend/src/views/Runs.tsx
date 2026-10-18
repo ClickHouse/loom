@@ -165,7 +165,7 @@ function budgetText(detail: RunGetResponse): string {
   if (run?.budget_usd) parts.push(usd(run.budget_usd));
   if (run?.budget_seconds) {
     parts.push(fmtDuration(run.budget_seconds * 1000));
-    const elapsed = detail.elapsed_seconds ?? 0;
+    const elapsed = detail.elapsed_seconds;
     parts.push(`${elapsed > 0 ? fmtDuration(elapsed * 1000) : "0s"} elapsed`);
   }
   return parts.length > 0 ? parts.join(" · ") : "—";
@@ -609,7 +609,7 @@ export function Runs() {
                 // The server's names_session: blank or "-" is no session.
                 const session = (open.session_id ?? "").trim();
                 const hasSession = session !== "" && session !== "-";
-                const over = detail.over_budget ?? [];
+                const over = detail.over_budget;
                 return (
                   <dl className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm m-0">
                     <ReplayFigure
@@ -632,7 +632,7 @@ export function Runs() {
                       help={
                         !hasSession
                           ? EMPTY_WHY.noSession
-                          : (detail.unpriced_turns ?? 0) > 0
+                          : detail.unpriced_turns > 0
                             ? `${EMPTY_WHY.sessionCost}. Unpriced: ${EMPTY_WHY.unpriced}`
                             : EMPTY_WHY.sessionCost
                       }
@@ -640,7 +640,7 @@ export function Runs() {
                       {hasSession ? (
                         <>
                           {detail.turns}
-                          {(detail.unpriced_turns ?? 0) > 0 && (
+                          {detail.unpriced_turns > 0 && (
                             <span className="text-text-muted"> ({detail.unpriced_turns} unpriced)</span>
                           )}
                         </>
