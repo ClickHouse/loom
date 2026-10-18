@@ -139,7 +139,12 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
             res, verdicts = await ask(cap)
             if len(verdicts) < len(peers):
                 # Cut at the cap, malformed, or a peer left out: once more, with room.
-                again, more = await ask(2 * cap)
+                try:
+                    again, more = await ask(2 * cap)
+                except (httpx.HTTPError, TimeoutError):
+                    if not verdicts:
+                        raise
+                    again, more = res, {}  # the first answer stands; what it left out waits
                 if len(more) > len(verdicts):
                     res, verdicts = again, more
     except httpx.HTTPStatusError as e:
@@ -426,9 +431,6 @@ async def _clear(org: str, row: Any, peer: Any) -> bool:
     a = await _unlink(org, row, str(peer.memory_id))
     b = await _unlink(org, peer, str(row.memory_id))
     return a or b
-
-
-_COUNTED = {cr.RETIRE: "retired", cr.FLAG: "flagged", cr.CLEAR: "cleared"}
 
 
 def _identity(r: Any) -> tuple[str, str, str, str]:

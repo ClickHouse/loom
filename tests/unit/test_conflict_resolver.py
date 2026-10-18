@@ -1624,6 +1624,29 @@ async def test_an_answer_that_leaves_a_peer_out_is_asked_again_with_room(monkeyp
     assert caps == [300, 600] and set(got) == {p.memory_id for p in _PEERS}
 
 
+async def test_a_reask_that_fails_keeps_the_first_usable_answer(monkeypatch) -> None:
+    import httpx
+
+    import server.llm.client as llm_client
+
+    calls = 0
+
+    class LLM:
+        async def complete(self, system: str, user: str, **kw: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                req = httpx.Request("POST", "https://llm.example/v1")
+                raise httpx.HTTPStatusError(
+                    "503", request=req, response=httpx.Response(503, request=req)
+                )
+            return NS(text=_answer(_entry("p1", "update", 0.97)), model="m")
+
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: LLM())
+    got, _ = await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
+    assert calls == 2 and list(got) == [_PEERS[0].memory_id]
+
+
 def test_the_resolver_client_never_falls_back_to_another_model(monkeypatch) -> None:
     import server.llm.client as llm_client
     from server.llm.fallback import FallbackLLMClient
