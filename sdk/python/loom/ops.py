@@ -11196,6 +11196,7 @@ class MemoryListEntry(TypedDict, total=False):
     value_truncated: NotRequired[bool]
     content_sha256: NotRequired[str]
     char_limit: NotRequired[Optional[int]]
+    sensitivity: NotRequired[str]
 
 
 class MemoryLockInput(TypedDict, total=False):

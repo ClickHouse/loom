@@ -79,3 +79,16 @@ async def test_short_excerpt_without_a_body_is_not_flagged(monkeypatch):
     h = _hit("k9", excerpt="short value, already whole")
     returned, elided, _ = await _expand_unit_bodies([h], _input())
     assert (returned, elided) == (0, 0) and h.body_truncated is False
+
+
+@pytest.mark.asyncio
+async def test_a_high_row_is_never_a_search_body(monkeypatch):
+    # The wildcard-agent read answers the newest row of the key, which another identity
+    # may have written as 'high'.
+    async def fake_get_many(identity, keys, **_):
+        return [SimpleNamespace(memory_key="k1", value="vault token", sensitivity="high")]
+
+    monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
+    h = _hit("k1")
+    await _expand_unit_bodies([h], _input())
+    assert h.content_excerpt == CLIP and "vault" not in h.content_excerpt

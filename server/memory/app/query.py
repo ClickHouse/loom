@@ -28,9 +28,11 @@ from server.memory.api.models_search import (
     MemoryAggregateOutput,
     _AggregateRow,
 )
+from server.memory.app.get_output import duplicate_of_shown, row_output
 from server.memory.app.served_superseded import ServedFlags, shown_successors
 from server.memory.domain import trust as _trust
 from server.memory.domain.entity_sentinels import public_entities
+from server.observability import audit as _audit
 
 log = logging.getLogger(__name__)
 
@@ -404,6 +406,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
                     evidence_count=r.evidence_count,
                     recall_count=r.recall_count,
                     last_recalled_at=r.last_recalled_at,
+                    sensitivity=r.sensitivity,
                     tags=list(r.tags or []),
                     entities=public_entities(r.entities),
                     agent=r.agent or "",
@@ -488,7 +491,7 @@ async def _list_by_score(
             memory_key, memory_type, confidence, version,
             created_at, expires_at, valid_at, pinned, status,
             evidence_count, recall_count, last_recalled_at,
-            tags, entities, source_trace,
+            tags, entities, source_trace, sensitivity,
             verified_by, verified_sha256, content_sha256,
             agent, user_id, session_id,
             value_preview AS value,
@@ -547,6 +550,7 @@ async def _list_by_score(
                 value=_decode_value(r.get("value")),
                 verified_by=r.get("verified_by") or "",
                 verification=_list_verification(r),
+                sensitivity=r.get("sensitivity") or "",
             )
             for r in rows_dict
         ],
@@ -756,7 +760,7 @@ async def handle_memory_bulk_get(
 async def _handle_memory_bulk_get(
     input: MemoryBulkGetInput,
 ) -> MemoryBulkGetOutput:
-    """Fetch many memory rows in a single CH query.
+    """Fetch many memory rows by key, each answered as memory.get answers it.
 
     Excludes tombstoned rows from `found`. Missing keys land in `missing`."""
     import server.memory.store as memory_repo
@@ -783,9 +787,7 @@ async def _handle_memory_bulk_get(
     # the id; a bulk reader that got chunk ids back from a search reads the parent rows here
     # instead of a miss. The parent's row is answered under every id that asked for it, with
     # `canonical_key` naming the parent, so the caller can fold.
-    from server.memory.app.get_output import duplicate_of_shown, row_output
     from server.memory.app.handlers import chunk_parent_key
-    from server.observability import audit as _audit
 
     parent_of: dict[str, str] = {}
     for k in input.memory_keys:
@@ -802,6 +804,7 @@ async def _handle_memory_bulk_get(
     # sees identity, lifecycle, sensitivity and attestation without N gets. The conflict
     # verdict and code links cost a read per row and are left to memory.get.
     results: dict[str, MemoryGetOutput] = {}
+    high: list[dict[str, Any]] = []
     for r in rows:
         canonical_key = canonical.get(r.memory_key)
         results[r.memory_key] = row_output(
@@ -812,14 +815,7 @@ async def _handle_memory_bulk_get(
             superseded_by=successors.get(str(r.memory_id), ""),
         )
         if getattr(r, "sensitivity", "") == "high":
-            # A key read of a 'high' row is audited, as memory.get audits it.
-            await _audit.emit(
-                "memory.sensitive_read",
-                org=input.org,
-                namespace=input.namespace,
-                actor=input.agent,
-                subject={"memory_key": r.memory_key, "memory_id": str(r.memory_id)},
-            )
+            high.append({"memory_key": r.memory_key, "memory_id": str(r.memory_id)})
         results[r.memory_key]._projection = keep
     for chunk_id, parent in parent_of.items():
         if parent in results and chunk_id not in results:
@@ -828,5 +824,13 @@ async def _handle_memory_bulk_get(
             row = parent_row.model_copy(update={"canonical_key": canonical_key})
             row._projection = keep
             results[chunk_id] = row
+    # A key read of a 'high' row is audited, as memory.get audits it.
+    await _audit.emit_many(
+        "memory.sensitive_read",
+        org=input.org,
+        namespace=input.namespace,
+        actor=input.agent,
+        subjects=high,
+    )
     missing = [k for k in input.memory_keys if k not in results]
     return MemoryBulkGetOutput(results=results, missing=missing)

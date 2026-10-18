@@ -119,9 +119,10 @@ async def _fetch_namespace(
     *,
     include_tombstoned: bool,
     limit: int | None = None,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[str]]:
     """Every live row of `namespace` (all agents, users and sessions), full
-    values, as memory_to_concept dicts. `limit` caps the rows for smoke runs."""
+    values, as memory_to_concept dicts, and the keys of the tombstoned rows whose
+    full value could not be read. `limit` caps the rows for smoke runs."""
     entries: list[dict[str, Any]] = []
     offset = 0
     while True:
@@ -161,6 +162,7 @@ async def _fetch_namespace(
         by_ident.setdefault(ident, []).append(r)
 
     out: list[dict[str, Any]] = []
+    unreadable: list[str] = []
     for (agent, user_id, session_id), rows in by_ident.items():
         keys = [r["memory_key"] for r in rows]
         full: dict[str, dict[str, Any]] = {}
@@ -178,14 +180,19 @@ async def _fetch_namespace(
             )
             full.update(got.get("results") or {})
         for r in rows:
-            g = full.get(r["memory_key"]) or {}
-            merged = {**r, **{k: v for k, v in g.items() if v not in (None, "", [], {})}}
-            # Present even when empty, so a row bulk_get did not answer has none and stays home.
-            merged["sensitivity"] = g.get("sensitivity")
+            g = full.get(r["memory_key"])
+            if g is None and r.get("value_truncated"):
+                # bulk_get answers live rows only, and the list holds a cut preview.
+                unreadable.append(r["memory_key"])
+                continue
+            merged = {**r, **{k: v for k, v in (g or {}).items() if v not in (None, "", [], {})}}
+            if g is not None:
+                # Kept even when empty: the list's own value is not the one to trust.
+                merged["sensitivity"] = g.get("sensitivity")
             merged.setdefault("namespace", namespace)
             merged["agent"] = agent if agent != "*" else (r.get("agent") or "")
             out.append(merged)
-    return out
+    return out, unreadable
 
 
 async def _fetch_evidence(
@@ -347,7 +354,7 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
         digests: list[okf_ev.DigestRecord] = []
         edges: list[dict[str, Any]] = []
         try:
-            entries = await _fetch_namespace(
+            entries, unreadable = await _fetch_namespace(
                 client,
                 org,
                 args.namespace,
@@ -393,8 +400,15 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             )
         if skipped_high:
             print(
-                f"  {skipped_high} row(s) stayed in the database: sensitivity=high, or not "
-                f"answered (--include-high exports them)"
+                f"  {skipped_high} row(s) with sensitivity=high, or no known sensitivity, "
+                f"stayed in the database (--include-high exports them)"
+            )
+        if unreadable:
+            print(
+                f"  {len(unreadable)} tombstoned row(s) left out: their value is longer than "
+                "the list preview and bulk_get does not serve tombstoned rows: "
+                + ", ".join(unreadable[:5])
+                + (" …" if len(unreadable) > 5 else "")
             )
         if orphans:
             print(

@@ -554,6 +554,8 @@ async def find_related_by_entities(
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
           AND tombstoned_at IS NULL
+          -- A 'high' row is readable by key only, not as a neighbour's excerpt.
+          AND sensitivity != 'high'
           AND memory_key != {{key:String}}
           AND hasAny(entities, {{ents:Array(String)}})
           AND length(arrayIntersect(entities, {{ents:Array(String)}})) >= {{min_overlap:UInt32}}
@@ -736,7 +738,7 @@ async def list_by_namespace(
             char_limit,
             created_at, updated_at, expires_at, valid_at, tombstoned_at,
             status, run_id, source_trace, tags, entities,
-            evidence_count, recall_count, last_recalled_at,
+            evidence_count, recall_count, last_recalled_at, sensitivity,
             content_sha256, verified_by, verified_at, verified_sha256, actor, source_class
         FROM loom.memory FINAL
         WHERE {" AND ".join(where)}
@@ -771,7 +773,7 @@ async def _locate_then_preview(
             confidence, version, pinned, char_limit,
             created_at, updated_at, expires_at, valid_at, tombstoned_at,
             status, run_id, source_trace, tags, entities,
-            evidence_count, recall_count, last_recalled_at,
+            evidence_count, recall_count, last_recalled_at, sensitivity,
             content_sha256, verified_by, verified_at, verified_sha256, actor, source_class
         FROM loom.memory FINAL
         WHERE {" AND ".join(where)}

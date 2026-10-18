@@ -4629,6 +4629,7 @@ export interface MemoryListEntry {
   value_truncated?: boolean;
   content_sha256?: string;
   char_limit?: number | null;
+  sensitivity?: string;
 }
 
 export interface MemoryListOutput {

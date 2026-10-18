@@ -618,6 +618,8 @@ class _MemoryListEntry(ProjectedRow):
     value_truncated: bool = False
     content_sha256: str = ""
     char_limit: int | None = None
+    # Sensitivity tier ('' | low | medium | high), so a reader can keep 'high' rows to itself.
+    sensitivity: str = ""
 
 
 class MemoryListOutput(BaseModel):

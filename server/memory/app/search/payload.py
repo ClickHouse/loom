@@ -295,10 +295,13 @@ async def _expand_unit_bodies(
 
     # one read per (namespace, session) the hits span, overlapped
     reads = await asyncio.gather(*(_read(ns, sid, group) for (ns, sid), group in by_scope.items()))
+    # The body read can answer another identity's row of the key; a 'high' one is never a
+    # search body, whoever wrote it.
     values: dict[tuple[str, str], Any] = {
         (ns, str(r.memory_key)): r.value
         for (ns, _), rows in zip(by_scope, reads, strict=True)
         for r in rows
+        if getattr(r, "sensitivity", "") != "high"
     }
     returned = elided = tokens = 0
     spent = 0

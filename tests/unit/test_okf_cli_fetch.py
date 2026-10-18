@@ -83,7 +83,8 @@ class _FakeClient:
 @pytest.mark.asyncio
 async def test_export_keeps_superseded_rows_and_pages_edges() -> None:
     client = _FakeClient()
-    rows = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    rows, unreadable = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    assert unreadable == []
     list_call = next(b for op, b in client.calls if op == "memory.list")
     assert list_call["include_superseded"] is True
     assert sorted(r["memory_key"] for r in rows) == ["new", "old"]
@@ -112,3 +113,51 @@ async def test_export_keeps_superseded_rows_and_pages_edges() -> None:
     assert newer.relates_to == [{"path": "semantic/old.md", "kind": "supersedes"}]
     assert orphans == [] and skipped == 0
     assert datetime.now(UTC).date().isoformat() in files["log.md"]
+
+
+class _MixedClient:
+    """A namespace with a live row, a live 'high' row and three tombstoned rows, which
+    bulk_get does not answer: one short, one longer than the list preview, one 'high'."""
+
+    async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        def entry(key: str, **over: Any) -> dict[str, Any]:
+            base = {"memory_key": key, "agent": "a", "user_id": "-", "session_id": "-"}
+            return {**base, "memory_type": "semantic", "value": f"{key} text", **over}
+
+        if op == "memory.list":
+            return {
+                "entries": [
+                    entry("plain", sensitivity=""),
+                    entry("secret", sensitivity="high"),
+                    entry("gone-short", status="tombstoned", sensitivity=""),
+                    entry("gone-long", status="tombstoned", sensitivity="", value_truncated=True),
+                    entry("gone-high", status="tombstoned", sensitivity="high"),
+                ],
+                "truncated": False,
+            }
+        if op == "memory.bulk_get":
+            return {
+                "results": {
+                    "plain": {"value": "plain text", "sensitivity": ""},
+                    "secret": {"value": "secret text", "sensitivity": "high"},
+                }
+            }
+        raise AssertionError(op)
+
+
+@pytest.mark.asyncio
+async def test_export_keeps_high_and_unreadable_rows_home() -> None:
+    rows, unreadable = await cli_okf._fetch_namespace(
+        _MixedClient(),  # type: ignore[arg-type]
+        "o",
+        "ns",
+        include_tombstoned=True,
+    )
+    assert unreadable == ["gone-long"]
+    files, _orphans, skipped = cli_okf._plan_export(
+        rows, [], [], [], namespace="ns", title=None, include_high=False
+    )
+    text = "\n".join(files.values())
+    assert skipped == 2  # secret and gone-high
+    assert "plain text" in text and "gone-short text" in text
+    assert "secret text" not in text and "gone-high text" not in text

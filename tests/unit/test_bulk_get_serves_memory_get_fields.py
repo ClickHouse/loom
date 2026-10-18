@@ -59,15 +59,15 @@ def served(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _none(*_a: Any, **_k: Any) -> dict[str, Any]:
         return {}
 
-    async def _emit(event: str, **kw: Any) -> None:
-        seen["audits"].append((event, kw["subject"]["memory_key"]))
+    async def _emit_many(event: str, **kw: Any) -> None:
+        seen["audits"].append((event, [s["memory_key"] for s in kw["subjects"]]))
 
     monkeypatch.setattr(memory_repo, "get_many_by_keys", _rows)
     monkeypatch.setattr(memory_repo, "list_by_namespace", _rows)
     monkeypatch.setattr(memory_repo, "overlay_usage_totals_many", _overlay)
     monkeypatch.setattr(query, "_canonical_keys_for_rows", _none)
     monkeypatch.setattr(query, "shown_successors", _none)
-    monkeypatch.setattr(audit, "emit", _emit)
+    monkeypatch.setattr(audit, "emit_many", _emit_many)
     return seen
 
 
@@ -79,7 +79,7 @@ async def test_bulk_get_serves_sensitivity_and_usage_and_audits_high_rows(served
     assert out.results["secret"].sensitivity == "high"
     assert out.results["plain"].sensitivity == ""
     assert out.results["plain"].recall_count == 4
-    assert served["audits"] == [("memory.sensitive_read", "secret")]
+    assert served["audits"] == [("memory.sensitive_read", ["secret"])]  # one insert per call
 
 
 @pytest.mark.asyncio
@@ -107,3 +107,21 @@ async def test_list_serves_the_usage_counters(served, monkeypatch) -> None:
         MemoryListInput(org="o", namespace="n", agent="a", fields=["recall_count"])
     )
     assert [e.recall_count for e in out.entries] == [4, 4]
+
+
+@pytest.mark.asyncio
+async def test_list_reads_usage_only_when_the_projection_serves_it(served, monkeypatch) -> None:
+    async def _version(*_a: Any, **_k: Any) -> int:
+        return 1
+
+    async def _count(*_a: Any, **_k: Any) -> int:
+        return 2
+
+    monkeypatch.setattr(memory_repo, "namespace_version", _version)
+    monkeypatch.setattr(memory_repo, "count_by_namespace", _count)
+    monkeypatch.setattr(query, "_record_read_exposure", lambda *a, **k: None)
+    out = await query._handle_memory_list(
+        MemoryListInput(org="o", namespace="n", agent="a", fields=["sensitivity"])
+    )
+    assert served["overlaid"] == 0
+    assert [e.sensitivity for e in out.entries] == ["", "high"]
