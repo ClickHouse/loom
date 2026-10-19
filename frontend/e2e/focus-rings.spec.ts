@@ -1,130 +1,254 @@
 import { expect, test, type Page } from "@playwright/test";
 import { installApi, NAMESPACE, ROUTES, SMALL_SEED, TASK_INBOX } from "./fixtures";
 
-// Every keyboard focus ring is drawn whole. On each page, at desktop width and on a touch
-// phone, Tab walks up to 40 stops and the arrow keys rove into each row list or the namespace
-// picker's options met on the way. At each stop the ring (the focused element's outline, or
-// the one an ancestor draws for it, as a list row does) must fit inside every box that clips
-// it, within 0.5 px: an ancestor in its containing-block chain whose overflow is not visible.
-// After Tab the browser scrolls, and leaves a partly visible element where it is, so
-// a scroll box counts its whole scrollable area: the ring is clipped when no scrolling shows
-// it. After an arrow key Loom scrolls the item itself, so the box's padding box counts.
+// Every focus ring fits inside each box that clips it; after Tab a scroll box counts its whole
+// scrollable area, after an arrow key only its visible area.
 
-const TAB_STOPS = 40;
+// A page's whole tab cycle fits in this many stops; a walk that reaches it fails.
+const TAB_CAP = 200;
 const ARROW_STOPS = 24;
 
-/** Each clipping box the focused element's ring overflows, described; none when it has no ring. */
-async function clippedRings(page: Page, scrolled: "browser" | "loom"): Promise<string[]> {
-  return page.evaluate((scrolled) => {
-    const el = document.activeElement;
-    if (!(el instanceof HTMLElement) || el === document.body || !el.matches(":focus-visible")) return [];
-    const name = (e: Element) => {
-      const label = e.getAttribute("aria-label") ?? (e.textContent ?? "").trim().slice(0, 32);
-      const cls = e.classList.length ? `.${[...e.classList].slice(0, 3).join(".")}` : "";
-      const role = e.getAttribute("role");
-      return `${e.tagName.toLowerCase()}${role ? `[role=${role}]` : ""}${cls} "${label}"`;
-    };
-    // The next box whose overflow can clip `e`: its parent, or for a positioned box the
-    // ancestor that positions it.
-    const clipParent = (e: Element): Element | null => {
-      const pos = getComputedStyle(e).position;
-      let p = e.parentElement;
-      const plain = (x: Element) => getComputedStyle(x).transform === "none" && getComputedStyle(x).filter === "none";
-      if (pos === "fixed") while (p && plain(p)) p = p.parentElement;
-      else if (pos === "absolute")
-        while (p && getComputedStyle(p).position === "static" && plain(p)) p = p.parentElement;
-      return p;
-    };
-    // The ring's element: the focused one, or the nearest ancestor drawing it (`:has(:focus-visible)`).
-    let ringEl: Element | null = el;
-    for (; ringEl && ringEl !== document.body; ringEl = ringEl.parentElement) {
-      const s = getComputedStyle(ringEl);
-      const drawn = s.outlineStyle !== "none" && parseFloat(s.outlineWidth) > 0;
-      if (drawn && (ringEl === el || ringEl.matches(":has(:focus-visible)"))) break;
-    }
-    if (!ringEl || ringEl === document.body) return [];
-    const s = getComputedStyle(ringEl);
-    // The outline's outer edge sits outline-offset + outline-width from the border box: out
-    // for an outset ring, in for one inset by more than its width.
-    const reach = parseFloat(s.outlineWidth) + parseFloat(s.outlineOffset);
-    const r = ringEl.getBoundingClientRect();
-    if (r.width === 0 && r.height === 0) return [];
-    const ring = { left: r.left - reach, right: r.right + reach, top: r.top - reach, bottom: r.bottom + reach };
-    const out: string[] = [];
-    type Box = { start: number; size: number; scroll: number; extent: number };
-    for (
-      let box = clipParent(ringEl);
-      box && box !== document.body && box !== document.documentElement;
-      box = clipParent(box)
-    ) {
-      const bs = getComputedStyle(box);
-      const b = box.getBoundingClientRect();
-      const left = b.left + box.clientLeft;
-      const top = b.top + box.clientTop;
-      const over: string[] = [];
-      // One axis (`own`: the element's size on it); returns how far scrolling the box would
-      // move the ring into its view, for the boxes further out.
-      const axis = (overflow: string, lo: number, hi: number, own: number, at: Box, sides: [string, string]) => {
-        // An element larger than the box (a tab panel taller than the page) is seen a part at a time.
-        if (overflow === "visible" || own > at.size) return 0;
-        const scrolls = scrolled === "browser" && (overflow === "auto" || overflow === "scroll");
-        // A browser-scrolled box: anywhere in its scrollable area. Loom-scrolled: in view.
-        const from = scrolls ? at.start - at.scroll : at.start;
-        const to = scrolls ? from + at.extent : at.start + at.size;
-        if (lo < from - 0.5) over.push(`${sides[0]} ${(from - lo).toFixed(1)}px`);
-        if (hi > to + 0.5) over.push(`${sides[1]} ${(hi - to).toFixed(1)}px`);
-        if (!scrolls) return 0;
-        return lo < at.start ? at.start - lo : hi > at.start + at.size ? at.start + at.size - hi : 0;
+type Mode = "tab" | "arrow";
+type Stop = {
+  /** The focused element, short; the ring's element after it when an ancestor draws the ring. */
+  name: string;
+  /** Each clipping box the ring overflows, described. */
+  clipped: string[];
+  /** The targets the focused element or its ring's element matches. */
+  matched: string[];
+  /** Focus is on another element this walk checked already: after a Tab, the cycle is complete. */
+  again: boolean;
+  /** Focus moved since the last stop. */
+  moved: boolean;
+  /** Focus is outside `within`. */
+  out: boolean;
+  /** Focus is on an item of an arrow-key list not roved yet in this walk. */
+  fresh: boolean;
+  /** The dialogs open. */
+  dialogs: number;
+};
+
+/** The focused element's stop: its ring checked, as `mode` scrolled it there. `start` makes it
+ *  the walk's first stop. */
+async function stopAt(page: Page, mode: Mode, start: boolean, within: string | null, targets: string[]): Promise<Stop> {
+  return page.evaluate(
+    ({ mode, start, within, targets }) => {
+      const styles = new Map<Element, CSSStyleDeclaration>();
+      const css = (e: Element) => {
+        let s = styles.get(e);
+        if (!s) {
+          s = getComputedStyle(e);
+          styles.set(e, s);
+        }
+        return s;
       };
-      const x = { start: left, size: box.clientWidth, scroll: box.scrollLeft, extent: box.scrollWidth };
-      const y = { start: top, size: box.clientHeight, scroll: box.scrollTop, extent: box.scrollHeight };
-      const dx = axis(bs.overflowX, ring.left, ring.right, r.width, x, ["left", "right"]);
-      const dy = axis(bs.overflowY, ring.top, ring.bottom, r.height, y, ["top", "bottom"]);
-      // The boxes further out see the ring where scrolling this one brings it.
-      ring.left += dx;
-      ring.right += dx;
-      ring.top += dy;
-      ring.bottom += dy;
-      if (over.length) out.push(`${name(ringEl)} clipped by ${name(box)}: ${over.join(", ")}`);
-    }
-    return out;
-  }, scrolled);
+      const name = (e: Element) => {
+        const label = e.getAttribute("aria-label") ?? (e.textContent ?? "").trim().slice(0, 32);
+        const cls = e.classList.length ? `.${[...e.classList].slice(0, 3).join(".")}` : "";
+        const attrs = ["role", "data-nav", "aria-expanded"]
+          .filter((a) => e.hasAttribute(a))
+          .map((a) => `[${a}=${e.getAttribute(a)}]`)
+          .join("");
+        return `${e.tagName.toLowerCase()}${attrs}${cls} "${label}"`;
+      };
+      // The boxes that can clip `el`, inner first: the ancestors in its containing-block chain
+      // whose overflow is not visible on an axis.
+      const clipAncestors = (el: Element): Element[] => {
+        const plain = (x: Element) => css(x).transform === "none" && css(x).filter === "none";
+        const boxes: Element[] = [];
+        for (let e = el; ; ) {
+          let p = e.parentElement;
+          if (css(e).position === "fixed") while (p && plain(p)) p = p.parentElement;
+          else if (css(e).position === "absolute")
+            while (p && css(p).position === "static" && plain(p)) p = p.parentElement;
+          if (!p || p === document.body || p === document.documentElement) return boxes;
+          if (css(p).overflowX !== "visible" || css(p).overflowY !== "visible") boxes.push(p);
+          e = p;
+        }
+      };
+      type Ring = { left: number; right: number; top: number; bottom: number; width: number; height: number };
+      // The sides of `ring` that `box` clips, and how far scrolling the box moves the ring into
+      // its view (what the boxes further out see).
+      const overflow = (ring: Ring, box: Element, mode: Mode) => {
+        const s = css(box);
+        const b = box.getBoundingClientRect();
+        const axes = [
+          {
+            overflow: s.overflowX,
+            lo: ring.left,
+            hi: ring.right,
+            own: ring.width,
+            start: b.left + box.clientLeft,
+            size: box.clientWidth,
+            scroll: box.scrollLeft,
+            extent: box.scrollWidth,
+            names: ["left", "right"],
+          },
+          {
+            overflow: s.overflowY,
+            lo: ring.top,
+            hi: ring.bottom,
+            own: ring.height,
+            start: b.top + box.clientTop,
+            size: box.clientHeight,
+            scroll: box.scrollTop,
+            extent: box.scrollHeight,
+            names: ["top", "bottom"],
+          },
+        ];
+        const sides: string[] = [];
+        const shift = [0, 0];
+        axes.forEach((a, i) => {
+          // An element larger than the box (a tab panel taller than the page) is seen a part at a time.
+          if (a.overflow === "visible" || a.own > a.size) return;
+          const scrolls = mode === "tab" && (a.overflow === "auto" || a.overflow === "scroll");
+          const from = scrolls ? a.start - a.scroll : a.start;
+          const to = from + (scrolls ? a.extent : a.size);
+          if (a.lo < from - 0.5) sides.push(`${a.names[0]} ${(from - a.lo).toFixed(1)}px`);
+          if (a.hi > to + 0.5) sides.push(`${a.names[1]} ${(a.hi - to).toFixed(1)}px`);
+          if (scrolls)
+            shift[i] = a.lo < a.start ? a.start - a.lo : a.hi > a.start + a.size ? a.start + a.size - a.hi : 0;
+        });
+        return { sides, shift: { x: shift[0], y: shift[1] } };
+      };
+      // The arrow-key list an item belongs to: its tree, grid or listbox, else the nearest
+      // ancestor holding another item.
+      const ITEM = '[role="row"], [role="treeitem"], [role="option"], [data-nav], [data-row-open]';
+      const listOf = (el: Element): Element | null => {
+        const item = el.closest(ITEM);
+        if (!item) return null;
+        const owner = item.closest('[role="tree"], [role="grid"], [role="listbox"], table, [role="list"], ul');
+        if (owner) return owner;
+        let p = item.parentElement;
+        while (p && p.querySelectorAll(ITEM).length < 2) p = p.parentElement;
+        return p;
+      };
+
+      type State = { seen: WeakSet<Element>; roved: WeakSet<Element>; last: Element | null };
+      const w = window as unknown as { __walk?: State };
+      if (start || !w.__walk) w.__walk = { seen: new WeakSet(), roved: new WeakSet(), last: null };
+      const walked = w.__walk;
+      const at = document.activeElement;
+      const el = at && at !== document.body ? at : null;
+      const list = el ? listOf(el) : null;
+      const stop = {
+        name: "",
+        clipped: [] as string[],
+        matched: [] as string[],
+        again: !!el && walked.seen.has(el),
+        moved: el !== walked.last,
+        out: !!within && !el?.closest(within),
+        fresh: !!list && !walked.roved.has(list),
+        dialogs: document.querySelectorAll('[role="dialog"], [role="alertdialog"]').length,
+      };
+      walked.last = el;
+      if (!(el instanceof HTMLElement) || (stop.again && mode === "tab")) return stop;
+      walked.seen.add(el);
+      if (list) walked.roved.add(list);
+      stop.name = name(el);
+      if (!el.matches(":focus-visible")) return stop;
+
+      // The ring's element: the focused one, or the nearest ancestor drawing it (`:has(:focus-visible)`).
+      let ringEl: Element | null = el;
+      for (; ringEl && ringEl !== document.body; ringEl = ringEl.parentElement) {
+        const s = css(ringEl);
+        const drawn = s.outlineStyle !== "none" && parseFloat(s.outlineWidth) > 0;
+        if (drawn && (ringEl === el || ringEl.matches(":has(:focus-visible)"))) break;
+      }
+      stop.matched = targets.filter((t) => el.matches(t) || (ringEl !== document.body && !!ringEl?.matches(t)));
+      if (!ringEl || ringEl === document.body) return stop;
+      if (ringEl !== el) stop.name += ` ring on ${name(ringEl)}`;
+      const r = ringEl.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return stop;
+      // The outline's outer edge sits outline-offset + outline-width from the border box: out
+      // for an outset ring, in for one inset by more than its width.
+      const reach = parseFloat(css(ringEl).outlineWidth) + parseFloat(css(ringEl).outlineOffset);
+      const ring = {
+        left: r.left - reach,
+        right: r.right + reach,
+        top: r.top - reach,
+        bottom: r.bottom + reach,
+        width: r.width,
+        height: r.height,
+      };
+      for (const box of clipAncestors(ringEl)) {
+        const { sides, shift } = overflow(ring, box, mode);
+        if (sides.length) stop.clipped.push(`${name(ringEl)} clipped by ${name(box)}: ${sides.join(", ")}`);
+        ring.left += shift.x;
+        ring.right += shift.x;
+        ring.top += shift.y;
+        ring.bottom += shift.y;
+      }
+      return stop;
+    },
+    { mode, start, within, targets },
+  );
 }
 
-/** True when focus is on an item of an arrow-key list (a row, a tree item, a picker option)
- *  not roved yet on this page. */
-async function newList(page: Page): Promise<boolean> {
-  return page.evaluate(() => {
-    const item = document.activeElement?.closest(
-      '[role="row"], [role="treeitem"], [role="option"], [data-nav], [data-row-open]',
-    );
-    const list =
-      item?.closest('[role="tree"], [role="grid"], [role="listbox"], table, [role="list"], ul') ?? item?.parentElement;
-    if (!list) return false;
-    const w = window as unknown as { __roved?: WeakSet<Element> };
-    w.__roved ??= new WeakSet();
-    if (w.__roved.has(list)) return false;
-    w.__roved.add(list);
-    return true;
-  });
-}
+type Walk = { failures: string[]; stops: string[]; missed: string[] };
 
-/** Tab through the page, roving into each arrow-key list met, and gather every clipped ring. */
-async function walk(page: Page, where: string): Promise<string[]> {
-  const found = new Set<string>();
-  const check = async (scrolled: "browser" | "loom") => {
-    for (const v of await clippedRings(page, scrolled)) found.add(`${where}: ${v}`);
+/**
+ * Tab from the focus until it lands on a stop checked already, the cycle done (or leaves
+ * `within`), roving with the arrow keys into each arrow-key list met, and check every stop's ring. `fromFocus`
+ * starts at the element focused now instead of pressing Tab first. Returns the clipped rings,
+ * the stops checked, and the `targets` (selectors) no stop matched; a walk that reaches
+ * TAB_CAP, or an arrow key that opens a dialog, is a failure.
+ */
+async function walk(
+  page: Page,
+  where: string,
+  {
+    targets = [],
+    within = null,
+    fromFocus = false,
+  }: { targets?: string[]; within?: string | null; fromFocus?: boolean } = {},
+): Promise<Walk> {
+  const failures = new Set<string>();
+  const stops: string[] = [];
+  const reached = new Set<string>();
+  const visit = async (mode: Mode, start = false) => {
+    const s = await stopAt(page, mode, start, within, targets);
+    if ((s.again && mode === "tab") || !s.moved) return s;
+    if (s.name) stops.push(`${mode === "arrow" ? "  ↓ " : ""}${s.name}`);
+    for (const t of s.matched) reached.add(t);
+    for (const c of s.clipped) failures.add(`${where}: ${c}`);
+    return s;
   };
-  for (let i = 0; i < TAB_STOPS; i++) {
+  if (!fromFocus) await page.keyboard.press("Tab");
+  let s = await visit("tab", true);
+  // A Tab from the last stop (an autofocused field, a clicked control) reaches the body first.
+  if (!s.name) {
     await page.keyboard.press("Tab");
-    await check("browser");
-    if (!(await newList(page))) continue;
-    for (let j = 0; j < ARROW_STOPS; j++) {
-      await page.keyboard.press("ArrowDown");
-      await check("loom");
-    }
+    s = await visit("tab");
   }
-  return [...found];
+  if (!s.name) failures.add(`${where}: the walk starts on no element`);
+  const dialogs = s.dialogs;
+  for (let i = 0; ; i++) {
+    if (s.fresh)
+      for (let j = 0; j < ARROW_STOPS; j++) {
+        await page.keyboard.press("ArrowDown");
+        const a = await visit("arrow");
+        if (a.dialogs > dialogs) failures.add(`${where}: ArrowDown to ${a.name} opened a dialog`);
+        if (!a.moved) break;
+      }
+    if (i === TAB_CAP) {
+      failures.add(`${where}: ${TAB_CAP} Tab stops and the cycle is not done`);
+      break;
+    }
+    await page.keyboard.press("Tab");
+    s = await visit("tab");
+    // A date field's Tab moves between its parts, on one element.
+    if (s.moved && (s.again || s.out)) break;
+  }
+  await test.info().attach(`${where} stops`, { body: stops.join("\n"), contentType: "text/plain" });
+  return { failures: [...failures], stops, missed: targets.filter((t) => !reached.has(t)) };
+}
+
+/** Walk and expect no clipped ring and every target visited. */
+async function expectWhole(page: Page, where: string, opts: Parameters<typeof walk>[2] = {}) {
+  const { failures, missed } = await walk(page, where, opts);
+  expect(failures).toEqual([]);
+  expect(missed, "targets no stop reached").toEqual([]);
 }
 
 // The picker's groups: memory namespaces, and more code indexes than an open group shows,
@@ -171,7 +295,23 @@ const task = (i: number) => ({
   version: 1,
 });
 
-async function open(page: Page, path: string, mine?: typeof MINE) {
+// Per page, the stops its walk must reach: its row list, its tabs.
+const ROW = "[data-row-open]";
+const TAB = '[role="tab"]';
+const ROUTE_TARGETS: Record<string, string[]> = {
+  "/memories": [ROW, TAB],
+  "/recall": [TAB],
+  "/settings": [TAB],
+  "/library": [ROW],
+  "/spaces": [ROW],
+  "/profile": [ROW],
+  "/runs": [ROW],
+  "/tasks": [".tq-row", '[data-nav^="group:"]'],
+  "/admin/health": [TAB],
+  "/admin/activity": [TAB],
+};
+
+async function open(page: Page, path: string, mine?: { namespace: string }[]) {
   await installApi(page, {
     memoryRows: 8,
     knowledgeRows: 4,
@@ -181,8 +321,28 @@ async function open(page: Page, path: string, mine?: typeof MINE) {
   await page.goto(path);
   await expect(page.locator("main h1").first()).toBeVisible();
   await page.waitForLoadState("networkidle");
-  await page.waitForTimeout(300); // the rows' entry animation
+  await page.waitForFunction(() => document.getAnimations().length === 0);
 }
+
+// The detector itself: a full-width button in a box that clips it, its ring drawn out, then in.
+for (const [offset, clipped] of [
+  ["2px", true],
+  ["-2px", false],
+] as const)
+  test(`a ring drawn ${offset} out of a full-width button in an overflow: hidden box ${clipped ? "is" : "is not"} clipped`, async ({
+    page,
+  }) => {
+    await page.setContent(`
+      <style>button:focus-visible { outline: 2px solid blue; outline-offset: ${offset}; }</style>
+      <div style="overflow: hidden; width: 200px; margin: 40px"><button style="width: 100%">Wide</button></div>`);
+    const { failures, stops } = await walk(page, "probe");
+    expect(stops).toEqual(['button "Wide"']);
+    if (clipped)
+      expect(failures).toEqual([
+        'probe: button "Wide" clipped by div "Wide": left 4.0px, right 4.0px, top 4.0px, bottom 4.0px',
+      ]);
+    else expect(failures).toEqual([]);
+  });
 
 for (const phone of [false, true]) {
   test.describe(phone ? "375 px, touch" : "1400 px", () => {
@@ -195,14 +355,14 @@ for (const phone of [false, true]) {
     for (const path of ROUTES) {
       test(`${path}: every focus ring is drawn whole`, async ({ page }) => {
         await open(page, path);
-        expect(await walk(page, path)).toEqual([]);
+        await expectWhole(page, path, { targets: ROUTE_TARGETS[path] });
       });
     }
 
     test("the Explorer with a walk: every focus ring is drawn whole", async ({ page }) => {
       await open(page, `/graph?seed=${SMALL_SEED}`);
       await expect(page.getByRole("tree", { name: "Walk outline" }).getByRole("treeitem").first()).toBeVisible();
-      expect(await walk(page, "/graph walk")).toEqual([]);
+      await expectWhole(page, "/graph walk", { targets: ['.explorer-outline [role="treeitem"]'] });
     });
 
     test("a task lane longer than it shows: every focus ring is drawn whole", async ({ page }) => {
@@ -213,7 +373,9 @@ for (const phone of [false, true]) {
       );
       await page.reload();
       await expect(page.getByRole("button", { name: "Show all 24" })).toBeVisible();
-      expect(await walk(page, "/tasks long lane")).toEqual([]);
+      await expectWhole(page, "/tasks long lane", {
+        targets: ['[data-nav="more:todo"]', '[data-nav="group:todo"]', ".tq-row"],
+      });
     });
 
     test("the tasks list with a lane folded: every focus ring is drawn whole", async ({ page }) => {
@@ -221,7 +383,13 @@ for (const phone of [false, true]) {
       const header = page.getByRole("grid").getByRole("button", { name: /^Triage/ });
       await header.click();
       await expect(header).toHaveAttribute("aria-expanded", "false");
-      expect(await walk(page, "/tasks folded")).toEqual([]);
+      await expectWhole(page, "/tasks folded", {
+        targets: [
+          '[data-nav="group:triage"][aria-expanded="false"]',
+          '[data-nav^="group:"][aria-expanded="true"]',
+          ".tq-row",
+        ],
+      });
     });
 
     // A phone shows the list only: a board's columns do not fit it.
@@ -230,7 +398,7 @@ for (const phone of [false, true]) {
         await open(page, "/tasks");
         await page.getByRole("button", { name: "Board", exact: true }).click();
         await expect(page.getByRole("region", { name: /^To do/ })).toBeVisible();
-        expect(await walk(page, "/tasks board")).toEqual([]);
+        await expectWhole(page, "/tasks board", { targets: [".tq-card"] });
       });
 
     test("the open namespace picker: every focus ring is drawn whole", async ({ page }) => {
@@ -239,22 +407,57 @@ for (const phone of [false, true]) {
       const dialog = page.getByRole("dialog", { name: "Namespaces" });
       await dialog.getByRole("button", { name: /^Code indexes/ }).click();
       await expect(dialog.getByRole("button", { name: "Show all 10" })).toBeVisible();
-      expect(await walk(page, "namespace picker")).toEqual([]);
+      // Into the list from its search field, at its tab stop (the group just opened), and Home
+      // to its first option, so the arrows rove over every item.
+      await dialog.getByLabel("Search namespaces").focus();
+      await page.keyboard.press("ArrowDown");
+      await expect(dialog.getByRole("button", { name: /^Code indexes/ })).toBeFocused();
+      await page.keyboard.press("Home");
+      await expectWhole(page, "namespace picker", {
+        fromFocus: true,
+        within: '[role="dialog"][aria-label="Namespaces"]',
+        targets: [
+          '[data-nav^="ns:"]',
+          '[data-nav="group:code"]',
+          '[data-nav="group:tracker"]',
+          '[data-nav="more:code"]',
+        ],
+      });
     });
+
+    // Two lists whose last control is not an arrow-key item, at the list's clipped bottom edge.
+    const owned = { ...ns(NAMESPACE, "memory"), role: "admin" };
+    const pending = { ...ns("team-notes", "memory"), role: "viewer", status: "pending", pending_role: "writer" };
+    for (const [list, mine, last] of [
+      ["ends on a pending request", [owned, pending], "pending writer"],
+      ["has nothing joined", [owned], "Find public namespaces"],
+    ] as const)
+      test(`a namespace picker that ${list}: every focus ring is drawn whole`, async ({ page }) => {
+        await open(page, "/memories", [...mine]);
+        await page.getByRole("button", { name: /^Namespace: / }).click();
+        await expect(page.getByRole("dialog", { name: "Namespaces" }).getByText(last)).toBeVisible();
+        // The search field takes the focus on open; the walk starts there.
+        const { failures, stops } = await walk(page, `picker ${list}`, {
+          fromFocus: true,
+          within: '[role="dialog"][aria-label="Namespaces"]',
+        });
+        expect(failures).toEqual([]);
+        expect(stops.filter((s) => s.includes(last))).toHaveLength(1);
+      });
 
     test("the open memory inspector: every focus ring is drawn whole", async ({ page }) => {
       await open(page, "/memories");
       await page.locator("[data-memory-open]").first().click();
       await expect(page.getByRole("dialog")).toBeVisible();
       await page.waitForLoadState("networkidle");
-      expect(await walk(page, "memory inspector")).toEqual([]);
+      await expectWhole(page, "memory inspector", { targets: ['[role="dialog"] button'] });
     });
 
     test("the open task detail: every focus ring is drawn whole", async ({ page }) => {
       await open(page, "/tasks");
       await page.getByRole("row", { name: /^Task 1:/ }).click();
       await expect(page.getByRole("complementary", { name: "Task detail" }).or(page.getByRole("dialog"))).toBeVisible();
-      expect(await walk(page, "task detail")).toEqual([]);
+      await expectWhole(page, "task detail", { targets: [".tq-panel button"] });
     });
   });
 }
