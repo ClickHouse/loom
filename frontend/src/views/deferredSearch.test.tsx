@@ -2,6 +2,10 @@ import { cleanup, render, screen } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
+import { invalidateShared } from "../lib/sharedReads";
+import { codeRepoFixture, stubCodeFetch } from "../test/codeRepos";
+import { Browse } from "./Browse";
+import { CodeView } from "./Code";
 import { Documents } from "./Documents";
 import { Profile } from "./Profile";
 import { Audit } from "./admin/Audit";
@@ -31,6 +35,8 @@ const api = vi.hoisted(() => ({
   getProfileActivity: vi.fn(async () => ({ entries: [] })),
   listAuditLog: vi.fn(),
   listErasures: vi.fn(async () => ({ rows: [] })),
+  browseNamespaces: vi.fn(),
+  listMine: vi.fn(async () => []),
 }));
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
@@ -69,6 +75,15 @@ const event = (actor: string) => ({
   request_id: "",
 });
 
+const space = (namespace: string) => ({
+  namespace,
+  description: "",
+  kind: "memory" as const,
+  owner_email: "",
+  member_count: 1,
+  created_at: "",
+});
+
 const toolbar = () => screen.getByLabelText("Search and filters");
 
 async function typeHeld(box: HTMLElement, text: string) {
@@ -88,11 +103,14 @@ beforeEach(() => {
   });
   api.listProfile.mockResolvedValue({ entries: [section("about-me", "On call."), section("persona", "Terse.")] });
   api.listAuditLog.mockResolvedValue({ rows: [event("alice"), event("bob")] });
+  api.browseNamespaces.mockResolvedValue([space("alpha"), space("beta")]);
   useStore.setState({ authed: true, identity: { org: "acme", namespace: "team", agent: "loom-ui" } });
 });
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
+  invalidateShared();
   useStore.setState({ identity: null });
 });
 
@@ -139,5 +157,48 @@ describe("the count and the no-match state follow the rows, not the box", () => 
     await clearHeld(box);
     expect(screen.getByText("zzz", { selector: ".font-mono" })).toBeInTheDocument();
     expect(screen.queryByText("the filters in force", { exact: false })).toBeNull();
+  });
+
+  it("Spaces: a word the rows have not taken yet leaves the count at what is shown", async () => {
+    render(<Browse />);
+    await screen.findByText("beta");
+    await typeHeld(screen.getByLabelText("Search namespaces"), "alp");
+    expect(screen.getByText("beta")).toBeInTheDocument();
+    expect(screen.getByLabelText("Namespaces")).toHaveTextContent("2 namespaces");
+  });
+
+  it("Spaces: with no public namespaces, a typed name waits for the rows before offering a request", async () => {
+    api.browseNamespaces.mockResolvedValue([]);
+    render(<Browse />);
+    await screen.findByText("No public namespaces yet");
+    await typeHeld(screen.getByLabelText("Search namespaces"), "zzz");
+    expect(screen.getByText("No public namespaces yet")).toBeInTheDocument();
+    expect(screen.queryByText("No public namespace matching", { exact: false })).toBeNull();
+  });
+
+  it("Spaces: clearing a name that matched nothing keeps the request card on that name until the rows return", async () => {
+    render(<Browse />);
+    await screen.findByText("beta");
+    const box = screen.getByLabelText("Search namespaces");
+    await userEvent.type(box, "zzz");
+    await screen.findByText("No public namespace matching", { exact: false });
+    await clearHeld(box);
+    expect(screen.getByLabelText("Namespaces")).toHaveTextContent("0 namespaces");
+    expect(screen.getAllByText("zzz", { selector: ".font-mono" }).length).toBeGreaterThan(0);
+  });
+
+  it("Repositories: the count and the no-match row follow the cards, not the box", async () => {
+    stubCodeFetch(() => [codeRepoFixture]);
+    render(<CodeView />);
+    expect((await screen.findAllByText("acme/app", {}, { timeout: 2000 })).length).toBeGreaterThan(0);
+    const box = screen.getByLabelText("Filter repositories");
+    await typeHeld(box, "zzz");
+    expect(toolbar()).toHaveTextContent("1 repository · 1 branch");
+    held.on = false;
+    await userEvent.type(box, "z");
+    await screen.findByText("zzzz", { selector: ".font-mono" });
+    await clearHeld(box);
+    expect(toolbar()).toHaveTextContent("0 matches");
+    expect(screen.getByText("zzzz", { selector: ".font-mono" })).toBeInTheDocument();
   });
 });

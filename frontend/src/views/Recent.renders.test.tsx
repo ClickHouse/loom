@@ -107,4 +107,22 @@ describe("Recent card renders", () => {
     });
     expect(renders.count).toBe(0);
   });
+
+  it("typing an agent filter a key at a time renders no card again", async () => {
+    render(<Recent />);
+    await screen.findByText("coffee_pref");
+    const box = screen.getByLabelText("Search memories");
+    fireEvent.change(box, { target: { value: "milk" } });
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Why this result" })).toHaveLength(2), {
+      timeout: 3000,
+    });
+    renders.count = 0;
+    act(() => {
+      fireEvent.change(box, { target: { value: "milk agent:c" } });
+    });
+    act(() => {
+      fireEvent.change(box, { target: { value: "milk agent:cl" } });
+    });
+    expect(renders.count).toBe(0);
+  });
 });
