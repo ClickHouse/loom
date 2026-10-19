@@ -240,7 +240,8 @@ class MemorySetInput(_Identity):
     # The writer's own confidence in the fact, 0..1 (1.0 = certain).
     confidence: float = 1.0
     # Provenance tag of the write (`conversation:<id>`, `curated_doc://…`); a known
-    # prefix decides `source_class` (`conversation:` → extracted). Not in the MCP listing.
+    # prefix decides `source_class` (`conversation:` → extracted), and one starting with
+    # `memory.delete_version:` is refused. Not in the MCP listing.
     source_trace: str = Field(default="", json_schema_extra=MCP_HIDDEN)
     # Declare that this content came from outside (a tool result, a page, a
     # document): `external`, or `imported`. The server decides every other

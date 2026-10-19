@@ -1292,7 +1292,7 @@ WHAT: Save a standing fact and protect it.
 | `entities` | `list[str]` | *(computed)* | Explicit entities for a point write. |
 | `files` | `list[str] \| None` | `None` | The repo files this memory is about (repo-relative path or bare filename); memory.for_file serves it before an edit of them. |
 | `confidence` | `float` | `1.0` | The writer's own confidence in the fact, 0..1 (1.0 = certain). |
-| `source_trace` | `str` | `''` | Provenance tag of the write (`conversation:<id>`, `curated_doc://…`); a known prefix decides `source_class` (`conversation:` → extracted). |
+| `source_trace` | `str` | `''` | Provenance tag of the write (`conversation:<id>`, `curated_doc://…`); a known prefix decides `source_class` (`conversation:` → extracted), and one starting with `memory.delete_version:` is refused. |
 | `source_class` | `str \| None` | `None` | Declare that this content came from outside (a tool result, a page, a document): `external`, or `imported`. |
 | `source_resource_id` | `str` | `''` | Provenance pointer to the primary source this fact was cited from — a file path, document id, or URL. |
 | `ttl_seconds` | `int \| None` | `None` | Expire the row this many seconds from now. |
@@ -1951,7 +1951,7 @@ Save a fact to Loom — shared across every AI tool the user runs; native memory
 | `entities` | `list[str]` | *(computed)* | Explicit entities for a point write. |
 | `files` | `list[str] \| None` | `None` | The repo files this memory is about (repo-relative path or bare filename); memory.for_file serves it before an edit of them. |
 | `confidence` | `float` | `1.0` | The writer's own confidence in the fact, 0..1 (1.0 = certain). |
-| `source_trace` | `str` | `''` | Provenance tag of the write (`conversation:<id>`, `curated_doc://…`); a known prefix decides `source_class` (`conversation:` → extracted). |
+| `source_trace` | `str` | `''` | Provenance tag of the write (`conversation:<id>`, `curated_doc://…`); a known prefix decides `source_class` (`conversation:` → extracted), and one starting with `memory.delete_version:` is refused. |
 | `source_class` | `str \| None` | `None` | Declare that this content came from outside (a tool result, a page, a document): `external`, or `imported`. |
 | `source_resource_id` | `str` | `''` | Provenance pointer to the primary source this fact was cited from — a file path, document id, or URL. |
 | `ttl_seconds` | `int \| None` | `None` | Expire the row this many seconds from now. |

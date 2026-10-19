@@ -22,6 +22,8 @@ class _BulkSetEntry(BaseModel):
     memory_type: MemoryType = "semantic"
     value: dict[str, Any] | list[Any] | str | int | float | bool
     confidence: float = 1.0
+    # Provenance tag of the entry, as memory.set's; may not start with
+    # `memory.delete_version:`.
     source_trace: str = ""
     # `external` / `imported` only — a downgrade the caller may declare; the
     # server decides the rest.
