@@ -675,13 +675,9 @@ def test_lint_never_warns_on_the_directory_export_chose(tmp_path: Any, memory_ty
 def test_keys_named_like_every_suffix_a_concept_could_take_never_stop_the_export() -> None:
     # Someone who knows a row's id can write keys named like each of its suffixed names; each
     # rename attempt is a fresh hash, so planning always ends and every key keeps a file.
-    import hashlib
-
     mid = _ids(2)[1]
     identity = f"a.b\0{mid}"
-    taken = [hashlib.sha256(identity.encode()).hexdigest()[:8]] + [
-        hashlib.sha256(f"{identity}\0{n}".encode()).hexdigest()[:8] for n in range(1, 6)
-    ]
+    taken = [okf._short_hash(identity, n) for n in range(6)]
     entries = [_entry(memory_key="a.b", memory_id=_ids(1)[0])]
     entries.append(_entry(memory_key="a.b", memory_id=mid, agent="other"))
     entries += [
@@ -691,3 +687,5 @@ def test_keys_named_like_every_suffix_a_concept_could_take_never_stop_the_export
     files = okf.plan_bundle(entries, namespace="ns", exported_at=_NOW)
     concept_files = [p for p in files if p.startswith("semantic/") and not p.endswith("index.md")]
     assert len(concept_files) == len(entries)
+    # the second `a.b` lands on the first attempt nobody holds
+    assert f"semantic/a-{okf._short_hash(identity, 6)}.b.md" in files
