@@ -810,19 +810,47 @@ async def drop_undeclared_edges(
         )
 
 
-def drop_undeclared_edges_beside(
-    input: Any, memory_id: str, declared: list[str], *, op: str
+async def drop_undeclared_edges_beside(
+    input: Any, memory_id: str, declared: list[str], *, op: str, was_high: bool = False
 ) -> None:
-    """`drop_undeclared_edges` after the response, for a write that made its row 'high':
-    the request waits on no DELETE. Scheduled after the write's own declared projection
-    returned, so it runs after its fence."""
-    from server.memory.app import after_write
+    """`drop_undeclared_links` after the response, for a write that made its row 'high'
+    (`was_high`: it already was, and dropped them then). Owed first, as a retirement is:
+    the EDGES_DROP_UNDECLARED intent goes in before the drop is scheduled and is resolved
+    in the next batched mark once the drop lands, so a stop between them leaves it to the
+    repair. Scheduled after the write's own declared projection returned, so it runs
+    after its fence."""
+    from server.memory.app import after_write, intent_marks
 
-    after_write.schedule(
-        drop_undeclared_edges(input, memory_id, list(declared), ch=get_client(), op=op),
-        name=f"{op}.drop-undeclared",
-        scope=(input.org, input.namespace),
-    )
+    if was_high:
+        return
+    declared = list(declared)
+    try:
+        intent = await record_projection_failure(
+            org=input.org,
+            namespace=input.namespace,
+            agent=str(getattr(input, "agent", "") or ""),
+            projection=EDGES_DROP_UNDECLARED,
+            source_operation=op,
+            error="row made high: undeclared edges to drop",
+            payload={"memory_id": memory_id, "declared": declared},
+            user_id=str(getattr(input, "user_id", "") or ""),
+        )
+    except Exception as e:  # noqa: BLE001 — the drop still runs; a failure is recorded then
+        log.warning("%s: drop intent not written for %s: %s", op, memory_id, e)
+        intent = ""
+
+    async def drop() -> None:
+        if not intent:
+            await drop_undeclared_edges(input, memory_id, declared, ch=get_client(), op=op)
+            return
+        try:
+            await drop_undeclared_links(input, memory_id, declared, ch=get_client())
+        except Exception as e:  # noqa: BLE001 — the intent stays; the repair drops them
+            log.warning("%s: undeclared edges not dropped for %s (owed): %s", op, memory_id, e)
+            return
+        intent_marks.resolve_soon(input.org, [intent])
+
+    after_write.schedule(drop(), name=f"{op}.drop-undeclared", scope=(input.org, input.namespace))
 
 
 async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, ch: Any) -> None:

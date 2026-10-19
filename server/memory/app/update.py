@@ -411,7 +411,13 @@ async def _revised_edges(
             user_id=str(existing.user_id),
         )
         declared = declared_entities(SimpleNamespace(entities=memory_row.get("entities")))
-        drop_undeclared_edges_beside(scope, str(existing.memory_id), declared, op=op)
+        await drop_undeclared_edges_beside(
+            scope,
+            str(existing.memory_id),
+            declared,
+            op=op,
+            was_high=str(existing.sensitivity or "") == "high",
+        )
 
 
 def _update_sensitivity(

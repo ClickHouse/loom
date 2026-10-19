@@ -7309,3 +7309,32 @@ async def test_a_user_erasure_deletes_every_kind_of_projection_failure_of_that_u
         params={"org": org},
     )
     assert {r["u"] for r in rows} == {"bob"} and len(rows) == 5, rows
+
+
+async def _drop_intents(ch: Any, org: str) -> list[str]:
+    rows = await ch.query_all(
+        "SELECT toString(status) AS s FROM loom.memory_projection_failures WHERE org = {org:String}"
+        " AND projection = 'entity_edges_drop_undeclared' SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    return sorted(r["s"] for r in rows)
+
+
+async def test_a_drop_of_mined_edges_is_owed_first_and_resolved_once_it_lands(ch, org) -> None:
+    """Re-set high, the drop's intent goes in before it is scheduled and is resolved by
+    the next flush once the drop landed; a later write of the row, high already, owes
+    no drop."""
+    from server.memory.app import intent_marks
+
+    value = "Alice Smith met Bob Jones at Acme Corp in Berlin"
+    await _high_set(org, "s1", "contact", value)
+    await _high_set(org, "s1", "contact", value, sensitivity="high")
+    await intent_marks.drain()
+    assert await _edge_links(ch, org) == 0
+    for _ in range(50):
+        if await _drop_intents(ch, org) == ["resolved"]:
+            break
+        await asyncio.sleep(0.2)
+    assert await _drop_intents(ch, org) == ["resolved"]
+    await _high_set(org, "s1", "contact", value + ", again", sensitivity="high")
+    assert await _drop_intents(ch, org) == ["resolved"], "no second intent"

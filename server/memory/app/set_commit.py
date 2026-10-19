@@ -294,7 +294,10 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
         )
     if high and had_existing_row:
         # Made high over a value it held: what its text gave the graph goes.
-        drop_undeclared_edges_beside(input, memory_id, declared or [], op="memory.set")
+        was_high = str(getattr(w.existing, "sensitivity", "") or "") == "high"
+        await drop_undeclared_edges_beside(
+            input, memory_id, declared or [], op="memory.set", was_high=was_high
+        )
     await project_stated_relations(
         memory_row,
         input.value,

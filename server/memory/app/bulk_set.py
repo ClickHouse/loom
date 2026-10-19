@@ -419,7 +419,9 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         await fence_high(fences, ch=ch)
 
 
-def _drop_undeclared_of_rows_made_high(input: MemoryBulkSetInput, state: _BulkWriteState) -> None:
+async def _drop_undeclared_of_rows_made_high(
+    input: MemoryBulkSetInput, state: _BulkWriteState
+) -> None:
     """Each key the batch wrote 'high' over a row it already held: what its text gave the
     graph goes, after the response; the edges of the entities its row names stay."""
     from types import SimpleNamespace
@@ -433,7 +435,10 @@ def _drop_undeclared_of_rows_made_high(input: MemoryBulkSetInput, state: _BulkWr
         if str(row.get("sensitivity") or "") != "high" or key not in state.existing_rows:
             continue
         declared = declared_entities(SimpleNamespace(entities=row.get("entities")))
-        drop_undeclared_edges_beside(input, str(row["memory_id"]), declared, op="memory.bulk_set")
+        was_high = str(getattr(state.existing_rows[key], "sensitivity", "") or "") == "high"
+        await drop_undeclared_edges_beside(
+            input, str(row["memory_id"]), declared, op="memory.bulk_set", was_high=was_high
+        )
 
 
 def _high_winners(state: _BulkWriteState) -> list[tuple[Any, int]]:
@@ -734,7 +739,7 @@ async def _bulk_run_projections(
     # An entry whose key landed superseded writes no current graph facts; the input and
     # its results are filtered together (the writers zip them), and so is the replay.
     p_input, p_results = _projected(input, state)
-    _drop_undeclared_of_rows_made_high(input, state)
+    await _drop_undeclared_of_rows_made_high(input, state)
 
     # Graph/entity projections (entity_vectors / edges / triples / derived).
     # Each leg is fail-open + records a replayable projection_failure.
