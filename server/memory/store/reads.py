@@ -80,8 +80,9 @@ async def get_by_key(
     way search does; the default keeps expired rows visible because most
     callers are write paths that must carry the row's columns
     forward (set, touch, lock, delete) or decide about its expiry
-    (update_by_id's EXPIRED). Ignored under `as_of`: a replay read asks
-    about a past instant, not about now.
+    (update_by_id's EXPIRED). Under `as_of`, a replay serves expired rows
+    (it asks about a past instant), except a 'high' row past its retention
+    window, which stays hidden.
 
     FINAL because loom.memory is ReplacingMergeTree(version).
 
