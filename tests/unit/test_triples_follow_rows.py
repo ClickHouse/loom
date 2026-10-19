@@ -891,3 +891,25 @@ def test_a_fact_ending_later_the_winner_still_says_is_kept() -> None:
         winner_triples=frozenset({("user", "work_at", "initech")}),
     )
     assert lives in tfr.plan_follow([], [pair]).kept
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Ana no longer lives in London",
+        "Ana does not live in London",
+        "Ana doesn't live in London",
+        "Ana lived in London until 2020",
+        "Ana never lived in London",
+        "Ana never lived there",
+    ],
+)
+def test_a_value_that_denies_the_fact_does_not_still_state_it(text: str) -> None:
+    assert not tfr.still_states(text, ("ana", "lives_in", "london"))
+
+
+@pytest.mark.parametrize(
+    "text", ["Ana lives in London", "Ana lives in London, not Paris", "Ana moved to London"]
+)
+def test_a_value_that_names_the_fact_still_states_it(text: str) -> None:
+    assert tfr.still_states(text, ("ana", "lives_in", "london"))

@@ -320,10 +320,23 @@ def _later(a: Any, b: Any) -> Any:
     return None if a is None or b is None else max(a, b)
 
 
+# Words that, in the clause naming a triple's object, say it no longer holds or never
+# did ("no longer lives in London", "does not live in", "lived in London until 2020").
+_NEGATORS = frozenset({"no", "not", "never", "until", "anymore", "formerly", "former"})
+
+
 def still_states(text: str, triple: Triple) -> bool:
     """A row's value names `triple`: the object, and the subject too unless it is the
-    writer (a first-person value never spells it)."""
-    return _still_named(_tokens(text), triple)
+    writer (a first-person value never spells it), in a clause that does not deny it."""
+    if not _still_named(_tokens(text), triple):
+        return False
+    obj = _words_and_signs(triple[2])
+    return any(
+        not any(w in _NEGATORS or w.endswith("n't") for w in clause)
+        for sentence in _sentences(text, triple)
+        for clause in sentence.clauses
+        if _mentions(clause, obj)
+    )
 
 
 def _still_named(words: Sequence[str], triple: Triple) -> bool:
