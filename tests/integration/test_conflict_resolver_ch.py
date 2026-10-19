@@ -1119,7 +1119,7 @@ async def test_the_by_id_reads_use_the_memory_id_skip_index(ch, wired) -> None:
         # The anchored read's id lookup, on its own: EXPLAIN does not show a set's plan.
         "anchored": (queue._FLAGGED_IDENTITIES_SQL, base),
         "protected": (queue._PROTECTED_SQL, base),
-        "asserted": (queue._ASSERTED_SQL, base | {"rows": [(i, "") for i in ids]}),
+        "asserted": (queue._HISTORY_SQL, base | {"rows": [(i, "") for i in ids]}),
     }
     for name, (sql, params) in statements.items():
         plan = await ch.query_all("EXPLAIN indexes = 1 " + sql, params=params)
