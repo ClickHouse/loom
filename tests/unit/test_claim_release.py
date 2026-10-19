@@ -9,6 +9,7 @@ but the claim. Hermetic: ClickHouse and the classification are faked.
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -44,6 +45,8 @@ class _CH:
         self.inserts: dict[str, list[dict[str, Any]]] = {}
 
     async def query_one(self, sql: str, params: Any = None) -> Any:
+        if "max(version)" in sql:  # `next_version`'s read for the sso_links row
+            return {"v": time.time_ns()}
         return dict(self.row) if self.row else None
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:

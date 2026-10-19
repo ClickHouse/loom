@@ -10,12 +10,12 @@ subject, grants and namespaces; no new one is made.
 
 from __future__ import annotations
 
-import time
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from typing import Any
 
-from server.core.ch import get_client, own_write_reads
+from server.core.ch import get_client
+from server.core.versions import next_version
 
 TABLE = "loom.sso_links"
 
@@ -148,13 +148,8 @@ async def _write(
     ch = ch or get_client()
     # Past the email's newest link row, whichever replica's clock wrote it: under
     # FINAL a later unlink with a lower version would be lost.
-    with own_write_reads():
-        row = await ch.query_one(
-            f"SELECT max(version) AS v FROM {TABLE} WHERE email = {{email:String}}",
-            params={"email": email.strip().lower()},
-        )
-    newest = int((row or {}).get("v") or 0)
-    now, version = datetime.now(UTC), max(time.time_ns(), newest + 1)
+    version = await next_version(ch, TABLE, {"email": email.strip().lower()})
+    now = datetime.now(UTC)
     await ch.insert(
         TABLE,
         [

@@ -266,6 +266,25 @@ naming their address is not theirs goes on to a JIT account, unless an account n
 address is revoked: offboarding stands, and a squatter's account is released
 (`loom claim-release` clears its email and its links) rather than revoked.
 
+With `LOOM_SCIM_TOKEN` set, the provider deactivates people over SCIM 2.0 (`/scim/v2`,
+`server/auth/scim.py`); that bearer token, compared in constant time, is the only credential
+those routes take. Loom refuses to start with one shorter than 32 characters, and with
+SCIM set while sign-in is not SSO or auth is off, where a deactivation would refuse nobody. A
+deactivation revokes outright every subject an SSO sign-in with the email could reach, in
+any org, which ends their sessions and every token delegated from them, and
+`loom.scim_users` refuses SSO sign-in with the email until a reactivation, which narrows the
+revocations to tokens issued before it. SCIM's revocation of a subject is stored under its
+own key (`revocation.SCIM_PREFIX`), beside the subject's own row, and every reader takes it
+as it takes that row: the subject is revoked while either says so. SCIM writes only its own
+key and an operator's `revoke-token` only the subject's, so neither undoes the other: an
+operator's time-box or lift does not let a deactivated person in, and a reactivation does not
+lift an operator's revocation. One shared key would make SCIM read, merge and repair the
+operator's row around each write, and an operator's write landing in between could still
+replace SCIM's or be replaced by it; the operator cutoffs (`CUTOFF_PREFIX`) are kept apart
+for the same reason. A SCIM user's id is a UUIDv5 of its email, so it is a pseudonym, not a
+secret: anyone who knows an address can compute its id. Keying it with the root secret would
+change every id when that secret rotates, and the provider would find none of its users.
+
 Loom stays the authorization server for every client (the dashboard, `loom login`, MCP
 clients); the provider only authenticates the person. The OAuth server:
 
