@@ -105,6 +105,32 @@ def _refuse(message: str) -> HTTPException:
     return HTTPException(status_code=403, detail={"code": "AUTH_INSUFFICIENT", "message": message})
 
 
+async def _refuse_a_revoked_parent(parent: AuthInfo, issued_at: int, tokens: list[str]) -> None:
+    """401 when ClickHouse says `parent` is revoked, judged as the gate judges it
+    (`jwt._check_revoked`): this replica's snapshot may not have the revocation
+    yet, and a child minted meanwhile would be dead at the gate but listed live,
+    holding its name. `tokens`: its ancestor tokens and itself. A revocation
+    landing between this read and the child's save leaves the child dead at the
+    gate but listed live, a window of a few round trips."""
+    from server.auth import revocation
+
+    chain = zip(parent.parent_subjects, parent.parent_iats, strict=True)
+    judged = [(parent.subject, issued_at), *chain]
+    judged.append((parent.creator or parent.subject, min(iat for _, iat in judged)))
+    cut = await revocation.cutoffs(sorted({s for s, _ in judged} | set(tokens)))
+    by_subject = any(s in cut and revocation.kills(cut[s], iat) for s, iat in judged)
+    # The sign-in session, first-party too (a logout ends it), owed revocations included.
+    ended = bool(parent.session_id) and await revocation.revoked_outright(parent.session_id)
+    if by_subject or any(t in cut for t in tokens) or ended:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "code": "AUTH_INVALID",
+                "message": "this token or one it was made from is revoked",
+            },
+        )
+
+
 # Asks for a token that never expires: 0, in seconds and in days alike.
 NEVER = 0
 
@@ -142,6 +168,7 @@ async def delegate(
     if parent.issued_at is None:
         # The child's revocation check needs the parent's age (jwt.parent_iats).
         raise _refuse("the parent token carries no issue time")
+    await _refuse_a_revoked_parent(parent, parent.issued_at, parents)
     creator = parent.creator or parent.subject
     roles = await _allowed_roles(parent, child_org, creator, requested, scoped)
     if scoped:

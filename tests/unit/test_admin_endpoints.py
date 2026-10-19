@@ -16,6 +16,7 @@ model and the repo function separately can't catch:
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -275,7 +276,9 @@ def test_token_mint_happy_path_when_auth_not_required(
     saved: list[dict] = []
 
     class _CH:
-        async def query_one(self, sql: str, params: object = None) -> None:
+        async def query_one(self, sql: str, params: object = None) -> dict[str, int] | None:
+            if "max(version)" in sql:  # a new token's version, past its name's rows
+                return {"v": time.time_ns()}
             return None
 
         async def insert(self, table: str, rows: list[dict], **kw: object) -> None:

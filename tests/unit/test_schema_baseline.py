@@ -100,7 +100,9 @@ def test_the_journal_files() -> None:
         "040_oauth_signin_state.sql",
         "041_sso_links.sql",
         "042_machine_identities.sql",
-        "043_request_sli.sql",
+        "043_scim_users.sql",
+        "044_service_account_lineage.sql",
+        "045_request_sli.sql",
     ]
 
 

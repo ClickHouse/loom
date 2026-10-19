@@ -5,6 +5,7 @@ revoked from it, whether or not a bearer is sent."""
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -15,6 +16,7 @@ from fastapi.testclient import TestClient
 from server.auth.jwt import mint_token
 from server.operations.base import Role
 from server.settings import settings
+from tests.unit.revocation_fakes import revocation_read
 
 
 class _Store:
@@ -22,13 +24,20 @@ class _Store:
 
     def __init__(self) -> None:
         self.rows: dict[tuple[str, str], dict[str, Any]] = {}
+        self.revocations: list[dict[str, Any]] = []  # loom.revoked_tokens
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+        if table == "loom.revoked_tokens":
+            self.revocations.extend(rows)
         if table == "loom.service_accounts":
             for r in rows:
                 self.rows[(r["org"], r["name"])] = {"revoked_at": None, "revoked_by": "", **r}
 
     async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any] | None:
+        if "loom.revoked_tokens" in sql:
+            return revocation_read(self.revocations, sql, params)
+        if "max(version)" in sql:  # a new token's version, past its name's rows
+            return {"v": time.time_ns()}
         row = self.rows.get((params["org"], params["name"]))
         if row is None or ("revoked_at IS NULL" in sql and row["revoked_at"] is not None):
             return None

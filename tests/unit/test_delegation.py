@@ -21,6 +21,8 @@ from server.core import grant_cache
 from server.operations.base import Role, grant_rank
 
 ORG, OTHER = "o", "other"
+# Taken before tests/unit/conftest.py stubs it out for the fakes that have no store.
+_REFUSE_A_REVOKED_PARENT = delegation._refuse_a_revoked_parent
 RESTRICTED = "r-secret"
 DAY = 86400
 
@@ -798,3 +800,85 @@ def test_ttl_days_accepts_an_integral_number() -> None:
     assert parse_ttl_days(7) == parse_ttl_days(7.0) == 7 * 86400
     assert parse_ttl_days(None) is None
     assert parse_ttl_days(0) == 0  # never expires
+
+
+@pytest.mark.parametrize(
+    ("revoked", "refused"),
+    [
+        ({"alice": None}, True),  # revoked outright: SCIM's deactivation, or revoke-token
+        ({"alice": 2**40}, True),  # a cutoff past the parent's issue time
+        ({"alice": 1}, False),  # a cutoff before it: the parent was made after
+        ({"login-1": None}, True),  # an ancestor token revoked
+        ({}, False),
+    ],
+)
+async def test_a_mint_reads_the_parents_revocations_from_the_store(
+    world, monkeypatch, revoked: dict[str, int | None], refused: bool
+) -> None:
+    # A replica whose snapshot is behind takes the parent at the gate; the mint must not.
+    monkeypatch.setattr(delegation, "_refuse_a_revoked_parent", _REFUSE_A_REVOKED_PARENT)
+    asked: list[list[str]] = []
+
+    async def cutoffs(subjects: list[str]) -> dict[str, int | None]:
+        asked.append(subjects)
+        return {s: c for s, c in revoked.items() if s in subjects}
+
+    monkeypatch.setattr(revocation, "cutoffs", cutoffs)
+    if refused:
+        with pytest.raises(HTTPException) as e:
+            await _child(_delegated_list(), {"a": None})
+        assert e.value.status_code == 401
+    else:
+        await _child(_delegated_list(), {"a": None})
+    assert asked == [["alice", "dl-1", "login-1"]]  # the subject, this token, its ancestor
+
+
+async def test_a_mint_judges_each_ancestor_by_its_own_issue_time(world, monkeypatch) -> None:
+    monkeypatch.setattr(delegation, "_refuse_a_revoked_parent", _REFUSE_A_REVOKED_PARENT)
+    now = int(time.time())
+    parent = _login(
+        subject="sa:mid",
+        creator="alice",
+        token_id="t2",
+        parents=("t1",),
+        parent_subjects=("sa:root",),
+        parent_iats=(now - 100,),
+        issued_at=now,
+    )
+
+    async def cutoffs(subjects: list[str]) -> dict[str, int | None]:
+        return {"sa:root": now - 50}  # narrowed after the root ancestor was issued
+
+    monkeypatch.setattr(revocation, "cutoffs", cutoffs)
+    with pytest.raises(HTTPException) as e:
+        await _child(parent, {"a": None})
+    assert e.value.status_code == 401
+
+
+async def test_a_mint_from_an_ended_sign_in_session_is_refused(world, monkeypatch) -> None:
+    # A logout ends a first-party session too; a stale replica still takes its token.
+    monkeypatch.setattr(delegation, "_refuse_a_revoked_parent", _REFUSE_A_REVOKED_PARENT)
+
+    async def cutoffs(subjects: list[str]) -> dict[str, int | None]:
+        return {}
+
+    async def revoked_outright(jti: str) -> bool:
+        return jti == "sess-1"
+
+    monkeypatch.setattr(revocation, "cutoffs", cutoffs)
+    monkeypatch.setattr(revocation, "revoked_outright", revoked_outright)
+    parent = _login(session_id="sess-1", first_party=True)
+    with pytest.raises(HTTPException) as e:
+        await _child(parent, {"a": None})
+    assert e.value.status_code == 401
+
+
+async def test_a_mint_whose_revocation_read_fails_mints_nothing(world, monkeypatch) -> None:
+    monkeypatch.setattr(delegation, "_refuse_a_revoked_parent", _REFUSE_A_REVOKED_PARENT)
+
+    async def cutoffs(subjects: list[str]) -> dict[str, int | None]:
+        raise RuntimeError("ClickHouse is away")
+
+    monkeypatch.setattr(revocation, "cutoffs", cutoffs)
+    with pytest.raises(RuntimeError):  # the caller's error: no child, no saved row
+        await _child(_delegated_list(), {"a": None})

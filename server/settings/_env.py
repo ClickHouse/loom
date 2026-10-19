@@ -122,7 +122,7 @@ _SECRET_FIELD = re.compile(
         (
             r"(?:^|_)secret$",
             r"(?:^|_)password$",
-            r"(?:^|_)(?:admin|github)_token$",
+            r"(?:^|_)(?:admin|github|scim)_token$",
             r"(?:^|_)key$",
             r"(?:^|_)public_keys_json$",
             r"(?:^|_)credentials_json$",

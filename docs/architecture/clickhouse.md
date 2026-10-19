@@ -50,7 +50,7 @@ sentinel goes with it), then `SYSTEM START VIEW`; stopping first matters, since 
 that commits after the truncate writes a new sentinel and the refold never starts. It
 reads the last 31 days of the ledger only, an hour per refresh, so it takes about 12 hours
 and `loom.sli.rollup_lag_s` shows how far it is; a deployment that wants the longer
-history backs `loom_telemetry` up too. Do not drop the view: migration 043 is journaled as
+history backs `loom_telemetry` up too. Do not drop the view: migration 045 is journaled as
 applied, so nothing recreates it. The cost is one more database: the setup SQL grants the
 migrating user `CURRENT GRANTS ON loom_telemetry.*`, and preflight names that grant when
 it is missing.

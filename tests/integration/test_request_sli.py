@@ -167,7 +167,7 @@ def _private_rollup(ch_client, db: str) -> None:
     """The migration's rollup view over private copies of its two tables, so a
     test can stamp `ingested_at` itself without moving the shared mark. Its
     refreshes run only when the test asks."""
-    view = (ROOT / "schemas/migrations/043_request_sli.sql").read_text()
+    view = (ROOT / "schemas/migrations/045_request_sli.sql").read_text()
     view = view[view.index("CREATE MATERIALIZED VIEW") :].rstrip().rstrip(";")
     view = view.replace("REFRESH EVERY 1 MINUTE", "REFRESH EVERY 1 YEAR")
     view = view.replace("loom.agent_events", f"{db}.agent_events")

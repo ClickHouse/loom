@@ -86,6 +86,10 @@ def to_naive_utc(dt: datetime | None) -> datetime | None:
     return dt.astimezone(UTC).replace(tzinfo=None) if dt.tzinfo else dt
 
 
+@overload
+def as_aware_utc(value: datetime) -> datetime: ...
+@overload
+def as_aware_utc(value: Any) -> datetime | None: ...
 def as_aware_utc(value: Any) -> datetime | None:
     """A datetime read back from ClickHouse (naive UTC) as aware UTC; None for
     anything that is not a datetime."""

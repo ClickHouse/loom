@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from server.auth.delegation import Delegated, delegate
 from server.auth.jwt import AuthInfo
 from server.auth.self_signup import AGENT_NAME_PREFIX
+from server.auth.service_accounts import hand_down_lineage, revoked_row
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.app import me_callers, token_grants
@@ -190,14 +191,23 @@ async def save_token(
     client: str = "",
 ) -> None:
     """List the token in its owner's token list (`loom.service_accounts`).
-    `kind` is "mcp" for a Setup-page token, with the MCP client it was made for."""
+    `kind` is "mcp" for a Setup-page token, with the MCP client it was made for.
+    Called under the name's claim, but for a Setup-page token, whose name is
+    new with each mint."""
     from server.core.ch import get_client
+    from server.core.versions import next_version
 
     ns_roles = delegated.ns_roles or {}
     # `roles` keeps the distinct effective roles for the list view; `ns_roles`
     # the authoritative per-namespace map (JSON), when the token has one.
     roles = sorted(set(ns_roles.values()), key=grant_rank) if ns_roles else delegated.roles
-    await get_client().insert(
+    ch = get_client()
+    await hand_down_lineage(delegated.org, name)
+    # Past every row the name has held, whichever host's clock wrote it: a
+    # revoked row from a host running ahead would otherwise replace this one.
+    version = await next_version(ch, "loom.service_accounts", {"org": delegated.org, "name": name})
+    lineage = {created_by, delegated.creator, *delegated.parent_subjects} - {""}
+    await ch.insert(
         "loom.service_accounts",
         [
             {
@@ -213,12 +223,13 @@ async def save_token(
                 "expires_at": delegated.expires_at(now),
                 "revoked_at": None,
                 "revoked_by": "",
-                "version": time.time_ns(),
+                "version": version,
                 "kind": kind,
                 "client": client,
                 # The gate and the namespace listings read this flag: a token
                 # reads through its creator's live grants (server/auth/service_accounts.py).
                 "inherit_creator_grants": True,
+                "lineage": sorted(lineage),
             }
         ],
     )
@@ -463,7 +474,7 @@ async def me_service_accounts_revoke(
             """
             SELECT sa_subject, namespaces, created_by, created_at,
                    expires_at, ttl_days, roles, kind, client,
-                   inherit_creator_grants, ns_roles, revoked_at
+                   inherit_creator_grants, ns_roles, revoked_at, version, lineage
             FROM loom.service_accounts FINAL
             WHERE org = {org:String} AND name = {name:String}
             LIMIT 1
@@ -500,26 +511,9 @@ async def me_service_accounts_revoke(
             await ch.insert(
                 "loom.service_accounts",
                 [
-                    {
-                        "org": org,
-                        "name": name,
-                        "sa_subject": row["sa_subject"],
-                        "namespaces": row["namespaces"],
-                        "roles": row["roles"],
-                        "ttl_days": row["ttl_days"],
-                        "created_by": row["created_by"],
-                        "created_at": row["created_at"],
-                        "expires_at": row["expires_at"],
-                        "revoked_at": now,
-                        "revoked_by": subject,
-                        "version": time.time_ns(),
-                        # Column-mirror discipline: carry every column
-                        # forward or the merge zeros it.
-                        "kind": row.get("kind") or "service_account",
-                        "client": row.get("client") or "",
-                        "inherit_creator_grants": bool(row.get("inherit_creator_grants", True)),
-                        "ns_roles": row.get("ns_roles") or "{}",
-                    }
+                    revoked_row(
+                        {**row, "org": org, "name": name}, revoked_at=now, revoked_by=subject
+                    )
                 ],
             )
 

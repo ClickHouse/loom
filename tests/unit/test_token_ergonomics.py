@@ -31,6 +31,7 @@ import server.cli as cli
 from server.auth import revocation
 from server.cli import access
 from server.settings import settings
+from tests.unit.revocation_fakes import revocation_read
 
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
@@ -154,7 +155,7 @@ def test_ttl_help_recommends_an_expiry_without_changing_the_default(
 
 
 class _FakeCH:
-    """The four calls the revoke path makes, with `query_all` answering from
+    """The calls the revoke path makes, with `query_all` answering from
     what `insert` wrote, so the snapshot refresh sees the new row."""
 
     def __init__(self) -> None:
@@ -169,6 +170,9 @@ class _FakeCH:
 
     async def disconnect(self) -> None:
         self.disconnected += 1
+
+    async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any] | None:
+        return revocation_read(self.rows, sql, params)
 
     async def insert(self, table: str, rows: list[dict[str, Any]], *a: Any, **kw: Any) -> None:
         self.inserts.append((table, rows))
