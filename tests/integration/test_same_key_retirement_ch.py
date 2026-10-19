@@ -7294,7 +7294,7 @@ async def test_a_user_erasure_deletes_every_kind_of_projection_failure_of_that_u
         with monkeypatch.context() as m:
             m.setattr(ep, "drop_undeclared_links", boom)
             await ep.drop_undeclared_edges(
-                scope, str(uuid.uuid4()), ["acme"], ch=ch, op="memory.set"
+                scope, {str(uuid.uuid4()): ["acme"]}, ch=ch, op="memory.set"
             )
         for kind in (TRIPLES_REOPEN, TRIPLES_RECONCILE, EDGES_CLOSE, FOLLOW_ROWS):
             await record_input_projection_failure(
@@ -7338,3 +7338,69 @@ async def test_a_drop_of_mined_edges_is_owed_first_and_resolved_once_it_lands(ch
     assert await _drop_intents(ch, org) == ["resolved"]
     await _high_set(org, "s1", "contact", value + ", again", sensitivity="high")
     assert await _drop_intents(ch, org) == ["resolved"], "no second intent"
+
+
+async def test_a_bulk_write_making_many_rows_high_owes_one_drop(ch, org, monkeypatch) -> None:
+    """200 plain rows re-set high in one bulk call: one intent before the response (not
+    a committed insert per row), one drop after it; a failed drop leaves that intent to
+    the repair, which drops every row's links."""
+    import time
+
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write, entity_projections, intent_marks
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    def write(sensitivity: str) -> MemoryBulkSetInput:
+        entries = [
+            {
+                "memory_key": f"k{i}",
+                "value": f"Alice Smith met Bob Jones at Acme Corp {i}",
+                "memory_type": "semantic",
+                "sensitivity": sensitivity,
+                # Declared on the plain write only: the high one names none.
+                "entities": [] if sensitivity else ["Alice Smith", "Bob Jones", "Acme Corp"],
+            }
+            for i in range(200)
+        ]
+        return MemoryBulkSetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            entries=entries,
+        )
+
+    await handle_memory_bulk_set(write(""))
+    await after_write.drain()
+    assert await _edge_links(ch, org) > 0
+    started = time.monotonic()
+    await handle_memory_bulk_set(write("high"))
+    assert time.monotonic() - started < 5.0
+    await after_write.drain()
+    await intent_marks.drain()
+    assert await _edge_links(ch, org) == 0
+    for _ in range(50):  # the mark is a mutation
+        if await _drop_intents(ch, org) == ["resolved"]:
+            break
+        await asyncio.sleep(0.2)
+    assert await _drop_intents(ch, org) == ["resolved"]
+
+    # The same with the drop failing: the one intent stays and the repair drops them.
+    async def down(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("DELETE refused")
+
+    other = f"{org}-failed"
+    monkeypatch.setattr(entity_projections, "drop_undeclared_links", down)
+    await handle_memory_bulk_set(write("").model_copy(update={"org": other}))
+    await after_write.drain()
+    await handle_memory_bulk_set(write("high").model_copy(update={"org": other}))
+    await after_write.drain()
+    assert await _drop_intents(ch, other) == ["active"]
+    monkeypatch.undo()
+    results = await retry_projection_failures(
+        org=other, projection="entity_edges_drop_undeclared", ch=ch
+    )
+    assert results and all(r.resolved for r in results), results
+    assert await _edge_links(ch, other) == 0

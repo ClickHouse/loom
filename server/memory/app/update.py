@@ -403,7 +403,7 @@ async def _revised_edges(
     entities' edges, so what any value's text gave the graph goes, after the response."""
     if new_sha != existing.content_sha256:
         await project_revised_edges(memory_row, new_value, op=op, ch=ch)
-    if sensitivity == "high":
+    if sensitivity == "high" and str(existing.sensitivity or "") != "high":
         scope = SimpleNamespace(
             org=existing.org,
             namespace=existing.namespace,
@@ -411,13 +411,7 @@ async def _revised_edges(
             user_id=str(existing.user_id),
         )
         declared = declared_entities(SimpleNamespace(entities=memory_row.get("entities")))
-        await drop_undeclared_edges_beside(
-            scope,
-            str(existing.memory_id),
-            declared,
-            op=op,
-            was_high=str(existing.sensitivity or "") == "high",
-        )
+        await drop_undeclared_edges_beside(scope, {str(existing.memory_id): declared}, op=op)
 
 
 def _update_sensitivity(

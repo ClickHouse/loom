@@ -259,7 +259,7 @@ async def _close_mined_facts(c: SweepCandidate, row_entities: list[Any], *, ch: 
 
     scope = SimpleNamespace(org=c.org, namespace=c.namespace, agent=c.agent, user_id=c.user_id)
     keep = declared_entities(SimpleNamespace(entities=row_entities))
-    await drop_undeclared_edges(scope, c.memory_id, keep, ch=ch, op="sensitivity_sweep")
+    await drop_undeclared_edges(scope, {c.memory_id: keep}, ch=ch, op="sensitivity_sweep")
     await reconcile_row_facts(scope, [c.memory_id], reopen=False, op="sensitivity_sweep", ch=ch)
 
 

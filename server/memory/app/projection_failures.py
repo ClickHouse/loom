@@ -641,22 +641,22 @@ async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
 
 
 async def _retry_edges_drop(failure: ProjectionFailureRow, *, ch: Any) -> str:
-    """Drop again the undeclared edge links of a row made 'high'; a failure raises and
-    leaves the row active."""
+    """Drop again the undeclared edge links of the rows a write made 'high'; a failure
+    raises and leaves the row active."""
     from types import SimpleNamespace
 
     from server.memory.app.entity_projections import drop_undeclared_links
 
-    memory_id = str(failure.payload.get("memory_id") or "")
-    declared = failure.payload.get("declared")
-    if not memory_id or not isinstance(declared, list):
+    rows = failure.payload.get("rows")
+    if not isinstance(rows, dict) or not all(isinstance(d, list) for d in rows.values()):
         return "malformed_payload"
     scope = SimpleNamespace(
         org=failure.org,
         namespace=failure.namespace,
         user_id=str(failure.payload.get("user_id") or ""),
     )
-    await drop_undeclared_links(scope, memory_id, [str(d) for d in declared], ch=ch)
+    declared = {str(memory_id): [str(d) for d in ents] for memory_id, ents in rows.items()}
+    await drop_undeclared_links(scope, declared, ch=ch)
     return ""
 
 
