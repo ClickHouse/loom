@@ -21,6 +21,7 @@ import { addKnowledge, downloadKnowledge, getKnowledge, textDownloadName, type K
 import { humanizeError, relativeTime } from "../lib/format";
 import { toastError } from "../components/Toast";
 import { TabTrigger } from "../components/ui/TabTrigger";
+import { Loading } from "../components/ui/Loading";
 import { readDocumentFile, slugify, type ReadDocument } from "../lib/docFiles";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 
@@ -310,11 +311,7 @@ export function RepoDocViewer({
         </>
       }
     >
-      {state.kind === "loading" && (
-        <p className="text-sm text-text-muted" role="status">
-          Opening…
-        </p>
-      )}
+      {state.kind === "loading" && <Loading label="Loading the document" />}
       {state.kind === "error" && <ErrorNote>{state.message}</ErrorNote>}
       {state.kind === "ready" && (
         <>

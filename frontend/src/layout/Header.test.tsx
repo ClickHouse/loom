@@ -139,3 +139,14 @@ it("names the account menu after the signed-in subject and org", async () => {
   expect(screen.getByText("Signed in as").closest("[aria-hidden='true']")).not.toBeNull();
   expect(menu).toContainElement(screen.getByRole("menuitem", { name: "Settings" }));
 });
+
+// The search field's hint is written the way the keyboard prints it: Ctrl K off Apple
+// platforms (the handler takes either modifier). The help button's tooltip names its key.
+it("labels the search shortcut for the platform, and the help key in its tooltip", async () => {
+  listMine.mockResolvedValue(jwtOnly);
+  useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
+  render(<Header />);
+  expect(document.querySelector("#header-search kbd")).toHaveTextContent(/^Ctrl K$/);
+  await userEvent.hover(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+  expect((await screen.findAllByText("Keyboard shortcuts · ?")).length).toBeGreaterThan(0);
+});

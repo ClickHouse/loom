@@ -1,29 +1,34 @@
 /**
- * RepositoryCard — a repository is one card with two facets: its code and
- * its record.
+ * RepositoryCard — a repository is one list row with two facets: its code and its record.
  *
- * The card is folded by default: one row — a disclosure button carrying the repository
- * (`Org/repo`), one open/restricted pill, the caller's standing in one phrase with a
- * one-line summary of both facets (branches, files, issues, PRs), and — right, or under
- * the header below 640 px — exactly one primary button. Opening it (the title, or the
- * chevron) reveals the facet rows: **Code** (the branch chips) and **Issues & PRs** (the
- * tracker namespace(s) whose `repos` name this repository, chips named by scope), at most
- * one quiet Leave link, and for maintainers the access panel and a Details disclosure —
- * source, host, database, origin, contract, breaker, the branch namespaces, and the admin
- * extension point. A maintainer's Add branch sits in the Code row beside the branch chips.
+ * The row is folded by default:
  *
- * Five words on both facets: Open · Join · Request access · Withdraw
- * request · Leave. A chip states where you stand and takes you somewhere;
- * it never changes anything by itself: join, request and withdraw confirm first. The
- * header's Join on an open branch is the one direct verb.
+ * - line 1: `owner/repo` (the disclosure button), one health badge for the worst branch the
+ *   person can see (its detail in a tooltip), and `Restricted` when it is;
+ * - line 2, muted: "3 branches · 31,539 files · indexed 2h ago · you read 2 of 3";
+ * - right, or under line 2 below 640 px: the one inline action, a Click UI split button —
+ *   Open (its menu: each branch you read), Join or Request access (its menu: each branch
+ *   you could add, Join all, Choose branches…, Request maintainer access), or a `Requested`
+ *   badge whose menu withdraws the request.
+ *
+ * Opened, it shows a Click UI table of the branches (health, lag, last indexed, files,
+ * symbols, your access, and a menu per branch: Open, Refresh, Leave, Join, Withdraw, a
+ * maintainer's Remove branch) with Add branch at its foot, the tracker line (the tracker
+ * scopes whose `repos` name the repository, and a maintainer's links), a folded Settings
+ * for maintainers (access, join policy, the details), then the docs.
+ *
+ * Five words on both facets: Open · Join · Request access · Withdraw request · Leave. A
+ * branch name is never in a button's label; it is in a menu item or the table.
  */
-import { useId, useState, type ReactNode } from "react";
+import { memo, useId, useState, type ReactNode } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { Select } from "@clickhouse/click-ui/Select";
+import { SplitButton } from "../components/ui/SplitButton";
+import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import type { CodeRepoSummary } from "../api";
-import { absoluteTime, fmtInt, relativeTime } from "../lib/format";
+import { absoluteTime, fmtInt, listTime, parseChTime } from "../lib/format";
 import { stageLabel } from "../lib/codeStage";
 import { freshness, type FreshTone } from "../lib/codeFreshness";
 import {
@@ -34,7 +39,9 @@ import {
   type TrackerNamespaceState,
   type TrackerSource,
 } from "../lib/trackerSources";
-import { Chip, MetaList, MetaRow, Panel, Tip, TipTarget } from "../components/ui";
+import { Chip, ListRow, MetaList, MetaRow, TipTarget } from "../components/ui";
+import { ListTime } from "../components/ui/ListTime";
+import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import {
   branchState,
   canBeApproved,
@@ -43,14 +50,11 @@ import {
   OUT_OF_SCOPE_MAINTAINER,
   primaryAction,
   RECORD_NOUN,
-  soleMembership,
   verbForState,
-  visibleBranches,
   type CodeFacet,
   type RecordFacet,
   type RecordNamespace,
   type RepositoryCard as CardModel,
-  type Verb,
 } from "../lib/repositoryCard";
 import { RecordSourceDetails } from "./TrackerSources";
 import { RepoDocsList } from "./RepoDocs";
@@ -69,6 +73,83 @@ export const FRESH_STATE: Record<FreshTone, BadgeState> = {
   muted: "neutral",
 };
 
+// ---------------------------------------------------------------------------
+// Health: one vocabulary for a branch's index
+// ---------------------------------------------------------------------------
+
+export interface Health {
+  text: string;
+  state: BadgeState;
+  /** What the tooltip says: the detail, the heads and the lag per tier. */
+  detail: string;
+  /** Higher is worse: the row shows its worst branch. */
+  rank: number;
+}
+
+const BUILDING = new Set(["queued", "cloning", "indexing", "embedding"]);
+const DAY_MS = 24 * 3600_000;
+const short = (sha: string) => sha.slice(0, 12);
+
+function heads(b: CodeRepoSummary): string {
+  const fetched = b.clone_head && b.clone_head !== b.git_head ? `, fetched ${short(b.clone_head)}` : "";
+  return `Indexed ${short(b.git_head)}${fetched}; fast tier ${b.fast_tier_lag} behind, compiler tier ${b.scip_lag} behind.`;
+}
+
+/** A branch's index health, worst cause first. */
+export function branchHealth(b: CodeRepoSummary): Health {
+  const stage = b.stage || "";
+  const building = stageLabel(b);
+  if (stage === "error")
+    return { text: "Index failed", state: "danger", rank: 6, detail: building?.title || "The last index failed." };
+  if (BUILDING.has(stage))
+    return { text: "Indexing", state: "info", rank: 1, detail: `${building?.label}. ${building?.title}` };
+  if (!b.git_head || !b.indexed_at)
+    return { text: "Not indexed", state: "neutral", rank: 3, detail: "Nothing is indexed on this branch yet." };
+  if (b.searchable === false)
+    return { text: "Not searchable", state: "neutral", rank: 2, detail: building?.title ?? "Not searchable yet." };
+  const behind = b.fast_tier_lag > 0 ? b.fast_tier_lag : b.scip_lag;
+  if (behind > 0)
+    return {
+      text: `Behind ${fmtInt(behind)} commit${behind === 1 ? "" : "s"}`,
+      state: "warning",
+      rank: 5,
+      detail: `${freshness(b).detail}. ${heads(b)}`,
+    };
+  const at = parseChTime(b.indexed_at);
+  if (at && Date.now() - at.getTime() > DAY_MS && b.clone_head && b.clone_head !== b.git_head)
+    return {
+      text: "Stale",
+      state: "warning",
+      rank: 4,
+      detail: `Indexed ${listTime(b.indexed_at)} and the remote has moved since. ${heads(b)}`,
+    };
+  return {
+    text: "Up to date",
+    state: "success",
+    rank: 0,
+    detail: `The index matches the fetched branch tip. ${heads(b)}`,
+  };
+}
+
+/** The worst health among the branches, its detail naming the branch. */
+export function worstHealth(branches: readonly CodeRepoSummary[]): Health | null {
+  let worst: { b: CodeRepoSummary; h: Health } | null = null;
+  for (const b of branches) {
+    const h = branchHealth(b);
+    if (!worst || h.rank > worst.h.rank) worst = { b, h };
+  }
+  return worst && { ...worst.h, detail: `${worst.b.branch}: ${worst.h.detail}` };
+}
+
+function HealthBadge({ health }: { health: Health }) {
+  return (
+    // Lifted over the row's stretched disclosure, so a hover reaches the tooltip.
+    <TipTarget tip={health.detail} className="list-row-control inline-flex rounded">
+      <Badge text={health.text} state={health.state} size="sm" />
+    </TipTarget>
+  );
+}
+
 /** A status badge whose tooltip carries the detail; the wrapper takes focus so keyboard
  *  users reach the tip. */
 function TipBadge({ text, state, tip }: { text: string; state: BadgeState; tip: string }) {
@@ -79,18 +160,10 @@ function TipBadge({ text, state, tip }: { text: string; state: BadgeState; tip: 
   );
 }
 
-const VERB_ICON: Record<Verb, IconName> = {
-  Open: "chevron-right",
-  Join: "users",
-  "Request access": "lock",
-  "Withdraw request": "clock",
-  Leave: "chevron-right",
-};
-
 // ---------------------------------------------------------------------------
-// Chips. One shape for a branch and for a record scope: the `Chip`
-// primitive as a button (border, glyph, hover ring), the standing word after
-// the name, the verb in the tooltip and the accessible name.
+// Chips. One shape for a branch (the repository detail's header) and for a record
+// scope: the `Chip` primitive as a button, the standing word after the name, the verb in
+// the tooltip and the accessible name.
 // ---------------------------------------------------------------------------
 
 const STATE_META: Record<TrackerNamespaceState, { word: string; icon: IconName }> = {
@@ -144,37 +217,30 @@ function StandingChip({
       label={label}
       mono={mono}
       icon={<Icon name={meta.icon} size="xs" aria-hidden="true" />}
-      selected={st === "member"}
       onClick={onClick}
       disabled={disabled || !onClick}
       ariaLabel={`${name}: ${disabledReason ? disabledReason : standingWord(st)}`}
       tip={tip}
-      className={
-        st === "pending" ? "border-warn/40 text-warn" : st === "closed" || st === "registering" ? "text-text-muted" : ""
-      }
+      className={st === "closed" || st === "registering" ? "text-text-muted" : ""}
     />
   );
 }
 
-/** A branch chip: member → Open, open/approval → the request dialog,
- *  pending → withdraw. `onJoin` is accepted for callers that still pass it
- *  and never called — a chip never joins directly. */
+/** A branch chip (the repository detail's branch switcher): member → Open, open/approval
+ *  → the request dialog, pending → withdraw. A chip never joins directly. */
 export function BranchChip({
   b,
   busy,
   onOpen,
-  onJoin,
   onRequest,
   onCancel,
 }: {
   b: CodeRepoSummary;
   busy: boolean;
   onOpen: () => void;
-  onJoin?: () => void;
   onRequest: () => void;
   onCancel: () => void;
 }) {
-  void onJoin;
   const st = branchState(b);
   const onClick =
     st === "member" ? onOpen : st === "open" || st === "approval" ? onRequest : st === "pending" ? onCancel : undefined;
@@ -192,8 +258,7 @@ export function BranchChip({
 
 /** A record chip: exactly the BranchChip rule (a chip never mutates) — member → Open,
  *  open/approval → `onRequest`, which the row wires to a confirmation that says
- *  instant-vs-pending before anything is sent, pending → withdraw. The header's Join
- *  button is the one direct verb. */
+ *  instant-vs-pending before anything is sent, pending → withdraw. */
 function RecordChip({
   r,
   busy,
@@ -236,7 +301,7 @@ function FacetRow({ icon, label, children }: { icon: IconName; label: string; ch
       role="group"
       aria-label={label}
     >
-      <div className="section-label inline-flex items-center gap-1.5 text-text-muted">
+      <div className="section-label inline-flex items-center gap-1.5 self-start text-text-muted">
         <Icon name={icon} size="xs" aria-hidden="true" /> {label}
       </div>
       <div className="min-w-0">{children}</div>
@@ -244,13 +309,9 @@ function FacetRow({ icon, label, children }: { icon: IconName; label: string; ch
   );
 }
 
-function Verbs({ children }: { children: ReactNode }) {
-  return <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">{children}</div>;
-}
-
 export interface CodeActions {
   onOpen: (b: CodeRepoSummary) => void;
-  /** The header's direct join of an open branch. */
+  /** The direct join of an open branch (the row's Join, a menu's "Join <branch>"). */
   onJoin: (b: CodeRepoSummary) => void;
   /** The request dialog (role choice Reader / Maintainer, instant-vs-pending said before the click). */
   onRequest: (b: CodeRepoSummary, role?: "viewer" | "admin") => void;
@@ -261,6 +322,10 @@ export interface CodeActions {
   onManage: (facet: CodeFacet) => void;
   /** Absent where the deployment cannot add branches from the page (no sandbox). */
   onAddBranch?: (facet: CodeFacet) => void;
+  /** An ingest pass on a branch the person reads (`code.refresh`). */
+  onRefresh?: (b: CodeRepoSummary) => void;
+  /** A maintainer retires a branch added from the dashboard (`code.repo.remove`). */
+  onRemove?: (b: CodeRepoSummary) => void;
   /** A maintainer sets the repository's access (every branch it maintains). */
   onSetAccess?: (
     facet: CodeFacet,
@@ -268,7 +333,6 @@ export interface CodeActions {
     join_policy: "open" | "approval" | "closed",
     opening: boolean,
   ) => void;
-  /** A maintainer binds the tracker record the repository answers from ("" clears). */
   /** The repository's trackers in order, primary first ([] unlinks all). */
   onSetSource?: (facet: CodeFacet, tracker_namespaces: string[]) => void;
   /** The registered records the binding picks from, and the register dialog (absent when
@@ -288,135 +352,109 @@ export interface RecordActionProps {
   onSourcesChanged?: () => void;
 }
 
-function CodeFacetRow({
-  facet: c,
-  busy,
-  actions,
-  leaveInline,
-}: {
-  facet: CodeFacet;
-  busy: string | null;
-  actions: CodeActions;
-  leaveInline: boolean;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const shown = visibleBranches(c, expanded);
-  const hidden = c.branches.length - shown.length;
-  const head = c.head;
-  const building = stageLabel(head);
-  const f = !building && head.git_head ? freshness(head) : null;
-  const anyBusy = busy !== null;
-  const openable = c.joinable.filter((b) => branchState(b) === "open").length;
+// ---------------------------------------------------------------------------
+// The branch table
+// ---------------------------------------------------------------------------
+
+/** Cells the phone layout leaves out: there a branch stacks as Branch · Health · Last indexed. */
+const WIDE_ONLY = "[@media(max-width:768px)]:hidden";
+const BRANCH_HEADERS = [
+  { label: "Branch" },
+  { label: "Health", width: "190px" },
+  { label: "Behind", width: "84px" },
+  { label: "Last indexed", width: "112px" },
+  { label: "Files", width: "96px" },
+  { label: "Symbols", width: "104px" },
+  { label: "Access", width: "104px" },
+  { label: <span className="sr-only">Actions</span>, width: "52px" },
+];
+const ACCESS_WORD: Partial<Record<TrackerNamespaceState, string>> = { member: "Reading", pending: "Requested" };
+
+// While a write is out, a second one waits for it: every item is disabled.
+function branchMenu(b: CodeRepoSummary, actions: CodeActions, busy: boolean): RowMenuItem[] {
+  const st = branchState(b);
+  const items: RowMenuItem[] = [];
+  if (st === "member") {
+    items.push({ label: "Open", icon: "arrow-right", onSelect: () => actions.onOpen(b) });
+    const refresh = actions.onRefresh;
+    if (refresh) items.push({ label: "Refresh", icon: "refresh", onSelect: () => refresh(b) });
+    items.push({ label: "Leave", icon: "cross", onSelect: () => actions.onLeave(b) });
+  } else if (st === "open") items.push({ label: "Join", icon: "users", onSelect: () => actions.onJoin(b) });
+  else if (st === "approval")
+    items.push({ label: "Request access", icon: "lock", onSelect: () => actions.onRequest(b, "viewer") });
+  else if (st === "pending")
+    items.push({ label: "Withdraw request", icon: "clock", onSelect: () => actions.onCancel(b) });
+  const remove = actions.onRemove;
+  if (remove && b.my_role === "admin" && b.source === "registry")
+    items.push({ label: "Remove branch", icon: "trash", danger: true, onSelect: () => remove(b) });
+  return items.map((item) => ({ ...item, disabled: busy }));
+}
+
+function branchRow(b: CodeRepoSummary, actions: CodeActions, busy: boolean): TableRowType {
+  const behind = b.fast_tier_lag > 0 ? b.fast_tier_lag : b.scip_lag;
+  const counts = b.counts?.code_files ? b.counts : null;
+  const items = branchMenu(b, actions, busy);
+  return {
+    id: b.namespace,
+    items: [
+      { label: <span className="font-mono">{b.branch}</span> },
+      { label: <HealthBadge health={branchHealth(b)} /> },
+      { label: <span className="tabular">{behind > 0 ? fmtInt(behind) : "—"}</span>, className: WIDE_ONLY },
+      { label: b.indexed_at ? <ListTime time={b.indexed_at} quiet /> : "—" },
+      { label: <span className="tabular">{counts ? fmtInt(counts.code_files) : "—"}</span>, className: WIDE_ONLY },
+      { label: <span className="tabular">{counts ? fmtInt(counts.code_symbols) : "—"}</span>, className: WIDE_ONLY },
+      { label: ACCESS_WORD[branchState(b)] ?? "—", className: WIDE_ONLY },
+      {
+        label: items.length > 0 ? <RowMenu name={`${b.repo} @ ${b.branch}`} items={items} /> : null,
+        className: "[@media(max-width:768px)]:ml-auto",
+      },
+    ],
+  };
+}
+
+function BranchTable({ facet, busy, actions }: { facet: CodeFacet; busy: boolean; actions: CodeActions }) {
+  const add = facet.maintained ? actions.onAddBranch : undefined;
   return (
-    <FacetRow icon="git-merge" label="Code">
-      <div className="text-xs text-text-muted tabular-nums flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-        <span>
-          {c.branches.length} branch{c.branches.length === 1 ? "" : "es"}
-        </span>
-        {head.counts && head.counts.code_files ? (
-          <span>
-            · {fmtInt(head.counts.code_files)} files · {fmtInt(head.counts.code_symbols)} symbols at {head.branch}
-          </span>
-        ) : null}
-        {head.indexed_at && <span>· indexed {relativeTime(head.indexed_at.replace(" ", "T") + "Z")}</span>}
-        {f && <TipBadge text={f.label} state={FRESH_STATE[f.tone]} tip={f.detail} />}
-        {building && <TipBadge text={building.label} state={FRESH_STATE[building.tone]} tip={building.title} />}
-      </div>
-      <ul className="mt-2 flex flex-wrap items-center gap-2 list-none p-0 m-0" aria-label={`${c.repo} branches`}>
-        {shown.map((b) => (
-          <li key={b.namespace} className="inline-flex max-w-full">
-            <BranchChip
-              b={b}
-              busy={anyBusy}
-              onOpen={() => actions.onOpen(b)}
-              onRequest={() => actions.onRequest(b, "viewer")}
-              onCancel={() => actions.onCancel(b)}
-            />
-          </li>
-        ))}
-      </ul>
-      <Verbs>
-        {(hidden > 0 || expanded) && (
-          <Button type="empty" htmlType="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
-            {expanded ? "Show fewer" : `Show ${hidden} more`}
-          </Button>
-        )}
-        {c.joinable.length > 1 && (
-          <Tip
-            content={
-              openable === c.joinable.length
-                ? "Instant, read-only"
-                : "Open branches join instantly; restricted ones go to a maintainer"
-            }
-          >
-            <Button type="empty" htmlType="button" onClick={() => actions.onJoinAll(c.branches)} disabled={anyBusy}>
-              {openable === 0 ? "Request access to" : "Join"} all {c.joinable.length} branches
-            </Button>
-          </Tip>
-        )}
-        {c.maintained && actions.onAddBranch && (
-          <Tip content="Index another branch of this repository. It shares the mirror; you maintain it.">
-            <Button
-              type="empty"
-              htmlType="button"
-              iconLeft="git-merge"
-              onClick={() => actions.onAddBranch?.(c)}
-              disabled={anyBusy}
-            >
-              Add branch
-            </Button>
-          </Tip>
-        )}
-        {leaveInline && c.joined.length === 1 && (
-          <Button type="empty" htmlType="button" onClick={() => actions.onLeave(c.joined[0])} disabled={anyBusy}>
-            Leave · {c.joined[0].branch}
-          </Button>
-        )}
-        {c.joined.length > 1 && (
-          <Button type="empty" htmlType="button" onClick={() => actions.onLeaveAll(c.branches)} disabled={anyBusy}>
-            Leave all {c.joined.length} branches
-          </Button>
-        )}
-        {c.branches.length > 1 && (
-          <Tip content="Pick exactly which branches you read">
-            <Button type="empty" htmlType="button" onClick={() => actions.onManage(c)} disabled={anyBusy}>
-              Choose branches…
-            </Button>
-          </Tip>
-        )}
-        {!c.maintained && c.pendingCount === 0 && branchState(c.primary) !== "closed" && (
-          <Tip content="Maintainers approve readers and set how people join. A current maintainer decides.">
-            <Button
-              type="empty"
-              htmlType="button"
-              onClick={() => actions.onRequest(c.primary, "admin")}
-              disabled={anyBusy}
-            >
-              Request maintainer access
-            </Button>
-          </Tip>
-        )}
-      </Verbs>
-    </FacetRow>
+    <div className="repo-branches" aria-busy={busy || undefined}>
+      <Table
+        aria-label={`${facet.repo} branches`}
+        size="sm"
+        headers={BRANCH_HEADERS}
+        rows={facet.branches.map((b) => branchRow(b, actions, busy))}
+      />
+      {add && (
+        <Button
+          type="empty"
+          htmlType="button"
+          iconLeft="plus"
+          onClick={() => add(facet)}
+          disabled={busy}
+          className="mt-1"
+        >
+          Add branch
+        </Button>
+      )}
+    </div>
   );
 }
 
-function RecordFacetRow({
+// ---------------------------------------------------------------------------
+// The tracker line
+// ---------------------------------------------------------------------------
+
+function RecordFacetLine({
   facet: r,
   busy,
   actions,
-  leaveInline,
 }: {
   facet: RecordFacet;
-  busy: string | null;
+  busy: boolean;
   actions: RecordActionProps;
-  leaveInline: boolean;
 }) {
-  const anyBusy = busy !== null;
   const f = r.freshness;
   const unapprovable = r.namespaces.some((n) => n.state === "approval" && canBeApproved(n.ns) === false);
   return (
-    <FacetRow icon="database" label="Tracker">
+    <>
       <div className="text-xs text-text-muted tabular-nums flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
         {f ? (
           <>
@@ -427,13 +465,13 @@ function RecordFacetRow({
             </span>
             {f.last_refresh_at && (
               <TipTarget tip={`Last refresh ${absoluteTime(f.last_refresh_at)}`} underline>
-                · refreshed {relativeTime(f.last_refresh_at)}
+                · refreshed {listTime(f.last_refresh_at)}
               </TipTarget>
             )}
           </>
         ) : r.unconfigured ? (
           <TipBadge
-            text="no credential"
+            text="No credential"
             state="neutral"
             tip="The tracker is declared but has no credential yet — nothing can be read from it until one is added."
           />
@@ -441,12 +479,12 @@ function RecordFacetRow({
           <span>read live · counts not available right now</span>
         )}
       </div>
-      <ul className="mt-2 flex flex-wrap items-center gap-2 list-none p-0 m-0" aria-label="tracker scopes">
+      <ul className="mt-2 flex flex-wrap items-center gap-2 list-none p-0 m-0" aria-label="Tracker scopes">
         {r.namespaces.map((n) => (
           <li key={n.ns.namespace} className="inline-flex max-w-full">
             <RecordChip
               r={n}
-              busy={anyBusy}
+              busy={busy}
               onOpen={() => actions.onOpen(n)}
               // open → the confirm-first join (`confirm: true`); approval → the request confirmation.
               onRequest={() => (n.state === "open" ? actions.onJoin(n, true) : actions.onRequest(n))}
@@ -458,37 +496,85 @@ function RecordFacetRow({
       {unapprovable && (
         <p className="mt-1 text-xs text-text-muted">{NO_APPROVER[0].toUpperCase() + NO_APPROVER.slice(1)}.</p>
       )}
-      {(leaveInline || r.joined.length > 1) && r.joined.length > 0 && (
-        <Verbs>
+      {r.joined.length > 0 && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
           {r.joined.map((n) => (
             <Button
               key={n.ns.namespace}
               type="empty"
               htmlType="button"
               onClick={() => actions.onLeave(n)}
-              disabled={anyBusy}
+              disabled={busy}
             >
               Leave · {r.joined.length > 1 ? n.label : RECORD_NOUN}
             </Button>
           ))}
-        </Verbs>
+        </div>
       )}
+    </>
+  );
+}
+
+function TrackerLine({
+  card,
+  busy,
+  code,
+  record,
+  trackerNote,
+}: {
+  card: CardModel;
+  busy: boolean;
+  code: CodeActions;
+  record: RecordActionProps;
+  trackerNote?: string;
+}) {
+  const linkable = !trackerNote && !!code.onSetSource && !!card.code?.branches.some((b) => b.my_role === "admin");
+  return (
+    <FacetRow icon="database" label="Tracker">
+      {card.record ? (
+        <RecordFacetLine facet={card.record} busy={busy} actions={record} />
+      ) : trackerNote ? (
+        <p className="text-xs text-text-muted">{trackerNote}</p>
+      ) : (
+        !linkable && <p className="text-xs text-text-muted">Not linked</p>
+      )}
+      {linkable && card.code && <TrackerLinkRow card={card} facet={card.code} busy={busy} actions={code} />}
     </FacetRow>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Details (maintainers only)
+// Settings (maintainers only)
 // ---------------------------------------------------------------------------
 
-function Details({ card, adminOpsPresent }: { card: CardModel; adminOpsPresent: boolean }) {
+function Settings({
+  card,
+  busy,
+  code,
+  adminOpsPresent,
+}: {
+  card: CardModel;
+  busy: boolean;
+  code: CodeActions;
+  adminOpsPresent: boolean;
+}) {
+  const access = card.code && code.onSetAccess && card.code.branches.some((b) => b.my_role === "admin");
+  const [open, setOpen] = useState(false);
+  const bodyId = useId();
   return (
-    <details className="group mt-3 border-t border-border pt-2">
-      <summary className="inline-flex items-center gap-1 min-h-9 px-1 -mx-1 rounded text-xs text-text-muted hover:text-text cursor-pointer list-none pointer-coarse:min-h-11 pointer-coarse:min-w-11">
-        <Icon name="chevron-right" size="xs" aria-hidden="true" className="transition-transform group-open:rotate-90" />{" "}
-        Details
-      </summary>
-      <div className="mt-2 space-y-3">
+    <div className="border-t border-border pt-2">
+      <Button
+        type="empty"
+        htmlType="button"
+        iconLeft={open ? "chevron-down" : "chevron-right"}
+        aria-expanded={open}
+        aria-controls={bodyId}
+        onClick={() => setOpen((v) => !v)}
+      >
+        Settings
+      </Button>
+      <div id={bodyId} hidden={!open} className="mt-2 space-y-3">
+        {access && card.code && <RepoAccessPanel card={card} facet={card.code} busy={busy} actions={code} />}
         {card.code && (
           // biome-ignore lint/a11y/useSemanticElements: a named group of read-only details of the card, not form controls
           <div role="group" aria-label="Code details">
@@ -496,10 +582,10 @@ function Details({ card, adminOpsPresent }: { card: CardModel; adminOpsPresent: 
               {card.code.branches.map((b) => (
                 <MetaRow key={b.namespace} label={b.branch} mono>
                   {b.namespace}
-                  {b.git_head ? ` · ${b.git_head.slice(0, 12)}` : ""}
+                  {b.git_head ? ` · ${short(b.git_head)}` : ""}
                 </MetaRow>
               ))}
-              <MetaRow label="origin">
+              <MetaRow label="Origin">
                 {card.code.head.source === "registry" ? "added from the dashboard" : "configured by the operator"}
               </MetaRow>
             </MetaList>
@@ -509,174 +595,236 @@ function Details({ card, adminOpsPresent }: { card: CardModel; adminOpsPresent: 
           <RecordSourceDetails key={s.name} source={s} manageable={canAdminister(s, adminOpsPresent)} />
         ))}
       </div>
-    </details>
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// The card
+// The row
 // ---------------------------------------------------------------------------
 
-/** The folded row's one-line summary of both facets: "3 branches · 31,539 files · 22,579 issues · 65,328 PRs". */
-function cardSummary(card: Pick<CardModel, "code" | "record">): string {
+/** Line 2: "3 branches · 31,539 files · indexed 2h ago · you read 2 of 3"; a record-only
+ *  row: "22,579 issues · 65,328 PRs · not joined". */
+export function rowSummary(card: Pick<CardModel, "code" | "record">): string {
   const parts: string[] = [];
-  if (card.code) {
-    const n = card.code.branches.length;
+  const c = card.code;
+  if (c) {
+    const n = c.branches.length;
     parts.push(`${n} branch${n === 1 ? "" : "es"}`);
-    const files = card.code.head.counts?.code_files;
+    const files = c.head.counts?.code_files;
     if (files) parts.push(`${fmtInt(files)} files`);
-  }
-  if (card.record) {
-    const f = card.record.freshness;
-    if (f) parts.push(`${fmtInt(f.issues)} issues`, `${fmtInt(f.prs)} PRs`);
-    else if (card.record.unconfigured) parts.push(`${RECORD_NOUN}: no credential`);
-    // No counts yet — the standing phrase already names the tracker
+    if (c.head.indexed_at && c.head.git_head) parts.push(`indexed ${listTime(c.head.indexed_at)}`);
+    if (c.joinedCount > 0) parts.push(`you read ${c.joinedCount} of ${n}`);
+    else if (c.pendingCount > 0) parts.push(`${c.pendingCount} branch${c.pendingCount === 1 ? "" : "es"} requested`);
+    else parts.push("not joined");
+  } else if (card.record) {
+    const r = card.record;
+    if (r.freshness) parts.push(`${fmtInt(r.freshness.issues)} issues`, `${fmtInt(r.freshness.prs)} PRs`);
+    else if (r.unconfigured) parts.push(`${RECORD_NOUN}: no credential`);
+    parts.push(r.joined.length > 0 ? "reading" : r.pending.length > 0 ? "requested" : "not joined");
   }
   return parts.join(" · ");
 }
 
-export function RepositoryCard({
+/** "the public tracker", or the namespace when two scopes share a label. */
+function recordName(r: RecordNamespace): string {
+  return r.label === "Public" || r.label === "Private" ? `the ${r.label.toLowerCase()} ${RECORD_NOUN}` : r.label;
+}
+
+interface MenuEntry {
+  label: string;
+  onSelect: () => void;
+}
+
+/** The split button's menu: what can be done to each branch (or tracker scope), then the
+ *  repository's own verbs. */
+function actionMenu(card: CardModel, code: CodeActions, record: RecordActionProps): MenuEntry[][] {
+  const each: MenuEntry[] = [];
+  const all: MenuEntry[] = [];
+  const c = card.code;
+  if (c) {
+    for (const b of c.branches) {
+      const st = branchState(b);
+      if (st === "member") each.push({ label: `Open ${b.branch}`, onSelect: () => code.onOpen(b) });
+      else if (st === "open") each.push({ label: `Join ${b.branch}`, onSelect: () => code.onJoin(b) });
+      else if (st === "approval")
+        each.push({ label: `Request access to ${b.branch}`, onSelect: () => code.onRequest(b, "viewer") });
+    }
+    const openable = c.joinable.filter((b) => branchState(b) === "open").length;
+    if (c.joinable.length > 1)
+      all.push({
+        label: `${openable === 0 ? "Request access to" : "Join"} all ${c.joinable.length} branches`,
+        onSelect: () => code.onJoinAll(c.branches),
+      });
+    if (c.joined.length > 1)
+      all.push({ label: `Leave all ${c.joined.length} branches`, onSelect: () => code.onLeaveAll(c.branches) });
+    if (c.branches.length > 1) all.push({ label: "Choose branches…", onSelect: () => code.onManage(c) });
+    if (!c.maintained && c.pendingCount === 0 && branchState(c.primary) !== "closed")
+      all.push({ label: "Request maintainer access", onSelect: () => code.onRequest(c.primary, "admin") });
+  } else if (card.record) {
+    for (const n of card.record.namespaces) {
+      if (n.state === "member") each.push({ label: `Open ${recordName(n)}`, onSelect: () => record.onOpen(n) });
+      else if (n.state === "open")
+        each.push({ label: `Join ${recordName(n)}`, onSelect: () => record.onJoin(n, false) });
+      else if (n.state === "approval")
+        each.push({ label: `Request access to ${recordName(n)}`, onSelect: () => record.onRequest(n) });
+    }
+  }
+  return [each, all].filter((g) => g.length > 0);
+}
+
+/** The withdraw menu behind a `Requested` badge. */
+function withdrawMenu(card: CardModel, code: CodeActions, record: RecordActionProps, busy: boolean): RowMenuItem[] {
+  const branches = card.code?.pending ?? [];
+  const scopes = card.record?.pending ?? [];
+  const one = branches.length + scopes.length === 1;
+  return [
+    ...branches.map((b) => ({
+      label: one ? "Withdraw request" : `Withdraw request for ${b.branch}`,
+      icon: "clock" as const,
+      onSelect: () => code.onCancel(b),
+      disabled: busy,
+    })),
+    ...scopes.map((n) => ({
+      label: one ? "Withdraw request" : `Withdraw request for ${recordName(n)}`,
+      icon: "clock" as const,
+      onSelect: () => record.onCancel(n),
+      disabled: busy,
+    })),
+  ];
+}
+
+function RowAction({
+  card,
+  busy,
+  code,
+  record,
+}: {
+  card: CardModel;
+  busy: boolean;
+  code: CodeActions;
+  record: RecordActionProps;
+}) {
+  const primary = primaryAction(card);
+  if (!primary) return null;
+  if (primary.verb === "Withdraw request") {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <Badge text="Requested" state="info" size="sm" />
+        <RowMenu name={card.repo} items={withdrawMenu(card, code, record, busy)} />
+      </span>
+    );
+  }
+  const fire = () => {
+    const { branch: b, record: r } = primary;
+    if (b) {
+      if (primary.verb === "Open") code.onOpen(b);
+      else if (primary.verb === "Join") code.onJoin(b);
+      else code.onRequest(b, "viewer");
+    } else if (r) {
+      if (primary.verb === "Open") record.onOpen(r);
+      else if (primary.verb === "Join") record.onJoin(r, false);
+      else record.onRequest(r);
+    }
+  };
+  const groups = actionMenu(card, code, record);
+  const items = (g: MenuEntry[]) => g.map((m) => ({ label: m.label, onClick: m.onSelect }));
+  return (
+    <span className="repo-action">
+      <SplitButton
+        menuLabel={`More actions for ${card.repo}`}
+        htmlType="button"
+        disabled={busy}
+        onClick={fire}
+        menu={
+          groups.length > 1 ? groups.map((g) => ({ type: "group" as const, items: items(g) })) : items(groups[0] ?? [])
+        }
+      >
+        {primary.verb}
+      </SplitButton>
+    </span>
+  );
+}
+
+export const RepositoryCard = memo(function RepositoryCard({
   card,
   busy,
   code,
   record,
   adminOpsPresent = false,
   defaultOpen = false,
+  trackerNote,
 }: {
   card: CardModel;
   busy: string | null;
   code: CodeActions;
   record: RecordActionProps;
   adminOpsPresent?: boolean;
-  /** A card is folded until the person opens it. */
+  /** A row is folded until the person opens it. */
   defaultOpen?: boolean;
+  /** Why no tracker can be shown here (the deployment serves none, or the read failed). */
+  trackerNote?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const bodyId = useId();
   const anyBusy = busy !== null;
-  const primary = primaryAction(card);
-  const sole = soleMembership(card);
+  const health = card.code ? worstHealth(card.code.branches) : null;
   const outOfScope = card.code?.branches.some(maintainsOutOfScope) ?? false;
-  const summary = cardSummary(card);
+  const summary = rowSummary(card);
   // The branch whose namespace holds the repository's documents
   const docsNs = card.code?.branches.find((b) => b.docs_namespace)?.docs_namespace ?? "";
   const docs = docsNs ? (card.code?.branches.find((b) => b.namespace === docsNs) ?? null) : null;
-
-  const fire = (p: NonNullable<typeof primary>) => {
-    if (p.facet === "code" && p.branch) {
-      const b = p.branch;
-      if (p.verb === "Open") code.onOpen(b);
-      else if (p.verb === "Join") code.onJoin(b);
-      else if (p.verb === "Request access") code.onRequest(b, "viewer");
-      else code.onCancel(b);
-    } else if (p.record) {
-      const r = p.record;
-      if (p.verb === "Open") record.onOpen(r);
-      else if (p.verb === "Join") record.onJoin(r, false);
-      else if (p.verb === "Request access") record.onRequest(r);
-      else record.onCancel(r);
-    }
-  };
-  const leaveSole = () => {
-    if (!sole) return;
-    if (sole.branch) code.onLeave(sole.branch);
-    else if (sole.record) record.onLeave(sole.record);
-  };
-  // Join and Request access are the card's call to action; Open and Withdraw are not.
-  const primaryType = primary?.verb === "Open" || primary?.verb === "Withdraw request" ? "secondary" : "primary";
+  const settings = card.maintained || (!!code.onSetAccess && !!card.code?.branches.some((b) => b.my_role === "admin"));
 
   return (
-    <Panel as="section" aria-label={card.repo} className={open ? "p-pane sm:p-4" : "px-2 py-1.5 sm:px-3 sm:py-2"}>
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
-            {/* The disclosure: the heading is the button, so the row opens from its
-                name (WAI-ARIA disclosure pattern); the chevron says which way. */}
-            <h2 className="min-w-0 max-w-full">
-              <button
-                type="button"
-                onClick={() => setOpen((v) => !v)}
-                aria-expanded={open}
-                aria-controls={open ? bodyId : undefined}
-                className="inline-flex items-start gap-1.5 min-h-9 -ml-1 pl-1 pr-2 py-1.5 rounded text-left hover:bg-surface-2 pointer-coarse:min-h-11"
-              >
-                <Icon
-                  name={open ? "chevron-down" : "chevron-right"}
-                  size="sm"
-                  aria-hidden="true"
-                  className="mt-1 shrink-0"
-                />
-                <span className="break-words">{card.repo}</span>
-              </button>
-            </h2>
-            {/* A static pill, not a target: the page intro says what open and
-                restricted mean, so it carries no tooltip and no 44 px box. */}
-            <Badge
-              text={card.restricted ? "restricted" : "open"}
-              state={card.restricted ? "warning" : "success"}
-              size="sm"
-            />
-            {card.restricted && open && (
+    <section aria-label={card.repo}>
+      <ListRow>
+        <div className="relative flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
+              {/* The disclosure: the heading is the button, stretched over the row's head,
+                  so the row opens from anywhere on it (WAI-ARIA disclosure pattern). */}
+              <h2 className="min-w-0 max-w-full text-sm font-semibold">
+                <button
+                  type="button"
+                  data-row-open=""
+                  onClick={() => setOpen((v) => !v)}
+                  aria-expanded={open}
+                  aria-controls={open ? bodyId : undefined}
+                  className="list-row-open inline-flex items-start gap-1 break-words"
+                >
+                  <Icon
+                    name="chevron-right"
+                    size="sm"
+                    aria-hidden="true"
+                    className={`mt-0.5 shrink-0 ${open ? "rotate-90" : ""}`}
+                  />
+                  {card.repo}
+                </button>
+              </h2>
+              {health && <HealthBadge health={health} />}
+              {card.restricted && <Badge size="sm" state="neutral" text="Restricted" icon="lock" iconDir="start" />}
+            </div>
+            {summary && <p className="mt-0.5 text-xs text-text-muted tabular-nums break-words">{summary}</p>}
+          </div>
+          <div className="list-row-control sm:shrink-0">
+            <RowAction card={card} busy={anyBusy} code={code} record={record} />
+          </div>
+        </div>
+
+        {open && (
+          <div id={bodyId} className="mt-3 space-y-3">
+            {outOfScope && <p className="text-xs text-text-muted">{OUT_OF_SCOPE_MAINTAINER}</p>}
+            {card.restricted && (
               // Membership reads it; a client token reads it only when added at mint
               // (Settings → For my own tools).
-              <span className="text-xs text-text-muted" data-testid="repo-client-tokens-note">
-                your client tokens: only when added in Settings
-              </span>
+              <p className="text-xs text-text-muted" data-testid="repo-client-tokens-note">
+                Your client tokens read it only when added in Settings.
+              </p>
             )}
-          </div>
-          {(card.standing || (!open && summary)) && (
-            <p className="mt-0.5 pl-6 text-xs text-text-muted tabular-nums flex flex-wrap items-center gap-x-1.5">
-              {card.standing && <span>{card.standing}</span>}
-              {!open && summary && (
-                <>
-                  {card.standing && <span aria-hidden="true">·</span>}
-                  <span>{summary}</span>
-                </>
-              )}
-            </p>
-          )}
-        </div>
-        {primary && (
-          <div className="flex flex-wrap items-center gap-2 pl-6 sm:pl-0 sm:shrink-0">
-            <Button
-              type={primaryType}
-              htmlType="button"
-              iconLeft={VERB_ICON[primary.verb]}
-              onClick={() => fire(primary)}
-              disabled={anyBusy}
-              className="w-full sm:w-auto"
-            >
-              {primary.verb} · {primary.qualifier}
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {open && (
-        <div id={bodyId}>
-          {(sole || outOfScope) && (
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-6">
-              {sole && (
-                <Button type="empty" htmlType="button" onClick={leaveSole} disabled={anyBusy}>
-                  Leave · {sole.qualifier}
-                </Button>
-              )}
-              {outOfScope && <p className="text-xs text-text-muted">{OUT_OF_SCOPE_MAINTAINER}</p>}
-            </div>
-          )}
-
-          <div className="mt-3 space-y-3">
-            {card.code && (
-              <CodeFacetRow facet={card.code} busy={busy} actions={code} leaveInline={!sole && card.joinedCount > 1} />
-            )}
-            {card.record && (
-              <RecordFacetRow
-                facet={card.record}
-                busy={busy}
-                actions={record}
-                leaveInline={!sole && card.joinedCount > 1}
-              />
-            )}
+            {card.code && <BranchTable facet={card.code} busy={anyBusy} actions={code} />}
+            <TrackerLine card={card} busy={anyBusy} code={code} record={record} trackerNote={trackerNote} />
+            {settings && <Settings card={card} busy={anyBusy} code={code} adminOpsPresent={adminOpsPresent} />}
             {docs && (
               // The documents agents read before changing this code
               <FacetRow icon="document" label="Docs">
@@ -689,27 +837,18 @@ export function RepositoryCard({
                 />
               </FacetRow>
             )}
-            {card.code &&
-              card.code.branches.some((b) => b.my_role === "admin") &&
-              (code.onSetAccess || code.onSetSource) && (
-                <RepoAccessPanel card={card} facet={card.code} busy={anyBusy} actions={code} />
-              )}
+            {card.restricted && card.joinedCount === 0 && card.pendingCount === 0 && (
+              <p className="text-xs text-text-muted">{RESTRICTED_SENTENCE}</p>
+            )}
           </div>
-
-          {card.restricted && card.joinedCount === 0 && card.pendingCount === 0 && (
-            <p className="mt-3 text-xs text-text-muted">{RESTRICTED_SENTENCE}</p>
-          )}
-
-          {card.maintained && <Details card={card} adminOpsPresent={adminOpsPresent} />}
-        </div>
-      )}
-    </Panel>
+        )}
+      </ListRow>
+    </section>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
-// The maintainer's panel — access (classification, join policy) and the tracker record
-// the repository answers from. Shown when the person maintains a branch; every write goes
+// The maintainer's access (classification, join policy), in Settings. Every write goes
 // through one op, audited.
 // ---------------------------------------------------------------------------
 
@@ -749,11 +888,7 @@ function RepoAccessPanel({
   const openingRestricted = currentClass === "restricted" && cls === "standard";
   const restrictedOpen = cls === "restricted" && policy === "open";
   return (
-    <section
-      aria-label={`Maintain ${card.repo}`}
-      className="rounded-lg border border-border bg-surface-2/40 p-3 space-y-3"
-    >
-      <div className="text-xs font-medium text-text-muted">Maintain · access and tracker</div>
+    <section aria-label={`Access to ${card.repo}`} className="space-y-3">
       {actions.onSetAccess && (
         <div className="flex flex-wrap items-end gap-2">
           <div className="w-full sm:w-72">
@@ -813,13 +948,12 @@ function RepoAccessPanel({
           )}
         </div>
       )}
-      {actions.onSetSource && <TrackerLinkRow card={card} facet={facet} busy={busy} actions={actions} />}
     </section>
   );
 }
 
 /**
- * The repository's trackers as they are — `bound_trackers` on the maintainer's row
+ * The repository's trackers as they are, on a maintainer's tracker line — `bound_trackers` on the maintainer's row
  * (primary first). The first is the primary: its numbers are the repository's, so a
  * lookup by number (#123, a PR's facts) reads it; every linked tracker is searched
  * (duplicates, similar reports, bisect). Each line says what agents get from it; Make
@@ -852,8 +986,7 @@ function TrackerLinkRow({
 
   return (
     // biome-ignore lint/a11y/useSemanticElements: a named group of read-only details of the card, not form controls and their link actions
-    <div className="space-y-2 border-t border-border pt-3" role="group" aria-label="Tracker link">
-      <div className="text-xs text-text-muted font-medium">{many ? `Trackers · ${linked.length}` : "Tracker"}</div>
+    <div className="space-y-2" role="group" aria-label="Tracker link">
       {linked.length === 0 ? (
         <p className="text-sm text-text-muted">
           Not linked. Agents in this repository's checkout see no issues or PRs.
@@ -1039,7 +1172,7 @@ function LinkedTracker({
           <Icon name="check" size="sm" color="var(--color-success)" aria-hidden="true" className="shrink-0 mt-0.5" />
         )}
         <span className="min-w-0">{line}</span>
-        {many && primary && <Badge text="primary" state="neutral" size="sm" className="shrink-0" />}
+        {many && primary && <Badge text="Primary" state="neutral" size="sm" className="shrink-0" />}
       </div>
       <span className="flex items-center gap-1.5 pl-5 sm:pl-0 sm:shrink-0">
         {many && !primary && (

@@ -14,14 +14,12 @@ interface Props {
   // The memory's current location (org + source namespace).
   source: Identity;
   memoryKey: string;
-  // Called after a successful copy so the caller can refresh.
-  onCopied?: () => void;
 }
 
 // Roles that can WRITE a namespace (viewers can read but not accept a copy).
 const WRITABLE = new Set(["admin", "writer", "jwt"]);
 
-export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey, onCopied }: Props) {
+export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey }: Props) {
   const [targets, setTargets] = useState<MyNamespaceEntry[]>([]);
   const [loadingTargets, setLoadingTargets] = useState(false);
   const [target, setTarget] = useState("");
@@ -79,7 +77,6 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey, o
         rationale: rationale.trim() || undefined,
       });
       toast(`Copied to ${res.target_namespace} as ${res.target_key}`, "ok");
-      onCopied?.();
       reset();
       onOpenChange(false);
     } catch (e) {
@@ -115,7 +112,7 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey, o
             disabled={loadingTargets}
             placeholder={
               loadingTargets
-                ? "Loading…"
+                ? "Loading namespaces"
                 : targets.length === 0
                   ? "No other writable namespaces"
                   : "Select a namespace…"

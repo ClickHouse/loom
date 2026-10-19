@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { listServiceAccounts } from "../api";
 import { Setup } from "./Setup";
 
 vi.mock("../api", async (importOriginal) => {
@@ -58,5 +59,36 @@ describe("Settings", () => {
     render(<Setup />);
     const lead = await screen.findByText("No namespace selected.", undefined, WAIT);
     expect(lead.closest("[role='status']")).toBe(lead.closest("[data-testid='click-alert']"));
+  });
+});
+
+// A token's created and used times are the list's one time format, quiet in the row.
+describe("Settings tokens", () => {
+  it("draws a token's created and last-used times with ListTime", async () => {
+    vi.mocked(listServiceAccounts).mockResolvedValueOnce([
+      {
+        name: "ci-bot",
+        sa_subject: "sa:ci-bot",
+        namespaces: ["team"],
+        roles: ["writer"],
+        ttl_days: 90,
+        created_by: "v@x",
+        created_at: "2025-03-04 10:00:00",
+        expires_at: null,
+        revoked_at: null,
+        revoked_by: "",
+        last_used_at: "2025-03-05 09:00:00",
+        kind: "service_account",
+      },
+    ]);
+    seed("team");
+    render(<Setup />);
+    const created = await screen.findByText(/created/, { selector: "div" }, WAIT);
+    const times = [...created.querySelectorAll("time")];
+    expect(times.map((t) => t.getAttribute("dateTime"))).toEqual([
+      "2025-03-04T10:00:00.000Z",
+      "2025-03-05T09:00:00.000Z",
+    ]);
+    expect(times.every((t) => !t.hasAttribute("tabindex"))).toBe(true);
   });
 });

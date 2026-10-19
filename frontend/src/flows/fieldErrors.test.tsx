@@ -59,9 +59,7 @@ describe("a field with an error is invalid and described by it", () => {
   });
 
   it("CopyToNamespaceDialog's destination key", async () => {
-    render(
-      <CopyToNamespaceDialog open onOpenChange={noop} source={identity} memoryKey="user_coffee" onCopied={noop} />,
-    );
+    render(<CopyToNamespaceDialog open onOpenChange={noop} source={identity} memoryKey="user_coffee" />);
     const key = screen.getByRole("textbox", { name: /^Key in destination/ });
     await userEvent.setup().type(key, "Bad Key");
     await expectInvalid(key, /lower_snake_case, start with a letter/);

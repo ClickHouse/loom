@@ -138,7 +138,7 @@ async function setup(page: Page): Promise<Probe> {
 async function openPreview(page: Page, f: Fixture) {
   await page.getByRole("button", { name: `Preview ${f.title}`, exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText("Loading…")).toHaveCount(0);
+  await expect(dialog.getByText("Loading thread")).toHaveCount(0);
   return dialog;
 }
 

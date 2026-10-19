@@ -7,10 +7,7 @@ import {
   canBeApproved,
   maintainsOutOfScope,
   primaryAction,
-  soleMembership,
-  standingPhrase,
   verbForState,
-  visibleBranches,
 } from "./repositoryCard";
 import type { TrackerSource, TrackerSourceNamespace } from "./trackerSources";
 import { must } from "../test/must";
@@ -123,7 +120,6 @@ describe("buildCards joins code.repos and tracker.source.list by repository", ()
     );
     expect(stranger.code).toBeNull();
     expect(stranger.record?.namespaces[0].ns.namespace).toBe("tracker-other");
-    expect(stranger.standing).toBe("not joined");
   });
 
   it("a namespace declaring no repository is headed by its source's name; the join is case-insensitive", () => {
@@ -164,7 +160,7 @@ describe("buildCards joins code.repos and tracker.source.list by repository", ()
   });
 
   it("a member of a restricted repository still sees it as restricted", () => {
-    // the standing-based reading said "open" to the maintainer; the server's class decides
+    // The server's class decides, not the caller's standing as a maintainer.
     const member = buildCards(
       [branch({ join_policy: "approval", classification: "restricted", my_status: "member", my_role: "admin" })],
       [],
@@ -187,61 +183,26 @@ describe("buildCards joins code.repos and tracker.source.list by repository", ()
   });
 });
 
-describe("standingPhrase: the caller's standing in one phrase", () => {
-  it("'you read 8 of 10 branches · tracker: not joined'", () => {
-    const rows = TEN.map((b, i) => (i < 8 ? { ...b, my_status: "member" as const } : b));
-    const [c] = buildCards(rows, [source()]);
-    expect(c.standing).toBe("you read 8 of 10 branches · tracker: not joined");
-  });
-  it("nothing joined anywhere is 'not joined'", () => {
-    expect(buildCards([branch()], [source()])[0].standing).toBe("not joined");
-    expect(buildCards([branch()], [])[0].standing).toBe("not joined");
-  });
-  it("a pending branch and a read record", () => {
-    const [c] = buildCards(
-      [branch({ my_status: "pending", join_policy: "approval" })],
-      [source({ namespaces: [ns({ member_role: "viewer" })] })],
-    );
-    expect(c.standing).toBe("1 branch requested · tracker: reading");
-  });
-  it("code read, record requested", () => {
-    const [c] = buildCards(
-      [branch({ my_status: "member" })],
-      [source({ namespaces: [ns({ pending_role: "viewer", join_policy: "approval" })] })],
-    );
-    expect(c.standing).toBe("you read 1 of 1 branch · tracker: requested");
-  });
-  it("a record-only card says only its record", () => {
-    expect(
-      standingPhrase({
-        code: null,
-        record: buildRecordFacet([{ ns: ns({ member_role: "viewer" }), source: source() }]),
-      }),
-    ).toBe("tracker: reading");
-  });
-});
-
 describe("primaryAction: exactly one primary button", () => {
   it("Open the branch you read, before anything else", () => {
     const [c] = buildCards([branch({ my_status: "member" })], [source()]);
-    expect(primaryAction(c)).toMatchObject({ verb: "Open", facet: "code", qualifier: "master" });
+    expect(primaryAction(c)).toMatchObject({ verb: "Open", branch: { branch: "master" } });
   });
   it("Open the record when only the record is read", () => {
     const [c] = buildCards(
       [branch({ join_policy: "approval" })],
       [source({ namespaces: [ns({ member_role: "viewer" })] })],
     );
-    expect(primaryAction(c)).toMatchObject({ verb: "Open", facet: "record", qualifier: "tracker" });
+    expect(primaryAction(c)).toMatchObject({ verb: "Open", record: expect.any(Object) });
   });
   it("Join the open branch first; the record's Join when the code is restricted; Request access when nothing is open", () => {
     expect(primaryAction(buildCards([branch()], [source()])[0])).toMatchObject({
       verb: "Join",
-      facet: "code",
-      qualifier: "master",
+      branch: { branch: "master" },
     });
     expect(primaryAction(buildCards([branch({ join_policy: "approval" })], [source()])[0])).toMatchObject({
       verb: "Join",
-      facet: "record",
+      record: expect.any(Object),
     });
     expect(
       primaryAction(
@@ -250,7 +211,7 @@ describe("primaryAction: exactly one primary button", () => {
           [source({ namespaces: [ns({ classification: "restricted", join_policy: "approval" })] })],
         )[0],
       ),
-    ).toMatchObject({ verb: "Request access", facet: "code" });
+    ).toMatchObject({ verb: "Request access", branch: expect.any(Object) });
   });
   it("Withdraw request when the only thing left is pending; nothing on a closed repository", () => {
     expect(primaryAction(buildCards([branch({ my_status: "pending", join_policy: "approval" })], [])[0])).toMatchObject(
@@ -267,25 +228,7 @@ describe("primaryAction: exactly one primary button", () => {
   });
 });
 
-describe("soleMembership: the header's one quiet Leave", () => {
-  it("is the one thing read; null with none or several", () => {
-    expect(soleMembership(buildCards([branch({ my_status: "member" })], [source()])[0])).toMatchObject({
-      facet: "code",
-      qualifier: "master",
-    });
-    expect(
-      soleMembership(buildCards([branch()], [source({ namespaces: [ns({ member_role: "viewer" })] })])[0]),
-    ).toMatchObject({ facet: "record" });
-    expect(
-      soleMembership(
-        buildCards([branch({ my_status: "member" })], [source({ namespaces: [ns({ member_role: "viewer" })] })])[0],
-      ),
-    ).toBeNull();
-    expect(soleMembership(buildCards([branch()], [source()])[0])).toBeNull();
-  });
-});
-
-describe("the Code facet keeps the 6830 group shape and hides the long tail of branches", () => {
+describe("the Code facet keeps the group shape", () => {
   it("master first, release branches newest first; primary is master; head is the first read branch", () => {
     const f = buildCodeFacet(
       "ClickHouse/ClickHouse",
@@ -297,15 +240,6 @@ describe("the Code facet keeps the 6830 group shape and hides the long tail of b
     expect(f.head.branch).toBe("25.6");
     expect(f.joinedCount).toBe(1);
     expect(f.joinable).toHaveLength(9);
-  });
-  it("visibleBranches shows the trunk, what you read or requested, and fills to four; expanded shows all", () => {
-    const rows = TEN.map((b, i) =>
-      i === 7 ? { ...b, my_status: "member" as const } : i === 9 ? { ...b, my_status: "pending" as const } : b,
-    );
-    const f = buildCodeFacet("r", rows);
-    expect(visibleBranches(f, false).map((b) => b.branch)).toEqual(["master", "25.9", "25.8", "25.7"]);
-    expect(visibleBranches(f, true)).toHaveLength(10);
-    expect(visibleBranches(buildCodeFacet("r", TEN.slice(0, 3)), false)).toHaveLength(3);
   });
 });
 

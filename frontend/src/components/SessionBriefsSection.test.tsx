@@ -1,9 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setFoldOpen } from "../lib/folds";
 import { SessionBriefsSection } from "./SessionBriefsSection";
 
 // A brief whose conversation was never recorded is still findable: the
-// Conversations page lists the namespace's briefs above its threads.
+// Conversations page holds the namespace's briefs in one bucket above its threads,
+// folded to its title so it never pushes the threads down, and read only once opened.
 
 const listBriefs = vi.fn();
 const getBrief = vi.fn();
@@ -13,7 +15,10 @@ vi.mock("../api/briefs", () => ({
 }));
 
 describe("SessionBriefsSection", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setFoldOpen("session-briefs", false);
+  });
   afterEach(cleanup);
 
   it("renders nothing when the namespace holds no brief", async () => {
@@ -34,7 +39,10 @@ describe("SessionBriefsSection", () => {
       updated_at: null,
     }));
     render(<SessionBriefsSection org="o" namespace="ns" />);
-    expect(await screen.findByText("Session briefs")).toBeInTheDocument();
+    const toggle = await screen.findByRole("button", { name: "Session briefs" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(getBrief).not.toHaveBeenCalled();
+    fireEvent.click(toggle);
     await waitFor(() => expect(getBrief).toHaveBeenCalledTimes(2));
     expect(getBrief.mock.calls.map((c) => c[1]).sort()).toEqual(["auto/loom/main", "handoff/billing"]);
     fireEvent.click(await screen.findByRole("button", { name: /handoff\/billing/ }));

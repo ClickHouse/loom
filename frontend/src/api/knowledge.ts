@@ -40,14 +40,19 @@ export async function listKnowledge(
     limit?: number;
     cursor?: string;
     fields?: string[];
+    /** Only documents whose source_uri starts with one of these. */
+    uriPrefix?: string[];
   } & RequestOpts = {},
 ): Promise<KnowledgeListResponse> {
   const body: Record<string, unknown> = {
     org: id.org,
     namespace: id.namespace,
     tags: opts.tags || [],
+    // Two or more must all match (a build that predates `tags_every` matches any one).
+    ...((opts.tags?.length ?? 0) > 1 ? { tags_every: true } : {}),
     include_superseded: opts.include_superseded || false,
     limit: opts.limit || 100,
+    ...(opts.uriPrefix?.length ? { uri_prefix: opts.uriPrefix } : {}),
     // The fields the caller reads; unset, every field.
     ...(opts.fields ? { fields: opts.fields } : {}),
   };

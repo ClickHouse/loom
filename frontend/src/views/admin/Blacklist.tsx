@@ -7,7 +7,7 @@ import { useStore, useIdentity } from "../../lib/state";
 import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { toast } from "../../components/Toast";
-import { relativeTime, humanizeError } from "../../lib/format";
+import { humanizeError, parseChTime, relativeTime } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { canCall } from "../../lib/canCall";
 import { useNamespaceRole } from "../../lib/namespaceRole";
@@ -15,7 +15,8 @@ import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { oneOf } from "../../lib/oneOf";
 import { IconButton } from "../../components/IconButton";
-import { Chip, PageHeader } from "../../components/ui";
+import { Chip, ListTime, LoadingSkeleton, PageHeader } from "../../components/ui";
+import { ListState } from "../../components/ui/ListState";
 
 /** What a visitor who cannot list the patterns reads instead of a request: the token's
  * role here is unknown, so the panel says who manages the
@@ -83,18 +84,43 @@ export function PrivacyFilters({
   const canAdd = canCall("blacklist.add", role, whoami);
   const canRemove = canCall("blacklist.remove", role, whoami);
 
-  const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
-    if (!canList) return;
+  // A reload after an add or a remove keeps the patterns on screen, marked busy. It runs
+  // through the read effect, so an answer for a namespace the page has left is dropped.
+  const [refreshing, setRefreshing] = useState(false);
+  // A failed read is said as a failure, with Retry: never as "no patterns".
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [reads, setReads] = useState(0);
+  const reload = () => setReads((n) => n + 1);
+  // Another namespace's patterns are not this one's: start from the skeleton, during
+  // render, so the old namespace's rows (and their Remove buttons) never paint under it.
+  const scopeKey = `${identity.org}/${identity.namespace}`;
+  const [rowsFor, setRowsFor] = useState(scopeKey);
+  if (rowsFor !== scopeKey) {
+    setRowsFor(scopeKey);
     setRows(null);
-    listBlacklist({ org: identity.org, namespace: identity.namespace }, { signal })
-      .then((r) => {
-        if (live()) setRows(r.rows || []);
-      })
-      .catch(() => {
-        if (live()) setRows([]);
-      });
-  };
-  useAbortableEffect(load, [identity.org, identity.namespace, canList]);
+    setLoadError(null);
+  }
+  useAbortableEffect(
+    (signal, live) => {
+      if (!canList) return;
+      setRefreshing(true);
+      setLoadError(null);
+      listBlacklist({ org: identity.org, namespace: identity.namespace }, { signal })
+        .then((r) => {
+          if (live()) setRows(r.rows || []);
+        })
+        .catch((e) => {
+          if (!live()) return;
+          setLoadError(e);
+          // Not an empty list: Retry shows the skeleton until the read answers.
+          setRows(null);
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
+        });
+    },
+    [scopeKey, canList, reads],
+  );
 
   const add = async () => {
     if (!pattern.trim()) return;
@@ -107,7 +133,7 @@ export function PrivacyFilters({
       setPattern("");
       setReason("");
       toast("Pattern added", "ok");
-      load();
+      reload();
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     }
@@ -116,7 +142,7 @@ export function PrivacyFilters({
   const remove = async (pattern_id: string) => {
     try {
       await removeBlacklist({ org: identity.org }, pattern_id);
-      load();
+      reload();
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     }
@@ -198,7 +224,18 @@ export function PrivacyFilters({
         </div>
       )}
 
-      {rows === null && <Skeleton className={compact ? "h-10 w-full" : "h-40 w-full"} />}
+      {/* Mounted before the read answers, so the count is announced when it lands. */}
+      {!compact && (
+        <p className="mb-2 text-xs text-text-muted tabular" aria-live="polite">
+          {rows !== null && loadError === null ? `${rows.length} ${rows.length === 1 ? "pattern" : "patterns"}` : ""}
+        </p>
+      )}
+      {rows === null && loadError === null && (
+        <LoadingSkeleton label="Loading privacy filters">
+          <Skeleton className={compact ? "h-10 w-full" : "h-40 w-full"} />
+        </LoadingSkeleton>
+      )}
+      {loadError !== null && <ListState kind="error" things="privacy filters" error={loadError} onRetry={reload} />}
       {rows !== null && rows.length === 0 && compact && (
         <p className="text-xs text-text-muted" role="status">
           {canAdd ? "No patterns yet." : "Nothing is refused here yet."}
@@ -220,6 +257,7 @@ export function PrivacyFilters({
           <PrivacyFiltersHitSummary rows={rows} />
           <div
             className={compact ? "rounded-lg border border-border bg-surface divide-y divide-border" : "space-y-1.5"}
+            aria-busy={refreshing || undefined}
           >
             {rows.map((r) => (
               <div
@@ -237,7 +275,9 @@ export function PrivacyFilters({
                     <span>·</span>
                     <span>{r.scope}</span>
                     <span>·</span>
-                    <span>added {relativeTime(r.created_at)}</span>
+                    <span>
+                      added <ListTime time={r.created_at} quiet />
+                    </span>
                     <span>·</span>
                     <PrivacyFilterHits row={r} />
                     {r.reason && (
@@ -287,9 +327,9 @@ function PrivacyFiltersHitSummary({ rows }: { rows: BlacklistRow[] }) {
   let mostRecent = 0;
   let activePatterns = 0;
   for (const r of rows) {
-    if (!r.last_hit_at) continue;
-    const t = Date.parse(r.last_hit_at);
-    if (!Number.isFinite(t)) continue;
+    const hit = parseChTime(r.last_hit_at);
+    if (!hit) continue;
+    const t = hit.getTime();
     if (t > mostRecent) mostRecent = t;
     if (now - t <= SEVEN_DAYS) activePatterns += 1;
   }
@@ -313,11 +353,18 @@ function PrivacyFiltersHitSummary({ rows }: { rows: BlacklistRow[] }) {
   );
 }
 
-function PrivacyFilterHits({ row }: { row: BlacklistRow }) {
+/** A pattern's hits: how many writes it refused, and the last one. */
+export function PrivacyFilterHits({ row }: { row: BlacklistRow }) {
   if (row.hit_count === 0) {
     return <span className="text-text-muted">never matched</span>;
   }
-  const lastHitText = row.last_hit_at ? <>last {relativeTime(row.last_hit_at)}</> : <>last hit unknown</>;
+  const lastHitText = row.last_hit_at ? (
+    <>
+      last <ListTime time={row.last_hit_at} quiet />
+    </>
+  ) : (
+    <>last hit unknown</>
+  );
   return (
     <>
       <span className="text-text font-medium">{row.hit_count}</span>

@@ -1,5 +1,5 @@
 import type { TaxonomyResponse } from "../../api";
-import { parseIso, relativeTime } from "../../lib/format";
+import { parseChTime, relativeTime } from "../../lib/format";
 import { NODE_CAP, shorten } from "./model";
 
 /**
@@ -81,7 +81,7 @@ export type CommunitiesCopy =
 
 /** An absolute UTC stamp for a tooltip: "2026-09-16 08:33 UTC". */
 export function absoluteUtc(iso: string): string | null {
-  const d = parseIso(iso);
+  const d = parseChTime(iso);
   if (!d) return null;
   return `${d.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }

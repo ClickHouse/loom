@@ -19,6 +19,7 @@ import { humanizeError } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { oneOf } from "../lib/oneOf";
 import { Modal } from "../components/ui/Modal";
+import { Loading } from "../components/ui";
 
 const REPO_JOIN_RULES = [
   ["open", "Open", "Anyone in the org joins instantly as a reader."],
@@ -173,7 +174,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
       }}
     >
       <div>
-        {!ns && <div className="py-8 text-center text-sm text-text-muted">Loading…</div>}
+        {!ns && <Loading label="Loading namespace settings" />}
         {ns && (
           <div className="space-y-5">
             <div className="flex items-end gap-2">

@@ -18,8 +18,9 @@ import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { fieldError, Tip } from "../components/ui";
-import { relativeTime, humanizeError } from "../lib/format";
+import { fieldError, ListTime, Loading, Tip } from "../components/ui";
+import { ListState } from "../components/ui/ListState";
+import { humanizeError } from "../lib/format";
 import { oneOf } from "../lib/oneOf";
 
 interface Props {
@@ -78,17 +79,34 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
   // response for a namespace the dialog has left is dropped instead of shown.
   const [reloadSeq, setReloadSeq] = useState(0);
   const load = () => setReloadSeq((n) => n + 1);
+  // The re-read after a change keeps the members on screen, marked busy, and so does a
+  // failed one; a failed first read is said as one, with Retry, never as "no members".
+  // Another namespace resets during render, so its members (and their actions) never
+  // paint under the new one.
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const rowsKey = `${org}/${namespace}`;
+  const [rowsFor, setRowsFor] = useState(rowsKey);
+  if (rowsFor !== rowsKey) {
+    setRowsFor(rowsKey);
+    setRows(null);
+    setLoadError(null);
+  }
 
   useEffect(() => {
     if (!open) return;
     let live = true;
-    setRows(null);
+    setRefreshing(true);
+    setLoadError(null);
     listGrants({ org, namespace })
       .then((r) => {
         if (live) setRows(r.rows || []);
       })
-      .catch(() => {
-        if (live) setRows([]);
+      .catch((e) => {
+        if (live) setLoadError(e);
+      })
+      .finally(() => {
+        if (live) setRefreshing(false);
       });
     return () => {
       live = false;
@@ -214,8 +232,16 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
       description={label ? namespace : undefined}
       className="w-full max-w-[600px]"
     >
-      <div>
-        {rows === null && <div className="py-8 text-center text-sm text-text-muted">Loading…</div>}
+      <div data-testid="members-body" aria-busy={(rows !== null && refreshing) || undefined}>
+        {rows === null && loadError === null && <Loading label={isCode ? "Loading readers" : "Loading members"} />}
+        {loadError !== null && rows === null && (
+          <ListState kind="error" things={isCode ? "readers" : "members"} error={loadError} onRetry={load} />
+        )}
+        {loadError !== null && rows !== null && (
+          <div className="mb-3 text-xs text-text-muted" role="status">
+            {`Couldn't refresh the ${isCode ? "readers" : "members"}; showing the last read.`}
+          </div>
+        )}
         {rows !== null && rows.length === 0 && (
           <div className="py-8 text-center text-sm text-text-muted">
             No members yet.{canManage && ` Click ${addLabel} below to invite the first one.`}
@@ -223,7 +249,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
         )}
         {pendingRows.length > 0 && (
           <div className="mb-4">
-            <div className="mb-2 text-xs font-medium text-warn">Pending requests ({pendingRows.length})</div>
+            <div className="mb-2 text-xs font-medium text-info">Pending requests ({pendingRows.length})</div>
             <div className="space-y-1">
               {pendingRows.map((r) => {
                 const sinceDate = r.pending_since || r.granted_at;
@@ -233,7 +259,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                 return (
                   <div
                     key={`p-${r.subject}`}
-                    className="flex items-center gap-3 rounded-lg border border-warn/40 bg-warn/10 p-2.5"
+                    className="flex items-center gap-3 rounded-lg border border-info/40 bg-info/10 p-2.5"
                   >
                     <RoleIcon role={r.requested_role} />
                     <div className="min-w-0 flex-1">
@@ -249,7 +275,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                             requested <span className="font-medium">{r.requested_role}</span>
                           </>
                         )}{" "}
-                        · {relativeTime(sinceDate)}
+                        · <ListTime time={sinceDate} quiet />
                         {elsewhere.length > 0 && (
                           <div className="mt-0.5 break-words">
                             also waiting on {elsewhere.map((t) => t.label).join(", ")} — one decision covers all
@@ -332,7 +358,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                     {r.subject === me && <span className="ml-2 font-sans text-xs text-text-muted">(you)</span>}
                   </div>
                   <div className="text-xs text-text-muted">
-                    Granted {relativeTime(r.granted_at)} by {r.granted_by}
+                    Granted <ListTime time={r.granted_at} quiet /> by {r.granted_by}
                   </div>
                 </div>
                 {canManage && r.subject !== me ? (
@@ -436,7 +462,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
 }
 
 function RoleIcon({ role }: { role: GrantRole }) {
-  if (role === "admin") return <Icon name="star" size="xs" color="var(--color-warn)" aria-label="Admin" />;
+  if (role === "admin") return <Icon name="star" size="xs" color="var(--global-color-text-muted)" aria-label="Admin" />;
   if (role === "writer") return <Icon name="user" size="xs" color="var(--color-text-muted)" aria-label="Writer" />;
   return <Icon name="eye" size="xs" color="var(--color-text-muted)" aria-label="Viewer" />;
 }
