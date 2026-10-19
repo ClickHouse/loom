@@ -2056,7 +2056,7 @@ The current status of some memories, by id: which automatic retirements still st
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `rows` | `list[MemoryStatus]` |  |
+| `rows` | `list[MemoryStatus]` | One entry per id the namespace holds inside the read scope. |
 
 ## `memory.sweep_expired`
 

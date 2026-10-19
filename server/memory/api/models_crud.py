@@ -520,6 +520,7 @@ class MemoryStatus(BaseModel):
 
 
 class MemoryStatusesOutput(BaseModel):
+    # One entry per id the namespace holds inside the read scope.
     rows: list[MemoryStatus] = Field(default_factory=list)
 
 
