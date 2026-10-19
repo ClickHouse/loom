@@ -139,6 +139,7 @@ def test_rows_say_where_each_value_came_from(
     env_file = tmp_path / ".env"
     env_file.write_text(
         "LOOM_MEMORY_ASK_SYNTH_BUDGET_RATIO=0.5\nLOOM_CH_HOST=from-file\nLOOM_CH_PORT=9\n"
+        "LOOM_LOG_FORMAT=JSON\n"
     )
     yaml_file = tmp_path / "loom.yaml"
     yaml_file.write_text(
@@ -150,6 +151,7 @@ def test_rows_say_where_each_value_came_from(
     monkeypatch.setenv("LOOM_SETTINGS_FILE", str(yaml_file))
     monkeypatch.setenv("LOOM_CH_HOST", "from-env")
     monkeypatch.setenv("LOOM_CH_PORT", "9")  # the file's value, copied in as the CLI does
+    monkeypatch.setenv("LOOM_LOG_FORMAT", "JSON")  # copied too; the setting reads it as json
     monkeypatch.setenv("LOOM_WEB_WORKERS", "3")  # exported by scripts/serve.sh, validated
     monkeypatch.setenv("LOOM_RUNTIME_DIR", "/run/loom")  # and stripped
     monkeypatch.setenv("LOOM_LLM_MODEL", "gpt-4o")  # the provider is inferred from it
@@ -160,6 +162,7 @@ def test_rows_say_where_each_value_came_from(
     by_name = {r["name"]: r for r in so.rows()}
     assert by_name["ch_host"]["source"] == "env"  # the environment wins, as at startup
     assert by_name["ch_port"]["source"] == "env_file"
+    assert (by_name["log_format"]["value"], by_name["log_format"]["source"]) == ("json", "env_file")
     assert by_name["memory_ask_synth_budget_ratio"]["source"] == "env_file"
     assert by_name["ch_database"]["source"] == "settings_file"
     assert by_name["web_workers"]["source"] == "settings_file"

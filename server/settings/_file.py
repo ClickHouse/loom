@@ -3,7 +3,8 @@ names (the `LOOM_<FIELD>` names, lowercase) to values.
 
 Read only when LOOM_SETTINGS_FILE names it. It ranks below the dotenv file and the
 environment, above the defaults. A secret, a key given twice, an unsupported
-version or a value of the wrong type refuses to start. A name no setting has is
+version or a value of the wrong type refuses to start, also when the environment
+or the dotenv file sets that setting too. A name no setting has is
 logged and ignored, as an unknown `LOOM_*` variable is: builds N-1 and N share one
 file during a rolling upgrade. Secrets stay in the environment or a secrets
 manager, never in a file that is committed. `schemas/loom-settings.schema.json`
@@ -21,6 +22,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from server.core.env_file import settings_file_path
 from server.settings._env import is_secret_field
+from server.settings._live import coerce
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +107,13 @@ class SettingsFileSource(PydanticBaseSettingsSource):
         if not os.path.isfile(path):
             raise SettingsFileError(f"LOOM_SETTINGS_FILE names {path}, which does not exist")
         self._values = read_settings_file(path, set(settings_cls.model_fields))
+        # pydantic validates only the value in force; a value the environment shadows
+        # is checked here, so removing the variable later cannot stop a start.
+        for name, value in self._values.items():
+            try:
+                coerce(settings_cls, name, value)
+            except ValueError:
+                raise SettingsFileError(f"{path}: {name} has a value it cannot take") from None
 
     def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
         return self._values.get(field_name), field_name, False

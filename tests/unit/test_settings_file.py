@@ -152,3 +152,16 @@ def test_the_schema_holds_every_setting_but_the_secrets() -> None:
     assert set(props) == {f for f in Settings.model_fields if not is_secret_field(f)}
     assert schema["properties"]["settings"]["additionalProperties"] is False
     assert props["memory_ask_recency_weight"]["description"].startswith("memory.ask only")
+
+
+def test_a_wrong_type_the_environment_shadows_still_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("LOOM_MEMORY_ASK_SYNTH_MAX_TOKENS", "900")
+    with pytest.raises(SettingsFileError) as e:
+        _load(
+            monkeypatch,
+            tmp_path,
+            "version: 1\nsettings:\n  memory_ask_synth_max_tokens: lots-of-them\n",
+        )
+    assert "memory_ask_synth_max_tokens" in str(e.value) and "lots-of-them" not in str(e.value)

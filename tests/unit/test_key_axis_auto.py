@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from server.memory.app.retrieval import SearchQuery
 from server.memory.app.retrieval import key_axis as ms
@@ -135,7 +136,5 @@ async def test_a_changed_threshold_applies_to_the_cached_share() -> None:
 def test_a_share_outside_zero_to_one_or_a_ttl_under_a_second_is_refused(
     values: dict[str, Any],
 ) -> None:
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError):
         Settings(_env_file=None, **values)  # type: ignore[call-arg]
