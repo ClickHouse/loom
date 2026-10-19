@@ -42,7 +42,7 @@ export function relativeTime(iso: string | null | undefined): string {
   return fmt("date").format(d);
 }
 
-export function parseIso(iso: string): Date | null {
+function parseIso(iso: string): Date | null {
   if (!iso) return null;
   // CH datetimes come back without timezone — treat them as UTC.
   const hasOffset = /[+-]\d{2}:?\d{2}$|Z$/.test(iso);
