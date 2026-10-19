@@ -47,7 +47,7 @@ def test_a_rows_cadences_are_numeric_settings(row: registry._Worker) -> None:
         assert name in _FIELDS and _FIELDS[name].annotation in (int, float), name
 
 
-_ALWAYS_ON_CADENCES = {
+_CADENCE_SETTINGS = {
     "usage_fold": "usage_fold_interval_seconds",
     "keeper_sweep": "keeper_sweep_interval_seconds",
     "conflict_sweep": "conflict_sweep_interval_seconds",
@@ -56,14 +56,14 @@ _ALWAYS_ON_CADENCES = {
 }
 
 
-@pytest.mark.parametrize("name", sorted(_ALWAYS_ON_CADENCES))
+@pytest.mark.parametrize("name", sorted(_CADENCE_SETTINGS))
 def test_a_workers_spec_takes_its_cadence_from_its_setting(
     name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.settings import settings
 
     (row,) = [w for w in _ROWS if w.name == name]
-    assert row.interval == _ALWAYS_ON_CADENCES[name]
+    assert row.interval == _CADENCE_SETTINGS[name]
     monkeypatch.setattr(settings, row.interval, 7)
     assert registry._spec_for(row).interval_seconds == 7
 
