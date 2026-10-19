@@ -256,9 +256,24 @@ async def test_a_peer_turn_sharing_only_a_prefix_does_not_keep_the_row(ch, scope
 @pytest.mark.asyncio
 async def test_a_kept_row_passes_to_the_agent_that_still_holds_the_turn(ch, scope) -> None:
     """A shared row this agent wrote last stays live for the peer's copy, and is
-    rewritten under the peer's agent, so this agent's own search drops it."""
-    await _message(ch, scope, "b", "1", "shared", T0)
-    await _message(ch, scope, "a", "1", "shared", T0)
+    rewritten with that copy's agent, run and user, so this agent's own search drops
+    it and the peer's searches and erasure find it."""
+    for agent in ("b", "a"):
+        await repo.append(
+            repo.MessageInsert(
+                org=scope["org"],
+                namespace=scope["ns"],
+                agent=agent,
+                thread_id=scope["tid"],
+                msg_id="1",
+                role="user",
+                content="shared",
+                user_id=f"user-{agent}",
+                run_id=f"run-{agent}",
+                ts=T0,
+            ),
+            ch=ch,
+        )
     await _embedding(ch, scope, "a", "1", "shared", T0)
     for tombstone in (
         lambda: repo.tombstone_messages(
@@ -268,12 +283,14 @@ async def test_a_kept_row_passes_to_the_agent_that_still_holds_the_turn(ch, scop
     ):
         await tombstone()
         rows = await ch.query_all(
-            "SELECT agent, tombstoned_at IS NULL AS live FROM loom.conversation_embeddings "
-            "FINAL WHERE org = {org:String} AND namespace = {ns:String} "
-            "AND thread_id = {tid:String}",
+            "SELECT agent, run_id, user_id, tombstoned_at IS NULL AS live "
+            "FROM loom.conversation_embeddings FINAL WHERE org = {org:String} "
+            "AND namespace = {ns:String} AND thread_id = {tid:String}",
             params={"org": scope["org"], "ns": scope["ns"], "tid": scope["tid"]},
         )
-        assert [(r["agent"], bool(r["live"])) for r in rows] == [("b", True)]
+        assert [(r["agent"], r["run_id"], r["user_id"], bool(r["live"])) for r in rows] == [
+            ("b", "run-b", "user-b", True)
+        ]
 
 
 _LONG_IDS = [f"{i:04d}" + "x" * 508 for i in range(300)]  # 512-character ids
