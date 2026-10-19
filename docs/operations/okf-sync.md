@@ -70,11 +70,12 @@ prune guard, a path that is not a directory, or a missing `--agent`, token or or
 - Before each delete it reads the row under its own identity again, and goes on only if
   that row is under its `--agent`, was written by its own token (the agent name alone is
   the caller's choice), is still the version the import's listing saw with an `okf:`
-  trace, and has no `memory.lock`: anything else is counted as kept. It deletes with
+  trace, and has no `memory.lock`: anything else is counted as kept, and a row that is
+  gone or under another agent by then is not counted. It deletes with
   `memory.delete_version`, which removes only that version, under that exact identity, and
   never another agent's row. A `memory.set` or `memory.bulk_set` of the key that is in
-  flight when the delete lands keeps its row; the exceptions are in the
-  [memory architecture](../architecture/memory-architecture.md#lifecycle).
+  flight when the delete lands keeps its row; the exceptions are in the [memory
+  architecture](../architecture/memory-architecture.md#lifecycle).
 - A target replica too old to know `memory.delete_version` answers 404 and deletes
   nothing; the prune counts the failure and the import exits 1. A rolling upgrade of
   either Loom needs no pause.
