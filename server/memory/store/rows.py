@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
 from server.core.rmt_carry import register
+from server.memory.domain.delete_marks import carried_trace
 from server.memory.domain.expire_reasons import carried_reason
 
 
@@ -363,6 +364,9 @@ def build_memory_version_row(
             # namespace.rollback pass it as an override); every other version drops it
             # (write_fence).
             val = carried_reason(val)
+        elif col == "source_trace":
+            # memory.delete_version's marker likewise stays on its own tombstone.
+            val = carried_trace(val)
         elif col == "value":
             # The stored bytes verbatim, never the parsed value written back
             # (see `stored_value_text`).

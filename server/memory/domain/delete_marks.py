@@ -2,7 +2,8 @@
 
 A write the version check could not see lands above such a tombstone whether it came
 before or after the delete (server/memory/app/write_fence.py), so the write fence tells
-this tombstone from a plain memory.delete's by it, and no caller may write the prefix.
+this tombstone from a plain memory.delete's by it. No caller may write the prefix, and
+every other version drops it when it carries a row's trace forward.
 """
 
 from __future__ import annotations
@@ -20,3 +21,10 @@ def caller_trace(trace: str) -> str:
     if trace.startswith(DELETE_VERSION_TRACE):
         raise ValueError(f"`source_trace` may not start with {DELETE_VERSION_TRACE!r}")
     return trace
+
+
+def carried_trace(trace: str | None) -> str:
+    """A row's `source_trace` as a new version of the row carries it: the marker stays on
+    memory.delete_version's own tombstone."""
+    trace = trace or ""
+    return "" if trace.startswith(DELETE_VERSION_TRACE) else trace

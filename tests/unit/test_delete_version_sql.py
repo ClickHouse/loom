@@ -698,11 +698,12 @@ async def test_a_batch_keeps_a_row_already_above_the_tombstone_where_it_is(
 
 
 @pytest.mark.asyncio
-async def test_a_plain_delete_between_the_check_and_the_tombstone_is_not_undone(
+async def test_a_plain_delete_drawn_above_the_tombstone_is_not_undone(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A set lands, then a plain memory.delete removes it, both after delete_version's check:
-    # every serial order ends deleted, so the put-back writes nothing.
+    # A set lands, then a plain memory.delete removes it, both after delete_version's check
+    # and after it drew its tombstone's version: the plain delete's tombstone is the newer,
+    # so the key ends deleted (delete_version, then the plain delete).
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
     w = _in_flight_set(time.time_ns() - 1_000_000)
@@ -723,8 +724,58 @@ async def test_a_plain_delete_between_the_check_and_the_tombstone_is_not_undone(
     out = await hm.handle_memory_delete_version(
         MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
     )
-    assert out.tombstoned is False and out.reason == "version_changed"
+    assert out.tombstoned is True
     assert await _read_back(ch) is None
+
+
+@pytest.mark.asyncio
+async def test_a_plain_delete_below_the_tombstone_answers_gone(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A set lands and a plain memory.delete removes it after delete_version's check and
+    # before it draws its tombstone's version: the plain delete came first, so the key was
+    # already gone when this delete ran (found=False), and nothing is written back.
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    w = _in_flight_set(time.time_ns() - 1_000_000)
+    landed: list[bool] = []
+
+    async def check_then_land(identity: Any, key: str, **kw: Any) -> Any:
+        found = await get_by_key(identity, key, **kw)
+        if not landed:
+            landed.append(True)
+            await set_commit._set_plain_insert(w, ch)
+            await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
+        return found
+
+    get_by_key = memory_repo.get_by_key
+    monkeypatch.setattr(memory_repo, "get_by_key", check_then_land)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is False and out.found is False
+    assert await _read_back(ch) is None
+
+
+@pytest.mark.asyncio
+async def test_a_restored_key_does_not_carry_the_delete_version_marker(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The marker stays on delete_version's tombstone; the row memory.restore brings back,
+    # and every version after it, drops it.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore as restore_mod
+
+    monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    out = await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
+    assert out.restored is True
+    got = await _read_back(ch)
+    assert got is not None and not got.source_trace.startswith("memory.delete_version:")
 
 
 @pytest.mark.asyncio
@@ -745,12 +796,16 @@ async def test_a_put_back_that_cannot_read_the_row_is_not_reported_as_one(
     async def nothing(*_a: Any, **_k: Any) -> list[Any]:
         return []
 
+    from server.observability import degradations
+
     monkeypatch.setattr(hm, "_write_tombstone_row", set_lands_first)
     monkeypatch.setattr(memory_repo, "fetch_version_rows", nothing)
+    degradations.begin()
     out = await hm.handle_memory_delete_version(
         MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
     )
     assert out.tombstoned is True
+    assert any("later_write_unchecked" in d for d in degradations.current())
 
 
 @pytest.mark.asyncio
