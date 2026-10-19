@@ -21,8 +21,9 @@ from server.auth import authz
 from server.auth import jwt as jwt_mod
 from server.auth.authz import grant_role
 from server.auth.fail_closed import note_unreadable, unreadable
-from server.auth.jwt import AuthInfo
+from server.auth.jwt import AuthInfo, TokenError
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
+from server.observability.metrics import record_auth_refusal
 from server.operations.base import GRANT_ROLES, Role, grant_rank
 from server.settings import settings
 
@@ -122,6 +123,7 @@ async def _refuse_a_revoked_parent(parent: AuthInfo, issued_at: int, tokens: lis
     # The sign-in session, first-party too (a logout ends it), owed revocations included.
     ended = bool(parent.session_id) and await revocation.revoked_outright(parent.session_id)
     if by_subject or any(t in cut for t in tokens) or ended:
+        record_auth_refusal(TokenError(reason="revoked"), transport="http")
         raise HTTPException(
             status_code=401,
             detail={

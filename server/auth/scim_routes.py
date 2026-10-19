@@ -26,10 +26,12 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
 from server.auth import scim
+from server.auth.jwt import TokenError
 from server.auth.public_url import public_base_url
 from server.core.ch import set_query_tag
 from server.core.datetimes import as_aware_utc
 from server.core.errors import LoomServerError
+from server.observability.metrics import record_auth_refusal
 from server.settings import settings
 
 SCIM_JSON = "application/scim+json"
@@ -63,6 +65,13 @@ async def _authorized(request: Request) -> None:
     # Every token is compared, so the time taken doesn't say which one matched.
     matches = [hmac.compare_digest(presented, t.encode()) for t in scim.tokens(settings.scim_token)]
     if scheme.lower() != "bearer" or not any(matches):
+        if not scheme:
+            reason = "missing"
+        elif scheme.lower() != "bearer" or not presented:
+            reason = "malformed"
+        else:
+            reason = "invalid"
+        record_auth_refusal(TokenError(reason=reason), transport="http")
         raise ScimError(401, "a valid SCIM bearer token is required")
 
 

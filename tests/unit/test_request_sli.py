@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
-from server.auth import revocation
+from server.auth import delegation, revocation
 from server.auth.bearer import bearer_token
 from server.auth.jwt import AuthUnavailable, TokenError, mint_token, verify_token
 from server.core.errors import BackendTimeoutError, RateLimitedError, ValidationError
@@ -20,6 +20,9 @@ from server.observability.metrics import AUTH_REFUSAL_REASONS, auth_refusal_reas
 from server.observability.metrics_gauges import health_problem_series
 from server.operations.base import Role
 from server.transport._common import sli_columns
+
+# The real check: the unit conftest swaps in one that never refuses.
+_REFUSE_A_REVOKED_PARENT = delegation._refuse_a_revoked_parent
 
 
 def test_slo_classes() -> None:
@@ -1722,3 +1725,41 @@ def test_each_mcp_call_in_a_batch_starts_with_no_budget_shape() -> None:
         return current_budget_shape()
 
     assert contextvars.copy_context().run(_two_calls) == ""
+
+
+def test_a_mint_by_a_revoked_token_and_a_refused_scim_bearer_are_counted(monkeypatch) -> None:
+    """Two refusals of the caller's bearer outside `verify_bearer`: a mint whose
+    token ClickHouse says is revoked (this replica's snapshot may not know yet),
+    and a SCIM request without the provider's token."""
+    from server.auth import scim_routes
+    from server.auth.jwt import AuthInfo
+    from server.observability import metrics
+
+    counter = _Counter()
+    monkeypatch.setattr(metrics, "_auth_refusals", counter)
+
+    async def _cutoffs(subjects: list[str]) -> dict[str, int | None]:
+        return {"alice": None}
+
+    monkeypatch.setattr(revocation, "cutoffs", _cutoffs)
+    alice = AuthInfo(
+        subject="alice", org="o", namespaces=("n",), roles=(Role.WRITER,), is_service_account=False
+    )
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(_REFUSE_A_REVOKED_PARENT(alice, 1, []))
+    assert e.value.status_code == 401
+
+    monkeypatch.setattr(scim_routes.settings, "scim_token", "s" * 40)
+
+    class _Request:
+        method = "GET"
+
+        def __init__(self, authorization: str) -> None:
+            self.headers = {"authorization": authorization} if authorization else {}
+
+    for header in ("", "Basic abc", "Bearer ", "Bearer " + "x" * 40):
+        with pytest.raises(scim_routes.ScimError):
+            asyncio.run(scim_routes._authorized(_Request(header)))
+    reasons = [c["reason"] for c in counter.calls]
+    assert reasons == ["revoked", "missing", "malformed", "malformed", "invalid"]
+    assert {c["loom.transport"] for c in counter.calls} == {"http"}
