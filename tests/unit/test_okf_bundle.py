@@ -621,7 +621,7 @@ def test_names_that_collide_only_in_case_get_two_files(tmp_path: Any) -> None:
     )
 
 
-@pytest.mark.parametrize("memory_type", ["index.md", "log.md", "  "])
+@pytest.mark.parametrize("memory_type", ["index.md", "log.md", "  ", "nul", "COM1"])
 def test_a_type_named_like_a_bundle_file_or_blank_still_travels(
     tmp_path: Any, memory_type: str
 ) -> None:
@@ -657,7 +657,7 @@ def test_the_reserved_directories_cover_every_name_a_reader_skips() -> None:
     assert okf_evidence.EVIDENCE_DIRS | {okf_lint.STAGING_DIR} | skipped <= okf._RESERVED_DIRS
 
 
-@pytest.mark.parametrize("memory_type", ["My Type", "Semantic", "evidence"])
+@pytest.mark.parametrize("memory_type", ["My Type", "Semantic", "evidence", "nul", "t" * 300])
 def test_lint_never_warns_on_the_directory_export_chose(tmp_path: Any, memory_type: str) -> None:
     from server.cli import okf as cli_okf
     from server.memory.domain import okf_lint

@@ -746,9 +746,9 @@ def _is_device(name: str) -> bool:
 def _suffixed(concept_id: str, suffix: str) -> str:
     """`concept_id` with `-<suffix>` before the first dot of its name: Windows reads a device
     name (`lpt9.txt`) by the part before the dot, so a suffix after it would not help."""
-    directory, _, name = concept_id.rpartition("/")
+    directory, name = concept_id.rsplit("/", 1)  # every concept id is `<type dir>/<slug>`
     stem, dot, rest = name.partition(".")
-    return f"{directory}/{stem}-{suffix}{dot}{rest}" if directory else f"{stem}-{suffix}{dot}{rest}"
+    return f"{directory}/{stem}-{suffix}{dot}{rest}"
 
 
 def _is_reserved(concept_id: str) -> bool:
