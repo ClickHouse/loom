@@ -301,8 +301,9 @@ async def test_export_never_writes_a_parents_value_under_a_chunk_shaped_key() ->
 
 
 def test_a_chunk_shaped_rows_own_answer_is_told_apart_from_its_parents() -> None:
-    # A duplicate row's answer names its canonical (another key); only the parent named in
-    # the id, or `resolved_from`, marks an answer given by another row.
+    # Another row's answer: `resolved_from`, the parent named in the id as `canonical_key`,
+    # or (an older build) a canonical key with another version. `duplicate_of` marks the
+    # row's own answer, and a duplicate's canonical alone (another key) says nothing.
     own = {"value": "v", "canonical_key": "notes-v2"}
     assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", own, None)
     assert cli_okf._answered_by_parent("chunk:memory.set:notes:0", {"canonical_key": "notes"}, None)
