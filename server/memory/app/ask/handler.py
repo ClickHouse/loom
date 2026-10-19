@@ -592,7 +592,7 @@ def _shape_settings(settings: Any) -> dict[str, Any]:
     return {
         name: getattr(settings, name)
         for name in type(settings).model_fields
-        if name.startswith(_ASK_SHAPE_SETTINGS) and not name.startswith("memory_ask_precedents")
+        if name.startswith(_ASK_SHAPE_SETTINGS) and not name.startswith("memory_ask_precedent")
     }
 
 

@@ -16,8 +16,9 @@ ROOT = Path(__file__).resolve().parents[2]
 _PYTHON = """#!/bin/sh
 case "$*" in
   "-m server.core.web_workers") echo 4 ;;
-  "-m server.core.env_file LOOM_WEB_WORKERS") echo "$STUB_ENV_FILE_WORKERS" ;;
-  "-m server.core.env_file LOOM_RUNTIME_DIR") echo "${STUB_ENV_FILE_RUNTIME_DIR:-}" ;;
+  "-m server.settings.launch web_workers") echo "$STUB_ENV_FILE_WORKERS" ;;
+  "-m server.settings.launch runtime_dir") echo "${STUB_ENV_FILE_RUNTIME_DIR:-}" ;;
+  "-m server.settings.launch trusted_proxies") echo "" ;;
   "-m server.core.runtime_files")
     [ "$STUB_RUNTIME_DIR" = none ] && { echo "loom: no private directory" >&2; exit 2; }
     [ "$STUB_RUNTIME_DIR" = broken ] && { echo "Traceback: settings invalid" >&2; exit 1; }
@@ -106,18 +107,64 @@ def test_a_count_only_the_env_file_names_is_kept(
     assert _workers(done.stdout) == started
 
 
-def test_the_env_file_is_read_as_the_server_reads_it(tmp_path: Path) -> None:
-    env = tmp_path / "loom.env"
-    env.write_text("LOOM_WEB_WORKERS=5\n")
+def _without_loom() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if not k.startswith("LOOM_")}
+
+
+def _resolved(name: str, **env: str) -> str:
     done = subprocess.run(
-        [sys.executable, "-m", "server.core.env_file", "LOOM_WEB_WORKERS"],
-        env={**os.environ, "LOOM_ENV_FILE": str(env)},
+        [sys.executable, "-m", "server.settings.launch", name],
+        env={**_without_loom(), "LOOM_ENV_FILE": "", **env},
         cwd=ROOT,
         capture_output=True,
         text=True,
         check=True,
     )
-    assert done.stdout.strip() == "5"
+    return done.stdout.strip()
+
+
+def test_the_launch_values_resolve_as_the_server_loads_them(tmp_path: Path) -> None:
+    env = tmp_path / "loom.env"
+    env.write_text("LOOM_WEB_WORKERS=5\n")
+    yaml = tmp_path / "loom.yaml"
+    yaml.write_text("version: 1\nsettings:\n  web_workers: 3\n  trusted_proxies: 10.0.0.0/8\n")
+    files = {"LOOM_ENV_FILE": str(env), "LOOM_SETTINGS_FILE": str(yaml)}
+    assert _resolved("web_workers", **files) == "5"  # the env file over the settings file
+    assert _resolved("trusted_proxies", **files) == "10.0.0.0/8"
+    assert _resolved("web_workers", LOOM_SETTINGS_FILE=str(yaml)) == "3"
+    assert _resolved("web_workers") == ""  # set nowhere: the launcher chooses
+    assert _resolved("trusted_proxies") == ""
+
+
+def test_the_settings_file_sets_the_web_tier_uvicorn_starts(tmp_path: Path) -> None:
+    """The real resolver behind the launcher: a count and proxies named only in the
+    settings file reach uvicorn's arguments."""
+    yaml = tmp_path / "loom.yaml"
+    yaml.write_text("version: 1\nsettings:\n  web_workers: 3\n  trusted_proxies: 10.0.0.0/8\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = f'''#!/bin/sh
+case "$*" in
+  "-m server.settings.launch "*) exec "{sys.executable}" "$@" ;;
+  "-m server.core.runtime_files") echo /run/loom ;;
+  *) exit 99 ;;
+esac
+'''
+    for name, body in (("python", shim), ("uvicorn", _UVICORN)):
+        (bin_dir / name).write_text(body)
+        (bin_dir / name).chmod(0o755)
+    env = {**_without_loom(), "PATH": f"{bin_dir}:/usr/bin:/bin", "PORT": "1", "LOOM_ENV_FILE": ""}
+    done = subprocess.run(
+        ["sh", str(ROOT / "scripts" / "serve.sh")],
+        env={**env, "LOOM_SETTINGS_FILE": str(yaml)},
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert _workers(done.stdout) == "3"
+    assert "--forwarded-allow-ips=10.0.0.0/8" in done.stdout.split()
 
 
 def test_a_pin_it_cannot_use_refuses_even_one_process(tmp_path: Path) -> None:

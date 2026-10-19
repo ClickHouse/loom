@@ -20,15 +20,3 @@ def settings_file_path() -> str | None:
     No default path: a `loom.yaml` in whatever directory the `loom` CLI runs in is
     not the server's."""
     return os.environ.get("LOOM_SETTINGS_FILE") or None
-
-
-if __name__ == "__main__":
-    # `python -m server.core.env_file NAME` prints NAME's value in the env file
-    # ("" when the file or the name is missing), for scripts/serve.sh.
-    import sys
-
-    from dotenv import dotenv_values
-
-    path = env_file_path()
-    values = dotenv_values(path) if path and os.path.isfile(path) else {}
-    print(values.get(sys.argv[1]) or "")

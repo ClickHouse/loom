@@ -39,9 +39,10 @@ Provider selection itself (`LOOM_EMBEDDING_MODEL`, `LOOM_LLM_PROVIDER`,
 
 Read by `scripts/serve.sh`, the image's command, which starts uvicorn. It takes
 them from its environment only, not from `.env` or `LOOM_ENV_FILE` (compose's
-`env_file:` sets them in the environment), except `LOOM_WEB_WORKERS`, which it
-also reads from the env file the server reads, as it does the settings field
-`LOOM_RUNTIME_DIR`:
+`env_file:` sets them in the environment), except the settings fields
+`LOOM_WEB_WORKERS`, `LOOM_TRUSTED_PROXIES` and `LOOM_RUNTIME_DIR`, which it
+resolves as the server loads them: the environment, then the env file, then the
+[settings file](configuration.md):
 
 | Variable                   | Default              | Meaning                                                                                                                                                                                                                                                                                                                                                |
 | -------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
