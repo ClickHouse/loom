@@ -103,12 +103,6 @@ def test_cross_session_is_another_session_of_a_subject_with_no_user() -> None:
     assert not resolver._cross_session(other, {"agent": "a", "session_id": "s2"})
 
 
-def test_cross_session_is_another_session_of_the_same_agent() -> None:
-    row = NS(user_id="-", agent="a", session_id="s1")
-    assert resolver._cross_session(row, {"agent": "a", "session_id": "s2"})
-    assert not resolver._cross_session(row, {"agent": "b", "session_id": "s2"})
-
-
 def test_each_note_shows_when_it_holds_and_its_session() -> None:
     row = _mem("m1", agent="a", session_id="s1", valid_at=None, value_text='"Office in Rome"')
     peers = [
@@ -1395,6 +1389,29 @@ async def test_a_row_stamped_after_an_attempt_left_it_owed_forgets_the_attempt(
     pass_env.left_owed = set()
     await pass_env.run()
     assert worker._state.attempts == {}
+
+
+async def test_an_answer_whose_action_failed_breaks_a_refusal_streak(
+    pass_env: NS, monkeypatch
+) -> None:
+    """Two refusals, then a row the judge answered whose write failed, then a refusal:
+    the answer ends the streak, so the namespace is not stopped and its refused rows
+    are stamped. One slot, so the rows run in order."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", 1)
+
+    async def resolve(q: Any, *, policy: str, counts: Any, shown: Any = frozenset()) -> None:
+        if q["memory_key"] == "answered":
+            counts.judged += 1
+            raise resolver.JudgedThenFailed("RuntimeError: insert failed")
+        raise resolver.Unjudgeable("400 Bad Request")
+
+    monkeypatch.setattr(resolver, "resolve_row", resolve)
+    keys = ["first", "second", "answered", "third"]
+    pass_env.owed = [_q(memory_key=k) for k in keys]
+    await pass_env.run()
+    assert sorted(pass_env.stamped) == ["first", "second", "third"]
 
 
 async def test_another_namespaces_answer_breaks_no_refusal_streak(

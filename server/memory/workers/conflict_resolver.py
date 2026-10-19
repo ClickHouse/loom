@@ -201,6 +201,8 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {type(e).__name__}: {e}")
             # Counted only once the judge answered: an error before it paid for nothing.
+            if isinstance(e, resolver.JudgedThenFailed):
+                _after_row(p, (org, namespace), _attempt_key(r), counts, frozenset())
             if isinstance(e, resolver.JudgedThenFailed) and await _out_of_attempts(r):
                 p.errors.append(f"{namespace}/{r.get('memory_key')}: stamped after {MAX_ATTEMPTS}")
         finally:
@@ -217,9 +219,8 @@ def _after_row(
     counts: resolver.Counts,
     judged: frozenset[str] | None,
 ) -> None:
-    """A row that returned, by its own `counts` (the rows judged beside it answer for
-    themselves): an answer ends its namespace's refusal streak and the outage count, and
-    a row stamped judged forgets its attempts."""
+    """After a row returns: if it got an answer, end its namespace's refusal streak and
+    the outage count; if it was stamped judged, forget its attempts."""
     if counts.judged:
         p.refusals.pop(namespace, None)
         p.outage = 0

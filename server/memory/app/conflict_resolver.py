@@ -702,11 +702,7 @@ def _cross_session(row: Any, peer: Mapping[str, Any]) -> bool:
     """A peer from another session of a subject with no real user: the anonymous user is
     one subject per agent (the cluster reads only its agent's rows), and an agent's
     sessions are separate tasks."""
-    return (
-        str(row.user_id) == "-"
-        and str(peer["agent"]) == str(row.agent)
-        and str(peer["session_id"]) != str(row.session_id)
-    )
+    return str(row.user_id) == "-" and str(peer["session_id"]) != str(row.session_id)
 
 
 def notes_for(
