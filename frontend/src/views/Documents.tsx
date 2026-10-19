@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -117,8 +117,15 @@ export function Documents() {
   // (a server a release behind matches any one, and the list then requires every tag
   // itself), so it covers documents past the pages loaded so far. Debounced, so typing
   // `tag:…` sends one read.
-  const queryTags = useMemo(() => parseSearchQuery(query).tags, [query]);
-  const activeTags = useMemo(() => new Set(queryTags.map((t) => t.toLowerCase())), [queryTags]);
+  // The list filters by the text a render behind the box, so a keystroke paints the box
+  // first; the memoised rows render again only when what they show changes.
+  const listQuery = useDeferredValue(query);
+  const parsedQuery = useMemo(() => parseSearchQuery(listQuery), [listQuery]);
+  const queryTags = parsedQuery.tags;
+  // Built from the tags' text (a tag holds no space), so a keystroke that leaves the tags as
+  // they were hands every row the same set.
+  const activeTagsText = queryTags.map((t) => t.toLowerCase()).join(" ");
+  const activeTags = useMemo(() => new Set(activeTagsText.split(" ").filter(Boolean)), [activeTagsText]);
   // Each tag once: the first page and Load more send the same list.
   const tagKey = JSON.stringify([...new Set(queryTags)]);
   const [serverTags, setServerTags] = useState(tagKey);
@@ -230,7 +237,7 @@ export function Documents() {
     clearPendingDoc();
     const target = rows.find((r) => r.source_uri === uri);
     if (target) {
-      void onOpenRef.current(target);
+      void handlers.current.onOpen(target);
       return;
     }
     // Not among the rows loaded (a link past the first page): read that one document. A
@@ -242,7 +249,7 @@ export function Documents() {
     void findDocument({ org: identity.org, namespace: identity.namespace }, uri, ac.signal)
       .then((found) => {
         if (ac.signal.aborted) return;
-        if (found) void onOpenRef.current(found);
+        if (found) void handlers.current.onOpen(found);
         else setViewParam("doc", null);
       })
       .catch((e) => {
@@ -320,9 +327,10 @@ export function Documents() {
       setPreviewLoading(false);
     }
   };
-  // The deep-link effect opens with the latest render's `onOpen` without re-firing on it.
-  const onOpenRef = useRef(onOpen);
-  onOpenRef.current = onOpen;
+  // The deep-link effect and the rows call the latest render's handlers without re-firing
+  // on them or rendering every row again.
+  const handlers = useRef({ onOpen, onDownload, onDelete });
+  handlers.current = { onOpen, onDownload, onDelete };
 
   const closePreview = () => {
     linkRead.current?.abort();
@@ -353,7 +361,6 @@ export function Documents() {
   }, [firstScreenOnly, rows]);
   // The words the browser matches over the loaded rows: the Memories parser's text, and an
   // `agent:` token as words (a document has no agent).
-  const parsedQuery = useMemo(() => parseSearchQuery(query), [query]);
   const words = `${parsedQuery.text} ${parsedQuery.agent === null ? "" : `agent:${parsedQuery.agent}`}`.trim();
   const freeText = useMemo(() => words.toLowerCase().split(/\s+/).filter(Boolean), [words]);
   const visibleRows = useMemo(() => {
@@ -502,24 +509,19 @@ export function Documents() {
       ))}
     </Select>
   );
-  const rowMenu = (r: KnowledgeEntry): RowMenuItem[] => [
-    { label: "Preview", icon: "eye", onSelect: () => void onOpen(r) },
-    { label: downloadLabel(r), icon: "download", onSelect: () => void onDownload(r) },
-    // Uploading a file into a text-only document is the same replace flow.
-    { label: "Replace content", icon: "refresh", onSelect: () => setReplaceEntry(r) },
-    { label: "Edit details", icon: "pencil", onSelect: () => setEditEntry(r) },
-    {
-      label: "Copy URI",
-      icon: "copy",
-      onSelect: () => {
-        void navigator.clipboard?.writeText(r.source_uri).then(
-          () => toast("Copied", "ok"),
-          () => toast("Couldn't copy", "error"),
-        );
-      },
-    },
-    { label: "Delete", icon: "trash", danger: true, onSelect: () => void onDelete(r.source_uri) },
-  ];
+  const toggleRow = selection.toggle;
+  const rowActions = useMemo<DocRowActions>(
+    () => ({
+      open: (r) => void handlers.current.onOpen(r),
+      download: (r) => void handlers.current.onDownload(r),
+      replace: setReplaceEntry,
+      edit: setEditEntry,
+      remove: (uri) => void handlers.current.onDelete(uri),
+      toggle: toggleRow,
+      tag: (t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`)),
+    }),
+    [toggleRow],
+  );
 
   return (
     <PageContainer>
@@ -685,78 +687,17 @@ export function Documents() {
 
       {rows !== null && rows.length > 0 && shownRows && shownRows.length > 0 && (
         <div ref={listRef} className="space-y-2" aria-busy={reading || undefined}>
-          {shownRows.map((r) => {
-            const name = r.title || r.original_filename || r.source_uri;
-            const file = r.title ? r.original_filename || r.source_uri : "";
-            return (
-              <ListRow
-                key={r.source_uri}
-                data-doc-row={r.source_uri}
-                data-focus-key={`doc:${r.source_uri}`}
-                active={previewEntry?.source_uri === r.source_uri}
-                checked={selected.has(r.source_uri)}
-                trailing={<RowMenu name={name} items={rowMenu(r)} />}
-                leading={
-                  <Checkbox
-                    checked={selected.has(r.source_uri)}
-                    aria-label={`Select ${name}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      selection.toggle(r.source_uri, e.shiftKey);
-                    }}
-                    className="list-row-control"
-                  />
-                }
-              >
-                <button
-                  type="button"
-                  data-row-open=""
-                  onClick={() => (selected.size > 0 ? selection.toggle(r.source_uri) : onOpen(r))}
-                  className="list-row-open block w-full"
-                  aria-label={`Preview ${name}`}
-                >
-                  {/* Line 1: the document and its state; right, how much is indexed and when. */}
-                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    {/* The icon, the name and its state stay on one line; a long name is cut. */}
-                    <span className="flex min-w-0 max-w-full items-center gap-2">
-                      <Icon name="document" size="sm" aria-hidden="true" className="shrink-0" />
-                      {/* An untitled document is named by its file name or URI, an identifier. */}
-                      {r.title ? (
-                        <span className="min-w-0 truncate text-text text-sm font-semibold">{name}</span>
-                      ) : (
-                        <code className="min-w-0 truncate text-text font-mono text-xs">{name}</code>
-                      )}
-                      {r.superseded && (
-                        <span className="inline-flex shrink-0">
-                          <Badge text="Superseded" state="neutral" size="sm" aria-hidden="true" />
-                          <span className="sr-only">, superseded: a newer version of this URI was uploaded</span>
-                        </span>
-                      )}
-                    </span>
-                    {/* The meta slot: flush right; under 640 px its own line. */}
-                    <span className="basis-full text-xs text-text-muted tabular sm:ml-auto sm:basis-auto sm:shrink-0">
-                      {(r.chunk_count ?? 0).toLocaleString()} chunk{r.chunk_count === 1 ? "" : "s"} ·{" "}
-                      <ListTime iso={r.ingested_at} quiet />
-                    </span>
-                  </span>
-                  {/* Line 2: the file it came from and what it is about. */}
-                  {(file || r.description) && (
-                    <span className="mt-1 block truncate text-xs text-text-muted">
-                      {file && <span className="font-mono">{file}</span>}
-                      {file && r.description && " · "}
-                      {r.description}
-                    </span>
-                  )}
-                </button>
-                <TagList
-                  tags={r.tags ?? []}
-                  activeTags={activeTags}
-                  onTagClick={(t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`))}
-                  className="mt-2"
-                />
-              </ListRow>
-            );
-          })}
+          {shownRows.map((r) => (
+            <DocRow
+              key={r.source_uri}
+              entry={r}
+              active={previewEntry?.source_uri === r.source_uri}
+              checked={selected.has(r.source_uri)}
+              selecting={selected.size > 0}
+              activeTags={activeTags}
+              actions={rowActions}
+            />
+          ))}
         </div>
       )}
 
@@ -942,3 +883,112 @@ function downloadLabel(r: KnowledgeEntry): string {
 function hasOriginalFile(r: KnowledgeEntry): boolean {
   return Boolean(r.has_blob || r.blob_size || r.original_filename);
 }
+
+/** What a row asks of the page; one object for the page's life, so a memoised row keeps
+ *  its props across a keystroke. */
+interface DocRowActions {
+  open: (r: KnowledgeEntry) => void;
+  download: (r: KnowledgeEntry) => void;
+  replace: (r: KnowledgeEntry) => void;
+  edit: (r: KnowledgeEntry) => void;
+  remove: (sourceUri: string) => void;
+  toggle: (sourceUri: string, range?: boolean) => void;
+  tag: (tag: string) => void;
+}
+
+interface DocRowProps {
+  entry: KnowledgeEntry;
+  active: boolean;
+  checked: boolean;
+  /** Some row is checked: a click on the row checks it instead of previewing it. */
+  selecting: boolean;
+  activeTags: ReadonlySet<string>;
+  actions: DocRowActions;
+}
+
+// Memoised: a hundred rows of Click UI checkboxes, badges, icons and menus rendered again
+// on every keystroke in the search (the Memories cards' rule).
+const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, activeTags, actions }: DocRowProps) {
+  const name = r.title || r.original_filename || r.source_uri;
+  const file = r.title ? r.original_filename || r.source_uri : "";
+  const menu: RowMenuItem[] = [
+    { label: "Preview", icon: "eye", onSelect: () => actions.open(r) },
+    { label: downloadLabel(r), icon: "download", onSelect: () => actions.download(r) },
+    // Uploading a file into a text-only document is the same replace flow.
+    { label: "Replace content", icon: "refresh", onSelect: () => actions.replace(r) },
+    { label: "Edit details", icon: "pencil", onSelect: () => actions.edit(r) },
+    {
+      label: "Copy URI",
+      icon: "copy",
+      onSelect: () => {
+        void navigator.clipboard?.writeText(r.source_uri).then(
+          () => toast("Copied", "ok"),
+          () => toast("Couldn't copy", "error"),
+        );
+      },
+    },
+    { label: "Delete", icon: "trash", danger: true, onSelect: () => actions.remove(r.source_uri) },
+  ];
+  return (
+    <ListRow
+      data-doc-row={r.source_uri}
+      data-focus-key={`doc:${r.source_uri}`}
+      active={active}
+      checked={checked}
+      trailing={<RowMenu name={name} items={menu} />}
+      leading={
+        <Checkbox
+          checked={checked}
+          aria-label={`Select ${name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            actions.toggle(r.source_uri, e.shiftKey);
+          }}
+          className="list-row-control"
+        />
+      }
+    >
+      <button
+        type="button"
+        data-row-open=""
+        onClick={() => (selecting ? actions.toggle(r.source_uri) : actions.open(r))}
+        className="list-row-open block w-full"
+        aria-label={`Preview ${name}`}
+      >
+        {/* Line 1: the document and its state; right, how much is indexed and when. */}
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {/* The icon, the name and its state stay on one line; a long name is cut. */}
+          <span className="flex min-w-0 max-w-full items-center gap-2">
+            <Icon name="document" size="sm" aria-hidden="true" className="shrink-0" />
+            {/* An untitled document is named by its file name or URI, an identifier. */}
+            {r.title ? (
+              <span className="min-w-0 truncate text-text text-sm font-semibold">{name}</span>
+            ) : (
+              <code className="min-w-0 truncate text-text font-mono text-xs">{name}</code>
+            )}
+            {r.superseded && (
+              <span className="inline-flex shrink-0">
+                <Badge text="Superseded" state="neutral" size="sm" aria-hidden="true" />
+                <span className="sr-only">, superseded: a newer version of this URI was uploaded</span>
+              </span>
+            )}
+          </span>
+          {/* The meta slot: flush right; under 640 px its own line. */}
+          <span className="basis-full text-xs text-text-muted tabular sm:ml-auto sm:basis-auto sm:shrink-0">
+            {(r.chunk_count ?? 0).toLocaleString()} chunk{r.chunk_count === 1 ? "" : "s"} ·{" "}
+            <ListTime iso={r.ingested_at} quiet />
+          </span>
+        </span>
+        {/* Line 2: the file it came from and what it is about. */}
+        {(file || r.description) && (
+          <span className="mt-1 block truncate text-xs text-text-muted">
+            {file && <span className="font-mono">{file}</span>}
+            {file && r.description && " · "}
+            {r.description}
+          </span>
+        )}
+      </button>
+      <TagList tags={r.tags ?? []} activeTags={activeTags} onTagClick={actions.tag} className="mt-2" />
+    </ListRow>
+  );
+});

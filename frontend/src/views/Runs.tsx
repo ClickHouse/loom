@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Alert } from "../components/ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -6,7 +6,6 @@ import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
 import type { IconName } from "@clickhouse/click-ui/Icon";
-import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Table, type TableColumnConfigProps, type TableRowType } from "@clickhouse/click-ui/Table";
 import {
@@ -44,6 +43,7 @@ import { Modal } from "../components/ui/Modal";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
+import { DraftSearch } from "../components/ui/DraftSearch";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 
 // The ten fields a run row reads of the twenty a run carries; the replay reads the rest
@@ -544,9 +544,10 @@ export function Runs() {
   const [agents, setAgents] = useState<string[]>([]);
   const [groupBy, setGroupBy] = useState(false);
   const [hideConn, setHideConn] = useState(true);
-  // What is typed, and the search sent (trimmed, once typing pauses).
-  const [query, setQuery] = useState("");
+  // The search sent (trimmed, once typing pauses); the box keeps what is typed, so a
+  // keystroke does not render the table. A Clear filters bumps `searchBox` to empty it.
   const [q, setQ] = useState("");
+  const [searchBox, setSearchBox] = useState(0);
   const [order, setOrder] = useState<RunOrder>("started_desc");
   // The server answered without a total: it does not page, search or sort (a release behind).
   const [local, setLocal] = useState(false);
@@ -573,15 +574,12 @@ export function Runs() {
       setPage(0);
     };
 
-  useEffect(() => {
-    const next = query.trim();
+  const search = (text: string) => {
+    const next = text.trim();
     if (next === q) return;
-    const t = setTimeout(() => {
-      setQ(next);
-      setPage(0);
-    }, SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [query, q]);
+    setQ(next);
+    setPage(0);
+  };
 
   // Another namespace is another list: its first page, from nothing on screen.
   const scope = `${identity.org}\n${identity.namespace}`;
@@ -702,7 +700,10 @@ export function Runs() {
   }, [open, identity.org, identity.namespace]);
 
   // Against a server that does not page: its newest runs, searched, sorted and paged here.
-  const localRows = local && shown ? sortRuns(searchRuns(shown.runs, q), order) : null;
+  const localRows = useMemo(
+    () => (local && shown ? sortRuns(searchRuns(shown.runs, q), order) : null),
+    [local, shown, q, order],
+  );
   // It answered as many as it sends: the server holds more than these.
   const capped = local && shown !== null && shown.runs.length >= LOCAL_LIMIT;
   const rows = localRows ? localRows.slice(page * pageSize, (page + 1) * pageSize) : (shown?.runs ?? []);
@@ -734,7 +735,7 @@ export function Runs() {
   // One tab stop for every run on the page, grouped by session or not (lib/useRowNav).
   const nav = useRowNav({ enabled: open === null && rows.length > 0 });
   const clearFilters = () => {
-    setQuery("");
+    setSearchBox((n) => n + 1);
     setQ("");
     setFilter("");
     setAgent("");
@@ -847,9 +848,10 @@ export function Runs() {
 
       <ListToolbar label="Search and filters" count={count}>
         <ListToolbarSearch>
-          <SearchField
-            value={query}
-            onChange={(value) => setQuery(value)}
+          <DraftSearch
+            key={searchBox}
+            onSearch={search}
+            debounceMs={SEARCH_DEBOUNCE_MS}
             placeholder="Search runs by goal, id or agent"
             aria-label="Search runs"
           />

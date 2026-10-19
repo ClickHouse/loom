@@ -792,6 +792,9 @@ export interface InstallOptions {
   /** Answer `run.list` with this many runs, every field a run carries, projected by the
    *  request's `fields`. Default: none. */
   runRows?: number;
+  /** Answer `conversation.threads` with this many threads, cut to the request's `limit`.
+   *  Default: none. */
+  threadRows?: number;
   /** Hold every `memory.search` answer this long, so a retype can be seen to abort the
    *  stale search. Default: answer at once. */
   searchDelayMs?: number;
@@ -1014,6 +1017,18 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
       case "/v1/run.list":
         if (!options.runRows) break;
         return json(runListFixture(runRowsFixture(options.runRows, ns), body));
+      case "/v1/conversation.threads":
+        if (!options.threadRows) break;
+        return json({
+          threads: projectRows(
+            threadRowsFixture(options.threadRows).slice(
+              Number(body.offset ?? 0),
+              Number(body.offset ?? 0) + Number(body.limit ?? 20),
+            ),
+            body,
+            "thread_id",
+          ),
+        });
       case "/v1/run.get":
         return json(runGetFixture(runRowsFixture(options.runRows ?? 0, ns), String(body.run_id ?? "")));
       case "/v1/tracker.source.list":
@@ -1297,6 +1312,20 @@ function knowledgeRowsFixture(n: number): Record<string, unknown>[] {
     blob_content_type: "text/markdown",
     original_filename: `handbook-${i}.md`,
     snippet: "Drain the lane, re-point the consumer group, replay from the last committed offset.",
+  }));
+}
+
+/** `n` threads the way `conversation.threads` lists them, most recently active first. */
+function threadRowsFixture(n: number): Record<string, unknown>[] {
+  return Array.from({ length: n }, (_, i) => ({
+    thread_id: `thread-${String(i).padStart(4, "0")}`,
+    agent: i % 2 ? "claude-code" : "claude-desktop",
+    msg_count: 4 + (i % 9),
+    title: `Lane ${i % 5} exporter backlog`,
+    first_seen: "2026-09-18T08:00:00Z",
+    last_seen: `2026-09-19T${String(23 - (i % 24)).padStart(2, "0")}:00:00Z`,
+    last_role: i % 2 ? "assistant" : "user",
+    last_content_excerpt: "Drained the lane and replayed from the last committed offset; the backlog is clear.",
   }));
 }
 

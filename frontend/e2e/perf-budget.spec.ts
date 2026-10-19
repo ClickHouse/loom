@@ -350,10 +350,9 @@ test("the Activity list asks for the fields its rows read", async ({ page }) => 
 // of each interaction stays under the INP "good" line (typically 40–120 ms with a hundred
 // cards).
 const INP_BUDGET_MS = 200;
-test("Memories interactions: typing, clearing, opening and closing a card stay under the INP budget at 4x", async ({
-  page,
-}) => {
-  await installApi(page, { memoryRows: 100 });
+
+/** Records every event-timing entry from the first script on, and slows the CPU 4x. */
+async function watchInteractions(page: import("@playwright/test").Page) {
   await page.addInitScript(() => {
     window.__ev = [];
     try {
@@ -367,37 +366,87 @@ test("Memories interactions: typing, clearing, opening and closing a card stay u
   });
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+  return cdp;
+}
+
+/** Runs `fn`, then fails when its longest interaction is over the INP budget. */
+async function worstInteraction(page: import("@playwright/test").Page, label: string, fn: () => Promise<void>) {
+  await page.evaluate(() => {
+    window.__ev = [];
+  });
+  await fn();
+  await page.waitForTimeout(1500);
+  const ev = await page.evaluate(() => window.__ev);
+  const w = ev.length ? Math.max(...ev) : 0;
+  test.info().annotations.push({ type: `inp_${label}`, description: String(Math.round(w)) });
+  expect(w, `${label}: longest interaction ${Math.round(w)} ms over ${INP_BUDGET_MS}`).toBeLessThanOrEqual(
+    INP_BUDGET_MS,
+  );
+}
+
+/** Types `text` into the field a key at a time, as a reader does. */
+async function typeInto(field: import("@playwright/test").Locator, text: string) {
+  await field.click();
+  await field.pressSequentially(text, { delay: 120 });
+}
+
+test("Memories interactions: typing, clearing, opening and closing a card stay under the INP budget at 4x", async ({
+  page,
+}) => {
+  await installApi(page, { memoryRows: 100 });
+  const cdp = await watchInteractions(page);
   await page.goto("/memories", { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-memory-key]").first()).toBeVisible();
   await page.waitForTimeout(2000);
-  const worst = async (label: string, fn: () => Promise<void>) => {
-    await page.evaluate(() => {
-      window.__ev = [];
-    });
-    await fn();
-    await page.waitForTimeout(1500);
-    const ev = await page.evaluate(() => window.__ev);
-    const w = ev.length ? Math.max(...ev) : 0;
-    test.info().annotations.push({ type: `inp_${label}`, description: String(Math.round(w)) });
-    expect(w, `${label}: longest interaction ${Math.round(w)} ms over ${INP_BUDGET_MS}`).toBeLessThanOrEqual(
-      INP_BUDGET_MS,
-    );
-  };
   const box = page.getByLabel("Search memories");
-  await worst("type", async () => {
-    await box.click();
-    await box.pressSequentially("exporter", { delay: 120 });
-  });
-  await worst("clear", async () => {
-    await box.fill("");
-  });
-  await worst("open", async () => {
+  await worstInteraction(page, "type", () => typeInto(box, "exporter"));
+  await worstInteraction(page, "clear", () => box.fill(""));
+  await worstInteraction(page, "open", async () => {
     await page.locator("[data-memory-key]").first().click();
     await expect(page.getByRole("dialog")).toBeVisible();
   });
-  await worst("close", async () => {
-    await page.keyboard.press("Escape");
-  });
+  await worstInteraction(page, "close", () => page.keyboard.press("Escape"));
+  await cdp.detach();
+});
+
+// Typing in a list's search box renders the box, not every row under it: the rows render
+// again only when the settled search changes what they show.
+test("Runs: typing in the search stays under the INP budget at 4x with 100 runs", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("loom_page_size_runs_v1", "100"));
+  await installApi(page, { runRows: 100 });
+  const cdp = await watchInteractions(page);
+  await page.goto("/runs", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("main").getByText("run-0099")).toBeVisible();
+  await page.waitForTimeout(2000);
+  const box = page.getByLabel("Search runs");
+  await worstInteraction(page, "type", () => typeInto(box, "triage lane"));
+  await worstInteraction(page, "clear", () => box.fill(""));
+  await cdp.detach();
+});
+
+test("Library: typing in the search stays under the INP budget at 4x with 100 documents", async ({ page }) => {
+  await installApi(page, { knowledgeRows: 100 });
+  const cdp = await watchInteractions(page);
+  await page.goto("/library", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("main").getByText("Runbook 99: lane 4 recovery")).toBeVisible();
+  await page.waitForTimeout(2000);
+  const box = page.getByLabel("Search library");
+  await worstInteraction(page, "type", () => typeInto(box, "lane 4"));
+  await worstInteraction(page, "clear", () => box.fill(""));
+  await cdp.detach();
+});
+
+test("Conversations: typing in the search stays under the INP budget at 4x with a page of threads", async ({
+  page,
+}) => {
+  await installApi(page, { threadRows: 30 });
+  const cdp = await watchInteractions(page);
+  await page.goto("/conversations", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("[data-thread-row]")).toHaveCount(30);
+  await page.waitForTimeout(2000);
+  await worstInteraction(page, "type", () =>
+    typeInto(page.getByLabel("Search conversation transcripts"), "exporter backlog"),
+  );
   await cdp.detach();
 });
 

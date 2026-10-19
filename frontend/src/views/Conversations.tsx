@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
-import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Switch } from "@clickhouse/click-ui/Switch";
 import {
@@ -21,6 +20,7 @@ import { ListPager } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
+import { DraftSearch } from "../components/ui/DraftSearch";
 import { toast } from "../components/Toast";
 import { AgentBadge } from "../components/AgentBadge";
 import { displayAgent, truncate, humanizeError, sentenceCase } from "../lib/format";
@@ -74,7 +74,10 @@ export function Conversations() {
   const roleHere = useNamespaceRole(identity.namespace);
   const pendingConversationThread = useStore((s) => s.pendingConversationThread);
   const clearPendingConversationThread = useStore((s) => s.clearPendingConversationThread);
+  // The search last sent (on Enter); the box keeps what is typed, so a keystroke does not
+  // render the threads. Clearing a search bumps `searchBox` to empty it.
   const [q, setQ] = useState("");
+  const [searchBox, setSearchBox] = useState(0);
   const [hits, setHits] = useState<ConversationHit[] | null>(null);
   const [busy, setBusy] = useState(false);
   // Filter the namespace-wide thread list down to one agent (claude-code,
@@ -229,16 +232,16 @@ export function Conversations() {
     [identity.org, identity.namespace],
   );
 
-  const run = async () => {
-    if (!q.trim()) return;
+  const run = async (text: string) => {
+    if (!text.trim()) return;
     const seq = ++searchSeq.current;
     setBusy(true);
     setSearchError(null);
     try {
-      const r = await searchConversations(identity, q, { top_k: 50, agent: agentFilter });
+      const r = await searchConversations(identity, text, { top_k: 50, agent: agentFilter });
       if (seq !== searchSeq.current) return;
       setHits(r.hits || []);
-      setHitsFor(q);
+      setHitsFor(text);
     } catch (e) {
       if (seq !== searchSeq.current) return;
       setSearchError(e);
@@ -490,17 +493,18 @@ export function Conversations() {
         count={countShown && <span aria-busy={busy || loadingThreads || undefined}>{countShown}</span>}
       >
         <ListToolbarSearch>
-          <SearchField
+          <DraftSearch
+            key={searchBox}
             ref={searchRef}
-            value={q}
-            onChange={(value) => {
-              setQ(value);
-              if (!value) {
+            onSearch={(text) => {
+              setQ(text);
+              if (text) {
+                void run(text);
+              } else {
                 setHits(null);
                 setSearchError(null);
               }
             }}
-            onKeyDown={(e) => e.key === "Enter" && run()}
             placeholder="Search transcripts"
             aria-label="Search conversation transcripts"
           />
@@ -521,7 +525,7 @@ export function Conversations() {
       )}
 
       {!busy && searchError !== null && (
-        <ListState kind="error" things="search results" error={searchError} onRetry={() => void run()} />
+        <ListState kind="error" things="search results" error={searchError} onRetry={() => void run(q)} />
       )}
 
       {hits === null && searchError === null && (
@@ -580,6 +584,7 @@ export function Conversations() {
             filter={`"${hitsFor}"`}
             onClear={() => {
               setQ("");
+              setSearchBox((n) => n + 1);
               setHits(null);
             }}
           />
