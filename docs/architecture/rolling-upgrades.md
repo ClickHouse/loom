@@ -139,7 +139,10 @@ schema. These rules keep that safe. The operator procedure is in
     them) do not hold on an N-1 replica, which restores a deleted row or one retired
     behind another memory, and the `relations` of `memory.set`, `memory.update` and
     `memory.update_by_id` are dropped there, so that write graphs none of the facts it
-    names.
+    names. An Undo made on an N-1 replica, or before the upgrade, is not seen by N's
+    conflict resolver: its `memory.unsupersede` record carries neither the restored hash
+    nor the restore version, so N may judge that pair again. Undo it again on N once N-1
+    stops serving.
 13. **A name N spells differently is a different node.** N keeps combining marks and
     NFKC-normalises an entity's name (`दिल्ली`, `İstanbul` as `istanbul`); N-1 split them
     into fragments (`द ल ल`, `i stanbul`). ASCII names spell the same in both, and so do
