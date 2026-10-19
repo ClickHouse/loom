@@ -2,6 +2,7 @@
  "code_git_fetch_timeout_s",
  "code_git_timeout_s",
  "context_offload_max_bytes",
+ "conversation_search_excerpt_chars",
  "conversation_search_min_similarity",
  "extraction_defer_agents",
  "extraction_queue_lease_seconds",

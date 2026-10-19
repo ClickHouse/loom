@@ -223,3 +223,27 @@ def test_a_bare_value_key_is_an_unknown_name_not_unreadable(
         _load(monkeypatch, tmp_path, "version: 1\nsettings:\n  =: 1\n").loaded_from("settings_file")
         == frozenset()
     )
+
+
+def test_the_settings_file_is_named_by_the_environment_else_the_dotenv_file_loaded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A process that copies the dotenv file into its environment (the CLI, compose)
+    and one that does not (uvicorn) read the same settings file, named by the dotenv
+    file this load reads, not by LOOM_ENV_FILE."""
+    from server.core.env_file import settings_file_path
+
+    yaml = tmp_path / "loom.yaml"
+    yaml.write_text("version: 1\nsettings:\n  memory_ask_recency_weight: 0.3\n")
+    env = tmp_path / "loaded.env"
+    env.write_text(f"LOOM_SETTINGS_FILE={yaml}\n")
+    other = tmp_path / "default.env"
+    other.write_text("LOOM_SETTINGS_FILE=/nonexistent/loom.yaml\n")
+    monkeypatch.setenv("LOOM_ENV_FILE", str(other))
+    monkeypatch.delenv("LOOM_SETTINGS_FILE", raising=False)
+    monkeypatch.delenv("LOOM_MEMORY_ASK_RECENCY_WEIGHT", raising=False)
+    assert settings_file_path(env) == str(yaml)
+    assert Settings(_env_file=str(env)).memory_ask_recency_weight == 0.3  # type: ignore[call-arg]
+    assert Settings(_env_file=None).loaded_from("settings_file") == frozenset()  # type: ignore[call-arg]
+    monkeypatch.setenv("LOOM_SETTINGS_FILE", "")  # the environment wins, even empty
+    assert settings_file_path(env) is None

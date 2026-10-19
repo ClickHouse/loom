@@ -15,16 +15,16 @@ def env_file_path() -> str | None:
     return os.environ.get("LOOM_ENV_FILE", ".env") or None
 
 
-def settings_file_path() -> str | None:
+def settings_file_path(env_file: str | os.PathLike[str] | None) -> str | None:
     """The YAML settings file LOOM_SETTINGS_FILE names, in the environment or else in
-    the dotenv file (the CLI and compose copy that file into the environment, so every
-    process must read it the same way); unset or empty reads none. No default path: a
-    `loom.yaml` in whatever directory the `loom` CLI runs in is not the server's."""
+    `env_file`, the dotenv file being loaded (the CLI and compose copy that file into
+    the environment, so every process must read it the same way); unset or empty reads
+    none. No default path: a `loom.yaml` in whatever directory the `loom` CLI runs in
+    is not the server's."""
     if "LOOM_SETTINGS_FILE" in os.environ:
         return os.environ["LOOM_SETTINGS_FILE"] or None
-    path = env_file_path()
-    if not path or not os.path.isfile(path):
+    if env_file is None or not os.path.isfile(env_file):
         return None
     from dotenv import dotenv_values
 
-    return dotenv_values(path).get("LOOM_SETTINGS_FILE") or None
+    return dotenv_values(env_file).get("LOOM_SETTINGS_FILE") or None

@@ -317,6 +317,7 @@
  "conflict_threshold": 0.85,
  "consolidation_merge_concurrency": 4,
  "context_offload_max_bytes": 8000000,
+ "conversation_search_excerpt_chars": 240,
  "conversation_search_min_similarity": 0.3,
  "conversation_titler_enabled": true,
  "conversation_titler_interval_seconds": 1800,

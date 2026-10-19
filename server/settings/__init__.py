@@ -44,6 +44,14 @@ from server.settings._tasks import TaskSettings
 from server.settings._tracker import TrackerSettings
 
 
+def _one_env_file(dotenv_settings: PydanticBaseSettingsSource) -> Any:
+    """The dotenv file this load reads (the last of several, which wins), or None."""
+    env_file = getattr(dotenv_settings, "env_file", None)
+    if isinstance(env_file, (list, tuple)):
+        return env_file[-1] if env_file else None
+    return env_file
+
+
 class Settings(
     ClickHouseSettings,
     ProviderSettings,
@@ -95,7 +103,9 @@ class Settings(
             Recorded(env_settings, "env"),
             Recorded(dotenv_settings, "env_file"),
             file_secret_settings,
-            Recorded(SettingsFileSource(settings_cls), "settings_file"),
+            Recorded(
+                SettingsFileSource(settings_cls, _one_env_file(dotenv_settings)), "settings_file"
+            ),
         )
 
     def __init__(self, **values: Any) -> None:
@@ -161,10 +171,11 @@ settings = Settings(_env_file=env_file_path())
 
 def log_unknown_env_keys() -> None:
     """One boot WARN naming the LOOM_* keys no setting reads."""
-    log = logging.getLogger(__name__)
     unknown = unknown_env_keys(Settings.model_fields, env_file_path())
     if unknown:
-        log.warning("LOOM_* variables that match no setting are ignored: %s", ", ".join(unknown))
+        logging.getLogger(__name__).warning(
+            "LOOM_* variables that match no setting are ignored: %s", ", ".join(unknown)
+        )
 
 
 __all__ = ["DEV_JWT_SECRET", "Settings", "log_unknown_env_keys", "settings"]

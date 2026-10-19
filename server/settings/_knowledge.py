@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from server.settings._live import LIVE
 
@@ -14,6 +14,9 @@ class KnowledgeSettings(BaseModel):
     # conversation.search cosine floor; without it the top_k nearest threads
     # return however far. Stricter than memory recall: chat excerpts are noisy.
     conversation_search_min_similarity: Annotated[float, LIVE] = 0.30
+    # Characters of a turn a conversation.search hit shows; the embedding row keeps
+    # the whole embedded text, so this changes no stored row.
+    conversation_search_excerpt_chars: Annotated[int, LIVE] = Field(default=240, ge=1)
 
     # LLM-title untitled threads in namespaces with conversation_logging_enabled
     # (the Sessions "Recording" toggle is the off-switch). Skipped with the fake

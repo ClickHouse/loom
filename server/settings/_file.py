@@ -117,9 +117,9 @@ def read_settings_file(path: str, fields: set[str]) -> dict[str, Any]:
 class SettingsFileSource(PydanticBaseSettingsSource):
     """The settings file as a pydantic-settings source."""
 
-    def __init__(self, settings_cls: type[BaseSettings]) -> None:
+    def __init__(self, settings_cls: type[BaseSettings], env_file: Any) -> None:
         super().__init__(settings_cls)
-        path = settings_file_path()
+        path = settings_file_path(env_file)
         self._values: dict[str, Any] = {}
         if path is None:
             return

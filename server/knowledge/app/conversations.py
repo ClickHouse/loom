@@ -41,7 +41,6 @@ from server.knowledge.api.models_conversations import (
     _ConversationHit,
 )
 from server.knowledge.app.conversation_search import (
-    HIT_EXCERPT_CHARS,
     ConversationHit,
     ConversationVectorQuery,
     vector_search,
@@ -232,7 +231,7 @@ async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn) -> None:
         "msg_id": msg.msg_id,
         "role": msg.role,
         # The text the vector was built from, which a re-embed starts from again;
-        # search hits show its first HIT_EXCERPT_CHARS characters.
+        # search hits show its first conversation_search_excerpt_chars characters.
         "content_excerpt": embedded.excerpt,
         "embedding_model": embedded.model,
         "embedding_dim": embedded.dim,
@@ -591,6 +590,7 @@ async def _search_substring_fallback(
     """Lexical fallback used when the embedder is unavailable: the same
     namespaces, newest match first."""
     from server.knowledge.store import conversations as conversation_repo
+    from server.settings import settings
 
     rows = await conversation_repo.search_substring(
         input.org,
@@ -607,7 +607,7 @@ async def _search_substring_fallback(
             thread_id=r.thread_id,
             msg_id=r.msg_id,
             role=r.role,
-            content_excerpt=r.content[:HIT_EXCERPT_CHARS],
+            content_excerpt=r.content[: settings.conversation_search_excerpt_chars],
             ts=r.ts,
             namespace=r.namespace,
         )

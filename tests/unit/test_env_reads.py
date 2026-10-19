@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 ALLOWED: dict[str, str] = {
-    "server/core/env_file.py": "which dotenv file to load, before settings exist",
+    "server/core/env_file.py": "which dotenv and settings files to load, before settings exist",
     "server/core/provider_keys.py": "provider credentials under their vendors' variable names",
     "server/core/llm_provider.py": "the LLM provider implied by which vendor key is set",
     "server/observability/problems.py": "which vendor keys are set, for health problems",

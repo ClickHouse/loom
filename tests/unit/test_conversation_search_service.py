@@ -189,3 +189,41 @@ async def test_the_substring_fallback_cuts_a_hit_as_the_vector_path_does(monkeyp
     )
     [hit] = out.hits
     assert hit.content_excerpt == content[:240]
+
+
+@pytest.mark.asyncio
+async def test_a_live_excerpt_length_reaches_both_cuts(monkeypatch) -> None:
+    """conversation_search_excerpt_chars is read per search, by the vector path and the
+    fallback alike."""
+    from server.knowledge.api.models_conversations import ConversationSearchInput
+    from server.knowledge.app import conversations as h
+    from server.knowledge.store import conversations as conversation_repo
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "conversation_search_excerpt_chars", 12)
+    ch = StubCH()
+    ch.query_all_returns.append([_row()])
+    await vector_search(_q(), ch=ch)
+    assert ch.query_all_calls[0][1]["excerpt"] == 12
+
+    content = "deploy " * 100
+
+    async def fake_search_substring(*a, **k):
+        return [
+            conversation_repo.MessageRow(
+                org="o",
+                namespace="ns",
+                agent="a",
+                thread_id="t",
+                msg_id="m1",
+                role="user",
+                content=content,
+                ts=datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
+            )
+        ]
+
+    monkeypatch.setattr(conversation_repo, "search_substring", fake_search_substring)
+    out = await h._search_substring_fallback(
+        ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy"), ["ns"], []
+    )
+    assert out.hits[0].content_excerpt == content[:12]

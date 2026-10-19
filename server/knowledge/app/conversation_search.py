@@ -16,9 +16,6 @@ from server.core.repo_base import _default_client
 from server.core.vectors.search_settings import vector_search_settings
 from server.knowledge.domain.conversations import ConversationRole
 
-# Characters of a turn a hit shows (the embedding row keeps the whole embedded text).
-HIT_EXCERPT_CHARS = 240
-
 
 class _CHClient(Protocol):
     async def query_all(
@@ -62,6 +59,8 @@ async def vector_search(
     """Vector search over loom.conversation_embeddings. Close-distance ties
     are ordered most-recent-first (ts DESC).
     """
+    from server.settings import settings
+
     ch = ch or _default_client()
     where = [
         "org = {org:String}",
@@ -76,7 +75,7 @@ async def vector_search(
         "model": q.embedding_model,
         "q": q.query_vec,
         "lim": int(q.top_k),
-        "excerpt": HIT_EXCERPT_CHARS,
+        "excerpt": int(settings.conversation_search_excerpt_chars),
         "maxd": float(q.max_distance),
     }
     # Relevance gate: drop rows beyond max_distance so a short query doesn't

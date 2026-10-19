@@ -1690,6 +1690,12 @@
           "type": "integer",
           "description": "context.offload: largest single parked tool result, in bytes."
         },
+        "conversation_search_excerpt_chars": {
+          "default": 240,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Characters of a turn a conversation.search hit shows; the embedding row keeps the whole embedded text, so this changes no stored row."
+        },
         "conversation_search_min_similarity": {
           "default": 0.3,
           "type": "number",
