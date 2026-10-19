@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 
 from pydantic import PrivateAttr, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+from pydantic_settings.sources import DotEnvSettingsSource
 
 from server.core.env_file import env_file_path
 from server.settings._auth import AuthSettings
@@ -44,12 +45,12 @@ from server.settings._tasks import TaskSettings
 from server.settings._tracker import TrackerSettings
 
 
-def _one_env_file(dotenv_settings: PydanticBaseSettingsSource) -> Any:
-    """The dotenv file this load reads (the last of several, which wins), or None."""
-    env_file = getattr(dotenv_settings, "env_file", None)
-    if isinstance(env_file, (list, tuple)):
-        return env_file[-1] if env_file else None
-    return env_file
+def _named_in(dotenv_settings: PydanticBaseSettingsSource) -> str | None:
+    """LOOM_SETTINGS_FILE as the dotenv file this load reads names it: pydantic's own
+    merged read (keys lowercased), so `~` and several files resolve as for every value."""
+    if not isinstance(dotenv_settings, DotEnvSettingsSource):
+        return None
+    return dotenv_settings.env_vars.get("loom_settings_file") or None
 
 
 class Settings(
@@ -103,9 +104,7 @@ class Settings(
             Recorded(env_settings, "env"),
             Recorded(dotenv_settings, "env_file"),
             file_secret_settings,
-            Recorded(
-                SettingsFileSource(settings_cls, _one_env_file(dotenv_settings)), "settings_file"
-            ),
+            Recorded(SettingsFileSource(settings_cls, _named_in(dotenv_settings)), "settings_file"),
         )
 
     def __init__(self, **values: Any) -> None:

@@ -242,8 +242,13 @@ def test_the_settings_file_is_named_by_the_environment_else_the_dotenv_file_load
     monkeypatch.setenv("LOOM_ENV_FILE", str(other))
     monkeypatch.delenv("LOOM_SETTINGS_FILE", raising=False)
     monkeypatch.delenv("LOOM_MEMORY_ASK_RECENCY_WEIGHT", raising=False)
-    assert settings_file_path(env) == str(yaml)
     assert Settings(_env_file=str(env)).memory_ask_recency_weight == 0.3  # type: ignore[call-arg]
     assert Settings(_env_file=None).loaded_from("settings_file") == frozenset()  # type: ignore[call-arg]
+    # The dotenv file resolves as pydantic resolves it: `~` and several files, the last winning.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert Settings(_env_file="~/loaded.env").memory_ask_recency_weight == 0.3  # type: ignore[call-arg]
+    assert Settings(_env_file=(str(other), str(env))).memory_ask_recency_weight == 0.3  # type: ignore[call-arg]
+    assert settings_file_path(str(yaml)) == str(yaml)
     monkeypatch.setenv("LOOM_SETTINGS_FILE", "")  # the environment wins, even empty
-    assert settings_file_path(env) is None
+    assert settings_file_path(str(yaml)) is None
+    assert Settings(_env_file=str(env)).loaded_from("settings_file") == frozenset()  # type: ignore[call-arg]
