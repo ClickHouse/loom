@@ -2963,8 +2963,14 @@ async def test_an_undo_whose_insert_answer_was_lost_finishes(ch, wired, monkeypa
 async def test_memory_statuses_says_which_retirements_still_stand(ch, wired) -> None:
     """The Review queue reads each retired row's state now: a retirement whose Undo
     record outlived a failed restore still reads as retired behind its winner."""
-    from server.memory.api.models_crud import MemoryStatusesInput
+    from server.memory.api.models_crud import (
+        MemoryDeleteInput,
+        MemoryRestoreInput,
+        MemoryStatusesInput,
+    )
+    from server.memory.app.handlers import handle_memory_delete
     from server.memory.app.query import handle_memory_statuses
+    from server.memory.app.restore import handle_memory_restore
     from server.memory.workers.conflict_resolver import run_pass
 
     org, _ = wired
@@ -2986,3 +2992,11 @@ async def test_memory_statuses_says_which_retirements_still_stand(ch, wired) -> 
         MemoryStatusesInput(org=org, namespace="elsewhere", memory_ids=[loser])
     )
     assert other.rows == [], "another namespace holds none of them"
+    # A delete, then its restore: the row reads deleted, then live again.
+    key = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s2"}
+    await handle_memory_delete(MemoryDeleteInput(**key, memory_key="office_location"))
+    assert (await statuses())[winner][0] == "deleted"
+    assert (
+        await handle_memory_restore(MemoryRestoreInput(**key, memory_key="office_location"))
+    ).restored
+    assert (await statuses())[winner] == ("active", "")
