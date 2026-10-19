@@ -8,7 +8,7 @@
  * (search/symbol/callers — the same ops agents call), PR packs (precomputed
  * per-PR context), Access (who can read it, how tokens get the claim).
  */
-import { lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -35,7 +35,6 @@ import { toast } from "../components/Toast";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
-import { DraftSearch } from "../components/ui/DraftSearch";
 import { BusyButton } from "../components/ui/BusyButton";
 import { stageFlips } from "../lib/codeStage";
 import { confirmAction } from "../components/ConfirmDialog";
@@ -411,10 +410,7 @@ function RepositoriesHome({
   // The add-a-tracker dialog, from a card (that repository) or the page (none)
   const [registering, setRegistering] = useState<{ group: RepoGroup | null } | null>(null);
   const org = useStore((s) => s.identity)?.org ?? repos?.[0]?.org ?? "";
-  // The filter the cards show. The box keeps what is typed and hands it over in a
-  // transition, so a keystroke paints before the cards filter; `searchBox` empties it.
   const [query, setQuery] = useState("");
-  const [searchBox, setSearchBox] = useState(0);
   // Most orgs hold a handful of repositories: the pager draws once there are more than fit
   // the smallest page.
   const [page, setPage] = useState(0);
@@ -424,8 +420,11 @@ function RepositoriesHome({
   const tracker = useTrackerSources(org);
   const record = useRecordActions(org, tracker.refresh);
   const cards = useMemo(() => buildCards(repos ?? [], tracker.sources), [repos, tracker.sources]);
+  // The cards filter by the text a render behind the box, so a keystroke paints the box
+  // first; the memoised cards render again only when what they show changes.
+  const listQuery = useDeferredValue(query).trim();
   const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = listQuery.toLowerCase();
     if (!q) return cards;
     return cards.filter(
       (c) =>
@@ -435,7 +434,7 @@ function RepositoriesHome({
         ) ||
         (c.record?.namespaces ?? []).some((n) => n.ns.namespace.toLowerCase().includes(q)),
     );
-  }, [cards, query]);
+  }, [cards, listQuery]);
   const pageCards = visible.slice(page * pageSize, (page + 1) * pageSize);
   const totals = useMemo(() => {
     const all = repos ?? [];
@@ -454,7 +453,7 @@ function RepositoriesHome({
   // The toolbar's count: the whole list, or what the filter matches.
   const count = !loaded
     ? undefined
-    : query.trim()
+    : listQuery
       ? `${visible.length} match${visible.length === 1 ? "" : "es"}`
       : `${totals.repos} repositor${totals.repos === 1 ? "y" : "ies"} · ${totals.branches} branch${totals.branches === 1 ? "" : "es"}`;
   // Said on each repository's tracker line when no tracker can be shown.
@@ -582,6 +581,44 @@ function RepositoriesHome({
       onChanged();
     },
   };
+  // The cards call the latest render's handlers through objects that keep their identity
+  // while the data they carry is unchanged, so a memoised card renders again only when its
+  // own fields change.
+  const latest = useRef({ code: codeActions, record: recordActions });
+  latest.current = { code: codeActions, record: recordActions };
+  const cardCode = useMemo<CodeActions>(() => {
+    const c = () => latest.current.code;
+    return {
+      onOpen: (b) => c().onOpen(b),
+      onJoin: (b) => c().onJoin(b),
+      onRequest: (b, role) => c().onRequest(b, role),
+      onCancel: (b) => c().onCancel(b),
+      onLeave: (b) => c().onLeave(b),
+      onJoinAll: (bs) => c().onJoinAll(bs),
+      onLeaveAll: (bs) => c().onLeaveAll(bs),
+      onManage: (g) => c().onManage(g),
+      onAddBranch: canAdd ? (g) => c().onAddBranch?.(g) : undefined,
+      onRefresh: (b) => c().onRefresh?.(b),
+      onRemove: (b) => c().onRemove?.(b),
+      onSetAccess: (g, classification, join_policy, opening) =>
+        c().onSetAccess?.(g, classification, join_policy, opening),
+      onSetSource: (g, namespaces) => c().onSetSource?.(g, namespaces),
+      trackerSources: tracker.sources,
+      onRegisterSource: tracker.selfService ? (g) => c().onRegisterSource?.(g) : undefined,
+    };
+  }, [canAdd, tracker.sources, tracker.selfService]);
+  const cardRecord = useMemo<RecordActionProps>(() => {
+    const r = () => latest.current.record;
+    return {
+      onOpen: (n) => r().onOpen(n),
+      onJoin: (n, confirm) => r().onJoin(n, confirm),
+      onRequest: (n) => r().onRequest(n),
+      onCancel: (n) => r().onCancel(n),
+      onLeave: (n) => r().onLeave(n),
+      org,
+      onSourcesChanged: () => r().onSourcesChanged?.(),
+    };
+  }, [org]);
 
   return (
     <PageContainer>
@@ -647,15 +684,12 @@ function RepositoriesHome({
       {!empty && (
         <ListToolbar label="Search and filters" count={count}>
           <div className="min-w-0 flex-1">
-            <DraftSearch
-              key={searchBox}
-              debounceMs={0}
-              onSearch={(text) =>
-                startTransition(() => {
-                  setQuery(text);
-                  setPage(0);
-                })
-              }
+            <SearchField
+              value={query}
+              onChange={(text) => {
+                setQuery(text);
+                setPage(0);
+              }}
               // A phone's field, beside the count, holds the short form only.
               placeholder={phone ? "Filter by name" : "Filter repositories or branches"}
               aria-label="Filter repositories"
@@ -708,8 +742,8 @@ function RepositoriesHome({
               key={c.repo}
               card={c}
               busy={busy}
-              code={codeActions}
-              record={recordActions}
+              code={cardCode}
+              record={cardRecord}
               adminOpsPresent={tracker.selfService}
               trackerNote={trackerNote}
             />
@@ -732,15 +766,7 @@ function RepositoriesHome({
         />
       )}
       {loaded && cards.length > 0 && visible.length === 0 && (
-        <ListState
-          kind="filtered"
-          things="repositories or branches"
-          filter={query}
-          onClear={() => {
-            setQuery("");
-            setSearchBox((n) => n + 1);
-          }}
-        />
+        <ListState kind="filtered" things="repositories or branches" filter={listQuery} onClear={() => setQuery("")} />
       )}
 
       {(tracker.status.kind === "ready" || tracker.status.kind === "loading") && loaded && (

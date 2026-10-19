@@ -20,7 +20,7 @@
  * Five words on both facets: Open · Join · Request access · Withdraw request · Leave. A
  * branch name is never in a button's label; it is in a menu item or the table.
  */
-import { useId, useState, type ReactNode } from "react";
+import { memo, useId, useState, type ReactNode } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
@@ -746,7 +746,7 @@ function RowAction({
   );
 }
 
-export function RepositoryCard({
+export const RepositoryCard = memo(function RepositoryCard({
   card,
   busy,
   code,
@@ -845,7 +845,7 @@ export function RepositoryCard({
       </ListRow>
     </section>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // The maintainer's access (classification, join policy), in Settings. Every write goes

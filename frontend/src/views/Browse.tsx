@@ -1,10 +1,10 @@
-import { startTransition, useEffect, useState, type ReactNode } from "react";
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
-import { DraftSearch } from "../components/ui/DraftSearch";
 import { Select } from "@clickhouse/click-ui/Select";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
 import {
   browseNamespaces,
   joinNamespace,
@@ -93,10 +93,7 @@ export function Browse() {
   const [pending, setPending] = useState<Set<string>>(new Set());
   // Namespaces I can invite to (admin, active), memory ones and code / tracker ones apart.
   const [adminNs, setAdminNs] = useState<MyNamespaceEntry[]>([]);
-  // The search the rows are filtered by. The box keeps what is typed and hands it over in a
-  // transition, so a keystroke paints before the 200 rows filter; `searchBox` empties it.
   const [query, setQuery] = useState("");
-  const [searchBox, setSearchBox] = useState(0);
   const [joining, setJoining] = useState<string | null>(null);
   const [requireMap, setRequireMap] = useState<Record<string, boolean>>({});
   const [joinDialog, setJoinDialog] = useState<{ ns: string; row: BrowseEntry } | null>(null);
@@ -207,12 +204,14 @@ export function Browse() {
     onRepositories: () => setView("code"),
   };
 
-  const matches = (namespace: string, description: string | undefined) =>
-    !query ||
-    namespace.toLowerCase().includes(query.toLowerCase()) ||
-    (description || "").toLowerCase().includes(query.toLowerCase());
-  const filtered = (rows || []).filter((r) => matches(r.namespace, r.description));
-  const managedShown = managedMemory.filter((r) => matches(r.namespace, r.description));
+  // The rows filter by the text a render behind the box, so a keystroke paints the box
+  // first; the memoised rows render again only when what they show changes.
+  const listQuery = useDeferredValue(query).trim();
+  const filtered = useMemo(() => {
+    const q = listQuery.toLowerCase();
+    return (rows || []).filter((r) => matchesSpace(r, q));
+  }, [rows, listQuery]);
+  const managedShown = managedMemory.filter((r) => matchesSpace(r, listQuery.toLowerCase()));
   const memberCount = (ns: string) => rows?.find((r) => r.namespace === ns)?.member_count;
   const dialogOpen = !!(joinDialog || manageNs || settingsNs || createOpen);
   // The rows of both sections are one tab stop; the arrows move through them.
@@ -253,32 +252,26 @@ export function Browse() {
       toast(`Leave failed: ${humanizeError(e)}`, "error");
     }
   };
-  /** A row's More menu: Settings where you manage it, Copy name, Leave where you belong. */
-  const menuFor = (ns: string, admin: boolean, member: boolean): RowMenuItem[] => [
-    ...(admin ? [{ label: "Settings", icon: "gear" as const, onSelect: () => setSettingsNs(ns) }] : []),
-    {
-      label: "Copy name",
-      icon: "copy",
-      onSelect: () =>
-        void navigator.clipboard
-          ?.writeText(ns)
-          .then(() => toast(`Copied ${ns}`, "ok"))
-          .catch(() => toast("Couldn't copy the name", "error")),
-    },
-    ...(member ? [{ label: "Leave", icon: "cross" as const, danger: true, onSelect: () => void leave(ns) }] : []),
-  ];
-  const invite = (ns: string) => (
-    <Tip content={`Invite people to ${ns}`}>
-      <Button
-        type="secondary"
-        htmlType="button"
-        iconLeft="users"
-        aria-label={`Invite people to ${ns}`}
-        onClick={() => setManageNs(ns)}
-      >
-        Invite
-      </Button>
-    </Tip>
+  // The rows call the latest render's handlers through one object that keeps its identity,
+  // so a memoised row renders again only when its own fields change.
+  const handlers = useRef({ withdraw, leave, setSettingsNs, setManageNs, setJoinDialog, rows });
+  handlers.current = { withdraw, leave, setSettingsNs, setManageNs, setJoinDialog, rows };
+  const rowActions = useMemo<SpaceActions>(
+    () => ({
+      open: (ns, standing) => {
+        const h = handlers.current;
+        if (standing === "pending") void h.withdraw(ns);
+        else if (standing === "admin") h.setSettingsNs(ns);
+        else {
+          const row = h.rows?.find((r) => r.namespace === ns);
+          if (row) h.setJoinDialog({ ns, row });
+        }
+      },
+      invite: (ns) => handlers.current.setManageNs(ns),
+      settings: (ns) => handlers.current.setSettingsNs(ns),
+      leave: (ns) => void handlers.current.leave(ns),
+    }),
+    [],
   );
 
   return (
@@ -307,11 +300,10 @@ export function Browse() {
         count={rows ? `${filtered.length} ${filtered.length === 1 ? "namespace" : "namespaces"}` : undefined}
       >
         <div className="min-w-0 flex-1">
-          <DraftSearch
-            key={searchBox}
+          <SearchField
             aria-label="Search namespaces"
-            debounceMs={0}
-            onSearch={(text) => startTransition(() => setQuery(text))}
+            value={query}
+            onChange={setQuery}
             // A phone's field holds the short form only.
             placeholder={
               phone
@@ -336,9 +328,8 @@ export function Browse() {
                   visibility={r.visibility}
                   description={r.description}
                   members={memberCount(r.namespace)}
-                  onOpen={() => setSettingsNs(r.namespace)}
-                  action={invite(r.namespace)}
-                  menu={menuFor(r.namespace, true, true)}
+                  standing="admin"
+                  actions={rowActions}
                 />
               ))}
             </div>
@@ -369,7 +360,7 @@ export function Browse() {
             </LoadingSkeleton>
           )}
 
-          {rows !== null && filtered.length === 0 && !query && (
+          {rows !== null && filtered.length === 0 && !listQuery && (
             <ListState
               kind="empty"
               icon="globe"
@@ -385,14 +376,13 @@ export function Browse() {
             />
           )}
 
-          {rows !== null && filtered.length === 0 && query && (
+          {rows !== null && filtered.length === 0 && listQuery && (
             <RequestAccessCard
               org={identity.org}
-              typedName={query.trim()}
-              existingRole={myRole[query.trim()]}
+              typedName={listQuery}
+              existingRole={myRole[listQuery]}
               onSuccess={() => {
                 setQuery("");
-                setSearchBox((n) => n + 1);
                 load();
               }}
             />
@@ -401,15 +391,14 @@ export function Browse() {
           {rows !== null && filtered.length > 0 && (
             <div className="space-y-2" data-testid="browse-list" aria-busy={refreshing || undefined}>
               {filtered.map((r) => {
-                const isMember = mine.has(r.namespace);
                 const role = myRole[r.namespace];
-                const isPending = isMember && pending.has(r.namespace);
-                const isAdmin = isMember && role === "admin";
-                const open = () => {
-                  if (isPending) void withdraw(r.namespace);
-                  else if (isAdmin) setSettingsNs(r.namespace);
-                  else setJoinDialog({ ns: r.namespace, row: r });
-                };
+                const standing: SpaceStanding = !mine.has(r.namespace)
+                  ? "none"
+                  : pending.has(r.namespace)
+                    ? "pending"
+                    : role === "admin"
+                      ? "admin"
+                      : "member";
                 return (
                   <SpaceRow
                     key={r.namespace}
@@ -418,29 +407,10 @@ export function Browse() {
                     kind={isSystemKind(r.kind) ? r.kind : undefined}
                     description={r.description}
                     members={r.member_count}
-                    onOpen={open}
-                    action={
-                      isPending ? (
-                        <Tip content="Your request is waiting for an admin">
-                          <Button type="secondary" htmlType="button" iconLeft="clock" onClick={open}>
-                            Withdraw request
-                          </Button>
-                        </Tip>
-                      ) : isAdmin ? (
-                        invite(r.namespace)
-                      ) : isMember ? (
-                        <Tip content={`You're a ${role} — request writer or admin`}>
-                          <Button type="secondary" htmlType="button" onClick={open}>
-                            Request upgrade
-                          </Button>
-                        </Tip>
-                      ) : (
-                        <Button type="secondary" htmlType="button" loading={joining === r.namespace} onClick={open}>
-                          Join
-                        </Button>
-                      )
-                    }
-                    menu={menuFor(r.namespace, isAdmin, isMember && !isPending)}
+                    standing={standing}
+                    role={role}
+                    joining={joining === r.namespace}
+                    actions={rowActions}
                   />
                 );
               })}
@@ -501,30 +471,97 @@ export function Browse() {
   );
 }
 
+const matchesSpace = (r: { namespace: string; description?: string }, q: string) =>
+  !q || r.namespace.toLowerCase().includes(q) || (r.description || "").toLowerCase().includes(q);
+
+/** Where the caller stands in a space: its row's open action, inline button and menu follow. */
+type SpaceStanding = "none" | "pending" | "member" | "admin";
+
+interface SpaceActions {
+  open: (ns: string, standing: SpaceStanding) => void;
+  invite: (ns: string) => void;
+  settings: (ns: string) => void;
+  leave: (ns: string) => void;
+}
+
 /**
  * One space: line 1 the namespace in mono and its visibility, line 2 its
  * description; at the right its member count, the one inline action and the More menu.
  * The name is the row's open button (`data-row-open`), stretched over the row.
+ * Memoised: two hundred rows of badges, buttons and menus rendered again on every
+ * keystroke in the search.
  */
-function SpaceRow({
+const SpaceRow = memo(function SpaceRow({
   namespace,
   visibility,
   kind,
   description,
   members,
-  onOpen,
-  action,
-  menu,
+  standing,
+  role,
+  joining = false,
+  actions,
 }: {
   namespace: string;
   visibility: string;
   kind?: string;
   description?: string;
   members?: number;
-  onOpen: () => void;
-  action: ReactNode;
-  menu: RowMenuItem[];
+  standing: SpaceStanding;
+  role?: string;
+  joining?: boolean;
+  actions: SpaceActions;
 }) {
+  const open = () => actions.open(namespace, standing);
+  const member = standing === "member" || standing === "admin";
+  /** The More menu: Settings where you manage it, Copy name, Leave where you belong. */
+  const menu: RowMenuItem[] = [
+    ...(standing === "admin"
+      ? [{ label: "Settings", icon: "gear" as const, onSelect: () => actions.settings(namespace) }]
+      : []),
+    {
+      label: "Copy name",
+      icon: "copy",
+      onSelect: () =>
+        void navigator.clipboard
+          ?.writeText(namespace)
+          .then(() => toast(`Copied ${namespace}`, "ok"))
+          .catch(() => toast("Couldn't copy the name", "error")),
+    },
+    ...(member
+      ? [{ label: "Leave", icon: "cross" as const, danger: true, onSelect: () => actions.leave(namespace) }]
+      : []),
+  ];
+  const action =
+    standing === "pending" ? (
+      <Tip content="Your request is waiting for an admin">
+        <Button type="secondary" htmlType="button" iconLeft="clock" onClick={open}>
+          Withdraw request
+        </Button>
+      </Tip>
+    ) : standing === "admin" ? (
+      <Tip content={`Invite people to ${namespace}`}>
+        <Button
+          type="secondary"
+          htmlType="button"
+          iconLeft="users"
+          aria-label={`Invite people to ${namespace}`}
+          onClick={() => actions.invite(namespace)}
+        >
+          Invite
+        </Button>
+      </Tip>
+    ) : standing === "member" ? (
+      <Tip content={`You're a ${role} — request writer or admin`}>
+        <Button type="secondary" htmlType="button" onClick={open}>
+          Request upgrade
+        </Button>
+      </Tip>
+    ) : (
+      <Button type="secondary" htmlType="button" loading={joining} onClick={open}>
+        Join
+      </Button>
+    );
   return (
     // Back to this page focuses the space that had the focus.
     <ListRow data-focus-key={`space:${namespace}`}>
@@ -534,7 +571,7 @@ function SpaceRow({
             <button
               type="button"
               data-row-open=""
-              onClick={onOpen}
+              onClick={open}
               className="list-row-open min-w-0 break-all font-mono text-sm text-text"
             >
               <code>{namespace}</code>
@@ -557,7 +594,7 @@ function SpaceRow({
       </div>
     </ListRow>
   );
-}
+});
 
 const MANAGED = {
   code: { label: "Code indexes you manage", icon: "code", link: "Manage indexing in Repositories" },
