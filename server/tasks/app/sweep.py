@@ -15,9 +15,9 @@ from server.tasks.app.common import (
     _release_lease,
 )
 from server.tasks.store import repo as repo
+from server.tasks.store.rows import InboxRow
 
 log = logging.getLogger(__name__)
-from server.tasks.store.rows import InboxRow
 
 SWEEP_ACTOR = "process:task_lease_sweep"
 # A lease row or task written this recently may belong to a transition still in flight
