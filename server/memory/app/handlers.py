@@ -901,10 +901,9 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
     # A caller that only names the row (the dashboard's conflict peer) never reads a
     # high value, so nothing sensitive was read and nothing is audited.
     omit_value = high and input.omit_high_value
-    # Without the value there is no hash to answer, nor a verification to check against.
     sha = (
         _content_sha256_of_stored(json.dumps(row.value, default=str))
-        if row.value is not None and not omit_value
+        if row.value is not None
         else ""
     )
     if high and not omit_value:
@@ -940,15 +939,14 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
         valid_to=getattr(row, "valid_to", None),
         pinned=row.pinned,
         # The hash of a short secret names it as well as the value does.
-        content_sha256=sha,
+        content_sha256="" if omit_value else sha,
         verified_by=getattr(row, "verified_by", "") or "",
         actor=getattr(row, "actor", "") or "",
         source_class=getattr(row, "source_class", "") or "",
         **_lock.lock_state(row),
         verified_at=getattr(row, "verified_at", None),
-        verification="none"
-        if omit_value
-        else _trust.verification_state(
+        # Derived from the stored hash, which the answer leaves out.
+        verification=_trust.verification_state(
             getattr(row, "verified_by", ""), getattr(row, "verified_sha256", ""), sha
         ),
     )
