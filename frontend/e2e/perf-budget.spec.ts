@@ -4,7 +4,7 @@
 // — script, boot order, first paint — not the server. The CPU is slowed 4x
 // to stand in for a laptop; the network is the preview server on localhost.
 import { expect, test } from "@playwright/test";
-import { codeReposFixture, installApi, stringArray, TASK_INBOX } from "./fixtures";
+import { codeReposFixture, installApi, stringArray } from "./fixtures";
 
 const LCP_BUDGET_MS = 1500;
 
@@ -507,33 +507,8 @@ test("Repositories: typing in the filter stays under the INP budget at 4x with 1
 });
 
 test("Tasks: typing in the search stays under the INP budget at 4x with 80 open tasks", async ({ page }) => {
-  await installApi(page);
   // Twenty in each open lane, all of them shown (a lane draws 20 before its Show all).
-  const statuses = ["triage", "todo", "in_progress", "blocked"];
-  const tasks = Array.from({ length: 80 }, (_, i) => ({
-    task_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
-    inbox: TASK_INBOX,
-    kind: i % 2 ? "bug_report" : "question",
-    priority: 1 + (i % 3),
-    status: statuses[i % 4],
-    reason: "",
-    blocked_on: i % 4 === 3 ? "human" : "",
-    resume_at: null,
-    deadline: null,
-    not_before: null,
-    defer_count: 0,
-    title: `Task ${i}: lane ${i % 5} exporter stalls`,
-    from_agent: "reporter-public",
-    from_subject: "sa:reporter-public-1a2b3c",
-    owner: i % 4 === 2 ? "alert-bot" : "",
-    lease_until: i % 4 === 2 ? "2099-01-01T00:00:00" : null,
-    parent_task_id: null,
-    disclosure: "internal",
-    created_at: `2026-09-20T01:${String(i % 60).padStart(2, "0")}:00`,
-    updated_at: "2026-09-20T01:00:00",
-    version: 1,
-  }));
-  await page.route("**/v1/task.list", (route) => route.fulfill({ json: { tasks, truncated: false } }));
+  await installApi(page, { taskRows: 80 });
   const cdp = await watchInteractions(page);
   await page.goto("/tasks", { waitUntil: "domcontentloaded" });
   await expect(page.locator(".tq-row")).toHaveCount(80);

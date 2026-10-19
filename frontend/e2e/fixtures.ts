@@ -799,6 +799,9 @@ export interface InstallOptions {
   auditRows?: number;
   /** Answer `namespace.browse` with this many memory namespaces. Default: none. */
   browseRows?: number;
+  /** Answer `task.list` with this many open tasks, spread over the four open lanes, in
+   *  place of the three the board shows by default. */
+  taskRows?: number;
   /** Hold every `memory.search` answer this long, so a retype can be seen to abort the
    *  stale search. Default: answer at once. */
   searchDelayMs?: number;
@@ -1012,7 +1015,12 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
       case "/v1/inbox.list":
         return json({ inboxes: taskInboxesFixture(ns) });
       case "/v1/task.list":
-        return json({ tasks: taskRowsFixture(String(body.inbox ?? "")), truncated: false });
+        return json({
+          tasks: options.taskRows
+            ? openTaskRowsFixture(String(body.inbox ?? ""), options.taskRows)
+            : taskRowsFixture(String(body.inbox ?? "")),
+          truncated: false,
+        });
       case "/v1/task.counts":
         return json({ counts: taskCountsFixture(ns) });
       case "/v1/task.get":
@@ -1424,6 +1432,36 @@ function taskRowsFixture(inbox: string): Record<string, unknown>[] {
     row(2, "todo"),
     row(3, "blocked", { reason: "needs a repro from the sender", blocked_on: "sender" }),
   ];
+}
+
+/** `n` open tasks, one lane after another (triage, todo, in progress, blocked), a third
+ *  of them leased to an agent. */
+function openTaskRowsFixture(inbox: string, n: number): Record<string, unknown>[] {
+  if (inbox !== TASK_INBOX) return [];
+  const statuses = ["triage", "todo", "in_progress", "blocked"];
+  return Array.from({ length: n }, (_, i) => ({
+    task_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    inbox,
+    kind: i % 2 ? "bug_report" : "question",
+    priority: 1 + (i % 3),
+    status: statuses[i % 4],
+    reason: "",
+    blocked_on: i % 4 === 3 ? "human" : "",
+    resume_at: null,
+    deadline: null,
+    not_before: null,
+    defer_count: 0,
+    title: `Task ${i}: lane ${i % 5} exporter stalls`,
+    from_agent: "reporter-public",
+    from_subject: "sa:reporter-public-1a2b3c",
+    owner: i % 4 === 2 ? "alert-bot" : "",
+    lease_until: i % 4 === 2 ? "2099-01-01T00:00:00" : null,
+    parent_task_id: null,
+    disclosure: "internal",
+    created_at: `2026-09-20T01:${String(i % 60).padStart(2, "0")}:00`,
+    updated_at: "2026-09-20T01:00:00",
+    version: 1,
+  }));
 }
 
 /** `task.get` for one of `taskRowsFixture`'s tasks: the row with the fields only the
