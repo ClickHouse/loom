@@ -103,6 +103,13 @@ async def _step_tombstone_documents_by_ns(org: str, namespace: _NS) -> int:
     return await memory_steps.tombstone_documents_by_namespace(org, namespace)
 
 
+async def _step_revoke_grants_by_user(org: str, user_id: str) -> int:
+    """Every grant naming the user as a principal, `user:<user_id>`."""
+    from server.identity.app.grants import revoke_subject
+
+    return await revoke_subject(org, "user:" + user_id)
+
+
 async def _step_tombstone_documents_by_user(org: str, user_id: str) -> int:
     """The user's originals first, as `_step_tombstone_documents_by_ns`, then
     the documents they wrote."""
@@ -193,9 +200,9 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("documents.tombstone", _step_tombstone_documents_by_user),
     # The user as a principal (`user:<user_id>`): what a grant, a group or the
     # tree still says about them.
-    ("grants.revoke", principal_steps.revoke_grants_by_user),
+    ("grants.revoke", _step_revoke_grants_by_user),
     ("groups.remove_member", principal_steps.remove_from_groups_by_user),
-    ("collections.retire_personal", principal_steps.retire_personal_collection_by_user),
+    ("personal.retire", principal_steps.retire_personal_collection_by_user),
     *_UNCOUNTED_STEPS_USER,
 )
 

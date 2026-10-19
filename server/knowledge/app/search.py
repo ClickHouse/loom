@@ -60,6 +60,8 @@ class ChunkHit:
     # lexical mode the BM25 value.
     lexical_score: float = 0.0
     score: float = 0.0
+    # When the chunk's document was written; None from a source without it.
+    ingested_at: datetime | None = None
 
     @property
     def section(self) -> str:
@@ -97,6 +99,7 @@ def fuse_rrf(
                 distance=min(prev.distance, h.distance),
                 section_path=prev.section_path or h.section_path,
                 lexical_score=max(prev.lexical_score, h.lexical_score),
+                ingested_at=prev.ingested_at or h.ingested_at,
             )
     sem_rank = {(h.namespace, h.source_uri, h.chunk_idx): r + 1 for r, h in enumerate(semantic)}
     lex_rank = {(h.namespace, h.source_uri, h.chunk_idx): r + 1 for r, h in enumerate(lexical)}
@@ -118,6 +121,7 @@ def fuse_rrf(
                 section_path=h.section_path,
                 lexical_score=h.lexical_score,
                 score=score,
+                ingested_at=h.ingested_at,
             )
         )
     fused.sort(key=lambda h: (-h.score, h.distance, h.namespace, h.source_uri, h.chunk_idx))
@@ -156,6 +160,7 @@ async def hybrid_search(
             content,
             tags,
             chunk_metadata,
+            ingested_at,
             cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
         FROM loom.chunks
         WHERE {" AND ".join(where)}
@@ -174,6 +179,7 @@ async def hybrid_search(
             distance=float(r["distance"]),
             section_path=_section_path_of(r.get("chunk_metadata")),
             score=1.0 - float(r["distance"]),
+            ingested_at=r.get("ingested_at"),
         )
         for r in rows
     ]
@@ -253,6 +259,7 @@ async def lexical_search(
             content,
             tags,
             chunk_metadata,
+            ingested_at,
             cosineDistance(embedding, {{q:Array(Float32)}}) AS distance,
             {bm25_expr} AS lexical
         FROM loom.chunks
@@ -271,6 +278,7 @@ async def lexical_search(
             distance=float(r["distance"]),
             section_path=_section_path_of(r.get("chunk_metadata")),
             lexical_score=float(r["lexical"] or 0.0),
+            ingested_at=r.get("ingested_at"),
             score=float(r["lexical"] or 0.0),
         )
         for r in rows

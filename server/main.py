@@ -155,6 +155,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         )
     await boot.require_keeper(ch)
     await boot.warn_newer_schema()
+    await boot.warn_collection_named_namespaces()
     # Nothing here writes a column a migration just added while another process
     # still carries its version writes by the older column lists.
     from server.core import rmt_carry
@@ -438,11 +439,11 @@ mcp_transport.attach(app)
 
 from server.auth import login as _login  # noqa: E402
 from server.auth import oauth as _oauth  # noqa: E402
-from server.auth import scim_groups as _scim_groups  # noqa: E402
 from server.auth import scim_routes as _scim_routes  # noqa: E402
 from server.auth import self_signup as _self_signup  # noqa: E402
 from server.identity.app import claim_release as _claim_release  # noqa: E402
 from server.identity.app import password_link as _password_link  # noqa: E402
+from server.identity.app import scim_groups as _scim_groups  # noqa: E402
 
 _self_signup.attach(app)
 _login.attach(app)

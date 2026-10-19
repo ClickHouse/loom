@@ -1,15 +1,15 @@
 -- Knowledge sharing (docs/architecture/sharing.md).
 --
 -- A collection is a namespace whose access comes only from grants, inherited
--- from its parent. Its namespace row in loom.namespaces has kind 'collection'
--- (or 'personal' for a user's own); this table holds the tree. One row per
--- collection, rewritten with a higher version on a move; `deleted` retires it.
+-- from its parent. Its namespace row in loom.namespaces has kind 'collection';
+-- this table holds the tree. One row per collection, rewritten with a higher
+-- version on a move; `deleted` retires it. A user's personal collection sits in
+-- no tree and has no row here: its name says whose it is.
 CREATE TABLE IF NOT EXISTS loom.collections
 (
     `org` LowCardinality(String),
     `namespace` String,
     `parent` String DEFAULT '',
-    `personal` Bool DEFAULT false,
     `owner` String DEFAULT '',
     `created_at` DateTime64(3) DEFAULT now64(3),
     `deleted` Bool DEFAULT false,

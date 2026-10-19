@@ -66,6 +66,12 @@ def account_change(org: str, namespace: str) -> AbstractAsyncContextManager[None
     return _claimed("account:" + json.dumps([org, namespace]), f"the account {org}/{namespace}")
 
 
+def group_change(org: str, group_id: str) -> AbstractAsyncContextManager[None]:
+    """Hold one SCIM group from its read to its write: two creates of one id
+    must not both find it free, nor two patches each drop the other's members."""
+    return _claimed("group:" + json.dumps([org, group_id]), f"the group {group_id!r}")
+
+
 def collections_change(org: str) -> AbstractAsyncContextManager[None]:
     """Hold the org's collection tree from the read that checks a move to its
     write: two moves at once could each pass the cycle check and together close

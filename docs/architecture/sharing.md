@@ -21,12 +21,15 @@ flowchart LR
 - **Collections.** A collection is a namespace with `kind = 'collection'` and a row in
   `loom.collections` naming its parent. `collection.create` makes one (the creator holds
   `admin`), `collection.move` puts it under another collection or detaches it, and
-  `collection.list` lists the ones the caller can read. A document lives in one
-  collection and follows its grants from the moment it is written.
-- **Only grants open a collection.** `check_authorized` hands every collection to
-  `server/auth/sharing.py` before any other rule. A token's namespace claim, an org admin
-  role and the code-namespace rules reach no collection. A platform admin passes, for
-  operator erasure and export.
+  `collection.list` lists the ones the caller can read, and `collection.delete` takes one
+  out of the directory and the tree (its children become top-level). A document lives in
+  one collection and follows its grants from the moment it is written.
+- **Only grants open a collection.** A collection is known by its name (`col-…`; the
+  prefix is reserved), so `check_authorized` hands it to `server/auth/sharing.py` before
+  any other rule, with no read. A token's namespace claim, an org admin role and the
+  code-namespace rules reach no collection; a scoped or delegated token reaches one no
+  further than its own claim names it, and a delegated one no further than its creator's
+  role there. A platform admin passes, for operator erasure and export.
 - **Principals.** A request holds its subject, every group whose members include it, and
   the agent a gateway asserted. A grant names any of them: a login handle or email, an
   `sa:` service account, `user:<id>`, `group:<id>` or `agent:<id>`. Groups and agents hold
@@ -35,9 +38,11 @@ flowchart LR
   principals holds on the collection or on one of its ancestors, at most eight up. A child
   only adds to what its parents give. To make a child narrower, detach it: it then keeps
   its own grants only.
-- **Personal collections.** Each end user has one, created the first time a request names
-  `namespace: "@me"`; only the server maps `@me` to a namespace. It takes no grant besides
-  its owner's. A chat service's saved messages are documents there, at
+- **Personal collections.** Each end user has one, `col-me-<hash of org and user>`; a
+  request names it `namespace: "@me"`, which only the server maps. Its name says whose it
+  is: it admits that user (as admin) and no one else, takes no grant, sits in no tree, and
+  needs no setup (its directory row appears with its first write). A chat service's saved
+  messages are documents there, at
   `chat/<conversation>/<message>`: `knowledge.upsert` saves one, `knowledge.delete`
   removes it, `knowledge.search` and `knowledge.list` (with `uri_prefix`) find them.
 
@@ -51,13 +56,21 @@ turns that into the request's identity: subject `user:<id>`, the token's org, th
 request that names no user is refused, so no row, collection or grant is ever addressed
 to the gateway's own account.
 
-| The gateway can claim                        | It cannot claim                        |
-| -------------------------------------------- | -------------------------------------- |
-| any user id and agent id, inside its own org | another org                            |
-|                                              | a group (Loom reads membership itself) |
-|                                              | a role, a namespace or admin           |
-|                                              | a Loom login handle or `sa:` subject   |
-|                                              | another user's personal collection     |
+| The gateway can claim                        | It cannot claim                         |
+| -------------------------------------------- | --------------------------------------- |
+| any user id and agent id, inside its own org | another org                             |
+|                                              | a group (Loom reads membership itself)  |
+|                                              | a role, a namespace or admin            |
+|                                              | a Loom login handle or `sa:` subject    |
+|                                              | another user's personal collection      |
+|                                              | directory self-service (register, join) |
+
+Ids are lowercase (`server/core/principals.py`), so two spellings never name one user.
+Of the org-level ops (those that name no namespace to gate), an end user may call only
+`collection.create` and `collection.list`. A trusted caller (`LOOM_TRUSTED_CALLERS`) acts
+for Loom subjects only and cannot assert a `user:`, `group:` or `agent:` principal.
+Revoking the gateway token cuts off all its users; one user is cut off by revoking their
+grants and removing them from groups, or by erasing them.
 
 The gateway authenticates its users and already holds their data, so Loom cannot make it
 less trusted than that; what Loom enforces is the org boundary and the shape of the
@@ -84,6 +97,10 @@ serves no cached grant and reads per request; a failed read then falls back only
 entry read at the last watermark it saw. The 10 s grant-cache TTL stays as a backstop
 for a watermark row that was never written, and for grant changes made by a build that
 predates the table during a rolling upgrade.
+
+A collection's name, not a lookup, decides that it is one, so every namespace that
+already uses the `col-` prefix is opened only by grants after the upgrade; the server logs
+the active ones at boot.
 
 ## Read cost
 
@@ -113,7 +130,8 @@ provenance and for erasure; access never reads these columns. A user erasure
 (`scope_type = user_id`) supersedes the documents and chunks that user wrote in any
 collection of the org, deletes their uploaded originals that no other writer's document
 shares, revokes every grant naming `user:<id>`, removes them from every group, and
-retires their personal collection. Collections that hold other writers' documents stay:
+retires their personal collection's directory row. Deleting a SCIM group revokes the
+grants that named it, so a group made later under the same id starts with none. Collections that hold other writers' documents stay:
 Loom deletes only what its writer asked to delete.
 
 ## Alternatives not taken

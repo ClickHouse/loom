@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from server.auth import authz
+from server.auth import authz, sharing
 from server.auth import context as auth_context
 from server.auth.jwt import AuthInfo
 from server.core.errors import AuthInsufficientError
@@ -163,6 +163,8 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
     # needs the org-wide view, less the restricted namespaces this caller may not read.
     auth = auth_context.current_auth()
     hidden: set[str] = set()
+    # The collections a subject export may show; None: no collection is left out.
+    readable_collections: set[str] | None = None
     if auth is not None:
         if input.scope_type == "namespace":
             try:
@@ -181,11 +183,19 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
                 raise AuthInsufficientError(
                     f"cannot export {input.org}: namespace classification unavailable"
                 )
+            readable_collections = set(await sharing.readable(auth, input.org))
+
+    def _shown(namespace: str) -> bool:
+        if namespace in hidden:
+            return False
+        if readable_collections is None or not sharing.is_collection(namespace):
+            return True
+        return namespace in readable_collections
 
     def _visible(rows: list[dict[str, object]], count: int) -> tuple[list[dict[str, object]], int]:
-        if not hidden:
+        kept = [r for r in rows if _shown(str(r.get("namespace") or ""))]
+        if len(kept) == len(rows):
             return rows, count
-        kept = [r for r in rows if str(r.get("namespace") or "") not in hidden]
         return kept, count - (len(rows) - len(kept))
 
     mem_rows, mem_count, mem_trunc = await _export_memory(
@@ -329,9 +339,20 @@ async def _list_scope(org: str) -> tuple[str, dict[str, Any]] | None:
         if hidden == ["*"]:
             return None
         where = "" if admin_view else " AND scope_type = 'namespace'"
+        params: dict[str, object] = {}
+        if not auth.has_role(Role.PLATFORM_ADMIN):
+            # A collection's erasures show only to whom the collection shows.
+            where += (
+                " AND (scope_type != 'namespace'"
+                " OR NOT startsWith(scope_value, {col_prefix:String})"
+                " OR scope_value IN {col_readable:Array(String)})"
+            )
+            params["col_prefix"] = sharing.COLLECTION_PREFIX
+            params["col_readable"] = await sharing.readable(auth, org)
         if hidden:
             where += " AND NOT (scope_type = 'namespace' AND scope_value IN {hidden:Array(String)})"
-        return where, ({"hidden": hidden} if hidden else {})
+            params["hidden"] = hidden
+        return where, params
     ns_list = await auth_context.rollup_member_namespaces(org)
     if not ns_list:
         return None

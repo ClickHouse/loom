@@ -1824,10 +1824,22 @@ export interface CollectionCreateOutput {
   created: boolean;
 }
 
+export interface CollectionDeleteInput {
+  org: string;
+  namespace: string;
+}
+
+export interface CollectionDeleteOutput {
+  namespace: string;
+  deleted: boolean;
+}
+
 export interface CollectionListInput {
   org: string;
-  /** Unused; collections are listed for the whole org. */
-  namespace?: string;
+  /** Collections per page. */
+  limit?: number;
+  /** The `next_cursor` of the previous page; none for the first. */
+  cursor?: string | null;
 }
 
 export interface CollectionEntry {
@@ -1839,6 +1851,7 @@ export interface CollectionEntry {
 
 export interface CollectionListOutput {
   collections: CollectionEntry[];
+  next_cursor?: string | null;
 }
 
 export interface CollectionMoveInput {
@@ -3219,6 +3232,7 @@ export interface SearchHit {
   distance: number;
   similarity: number;
   namespace?: string;
+  ingested_at?: string | null;
   section_path?: string[];
   section?: string;
   lexical_score?: number;
@@ -8454,6 +8468,7 @@ export type OpName =
   | "code.verify"
   | "code.verify_citations"
   | "collection.create"
+  | "collection.delete"
   | "collection.list"
   | "collection.move"
   | "conflicts.allowlist_list"
@@ -8762,6 +8777,7 @@ export interface OpMap {
   "code.verify": { input: CodeVerifyInput; output: CodeVerifyOutput };
   "code.verify_citations": { input: CodeVerifyCitationsInput; output: CodeVerifyCitationsOutput };
   "collection.create": { input: CollectionCreateInput; output: CollectionCreateOutput };
+  "collection.delete": { input: CollectionDeleteInput; output: CollectionDeleteOutput };
   "collection.list": { input: CollectionListInput; output: CollectionListOutput };
   "collection.move": { input: CollectionMoveInput; output: CollectionMoveOutput };
   "conflicts.allowlist_list": { input: ConflictsAllowlistListInput; output: ConflictsAllowlistListOutput };
@@ -9070,6 +9086,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "code.verify", group: "code", method: "verify", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "code.verify_citations", group: "code", method: "verifyCitations", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "collection.create", group: "collection", method: "create", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
+  { name: "collection.delete", group: "collection", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "collection.list", group: "collection", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "collection.move", group: "collection", method: "move", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "conflicts.allowlist_list", group: "conflicts", method: "allowlistList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
@@ -9320,4 +9337,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 305;
+export const GENERATED_OP_COUNT = 306;

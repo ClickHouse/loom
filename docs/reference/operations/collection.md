@@ -27,20 +27,38 @@ Create a collection: a namespace read and written only through grants.
 | `parent` | `str` |  |
 | `created` | `bool` | False when the caller's collection already existed there |
 
+## `collection.delete`
+
+Delete a collection: it leaves the directory and the tree; its documents stay until an erasure of the namespace removes them.
+
+`POST /v1/collection.delete` · MCP `loom_collection_delete` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `namespace` | `str` | The namespace the op reads or writes. |
+| `deleted` | `bool` | False when it was already deleted |
+
 ## `collection.list`
 
-List the collections the caller can read.
+List the collections the caller can read, by name.
 
 `POST /v1/collection.list` · MCP `loom_collection_list` · role `viewer` · read · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
-| `namespace` | `str` | `'-'` | Unused; collections are listed for the whole org. |
+| `limit` | `int` | `500` | Collections per page. |
+| `cursor` | `str \| None` | `None` | The `next_cursor` of the previous page; none for the first. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `collections` | `list[_CollectionEntry]` |  |
+| `next_cursor` | `str \| None` |  |
 
 ## `collection.move`
 

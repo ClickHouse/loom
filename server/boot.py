@@ -115,6 +115,37 @@ def require_safe_bind(
         )
 
 
+async def warn_collection_named_namespaces() -> list[str]:
+    """Log one WARNING naming active namespaces that use a collection's reserved
+    prefix (`col-`) without being one: only grants open such a name now, so a
+    token claim or an org admin role no longer reaches it. Returns the names."""
+    from server.auth.sharing import COLLECTION_PREFIX
+    from server.core.ch import get_client
+
+    try:
+        rows = await get_client().query_all(
+            """
+            SELECT namespace FROM loom.namespaces FINAL
+            WHERE startsWith(namespace, {prefix:String})
+              AND kind NOT IN ('collection', 'personal') AND active
+            ORDER BY namespace
+            LIMIT 20
+            """,
+            params={"prefix": COLLECTION_PREFIX},
+        )
+    except Exception as e:  # noqa: BLE001 — a boot report, never a boot failure
+        logging.getLogger(__name__).warning("could not check for col- namespaces: %s", e)
+        return []
+    names = [str(r["namespace"]) for r in rows]
+    if names:
+        logging.getLogger(__name__).warning(
+            "namespaces named like collections are now opened only by grants: %s "
+            "(grant their members, or rename them)",
+            ", ".join(names),
+        )
+    return names
+
+
 async def warn_newer_schema() -> list[str]:
     """Log one WARNING naming the ledger's migrations this build does not
     carry: an older build booting on a newer schema (a rolling upgrade's N-1,

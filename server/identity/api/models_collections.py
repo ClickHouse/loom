@@ -44,11 +44,12 @@ class CollectionMoveOutput(BaseModel):
 
 
 class CollectionListInput(BaseModel):
-    """List the collections the caller can read."""
+    """List the collections the caller can read, by name."""
 
     org: str
-    namespace: str = Field(
-        default="-", description="Unused; collections are listed for the whole org."
+    limit: int = Field(default=500, ge=1, le=10_000, description="Collections per page.")
+    cursor: str | None = Field(
+        default=None, description="The `next_cursor` of the previous page; none for the first."
     )
 
 
@@ -61,3 +62,17 @@ class _CollectionEntry(BaseModel):
 
 class CollectionListOutput(BaseModel):
     collections: list[_CollectionEntry]
+    next_cursor: str | None = None
+
+
+class CollectionDeleteInput(BaseModel):
+    """Delete a collection: it leaves the directory and the tree; its documents
+    stay until an erasure of the namespace removes them."""
+
+    org: str
+    namespace: str
+
+
+class CollectionDeleteOutput(BaseModel):
+    namespace: str
+    deleted: bool  # False when it was already deleted

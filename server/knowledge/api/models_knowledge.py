@@ -97,6 +97,7 @@ class _SearchHit(BaseModel):
     distance: float  # cosine distance; 0=identical, 2=opposite
     similarity: float  # 1 - distance (caller-friendly)
     namespace: str = ""  # source namespace; populated on cross-namespace search
+    ingested_at: datetime | None = None  # when the document was written
     # Where in the document this chunk sits: the heading
     # breadcrumb as a list and as "A > B > C". Empty for unstructured text.
     section_path: list[str] = Field(default_factory=list)

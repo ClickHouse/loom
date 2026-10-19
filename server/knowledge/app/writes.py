@@ -50,6 +50,7 @@ def _authorship() -> dict[str, str]:
     the gateway's end user and agent when a gateway asserted them."""
     from server.auth.context import current_auth
     from server.memory.app.provenance import writer_actor
+    from server.memory.domain.provenance import source_class_for
 
     auth = current_auth()
     agent = auth.agent_principal.removeprefix("agent:") if auth is not None else ""
@@ -57,7 +58,7 @@ def _authorship() -> dict[str, str]:
         "agent": agent or "-",
         "user_id": (auth.read_user_id if auth is not None else "") or "-",
         "actor": writer_actor(),
-        "source_class": "asserted",
+        "source_class": source_class_for(default="asserted"),
     }
 
 
@@ -157,6 +158,8 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     """
     from server.knowledge.store import chunks as knowledge_repo
 
+    author = _authorship()  # from the request's identity, never its body
+
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
     doc_id = str(uuid.uuid4())
@@ -210,7 +213,7 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
 
     await documents_repo.insert_one(
         documents_repo.build_document_row(
-            **_authorship(),
+            **author,
             org=input.org,
             namespace=input.namespace,
             source_uri=input.source_uri,
@@ -251,7 +254,7 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         embedding_model=embedder.model_name,
         embedding_dim=embedder.dim,
         now=now,
-        user_id=_authorship()["user_id"],
+        user_id=author["user_id"],
     )
     await knowledge_repo.insert_chunks(rows)
 
@@ -278,6 +281,8 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
 async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
     from server.observability.otel import traced
 
+    author = _authorship()  # from the request's identity, never its body
+
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
     doc_id = str(uuid.uuid4())
@@ -302,7 +307,7 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
     # The builder sets every loom.documents column, content_sha256 included
     # so cross-URI dedup can match.
     doc_row = _documents_repo.build_document_row(
-        **_authorship(),
+        **author,
         org=input.org,
         namespace=input.namespace,
         source_uri=input.source_uri,
@@ -344,7 +349,7 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
             embedding_model=embedder.model_name,
             embedding_dim=embedder.dim,
             now=now,
-            user_id=_authorship()["user_id"],
+            user_id=author["user_id"],
         )
 
     # documents + chunks INSERTs are independent — run them concurrently.
@@ -532,6 +537,7 @@ async def handle_knowledge_bulk_add(
 ) -> KnowledgeBulkAddOutput:
     """One CH insert for documents, one for all chunks (across all entries).
     Chunking + embedding still per-doc per the configured policy."""
+    author = _authorship()  # from the request's identity, never its body
 
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
@@ -565,7 +571,7 @@ async def handle_knowledge_bulk_add(
 
         doc_rows.append(
             documents_repo.build_document_row(
-                **_authorship(),
+                **author,
                 org=input.org,
                 namespace=input.namespace,
                 source_uri=entry.source_uri,
@@ -607,7 +613,7 @@ async def handle_knowledge_bulk_add(
                 embedding_model=embedder.model_name,
                 embedding_dim=embedder.dim,
                 now=now,
-                user_id=_authorship()["user_id"],
+                user_id=author["user_id"],
             )
         )
 

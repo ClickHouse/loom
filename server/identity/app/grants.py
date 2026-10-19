@@ -135,13 +135,14 @@ def _enforce_principal_target(namespace: str, subject: str) -> None:
     """A personal collection keeps its one grant; a group or an agent holds
     grants only on collections; a `user:`/`group:`/`agent:` subject needs a
     well-formed id."""
-    from server.auth import gateway, sharing
+    from server.auth import sharing
+    from server.core.principals import AGENT, GROUP, PRINCIPAL_PREFIXES, is_principal
 
     if sharing.is_personal(namespace):
         raise ValidationError("a personal collection is shared by copying an item out of it")
-    if subject.startswith(gateway.PRINCIPAL_PREFIXES) and not gateway.is_principal(subject):
-        raise ValidationError(f"{subject!r} is not a well-formed principal (prefix:id)")
-    if subject.startswith((gateway.GROUP, gateway.AGENT)) and not sharing.is_collection(namespace):
+    if subject.startswith(PRINCIPAL_PREFIXES) and not is_principal(subject):
+        raise ValidationError(f"{subject!r} is not a well-formed principal (prefix:id, lowercase)")
+    if subject.startswith((GROUP, AGENT)) and not sharing.is_collection(namespace):
         raise ValidationError("groups and agents hold grants on collections only")
 
 
@@ -418,6 +419,7 @@ async def _write_revoke(input: GrantsRevokeInput, subject: str, row: GrantState)
 
 async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutput:
     """Approve or reject a pending grant. No-op if it doesn't exist."""
+    _enforce_principal_target(input.namespace, input.subject)
     async with grant_change(input.org, input.namespace, input.subject):
         out = await _decide_request(input)
     if out.decision == "approve" and out.role == "admin":
@@ -528,3 +530,14 @@ async def _decide_request(input: GrantsApproveInput) -> GrantsApproveOutput:
         role=target_role,
         decided_at=now,
     )
+
+
+async def revoke_subject(org: str, subject: str) -> int:
+    """Revoke every live grant naming `subject` in `org` (a deleted group, an
+    erased user): one revoke row each, versioned as every grant write is.
+    Returns how many."""
+    rows = await grants_repo.live_rows_of(org, subject)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    revokes = [{**r, "revoked_at": now, "version": _version() + i} for i, r in enumerate(rows)]
+    await grants_repo.insert_rows(revokes)
+    return len(revokes)

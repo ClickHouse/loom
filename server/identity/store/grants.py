@@ -160,6 +160,23 @@ async def find_active_grant(
     return None if row is None else GrantState.from_row(row)
 
 
+async def live_rows_of(
+    org: str, subject: str, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """Every live row naming `subject` in `org`, whole, for a rewrite."""
+    from server.core.ch import own_write_reads
+
+    ch = ch or _default_client()
+    with own_write_reads():
+        return await ch.query_all(
+            """
+            SELECT * FROM loom.namespace_grants FINAL
+            WHERE org = {org:String} AND subject = {sub:String} AND revoked_at IS NULL
+            """,
+            params={"org": org, "sub": subject},
+        )
+
+
 async def find_any_grant(
     org: str,
     namespace: str,

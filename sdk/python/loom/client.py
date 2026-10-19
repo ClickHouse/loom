@@ -579,6 +579,15 @@ class CollectionOps:
             await self._agent.call("collection.create", body, **options),
         )
 
+    async def delete(
+        self, body: _ops.CollectionDeleteBody | None = None, /, **options: Any
+    ) -> _ops.CollectionDeleteOutput:
+        """`collection.delete`."""
+        return cast(
+            "_ops.CollectionDeleteOutput",
+            await self._agent.call("collection.delete", body, **options),
+        )
+
     async def list(
         self, body: _ops.CollectionListBody | None = None, /, **options: Any
     ) -> _ops.CollectionListOutput:

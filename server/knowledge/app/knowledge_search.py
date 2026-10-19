@@ -76,13 +76,17 @@ def _namespaces_search(
 
     tokens = knowledge_bm25.tokenize(input.query) if input.search_mode != "semantic" else []
 
+    # Collapsing sections folds sibling chunks after the statement: ask for more,
+    # so the page still fills.
+    top_k = input.top_k * 3 if input.collapse_sections else input.top_k
+
     async def _ranked(namespaces: list[str]) -> list[ChunkHit]:
         base = HybridSearchQuery(
             org=input.org,
             namespaces=tuple(namespaces),
             embedding_model=embedder.model_name,
             query_vec=query_vec,
-            top_k=input.top_k,
+            top_k=top_k,
             tags=list(input.tags or []),
             since_seconds=input.since_seconds,
             uri_prefixes=list(input.uri_prefix or []),
@@ -105,11 +109,11 @@ def _namespaces_search(
             return await lexical_search(lex_q)
         # Fusion candidates: fetch a wider slice from each leg so the top_k of
         # the fused list is drawn from more than top_k on either side.
-        wide = dataclasses.replace(lex_q, top_k=max(input.top_k * 3, 20))
+        wide = dataclasses.replace(lex_q, top_k=max(top_k * 3, 20))
         sem, lex = await asyncio.gather(hybrid_search(wide), lexical_search(wide))
         if not lex:
-            return sem[: input.top_k]
-        return fuse_rrf(sem, lex, top_k=input.top_k, w_lex=input.lexical_weight)
+            return sem[:top_k]
+        return fuse_rrf(sem, lex, top_k=top_k, w_lex=input.lexical_weight)
 
     async def _search(namespaces: list[str]) -> list[tuple[str, list[ChunkHit]]]:
         by_ns: dict[str, list[ChunkHit]] = {}
@@ -158,6 +162,7 @@ def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_S
                     distance=h.distance,
                     similarity=1.0 - h.distance,
                     namespace=ns,
+                    ingested_at=h.ingested_at,
                     section_path=list(h.section_path),
                     section=h.section,
                     lexical_score=h.lexical_score,

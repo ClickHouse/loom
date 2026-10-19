@@ -11,11 +11,11 @@ import pytest
 
 from server.auth import gateway, sharing
 from server.auth.jwt import AuthInfo, TokenError, mint_token, verify_token
-from server.auth.scim_groups import COLUMNS as GROUP_COLUMNS
-from server.auth.scim_groups import group_row
 from server.core import grant_cache
 from server.core.grant_cache import GrantMap, watermark_row
 from server.identity.app.collections import check_placement
+from server.identity.app.scim_groups import COLUMNS as GROUP_COLUMNS
+from server.identity.app.scim_groups import group_row
 from server.identity.store.collections import COLUMNS as COLLECTION_COLUMNS
 from server.identity.store.collections import collection_row
 from server.operations.base import Role
@@ -52,7 +52,7 @@ def test_a_gateway_token_is_refused_with_any_claim(kwargs: dict[str, Any]) -> No
 
 @pytest.mark.parametrize("subject", ["user:alice", "group:finance", "agent:helper"])
 def test_no_token_is_minted_for_a_grant_principal(subject: str) -> None:
-    with pytest.raises(TokenError):
+    with pytest.raises(ValueError, match="grant principal"):
         mint_token(subject, ORG, ["team"], ["viewer"], secret=SECRET)
 
 
@@ -79,6 +79,8 @@ def test_a_request_runs_as_the_user_the_gateway_names_and_nothing_more() -> None
         ("user:a b", ""),
         ("user:u-1", "group:finance"),
         ("user:u-1", "u-2"),
+        ("user:Alice", ""),  # ids are lowercase: two spellings never name one user
+        ("user:u-1", "agent:Helper"),
     ],
 )
 def test_a_gateway_names_only_a_user_and_an_agent(on_behalf_of: str, agent: str) -> None:
@@ -127,11 +129,11 @@ def test_a_move_that_would_nest_too_deep_is_refused() -> None:
 
 
 def test_only_a_collection_that_is_not_personal_holds_one() -> None:
-    tree = sharing.Tree(parent={"a": "", "me": ""}, personal=frozenset({"me"}))
+    tree = sharing.Tree(parent={"col-a": ""})
     with pytest.raises(Exception, match="not a collection"):
-        check_placement(tree, "a", "elsewhere")
+        check_placement(tree, "col-a", "col-elsewhere")
     with pytest.raises(Exception, match="personal"):
-        check_placement(tree, "a", "me")
+        check_placement(tree, "col-a", "col-me-0123")
 
 
 # ── who reads what ────────────────────────────────────────────────────────
@@ -165,6 +167,11 @@ def _user(name: str, agent: str = "") -> AuthInfo:
     return gateway.act_for(_gateway(), f"user:{name}", agent)
 
 
+def _shared(auth: AuthInfo) -> list[str]:
+    """The readable collections besides the user's own personal one."""
+    return [ns for ns in asyncio.run(sharing.readable(auth, ORG)) if not sharing.is_personal(ns)]
+
+
 def _role(auth: AuthInfo, ns: str) -> Role | None:
     return asyncio.run(sharing.role(auth, ORG, ns))
 
@@ -173,7 +180,7 @@ def test_a_group_grant_on_a_parent_reaches_its_child(org_state: dict[str, Any]) 
     org_state["grants"] = {"group:finance": {"col-q3": 1}}
     assert _role(_user("alice"), "col-q3-docs") is Role.VIEWER
     assert _role(_user("bob"), "col-q3-docs") is None
-    assert asyncio.run(sharing.readable(_user("alice"), ORG)) == ["col-q3", "col-q3-docs"]
+    assert _shared(_user("alice")) == ["col-q3", "col-q3-docs"]
 
 
 def test_the_best_role_of_every_principal_wins(org_state: dict[str, Any]) -> None:
@@ -199,7 +206,7 @@ def test_a_removed_member_reads_nothing_through_the_group(org_state: dict[str, A
     org_state["grants"] = {"group:finance": {"col-q3": 1}}
     org_state["groups"] = {}
     assert _role(_user("alice"), "col-q3") is None
-    assert asyncio.run(sharing.readable(_user("alice"), ORG)) == []
+    assert _shared(_user("alice")) == []
 
 
 def test_another_org_s_token_reaches_no_collection(org_state: dict[str, Any]) -> None:
@@ -210,7 +217,7 @@ def test_another_org_s_token_reaches_no_collection(org_state: dict[str, Any]) ->
     alice_elsewhere = gateway.act_for(other, "user:alice")
     with pytest.raises(PermissionError):
         asyncio.run(sharing.check(alice_elsewhere, Role.VIEWER, ORG, "col-q3"))
-    assert asyncio.run(sharing.readable(alice_elsewhere, ORG)) == []
+    assert _shared(alice_elsewhere) == []
 
 
 def test_an_org_admin_without_a_grant_reads_no_collection(org_state: dict[str, Any]) -> None:
@@ -259,3 +266,82 @@ def test_a_knowledge_search_reads_up_to_its_own_cap(monkeypatch: pytest.MonkeyPa
     read, skipped = many.split("col-0", settings.knowledge_search_max_namespaces)
     assert len(read) == 41 and len(skipped) == 9
     assert len(many.split("col-0").read) == 33, "memory search keeps the fan-out's cap"
+
+
+# ── personal collections, scoped and delegated tokens ─────────────────────
+
+
+def test_a_personal_collection_is_its_users_alone_and_takes_no_grant(
+    org_state: dict[str, Any],
+) -> None:
+    alices = sharing.personal_name(ORG, "user:alice")
+    org_state["grants"] = {"user:bob": {alices: 3}, "group:finance": {alices: 3}}
+    assert _role(_user("alice"), alices) is Role.ADMIN
+    assert _role(_user("bob"), alices) is None, "a stray grant row opens nothing"
+    assert alices in asyncio.run(sharing.readable(_user("alice"), ORG))
+    assert alices not in asyncio.run(sharing.readable(_user("bob"), ORG))
+    assert sharing.personal_name(ORG, "user:alice") != sharing.personal_name("globex", "user:alice")
+
+
+def _person(**kw: Any) -> AuthInfo:
+    base: dict[str, Any] = {
+        "subject": "sa:ci",
+        "org": ORG,
+        "namespaces": (),
+        "roles": (),
+        "is_service_account": True,
+    }
+    base.update(kw)
+    return AuthInfo(**base)
+
+
+def test_a_scoped_token_reaches_a_collection_no_further_than_its_claim(
+    org_state: dict[str, Any],
+) -> None:
+    org_state["grants"] = {"sa:ci": {"col-q3": 2}}
+    unnamed = _person(namespaces=("ns-a",), ns_roles=(("ns-a", "viewer"),))
+    assert _role(unnamed, "col-q3") is None
+    named = _person(namespaces=("col-q3",), ns_roles=(("col-q3", "viewer"),))
+    assert _role(named, "col-q3") is Role.VIEWER, "capped at the claim's viewer"
+
+
+def test_a_delegated_token_reaches_a_collection_no_further_than_its_creator(
+    org_state: dict[str, Any],
+) -> None:
+    org_state["grants"] = {"sa:ci": {"col-q3": 2}, "ann@acme.io": {"col-q3": 1}}
+    token = _person(namespaces=("col-q3",), roles=(Role.WRITER,), creator="ann@acme.io")
+    assert _role(token, "col-q3") is Role.VIEWER
+    org_state["grants"] = {"sa:ci": {"col-q3": 2}}
+    assert _role(token, "col-q3") is None, "the creator holds nothing there"
+
+
+def test_a_trusted_caller_cannot_become_a_grant_principal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "trusted_callers", "sa:proxy")
+    proxy = _person(subject="sa:proxy", namespaces=("*",), roles=(Role.WRITER,))
+    for header in ("user:u-1", "group:finance", "agent:helper"):
+        with pytest.raises(PermissionError):
+            gateway.effective_auth(proxy, header)
+    assert gateway.effective_auth(proxy, "bob@acme.io").subject == "bob@acme.io"
+
+
+def test_an_end_user_gets_no_directory_self_service() -> None:
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import gates
+
+    end_user = _user("alice")
+    for name in ("namespace.register", "namespace.join", "namespace.browse"):
+        op = OPERATIONS_BY_NAME[name]
+        target = gates.Target(
+            org=ORG, namespace=None, named_namespace=None, register_namespace=None
+        )
+        with pytest.raises(PermissionError, match="not open to a gateway"):
+            asyncio.run(gates.authorize(op, end_user, target, transport="http"))
+    assert {"collection.create", "collection.list"} <= gates.END_USER_ORG_OPS
+
+
+def test_an_erasure_rewrite_outranks_a_row_versioned_by_a_faster_clock() -> None:
+    from server.erasure.store import steps_principals
+
+    assert steps_principals._NEW_VERSION.startswith("greatest(version + 1,")

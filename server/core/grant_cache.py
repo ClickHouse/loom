@@ -34,13 +34,12 @@ from typing import Any
 from server.core import readiness
 from server.core.errors import BackendUnavailableError
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
+from server.core.principals import ONE_SPELLING
 from server.settings import settings
 
 log = logging.getLogger(__name__)
 
 _MAX_ENTRIES = 10_000
-# Subjects with one spelling: service accounts and a gateway's principals.
-_ONE_SPELLING = ("sa:", "user:", "group:", "agent:")
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,8 +89,7 @@ async def grant_map(org: str, subject: str) -> GrantMap:
         # watermark move superseded; while the watermark is stale, one read at the
         # last mark seen still may (no move since was seen). A task of its own, so a
         # cancelled request does not fail the others.
-        usable = hit is not None and hit[1] in (writes, _marks.get(org, 0) if _watching else None)
-        current = hit if usable else None
+        current = hit if hit is not None and _may_stand_in(hit, org, writes) else None
         task = asyncio.ensure_future(_load(key, current, writes))
         _loading[key] = (task, writes)
         _running.add(task)
@@ -99,9 +97,18 @@ async def grant_map(org: str, subject: str) -> GrantMap:
     return await asyncio.shield(task)
 
 
+def _may_stand_in(hit: _Entry, org: str, writes: int | None) -> bool:
+    """Whether a cached entry may answer for a failed re-read: it was read at
+    the org's current mark, or, while the watermark is stale, at the last mark
+    seen (no move since was seen)."""
+    if hit[1] == writes:
+        return True
+    return _watching and _unread(writes) and hit[1] == _marks.get(org, 0)
+
+
 # Per-org values that change with the org's grants (`org_value`): its
 # collection tree and its group members. (kind, org) -> (when stored, mark, value).
-_org_values: dict[tuple[str, str], tuple[float, int | None, Any]] = {}
+_org_values: OrderedDict[tuple[str, str], tuple[float, int | None, Any]] = OrderedDict()
 
 
 async def org_value[T](kind: str, org: str, load: Callable[[str], Awaitable[T]]) -> T:
@@ -115,11 +122,15 @@ async def org_value[T](kind: str, org: str, load: Callable[[str], Awaitable[T]])
         and hit[1] == writes
         and time.monotonic() - hit[0] < settings.grant_cache_ttl_seconds
     ):
+        _org_values.move_to_end(key)
         return hit[2]  # type: ignore[no-any-return]
     generation = _generation[org]
     value = await load(org)
     if _generation[org] == generation and not _unread(writes):
         _org_values[key] = (time.monotonic(), writes, value)
+        _org_values.move_to_end(key)
+        while len(_org_values) > _MAX_ENTRIES:
+            _org_values.popitem(last=False)
     return value
 
 
@@ -215,16 +226,18 @@ def fresh() -> bool:
 async def poll() -> None:
     """Read the watermark once: the total over every org, and each org's pair
     only when the total moved. Moves the mark of each org whose pair moved. A
-    failure keeps the marks; `_writes` stops trusting them past the stale bound.
-    The grant re-read after a move is sequentially consistent on its own."""
+    failure keeps the marks; `_writes` stops trusting them past the stale bound."""
     global _watching, _polled_at, _total
-    from server.core.ch import get_client
+    from server.core.ch import get_client, sequential_reads
 
     _watching = True
     try:
-        row = await get_client().query_one(
-            "SELECT count() AS n, sum(version) AS s FROM loom.acl_versions"
-        )
+        # Sequential, so a process whose reads alternate between a lagging
+        # replica and a current one does not see the total move back and forth.
+        with sequential_reads():
+            row = await get_client().query_one(
+                "SELECT count() AS n, sum(version) AS s FROM loom.acl_versions"
+            )
         total = (int((row or {}).get("n") or 0), int((row or {}).get("s") or 0))
         if total != _total:
             rows = await get_client().query_all(
@@ -311,7 +324,7 @@ async def _read(org: str, subject: str) -> GrantMap:
     namespaces' ranks, and every spelling read, for `invalidate`."""
     from server.core.ch import get_client, own_write_reads
 
-    human = bool(subject) and subject != "*" and not subject.startswith(_ONE_SPELLING)
+    human = bool(subject) and subject != "*" and not subject.startswith(ONE_SPELLING)
     with own_write_reads():
         row = await get_client().query_one(
             """

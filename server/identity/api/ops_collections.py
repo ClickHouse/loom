@@ -5,6 +5,8 @@ from __future__ import annotations
 from server.identity.api.models_collections import (
     CollectionCreateInput,
     CollectionCreateOutput,
+    CollectionDeleteInput,
+    CollectionDeleteOutput,
     CollectionListInput,
     CollectionListOutput,
     CollectionMoveInput,
@@ -12,6 +14,7 @@ from server.identity.api.models_collections import (
 )
 from server.identity.app.collections import (
     handle_collection_create,
+    handle_collection_delete,
     handle_collection_list,
     handle_collection_move,
 )
@@ -40,8 +43,7 @@ collection_move = Operation(
     handler=handle_collection_move,
     idempotent=True,
     budget_p99_ms=80,
-    # Admin on the collection moved, checked here; writer on the new parent,
-    # checked by the handler.
+    # Admin on the collection moved; writer on the new parent, checked by the handler.
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -60,4 +62,21 @@ collection_list = Operation(
     skip_namespace_authz=True,
 )
 
-OPERATIONS: list[Operation] = [collection_create, collection_move, collection_list]
+collection_delete = Operation(
+    name="collection.delete",
+    maturity="experimental",
+    input_model=CollectionDeleteInput,
+    output_model=CollectionDeleteOutput,
+    handler=handle_collection_delete,
+    idempotent=True,
+    budget_p99_ms=80,
+    required_role=Role.ADMIN,
+    audit=True,
+)
+
+OPERATIONS: list[Operation] = [
+    collection_create,
+    collection_move,
+    collection_list,
+    collection_delete,
+]

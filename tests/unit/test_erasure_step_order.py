@@ -174,9 +174,9 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
         "documents.tombstone",
         ((D, "loom.document_blobs"), (U, "loom.documents"), (U, "loom.documents")),
     ),
-    ("grants.revoke", (("OTHER", "INSERT"),)),
+    ("grants.revoke", ()),  # no grant names the user here
     ("groups.remove_member", (("OTHER", "INSERT"),)),
-    ("collections.retire_personal", (("OTHER", "INSERT"), ("OTHER", "INSERT"))),
+    ("personal.retire", (("OTHER", "INSERT"),)),
     (
         "conversations.tombstone",
         (

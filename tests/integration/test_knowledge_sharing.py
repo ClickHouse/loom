@@ -102,10 +102,11 @@ def test_a_document_added_to_a_shared_collection_reaches_the_group_at_once(gw: G
     hits = _search(gw, "bob", plans, nonce)
     assert any(nonce in h["content"] for h in hits), "inherited from the parent, at once"
     listed = gw.ok("bob", "collection.list", {})["collections"]
-    assert {(c["namespace"], c["parent"], c["role"]) for c in listed} == {
+    assert {(c["namespace"], c["parent"], c["role"]) for c in listed if not c["personal"]} == {
         (q3, "", "viewer"),
         (plans, q3, "viewer"),
     }
+    assert [c["role"] for c in listed if c["personal"]] == ["admin"], "bob's own"
     assert not any(nonce in h["content"] for h in _search(gw, "carol", "@me", nonce))
     # A writer role is needed to add; the group holds viewer.
     assert (
@@ -155,7 +156,7 @@ def test_cycles_and_depth_are_refused(gw: Gateway) -> None:
 def test_no_request_field_makes_a_saved_item_or_widens_a_grant(
     gw: Gateway, control_plane_url: str, mint_test_token: Any
 ) -> None:
-    from server.identity.app.personal_collection import name_for
+    from server.auth.sharing import personal_name as name_for
 
     nonce = _nonce()
     gw.ok(
@@ -311,3 +312,67 @@ def test_a_users_erasure_leaves_no_trace_and_keeps_others_documents(
         "bob", "knowledge.search", {"namespace": "@me", "query": mine, "namespace_scope": "this"}
     )
     assert not any(mine in h["content"] for h in left["results"])
+
+
+def test_a_create_cut_short_is_finished_by_its_creator_alone(gw: Gateway, ch_client: Any) -> None:
+    import time
+
+    name = f"col-cut-{uuid.uuid4().hex[:6]}"
+    # The tree row and the creator's grant landed; the directory row did not.
+    ch_client.insert(
+        "loom.collections",
+        [[gw.org, name, "", "user:alice", 0, time.time_ns()]],
+        column_names=["org", "namespace", "parent", "owner", "deleted", "version"],
+    )
+    assert gw.call("bob", "collection.create", {"namespace": name}).status_code == 409
+    out = gw.ok("alice", "collection.create", {"namespace": name})
+    assert out["created"] is True
+    assert gw.ok("alice", "collection.create", {"namespace": name})["created"] is False
+
+
+def test_a_grant_row_on_a_personal_collection_opens_nothing(gw: Gateway, ch_client: Any) -> None:
+    import time
+
+    from server.auth.sharing import personal_name
+
+    nonce = _nonce()
+    gw.ok(
+        "alice",
+        "knowledge.upsert",
+        {"namespace": "@me", "source_uri": "chat/c/m", "content": nonce},
+    )
+    alices = personal_name(gw.org, "user:alice")
+    ch_client.insert(
+        "loom.namespace_grants",
+        [[gw.org, alices, "user:bob", "admin", "test", time.time_ns(), "active"]],
+        column_names=["org", "namespace", "subject", "role", "granted_by", "version", "status"],
+    )
+    r = gw.call("bob", "knowledge.search", {"namespace": alices, "query": nonce})
+    assert r.status_code == 403
+    assert gw.call("bob", "namespace.join", {"namespace": alices}).status_code in (403, 422)
+
+
+def test_an_end_user_gets_no_directory_self_service(gw: Gateway) -> None:
+    for op, payload in (
+        ("namespace.register", {"namespace": f"mine-{uuid.uuid4().hex[:6]}", "owner_email": "x"}),
+        ("namespace.join", {"namespace": "anything"}),
+        ("namespace.browse", {}),
+    ):
+        assert gw.call("alice", op, payload).status_code == 403, op
+
+
+def test_an_id_with_capitals_is_refused(gw: Gateway) -> None:
+    assert (
+        gw.call("Alice", "knowledge.search", {"namespace": "@me", "query": "q"}).status_code == 403
+    )
+
+
+def test_a_deleted_collection_leaves_its_children_top_level(gw: Gateway) -> None:
+    tag = uuid.uuid4().hex[:6]
+    top = _collection(gw, "alice", f"col-top-{tag}")
+    child = _collection(gw, "alice", f"col-child-{tag}", parent=top)
+    gw.ok("alice", "grants.create", {"namespace": child, "subject": "user:bob", "role": "viewer"})
+    assert gw.ok("alice", "collection.delete", {"namespace": top})["deleted"] is True
+    listed = {c["namespace"]: c for c in gw.ok("bob", "collection.list", {})["collections"]}
+    assert listed[child]["parent"] == "", "the child keeps its own grant, at the top"
+    assert gw.call("bob", "collection.delete", {"namespace": child}).status_code == 403

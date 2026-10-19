@@ -10,33 +10,27 @@ that user's rows (`own_user`), and what it reaches is what grants give
 
 The gateway is trusted to authenticate its users, as it already holds their
 data. Loom bounds what it can claim: one org, a `user:` or `agent:` id, nothing
-else (no group, role, namespace or Loom account).
+else (no group, role, namespace or Loom account). Ids are lowercase
+(server/core/principals.py).
 """
 
 from __future__ import annotations
 
 import dataclasses
-import re
 
 from server.auth.jwt import AuthInfo
+from server.core.principals import AGENT, GROUP, PRINCIPAL_PREFIXES, USER, principal_id
 from server.operations.base import Role
 
-USER, GROUP, AGENT = "user:", "group:", "agent:"
-PRINCIPAL_PREFIXES = (USER, GROUP, AGENT)
-_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@-]{0,127}")
-
-
-def principal_id(value: str, prefix: str) -> str:
-    """The id of `value` when it is `prefix<id>` with a well-formed id, else ''."""
-    if not value.startswith(prefix):
-        return ""
-    ident = value[len(prefix) :]
-    return ident if _ID.fullmatch(ident) else ""
-
-
-def is_principal(subject: str) -> bool:
-    """True for a `user:`, `group:` or `agent:` grant subject with a well-formed id."""
-    return any(principal_id(subject, p) for p in PRINCIPAL_PREFIXES)
+__all__ = [
+    "AGENT",
+    "GROUP",
+    "PRINCIPAL_PREFIXES",
+    "USER",
+    "act_for",
+    "effective_auth",
+    "is_end_user",
+]
 
 
 def is_end_user(auth: AuthInfo | None) -> bool:
@@ -71,3 +65,22 @@ def act_for(gateway: AuthInfo, on_behalf_of: str, agent: str = "") -> AuthInfo:
         gateway=False,
         agent_principal=agent,
     )
+
+
+def effective_auth(auth: AuthInfo, on_behalf_of: str, agent: str = "") -> AuthInfo:
+    """The identity an HTTP request with these headers runs as: the end user a
+    gateway token names, the Loom subject a trusted caller acts for, or the
+    bearer's own. PermissionError for a header the bearer may not send."""
+    from server.settings import settings
+
+    if auth.gateway:
+        return act_for(auth, on_behalf_of, agent)
+    trusted = {s.strip() for s in settings.trusted_callers.split(",") if s.strip()}
+    on_behalf_of = on_behalf_of.strip()
+    if not on_behalf_of or auth.subject not in trusted:
+        return auth
+    # A trusted caller acts for a Loom subject; only a gateway token becomes a
+    # grant principal.
+    if on_behalf_of.startswith(PRINCIPAL_PREFIXES):
+        raise PermissionError("a trusted caller acts for a Loom subject, not a grant principal")
+    return dataclasses.replace(auth, subject=on_behalf_of, impersonated_by=auth.subject)

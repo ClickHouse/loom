@@ -45,6 +45,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("server.transport.gates")
 
+# The org-level ops a gateway's end user may call (server/auth/gateway.py):
+# make and list collections, and read their own standing.
+END_USER_ORG_OPS = frozenset(
+    {"collection.create", "collection.list", "namespace.list_mine", "grants.pending_for_me"}
+)
+
 # The code a role / namespace refusal carries on both transports: the one the
 # SDKs map (`AuthInsufficient`) and docs/reference/errors.md lists.
 ROLE_REFUSAL_CODE = "AUTH_INSUFFICIENT"
@@ -125,7 +131,13 @@ async def authorize(
     # Idempotent and process-cached; after impersonation, so a trusted caller
     # provisions for the effective user. A gateway's end user gets a personal
     # collection instead, the first time a request addresses `@me`.
-    if not is_end_user(auth):
+    if is_end_user(auth):
+        # Of the ops no namespace gates, an end user may only make and list
+        # collections: no directory self-service (register, join, browse).
+        org_level = op.skip_namespace_authz or op.deployment_scoped
+        if org_level and op.name not in END_USER_ORG_OPS:
+            raise PermissionError(f"{op.name} is not open to a gateway's end user")
+    else:
         await ensure_personal_namespace_cached(
             org=auth.org, subject=auth.subject, is_service_account=auth.is_service_account
         )

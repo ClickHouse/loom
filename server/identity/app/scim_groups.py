@@ -27,8 +27,8 @@ from fastapi.responses import JSONResponse
 
 from server.auth import scim
 from server.auth.bearer import bearer_token
-from server.auth.gateway import USER, principal_id
-from server.auth.jwt import AuthInfo, TokenError, verify_token
+from server.auth.grant_claims import group_change
+from server.auth.jwt import AuthInfo, AuthUnavailable, TokenError, verify_token
 from server.auth.scim_routes import (
     _LIST_SCHEMA,
     _MAX_RESULTS,
@@ -40,6 +40,7 @@ from server.auth.scim_routes import (
 )
 from server.core import grant_cache
 from server.core.ch import get_client, own_write_reads, set_query_tag
+from server.core.principals import USER, principal_id
 from server.observability import audit
 from server.observability.metrics import record_auth_refusal
 from server.settings import settings
@@ -79,6 +80,8 @@ async def _org(request: Request) -> str:
         return ""
     try:
         auth: AuthInfo = verify_token(token)
+    except AuthUnavailable as e:  # the revocation list or keyring is not loaded yet
+        raise ScimError(503, "tokens cannot be checked yet; retry") from e
     except TokenError as e:
         record_auth_refusal(e, transport="scim")
         raise ScimError(401, message) from None
@@ -192,7 +195,8 @@ async def list_groups(request: Request, org: str = Depends(_org)) -> JSONRespons
     rows: list[dict[str, Any]] = []
     total = 0
     if org:
-        where, params = "org = {org:String} AND NOT deleted", {"org": org}
+        where = "org = {org:String} AND NOT deleted"
+        params: dict[str, Any] = {"org": org}
         text = request.query_params.get("filter") or ""
         if text:
             attribute, _, value = text.partition(" eq ")
@@ -208,13 +212,16 @@ async def list_groups(request: Request, org: str = Depends(_org)) -> JSONRespons
             where += f" AND {column} = {{v:String}}"
             params["v"] = value.strip().strip('"')
         with own_write_reads():
-            found = await get_client().query_all(
-                f"SELECT {', '.join(COLUMNS)} FROM loom.principal_groups FINAL WHERE {where} "
-                "ORDER BY group_id",
+            counted = await get_client().query_one(
+                f"SELECT count() AS n FROM loom.principal_groups FINAL WHERE {where}",
                 params=params,
             )
-        total = len(found)
-        rows = found[start - 1 : start - 1 + count]
+            rows = await get_client().query_all(
+                f"SELECT {', '.join(COLUMNS)} FROM loom.principal_groups FINAL WHERE {where} "
+                "ORDER BY group_id LIMIT {lim:UInt32} OFFSET {off:UInt64}",
+                params={**params, "lim": count, "off": start - 1},
+            )
+        total = int((counted or {}).get("n") or 0)
     return _answer(
         {
             "schemas": [_LIST_SCHEMA],
@@ -239,16 +246,18 @@ async def create_group(request: Request, org: str = Depends(_org)) -> JSONRespon
     body = await _body(request)
     external = str(body.get("externalId") or "")
     group_id = external if principal_id(USER + external, USER) else uuid.uuid4().hex
-    if await _fetch(org, group_id) is not None:
-        raise ScimError(409, f"a group {group_id!r} exists", "uniqueness")
-    row = group_row(
-        org,
-        group_id,
-        display_name=str(body.get("displayName") or ""),
-        external_id=external,
-        members=_members(body.get("members")),
-    )
-    await _write(row, event="scim.group_created")
+    members = _members(body.get("members"))
+    async with group_change(org, group_id):
+        if await _fetch(org, group_id) is not None:
+            raise ScimError(409, f"a group {group_id!r} exists", "uniqueness")
+        row = group_row(
+            org,
+            group_id,
+            display_name=str(body.get("displayName") or ""),
+            external_id=external,
+            members=members,
+        )
+        await _write(row, event="scim.group_created")
     resource = _resource(request, row)
     return _answer(resource, 201, Location=resource["meta"]["location"])
 
@@ -256,29 +265,25 @@ async def create_group(request: Request, org: str = Depends(_org)) -> JSONRespon
 @router.put("/Groups/{group_id}")
 async def replace_group(group_id: str, request: Request, org: str = Depends(_org)) -> JSONResponse:
     org = _writable(org)
-    current = await _existing(org, group_id)
     body = await _body(request)
-    row = group_row(
-        org,
-        group_id,
-        display_name=str(body.get("displayName") or current["display_name"]),
-        external_id=str(body.get("externalId") or current["external_id"]),
-        members=_members(body.get("members")),
-        created_at=current["created_at"],
-    )
-    await _write(row, event="scim.group_replaced")
+    members = _members(body.get("members"))
+    async with group_change(org, group_id):
+        current = await _existing(org, group_id)
+        row = group_row(
+            org,
+            group_id,
+            display_name=str(body.get("displayName") or current["display_name"]),
+            external_id=str(body.get("externalId") or current["external_id"]),
+            members=members,
+            created_at=current["created_at"],
+        )
+        await _write(row, event="scim.group_replaced")
     return _answer(_resource(request, row))
 
 
-@router.patch("/Groups/{group_id}")
-async def patch_group(group_id: str, request: Request, org: str = Depends(_org)) -> JSONResponse:
-    """`add` / `remove` / `replace` on `members`, and `replace` on `displayName`."""
-    org = _writable(org)
-    current = await _existing(org, group_id)
-    body = await _body(request)
-    members = set(current["members"])
-    name = current["display_name"]
-    for op in body.get("Operations") or []:
+def _patched(name: str, members: set[str], operations: list[Any]) -> tuple[str, set[str]]:
+    """The group's name and members once `operations` (RFC 7644 §3.5.2) apply."""
+    for op in operations:
         kind = str(op.get("op") or "").lower()
         path = str(op.get("path") or "")
         value = op.get("value")
@@ -287,42 +292,61 @@ async def patch_group(group_id: str, request: Request, org: str = Depends(_org))
         elif path.lower() == "members" and kind in ("add", "replace"):
             members = (set() if kind == "replace" else members) | set(_members(value))
         elif path.lower() == "members" and kind == "remove":
-            # No value removes every member (RFC 7644 §3.5.2.2).
+            # No value removes every member (§3.5.2.2).
             members = members - set(_members(value)) if value else set()
         elif (filtered := _MEMBER_FILTER.fullmatch(path)) and kind == "remove":
-            members.discard(USER + filtered.group(1))
+            members = members - {USER + filtered.group(1)}
         elif not path and kind == "replace" and isinstance(value, dict):
             name = str(value.get("displayName") or name)
             if "members" in value:
                 members = set(_members(value["members"]))
         else:
             raise ScimError(400, f"{kind} {path or '(no path)'} is not served", "invalidPath")
-    row = group_row(
-        org,
-        group_id,
-        display_name=name,
-        external_id=current["external_id"],
-        members=sorted(members),
-        created_at=current["created_at"],
-    )
-    await _write(row, event="scim.group_changed")
+    return name, members
+
+
+@router.patch("/Groups/{group_id}")
+async def patch_group(group_id: str, request: Request, org: str = Depends(_org)) -> JSONResponse:
+    """`add` / `remove` / `replace` on `members`, and `replace` on `displayName`."""
+    org = _writable(org)
+    body = await _body(request)
+    async with group_change(org, group_id):
+        current = await _existing(org, group_id)
+        name, members = _patched(
+            current["display_name"], set(current["members"]), body.get("Operations") or []
+        )
+        row = group_row(
+            org,
+            group_id,
+            display_name=name,
+            external_id=current["external_id"],
+            members=sorted(members),
+            created_at=current["created_at"],
+        )
+        await _write(row, event="scim.group_changed")
     return _answer(_resource(request, row))
 
 
 @router.delete("/Groups/{group_id}")
 async def delete_group(group_id: str, org: str = Depends(_org)) -> Response:
+    """The group goes, and so do the grants that named it: a group made later
+    under the same id starts with none."""
+    from server.identity.app.grants import revoke_subject
+
     org = _writable(org)
-    current = await _existing(org, group_id)
-    row = group_row(
-        org,
-        group_id,
-        display_name=current["display_name"],
-        external_id=current["external_id"],
-        members=[],
-        created_at=current["created_at"],
-        deleted=True,
-    )
-    await _write(row, event="scim.group_deleted")
+    async with group_change(org, group_id):
+        current = await _existing(org, group_id)
+        row = group_row(
+            org,
+            group_id,
+            display_name=current["display_name"],
+            external_id=current["external_id"],
+            members=[],
+            created_at=current["created_at"],
+            deleted=True,
+        )
+        await _write(row, event="scim.group_deleted")
+        await revoke_subject(org, f"group:{group_id}")
     return Response(status_code=204)
 
 

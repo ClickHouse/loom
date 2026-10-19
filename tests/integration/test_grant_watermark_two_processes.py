@@ -92,7 +92,7 @@ async def _connected(work: Any) -> None:
 
 
 def _run_change(kind: str, org: str, step: str) -> None:
-    from server.auth import scim_groups
+    from server.identity.app import scim_groups
     from server.identity.store import grants as grants_repo
 
     async def _work() -> None:

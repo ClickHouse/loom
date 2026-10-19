@@ -13,6 +13,7 @@ vector leg by reciprocal rank. Tokenisation here must match the view: lower-case
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from typing import Any, Protocol
 
 from server.core import bm25
@@ -30,8 +31,10 @@ class _StatsClient(Protocol):
 
 
 MIN_TOKEN_LEN = bm25.MIN_TERM_LEN
-_CORPUS_CACHE: dict[tuple[str, str, str], tuple[float, int, float]] = {}
+_CORPUS_CACHE: OrderedDict[tuple[str, str, str], tuple[float, int, float]] = OrderedDict()
 _CORPUS_CACHE_TTL_S = 300.0
+# One entry per namespace a search read; the oldest go past this many.
+_CORPUS_CACHE_MAX = 50_000
 
 
 def tokenize(text: str) -> list[str]:
@@ -74,6 +77,9 @@ async def corpus_stats(
         for ns in missing:
             stats[ns] = found.get(ns, (0, 0.0))
             _CORPUS_CACHE[(org, ns, embedding_model)] = (now, *stats[ns])
+            _CORPUS_CACHE.move_to_end((org, ns, embedding_model))
+        while len(_CORPUS_CACHE) > _CORPUS_CACHE_MAX:
+            _CORPUS_CACHE.popitem(last=False)
     n = sum(count for count, _ in stats.values())
     words = sum(count * avgdl for count, avgdl in stats.values())
     return n, (words / n if n else 0.0)

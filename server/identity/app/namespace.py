@@ -324,16 +324,11 @@ async def require_admin_of_existing(
 
 
 def refuse_sso_name(namespace: str) -> None:
-    """A new namespace may not take a name single sign-on creates from an email,
-    nor a collection's (collection.create makes those)."""
-    from server.auth.sharing import COLLECTION_PREFIX
-
+    """A new namespace may not take a name single sign-on creates from an email."""
     if reserved_for_sso(namespace):
         raise ValidationError(
             f"'{SSO_NAMESPACE_PREFIX}' names are reserved for the accounts single sign-on creates"
         )
-    if namespace.startswith(COLLECTION_PREFIX):
-        raise ValidationError(f"'{COLLECTION_PREFIX}' names are collections: use collection.create")
 
 
 async def handle_namespace_register(
@@ -341,8 +336,10 @@ async def handle_namespace_register(
 ) -> NamespaceRegisterOutput:
     ch = get_client()
     caller = resolve_subject()
-    if input.kind in ("collection", "personal"):
-        raise ValidationError("a collection is created with collection.create, which places it")
+    from server.auth.sharing import COLLECTION_PREFIX
+
+    if input.kind in ("collection", "personal") or input.namespace.startswith(COLLECTION_PREFIX):
+        raise ValidationError("a collection is changed with the collection operations only")
 
     # Create-or-update. Fresh row ⇒ caller becomes admin; existing row ⇒
     # only an admin may update it. The whole stored row is read, so every setting the

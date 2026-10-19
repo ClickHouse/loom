@@ -62,15 +62,19 @@ async def namespaces_to_search(
     fan-out setting's by default)."""
     if namespace_scope != "all_mine":
         return Split([namespace], [])
-    return (await resolve_fanout(org)).split(namespace, cap)
+    fanout = await (resolve_fanout(org) if cap is None else resolve_fanout(org, cap))
+    return fanout.split(namespace, cap)
 
 
-async def resolve_fanout(org: str) -> Fanout:
+async def resolve_fanout(org: str, cap: int | None = None) -> Fanout:
     """The caller's namespaces of the fan-out kinds, in their order, which is a
-    priority only when `ordered` (a scoped token). Memoised per org for the
-    request: binding a principal clears the memo."""
+    priority only when `ordered` (a scoped token). `cap`: the most a search
+    will read (the fan-out setting by default), so the public ones are fetched
+    only when it would cut. Memoised per org and cap for the request: binding a
+    principal clears the memo."""
+    cap = settings.memory_search_fanout_max_namespaces if cap is None else cap
     cached = context.fanout_memo.get()
-    if cached is not None and cached.org == org:
+    if cached is not None and cached.org == org and cached.cap == cap:
         return cached
     # With auth off there is no token, but the single user's grants still say
     # which namespaces are theirs. With auth on, no token means no namespaces.
@@ -79,7 +83,6 @@ async def resolve_fanout(org: str) -> Fanout:
     readable = await context.resolve_my_namespaces(org, subject)
     # A scoped or delegated claim may repeat a namespace; it is read once.
     mine = list(dict.fromkeys(await directory().fanout_namespaces(org, readable)))
-    cap = settings.memory_search_fanout_max_namespaces
     ordered = auth is not None and auth.has_ns_roles()
     public: set[str] = set()
     if len(mine) > cap and not ordered:

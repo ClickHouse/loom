@@ -1155,7 +1155,6 @@ CREATE TABLE IF NOT EXISTS loom.collections
     `org` LowCardinality(String),
     `namespace` String,
     `parent` String DEFAULT '',
-    `personal` Bool DEFAULT false,
     `owner` String DEFAULT '',
     `created_at` DateTime64(3) DEFAULT now64(3),
     `deleted` Bool DEFAULT false,

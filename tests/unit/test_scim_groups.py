@@ -11,8 +11,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.auth import scim_groups
 from server.auth.jwt import mint_token, verify_token
+from server.identity.app import scim_groups
 
 ORG = "acme"
 SECRET = "g" * 32
@@ -25,13 +25,7 @@ class _Store:
         self.rows: dict[tuple[str, str], dict[str, Any]] = {}
         self.watermarks: list[str] = []
 
-    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> dict | None:
-        p = params or {}
-        row = self.rows.get((p["org"], p["gid"]))
-        return None if row is None or row["deleted"] else row
-
-    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
-        p = params or {}
+    def _listed(self, sql: str, p: dict[str, Any]) -> list[dict]:
         rows = [
             r for (org, _), r in sorted(self.rows.items()) if org == p["org"] and not r["deleted"]
         ]
@@ -40,11 +34,24 @@ class _Store:
             rows = [r for r in rows if r[column] == p["v"]]
         return rows
 
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> dict | None:
+        p = params or {}
+        if "count()" in sql:
+            return {"n": len(self._listed(sql, p))}
+        row = self.rows.get((p["org"], p["gid"]))
+        return None if row is None or row["deleted"] else row
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+        p = params or {}
+        if "loom.principal_groups" not in sql:  # the grants a deleted group named: none here
+            return []
+        return self._listed(sql, p)[p["off"] : p["off"] + p["lim"]]
+
     async def insert(self, table: str, rows: list[dict[str, Any]], **_k: Any) -> None:
         for r in rows:
             if table == "loom.acl_versions":
                 self.watermarks.append(r["org"])
-            else:
+            elif table == "loom.principal_groups":
                 self.rows[(r["org"], r["group_id"])] = r
 
 

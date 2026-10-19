@@ -42,8 +42,17 @@ def _scope(org_of_token: str, role: Role, org: str) -> Any:
     return asyncio.run(context.resolve_org_scope(org))
 
 
-def test_an_org_admin_sees_its_own_org_whole() -> None:
-    assert _scope("a", Role.ORG_ADMIN, "a").where == ""
+# An org admin's view leaves out the collections its grants do not reach.
+_UNREAD_COLLECTIONS = (
+    " AND (NOT startsWith(namespace, {col_prefix:String})"
+    " OR namespace IN {col_readable:Array(String)})"
+)
+
+
+def test_an_org_admin_sees_its_own_org_but_the_collections_it_cannot_read() -> None:
+    out = _scope("a", Role.ORG_ADMIN, "a")
+    assert out.where == _UNREAD_COLLECTIONS
+    assert out.params == {"col_prefix": "col-", "col_readable": []}
 
 
 def test_an_org_admin_of_another_org_gets_the_member_filter() -> None:
@@ -51,7 +60,9 @@ def test_an_org_admin_of_another_org_gets_the_member_filter() -> None:
     assert out.accessible is False  # no namespace of org b is theirs
 
 
-@pytest.mark.parametrize("token_org", ["a", "*"])
-def test_a_platform_admin_or_wildcard_org_admin_spans_orgs(token_org: str) -> None:
-    role = Role.PLATFORM_ADMIN if token_org == "a" else Role.ORG_ADMIN
-    assert _scope(token_org, role, "b").where == ""
+def test_a_platform_admin_spans_orgs_whole() -> None:
+    assert _scope("a", Role.PLATFORM_ADMIN, "b").where == ""
+
+
+def test_a_wildcard_org_admin_spans_orgs_but_their_unread_collections() -> None:
+    assert _scope("*", Role.ORG_ADMIN, "b").where == _UNREAD_COLLECTIONS

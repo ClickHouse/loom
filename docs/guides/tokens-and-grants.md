@@ -489,8 +489,13 @@ curl -s "$LOOM/v1/knowledge.search" -H "Authorization: Bearer $GATEWAY_TOKEN" \
 - Groups are pushed with the same token to SCIM `/scim/v2/Groups` (create, replace, patch
   members, delete); a member is a user id. A removed member loses the group's grants
   within `LOOM_ACL_WATERMARK_POLL_SECONDS`.
-- `namespace: "@me"` is the user's personal collection, created on first use and taking no
-  other grant. Collections, their tree and the read cost are in
+- Ids are lowercase letters, digits and `._@-`. `namespace: "@me"` is the user's personal
+  collection: only they reach it, and it takes no grant.
+- An end user may call `collection.create` and `collection.list` but no directory
+  self-service (`namespace.register`, `namespace.join`, `namespace.browse`).
+- Revoking the gateway token cuts off every user it acts for. To cut off one user, revoke
+  their grants and take them out of their groups, or erase them (`erasure.request` with
+  `scope_type: user_id`). Collections, their tree and the read cost are in
   [Sharing knowledge](../architecture/sharing.md).
 
 ## Revoke and rotate

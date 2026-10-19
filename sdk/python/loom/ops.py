@@ -100,6 +100,7 @@ OpName = Literal[
     "code.verify",
     "code.verify_citations",
     "collection.create",
+    "collection.delete",
     "collection.list",
     "collection.move",
     "conflicts.allowlist_list",
@@ -408,6 +409,7 @@ OP_NAMES: tuple[str, ...] = (
     "code.verify",
     "code.verify_citations",
     "collection.create",
+    "collection.delete",
     "collection.list",
     "collection.move",
     "conflicts.allowlist_list",
@@ -1382,6 +1384,18 @@ OPS: dict[str, OpSpec] = {
         "CollectionCreateOutput",
         True,
         "viewer",
+        "experimental",
+        80,
+        True,
+        False,
+    ),
+    "collection.delete": OpSpec(
+        "collection.delete",
+        "CollectionDeleteInput",
+        "CollectionDeleteBody",
+        "CollectionDeleteOutput",
+        True,
+        "admin",
         "experimental",
         80,
         True,
@@ -7065,22 +7079,44 @@ class CollectionCreateOutput(TypedDict, total=False):
     created: Required[bool]
 
 
-class CollectionListInput(TypedDict, total=False):
-    "List the collections the caller can read."
+class CollectionDeleteInput(TypedDict, total=False):
+    "Delete a collection: it leaves the directory and the tree; its documents"
 
     org: Required[str]
-    namespace: NotRequired[str]
+    namespace: Required[str]
 
 
-class CollectionListBody(TypedDict, total=False):
-    "List the collections the caller can read."
+class CollectionDeleteBody(TypedDict, total=False):
+    "Delete a collection: it leaves the directory and the tree; its documents"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
 
 
+class CollectionDeleteOutput(TypedDict, total=False):
+    namespace: Required[str]
+    deleted: Required[bool]
+
+
+class CollectionListInput(TypedDict, total=False):
+    "List the collections the caller can read, by name."
+
+    org: Required[str]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+
+
+class CollectionListBody(TypedDict, total=False):
+    "List the collections the caller can read, by name."
+
+    org: NotRequired[str]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+
+
 class CollectionListOutput(TypedDict, total=False):
     collections: Required[list["CollectionEntry"]]
+    next_cursor: NotRequired[Optional[str]]
 
 
 class CollectionEntry(TypedDict, total=False):
@@ -9228,6 +9264,7 @@ class SearchHit(TypedDict, total=False):
     distance: Required[float]
     similarity: Required[float]
     namespace: NotRequired[str]
+    ingested_at: NotRequired[Optional[str]]
     section_path: NotRequired[list[str]]
     section: NotRequired[str]
     lexical_score: NotRequired[float]

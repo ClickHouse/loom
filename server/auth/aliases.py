@@ -33,6 +33,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from server.auth.fail_closed import note_unreadable
+from server.core.principals import ONE_SPELLING
 
 log = logging.getLogger("loom.auth.aliases")
 
@@ -40,12 +41,8 @@ _CACHE: dict[tuple[str, str], tuple[float, tuple[str, ...]]] = {}
 _CACHE_MAX = 10_000
 
 
-# Service accounts, and the principals a gateway's grants name, have one spelling.
-_ONE_SPELLING = ("sa:", "user:", "group:", "agent:")
-
-
 def _is_human_subject(subject: str) -> bool:
-    return bool(subject) and subject != "*" and not subject.startswith(_ONE_SPELLING)
+    return bool(subject) and subject != "*" and not subject.startswith(ONE_SPELLING)
 
 
 async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -> list[str]:

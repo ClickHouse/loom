@@ -232,20 +232,17 @@ async def delegated_reach(
 
 
 async def hidden_namespaces(org: str) -> list[str]:
-    """The restricted namespaces and collections of `org` the current caller
-    may NOT read — the set an org-wide rollup must exclude even for an org
-    admin. Empty with auth disabled; `["*"]` when it cannot be told."""
-    from server.auth import sharing
+    """Restricted namespaces of `org` the current caller may NOT read — the
+    set an org-wide rollup must exclude even for an org admin (collections are
+    left out by `collection_clause`). Empty with auth disabled; `["*"]` when it
+    cannot be told."""
     from server.auth.authz import restricted_allows
     from server.operations.base import Role
 
     auth = current_auth()
     if auth is None:
         return []
-    collections = await sharing.hidden_from(auth, org)
     try:
-        if collections is None:
-            raise ClassificationUnavailable("collection tree not readable")
         names = directory().restricted_code_namespaces(org)
         names |= set(await directory().restricted_set(org))
     except ClassificationUnavailable:
@@ -255,12 +252,26 @@ async def hidden_namespaces(org: str) -> list[str]:
         note_answered_unverified()
         return ["*"]
     # A listing the caller did not scope: a namespace left out does not mark.
-    restricted = [
+    return [
         ns
         for ns in sorted(names)
         if not await restricted_allows(auth, Role.VIEWER, org, ns, hides_answer=False)
     ]
-    return sorted({*restricted, *collections})
+
+
+async def collection_clause(
+    org: str, column: str = "namespace"
+) -> tuple[str, dict[str, list[str]]]:
+    """A WHERE fragment that leaves out every collection of `org` the current
+    caller cannot read: by prefix, so it names only the readable ones."""
+    from server.auth import sharing
+
+    readable = await sharing.readable(current_auth(), org)
+    return (
+        f" AND (NOT startsWith({column}, {{col_prefix:String}})"
+        f" OR {column} IN {{col_readable:Array(String)}})",
+        {"col_prefix": sharing.COLLECTION_PREFIX, "col_readable": readable},  # type: ignore[dict-item]
+    )
 
 
 @dataclass(frozen=True)
@@ -307,18 +318,20 @@ async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeF
     if auth.has_role(Role.PLATFORM_ADMIN) or (
         auth.has_role(Role.ORG_ADMIN) and auth.org in ("*", org)
     ):
-        # An org admin sees everything EXCEPT the restricted
-        # namespaces it holds no grant + claim for.
+        # An org admin sees everything EXCEPT the restricted namespaces it
+        # holds no grant + claim for, and the collections it cannot read.
         hidden = await hidden_namespaces(org)
-        if not hidden:
-            return OrgScopeFilter(accessible=True, where="", params={})
         if hidden == ["*"]:
             return OrgScopeFilter(accessible=False, where="", params={})
-        return OrgScopeFilter(
-            accessible=True,
-            where=f" AND {column} NOT IN {{ns_hidden:Array(String)}}",
-            params={"ns_hidden": hidden},
+        # A platform admin reads every collection (sharing.check); an org admin
+        # only those its grants reach.
+        where, params = (
+            ("", {}) if auth.has_role(Role.PLATFORM_ADMIN) else await collection_clause(org, column)
         )
+        if hidden:
+            where += f" AND {column} NOT IN {{ns_hidden:Array(String)}}"
+            params["ns_hidden"] = hidden
+        return OrgScopeFilter(accessible=True, where=where, params=params)
     ns_list = await rollup_member_namespaces(org)
     if not ns_list:
         return OrgScopeFilter(accessible=False, where="", params={})

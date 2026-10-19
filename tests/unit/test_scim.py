@@ -25,7 +25,6 @@ from server.auth import (
     oauth,
     revocation,
     scim,
-    scim_groups,
     scim_routes,
     service_accounts,
 )
@@ -39,7 +38,7 @@ from server.auth.scim_routes import (
 )
 from server.core import ch
 from server.core.errors import GrantBusyError
-from server.identity.app import me_service_accounts
+from server.identity.app import me_service_accounts, scim_groups
 from server.observability import audit
 from server.settings import settings
 from tests.unit.revocation_fakes import revocation_read

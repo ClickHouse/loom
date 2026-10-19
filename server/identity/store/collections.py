@@ -12,7 +12,7 @@ from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
 
-COLUMNS = ("org", "namespace", "parent", "personal", "owner", "created_at", "deleted", "version")
+COLUMNS = ("org", "namespace", "parent", "owner", "created_at", "deleted", "version")
 
 
 def collection_row(
@@ -20,7 +20,6 @@ def collection_row(
     namespace: str,
     *,
     parent: str = "",
-    personal: bool = False,
     owner: str = "",
     created_at: datetime | None = None,
     deleted: bool = False,
@@ -30,7 +29,6 @@ def collection_row(
         "org": org,
         "namespace": namespace,
         "parent": parent,
-        "personal": personal,
         "owner": owner,
         "created_at": created_at or datetime.now(UTC).replace(tzinfo=None),
         "deleted": deleted,

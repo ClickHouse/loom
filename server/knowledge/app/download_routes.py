@@ -13,6 +13,8 @@ from fastapi.responses import Response, StreamingResponse
 
 from server.auth.authz import check_authorized
 from server.auth.bearer import missing_bearer, verify_bearer_header
+from server.auth.gateway import effective_auth, is_end_user
+from server.auth.sharing import PERSONAL_ALIAS, personal_name
 from server.core.ch import sequential_reads
 from server.knowledge.domain.documents import text_download_filename
 from server.knowledge.store import documents as documents_repo
@@ -47,6 +49,14 @@ async def knowledge_download(
     if auth is None and settings.auth_actually_required():
         raise missing_bearer()
     try:
+        if auth is not None:
+            auth = effective_auth(
+                auth,
+                request.headers.get("X-Loom-On-Behalf-Of") or "",
+                request.headers.get("X-Loom-Agent") or "",
+            )
+        if namespace == PERSONAL_ALIAS and is_end_user(auth):
+            namespace = personal_name(org, auth.subject)  # type: ignore[union-attr]
         await check_authorized(auth, Role.VIEWER, org=org, namespace=namespace)
     except PermissionError as e:
         raise HTTPException(

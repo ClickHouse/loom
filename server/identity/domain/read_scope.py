@@ -328,7 +328,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "code.verify_citations": _CODE_INDEX,
     # The groups below are planes with no path to memory rows.
     "tracker.": "tracker records: issues and their sources, no user's memory",
-    "knowledge.": "namespace documents: the plane has no user or session axis",
+    "knowledge.": "namespace documents: access is the namespace's; the user column is authorship",
     "task.": "the task inbox: tasks, not memory",
     "inbox.": "inbox registrations and policies",
     "grants.": "namespace grants",
@@ -366,7 +366,6 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "namespace.get": "the namespace's registration",
     "namespace.list_mine": "the caller's namespaces",
     "namespace.register": "registers a namespace",
-    "namespace.delete": "soft-deletes a namespace the caller administers",
     "namespace.join": "a membership request",
     "namespace.leave": "a membership change",
     "namespace.cancel_request": "a membership request",
