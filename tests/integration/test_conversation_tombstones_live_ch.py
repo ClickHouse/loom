@@ -383,6 +383,63 @@ async def test_two_agents_deleting_a_shared_turn_at_once_both_remove_it(ch, scop
     assert await _rows(ch, scope) == [("1", "shared", False)]
 
 
+class _PingPong(_PassThrough):
+    """After the first hand-off lands, runs `after_first`; runs the second hand-off as a
+    read, then `meanwhile`, then the write of what it read."""
+
+    def __init__(self, ch: Any, after_first: Any, meanwhile: Any) -> None:
+        super().__init__(ch)
+        self.after_first, self.meanwhile, self.handoffs = after_first, meanwhile, 0
+
+    async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
+        if "p.holder.1 AS agent" not in sql:
+            return await super().execute(sql, params, **kw)
+        self.handoffs += 1
+        if self.handoffs == 1:
+            out = await super().execute(sql, params, **kw)
+            await self.after_first()
+            return out
+        if self.handoffs == 2:
+            select = sql.split("INSERT INTO loom.conversation_embeddings", 1)[1]
+            rows = await self.ch.query_all(select, params=params)
+            await self.meanwhile()
+            if rows:
+                await self.ch.insert("loom.conversation_embeddings", rows)
+            return None
+        return await super().execute(sql, params, **kw)
+
+
+@pytest.mark.asyncio
+async def test_a_late_handoff_after_the_peer_hands_the_row_back_still_ends_tombstoned(
+    ch, scope
+) -> None:
+    """A hands the row to B; B's first pass hands it back (A's copy is still live);
+    A's second hand-off reads B's copy as live and lands after B's whole delete. Each
+    pass ends with a tombstone, so the turn both agents removed leaves search."""
+    await _message(ch, scope, "a", "1", "shared", T0)
+    await _message(ch, scope, "b", "1", "shared", T0)
+    await _embedding(ch, scope, "a", "1", "shared", T0)
+    when = datetime.now(UTC).replace(tzinfo=None)
+
+    async def b_first_pass() -> None:
+        await repo._tombstone_embeddings(
+            scope["org"], scope["ns"], "b", scope["tid"], msg_ids=None, when=when, ch=ch
+        )
+
+    async def b_deletes() -> None:
+        await repo.tombstone_thread(scope["org"], scope["ns"], "b", scope["tid"], when=when, ch=ch)
+
+    await repo.tombstone_thread(
+        scope["org"],
+        scope["ns"],
+        "a",
+        scope["tid"],
+        when=when,
+        ch=_PingPong(ch, b_first_pass, b_deletes),
+    )
+    assert await _rows(ch, scope) == [("1", "shared", False)]
+
+
 _LONG_IDS = [f"{i:04d}" + "x" * 508 for i in range(300)]  # 512-character ids
 
 

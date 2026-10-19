@@ -886,7 +886,10 @@ async def _tombstone_embeddings(
     # Sequential reads: on a multi-replica service a lagging replica could miss a turn
     # appended just before, leaving its embedding live once its message is tombstoned.
     with sequential_reads():
-        for build in (_tombstone_sql, _handoff_sql):
+        # The hand-off goes first, so a pass ends with a tombstone read taken after its
+        # own hand-off landed: a hand-off read while a peer's copy was live and landing
+        # after that peer's tombstone is then tombstoned by this pass or by the peer's.
+        for build in (_handoff_sql, _tombstone_sql):
             if msg_ids is None:
                 await ch.execute(build(_THREAD_TURNS), params)
                 continue
