@@ -96,7 +96,7 @@ def probe(monkeypatch: pytest.MonkeyPatch) -> tuple[_Store, list[str]]:
         required_role=Role.VIEWER,
         writes=True,  # a read-only op keeps no replay
     )
-    monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, TOOL, op)
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, TOOL, op)
 
     async def _no_defaults(auth: Any, client_name: str | None = None) -> None:
         return None

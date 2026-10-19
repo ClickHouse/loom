@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
 from server.auth.authz import check_authorized
-from server.auth.bearer import verify_bearer_header
+from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.core.ch import sequential_reads
 from server.knowledge.domain.documents import text_download_filename
 from server.knowledge.store import documents as documents_repo
@@ -45,10 +45,7 @@ async def knowledge_download(
     # the deployment requires one; a missing one is a 401 only when auth is on.
     auth = verify_bearer_header(request.headers.get("Authorization"))
     if auth is None and settings.auth_actually_required():
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "AUTH_INVALID", "message": "missing bearer token"},
-        )
+        raise missing_bearer()
     try:
         await check_authorized(auth, Role.VIEWER, org=org, namespace=namespace)
     except PermissionError as e:

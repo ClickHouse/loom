@@ -560,7 +560,7 @@ def branch(env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, An
     async def _vis(org: str, namespaces: list[str]) -> dict[str, str]:
         return {n: env["vis"][n] for n in namespaces if n in env["vis"]}
 
-    async def _scope(org: str, ns: str, role: Any = None) -> bool:
+    async def _scope(org: str, ns: str, role: Any = None, *, hides_answer: bool = True) -> bool:
         return bool(env["readable"])
 
     monkeypatch.setattr(nc, "is_restricted", _restricted)

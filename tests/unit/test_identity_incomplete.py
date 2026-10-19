@@ -107,9 +107,9 @@ def test_a_scoped_token_lists_its_own_namespaces_over_mcp(monkeypatch: pytest.Mo
 
     tool = "loom_namespace_list_mine"
     monkeypatch.setitem(
-        mcp_call._TOOLS_BY_NAME,
+        mcp_call.TOOLS_BY_NAME,
         tool,
-        dataclasses.replace(mcp_call._TOOLS_BY_NAME[tool], handler=_handler),
+        dataclasses.replace(mcp_call.TOOLS_BY_NAME[tool], handler=_handler),
     )
 
     async def _defaults(auth, client_name=None):  # type: ignore[no-untyped-def]

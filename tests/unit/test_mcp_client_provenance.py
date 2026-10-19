@@ -411,9 +411,9 @@ def test_key_reads_default_to_every_writer_in_the_namespace(
         seen.append(inp.agent)
         return op.output_model.model_construct()
 
-    op = mcp_call._TOOLS_BY_NAME[f"loom_{op_name.replace('.', '_')}"]
+    op = mcp_call.TOOLS_BY_NAME[f"loom_{op_name.replace('.', '_')}"]
     monkeypatch.setitem(
-        mcp_call._TOOLS_BY_NAME,
+        mcp_call.TOOLS_BY_NAME,
         f"loom_{op_name.replace('.', '_')}",
         dataclasses.replace(op, handler=_handler),
     )

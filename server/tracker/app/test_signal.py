@@ -55,7 +55,10 @@ async def _code_namespace_authorized(org: str, code_namespace: str) -> tuple[str
         from server.auth.authz import row_in_scope
         from server.operations.base import Role
 
-        if not await row_in_scope(code_org, ns, Role.VIEWER):
+        # A code namespace the caller named holds part of the answer; the
+        # deployment's default only enriches it.
+        named = bool(code_namespace)
+        if not await row_in_scope(code_org, ns, Role.VIEWER, hides_answer=named):
             return code_org, ns, "unauthorized"
     except Exception as e:  # noqa: BLE001 — closed
         return code_org, ns, f"authorization failed: {type(e).__name__}"

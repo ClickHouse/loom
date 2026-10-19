@@ -34,7 +34,7 @@ def _wire_namespaces(
         lambda: {"code-example-private*": PRIV, "code-clickhouse*": PUB},
     )
 
-    async def _scope(org, n, role=None):
+    async def _scope(org, n, role=None, *, hides_answer=True):
         return n in readable or n in code_readable
 
     monkeypatch.setattr("server.auth.authz.row_in_scope", _scope)
@@ -69,7 +69,7 @@ async def test_a_restricted_record_needs_its_own_grant(monkeypatch) -> None:
 async def test_requested_namespaces_are_resolved_and_gated_in_order(monkeypatch) -> None:
     _wire_namespaces(monkeypatch, readable={PRIV, PUB})
 
-    async def _bound(org, code_ns):
+    async def _bound(org, code_ns, *, hides_answer=True):
         return PUB if code_ns.startswith("code-clickhouse") else ""
 
     monkeypatch.setattr("server.tracker.app.binding.authorized_tracker_namespace", _bound)

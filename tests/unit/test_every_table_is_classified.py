@@ -1,16 +1,21 @@
-"""Every `loom.*` table is a census row, a documented
+"""Every `loom.*` and `loom_telemetry.*` table is a census row, a documented
 step-only table or a NO_MEMORY_CONTENT entry with a reason. A CREATE TABLE
 in schema.sql that is in none of the three lists fails
 here, so a new table is classified the day it lands. CH-free."""
 
 from __future__ import annotations
 
+import re
+
 from server.erasure.store import census as erasure_census
-from tests.unit.schema_ddl import engine, tables
+from tests.unit.schema_ddl import SCHEMA, engine, tables
+
+_TELEMETRY_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (loom_telemetry\.\w+)", re.M)
 
 
 def _schema_tables() -> set[str]:
-    return {f"loom.{name}" for name in tables()}
+    telemetry = set(_TELEMETRY_TABLE.findall(SCHEMA.read_text(encoding="utf-8")))
+    return {f"loom.{name}" for name in tables()} | telemetry
 
 
 def test_schema_has_the_expected_shape() -> None:
@@ -43,7 +48,8 @@ def test_the_three_lists_are_disjoint_and_every_reason_is_written() -> None:
     assert not census & no_content, census & no_content
     assert not step_only & no_content, step_only & no_content
     for table, reason in erasure_census.NO_MEMORY_CONTENT.items():
-        assert table.startswith("loom.") and len(reason.strip()) >= 20, (table, reason)
+        assert table.startswith(("loom.", "loom_telemetry.")), table
+        assert len(reason.strip()) >= 20, (table, reason)
 
 
 def test_the_review_moved_the_named_tables_into_the_census() -> None:

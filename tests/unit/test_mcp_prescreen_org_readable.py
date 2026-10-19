@@ -33,6 +33,9 @@ class _Directory:
     async def is_restricted(self, org: str, namespace: str) -> bool:
         return False
 
+    def is_restricted_cached(self, org: str, namespace: str) -> bool:
+        return False
+
     def code_entry(self, org: str, namespace: str) -> _Entry | None:
         return _Entry() if (org, namespace) == (ORG, CODE_NS) else None
 

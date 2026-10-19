@@ -176,7 +176,7 @@ schema. These rules keep that safe. The operator procedure is in
     rollout an N-1 pin racing an N retirement can leave the pinned row's vector
     superseded until the row's next write (or `loom reconcile-status`).
 16. **A triple row N-1 writes arrives at its whole second.** N-1 does not set
-    `entity_triples.seen_at` (migration 047), so its rows take the column's default, their
+    `entity_triples.seen_at` (migration 048), so its rows take the column's default, their
     `last_seen` second (`.000000`). Two values of a single-valued relation starting the
     same day and arriving in the same second, one from each build, then order the N-1
     row first, whichever arrived later; the next write of either fact orders them again.

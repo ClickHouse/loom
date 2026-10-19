@@ -58,7 +58,7 @@ async def _post(agent: str, **over: Any) -> Any:
     return await transitions.handle_task_create(wire.TaskCreateInput(**body))
 
 
-async def _no_write(org: str, namespace: str, *, write: bool) -> bool:
+async def _no_write(org: str, namespace: str, *, write: bool, hides_answer=True) -> bool:
     return False
 
 
@@ -126,7 +126,7 @@ async def test_a_human_writer_on_the_owner_namespace_stays_trusted(
 ) -> None:
     await _owned_inbox(fake)
 
-    async def _writer(org: str, namespace: str, *, write: bool) -> bool:
+    async def _writer(org: str, namespace: str, *, write: bool, hides_answer=True) -> bool:
         return namespace == "private"
 
     patch_handlers(monkeypatch, "_in_scope", _writer)

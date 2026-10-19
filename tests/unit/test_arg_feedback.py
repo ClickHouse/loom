@@ -144,9 +144,9 @@ def _patched(monkeypatch: pytest.MonkeyPatch, tool: str, ran: list[Any]) -> None
         return {}
 
     monkeypatch.setitem(
-        mcp_call._TOOLS_BY_NAME,
+        mcp_call.TOOLS_BY_NAME,
         tool,
-        dataclasses.replace(mcp_call._TOOLS_BY_NAME[tool], handler=_handler),
+        dataclasses.replace(mcp_call.TOOLS_BY_NAME[tool], handler=_handler),
     )
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
@@ -211,7 +211,7 @@ def test_an_unknown_op_answers_the_near_ops_with_their_args() -> None:
         "method": "tools/call",
         "params": {"name": "loom_op", "arguments": {"op": "tracker.similiar"}},
     }
-    _, resp = mcp_op.route(req, toolset=None)
+    _, resp = mcp_op.route(req, toolset=None, auth=None)
     assert resp is not None
     body = resp["result"]["structuredContent"]
     assert body["code"] == "UNKNOWN_OP" and body["did_you_mean"][0] == "tracker.similar"

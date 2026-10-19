@@ -108,8 +108,8 @@ def _known(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(nr, "default_branches", lambda org: {"code-clickhouse", "code-loom"})
     monkeypatch.setattr(nr, "suggestable", lambda org, can: ["code-clickhouse", "qa-clickhouse"])
 
-    async def may_read(auth: Any, org: str, ns: str) -> bool:
-        return bool(auth.can_access(org, ns))  # the gate, reduced to the claim
+    async def may_read(auth: Any, org: str, ns: str) -> tuple[bool, bool]:
+        return bool(auth.can_access(org, ns)), False  # the gate, reduced to the claim
 
     monkeypatch.setattr("server.transport.mcp_auth._may_read", may_read)
 
@@ -119,7 +119,7 @@ def test_the_gate_resolves_a_repository_name(_known: None) -> None:
 
     async def one_request() -> tuple[Any, Any]:
         # the gate and the tool call run in one task: the note reaches the result
-        got = await mcp_auth._plane_namespace(
+        got, _ = await mcp_auth._plane_namespace(
             "loom_tracker_duplicate_check", _Auth({"code-clickhouse"}), "clickhouse"
         )
         return got, nr.RESOLVED.get()
@@ -131,7 +131,7 @@ def test_the_gate_resolves_a_repository_name(_known: None) -> None:
 def test_the_gate_names_an_unknown_namespace_instead_of_refusing_access(_known: None) -> None:
     from server.transport import mcp_auth
 
-    got = asyncio.run(
+    got, _ = asyncio.run(
         mcp_auth._plane_namespace("loom_tracker_duplicate_check", _Auth(set()), "nosuch")
     )
     assert isinstance(got, dict) and got["structuredContent"]["code"] == nr.UNKNOWN_NAMESPACE
@@ -140,7 +140,7 @@ def test_the_gate_names_an_unknown_namespace_instead_of_refusing_access(_known: 
 def test_an_existing_namespace_keeps_the_real_refusal(_known: None) -> None:
     from server.transport import mcp_auth
 
-    got = asyncio.run(
+    got, _ = asyncio.run(
         mcp_auth._plane_namespace("loom_code_search", _Auth(set()), "code-example-private")
     )
     assert got is None, "the namespace exists: the caller refuses with the claim text as before"
@@ -149,7 +149,7 @@ def test_an_existing_namespace_keeps_the_real_refusal(_known: None) -> None:
 def test_a_resolution_the_caller_cannot_read_is_refused_on_the_real_namespace(_known: None) -> None:
     from server.transport import mcp_auth
 
-    got = asyncio.run(mcp_auth._plane_namespace("loom_code_search", _Auth(set()), "clickhouse"))
+    got, _ = asyncio.run(mcp_auth._plane_namespace("loom_code_search", _Auth(set()), "clickhouse"))
     assert isinstance(got, dict) and got["structuredContent"]["namespace"] == "code-clickhouse"
 
 
@@ -157,7 +157,7 @@ def test_a_memory_tool_is_untouched(_known: None) -> None:
     from server.transport import mcp_auth
 
     assert (
-        asyncio.run(mcp_auth._plane_namespace("loom_memory_get", _Auth(set()), "clickhouse"))
+        asyncio.run(mcp_auth._plane_namespace("loom_memory_get", _Auth(set()), "clickhouse"))[0]
         is None
     )
 

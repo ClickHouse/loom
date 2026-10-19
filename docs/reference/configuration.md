@@ -1032,7 +1032,7 @@ Source: `server/settings/_observability.py`
 | `LOOM_AUDIT_CHECKPOINT_GRACE_SECONDS` | `int` | `600` | Seconds after a window closes before it is sealed. |
 | `LOOM_AUDIT_CHECKPOINT_VERIFY_WINDOWS` | `int` | `24` | Most recent sealed windows recounted every pass (at least 1). |
 | `LOOM_AUDIT_CHECKPOINT_MAX_SEAL_PER_PASS` | `int` | `48` | Most windows one pass seals; a backlog is sealed over later passes. |
-| `LOOM_OTEL_EXPORTER` | `'' \| 'ch' \| 'otlp'` | `''` | OTel span exporter: "ch" writes to `default.otel_traces` on the same service, "otlp" ships to otel_exporter_otlp_endpoint (headers: comma- separated K=V), "" = auto (otlp when the endpoint is set, else ch). |
+| `LOOM_OTEL_EXPORTER` | `'' \| 'ch' \| 'otlp'` | `''` | OTel exporter, for spans and metrics: "ch" writes to `default.otel_traces` and `default.otel_metrics_*` on the same service, "otlp" ships to otel_exporter_otlp_endpoint (headers: comma-separated K=V), "" = auto (otlp when the endpoint is set, else ch). |
 | `LOOM_OTEL_CODE_COUNTS_CACHE_S` | `int` | `3600` | Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols and code_edges, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export. |
 | `LOOM_OTEL_CODE_GREP_REPLAY_CACHE_S` | `int` | `3600` | Seconds between recounts of the code.grep wrong-abstain gauge (a `content` scan per namespace with abstains). 0 = gauge off. |
 | `LOOM_OTEL_AGENT_LABELS_MAX_NAMESPACES` | `int` | `20` | Max namespaces `loom.memory.agent_labels_24h` names per probe (top N by label total); the rest sum under `loom.namespace = "other"`. 0 = no cap. |
@@ -1040,9 +1040,9 @@ Source: `server/settings/_observability.py`
 | `LOOM_OTEL_RETENTION_CENSUS_S` | `int` | `3600` | Seconds between retention censuses (`loom.retention.*`: per-org counts over 7- and 45-day windows; one FINAL pass over loom.memory on the lease holder). 0 = every export. |
 | `LOOM_OTEL_CENSUS_SCOPE` | `'leader' \| 'process'` | `'leader'` | Who takes the whole-table censuses (invariants, code-plane counts, retention, agent labels, storage): "leader" = only the supervisor-lease holder, "process" = every process (costly). |
 | `LOOM_OTEL_METRICS_EXPORT_INTERVAL_S` | `int` | `60` | Metric export cadence, seconds. Spans keep their own 3 s batch delay, which bounds span loss at SIGTERM. |
-| `LOOM_OTEL_METRICS_DELTA_TEMPORALITY` | `bool` | `False` | Delta temporality for counters and histograms (idle series write no row). Off: the dashboards (deploy/hyperdx_dashboards.md) read cumulative rows — flip together with them. |
-| `LOOM_OTEL_GAUGE_HEARTBEAT_S` | `int` | `0` | Write a gauge point only when its value changed or this many seconds after the last write; 0 = every export. Off because gauge tiles fill gaps with 0 and would draw a sawtooth. |
-| `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT` | `str` | `''` | OTLP/HTTP collector base URL (`/v1/traces` is appended); set with `otel_exporter` = "", it selects the otlp exporter. |
+| `LOOM_OTEL_METRICS_DELTA_TEMPORALITY` | `bool` | `False` | Delta temporality for counters and histograms (an idle synchronous series writes no row). Off: the dashboards (deploy/hyperdx_dashboards.md) read cumulative rows — flip together with them. |
+| `LOOM_OTEL_GAUGE_HEARTBEAT_S` | `int` | `0` | Write a gauge point only when its value changed or this many seconds after the last write; 0 = every export. The ClickHouse exporter only (LOOM_OTEL_EXPORTER=ch); OTLP exports every point. Off because gauge tiles fill gaps with 0 and would draw a sawtooth. |
+| `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT` | `str` | `''` | OTLP/HTTP collector base URL (`/v1/traces` and `/v1/metrics` are appended); set with `otel_exporter` = "", it selects the otlp exporter. |
 | `LOOM_OTEL_EXPORTER_OTLP_HEADERS` | `str` | *(unset)* | Comma-separated K=V headers sent to that endpoint, e.g. `Authorization=Bearer <token>`. |
 | `LOOM_OTEL_SERVICE_NAME` | `str` | `'loom'` | OTel resource `service.name` and `deployment.environment` stamped on every span, log and metric. |
 | `LOOM_OTEL_ENVIRONMENT` | `str` | `'dev'` | The `deployment.environment` value. |

@@ -93,18 +93,21 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
         # tokens included (resolve_org_scope drops the same set); otherwise
         # admins (and auth-off) pass and a non-admin is held to their own
         # namespaces.
-        from server.auth.authz import claim_cap
+        from server.auth.authz import claim_cap, may_be_restricted, restricted_allows
         from server.auth.context import (
             current_auth,
             resolve_my_namespaces,
-            restricted_namespaces_hidden_from,
         )
+        from server.auth.fail_closed import refused_unverified, reset
         from server.operations.base import Role
 
         auth = current_auth()
         if auth is not None and auth.subject:
-            hidden = await restricted_namespaces_hidden_from(input.org)
-            if hidden == ["*"] or input.namespace in hidden:
+            # The caller named this one: one check decides it, and marks the
+            # request when a read it needed failed.
+            if await may_be_restricted(input.org, input.namespace) and not await restricted_allows(
+                auth, Role.VIEWER, input.org, input.namespace
+            ):
                 return AuditListOutput(rows=[], next_cursor=None)
             is_admin = any(
                 r.value >= Role.ORG_ADMIN.value for r in getattr(auth, "roles", []) or []
@@ -113,11 +116,13 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
                 # Covered if the JWT reaches the namespace — can_access honours
                 # the `*` org/namespace wildcards (operator tooling) — or a
                 # grant elevates the caller into it.
+                reset()
                 covered = (
                     auth.can_access(input.org, input.namespace)
                     and await claim_cap(auth, input.org, input.namespace) != 0
                 ) or input.namespace in await resolve_my_namespaces(input.org)
                 if not covered:
+                    refused_unverified()
                     return AuditListOutput(rows=[], next_cursor=None)
         scope_where = " AND namespace = {ns:String}"
         params["ns"] = input.namespace

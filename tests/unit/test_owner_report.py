@@ -113,7 +113,7 @@ def grants(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
 
     monkeypatch.setattr("server.auth.context.resolve_my_namespaces", _resolve)
     monkeypatch.setattr("server.auth.authz._lookup_grant", _grant)
-    monkeypatch.setattr("server.auth.authz._is_restricted", _plain)
+    monkeypatch.setattr("server.auth.authz.may_be_restricted", _plain)
     return held
 
 

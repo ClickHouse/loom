@@ -418,6 +418,12 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "that table's purge goes: a purge deletes the chunks it names, and a row left "
         "behind names no chunk."
     ),
+    # -- telemetry derived from the ledger -----------------------------------
+    "loom_telemetry.sli_minute": (
+        "Request counts and latency quantiles per minute, operation and org, rolled up "
+        "from loom.agent_events by a materialized view — counters keyed by operation and "
+        "org name, no memory, conversation, document or code content; expires after 400 days."
+    ),
     # -- configuration, not content ------------------------------------------
     "loom.deployment_config": (
         "The deployment's published settings every replica checks itself against (one "
