@@ -10,19 +10,13 @@ import { isRecord } from "./guards";
 
 // ------------------------------------------------------------------ time
 
-/** A ClickHouse (naive UTC) or ISO time → ms, read as every list reads it (`parseChTime`);
- *  NaN when unreadable. */
-function parseTs(iso: string | null | undefined): number {
-  return parseChTime(iso)?.getTime() ?? NaN;
-}
-
 /** "42m ago" / "in 2h" / "3d ago": the date rule every list follows (`listTime` in
  *  lib/format.ts), measured from the page's ticking `now`, with the countdowns listTime
  *  has no form for ("in 2h", past a week "on Sep 29"). */
 export function rel(iso: string | null | undefined, now = Date.now()): string {
-  const t = parseTs(iso);
-  if (Number.isNaN(t)) return "";
-  const s = Math.floor((now - t) / 1000);
+  const d = parseChTime(iso);
+  if (!d) return "";
+  const s = Math.floor((now - d.getTime()) / 1000);
   if (s > -60 && s < 60) return "just now";
   const a = Math.abs(s);
   const span =
@@ -33,9 +27,9 @@ export function rel(iso: string | null | undefined, now = Date.now()): string {
 
 /** Whole minutes left on a lease, never negative; null without a lease. */
 export function leaseMinutesLeft(leaseUntil: string | null | undefined, now = Date.now()): number | null {
-  const t = parseTs(leaseUntil);
-  if (Number.isNaN(t)) return null;
-  return Math.max(0, Math.round((t - now) / 60_000));
+  const d = parseChTime(leaseUntil);
+  if (!d) return null;
+  return Math.max(0, Math.round((d.getTime() - now) / 60_000));
 }
 
 const LEASE_SOON_MINUTES = 10;
@@ -305,11 +299,10 @@ export function sublineOf(
       return u ? { text: "done ·", href: u } : null;
     }
     case "todo": {
-      const t = parseTs(r.not_before);
+      const t = parseChTime(r.not_before);
       const from = `from ${posterName(r)}`;
-      return !Number.isNaN(t) && t > now
-        ? { text: from, suffix: `· scheduled ${rel(r.not_before, now)}` }
-        : { text: from };
+      if (!t || t.getTime() <= now) return { text: from };
+      return { text: from, suffix: `· scheduled ${rel(r.not_before, now)}` };
     }
     case "in_progress":
       return progressNote ? { text: progressNote, italic: true } : null;
@@ -678,10 +671,8 @@ export function isoFromLocal(v: string): string | null {
 
 /** The server's naive-UTC or ISO instant → a datetime-local input's value. */
 export function localFromIso(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const t = parseTs(iso);
-  if (Number.isNaN(t)) return "";
-  const d = new Date(t);
+  const d = parseChTime(iso);
+  if (!d) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
