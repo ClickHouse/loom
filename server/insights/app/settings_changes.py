@@ -40,6 +40,7 @@ async def change(
             "previous": before["value"] if before else None,
             # Where `previous` came from: an override to set back, or the value of the
             # process that made the change (an env or a default), which a reset restores.
+            # None for a setting this build lacks (the reset of a retired one's override).
             "previous_source": before["source"] if before else None,
             "cleared": clear,
         },
@@ -61,7 +62,7 @@ async def history(
                 "name": subject["name"],
                 "value": subject["value"],
                 "previous": subject["previous"],
-                "previous_source": subject.get("previous_source"),
+                "previous_source": subject["previous_source"],
                 "cleared": subject["cleared"],
             }
         )

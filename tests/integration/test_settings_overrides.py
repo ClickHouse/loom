@@ -71,7 +71,8 @@ async def test_a_change_names_the_value_it_replaces_and_is_recorded(
     control_plane_url: str,
 ) -> None:
     async with _client(control_plane_url) as c:
-        before = (await _listed(c))["value"]
+        listed = await _listed(c)
+        before, before_source = listed["value"], listed["source"]
         try:
             r = await c.post(
                 "/v1/admin/settings.set", json={"name": NAME, "value": 999, "expected": before + 1}
@@ -92,7 +93,11 @@ async def test_a_change_names_the_value_it_replaces_and_is_recorded(
 
         reset, made = await eventually(_two, max_wait=30, description="two recorded changes")
         assert (made["previous"], made["value"], made["cleared"]) == (before, 999, False)
+        assert made["previous_source"] == before_source
         assert (reset["previous"], reset["value"]) == (999, before)
+        assert reset["previous_source"] == "override"
+        assert made["actor"] == reset["actor"] != ""
+        assert made["name"] == reset["name"] == NAME
 
 
 @pytest.mark.asyncio

@@ -321,7 +321,7 @@ def test_the_history_route_reads_the_recorded_changes(
     newer, older = r.json()["changes"]
     assert (newer["actor"], newer["previous"], newer["value"]) == ("cli:ops", 0.35, 0.4)
     assert newer["previous_source"] == "env"
-    assert older["previous_source"] is None  # a row recorded before the field existed
+    assert older["previous_source"] is None  # the reset of a retired setting's override
     assert seen == [("setting.changed", LIVE, 5)]
 
 
@@ -342,7 +342,15 @@ _HISTORY = [
     {
         "ts": "2026-01-01 03:04:05.000",
         "actor": "cli:ops",
-        "subject": json.dumps({"name": LIVE, "value": 0.35, "previous": 0.3, "cleared": False}),
+        "subject": json.dumps(
+            {
+                "name": "retired_setting",
+                "value": None,
+                "previous": None,
+                "previous_source": None,
+                "cleared": True,
+            }
+        ),
     },
 ]
 
@@ -364,7 +372,7 @@ def test_the_cli_history_says_when_an_undo_is_a_reset(
     assert settings_cmd._cmd_history(args) == 0
     newer, older = capsys.readouterr().out.splitlines()
     assert "0.35 (undo: reset) → 0.4 (set)" in newer
-    assert "0.3 → 0.35 (set)" in older
+    assert "retired_setting: null → null (reset)" in older
 
 
 def test_a_cross_site_origin_is_refused_with_auth_on(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -352,8 +352,9 @@ class SettingChange(BaseModel):
     value: Any
     previous: Any
     # `override`: undo by setting `previous` back. Anything else (env, default, …) was
-    # the value on the process that made the change: undo with a reset.
-    previous_source: str | None = None
+    # the value on the process that made the change: undo with a reset. None for a
+    # setting this build lacks (the reset of a retired setting's override).
+    previous_source: str | None
     cleared: bool
 
 

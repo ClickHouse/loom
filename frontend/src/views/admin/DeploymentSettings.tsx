@@ -229,23 +229,20 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   // The control that takes focus once it renders: the edit field when Change opens it,
-  // the row's Change button when Save, Cancel or Reset takes the focused one away.
-  const [focusNext, setFocusNext] = useState<string | null>(null);
+  // the row's Change button when Save, Cancel or Reset takes the focused one away. After
+  // a save or a reset it waits for the refreshed rows (`after` is the list it started
+  // from): under "Changed only" a reset to the default takes the row off the list, and
+  // focus then goes to the list itself.
+  const [focusNext, setFocusNext] = useState<{ id: string; after?: SettingRow[] } | null>(null);
   useEffect(() => {
-    if (!focusNext) return;
-    const el = document.getElementById(focusNext);
-    if (el) {
-      el.focus();
-      setFocusNext(null);
-    } else if (!rows.some((r) => focusNext === controlId("change", r.name))) {
-      // A reset to the default under "Changed only" takes the row off the list.
-      document.getElementById("settings-list")?.focus();
-      setFocusNext(null);
-    }
+    if (!focusNext || rows === focusNext.after) return;
+    const el = document.getElementById(focusNext.id) ?? document.getElementById("settings-list");
+    el?.focus();
+    setFocusNext(null);
   });
-  const close = (name: string) => {
+  const close = (name: string, refreshed: boolean) => {
     setEditing(null);
-    setFocusNext(controlId("change", name));
+    setFocusNext({ id: controlId("change", name), after: refreshed ? rows : undefined });
   };
 
   const save = async (row: SettingRow) => {
@@ -253,7 +250,7 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
     try {
       const after = await adminSettingSet(row.name, parsed(draft, row), row.value);
       toast(`${row.name} is ${shown(after.value)} on every replica within seconds`, "ok");
-      close(row.name);
+      close(row.name, true);
       onChanged();
     } catch (e) {
       toast(`${row.name} not changed: ${humanizeError(e)}`, "error");
@@ -272,7 +269,7 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
       return;
     try {
       await adminSettingReset(row.name, row.value);
-      setFocusNext(controlId("change", row.name));
+      setFocusNext({ id: controlId("change", row.name), after: rows });
       onChanged();
     } catch (e) {
       toast(`${row.name} not reset: ${humanizeError(e)}`, "error");
@@ -329,7 +326,7 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
                 <Button type="primary" htmlType="button" loading={busy} onClick={() => void save(r)}>
                   Save
                 </Button>
-                <Button type="secondary" htmlType="button" onClick={() => close(r.name)}>
+                <Button type="secondary" htmlType="button" onClick={() => close(r.name, false)}>
                   Cancel
                 </Button>
               </div>
@@ -343,7 +340,7 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
                   onClick={() => {
                     setEditing(r.name);
                     setDraft(shown(r.value));
-                    setFocusNext(controlId("value", r.name));
+                    setFocusNext({ id: controlId("value", r.name) });
                   }}
                 >
                   Change

@@ -10,8 +10,10 @@ const api = vi.hoisted(() => ({
   adminSettingReset: vi.fn(),
 }));
 vi.mock("../../api", async (orig) => ({ ...(await orig<typeof import("../../api")>()), ...api }));
+// The confirm dialog renders in the app shell, not here: every confirmation says yes.
+vi.mock("../../components/ConfirmDialog", () => ({ confirmAction: vi.fn().mockResolvedValue(true) }));
 
-import { DeploymentSettings, matching, parsed } from "./DeploymentSettings";
+import { DeploymentSettings, matching, parsed, undoIsReset } from "./DeploymentSettings";
 
 const row = (over: Partial<SettingRow>): SettingRow => ({
   name: "memory_ask_recency_weight",
@@ -73,6 +75,11 @@ describe("matching", () => {
     expect(parsed("rrf", { default: 3 })).toBe("rrf");
     expect(parsed("123", { default: "" })).toBe("123"); // a namespace named 123
   });
+  it("calls an undo a reset unless the value before was an override", () => {
+    expect(undoIsReset(CHANGE)).toBe(true);
+    expect(undoIsReset({ ...CHANGE, previous_source: "override" })).toBe(false);
+    expect(undoIsReset({ ...CHANGE, previous_source: null })).toBe(false);
+  });
   it("counts an override at the default as changed, as the server does", () => {
     const at = row({ value: 0.2, default: 0.2, source: "override" });
     expect(matching([at], "", true, false)).toEqual([at]);
@@ -100,6 +107,18 @@ describe("DeploymentSettings", () => {
     });
     expect(api.adminSettingSet).toHaveBeenCalledWith("memory_ask_recency_weight", 0.4, 0.35);
     await waitFor(() => expect(api.adminSettingsList).toHaveBeenCalledTimes(2));
+  });
+
+  it("moves focus to the list when a reset takes the row off it", async () => {
+    api.adminSettingReset.mockResolvedValue(row({ value: 0.2, source: "default" }));
+    render(<DeploymentSettings />);
+    const reset = await screen.findByRole("button", { name: "Reset memory_ask_recency_weight" });
+    api.adminSettingsList.mockResolvedValue([row({ value: 0.2, source: "default" }), ROWS[1]]);
+    reset.focus();
+    fireEvent.click(reset);
+    await waitFor(() => expect(api.adminSettingReset).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Change memory_ask_recency_weight" })).toBeNull());
+    await waitFor(() => expect(document.activeElement?.id).toBe("settings-list"));
   });
 
   it("moves focus to the field it opens and back to Change when it closes", async () => {

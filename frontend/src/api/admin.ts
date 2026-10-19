@@ -874,7 +874,8 @@ export interface SettingChange {
   value: unknown;
   previous: unknown;
   // `override`: undo by setting `previous` back; anything else was the changing
-  // process's own value, undone with a reset. Null on rows written before it existed.
+  // process's own value, undone with a reset. Null when the setting is one this build
+  // lacks (the reset of a retired setting's override).
   previous_source: string | null;
   cleared: boolean;
 }

@@ -589,8 +589,9 @@ loom sso password-link --email lee@example.com
 ```
 
 which prints a link that sets it, once, within `LOOM_PASSWORD_LINK_TTL_SECONDS` (a day
-by default), and only while SSO is off. The account stays linked, so turning SSO on again reaches it. Turning
-SSO on or off leaves bots (`loom bot`) and operator-minted tokens alone.
+by default), and only while SSO is off. The account stays linked, so turning SSO on
+again reaches it. Turning SSO on or off leaves bots (`loom bot`) and operator-minted
+tokens alone.
 
 ## Break glass
 
