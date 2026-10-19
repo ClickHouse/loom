@@ -70,7 +70,9 @@ Each line is one recorded change, newest first: when, who (`cli:<user>` or the t
 subject) and the value before and after. A value before that was an override is the
 deployment's: undo by setting it back with `loom settings set`. Any other was the value
 on the process that made the change (its environment or a default), marked
-`(undo: reset)`: undo with `loom settings reset`, which puts back each replica's own.
+`(undo: reset)`: undo with `loom settings reset`, which puts back each replica's own. A
+change with no value before (the reset of a setting this build no longer has) has nothing
+to undo.
 
 An override is the deployment's default, so what a namespace or a request sets still wins
 over it: a namespace's `retrieval_defaults` (`top_k`, `min_similarity`,
@@ -92,7 +94,7 @@ curl -s "$LOOM_BASE_URL/v1/admin/settings.set" -H "Authorization: Bearer $TOKEN"
 
 `POST /v1/admin/settings.history` takes `{"name": "...", "limit": 50}`. The Python SDK
 has `agent.deployment.settings()`, `set_setting(name, value, expected=...)`,
-`reset_setting(name)` and `setting_history(name)`.
+`reset_setting(name, expected=...)` and `setting_history(name)`.
 
 ## During a rolling upgrade
 

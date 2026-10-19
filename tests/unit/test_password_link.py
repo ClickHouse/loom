@@ -188,3 +188,14 @@ def test_a_spend_that_fails_after_the_write_keeps_the_sso_link_and_its_audit(
     assert _set(c, code, "correct horse").status_code == 400
     assert len(world["rows"]) == 1
     assert [e for e, _ in world["events"]].count("auth.password_set") == 1
+
+
+def test_the_cli_says_how_long_a_link_lives() -> None:
+    from server.cli.sso import _duration
+
+    assert [_duration(s) for s in (86400, 7 * 86400, 21600, 2700)] == [
+        "1 day",
+        "7 days",
+        "6 h",
+        "45 min",
+    ]

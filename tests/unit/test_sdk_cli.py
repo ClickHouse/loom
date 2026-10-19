@@ -113,6 +113,9 @@ def test_account_and_admin_clients_reach_the_routes_outside_the_registry(wire) -
             await agent.deployment.workers_status()
             await agent.deployment.reset_models("7")
             await agent.deployment.release_claim("acme", "squatted", "abuse")
+            await agent.deployment.set_setting("memory_ask_recency_weight", 0.35, expected=0.2)
+            await agent.deployment.reset_setting("memory_ask_recency_weight", expected=0.35)
+            await agent.deployment.reset_setting("memory_ask_recency_weight")
         finally:
             await agent.close()
 
@@ -136,6 +139,17 @@ def test_account_and_admin_clients_reach_the_routes_outside_the_registry(wire) -
             "/v1/admin/claim_release",
             {"org": "acme", "namespace": "squatted", "reason": "abuse"},
         ),
+        (
+            "POST",
+            "/v1/admin/settings.set",
+            {"name": "memory_ask_recency_weight", "value": 0.35, "expected": 0.2},
+        ),
+        (
+            "POST",
+            "/v1/admin/settings.set",
+            {"name": "memory_ask_recency_weight", "clear": True, "expected": 0.35},
+        ),
+        ("POST", "/v1/admin/settings.set", {"name": "memory_ask_recency_weight", "clear": True}),
     ]
 
 

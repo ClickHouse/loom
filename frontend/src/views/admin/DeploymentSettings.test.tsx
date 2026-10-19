@@ -109,6 +109,20 @@ describe("DeploymentSettings", () => {
     await waitFor(() => expect(api.adminSettingsList).toHaveBeenCalledTimes(2));
   });
 
+  it("returns focus to Change once a save's list read lands", async () => {
+    render(<DeploymentSettings />);
+    fireEvent.click(await screen.findByRole("button", { name: "Change memory_ask_recency_weight" }));
+    fireEvent.change(screen.getByLabelText("New value for memory_ask_recency_weight"), { target: { value: "0.4" } });
+    api.adminSettingsList.mockResolvedValue([row({ value: 0.4 }), ROWS[1]]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    await waitFor(() => expect(api.adminSettingsList).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Change memory_ask_recency_weight" })),
+    );
+  });
+
   it("moves focus to the list when a reset takes the row off it", async () => {
     api.adminSettingReset.mockResolvedValue(row({ value: 0.2, source: "default" }));
     render(<DeploymentSettings />);
