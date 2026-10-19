@@ -16,6 +16,9 @@ from server.core.repo_base import _default_client
 from server.core.vectors.search_settings import vector_search_settings
 from server.knowledge.domain.conversations import ConversationRole
 
+# Characters of a turn a hit shows (the embedding row keeps the whole embedded text).
+HIT_EXCERPT_CHARS = 240
+
 
 class _CHClient(Protocol):
     async def query_all(
@@ -73,6 +76,7 @@ async def vector_search(
         "model": q.embedding_model,
         "q": q.query_vec,
         "lim": int(q.top_k),
+        "excerpt": HIT_EXCERPT_CHARS,
         "maxd": float(q.max_distance),
     }
     # Relevance gate: drop rows beyond max_distance so a short query doesn't
@@ -99,7 +103,8 @@ async def vector_search(
     # rows, already distance-ordered by CH, and Python's sort is stable).
     rows = await ch.query_all(
         f"""
-        SELECT thread_id, msg_id, role, content_excerpt, ts,
+        SELECT thread_id, msg_id, role,
+               substringUTF8(content_excerpt, 1, {{excerpt:UInt32}}) AS excerpt, ts,
                cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
         FROM loom.conversation_embeddings FINAL
         WHERE {" AND ".join(where)}
@@ -114,7 +119,7 @@ async def vector_search(
             thread_id=r["thread_id"],
             msg_id=r["msg_id"],
             role=r["role"],
-            content_excerpt=r["content_excerpt"],
+            content_excerpt=r["excerpt"],
             ts=r["ts"],
             distance=float(r["distance"]),
         )

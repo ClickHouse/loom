@@ -170,9 +170,10 @@ class ConversationsClient:
     ) -> dict[str, Any]:
         """Soft-delete one thread (ADMIN role).
 
-        Tombstones the thread row + all messages + all embeddings;
-        retention TTL eventually hard-deletes, and read paths filter
-        tombstoned rows out.
+        Tombstones the thread row, its messages, and the embeddings no other
+        agent of the thread still holds with the same text, as a user, assistant
+        or summary turn. Read paths filter tombstoned rows out, and the retention
+        TTL on the messages table, when set, hard-deletes the messages.
 
         `confirm_thread_id` must equal `thread_id`, guarding against
         accidental deletes. This is the bounded "remove this one chat"
