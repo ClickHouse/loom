@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 import server.memory.app.search_tag_filter as tag_belt
+from server.core.tag_sql import TagFilter, tag_predicate
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search import assemble, payload
 from server.memory.app.search.assemble import _drop_excluded_and_duplicates
@@ -33,7 +34,7 @@ from server.memory.app.search.sql import (
 from server.memory.app.search.tiers import _prepend_anchor, _prepend_recent
 from server.memory.app.search.vector_legs import _stamp_leg_tags
 from server.memory.app.search_tag_filter import stamp_row_tags, tagged_row_hit
-from server.memory.domain.search_sql import _build_where, hard_tag_filter, tag_predicate
+from server.memory.domain.search_sql import _build_where, hard_tag_filter
 from server.memory.domain.search_types import SearchQuery
 
 TAG = "hasAny(e.tags, {tags:Array(String)})"
@@ -320,11 +321,12 @@ async def test_tiers_pass_the_hard_filter_only_when_set(monkeypatch: pytest.Monk
     monkeypatch.setattr(repo, "list_by_namespace", fake_list)
     base = dict(org="o", namespace="ns", agent="*", user_id="-", session_id="-", run_id="", top_k=3)
     await _prepend_recent([], SimpleNamespace(recent_first=1, **base))
-    assert "tags" not in calls[-1]
+    assert calls[-1]["tag_filter"] is None
     await _prepend_recent([], SimpleNamespace(recent_first=1, tags=["x"], tags_soft=False, **base))
-    assert calls[-1]["tags"] == ["x"]
+    # memory.search's exact match, not memory.list's any-case one.
+    assert calls[-1]["tag_filter"] == TagFilter(("x",), "exact_any")
     await _prepend_anchor([], SimpleNamespace(anchor_first=1, tags=["x"], tags_soft=True, **base))
-    assert "tags" not in calls[-1]
+    assert calls[-1]["tag_filter"] is None
 
 
 # ------------------------------------------ the two paths the replay found

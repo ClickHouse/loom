@@ -330,11 +330,26 @@ class RunClient:
         limit: int = 50,
         memory_activity: str = "",
         grade: str = "",
+        offset: int = 0,
+        order_by: Literal[
+            "started_desc",
+            "started_asc",
+            "duration_desc",
+            "duration_asc",
+            "relied_on_desc",
+            "relied_on_asc",
+        ] = "started_desc",
+        q: str = "",
     ) -> dict[str, Any]:
-        """Newest runs first. `memory_activity="with"` keeps only runs that
-        relied on or wrote a memory, `"without"` only the hollow ones;
-        `grade="ungraded"` the closed runs still owed a verdict (`"graded"`,
-        `"pass"`, `"fail"` also work). Filters apply before `limit`."""
+        """Runs in `order_by` order (newest first by default).
+
+        `memory_activity="with"` keeps only runs that relied on or wrote a
+        memory, `"without"` only the hollow ones; `grade="ungraded"` the closed
+        runs still owed a verdict (`"graded"`, `"pass"`, `"fail"` also work).
+        `q` matches the goal, run id or agent, in any case; `offset` skips at
+        most 100,000 runs. Filters apply before `limit`.
+
+        `total` is None on a full page after the first."""
         payload: dict[str, Any] = {
             "org": self._agent.org,
             "namespace": self._agent.namespace,
@@ -345,6 +360,12 @@ class RunClient:
             "memory_activity": memory_activity,
             "grade": grade,
         }
+        if offset:
+            payload["offset"] = offset
+        if order_by != "started_desc":
+            payload["order_by"] = order_by
+        if q.strip():
+            payload["q"] = q
         return await self._agent.transport.post("/v1/run.list", payload)
 
     async def grade(

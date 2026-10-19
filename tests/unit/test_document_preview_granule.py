@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from server.core.tag_sql import TagFilter
 from server.knowledge.store import documents as documents_repo
 from tests.unit.schema_ddl import ddl
 
@@ -30,7 +31,9 @@ class _CH:
 @pytest.mark.asyncio
 async def test_the_listing_reads_the_stored_preview_and_never_the_content() -> None:
     ch = _CH()
-    await documents_repo.list_with_chunk_counts("o", "n", tags=["a"], ch=ch)
+    await documents_repo.list_with_chunk_counts(
+        "o", "n", tag_filter=TagFilter(("a",), "folded_any"), ch=ch
+    )
     (sql,) = ch.sqls
     assert "d.content_preview" in sql and "AS content_preview" in sql
     assert "substring(d.content" not in sql

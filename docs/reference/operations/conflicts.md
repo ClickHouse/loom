@@ -56,6 +56,7 @@ List unresolved conflicts where two memories contradict each other.
 | `limit` | `int` | `50` | At most this many rows, 1-500, newest version first. |
 | `before_version` | `int \| None` | `None` | Keyset cursor — pass previous response's earliest version to paginate. |
 | `count_only` | `bool` | `False` | A badge needs the number, not the rows. |
+| `fresh` | `bool` | `False` | With count_only, count now instead of reading the minute-long cache; default off. |
 | `keys_only` | `bool` | `False` | The Memories view marks cards that have a conflict and needs only the keys. |
 | `fields` | `list[str] \| None` | `None` | The output fields the caller reads (a whitelist resolved against the row model; an unknown name is a 422); unset, every field. |
 
@@ -108,5 +109,6 @@ Pick the winner of a conflict (keep A, keep B, keep both, merge).
 | `decision` | `Literal['revise', 'contract', 'allow']` | The decision, echoed. |
 | `affected_memory_ids` | `list[str]` | Every memory id this call tombstoned or reactivated. |
 | `resolved_at` | `datetime \| None` | When the resolve ran (UTC); null when nothing was resolved. |
+| `total` | `int \| None` | The namespace's conflicted count under the caller's read scope, counted after the writes; null when nothing was resolved or the count failed. |
 
 <!-- prettier-ignore-end -->

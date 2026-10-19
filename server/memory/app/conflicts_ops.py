@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
+from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _sha256
 from server.identity.app.request_scope import request_scope
@@ -27,6 +29,8 @@ from server.memory.api.models_conflicts import (
 )
 from server.operations.read_projection import project_rows
 
+log = logging.getLogger(__name__)
+
 _COUNT_TTL_S = 60.0
 _count_cache: dict[tuple[str, str, ReadFilters], tuple[float, int]] = {}
 
@@ -36,11 +40,14 @@ def reset_conflicts_count_cache() -> None:
     _count_cache.clear()
 
 
-async def _conflicted_count_cached(repo: Any, org: str, namespace: str, scope: ReadFilters) -> int:
+async def _conflicted_count_cached(
+    repo: Any, org: str, namespace: str, scope: ReadFilters, *, fresh: bool = False
+) -> int:
+    """The count, from this replica's cache unless `fresh`; a count read fresh refreshes it."""
     key = (org, namespace, scope)
     hit = _count_cache.get(key)
     now = time.monotonic()
-    if hit is not None and now - hit[0] < _COUNT_TTL_S:
+    if not fresh and hit is not None and now - hit[0] < _COUNT_TTL_S:
         return hit[1]
     n = int(await repo.count_conflicted(org, namespace, scope=scope))
     if len(_count_cache) > 1024:
@@ -64,7 +71,9 @@ async def handle_conflicts_list(
         # The sidebar badge wants a number every minute from every open tab. One count per (org,
         # namespace) per `_COUNT_TTL_S` serves them all, and the count reads no value column —
         # reading the rows costs ~33 MB per tick on a large namespace.
-        total = await _conflicted_count_cached(conflicts_repo, input.org, input.namespace, scope)
+        total = await _conflicted_count_cached(
+            conflicts_repo, input.org, input.namespace, scope, fresh=input.fresh
+        )
         return ConflictsListOutput(rows=[], total=total)
     rows = await conflicts_repo.list_conflicted(
         input.org,
@@ -337,11 +346,20 @@ async def handle_conflicts_resolve(
     # The badge's cached counts (one per read scope) are stale now.
     for key in [k for k in _count_cache if k[:2] == (input.org, input.namespace)]:
         _count_cache.pop(key, None)
+    total: int | None = None
+    try:
+        with sequential_reads():  # the count must see the writes above
+            total = await _conflicted_count_cached(
+                conflicts_repo, input.org, input.namespace, request_scope(), fresh=True
+            )
+    except Exception as e:  # noqa: BLE001 — the count never fails an applied resolve
+        log.warning("conflicts.resolve: conflicted count failed for %s: %s", input.memory_id, e)
     return ConflictsResolveOutput(
         resolved=True,
         decision=input.decision,
         affected_memory_ids=affected,
         resolved_at=now,
+        total=total,
     )
 
 
