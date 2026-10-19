@@ -22,7 +22,6 @@ from server.code.domain.scope import apply_code_scope, current_code_scope
 from server.core.errors import LoomServerError
 from server.identity.app.caller_home import home_namespace
 from server.operations.base import Operation
-from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
@@ -38,6 +37,7 @@ from server.transport.mcp_config import (
 )
 from server.transport.mcp_defaults import coerce_search_arguments, mcp_default_arguments
 from server.transport.mcp_identity import _caller_defaults, note_default_namespace
+from server.transport.mcp_ledger import TOOLS_BY_NAME as _TOOLS_BY_NAME
 from server.transport.mcp_ledger import emit_token_refusal, first_in_batch
 from server.transport.mcp_op import UNKNOWN_OP
 from server.transport.mcp_outcome import (
@@ -55,10 +55,6 @@ if TYPE_CHECKING:
     from server.core.ratelimit import CheckResult
 
 log = logging.getLogger("server.transport.mcp")
-
-
-# Precomputed mapping: tool-name → operation (avoids a linear scan per call)
-_TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
 
 
 async def _ratelimit_retry_once(

@@ -670,12 +670,10 @@ async def row_in_scope(
     a 403 would confirm the id exists. A refusal that could not be verified
     marks the request the server's (`fail_closed`) when it refuses or hides
     what the caller asked for. `hides_answer=False` when it does not: the
-    answer is whole without the namespace (one Loom adds on its own: code
-    links, grounding, repository documents, a trunk, a tracker enriching a
-    code answer), the call filters a listing the caller did not scope (a
-    dropped entry degrades a list, as `CachedGate.admits` does for listings
-    and default picks), or another way in (a task's poster) already admits
-    the caller."""
+    answer is whole without the namespace, the call filters a listing the
+    caller did not scope, or another way in already admits the caller.
+    `test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_unmarked`
+    lists the sites that opt out."""
     from server.auth.context import current_auth
     from server.core.errors import IdentityIncompleteError
 

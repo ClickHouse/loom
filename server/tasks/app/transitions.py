@@ -586,11 +586,8 @@ async def handle_task_fail(input: TaskFailInput) -> TaskOutput:
 # ============================================================
 
 
-async def _load_for_reason_op(
-    input: TaskReasonInput, *, poster_may: bool = True
-) -> tuple[TaskRow, bool]:
-    """The row and whether the caller is on the owner side (else the poster,
-    when `poster_may`)."""
+async def _load_for_reason_op(input: TaskReasonInput, *, poster_may: bool = True) -> TaskRow:
+    """The row, for a caller on the owner side or (when `poster_may`) its poster."""
     task = await repo.fetch_task(input.org, input.task_id)
     if task is None:
         raise _not_found()
@@ -598,7 +595,9 @@ async def _load_for_reason_op(
     # The owner check decides alone unless a poster's way in (no read) admits;
     # on an in-progress task only the owner side may act.
     admitted = poster and task["status"] != "in_progress"
-    owner_side = await _in_scope(input.org, task["namespace"], write=True, hides_answer=not admitted)
+    owner_side = await _in_scope(
+        input.org, task["namespace"], write=True, hides_answer=not admitted
+    )
     if not owner_side and not poster:
         raise _not_found()
     if task["status"] in TERMINAL:
@@ -608,13 +607,13 @@ async def _load_for_reason_op(
             raise _conflict("TASK_IN_PROGRESS", "the task is owned; ask its owner")
         if input.fence is not None and int(input.fence) != int(task.get("fence") or 0):
             raise _conflict("TASK_FENCE_STALE", "the lease this fence belonged to is over")
-    return task, owner_side
+    return task
 
 
 async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
     """Owner side (an approver from triage, the owner from anywhere)."""
 
-    task, _owner_side = await _load_for_reason_op(input, poster_may=False)
+    task = await _load_for_reason_op(input, poster_may=False)
     await _drop_lease(task)
     row, seq = await _record(
         task,
@@ -632,7 +631,7 @@ async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
 async def handle_task_cancel(input: TaskReasonInput) -> TaskOutput:
     """Owner side, or the poster while nobody owns the task."""
 
-    task, _owner_side = await _load_for_reason_op(input)
+    task = await _load_for_reason_op(input)
     await _drop_lease(task)
     row, seq = await _record(
         task,

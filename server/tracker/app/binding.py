@@ -171,7 +171,7 @@ async def authorized_tracker_namespaces(
 ) -> list[str]:
     """Every linked tracker the current principal may read,
     primary first; a refused one is left out in silence (never named).
-    `hides_answer=False` for a code answer the tracker only enriches."""
+    `hides_answer`: see `authz.row_in_scope`."""
     await refresh_overrides()
     return [
         ns
@@ -192,8 +192,8 @@ async def authorized_tracker_namespace(
     so a reader of the repository never needs a grant, a join or a token
     naming the tracker namespace to see its public QA facts. A RESTRICTED QA
     namespace, or one the tracker plane does not know, keeps its
-    own two-factor gate on the tracker namespace itself. `hides_answer=False`
-    for a code answer the tracker only enriches."""
+    own two-factor gate on the tracker namespace itself. `hides_answer`: see
+    `authz.row_in_scope`."""
     await refresh_overrides()
     ns = tracker_namespace_for(code_namespace)
     if not ns or not await _gated(org, code_namespace, ns, hides_answer=hides_answer):

@@ -4353,4 +4353,5 @@ SELECT
     0 AS slow,
     quantilesTDigestStateIf(0.5, 0.95, 0.99)(toUInt32(0), false) AS latency,
     fold_to AS ingested_hwm
-HAVING fold_to > folded;
+HAVING fold_to > folded
+SETTINGS max_insert_threads = 1;

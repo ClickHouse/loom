@@ -325,7 +325,9 @@ def _mcp_refusals_before_dispatch(monkeypatch) -> None:
     async def _no(*_a) -> tuple[bool, bool]:
         return False, False
 
-    hidden = next(op for op in mcp_call.ALL_OPERATIONS if op.name == "blacklist.remove")
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    hidden = OPERATIONS_BY_NAME["blacklist.remove"]
     refusals = [
         lambda: asyncio.run(mcp_auth._screen_tool_call(_call("loom_memory_set", dict(named)), eve)),
         lambda: asyncio.run(
@@ -1315,10 +1317,10 @@ def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
             )
         )  # fmt: skip
 
-    async def _cancel_as_poster() -> tuple[bool, bool]:
+    async def _cancel_as_poster() -> bool:
         _as("poster")
-        _task_row, owner_side = await transitions._load_for_reason_op(reason)
-        return owner_side, answered_unverified()
+        assert (await transitions._load_for_reason_op(reason))["from_subject"] == "poster"
+        return answered_unverified()
 
     async def _refused(subject: str, **k: Any) -> bool:
         _as(subject)
@@ -1330,7 +1332,7 @@ def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
         _as("poster")
         return await common._readable(await _task("o", "t")), answered_unverified()
 
-    assert asyncio.run(_cancel_as_poster()) == (False, False)
+    assert asyncio.run(_cancel_as_poster()) is False
     assert asyncio.run(_read_as_poster()) == (True, False)
     assert asyncio.run(_refused("someone-else")) is True
     assert asyncio.run(_refused("poster", poster_may=False)) is True  # task.wont_do
