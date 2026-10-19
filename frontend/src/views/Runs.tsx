@@ -851,7 +851,7 @@ export function Runs() {
           <DraftSearch
             key={searchBox}
             onSearch={search}
-            debounceMs={SEARCH_DEBOUNCE_MS}
+            settle={{ debounceMs: SEARCH_DEBOUNCE_MS }}
             placeholder="Search runs by goal, id or agent"
             aria-label="Search runs"
           />

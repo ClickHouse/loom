@@ -496,6 +496,7 @@ export function Conversations() {
           <DraftSearch
             key={searchBox}
             ref={searchRef}
+            settle="enter"
             onSearch={(text) => {
               setQ(text);
               if (text) {
