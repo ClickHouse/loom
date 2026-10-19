@@ -285,6 +285,18 @@ def test_a_changed_value_or_field_is_written(
     assert sets == (["a"] if change else [])
 
 
+def test_a_source_row_that_stops_declaring_derived_is_rewritten(
+    tmp_path: Path, loom: _FakeLoom
+) -> None:
+    # Copied as derived, then rewritten at the source with the same bytes and no class: the
+    # copy must become imported, as the server stores an undeclared okf: row.
+    assert _run(_bundle(tmp_path / "1", [_entry("a", source_class="derived")])) == 0
+    loom.calls.clear()
+    assert _run(_bundle(tmp_path / "2", [_entry("a")])) == 0
+    assert [b["memory_key"] for op, b in loom.calls if op == "memory.set"] == ["a"]
+    assert loom.rows[("okf-sync", "-", "a")]["source_class"] == "imported"
+
+
 def test_a_changed_type_is_written(tmp_path: Path, loom: _FakeLoom) -> None:
     root = _bundle(tmp_path / "b", [_entry("a")])
     assert _run(root) == 0
@@ -693,9 +705,12 @@ def test_only_an_export_that_read_every_row_is_marked_complete(
     assert "complete" not in _export(tmp_path / "part", "--limit", "1")
     # a limit equal to the row count read every row
     assert _export(tmp_path / "exact", "--limit", "2")["complete"] is True
-    # only the export that stopped at its limit says it is not complete, and why
+    # deleted rows stay in such a bundle, so it never drives a prune
+    assert "complete" not in _export(tmp_path / "tomb", "--include-tombstoned")
+    # only the two left unmarked say they are not complete, and why
     out = capsys.readouterr().out
-    assert out.count("not marked complete") == 1 and "stopped at --limit 1" in out
+    assert out.count("not marked complete") == 2 and "stopped at --limit 1" in out
+    assert "--include-tombstoned keeps deleted rows" in out
 
 
 def test_a_complete_export_carries_rows_the_source_marked_duplicate(

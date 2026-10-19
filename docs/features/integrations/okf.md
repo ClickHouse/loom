@@ -132,17 +132,18 @@ lacks. `--prune` refuses a bundle with no concepts and one whose concept files d
 to the root index's `loom.corpus_digest`, so a hand-edited bundle never drives deletes. A
 bundle whose root index does not carry `loom.complete: true` is written but not pruned.
 Export writes the marker only when it read every row: not when it stopped at `--limit`,
-not from an older release, and not when the source changed while it was read (a write
-while it paged, or a row deleted before its full read). Each delete passes
-`memory.delete`'s `if_version` with the version prune just read: the server checks it
-against a strong read of the row under that exact identity and keeps a row rewritten
-before that check; it holds the key's write lock, so a conditional write to the key cannot
-land between the check and the tombstone. A copy someone locked with `memory.lock` is
-kept, and prune deletes nothing on a target whose `ops.capabilities` lacks `if_version`.
-Export into an empty directory for a prune: export overwrites concept files but never
-removes the file of a key that left the namespace, so a reused `--out` directory no longer
-matches its digest. [Copying a namespace to another Loom](../../operations/okf-sync.md)
-runs export and import on a schedule.
+not with `--include-tombstoned` (which keeps deleted rows in the bundle), not from an
+older release, and not when the source changed while it was read (a write while it paged,
+or a row deleted before its full read). Each delete passes `memory.delete`'s `if_version`
+with the version prune just read: the server checks it against a strong read of the row
+under that exact identity and keeps a row rewritten before that check; it holds the key's
+write lock, so a conditional write to the key cannot land between the check and the
+tombstone. A copy someone locked with `memory.lock` is kept, and prune deletes nothing on
+a target whose `ops.capabilities` lacks `if_version`. Export into an empty directory for a
+prune: export overwrites concept files but never removes the file of a key that left the
+namespace, so a reused `--out` directory no longer matches its digest. [Copying a
+namespace to another Loom](../../operations/okf-sync.md) runs export and import on a
+schedule.
 
 `--verify` never forges an attestation. The server decides the actor from the token; the
 bundle's original verifier is recorded in the memory's tags for provenance.

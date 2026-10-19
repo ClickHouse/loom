@@ -52,9 +52,10 @@ guard, a path that is not a directory, or a missing `--agent`, token or org.
   the `loom.corpus_digest` the export wrote into `index.md`: an edited bundle, or one
   exported into a directory that held an older bundle, never drives deletes. A bundle
   whose `index.md` does not carry `loom.complete: true` is written but not pruned, and the
-  last line says so. Export leaves the marker off when it stopped at `--limit` or the
-  source changed while it was read (a write while it paged, or a row deleted before its
-  full read), and prints which; a bundle an older release wrote has no marker.
+  last line says so. Export leaves the marker off when it stopped at `--limit`, ran with
+  `--include-tombstoned` (deleted rows stay in such a bundle), or the source changed while
+  it was read (a write while it paged, or a row deleted before its full read), and prints
+  which; a bundle an older release wrote has no marker.
 - The export carries the source's superseded and duplicate rows as `status: deprecated`,
   so a key the source folds into another stays in the copy instead of being pruned.
 - Export pages the source by offset, so a write to the source mid-listing can shift the

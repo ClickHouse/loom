@@ -60,6 +60,7 @@ from server.memory.domain import okf_evidence as okf_ev
 from server.memory.domain import okf_lint
 from server.memory.domain.edge_relations import canonical_edge
 from server.memory.domain.graph_quality import canonical_entities
+from server.memory.domain.provenance import class_from_trace
 from server.memory.domain.sensitivity import ATTRIBUTE_TAG_PREFIX, SENSITIVITY_TAG_PREFIX
 from server.memory.domain.trust import actor_for
 
@@ -486,7 +487,8 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             title=args.title,
             include_high=bool(args.include_high),
             server_url=args.server_url,
-            complete=whole,
+            # A bundle that keeps deleted rows says nothing about which keys left the source.
+            complete=whole and not args.include_tombstoned,
         )
         n_concepts = len(entries) - skipped_high
         evidence_note = (
@@ -514,7 +516,11 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
                 f"  {skipped_high} row(s) with sensitivity=high stayed in the database "
                 f"(--include-high exports them)"
             )
-        if capped:
+        if args.include_tombstoned:
+            print(
+                "  not marked complete: --include-tombstoned keeps deleted rows, so it never prunes"
+            )
+        elif capped:
             print(f"  not marked complete: it stopped at --limit {args.limit}")
         elif not whole:
             print(
@@ -794,9 +800,18 @@ def _unchanged(payload: dict[str, Any], row: dict[str, Any]) -> bool:
         )
         and _when(row.get("valid_at")) == _when(payload.get("valid_at"))
         and _when(row.get("valid_to")) == _when(payload.get("valid_to"))
-        # Without a declared class the server derives one from the op and source_trace.
-        and ("source_class" not in payload or row.get("source_class") == payload["source_class"])
+        and _stored_class_matches(row, payload)
     )
+
+
+def _stored_class_matches(row: dict[str, Any], payload: dict[str, Any]) -> bool:
+    """Whether the live row carries the class this write would store: the declared one, or,
+    without one, what the server derives from the `okf:` trace (`imported`). A source row
+    that stops declaring `derived` must not leave its copy derived."""
+    expected = payload.get("source_class") or class_from_trace(
+        str(payload.get("source_trace") or "")
+    )
+    return not expected or row.get("source_class") == expected
 
 
 def _comparable_tags(row_tags: list[str], payload_tags: list[str]) -> set[str]:
