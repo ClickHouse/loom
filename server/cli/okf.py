@@ -187,36 +187,33 @@ async def _list_namespace(
     include_tombstoned: bool,
     limit: int | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """The `memory.list` entries of every row, and whether every page reported the same
-    `namespace_version` (every write, delete and restore moves it) and total, and the rows
-    add up to that total."""
+    """The `memory.list` entries of every row, and whether they are known to be every row:
+    every page reported the same `namespace_version` (every write, delete and restore moves
+    it) and total, the rows add up to that total, and the version still held after the last
+    page was read."""
+    query: dict[str, Any] = {
+        "org": org,
+        "namespace": namespace,
+        # "*" drops the predicate on each identity column (memory.list
+        # otherwise scopes to one writer identity, default '-').
+        "agent": "*",
+        "user_id": "*",
+        "session_id": "*",
+        "sort_by": "recency",
+        "include_tombstoned": include_tombstoned,
+        # memory.list hides superseded and duplicate rows by default; the
+        # bundle renders them as `status: deprecated`, and a bundle without
+        # them would let --prune delete their copies.
+        "include_superseded": True,
+        "include_duplicates": True,
+    }
     entries: list[dict[str, Any]] = []
     totals: list[int] = []
     versions: list[str] = []
     offset = 0
     while True:
         page_size = _PAGE if limit is None else max(1, min(_PAGE, limit - len(entries)))
-        page = await client.post(
-            "memory.list",
-            {
-                "org": org,
-                "namespace": namespace,
-                # "*" drops the predicate on each identity column (memory.list
-                # otherwise scopes to one writer identity, default '-').
-                "agent": "*",
-                "user_id": "*",
-                "session_id": "*",
-                "limit": page_size,
-                "offset": offset,
-                "sort_by": "recency",
-                "include_tombstoned": include_tombstoned,
-                # memory.list hides superseded and duplicate rows by default; the
-                # bundle renders them as `status: deprecated`, and a bundle without
-                # them would let --prune delete their copies.
-                "include_superseded": True,
-                "include_duplicates": True,
-            },
-        )
+        page = await client.post("memory.list", {**query, "limit": page_size, "offset": offset})
         rows = page.get("entries") or []
         entries.extend(rows)
         totals.append(int(page.get("total") or 0))
@@ -229,7 +226,15 @@ async def _list_namespace(
     # A row a shifted page served twice counts once. Every page must agree, not only the
     # ends: a page answered by a lagging replica reports its own total and version.
     unique = list({_entry_id(r): r for r in entries}.values())
-    return unique, len(set(versions)) == len(set(totals)) == 1 and totals[0] == len(unique)
+    whole = len(set(versions)) == len(set(totals)) == 1 and totals[0] == len(unique)
+    if whole:
+        # A page reads the version before its rows, so a write during the last page's read
+        # shows only now: the version must still be the one every page reported.
+        after = await client.post(
+            "memory.list", {**query, "limit": 1, "offset": 0, "known_version": versions[-1]}
+        )
+        whole = after.get("unchanged") is True
+    return unique, whole
 
 
 def _entry_id(r: dict[str, Any]) -> tuple[Any, ...]:
@@ -1020,6 +1025,8 @@ def _print_import_summary(
     rows: int,
     chunks: int,
     digests: int,
+    *,
+    prune_skipped: bool,
 ) -> None:
     would = " would be" if args.dry_run else ""
     if args.dry_run:
@@ -1052,7 +1059,7 @@ def _print_import_summary(
         if n["links_failed"]:
             notes.append(f"{n['links_failed']} failed")
         parts.append(f"{n['links']} typed edges{would} linked ({', '.join(notes)})")
-    if args.prune and n["prune_skipped"]:
+    if prune_skipped:
         parts.append("prune skipped: the export is not complete")
     elif args.prune:
         notes = []
@@ -1082,8 +1089,8 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
     if refused is not None:
         return refused
 
-    # One read of the bundle: the keys prune keeps and the digest it checks come from the
-    # same files, even when the directory changes during the run.
+    # The keys prune keeps and the digest and marker it checks come from one read of the
+    # bundle, even when the directory changes during the run.
     files = okf_lint.read_bundle(root)
     concepts = _walk_bundle(files)
     if args.prune:
@@ -1091,7 +1098,7 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
         if reason:
             print(f"refusing to prune: {reason}", file=sys.stderr)
             return 2
-    skip = bool(args.prune) and _skips_prune(files)
+    prune_skipped = bool(args.prune) and _skips_prune(files)
     token = _resolve_token(args)
     org = _resolve_org(args, token)
     ev_chunks, ev_digests = ([], []) if args.no_evidence else _walk_evidence(root)
@@ -1113,9 +1120,7 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
             except RuntimeError as e:
                 print(f"cannot read {org}/{args.namespace}: {e}", file=sys.stderr)
                 return 1
-            if args.prune and skip:
-                n["prune_skipped"] = 1
-            elif args.prune:
+            if args.prune and not prune_skipped:
                 # Before the writes: a key renamed in the source would otherwise merge into
                 # its stale row, which prune then deletes.
                 keep = {(p["session_id"], p["memory_key"]) for _, p in planned}
@@ -1139,7 +1144,15 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
                     + (f", {ev['failed']} FAILED" if ev["failed"] else "")
                 )
                 n["evidence_failed"] = ev["failed"]
-        _print_import_summary(n, args, org, len(planned), len(ev_chunks), len(ev_digests))
+        _print_import_summary(
+            n,
+            args,
+            org,
+            len(planned),
+            len(ev_chunks),
+            len(ev_digests),
+            prune_skipped=prune_skipped,
+        )
         failures = ("failed", "links_failed", "prune_failed", "evidence_failed", "verify_failed")
         return 1 if any(n[k] for k in failures) else 0
 

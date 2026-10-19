@@ -100,11 +100,13 @@ A run that finds nothing to change sends only reads. For a namespace of N rows:
 
 | Side                 | Requests                                                                                                                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Export, private Loom | `memory.list` pages of 100 rows (`LOOM_MEMORY_LIST_VIEWER_LIMIT` caps a viewer token's page), one `memory.bulk_get` per 500 rows, and one `memory.export_evidence` page per 2,000 typed edges                                                                            |
+| Export, private Loom | `memory.list` pages of 100 rows (`LOOM_MEMORY_LIST_VIEWER_LIMIT` caps a viewer token's page) and one more to check nothing moved, one `memory.bulk_get` per 500 rows of each writer, and one `memory.export_evidence` page per 2,000 typed edges                         |
 | Import, public Loom  | `memory.list` pages of 1,000 rows, one `memory.bulk_get` per 500 rows, and the edge pages again; then one `memory.set` per changed row, one `memory.link` per new edge, a `memory.get` and a `memory.delete` per pruned row, and one `ops.capabilities` before the first |
 
-At 500 rows that is 13 requests; at 50,000 rows about 750, under one a second over a
-15-minute schedule.
+A 501-row namespace with one writer took 14 requests in all (7 `memory.list` calls, 2
+`memory.bulk_get` and 1 edge page on the export side; 1, 2 and 1 on the import side). At
+50,000 rows it is about 750, under one a second over a 15-minute schedule; the export lists
+the source again, up to three times, when it changed while it was paged.
 
 ## Tokens
 

@@ -89,6 +89,9 @@ class _FakeLoom:
 
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((op, body))
+        if op == "memory.list" and "known_version" in body:
+            # Nothing writes to the source while one export lists it.
+            return {"entries": [], "unchanged": body["known_version"] == "1"}
         if op == "memory.list":
             mine = sorted(
                 (
@@ -921,3 +924,17 @@ def test_prune_deletes_nothing_when_the_catalogue_cannot_be_read(
     assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 1
     assert "memory.delete" not in loom.writes()
     assert "cannot read the target's ops.capabilities" in capsys.readouterr().err
+
+
+def test_a_dry_run_says_an_older_target_would_prune_nothing(
+    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The dry run makes the real run's checks, so it fails the way that run would.
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    loom.older_catalogue = True
+    loom.calls.clear()
+    capsys.readouterr()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune", "--dry-run") == 1
+    out = capsys.readouterr()
+    assert "prune deletes nothing" in out.err and "would delete" not in out.out
+    assert loom.writes() == []

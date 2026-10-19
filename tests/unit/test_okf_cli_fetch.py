@@ -17,6 +17,8 @@ class _FakeClient:
 
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((op, body))
+        if op == "memory.list" and body.get("known_version") == "7":
+            return {"entries": [], "unchanged": True, "namespace_version": "7"}
         if op == "memory.list":
             return {
                 "entries": [
@@ -126,6 +128,11 @@ class _ShiftingClient:
         if op == "memory.bulk_get":
             return {"results": {k: {"value": k} for k in body["memory_keys"]}}
         assert op == "memory.list"
+        if "known_version" in body:  # the check after the last page
+            now = "2" if self.listings <= self.shifts else "1"
+            if self.restore and self.listings <= self.shifts:
+                now = "3"
+            return {"entries": [], "unchanged": body["known_version"] == now}
         if body["offset"] == 0:
             self.listings += 1
         keys, version = ["a", "b", "c"], "1"
@@ -179,6 +186,8 @@ class _LaggingMiddleClient:
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         if op == "memory.bulk_get":
             return {"results": {k: {"value": k} for k in body["memory_keys"]}}
+        if "known_version" in body:
+            return {"entries": [], "unchanged": body["known_version"] == "2"}
         lagging = body["offset"] == 1
         keys = ["a", "x", "b", "c"] if lagging else ["a", "b", "c"]
         page = keys[body["offset"] : body["offset"] + 1]
@@ -198,4 +207,36 @@ async def test_a_page_from_a_lagging_replica_is_not_called_complete() -> None:
         _LaggingMiddleClient(), "o", "ns", include_tombstoned=False
     )
     assert [r["memory_key"] for r in rows] == ["a", "x", "c"]  # "b" was skipped
+    assert not whole
+
+
+class _LateDeleteClient:
+    """Three pages of one row. A row of page 1 is deleted after the last page read its
+    version but before it read its rows, so that page skips the live row that moved up.
+    Every page reports the same version and a total the rows add up to (a cached count, a
+    replica that already counted the delete): only a read after the last page sees it."""
+
+    async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == "memory.bulk_get":
+            return {"results": {k: {"value": k} for k in body["memory_keys"]}}
+        if "known_version" in body:
+            return {"entries": [], "unchanged": body["known_version"] == "2"}
+        offset = body["offset"]
+        keys = ["a", "b", "c", "d"] if offset < 2 else ["b", "c", "d"]  # "a" deleted
+        page = keys[offset : offset + 1]
+        return {
+            "entries": [
+                {"memory_key": k, "agent": "x", "user_id": "-", "session_id": "-"} for k in page
+            ],
+            "truncated": offset + 1 < 3,
+            "total": 3,
+            "namespace_version": "1",
+        }
+
+
+@pytest.mark.asyncio
+async def test_a_delete_during_the_last_pages_read_is_caught_after_it() -> None:
+    client = _LateDeleteClient()
+    rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    assert [r["memory_key"] for r in rows] == ["a", "b", "d"]  # "c" was skipped
     assert not whole
