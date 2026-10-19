@@ -700,6 +700,7 @@ __all__ = [
     "GRANT_ROLES",
     "CachedGate",
     "Role",
+    "may_be_restricted",
     "check_authorized",
     "claim_cap",
     "grant_rank",

@@ -55,6 +55,8 @@ from server.tasks.app.common import (
     _loads,
     _naive,
     _not_found,
+    _owner_check,
+    _owner_refusal,
     _payload,
     _record,
     _release_lease,
@@ -508,10 +510,10 @@ async def handle_task_unblock(input: TaskUnblockInput) -> TaskOutput:
     if task is None:
         raise _not_found()
     subject = _caller_subject()
-    # A poster's way in needs no read: the owner check marks only when it is the last one.
     poster = task.get("blocked_on") == "sender" and _is_poster(task, subject)
-    owner_side = await _in_scope(input.org, task["namespace"], write=True, hides_answer=not poster)
+    owner_side, unverified = await _owner_check(input.org, task["namespace"])
     if not owner_side and not poster:
+        _owner_refusal(unverified)
         raise _not_found()
     if task["status"] != "blocked":
         raise await _state_conflict("TASK_NOT_BLOCKED", task)
@@ -586,43 +588,34 @@ async def handle_task_fail(input: TaskFailInput) -> TaskOutput:
 # ============================================================
 
 
-async def _load_for_reason_op(
-    input: TaskReasonInput, *, poster_may_finish: bool = True
-) -> tuple[TaskRow, bool]:
-    """The row and whether the caller is on the owner side (else the poster).
-    `poster_may_finish=False` for an op only the owner side may finish, which
-    then refuses the poster itself, after the state checks."""
+async def _load_for_reason_op(input: TaskReasonInput) -> tuple[TaskRow, bool, bool]:
+    """The row, whether the caller is on the owner side (else the poster), and
+    whether an owner-side refusal was unverified (see `_owner_check`)."""
     task = await repo.fetch_task(input.org, input.task_id)
     if task is None:
         raise _not_found()
     poster = _is_poster(task, _caller_subject())
-    # When the poster is admitted without a read, the owner check does not
-    # decide the answer, so it does not mark.
-    poster_admitted_without_read = (
-        poster
-        and task["status"] != "in_progress"
-        and (poster_may_finish or task["status"] in TERMINAL)
-    )
-    owner_side = await _in_scope(
-        input.org, task["namespace"], write=True, hides_answer=not poster_admitted_without_read
-    )
+    owner_side, unverified = await _owner_check(input.org, task["namespace"])
     if not owner_side and not poster:
+        _owner_refusal(unverified)
         raise _not_found()
     if task["status"] in TERMINAL:
         raise await _state_conflict("TASK_TERMINAL", task, want="it is already finished")
     if task["status"] == "in_progress":
         if not owner_side:
+            _owner_refusal(unverified)
             raise _conflict("TASK_IN_PROGRESS", "the task is owned; ask its owner")
         if input.fence is not None and int(input.fence) != int(task.get("fence") or 0):
             raise _conflict("TASK_FENCE_STALE", "the lease this fence belonged to is over")
-    return task, owner_side
+    return task, owner_side, unverified
 
 
 async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
     """Owner side (an approver from triage, the owner from anywhere)."""
 
-    task, owner_side = await _load_for_reason_op(input, poster_may_finish=False)
+    task, owner_side, unverified = await _load_for_reason_op(input)
     if not owner_side:
+        _owner_refusal(unverified)
         raise _not_found()
     await _drop_lease(task)
     row, seq = await _record(
@@ -641,7 +634,7 @@ async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
 async def handle_task_cancel(input: TaskReasonInput) -> TaskOutput:
     """Owner side, or the poster while nobody owns the task."""
 
-    task, _owner_side = await _load_for_reason_op(input)
+    task, _owner_side, _unverified = await _load_for_reason_op(input)
     await _drop_lease(task)
     row, seq = await _record(
         task,
@@ -692,8 +685,9 @@ async def handle_task_update(input: TaskUpdateInput) -> TaskUpdateOutput:
     if task is None:
         raise _not_found()
     poster = _is_poster(task, _caller_subject())
-    owner_side = await _in_scope(input.org, task["namespace"], write=True, hides_answer=not poster)
+    owner_side, unverified = await _owner_check(input.org, task["namespace"])
     if not owner_side and not poster:
+        _owner_refusal(unverified)
         raise _not_found()
     if task["status"] not in EDITABLE:
         raise _conflict("TASK_NOT_EDITABLE", f"task is {task['status']!r}; add a note instead")

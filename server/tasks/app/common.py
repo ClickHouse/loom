@@ -167,6 +167,26 @@ def _caller_is_human() -> bool:
     return not auth.is_service_account
 
 
+async def _owner_check(org: str, namespace: str) -> tuple[bool, bool]:
+    """(on the owner side, refused unverified): the owner-side check without
+    marking, for an op that also admits the poster; the op calls
+    `_owner_refusal` where that check alone refused."""
+    from server.auth.fail_closed import reset, unreadable
+
+    reset()
+    owner_side = await _in_scope(org, namespace, write=True, hides_answer=False)
+    return owner_side, not owner_side and unreadable()
+
+
+def _owner_refusal(unverified: bool) -> None:
+    """The owner check alone refused: when it could not read what it needed,
+    the refusal is the server's."""
+    if unverified:
+        from server.auth.fail_closed import note_answered_unverified
+
+        note_answered_unverified()
+
+
 async def _in_scope(org: str, namespace: str, *, write: bool, hides_answer: bool = True) -> bool:
     """`row_in_scope` at the role a side needs (`hides_answer`: see there)."""
     from server.auth.authz import row_in_scope

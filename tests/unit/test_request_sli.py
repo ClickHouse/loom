@@ -1162,6 +1162,8 @@ def test_a_listing_that_leaves_a_namespace_out_unverified_does_not_mark_the_requ
 def test_a_5xx_while_mcp_computes_the_caller_s_defaults_is_ledgered(monkeypatch) -> None:
     """MCP fills the caller's default namespace before the gate; a grants read
     past its stale window raises there, and must still leave a server row."""
+    from types import SimpleNamespace
+
     from server.auth.jwt import AuthInfo
     from server.core.errors import BackendUnavailableError
     from server.observability import events
@@ -1182,9 +1184,11 @@ def test_a_5xx_while_mcp_computes_the_caller_s_defaults_is_ledgered(monkeypatch)
     eve = AuthInfo(
         subject="eve", org="o", namespaces=("n",), roles=(Role.VIEWER,), is_service_account=False
     )
+    monkeypatch.setattr(mcp_call, "uuid", SimpleNamespace(uuid4=lambda: "the-call"))
     params = {"name": "loom_memory_get", "arguments": {"key": "k"}}  # no namespace: defaults run
     with pytest.raises(BackendUnavailableError):
         asyncio.run(mcp_call._call_tool(1, params, auth=eve))
+    assert [e.request_id for e in emitted] == ["the-call"]  # joins its log lines
     # In the token's org: the call's identity is not filled in yet.
     assert [(e.operation, e.error_code, e.status_class, e.org) for e in emitted] == [
         ("memory.get", "BACKEND_UNAVAILABLE", "server", "o")
@@ -1255,10 +1259,8 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
         # ...unless the caller named the tracker's item or the namespace.
         ("server/code/app/bisect.py", "_handle_bisect", cond),
         ("server/tracker/app/test_signal.py", "_code_namespace_authorized", cond),
-        # A task's owner side, when a poster's way in already admits the caller.
-        ("server/tasks/app/transitions.py", "_load_for_reason_op", cond),
-        ("server/tasks/app/transitions.py", "handle_task_unblock", cond),
-        ("server/tasks/app/transitions.py", "handle_task_update", cond),
+        # A task's owner side, which marks only where it alone refused.
+        ("server/tasks/app/common.py", "_owner_check", never),
         # A listing the caller did not scope.
         ("server/tasks/app/inboxes.py", "handle_inbox_list", never),
     }
@@ -1305,7 +1307,7 @@ def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
     is the server's."""
     from types import SimpleNamespace
 
-    from server.auth import authz
+    from server.auth import authz, fail_closed
     from server.auth.context import set_current_auth
     from server.auth.fail_closed import answered_unverified
     from server.auth.jwt import AuthInfo
@@ -1313,6 +1315,8 @@ def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
     from server.tasks.app import common, transitions
 
     async def _unverified(*a: Any, **k: Any) -> None:
+        # As check_authorized does when a read it needed failed.
+        fail_closed.note_unreadable()
         e = PermissionError("refused")
         e.unverified = True  # type: ignore[attr-defined]
         raise e
@@ -1342,30 +1346,25 @@ def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
 
     async def _cancel_as_poster() -> tuple[bool, bool]:
         _as("poster")
-        _row, owner_side = await transitions._load_for_reason_op(reason)
+        _row, owner_side, _unverified = await transitions._load_for_reason_op(reason)
         return owner_side, answered_unverified()
 
-    async def _wont_do_as_poster() -> tuple[bool, bool]:
-        # Only the owner side may finish it: the handler 404s the poster, and
-        # the owner check that decided it marks.
-        _as("poster")
-        _row, owner_side = await transitions._load_for_reason_op(reason, poster_may_finish=False)
-        return owner_side, answered_unverified()
-
-    async def _refused(subject: str, **k: Any) -> bool:
+    async def _refused(subject: str, op: Any = transitions._load_for_reason_op) -> bool:
         _as(subject)
         with pytest.raises(Exception):  # noqa: B017 — the 404 or 409 the op answers
-            await transitions._load_for_reason_op(reason, **k)
+            await op(reason)
         return answered_unverified()
+
+    wont_do = transitions.handle_task_wont_do  # only the owner side may finish it
 
     async def _read_as_poster() -> tuple[bool, bool]:
         _as("poster")
         return await common._readable(await _task("o", "t")), answered_unverified()
 
     assert asyncio.run(_cancel_as_poster()) == (False, False)
-    assert asyncio.run(_wont_do_as_poster()) == (False, True)
+    assert asyncio.run(_refused("poster", wont_do)) is True  # the owner check alone refused
     status["value"] = "done"  # a finished task answers 409 whichever side asks
-    assert asyncio.run(_refused("poster", poster_may_finish=False)) is False
+    assert asyncio.run(_refused("poster", wont_do)) is False
     status["value"] = "todo"
     assert asyncio.run(_read_as_poster()) == (True, False)
     assert asyncio.run(_refused("someone-else")) is True
@@ -1549,18 +1548,43 @@ def test_audit_list_naming_a_restricted_namespace_it_cannot_verify_is_the_server
     assert asyncio.run(_member_list()) == (0, True)
 
 
-def test_the_member_scoped_org_rollups_share_one_scope_rule() -> None:
-    """Every org-wide rollup scoped to a member's namespaces takes them from
-    `rollup_member_namespaces`, which marks a scope emptied by a failed read."""
-    import inspect
-
-    from server.erasure.app import handlers as erasure
+def test_the_member_scoped_org_rollups_mark_a_scope_emptied_by_a_failed_read(
+    monkeypatch,
+) -> None:
+    """memory.owner_report and learnings.quality, scoped to a member's
+    namespaces: empty for want of a read is the server's, for want of a
+    grant the caller's."""
+    from server.auth import context, fail_closed
+    from server.auth.jwt import AuthInfo
+    from server.core import request_work
+    from server.memory.api.models_exposure import MemoryOwnerReportInput
+    from server.memory.api.models_learnings import LearningsQualityInput
     from server.memory.app import exposure, learnings
 
-    for fn in (
-        exposure.handle_memory_owner_report,
-        learnings.handle_learnings_quality,
-        erasure._list_scope,
-    ):
-        source = inspect.getsource(fn)
-        assert "rollup_member_namespaces" in source and "resolve_my_namespaces" not in source, fn
+    read_fails = {"value": False}
+
+    async def _mine(org: str) -> list[str]:
+        if read_fails["value"]:
+            fail_closed.note_unreadable()
+        return []
+
+    monkeypatch.setattr(context, "resolve_my_namespaces", _mine)
+    member = AuthInfo(
+        subject="eve", org="o", namespaces=("n",), roles=(Role.VIEWER,), is_service_account=False
+    )
+
+    async def _run(handler: Any, input_obj: Any) -> bool:
+        request_work.begin()
+        context.set_current_auth(member)
+        await handler(input_obj)
+        return fail_closed.answered_unverified()
+
+    calls = [
+        (exposure.handle_memory_owner_report, MemoryOwnerReportInput(org="o", user_id="eve")),
+        (learnings.handle_learnings_quality, LearningsQualityInput(org="o")),
+    ]
+    for handler, input_obj in calls:
+        read_fails["value"] = False
+        assert asyncio.run(_run(handler, input_obj)) is False, handler.__name__
+        read_fails["value"] = True
+        assert asyncio.run(_run(handler, input_obj)) is True, handler.__name__

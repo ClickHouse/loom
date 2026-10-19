@@ -448,7 +448,7 @@ async def _bind_caller_identity(
         # A grants read past its cache's stale window (a 503), before the gate:
         # counted against the server in the token's org (the call's identity
         # is not filled in yet), then answered as raised.
-        emit_token_refusal(op.name, auth, error_code=e.code)
+        emit_token_refusal(op.name, auth, error_code=e.code, request_id=request_id)
         raise
     explicit_agent = bool(arguments.get("agent"))
     # A blank or "-" namespace names none, as the gates read it.

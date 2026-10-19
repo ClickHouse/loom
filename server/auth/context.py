@@ -319,6 +319,7 @@ __all__ = [
     "OrgScopeFilter",
     "current_auth",
     "current_auth_var",
+    "rollup_member_namespaces",
     "delegated_reach",
     "named_claims",
     "readable_named_claims",
