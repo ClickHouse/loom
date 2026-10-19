@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MentorBriefResult, MyNamespaceEntry, NamespaceAuditResult, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { setFoldOpen } from "../lib/folds";
 import { MentorPanel } from "./MentorPanel";
 import { NamespaceAuditPanel } from "./NamespaceAuditPanel";
 
@@ -88,6 +89,9 @@ function deferred<T>() {
 
 describe("panels drop a run for the namespace they moved off", () => {
   beforeEach(() => {
+    // The panel starts folded; these tests are about what it shows once opened.
+    setFoldOpen("usage-audit", true);
+    setFoldOpen("mentor", true);
     // Reset, not clear: a queued Once a failed test left unused must not answer the next.
     vi.resetAllMocks();
     resetNamespaceRoleCache();

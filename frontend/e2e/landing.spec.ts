@@ -53,16 +53,15 @@ test("bare / with a code+QA-only token lands on Repositories, picker on the code
   await expect(picker).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "No namespace selected" })).toHaveCount(0);
 
-  // The picker offers both namespaces with their kind tags — the QA row is a
-  // grants-only row, the code row a claim-only one.
-  // A row's name starts with its role icon's label ("jwt", "viewer").
+  // The picker groups the namespaces by kind: the current code index opens its group, and
+  // the tracker records (a grants-only row) sit folded under their own heading.
   await picker.click();
-  const codeRow = page.getByRole("button", { name: /^jwt code-clickhouse/ });
-  await expect(codeRow).toBeVisible();
-  await expect(codeRow.getByText("code", { exact: true })).toBeVisible();
-  const trackerRow = page.getByRole("button", { name: /^viewer tracker-clickhouse/ });
-  await expect(trackerRow).toBeVisible();
-  await expect(trackerRow.getByText("qa", { exact: true })).toBeVisible();
+  const list = page.getByLabel("Namespaces");
+  await expect(list.getByRole("button", { name: /code-clickhouse/ })).toBeVisible();
+  const trackers = list.getByRole("button", { name: /^Tracker records/ });
+  await expect(trackers).toHaveAttribute("aria-expanded", "false");
+  await trackers.click();
+  await expect(list.getByRole("button", { name: /tracker-clickhouse/ })).toBeVisible();
   await shot(page, "15-landing-code-tracker-only-repositories");
   await page.keyboard.press("Escape");
 

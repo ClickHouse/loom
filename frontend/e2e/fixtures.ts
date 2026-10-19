@@ -57,6 +57,12 @@ export interface TraverseFixture {
   truncated: boolean;
 }
 
+// A list row the read drew, not the loading placeholder (RowSkeleton is a `.list-row` too).
+export const LOADED_ROW = "main .list-row:not(.list-row-skeleton)";
+
+/** A 44 px target's least measured size: layout can land a 44 px control at 43.99998 px. */
+export const MIN_TARGET_PX = 44 - 0.01;
+
 /** A walk small enough to expand — five hop-1 nodes, no hop 2 — so `facts.related` has
  *  room under the 200-node cap. */
 export const SMALL_SEED = "gamma";
@@ -779,11 +785,23 @@ export interface InstallOptions {
   /** Answer `memory.list` with this many rows, each carrying a ~600-character preview — a
    *  render-budget fixture. Default: the empty list. */
   memoryRows?: number;
+  /** The first memory row's tags, in place of the fixture's three. */
+  firstMemoryTags?: string[];
   /** Answer `knowledge.list` with this many rows. */
   knowledgeRows?: number;
   /** Answer `run.list` with this many runs, every field a run carries, projected by the
    *  request's `fields`. Default: none. */
   runRows?: number;
+  /** Answer `conversation.threads` with this many threads, cut to the request's `limit`,
+   *  and `conversation.search` with three turns of each. Default: none. */
+  threadRows?: number;
+  /** Answer `audit.list` with this many events. Default: none. */
+  auditRows?: number;
+  /** Answer `namespace.browse` with this many memory namespaces. Default: none. */
+  browseRows?: number;
+  /** Answer `task.list` with this many open tasks, spread over the four open lanes, in
+   *  place of the three the board shows by default. */
+  taskRows?: number;
   /** Hold every `memory.search` answer this long, so a retype can be seen to abort the
    *  stale search. Default: answer at once. */
   searchDelayMs?: number;
@@ -926,7 +944,10 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
         });
       case "/v1/audit.list":
         calls.audit.push(body);
-        return json({ rows: [], next_cursor: null });
+        return json({ rows: auditRowsFixture(options.auditRows ?? 0), next_cursor: null });
+      case "/v1/namespace.browse":
+        if (!options.browseRows) break;
+        return json({ rows: browseRowsFixture(options.browseRows) });
       case "/v1/ui.vitals":
         return json({ recorded: true, route: body.route ?? "" });
       case "/v1/memory.list":
@@ -942,19 +963,32 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
           });
         }
         if (!options.memoryRows) break;
-        return json({
-          entries: projectRows(memoryRowsFixture(options.memoryRows, ns), body, "memory_key"),
-          total: options.memoryRows,
-          today: options.memoryRows,
-          truncated: false,
-          namespace_version: "1",
-          unchanged: false,
-        });
+        {
+          // One page of the rows, as the server answers `limit`, `offset` and `preview_chars`:
+          // a longer value is cut to `preview_chars`, ends in "…" and is flagged `value_truncated`.
+          const from = Number(body.offset ?? 0);
+          const cut = typeof body.preview_chars === "number" ? body.preview_chars : Infinity;
+          const rows = memoryRowsFixture(options.memoryRows, ns, options.firstMemoryTags)
+            .slice(from, from + Number(body.limit ?? 100))
+            .map((r) =>
+              typeof r.value === "string" && r.value.length > cut
+                ? { ...r, value: `${r.value.slice(0, cut)}…`, value_truncated: true }
+                : r,
+            );
+          return json({
+            entries: projectRows(rows, body, "memory_key"),
+            total: options.memoryRows,
+            today: options.memoryRows,
+            truncated: false,
+            namespace_version: "1",
+            unchanged: false,
+          });
+        }
       case "/v1/memory.get": {
         // The inspector's one read on open answers from the same fixture rows, so a card
         // open can be measured end to end.
         if (!options.memoryRows) break;
-        const rows = memoryRowsFixture(options.memoryRows, ns);
+        const rows = memoryRowsFixture(options.memoryRows, ns, options.firstMemoryTags);
         const hit = rows.find((r) => r.memory_key === body.memory_key);
         if (!hit) return json({ found: false });
         return json({
@@ -981,7 +1015,12 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
       case "/v1/inbox.list":
         return json({ inboxes: taskInboxesFixture(ns) });
       case "/v1/task.list":
-        return json({ tasks: taskRowsFixture(String(body.inbox ?? "")), truncated: false });
+        return json({
+          tasks: options.taskRows
+            ? openTaskRowsFixture(String(body.inbox ?? ""), options.taskRows)
+            : taskRowsFixture(String(body.inbox ?? "")),
+          truncated: false,
+        });
       case "/v1/task.counts":
         return json({ counts: taskCountsFixture(ns) });
       case "/v1/task.get":
@@ -992,7 +1031,22 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
         return json({ repos: projectRows(codeRepos, body, "namespace") });
       case "/v1/run.list":
         if (!options.runRows) break;
-        return json({ runs: projectRows(runRowsFixture(options.runRows, ns), body, "run_id") });
+        return json(runListFixture(runRowsFixture(options.runRows, ns), body));
+      case "/v1/conversation.threads":
+        if (!options.threadRows) break;
+        return json({
+          threads: projectRows(
+            threadRowsFixture(options.threadRows).slice(
+              Number(body.offset ?? 0),
+              Number(body.offset ?? 0) + Number(body.limit ?? 20),
+            ),
+            body,
+            "thread_id",
+          ),
+        });
+      case "/v1/conversation.search":
+        if (!options.threadRows) break;
+        return json({ hits: conversationHitsFixture(options.threadRows, Number(body.top_k ?? 50)) });
       case "/v1/run.get":
         return json(runGetFixture(runRowsFixture(options.runRows ?? 0, ns), String(body.run_id ?? "")));
       case "/v1/tracker.source.list":
@@ -1209,7 +1263,7 @@ function runGetFixture(runs: Record<string, unknown>[], runId: string): Record<s
 /** `n` memory rows the way `memory.list` returns them — a bounded string preview per row
  *  (the server caps `value` for a list), tags, an agent, alternating pins and a verified
  *  row here and there, so the card renders every chip it has. */
-function memoryRowsFixture(n: number, namespace: string): Record<string, unknown>[] {
+function memoryRowsFixture(n: number, namespace: string, firstTags?: string[]): Record<string, unknown>[] {
   const preview =
     "Alert fired on the ingest lane: consumer lag over 30 s for 4 minutes; root cause a stalled partition. ";
   return Array.from({ length: n }, (_, i) => ({
@@ -1221,7 +1275,7 @@ function memoryRowsFixture(n: number, namespace: string): Record<string, unknown
     created_at: `2026-09-19T0${i % 10}:${String(i % 60).padStart(2, "0")}:00Z`,
     expires_at: null,
     pinned: i % 17 === 0,
-    tags: ["alerts", i % 2 ? "ingest" : "storage", `lane-${i % 5}`],
+    tags: i === 0 && firstTags ? firstTags : ["alerts", i % 2 ? "ingest" : "storage", `lane-${i % 5}`],
     agent: i % 4 ? "alert-bot" : "oncall",
     namespace,
     org: "acme",
@@ -1279,9 +1333,69 @@ function knowledgeRowsFixture(n: number): Record<string, unknown>[] {
   }));
 }
 
+/** `n` audit events, newest first, each with an input behind its Details. */
+function auditRowsFixture(n: number): Record<string, unknown>[] {
+  return Array.from({ length: n }, (_, i) => ({
+    ts: `2026-09-19T${String(23 - (i % 24)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}:00Z`,
+    event_type: ["memory.set", "memory.delete", "memory.pin"][i % 3],
+    actor: i % 2 ? "alice@example.com" : "alert-bot",
+    subject: JSON.stringify({
+      namespace: "team-alerts",
+      memory_key: `alerts/2026-09-19/${String(i).padStart(4, "0")}`,
+    }),
+    request_id: `req-${i}`,
+  }));
+}
+
+/** `n` memory namespaces the way `namespace.browse` lists them; none is the caller's. */
+function browseRowsFixture(n: number): Record<string, unknown>[] {
+  return Array.from({ length: n }, (_, i) => ({
+    namespace: `team-${String(i).padStart(3, "0")}`,
+    kind: "memory",
+    description: `Lane ${i % 5} on-call notes and runbooks`,
+    owner_email: "owner@example.com",
+    member_count: 3 + (i % 7),
+    requires_approval: i % 2 === 0,
+    created_at: "2026-09-01T00:00:00Z",
+    join_policy: i % 2 === 0 ? "approval" : "open",
+    visibility: "public",
+    my_status: "none",
+  }));
+}
+
+/** `n` threads the way `conversation.threads` lists them, most recently active first. */
+function threadRowsFixture(n: number): Record<string, unknown>[] {
+  return Array.from({ length: n }, (_, i) => ({
+    thread_id: `thread-${String(i).padStart(4, "0")}`,
+    agent: i % 2 ? "claude-code" : "claude-desktop",
+    msg_count: 4 + (i % 9),
+    title: `Lane ${i % 5} exporter backlog`,
+    first_seen: "2026-09-18T08:00:00Z",
+    last_seen: `2026-09-19T${String(23 - (i % 24)).padStart(2, "0")}:00:00Z`,
+    last_role: i % 2 ? "assistant" : "user",
+    last_content_excerpt: "Drained the lane and replayed from the last committed offset; the backlog is clear.",
+  }));
+}
+
+/** `conversation.search` over `threadRowsFixture(n)`: three turns of each thread, cut to
+ *  `topK`. */
+function conversationHitsFixture(n: number, topK: number): Record<string, unknown>[] {
+  return threadRowsFixture(n)
+    .flatMap((t, i) =>
+      [0, 1, 2].map((k) => ({
+        thread_id: t.thread_id,
+        msg_id: `msg-${i}-${k}`,
+        role: k % 2 ? "assistant" : "user",
+        content_excerpt: `The lane ${i % 5} exporter backlog grew again; replay ${k} drained it.`,
+        ts: t.last_seen,
+      })),
+    )
+    .slice(0, topK);
+}
+
 // ---- Tasks: the inbox plane as the board reads it.
 
-const TASK_INBOX = "bench-bot";
+export const TASK_INBOX = "bench-bot";
 
 function taskInboxesFixture(namespace: string): Record<string, unknown>[] {
   return [
@@ -1337,6 +1451,36 @@ function taskRowsFixture(inbox: string): Record<string, unknown>[] {
     row(2, "todo"),
     row(3, "blocked", { reason: "needs a repro from the sender", blocked_on: "sender" }),
   ];
+}
+
+/** `n` open tasks dealt round-robin over triage, todo, in progress and blocked; the
+ *  in-progress ones are leased to an agent. */
+function openTaskRowsFixture(inbox: string, n: number): Record<string, unknown>[] {
+  if (inbox !== TASK_INBOX) return [];
+  const statuses = ["triage", "todo", "in_progress", "blocked"];
+  return Array.from({ length: n }, (_, i) => ({
+    task_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    inbox,
+    kind: i % 2 ? "bug_report" : "question",
+    priority: 1 + (i % 3),
+    status: statuses[i % 4],
+    reason: "",
+    blocked_on: i % 4 === 3 ? "human" : "",
+    resume_at: null,
+    deadline: null,
+    not_before: null,
+    defer_count: 0,
+    title: `Task ${i}: lane ${i % 5} exporter stalls`,
+    from_agent: "reporter-public",
+    from_subject: "sa:reporter-public-1a2b3c",
+    owner: i % 4 === 2 ? "alert-bot" : "",
+    lease_until: i % 4 === 2 ? "2099-01-01T00:00:00" : null,
+    parent_task_id: null,
+    disclosure: "internal",
+    created_at: `2026-09-20T01:${String(i % 60).padStart(2, "0")}:00`,
+    updated_at: "2026-09-20T01:00:00",
+    version: 1,
+  }));
 }
 
 /** `task.get` for one of `taskRowsFixture`'s tasks: the row with the fields only the
@@ -1422,3 +1566,33 @@ export const ROUTES = [
   "/admin/agents",
   "/admin/users",
 ];
+
+/** `run.list` as the server answers it: the filters (status, agent, memory_activity, q in
+ *  the goal, run id or agent, any case), then `order_by`, then the page `offset` and
+ *  `limit` cut, with `total` counting every run the filters keep. */
+function runListFixture(all: Record<string, unknown>[], body: Record<string, unknown>): Record<string, unknown> {
+  const q = String(body.q ?? "").toLowerCase();
+  const used = (r: Record<string, unknown>) => (r.memories_used as string[]).length;
+  const active = (r: Record<string, unknown>) => used(r) + (r.memories_written as string[]).length > 0;
+  const kept = all.filter(
+    (r) =>
+      (!body.status || r.status === body.status) &&
+      (!body.agent || r.agent === body.agent) &&
+      (body.memory_activity !== "with" || active(r)) &&
+      (body.memory_activity !== "without" || !active(r)) &&
+      (!q || `${r.goal} ${r.run_id} ${r.agent}`.toLowerCase().includes(q)),
+  );
+  const order = String(body.order_by || "started_desc");
+  const value = (r: Record<string, unknown>) =>
+    order.startsWith("duration") ? Number(r.duration_ms) : order.startsWith("relied_on") ? used(r) : 0;
+  const sign = order.endsWith("_asc") ? 1 : -1;
+  kept.sort(
+    (a, b) =>
+      sign * (value(a) - value(b)) ||
+      sign * String(a.started_at).localeCompare(String(b.started_at)) ||
+      sign * String(a.run_id).localeCompare(String(b.run_id)),
+  );
+  const offset = Number(body.offset ?? 0);
+  const page = kept.slice(offset, offset + Number(body.limit ?? 50));
+  return { runs: projectRows(page, body, "run_id"), total: kept.length };
+}

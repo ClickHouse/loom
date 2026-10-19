@@ -1,23 +1,37 @@
-import { useState, type FocusEvent, type HTMLAttributes, type KeyboardEvent, type MouseEvent } from "react";
+import {
+  memo,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type HTMLAttributes,
+  type KeyboardEvent,
+} from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import type { TaskListRow } from "../../api/tasks";
-import { GROUPS, GROUP_META, posterName, rel, sublineOf, type Group, type Subline } from "../../lib/tasks";
-import { Avatar, KindTag, LeaseBar, PosterAvatar, PriorityBar } from "./TaskBits";
+import { GROUPS, GROUP_META, assigneeOf, sublineOf, type Group, type Subline } from "../../lib/tasks";
+import { Assignee, KindTag, LaneBadge, LeaseBar, PriorityBar } from "./TaskBits";
 import { useTaskDrag } from "./drag";
 import { absoluteTime } from "../../lib/format";
+import { Tip } from "../../components/ui";
+import { ListTime } from "../../components/ui/ListTime";
+import { RowMenu, type RowMenuItem } from "../../components/ui/RowMenu";
 
 /**
  * The list: five collapsible groups by what happens next — Triage, To do, In progress,
- * Waiting, Closed — each with a swatch, a count and a hint. A row carries the decision:
- * the priority bar, the kind, the title, the one line that matters for its state, and a
- * meta cell — inline Accept / Won't do in Triage, the owner and lease bar in progress,
- * the poster and age otherwise. The DOM is a grid: each group is a rowgroup whose first
- * row holds the collapse button, then its task rows. The grid is one tab stop: Up / Down
- * (and j / k) move between group headers and task rows, Home / End jump to the ends, and
- * Left / Right walk a row's controls (a header is one cell, so there they do nothing). A
- * writer drags a row onto another group to move it (`useTaskDrag`); while a row is held,
- * empty and hidden groups show as drop targets.
+ * Waiting, Closed — each with its state badge, a count and a hint. A row reads in two
+ * lines: the priority and the title, with the assignee, the age and the row's menu on the
+ * right; then the kind and the one line that matters for its state (who posted it, why it
+ * waits, the lease). A triage row also carries its one inline action, Accept; every other
+ * move is in the menu. A group shows 20 rows, then "Show all N".
+ *
+ * The DOM is a grid (the WAI-ARIA grid pattern): each group is a rowgroup whose first row
+ * holds the collapse button, then its task rows. The grid is one tab stop: Up / Down (and
+ * j / k) move between group headers and task rows, Home / End jump to the ends, and Left /
+ * Right walk a row's controls (a header is one cell, so there they do nothing). A writer
+ * drags a row onto another group to move it (`useTaskDrag`); while a row is held, empty
+ * and hidden groups show as drop targets.
  */
 export interface RowContext {
   now: number;
@@ -31,85 +45,68 @@ export interface RowContext {
   onSelect: (r: TaskListRow) => void;
   canWrite: boolean;
   onAccept: (r: TaskListRow) => void;
-  onWontDo: (r: TaskListRow) => void;
+  /** The row's menu: every move its status allows but the inline one. */
+  menuFor: (r: TaskListRow) => RowMenuItem[];
   /** A card dropped on a group: the move `dropAction` names, if any. */
   onDrop: (r: TaskListRow, to: Group) => void;
 }
 
-function SublineView({ s }: { s: Subline | null }) {
-  if (!s) return null;
+/** A lane lists this many rows before "Show all N": Tasks has no pager. */
+export const LANE_ROWS = 20;
+
+/** A row's second line. `plain` writes an outcome's URL as text, for a card that is itself a button. */
+export function SublineView({ r, ctx, plain = false }: { r: TaskListRow; ctx: RowContext; plain?: boolean }) {
+  const s: Subline | null = sublineOf(r, ctx.now, ctx.progressNotes.get(r.task_id));
   return (
     <span className="tq-sub">
-      {s.italic ? <span className="reason">{s.text}</span> : <span>{s.text}</span>}
-      {s.href && (
-        <a href={s.href} target="_blank" rel="noreferrer" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
+      <KindTag kind={r.kind} />
+      {r.status === "in_progress" && (
+        <LeaseBar leaseUntil={r.lease_until} leaseSeconds={ctx.leaseSecondsOf(r.inbox)} now={ctx.now} />
+      )}
+      {s && (s.italic ? <span className="reason">{s.text}</span> : <span className="truncate">{s.text}</span>)}
+      {s?.href && plain && (
+        <span className="truncate">{s.href.replace(/^https?:\/\/(www\.)?(github\.com\/)?/, "")}</span>
+      )}
+      {s?.href && !plain && (
+        <a
+          href={s.href}
+          target="_blank"
+          rel="noreferrer"
+          className="truncate"
+          tabIndex={-1}
+          onClick={(e) => e.stopPropagation()}
+        >
           {s.href.replace(/^https?:\/\/(www\.)?(github\.com\/)?/, "")}
         </a>
       )}
-      {s.suffix && <span>{s.suffix}</span>}
+      {s?.suffix && <span className="whitespace-nowrap">{s.suffix}</span>}
     </span>
   );
 }
 
 function Meta({ r, ctx }: { r: TaskListRow; ctx: RowContext }) {
-  if (r.status === "in_progress") {
-    return (
-      <span className="tq-meta">
-        <span className="tq-who">
-          <Avatar name={r.owner || "?"} kind="me" />
-          {r.owner || "—"}
-        </span>
-        <LeaseBar leaseUntil={r.lease_until} leaseSeconds={ctx.leaseSecondsOf(r.inbox)} now={ctx.now} />
-      </span>
-    );
-  }
-  if (r.status === "triage") {
-    const stop = (e: MouseEvent) => e.stopPropagation();
-    return (
-      <span className="tq-meta">
-        {ctx.canWrite && (
-          <span className="tq-acts">
-            <Button
-              type="secondary"
-              htmlType="button"
-              tabIndex={-1}
-              onClick={(e) => {
-                stop(e);
-                ctx.onAccept(r);
-              }}
-              aria-label={`Accept ${r.title}`}
-            >
-              Accept
-            </Button>
-            <Button
-              type="empty"
-              htmlType="button"
-              tabIndex={-1}
-              onClick={(e) => {
-                stop(e);
-                ctx.onWontDo(r);
-              }}
-              aria-label={`Won't do ${r.title}`}
-            >
-              Won't do…
-            </Button>
-          </span>
-        )}
-        <time className="tabular" dateTime={r.created_at}>
-          {rel(r.created_at, ctx.now)}
-        </time>
-      </span>
-    );
-  }
+  const who = assigneeOf(r, ctx.ownerAgentOf(r.inbox));
   return (
     <span className="tq-meta">
-      <span className="tq-who">
-        <PosterAvatar r={r} ownerAgent={ctx.ownerAgentOf(r.inbox)} />
-        <span className="truncate max-w-40">{posterName(r)}</span>
-      </span>
-      <time className="tabular" dateTime={r.created_at}>
-        {rel(r.created_at, ctx.now)}
-      </time>
+      {r.status === "triage" && ctx.canWrite && (
+        <Tip content="Accept · A">
+          <Button
+            type="secondary"
+            htmlType="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              ctx.onAccept(r);
+            }}
+            aria-label={`Accept ${r.title}`}
+            aria-keyshortcuts="a"
+          >
+            Accept
+          </Button>
+        </Tip>
+      )}
+      {who && <Assignee name={who.name} label={who.label} />}
+      <ListTime time={r.created_at} quiet />
+      <RowMenu name={r.title} items={ctx.menuFor(r)} />
     </span>
   );
 }
@@ -144,26 +141,29 @@ function TaskRowView({
       data-task-id={r.task_id}
       data-nav={`task:${r.task_id}`}
       className="tq-row"
-      onClick={() => ctx.onOpen(r)}
+      onClick={(e) => {
+        // A control in the row, or its menu (whose clicks reach the row through the portal), is its own.
+        if (e.target instanceof Element && e.target.closest('button, a[href], [role="menu"]')) return;
+        ctx.onOpen(r);
+      }}
       onKeyDown={onKey}
       {...drag}
     >
-      <span className="grid" role="gridcell">
+      <span className="tq-pri" role="gridcell">
         <PriorityBar priority={r.priority} />
       </span>
-      <span className="min-w-0" role="gridcell">
-        <span className="t">
-          <KindTag kind={r.kind} />
-          <span className="title text-sm">{r.title}</span>
-        </span>
-        <SublineView s={sublineOf(r, ctx.now, ctx.progressNotes.get(r.task_id))} />
+      <span className="tq-title" role="gridcell">
+        <span className="title text-sm">{r.title}</span>
       </span>
-      <span role="gridcell">
+      <span className="tq-metacell" role="gridcell">
         <Meta r={r} ctx={ctx} />
         {/* The row shows a relative time; the full one is its description (and the panel's). */}
         <span id={`${r.task_id}-posted`} className="sr-only">
           Posted {absoluteTime(r.created_at)}
         </span>
+      </span>
+      <span className="tq-subcell" role="gridcell">
+        <SublineView r={r} ctx={ctx} />
       </span>
     </div>
   );
@@ -172,41 +172,71 @@ function TaskRowView({
 interface ListProps {
   groups: Record<Group, TaskListRow[]>;
   ctx: RowContext;
+  /** Folded groups (the page's, so an empty state can open Closed). */
+  collapsed: Record<Group, boolean>;
+  onToggle: (g: Group) => void;
   /** With a filter on, every group opens (the person asked to see these rows). */
   forceOpen: boolean;
-  showClosed: boolean;
 }
 
-export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
-  const [collapsed, setCollapsed] = useState<Record<Group, boolean>>({
-    triage: false,
-    todo: false,
-    in_progress: false,
-    waiting: false,
-    closed: true,
-  });
-  const [active, setActive] = useState<string | null>(null);
-  const drag = useTaskDrag(ctx.canWrite, ctx.onDrop);
+// What an open, empty group says. Only Triage and Closed are listed while empty; the
+// others show only as drop targets while a row is held.
+const EMPTY_LANE: Record<Group, string> = {
+  triage: "Nothing waiting for a decision.",
+  todo: "Drop here.",
+  in_progress: "Drop here.",
+  waiting: "Drop here.",
+  closed: "Nothing closed yet.",
+};
 
-  // A held row needs every group it could land in, even an empty or hidden one.
-  const shown = GROUPS.filter(
-    (g) => drag.holding || ((groups[g].length > 0 || g === "triage") && (g !== "closed" || showClosed)),
-  );
+/** What an empty group says under a filter: the group may hold tasks the filter hides. */
+export const NO_MATCH = "None match the filters.";
+
+/** The controls inside a row (its buttons, its link, its time) leave the tab order with
+ *  it: the grid is one tab stop, and Left / Right reach them. */
+const IN_ROW = '[role="row"][data-task-id] :is(a[href], button, [tabindex="0"])';
+
+// Memoised: a keystroke in the toolbar's search renders the page, not every row of every lane.
+export const TaskList = memo(function TaskList({ groups, ctx, collapsed, onToggle, forceOpen }: ListProps) {
+  const [active, setActive] = useState<string | null>(null);
+  const [all, setAll] = useState<ReadonlySet<Group>>(new Set());
+  const drag = useTaskDrag(ctx.canWrite, ctx.onDrop);
+  const grid = useRef<HTMLDivElement>(null);
+  // After every render: the controls React just drew inside rows take no tab stop.
+  useLayoutEffect(() => {
+    for (const el of grid.current?.querySelectorAll<HTMLElement>(IN_ROW) ?? []) el.tabIndex = -1;
+  });
+
+  // A held row needs every group it could land in, even an empty one.
+  const shown = GROUPS.filter((g) => drag.holding || groups[g].length > 0 || g === "triage" || g === "closed");
   const isCollapsed = (g: Group) => collapsed[g] && !forceOpen;
+  const listed = (g: Group) => (all.has(g) ? groups[g] : groups[g].slice(0, LANE_ROWS));
   const byKey = new Map<string, TaskListRow>();
   const keys: string[] = [];
   for (const g of shown) {
     keys.push(`group:${g}`);
     if (isCollapsed(g)) continue;
-    for (const r of groups[g]) {
+    for (const r of listed(g)) {
       keys.push(`task:${r.task_id}`);
       byKey.set(`task:${r.task_id}`, r);
     }
+    if (listed(g).length < groups[g].length) keys.push(`more:${g}`);
   }
   // The one tab stop: the last focused item, else the selected row, else the first header.
   const selectedKey = ctx.selectedId ? `task:${ctx.selectedId}` : null;
   const tabStop =
     active && keys.includes(active) ? active : selectedKey && keys.includes(selectedKey) ? selectedKey : keys[0];
+
+  // "Show all N" opens the rest in place and takes the reader to the first row it added. It
+  // moves focus only: selecting the row would also open it in place of the task in the panel.
+  const showAll = (g: Group) => {
+    const first = groups[g][LANE_ROWS];
+    setAll((s) => new Set(s).add(g));
+    if (!first) return;
+    const key = `task:${first.task_id}`;
+    setActive(key);
+    window.setTimeout(() => document.querySelector<HTMLElement>(`[data-nav="${CSS.escape(key)}"]`)?.focus(), 0);
+  };
 
   const onFocus = (e: FocusEvent<HTMLDivElement>) => {
     const key = (e.target as HTMLElement).closest<HTMLElement>("[data-nav]")?.dataset.nav;
@@ -215,6 +245,8 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     const target = e.target as HTMLElement;
+    // A menu open from a row keeps its own arrow keys.
+    if (target.closest('[role="menu"]')) return;
     const here = target.closest<HTMLElement>("[data-nav]");
     if (!here) return;
     if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
@@ -249,6 +281,7 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
 
   return (
     <div
+      ref={grid}
       role="grid"
       aria-label="Tasks by what happens next"
       className="min-w-0"
@@ -259,6 +292,7 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
         const rows = groups[g];
         const meta = GROUP_META[g];
         const closed = isCollapsed(g);
+        const rest = rows.length - listed(g).length;
         return (
           <div
             key={g}
@@ -278,16 +312,9 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
                     data-nav={`group:${g}`}
                     aria-expanded={!closed}
                     aria-controls={closed ? undefined : `tq-rows-${g}`}
-                    onClick={() => setCollapsed((c) => ({ ...c, [g]: !c[g] }))}
+                    onClick={() => onToggle(g)}
                   >
-                    <span
-                      className="w-2.5 h-2.5 rounded-xs shrink-0"
-                      style={{ background: meta.color }}
-                      aria-hidden="true"
-                    />
-                    <span id={`tq-group-${g}`} className="text-sm font-semibold whitespace-nowrap">
-                      {meta.label}
-                    </span>
+                    <LaneBadge group={g} id={`tq-group-${g}`} />
                     <span className="text-xs text-text-muted tabular">{rows.length}</span>
                     <span className="ml-auto text-xs text-text-muted hidden sm:inline">{meta.hint}</span>
                     <Icon name="chevron-down" size="xs" className="car" aria-hidden="true" />
@@ -300,11 +327,11 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
                 {rows.length === 0 ? (
                   <div role="row">
                     <div role="gridcell" className="px-3.5 py-3.5 text-sm text-text-muted">
-                      {g === "triage" ? "Nothing waiting for a decision." : "Drop here."}
+                      {forceOpen && (g === "triage" || g === "closed") ? NO_MATCH : EMPTY_LANE[g]}
                     </div>
                   </div>
                 ) : (
-                  rows.map((r) => (
+                  listed(g).map((r) => (
                     <TaskRowView
                       key={r.task_id}
                       r={r}
@@ -314,6 +341,21 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
                     />
                   ))
                 )}
+                {rest > 0 && (
+                  <div role="row">
+                    <div role="gridcell" className="tq-more">
+                      <Button
+                        type="empty"
+                        htmlType="button"
+                        tabIndex={tabStop === `more:${g}` ? 0 : -1}
+                        data-nav={`more:${g}`}
+                        onClick={() => showAll(g)}
+                      >
+                        {`Show all ${rows.length}`}
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -321,6 +363,6 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
       })}
     </div>
   );
-}
+});
 // biome-ignore-end lint/a11y/useFocusableInteractive: the grid ends
 // biome-ignore-end lint/a11y/useSemanticElements: the grid ends

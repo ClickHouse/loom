@@ -47,17 +47,52 @@ export interface RunGetResponse {
   over_budget: ("cost" | "time")[];
 }
 
-export async function listRuns(
+export type RunOrder =
+  | "started_desc"
+  | "started_asc"
+  | "duration_desc"
+  | "duration_asc"
+  | "relied_on_desc"
+  | "relied_on_asc";
+
+export interface RunListOptions {
+  status?: RunStatus | "";
+  agent?: string;
+  limit?: number;
+  // Runs to skip before the page (0 = first page).
+  offset?: number;
+  // Every order breaks ties on started_at then run_id, so pages never overlap.
+  orderBy?: RunOrder;
+  // Case-insensitive text in the goal, run id or agent; blank = no filter.
+  q?: string;
+  fields?: string[];
+  memoryActivity?: "" | "with" | "without";
+}
+
+export interface RunListPage {
+  runs: RunRow[];
+  // Runs matching every filter, whatever limit and offset cut. The server sends it on the
+  // first page, the last page and a page past the end; null on a full page after the first.
+  total: number | null;
+  // False when the server does not page (a replica a release behind): it ignores `offset`
+  // and answers its newest runs with no total.
+  paged: boolean;
+}
+
+// The largest `offset` run.list serves (its `le`); a larger one is a 422.
+export const RUN_LIST_MAX_OFFSET = 100_000;
+// The longest search run.list takes (its `q` max_length): a longer one is cut, not a 422.
+export const RUN_LIST_MAX_Q = 200;
+
+// A server a release behind ignores offset / order_by / q (named in its ignored_args)
+// and answers the newest first page without a total.
+export async function listRunsPage(
   id: { org: string; namespace: string },
-  opts: {
-    status?: RunStatus | "";
-    agent?: string;
-    limit?: number;
-    fields?: string[];
-    memoryActivity?: "" | "with" | "without";
-  } = {},
-): Promise<RunRow[]> {
-  const out = await post<{ runs: RunRow[] }>("/v1/run.list", {
+  opts: RunListOptions = {},
+): Promise<RunListPage> {
+  // Cut by characters (code points, as the server counts), never inside one.
+  const q = opts.q ? Array.from(opts.q.trim()).slice(0, RUN_LIST_MAX_Q).join("") : undefined;
+  const out = await post<{ runs: RunRow[]; total?: number; ignored_args?: string[] }>("/v1/run.list", {
     org: id.org,
     namespace: id.namespace,
     status: opts.status ?? "",
@@ -65,9 +100,19 @@ export async function listRuns(
     limit: opts.limit ?? 100,
     // The fold is a server filter so `limit` counts visible runs.
     memory_activity: opts.memoryActivity ?? "",
+    ...(opts.offset ? { offset: opts.offset } : {}),
+    ...(opts.orderBy ? { order_by: opts.orderBy } : {}),
+    ...(q ? { q } : {}),
     ...(opts.fields ? { fields: opts.fields } : {}),
   });
-  return out.runs || [];
+  const total = typeof out.total === "number" ? out.total : null;
+  const paged = opts.offset ? !(out.ignored_args ?? []).includes("offset") : total !== null;
+  return { runs: out.runs || [], total, paged };
+}
+
+// The page's rows alone, for callers that do not page.
+export async function listRuns(id: { org: string; namespace: string }, opts: RunListOptions = {}): Promise<RunRow[]> {
+  return (await listRunsPage(id, opts)).runs;
 }
 
 export async function getRun(id: { org: string; namespace: string }, runId: string): Promise<RunGetResponse> {

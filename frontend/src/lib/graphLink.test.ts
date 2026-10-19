@@ -31,6 +31,14 @@ describe("graph as a drill-down", () => {
     expect(q.get("stray")).toBeNull();
   });
 
+  it("is a new history entry, so Back returns to the page it was opened from", () => {
+    const before = history.length;
+    openGraphAt("Redis", { from: "memory api/cache", focusKey: "entity:redis" });
+    expect(history.length).toBe(before + 1);
+    expect(history.state).toMatchObject({ loomBack: "memory api/cache" });
+    expect(useStore.getState().navNote).toBe("Graph, walked from redis");
+  });
+
   it("a modified click leaves the anchor to the browser", () => {
     let prevented = false;
     const handler = onGraphLinkClick("alice");

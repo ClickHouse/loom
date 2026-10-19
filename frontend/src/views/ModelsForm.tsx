@@ -14,6 +14,7 @@ import {
   type ModelStatus,
   type ModelValidation,
 } from "../api/models";
+import { Loading } from "../components/ui";
 
 const PROVIDER_LABELS = {
   openai: "OpenAI",
@@ -317,7 +318,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
           </Button>
         </div>
       </fieldset>
-      {busy && <p role="status">Checking configuration…</p>}
+      {busy && <Loading layout="inline" label="Checking the configuration" />}
       {message && <p role="status">{message}</p>}
       {validation && (
         <ul aria-label="Provider checks" className="space-y-2 text-sm">

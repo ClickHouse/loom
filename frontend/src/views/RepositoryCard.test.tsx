@@ -5,7 +5,14 @@ import type { CodeRepoSummary } from "../api";
 import { buildCards } from "../lib/repositoryCard";
 import type { TrackerSource, TrackerSourceNamespace } from "../lib/trackerSources";
 import { axeViolations, unlabeledControls } from "../test/axe";
-import { RepositoryCard, RESTRICTED_SENTENCE, type CodeActions, type RecordActionProps } from "./RepositoryCard";
+import {
+  branchHealth,
+  RepositoryCard,
+  RESTRICTED_SENTENCE,
+  worstHealth,
+  type CodeActions,
+  type RecordActionProps,
+} from "./RepositoryCard";
 import { must } from "../test/must";
 
 vi.mock("../api", async (importOriginal) => {
@@ -13,9 +20,13 @@ vi.mock("../api", async (importOriginal) => {
   return { ...actual, listKnowledge: vi.fn(async () => ({ rows: [], next_cursor: null })) };
 });
 
-// A repository is one card with two facets. The card is pure over the model; every verb
-// is a callback, so the tests read what the person reads and check which callback a click
-// reaches.
+// A repository is one list row: its name and the health of the worst branch the person
+// can see, a muted summary line, and one inline action (a split button). Opened, it shows
+// a table of its branches, the tracker line, a folded Settings for maintainers, and the
+// docs. The card is pure over the model; every verb is a callback, so the tests read what
+// the person reads and check which callback a click reaches.
+
+const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString().slice(0, 19).replace("T", " ");
 
 function branch(over: Partial<CodeRepoSummary> = {}): CodeRepoSummary {
   return {
@@ -28,7 +39,7 @@ function branch(over: Partial<CodeRepoSummary> = {}): CodeRepoSummary {
     fast_tier_lag: 0,
     scip_lag: 0,
     scip_py_lag: 0,
-    indexed_at: new Date(Date.now() - 2 * 3600_000).toISOString().slice(0, 19).replace("T", " "),
+    indexed_at: hoursAgo(2),
     last_refresh_at: "",
     counts: { code_files: 31539, code_symbols: 400000 },
     join_policy: "open",
@@ -86,6 +97,8 @@ function actions() {
     onLeaveAll: vi.fn(),
     onManage: vi.fn(),
     onAddBranch: vi.fn(),
+    onRefresh: vi.fn(),
+    onRemove: vi.fn(),
   };
   const record: RecordActionProps = {
     onOpen: vi.fn(),
@@ -98,18 +111,85 @@ function actions() {
 }
 
 /** Mounts the card opened (the page folds it by default; `open: false` mounts it as the page does). */
-function mount(repos: CodeRepoSummary[], sources: TrackerSource[], busy: string | null = null, { open = true } = {}) {
+function mount(
+  repos: CodeRepoSummary[],
+  sources: TrackerSource[],
+  busy: string | null = null,
+  { open = true, trackerNote }: { open?: boolean; trackerNote?: string } = {},
+) {
   const a = actions();
   const [card] = buildCards(repos, sources);
-  const utils = render(<RepositoryCard card={card} busy={busy} code={a.code} record={a.record} defaultOpen={open} />);
+  const utils = render(
+    <RepositoryCard
+      card={card}
+      busy={busy}
+      code={a.code}
+      record={a.record}
+      defaultOpen={open}
+      trackerNote={trackerNote}
+    />,
+  );
   return { ...utils, ...a, card };
 }
 
-/** Every button except the card's own disclosure (its heading). */
-const verbs = () => screen.getAllByRole("button").filter((b) => !b.hasAttribute("aria-expanded"));
+/** Opens the inline action's menu (the split button's chevron). */
+async function openActionMenu(user: ReturnType<typeof userEvent.setup>, repo = "ClickHouse/ClickHouse") {
+  await user.click(screen.getByRole("button", { name: `More actions for ${repo}` }));
+  return screen.findByRole("menu");
+}
 
-describe("RepositoryCard", () => {
-  it("folded by default: the heading is the disclosure; the row says the standing and a one-line summary, keeps the primary verb, and shows no facet, Leave, or Details until opened — and passes axe", async () => {
+/** Opens a branch row's menu in the branch table. */
+async function openBranchMenu(user: ReturnType<typeof userEvent.setup>, branchName: string) {
+  const name = `Actions for ClickHouse/ClickHouse @ ${branchName}`;
+  await user.click(screen.getByRole("button", { name }));
+  return screen.findByRole("menu", { name });
+}
+
+describe("branchHealth: one vocabulary for an index's health", () => {
+  it("names every state with its badge colour", () => {
+    expect(branchHealth(branch())).toMatchObject({ text: "Up to date", state: "success" });
+    expect(branchHealth(branch({ fast_tier_lag: 412 }))).toMatchObject({
+      text: "Behind 412 commits",
+      state: "warning",
+    });
+    expect(branchHealth(branch({ fast_tier_lag: 1 })).text).toBe("Behind 1 commit");
+    expect(branchHealth(branch({ scip_lag: 7 })).text).toBe("Behind 7 commits");
+    expect(branchHealth(branch({ indexed_at: hoursAgo(30), clone_head: "ffff00001111" }))).toMatchObject({
+      text: "Stale",
+      state: "warning",
+    });
+    // An old index whose remote has not moved is up to date.
+    expect(branchHealth(branch({ indexed_at: hoursAgo(30) })).text).toBe("Up to date");
+    expect(branchHealth(branch({ git_head: "", indexed_at: "", stage: "indexing" }))).toMatchObject({
+      text: "Indexing",
+      state: "info",
+    });
+    expect(branchHealth(branch({ git_head: "", indexed_at: "" }))).toMatchObject({
+      text: "Not indexed",
+      state: "neutral",
+    });
+    expect(branchHealth(branch({ stage: "error", stage_detail: '{"reason":"auth refused"}' }))).toMatchObject({
+      text: "Index failed",
+      state: "danger",
+      detail: expect.stringContaining("auth refused"),
+    });
+    expect(branchHealth(branch({ searchable: false }))).toMatchObject({ text: "Not searchable", state: "neutral" });
+  });
+
+  it("the row shows the worst branch, its detail naming the branch and its heads", () => {
+    const worst = must(
+      worstHealth([branch(), branch({ namespace: "b", branch: "25.8", fast_tier_lag: 412 })]),
+      "worst branch",
+    );
+    expect(worst.text).toBe("Behind 412 commits");
+    expect(worst.detail).toMatch(/^25\.8: 412 merged commits not yet indexed/);
+    expect(worst.detail).toContain("abc123def456");
+    expect(worstHealth([])).toBeNull();
+  });
+});
+
+describe("RepositoryCard: the row", () => {
+  it("folded: name and health on line 1, the muted summary on line 2, the split button; the body only once opened — and passes axe", async () => {
     const user = userEvent.setup();
     const { container } = mount(
       [branch({ my_status: "member", my_role: "admin" }), branch({ namespace: "code-ch-25-8", branch: "25.8" })],
@@ -121,38 +201,186 @@ describe("RepositoryCard", () => {
     const toggle = within(card).getByRole("button", { name: "ClickHouse/ClickHouse" });
     expect(within(card).getByRole("heading", { level: 2, name: "ClickHouse/ClickHouse" })).toContainElement(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(within(card).getByText("you read 1 of 2 branches · tracker: not joined")).toBeInTheDocument();
-    expect(within(card).getByText("2 branches · 31,539 files · 22,583 issues · 65,334 PRs")).toBeInTheDocument();
-    expect(within(card).getByRole("button", { name: "Open · master" })).toBeInTheDocument();
-    expect(within(card).queryByRole("group", { name: "Code" })).toBeNull();
+    expect(within(card).getByText("Up to date")).toBeInTheDocument();
+    // A join policy is not a status: an open repository carries no badge for it.
+    expect(within(card).queryByText("open", { exact: true })).toBeNull();
+    expect(within(card).queryByText("Restricted")).toBeNull();
+    expect(within(card).getByText("2 branches · 31,539 files · indexed 2h ago · you read 1 of 2")).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Open" })).toBeInTheDocument();
+    expect(within(card).queryByRole("table")).toBeNull();
     expect(within(card).queryByRole("group", { name: "Tracker" })).toBeNull();
-    expect(within(card).queryByRole("button", { name: /^Leave/ })).toBeNull();
-    expect(within(card).queryByText("Details")).toBeNull();
+    expect(within(card).queryByText("Settings")).toBeNull();
+    expect(unlabeledControls(container)).toEqual([]);
     expect(await axeViolations(container)).toEqual([]);
 
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(toggle).toHaveAttribute("aria-controls");
     expect(document.getElementById(must(toggle.getAttribute("aria-controls"), "aria-controls"))).toBeInTheDocument();
-    // Open: the summary gives way to the facet rows, and the standing stays.
-    expect(within(card).queryByText("2 branches · 31,539 files · 22,583 issues · 65,334 PRs")).toBeNull();
-    expect(within(card).getByText("you read 1 of 2 branches · tracker: not joined")).toBeInTheDocument();
-    expect(within(card).getByRole("group", { name: "Code" })).toBeInTheDocument();
+    expect(within(card).getByRole("table", { name: "ClickHouse/ClickHouse branches" })).toBeInTheDocument();
     expect(within(card).getByRole("group", { name: "Tracker" })).toBeInTheDocument();
-    expect(within(card).getByRole("button", { name: "Leave · master" })).toBeInTheDocument();
-    expect(within(card).getByText("Details")).toBeInTheDocument();
+    expect(within(card).getByText("Settings")).toBeInTheDocument();
     expect(await axeViolations(container)).toEqual([]);
 
     await user.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(within(card).queryByRole("group", { name: "Code" })).toBeNull();
+    expect(within(card).queryByRole("table")).toBeNull();
   });
 
-  it("a record-only folded row summarises the record; an unconfigured one says so", () => {
-    mount([], [source({ namespaces: [ns({ namespace: "tracker-widgets", repos: ["Acme/widgets"] })] })], null, {
+  it("restricted shows a neutral Restricted badge; the health badge is the worst branch's", () => {
+    mount(
+      [
+        branch({ join_policy: "approval", classification: "restricted" }),
+        branch({ namespace: "b", branch: "25.8", fast_tier_lag: 412, classification: "restricted" }),
+      ],
+      [],
+      null,
+      { open: false },
+    );
+    expect(screen.getByText("Restricted")).toBeInTheDocument();
+    expect(screen.getByText("Behind 412 commits")).toBeInTheDocument();
+    expect(screen.queryByText("Up to date")).toBeNull();
+  });
+
+  it("no branch name is ever in a button's label", () => {
+    mount(
+      [branch(), branch({ namespace: "b", branch: "25.8" }), branch({ namespace: "c", branch: "25.7" })],
+      [source()],
+    );
+    const card = screen.getByRole("region", { name: "ClickHouse/ClickHouse" });
+    for (const b of within(card).getAllByRole("button")) {
+      const name = b.getAttribute("aria-label") ?? b.textContent ?? "";
+      if (name.startsWith("Actions for ")) continue; // a row menu is named after its row
+      expect(name, b.outerHTML).not.toMatch(/\b(master|25\.8|25\.7)\b/);
+    }
+  });
+
+  it("not joined: Join joins the trunk directly; its menu offers each branch, Join all, Choose branches and maintainer access", async () => {
+    const user = userEvent.setup();
+    const { code, card } = mount(
+      [
+        branch(),
+        branch({ namespace: "b", branch: "25.8" }),
+        branch({ namespace: "c", branch: "25.7", join_policy: "approval" }),
+      ],
+      [],
+      null,
+      { open: false },
+    );
+    const [master, b258, b257] = must(card.code, "code facet").branches;
+    expect(screen.getByText("3 branches · 31,539 files · indexed 2h ago · not joined")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Join" }));
+    expect(code.onJoin).toHaveBeenCalledWith(master);
+
+    let menu = await openActionMenu(user);
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((m) => m.textContent),
+    ).toEqual([
+      "Join master",
+      "Join 25.8",
+      "Request access to 25.7",
+      "Join all 3 branches",
+      "Choose branches…",
+      "Request maintainer access",
+    ]);
+    await user.click(within(menu).getByRole("menuitem", { name: "Join 25.8" }));
+    expect(code.onJoin).toHaveBeenLastCalledWith(b258);
+    menu = await openActionMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "Request access to 25.7" }));
+    expect(code.onRequest).toHaveBeenCalledWith(b257, "viewer");
+    menu = await openActionMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "Join all 3 branches" }));
+    expect(code.onJoinAll).toHaveBeenCalledWith(must(card.code, "code").branches);
+    menu = await openActionMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "Choose branches…" }));
+    expect(code.onManage).toHaveBeenCalledWith(card.code);
+    menu = await openActionMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "Request maintainer access" }));
+    expect(code.onRequest).toHaveBeenLastCalledWith(master, "admin");
+  });
+
+  it("the split button's menu half is a named, focusable button that opens from the keyboard", async () => {
+    const user = userEvent.setup();
+    mount([branch()], [], null, { open: false });
+    const more = screen.getByRole("button", { name: "More actions for ClickHouse/ClickHouse" });
+    more.focus();
+    expect(more).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(more).toHaveFocus();
+  });
+
+  it("read: Open opens the branch you read; the menu opens any of them and leaves them all", async () => {
+    const user = userEvent.setup();
+    const { code, card } = mount(
+      [
+        branch({ my_status: "member" }),
+        branch({ namespace: "b", branch: "25.8", my_status: "member" }),
+        branch({ namespace: "c", branch: "25.7" }),
+      ],
+      [],
+      null,
+      { open: false },
+    );
+    const [master, b258] = must(card.code, "code facet").branches;
+    expect(screen.getByText("3 branches · 31,539 files · indexed 2h ago · you read 2 of 3")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open" }));
+    expect(code.onOpen).toHaveBeenCalledWith(master);
+    const menu = await openActionMenu(user);
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((m) => m.textContent),
+    ).toEqual([
+      "Open master",
+      "Open 25.8",
+      "Join 25.7",
+      "Leave all 2 branches",
+      "Choose branches…",
+      "Request maintainer access",
+    ]);
+    await user.click(within(menu).getByRole("menuitem", { name: "Open 25.8" }));
+    expect(code.onOpen).toHaveBeenLastCalledWith(b258);
+    await openActionMenu(user);
+    await user.click(screen.getByRole("menuitem", { name: "Leave all 2 branches" }));
+    expect(code.onLeaveAll).toHaveBeenCalledWith(must(card.code, "code").branches);
+  });
+
+  it("everything restricted: Request access; the restricted sentence shows once", async () => {
+    const user = userEvent.setup();
+    const { code, card } = mount([branch({ join_policy: "approval" })], [source({ namespaces: [PRIVATE] })]);
+    expect(screen.getByText("Restricted")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Request access" }));
+    expect(code.onRequest).toHaveBeenCalledWith(must(card.code, "code").branches[0], "viewer");
+    expect(screen.getAllByText(RESTRICTED_SENTENCE)).toHaveLength(1);
+  });
+
+  it("a pending request: a Requested badge whose menu withdraws it", async () => {
+    const user = userEvent.setup();
+    const { code, card } = mount([branch({ my_status: "pending", join_policy: "approval" })], [], null, {
       open: false,
     });
-    expect(screen.getByText("22,583 issues · 65,334 PRs")).toBeInTheDocument();
+    expect(screen.getByText("Requested")).toBeInTheDocument();
+    expect(screen.getByText(/1 branch requested$/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Withdraw/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Actions for ClickHouse/ClickHouse" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Withdraw request" }));
+    expect(code.onCancel).toHaveBeenCalledWith(must(card.code, "code").branches[0]);
+  });
+
+  it("a record-only row (a tracker naming no indexed repository) summarises the record and joins it", async () => {
+    const user = userEvent.setup();
+    const { record, card } = mount(
+      [],
+      [source({ namespaces: [ns({ namespace: "tracker-widgets", repos: ["Acme/widgets"] })] })],
+      null,
+      { open: false },
+    );
+    expect(screen.getByRole("region", { name: "Acme/widgets" })).toBeInTheDocument();
+    expect(screen.getByText("22,583 issues · 65,334 PRs · not joined")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Join" }));
+    expect(record.onJoin).toHaveBeenCalledWith(must(card.record, "record").namespaces[0], false);
     cleanup();
     const dry = source({
       configured: false,
@@ -161,196 +389,110 @@ describe("RepositoryCard", () => {
       namespaces: [ns({ registered: false })],
     });
     mount([branch()], [dry], null, { open: false });
-    expect(screen.getByText("1 branch · 31,539 files · tracker: no credential")).toBeInTheDocument();
+    expect(screen.getByText("1 branch · 31,539 files · indexed 2h ago · not joined")).toBeInTheDocument();
   });
 
-  it("one card: header, standing phrase, both facets, chips named by branch and by scope — and passes axe", async () => {
-    const { container } = mount([branch()], [source()]);
+  it("busy disables every verb; the disclosure stays usable", () => {
+    mount([branch()], [source()], "code-clickhouse");
     const card = screen.getByRole("region", { name: "ClickHouse/ClickHouse" });
-    expect(within(card).getByRole("heading", { level: 2, name: "ClickHouse/ClickHouse" })).toBeInTheDocument();
-    expect(within(card).getByText("open")).toBeInTheDocument();
-    expect(within(card).getByText("not joined")).toBeInTheDocument();
-    // No per-card "read-only", no "tracker sources" heading, no source slug outside the disclosure.
-    expect(within(card).queryByText("read-only")).toBeNull();
-    expect(within(card).queryByText(/tracker source/)).toBeNull();
-    expect(within(card).queryByText(/tracker-clickhouse/)).toBeNull();
-    // Facet rows.
-    const code = within(card).getByRole("group", { name: "Code" });
-    expect(within(code).getByText(/1 branch/)).toBeInTheDocument();
-    expect(within(code).getByText(/31,539 files · 400,000 symbols at master/)).toBeInTheDocument();
-    expect(within(code).getByText(/indexed 2h ago/)).toBeInTheDocument();
-    expect(within(code).getByRole("button", { name: "master: not joined, join" })).toBeInTheDocument();
-    const rec = within(card).getByRole("group", { name: "Tracker" });
-    expect(within(rec).getByText(/22,583 issues · 65,334 PRs/)).toBeInTheDocument();
-    expect(within(rec).getByText(/refreshed 3m ago/)).toBeInTheDocument();
-    expect(within(rec).getByRole("button", { name: "Public: not joined, join" })).toBeInTheDocument();
-    expect(
-      within(rec).getByRole("button", { name: "Private (restricted): not joined, request access" }),
-    ).toBeInTheDocument();
-    // Diagnostics are not on the card for a reader.
-    expect(within(card).queryByText(/example\.com/)).toBeNull();
-    expect(within(card).queryByText(/contract/)).toBeNull();
-    expect(within(card).queryByText("Details")).toBeNull();
-    // One primary button: Join the open branch.
-    expect(within(card).getByRole("button", { name: "Join · master" })).toBeInTheDocument();
-    expect(within(card).queryByRole("button", { name: /^Leave/ })).toBeNull();
+    const toggle = within(card).getByRole("button", { name: "ClickHouse/ClickHouse" });
+    for (const b of within(card).getAllByRole("button")) {
+      if (b === toggle || b.getAttribute("aria-label")?.startsWith("Actions for ")) continue;
+      expect(b.hasAttribute("disabled") || b.getAttribute("aria-disabled") === "true", b.outerHTML).toBe(true);
+    }
+    expect(toggle).toBeEnabled();
+  });
+});
+
+describe("RepositoryCard: the branch table", () => {
+  it("one row per branch: health, lag, last indexed, files, symbols and your access — and passes axe", async () => {
+    const { container } = mount(
+      [
+        branch({ my_status: "member" }),
+        branch({ namespace: "b", branch: "25.8", fast_tier_lag: 412, counts: { code_files: 30000, code_symbols: 1 } }),
+        branch({ namespace: "c", branch: "25.7", my_status: "pending", join_policy: "approval" }),
+        branch({ namespace: "d", branch: "click-ui", git_head: "", indexed_at: "", counts: undefined }),
+      ],
+      [],
+    );
+    const table = screen.getByRole("table", { name: "ClickHouse/ClickHouse branches" });
+    const rows = within(table).getAllByRole("row").slice(1);
+    // Click UI repeats the column's header inside each cell for its phone layout; read past it.
+    const heads = ["Branch", "Health", "Behind", "Last indexed", "Files", "Symbols", "Access", "Actions"];
+    const values = rows.map((r) =>
+      within(r)
+        .getAllByRole("cell")
+        // ListTime may add the absolute time for screen readers; the visible value leads.
+        .map((c, i) =>
+          (c.textContent ?? "")
+            .replace(heads[i], "")
+            .replace(/ \(.* UTC\)$/, "")
+            .trim(),
+        ),
+    );
+    expect(values).toEqual([
+      ["master", "Up to date", "—", "2h ago", "31,539", "400,000", "Reading", ""],
+      ["25.8", "Behind 412 commits", "412", "2h ago", "30,000", "1", "—", ""],
+      ["25.7", "Up to date", "—", "2h ago", "31,539", "400,000", "Requested", ""],
+      ["click-ui", "Not indexed", "—", "—", "—", "—", "—", ""],
+    ]);
     expect(await axeViolations(container)).toEqual([]);
   });
 
-  it("the header verb follows the first facet the person cannot read: a restricted code facet makes it 'Join · tracker', which calls the record's join once and directly", async () => {
-    const user = userEvent.setup();
-    const { record, code, card } = mount([branch({ join_policy: "approval" })], [source()]);
-    const tracker = must(card.record, "record facet").namespaces[0];
-    const master = must(card.code, "code facet").branches[0];
-    await user.click(screen.getByRole("button", { name: "Join · tracker" }));
-    expect(record.onJoin).toHaveBeenCalledTimes(1);
-    expect(record.onJoin).toHaveBeenCalledWith(tracker, false);
-    expect(code.onJoin).not.toHaveBeenCalled();
-    // A bare click on the open record chip confirms first (`confirm: true`); only the header joins directly.
-    await user.click(screen.getByRole("button", { name: "Public: not joined, join" }));
-    expect(record.onJoin).toHaveBeenLastCalledWith(tracker, true);
-    // The restricted branch chip goes to the request dialog, never joins by itself.
-    await user.click(screen.getByRole("button", { name: "master: not joined, request access" }));
-    expect(code.onRequest).toHaveBeenCalledWith(master, "viewer");
-    expect(code.onJoin).not.toHaveBeenCalled();
-  });
-
-  it("everything restricted: 'Request access · master', the private record chip requests, the 6820 sentence shows once", async () => {
-    const user = userEvent.setup();
-    const { record, card } = mount([branch({ join_policy: "approval" })], [source({ namespaces: [PRIVATE] })]);
-    const tracker = must(card.record, "record facet").namespaces[0];
-    expect(screen.getByText("restricted")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Request access · master" })).toBeInTheDocument();
-    expect(screen.getAllByText(RESTRICTED_SENTENCE)).toHaveLength(1);
-    await user.click(screen.getByRole("button", { name: "Private (restricted): not joined, request access" }));
-    expect(record.onRequest).toHaveBeenCalledWith(tracker);
-  });
-
-  it("a read branch: 'Open · master', a quiet 'Leave · master', the chip opens, the standing phrase counts", async () => {
+  it("each row's menu: Open, Refresh and Leave on a branch you read; Join on an open one; Withdraw on a request", async () => {
     const user = userEvent.setup();
     const { code, card } = mount(
-      [branch({ my_status: "member" }), branch({ namespace: "code-ch-25-8", branch: "25.8" })],
-      [source()],
+      [
+        branch({ my_status: "member" }),
+        branch({ namespace: "b", branch: "25.8" }),
+        branch({ namespace: "c", branch: "25.7", my_status: "pending", join_policy: "approval" }),
+      ],
+      [],
     );
-    const master = must(card.code, "code facet").branches[0];
-    expect(screen.getByText("you read 1 of 2 branches · tracker: not joined")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Open · master" }));
-    expect(code.onOpen).toHaveBeenCalledWith(master);
-    await user.click(screen.getByRole("button", { name: "Leave · master" }));
+    const [master, b258, b257] = must(card.code, "code").branches;
+    let menu = await openBranchMenu(user, "master");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((m) => m.textContent),
+    ).toEqual(["Open", "Refresh", "Leave"]);
+    await user.click(within(menu).getByRole("menuitem", { name: "Refresh" }));
+    expect(code.onRefresh).toHaveBeenCalledWith(master);
+    menu = await openBranchMenu(user, "master");
+    await user.click(within(menu).getByRole("menuitem", { name: "Leave" }));
     expect(code.onLeave).toHaveBeenCalledWith(master);
-    await user.click(screen.getByRole("button", { name: "master: reading" }));
-    expect(code.onOpen).toHaveBeenCalledTimes(2);
-    // The branch verbs stay on a partly joined card: Choose branches…, Request maintainer access.
-    await user.click(screen.getByRole("button", { name: "Choose branches…" }));
-    expect(code.onManage).toHaveBeenCalledWith(card.code);
-    await user.click(screen.getByRole("button", { name: "Request maintainer access" }));
-    expect(code.onRequest).toHaveBeenCalledWith(master, "admin");
-    expect(screen.queryByRole("button", { name: /Ask to maintain/ })).toBeNull();
+    menu = await openBranchMenu(user, "25.8");
+    await user.click(within(menu).getByRole("menuitem", { name: "Join" }));
+    expect(code.onJoin).toHaveBeenCalledWith(b258);
+    menu = await openBranchMenu(user, "25.7");
+    await user.click(within(menu).getByRole("menuitem", { name: "Withdraw request" }));
+    expect(code.onCancel).toHaveBeenCalledWith(b257);
   });
 
-  it("a read record and a read branch: no header Leave; each facet carries its own; the record's Open reaches the record", async () => {
+  it("a maintainer removes a branch added from the dashboard, and adds one from the table's foot", async () => {
     const user = userEvent.setup();
-    const { record, code, card } = mount(
-      [branch({ my_status: "member" })],
-      [source({ namespaces: [ns({ member_role: "viewer" }), PRIVATE] })],
-    );
-    const tracker = must(card.record, "record facet").namespaces[0];
-    expect(screen.getByText("you read 1 of 1 branch · tracker: reading")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open · master" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Leave · master" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Leave · tracker" }));
-    expect(record.onLeave).toHaveBeenCalledWith(tracker);
-    await user.click(screen.getByRole("button", { name: "Public: reading" }));
-    expect(record.onOpen).toHaveBeenCalledWith(tracker);
-    expect(code.onOpen).not.toHaveBeenCalled();
-  });
-
-  it("a pending request: 'Withdraw request · master' and the chip withdraws", async () => {
-    const user = userEvent.setup();
-    const { code, card } = mount([branch({ my_status: "pending", join_policy: "approval" })], []);
-    const master = must(card.code, "code facet").branches[0];
-    expect(screen.getByText("1 branch requested")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Withdraw request · master" }));
-    expect(code.onCancel).toHaveBeenCalledWith(master);
-    await user.click(screen.getByRole("button", { name: "master: requested" }));
-    expect(code.onCancel).toHaveBeenCalledTimes(2);
-  });
-
-  it("ten branches: the trunk and up to four chips show, 'Show 6 more' reveals the rest; Join all and Leave all stay", async () => {
-    const user = userEvent.setup();
-    const rows = Array.from({ length: 10 }, (_, i) =>
-      branch({ namespace: `c${i}`, branch: i === 0 ? "master" : `25.${i}`, my_status: i < 2 ? "member" : "none" }),
-    );
-    const { code } = mount(rows, []);
-    const list = screen.getByRole("list", { name: "ClickHouse/ClickHouse branches" });
-    expect(list.querySelectorAll("li")).toHaveLength(4);
-    await user.click(screen.getByRole("button", { name: "Show 6 more" }));
-    expect(list.querySelectorAll("li")).toHaveLength(10);
-    expect(screen.getByRole("button", { name: "Show fewer" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Join all 8 branches" }));
-    expect(code.onJoinAll).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByRole("button", { name: "Leave all 2 branches" }));
-    expect(code.onLeaveAll).toHaveBeenCalledTimes(1);
-  });
-
-  it("a record-only card (a tracker namespace naming no configured repository) is headed by the repository it declares", () => {
-    mount([], [source({ namespaces: [ns({ namespace: "tracker-widgets", repos: ["Acme/widgets"] })] })]);
-    expect(screen.getByRole("region", { name: "Acme/widgets" })).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Code" })).toBeNull();
-    expect(screen.getByRole("group", { name: "Tracker" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Join · tracker" })).toBeInTheDocument();
-  });
-
-  it("an unconfigured record says 'no credential'; a registering namespace has nothing to click", () => {
-    const dry = source({
-      configured: false,
-      breaker: { state: "unconfigured", consecutive_failures: 0 },
-      freshness: {},
-      namespaces: [ns({ registered: false })],
-    });
-    mount([branch()], [dry]);
-    expect(screen.getByText("no credential")).toBeInTheDocument();
-    expect(screen.getByText("Public · registering…")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Public/ })).toBeNull();
-  });
-
-  it("the Details disclosure renders only for a maintainer: source, host, database, origin, contract, breaker, branch namespaces — and passes axe", async () => {
-    const user = userEvent.setup();
-    const { container } = mount([branch({ my_role: "admin", my_status: "member" })], [source()]);
-    const details = screen.getByText("Details");
-    expect(details).toBeInTheDocument();
-    await user.click(details);
-    const src = screen.getByRole("group", { name: "Tracker qa" });
-    expect(within(src).getByText("qa")).toBeInTheDocument();
-    expect(within(src).getByText("abc123xyz9.us-east-2.aws.example.com:8443")).toBeInTheDocument();
-    expect(within(src).getByText("qa_intelligence")).toBeInTheDocument();
-    expect(within(src).getByText("set up by the operator")).toBeInTheDocument();
-    // One state line in plain words, not a contract summary and a breaker
-    expect(within(src).getByText("ready — Read live; every table and column Loom needs is there.")).toBeInTheDocument();
-    const codeDetails = screen.getByRole("group", { name: "Code details" });
-    expect(within(codeDetails).getByText(/code-clickhouse · abc123def456/)).toBeInTheDocument();
-    // Add branch lives in the Code row, not a second copy in Details.
-    expect(within(codeDetails).queryByRole("button", { name: "Add branch" })).toBeNull();
-    // Admin verbs live in the Trackers list; an operator's tracker links nowhere.
-    expect(screen.queryByRole("button", { name: /rotate|retire|check now/i })).toBeNull();
-    expect(screen.queryByRole("link", { name: /Check, rotate or retire/ })).toBeNull();
-    expect(await axeViolations(container)).toEqual([]);
-  });
-
-  it("a maintainer's Add branch sits in the Code row beside the branch chips, without opening Details", async () => {
-    const user = userEvent.setup();
-    const { code, card } = mount([branch({ my_role: "admin", my_status: "member" })], [source()]);
-    const row = screen.getByRole("group", { name: "Code" });
-    const add = within(row).getByRole("button", { name: "Add branch" });
+    const { code, card } = mount([branch({ my_status: "member", my_role: "admin", source: "registry" })], []);
+    const master = must(card.code, "code").branches[0];
+    const menu = await openBranchMenu(user, "master");
+    await user.click(within(menu).getByRole("menuitem", { name: "Remove branch" }));
+    expect(code.onRemove).toHaveBeenCalledWith(master);
+    const add = screen.getByRole("button", { name: "Add branch" });
     expect(screen.getAllByRole("button", { name: "Add branch" })).toHaveLength(1);
-    expect(screen.getByText("Details").closest("details")).not.toHaveAttribute("open");
     await user.click(add);
     expect(code.onAddBranch).toHaveBeenCalledWith(card.code);
   });
 
-  it("no Add branch where the deployment cannot add branches from the page", () => {
+  it("no Remove branch for a configured branch, no Add branch for a reader or where the page cannot add", async () => {
+    const user = userEvent.setup();
+    mount([branch({ my_status: "member", my_role: "admin" })], []);
+    const menu = await openBranchMenu(user, "master");
+    expect(within(menu).queryByRole("menuitem", { name: "Remove branch" })).toBeNull();
+    cleanup();
+    mount([branch({ my_status: "member" })], []);
+    expect(screen.queryByRole("button", { name: "Add branch" })).toBeNull();
+    cleanup();
     const a = actions();
-    const [card] = buildCards([branch({ my_role: "admin", my_status: "member" })], [source()]);
+    const [card] = buildCards([branch({ my_role: "admin", my_status: "member" })], []);
     render(
       <RepositoryCard
         card={card}
@@ -362,15 +504,99 @@ describe("RepositoryCard", () => {
     );
     expect(screen.queryByRole("button", { name: "Add branch" })).toBeNull();
   });
+});
 
-  it("a reader never sees Details, Add branch, or the source's host", () => {
+describe("RepositoryCard: the tracker line", () => {
+  it("names the tracker, its counts and its scopes; a scope chip joins after a confirm, a restricted one requests", async () => {
+    const user = userEvent.setup();
+    const { record, card } = mount([branch()], [source()]);
+    const rec = screen.getByRole("group", { name: "Tracker" });
+    expect(within(rec).getByText(/22,583 issues · 65,334 PRs/)).toBeInTheDocument();
+    expect(within(rec).getByText(/refreshed 3m ago/)).toBeInTheDocument();
+    const [pub, priv] = must(card.record, "record").namespaces;
+    await user.click(within(rec).getByRole("button", { name: "Public: not joined, join" }));
+    expect(record.onJoin).toHaveBeenCalledWith(pub, true);
+    await user.click(within(rec).getByRole("button", { name: "Private (restricted): not joined, request access" }));
+    expect(record.onRequest).toHaveBeenCalledWith(priv);
+    // Diagnostics stay off a reader's card.
+    expect(screen.queryByText(/example\.com/)).toBeNull();
+    expect(screen.queryByText("Settings")).toBeNull();
+  });
+
+  it("a read scope opens and leaves from the line", async () => {
+    const user = userEvent.setup();
+    const { record, card } = mount(
+      [branch({ my_status: "member" })],
+      [source({ namespaces: [ns({ member_role: "viewer" }), PRIVATE] })],
+    );
+    const tracker = must(card.record, "record").namespaces[0];
+    const rec = screen.getByRole("group", { name: "Tracker" });
+    await user.click(within(rec).getByRole("button", { name: "Public: reading" }));
+    expect(record.onOpen).toHaveBeenCalledWith(tracker);
+    await user.click(within(rec).getByRole("button", { name: "Leave · tracker" }));
+    expect(record.onLeave).toHaveBeenCalledWith(tracker);
+  });
+
+  it("says Not linked when no tracker covers the repository, and says when trackers are not available here", () => {
+    mount([branch()], []);
+    expect(within(screen.getByRole("group", { name: "Tracker" })).getByText("Not linked")).toBeInTheDocument();
+    cleanup();
+    mount([branch()], [], null, { trackerNote: "Trackers are not available on this deployment yet." });
+    expect(
+      within(screen.getByRole("group", { name: "Tracker" })).getByText(
+        "Trackers are not available on this deployment yet.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("an unconfigured record says 'no credential'; a registering scope has nothing to click", () => {
+    const dry = source({
+      configured: false,
+      breaker: { state: "unconfigured", consecutive_failures: 0 },
+      freshness: {},
+      namespaces: [ns({ registered: false })],
+    });
+    mount([branch()], [dry]);
+    expect(screen.getByText("No credential")).toBeInTheDocument();
+    expect(screen.getByText("Public · registering…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Public/ })).toBeNull();
+  });
+});
+
+describe("RepositoryCard: Settings, for maintainers", () => {
+  it("is folded; opened it holds the access and the details — source, host, database, origin, branch namespaces — and passes axe", async () => {
+    const user = userEvent.setup();
+    const a = actions();
+    a.code.onSetAccess = vi.fn();
+    const [card] = buildCards([branch({ my_role: "admin", my_status: "member" })], [source()]);
+    const { container } = render(
+      <RepositoryCard card={card} busy={null} code={a.code} record={a.record} defaultOpen />,
+    );
+    const settings = screen.getByRole("button", { name: "Settings" });
+    expect(settings).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "Access" })).toBeNull();
+    await user.click(settings);
+    expect(settings).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Access" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Join policy" })).toBeInTheDocument();
+    const src = screen.getByRole("group", { name: "Tracker qa" });
+    expect(within(src).getByText("abc123xyz9.us-east-2.aws.example.com:8443")).toBeInTheDocument();
+    expect(within(src).getByText("qa_intelligence")).toBeInTheDocument();
+    expect(within(src).getByText("set up by the operator")).toBeInTheDocument();
+    expect(within(src).getByText("ready — Read live; every table and column Loom needs is there.")).toBeInTheDocument();
+    const codeDetails = screen.getByRole("group", { name: "Code details" });
+    expect(within(codeDetails).getByText(/code-clickhouse · abc123def456/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /rotate|retire|check now/i })).toBeNull();
+    expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it("a reader never sees Settings or the source's host", () => {
     mount([branch({ my_status: "member" })], [source()]);
-    expect(screen.queryByText("Details")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Add branch" })).toBeNull();
+    expect(screen.queryByText("Settings")).toBeNull();
     expect(screen.queryByText(/8443/)).toBeNull();
   });
 
-  it("a failing schema reads as such in the disclosure, and its admin gets a link to the Trackers list", async () => {
+  it("a failing schema reads as such, and its admin gets a link to the Trackers list", async () => {
     const user = userEvent.setup();
     const bad = source({
       contract: {
@@ -387,29 +613,21 @@ describe("RepositoryCard", () => {
     const a = actions();
     const [card] = buildCards([branch()], [bad]);
     render(<RepositoryCard card={card} busy={null} code={a.code} record={a.record} adminOpsPresent defaultOpen />);
-    await user.click(screen.getByText("Details"));
+    await user.click(screen.getByText("Settings"));
     expect(
       screen.getByText("schema failing — Reads are paused until the views match: missing tables: github_checks."),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Check, rotate or retire in Trackers ↓" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Check, rotate or retire in Trackers" })).toHaveAttribute(
       "href",
       "#tracker-qa",
     );
-  });
-
-  it("busy disables every verb and chip", () => {
-    mount([branch()], [source()], "code-clickhouse");
-    // A chip with a tip is aria-disabled rather than disabled, so its tip stays reachable.
-    for (const b of verbs())
-      expect(b.hasAttribute("disabled") || b.getAttribute("aria-disabled") === "true", b.outerHTML).toBe(true);
-    // The disclosure itself stays usable: folding is not a write.
-    expect(screen.getByRole("button", { name: "ClickHouse/ClickHouse" })).toBeEnabled();
   });
 });
 
 // The repository's trackers as they are (`bound_trackers`, primary first), each in a line
 // that says what agents get from it; Link another (trackers listing the repository
-// first), Make primary, Unlink; Add a tracker when self-service is on.
+// first), Make primary, Unlink; Add a tracker when self-service is on. A maintainer's
+// tracker line carries them.
 describe("RepositoryCard — the tracker links", () => {
   const other = source({
     name: "kj",
@@ -443,6 +661,12 @@ describe("RepositoryCard — the tracker links", () => {
   }
   const line = () => screen.getByRole("group", { name: "Tracker link" });
 
+  it("lives in the tracker line, not in Settings", () => {
+    mountAdmin("tracker-clickhouse");
+    expect(screen.getByRole("group", { name: "Tracker" })).toContainElement(line());
+    cleanup();
+  });
+
   it("one link: says it with its counts; Link another offers the trackers listing the repository first and appends", async () => {
     const a = mountAdmin("tracker-clickhouse");
     expect(line()).toHaveTextContent(
@@ -451,7 +675,7 @@ describe("RepositoryCard — the tracker links", () => {
     expect(within(line()).queryByRole("button", { name: /Make .* primary/ })).toBeNull();
     await userEvent.click(within(line()).getByRole("button", { name: "Link another tracker" }));
     const select = screen.getByRole("button", { name: "Tracker" });
-    expect(select).toHaveTextContent("qa · private"); // the first tracker listing the repository
+    expect(select).toHaveTextContent("qa · private");
     expect(screen.getByText(/stays primary/)).toBeInTheDocument();
     await userEvent.click(select);
     expect(Array.from(document.querySelectorAll("[cui-select-group-name]")).map((g) => g.textContent)).toEqual([
@@ -475,8 +699,8 @@ describe("RepositoryCard — the tracker links", () => {
     const a = mountAdmin(["tracker-clickhouse", "tracker-helpdesk"]);
     const items = within(screen.getByRole("list", { name: "Linked trackers" })).getAllByRole("listitem");
     expect(items).toHaveLength(2);
-    expect(within(items[0]).getByText("primary", { exact: true })).toBeInTheDocument();
-    expect(within(items[1]).queryByText("primary", { exact: true })).toBeNull();
+    expect(within(items[0]).getByText("Primary", { exact: true })).toBeInTheDocument();
+    expect(within(items[1]).queryByText("Primary", { exact: true })).toBeNull();
     expect(line()).toHaveTextContent("Agents search all 2; a lookup by number (#123, a PR's facts) reads qa · public");
     await userEvent.click(screen.getByRole("button", { name: "Make helpdesk primary" }));
     expect(a.code.onSetSource).toHaveBeenLastCalledWith(expect.anything(), ["tracker-helpdesk", "tracker-clickhouse"]);
@@ -504,7 +728,7 @@ describe("RepositoryCard — the tracker links", () => {
     cleanup();
   });
 
-  it("the page offers Add a tracker only when self-service is on", async () => {
+  it("offers Add a tracker only when self-service is on", async () => {
     const a = mountAdmin("tracker-clickhouse");
     await userEvent.click(screen.getByRole("button", { name: /Add a tracker/ }));
     expect(a.code.onRegisterSource).toHaveBeenCalled();
@@ -540,5 +764,35 @@ describe("RepositoryCard — docs", () => {
     mount([branch({ my_status: "member" })], []); // no docs namespace: no Docs facet
     expect(screen.queryByRole("group", { name: "Docs" })).toBeNull();
     cleanup();
+  });
+});
+
+describe("RepositoryCard while a write is out", () => {
+  it("disables every branch row's menu item, so a second write waits for the first", async () => {
+    const user = userEvent.setup();
+    mount(
+      [
+        branch({ namespace: "a", branch: "master", my_status: "member", my_role: "viewer" }),
+        branch({ namespace: "b", branch: "25.8", my_role: "", join_policy: "open" }),
+      ],
+      [],
+      "a",
+    );
+    let menu = await openBranchMenu(user, "master");
+    const member = within(menu).getAllByRole("menuitem");
+    expect(member.map((m) => m.textContent)).toEqual(expect.arrayContaining(["Open", "Leave"]));
+    for (const item of member) expect(item).toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("{Escape}");
+    menu = await openBranchMenu(user, "25.8");
+    for (const item of within(menu).getAllByRole("menuitem")) expect(item).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("disables the Withdraw request item behind a pending badge", async () => {
+    const user = userEvent.setup();
+    mount([branch({ namespace: "a", branch: "master", my_status: "pending" })], [], "a", { open: false });
+    await user.click(screen.getByRole("button", { name: "Actions for ClickHouse/ClickHouse" }));
+    const menu = await screen.findByRole("menu");
+    const withdraw = within(menu).getByRole("menuitem", { name: "Withdraw request" });
+    expect(withdraw).toHaveAttribute("aria-disabled", "true");
   });
 });

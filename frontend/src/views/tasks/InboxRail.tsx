@@ -1,23 +1,13 @@
-import { Checkbox } from "@clickhouse/click-ui/Checkbox";
-import { Icon } from "@clickhouse/click-ui/Icon";
+import { Select } from "@clickhouse/click-ui/Select";
 import type { Inbox, InboxCount } from "../../api/tasks";
-import { initials, type Filters, type PosterFilter } from "../../lib/tasks";
-import { Chip, Tip } from "../../components/ui";
-import { Avatar } from "./TaskBits";
+import { Tip } from "../../components/ui";
 
 /**
- * The inbox rail: every inbox the namespace owns as a folder with "N to do · M running"
- * from `task.counts`, "All inboxes" first, "Register inbox…" last for an admin. Under it
- * the filters: kind chips from the loaded rows, "Posted by" (this agent / other agents),
- * and "Show closed". Under 820 px the rail is a horizontal strip and the filters hide
- * (the tiles still filter).
+ * The page's scope, the inbox: on a wide screen a rail of every inbox the namespace owns
+ * with "N to do · M running" from `task.counts`, "All inboxes" first; on a phone the same
+ * choice as one Click UI Select. Registering an inbox is in the page's options menu.
  */
 export const ALL_INBOXES = "*";
-
-const POSTER_OPTIONS: ReadonlyArray<readonly [PosterFilter, string]> = [
-  ["me", "this agent"],
-  ["others", "other agents"],
-];
 
 export interface RailCounts {
   todo: number;
@@ -38,6 +28,24 @@ export function railCounts(counts: readonly InboxCount[]): Map<string, RailCount
   return by;
 }
 
+function totalsOf(counts: Map<string, RailCounts> | null): RailCounts | undefined {
+  return counts
+    ? [...counts.values()].reduce((a, c) => ({ todo: a.todo + c.todo, running: a.running + c.running }), {
+        todo: 0,
+        running: 0,
+      })
+    : undefined;
+}
+
+/** "3 to do · 2 running", "empty", or "" before the counts land. */
+export function countLine(c: RailCounts | undefined): string {
+  if (!c) return "";
+  const parts: string[] = [];
+  if (c.todo) parts.push(`${c.todo} to do`);
+  if (c.running) parts.push(`${c.running} running`);
+  return parts.length ? parts.join(" · ") : "empty";
+}
+
 /** What the rail's folder leaves out: the inbox's description and the agent that owns it. */
 function InboxTip({ inbox }: { inbox: Inbox }) {
   return (
@@ -55,10 +63,7 @@ function CountText({ c }: { c: RailCounts | undefined }) {
         …
       </span>
     );
-  const parts: string[] = [];
-  if (c.todo) parts.push(`${c.todo} to do`);
-  if (c.running) parts.push(`${c.running} running`);
-  if (parts.length === 0) return <span className="cnt">empty</span>;
+  if (!c.todo && !c.running) return <span className="cnt">empty</span>;
   return (
     <span className="cnt tabular">
       {c.todo > 0 && (
@@ -81,116 +86,62 @@ interface Props {
   counts: Map<string, RailCounts> | null;
   picked: string;
   onPick: (inbox: string) => void;
-  kinds: string[];
-  filters: Filters;
-  onFilters: (f: Filters) => void;
-  /** An admin's "Register inbox…" — absent for everyone else. */
-  onRegister?: () => void;
 }
 
-export function InboxRail({ inboxes, counts, picked, onPick, kinds, filters, onFilters, onRegister }: Props) {
-  const totals = counts
-    ? [...counts.values()].reduce((a, c) => ({ todo: a.todo + c.todo, running: a.running + c.running }), {
-        todo: 0,
-        running: 0,
-      })
-    : undefined;
-  const setPoster = (p: PosterFilter) => onFilters({ ...filters, poster: filters.poster === p ? null : p });
+const countsOf = (counts: Map<string, RailCounts> | null, inbox: string) =>
+  counts?.get(inbox) ?? (counts ? { todo: 0, running: 0 } : undefined);
+
+export function InboxRail({ inboxes, counts, picked, onPick }: Props) {
   return (
-    <aside className="tq-rail" aria-label="Inboxes and filters">
-      <section aria-labelledby="tq-rail-inboxes">
-        <h2 id="tq-rail-inboxes" className="section-label mb-1.5 ml-2">
-          Inboxes
-        </h2>
-        <nav aria-label="Inboxes">
-          {inboxes.length > 1 && (
+    <div>
+      <h2 id="tq-rail-inboxes" className="section-label mb-1.5 ml-2">
+        Inboxes
+      </h2>
+      <nav aria-labelledby="tq-rail-inboxes">
+        {inboxes.length > 1 && (
+          <button
+            type="button"
+            className="tq-inbox"
+            aria-current={picked === ALL_INBOXES}
+            onClick={() => onPick(ALL_INBOXES)}
+          >
+            <span className="nm">All inboxes</span>
+            <CountText c={totalsOf(counts)} />
+          </button>
+        )}
+        {inboxes.map((i) => (
+          <Tip key={i.inbox} content={<InboxTip inbox={i} />} side="right" disabled={!i.description && !i.owner_agent}>
             <button
               type="button"
               className="tq-inbox"
-              aria-current={picked === ALL_INBOXES}
-              onClick={() => onPick(ALL_INBOXES)}
+              aria-current={picked === i.inbox}
+              onClick={() => onPick(i.inbox)}
             >
-              <span className="nm">
-                <span className="tq-av" aria-hidden="true">
-                  ∗
-                </span>
-                <span>All inboxes</span>
-              </span>
-              <CountText c={totals} />
+              <span className="nm">{i.inbox}</span>
+              <CountText c={countsOf(counts, i.inbox)} />
             </button>
-          )}
-          {inboxes.map((i) => (
-            <Tip
-              key={i.inbox}
-              content={<InboxTip inbox={i} />}
-              side="right"
-              disabled={!i.description && !i.owner_agent}
-            >
-              <button
-                type="button"
-                className="tq-inbox"
-                aria-current={picked === i.inbox}
-                onClick={() => onPick(i.inbox)}
-              >
-                <span className="nm">
-                  <Avatar name={i.owner_agent || initials(i.inbox)} kind="bot" />
-                  <span>{i.inbox}</span>
-                </span>
-                <CountText c={counts?.get(i.inbox) ?? (counts ? { todo: 0, running: 0 } : undefined)} />
-              </button>
-            </Tip>
-          ))}
-          {onRegister && (
-            <button type="button" className="tq-inbox text-xs" onClick={onRegister}>
-              <span className="nm">
-                <span className="tq-av" aria-hidden="true">
-                  <Icon name="plus" size="xs" aria-hidden="true" />
-                </span>
-                <span>Register inbox…</span>
-              </span>
-            </button>
-          )}
-        </nav>
-      </section>
-      {kinds.length > 0 && (
-        <section className="tq-filters" aria-labelledby="tq-rail-kind">
-          <h2 id="tq-rail-kind" className="section-label mb-1.5 ml-2">
-            Kind
-          </h2>
-          {/* biome-ignore lint/a11y/useSemanticElements: a labelled cluster of toggle chips, not form fields */}
-          <div className="flex flex-wrap gap-1.5 px-2" id="tq-kind-chips" role="group" aria-label="Kind">
-            {kinds.map((k) => (
-              <Chip
-                key={k}
-                label={k}
-                mono
-                selected={filters.kind === k}
-                onClick={() => onFilters({ ...filters, kind: filters.kind === k ? null : k })}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-      <section className="tq-filters" aria-labelledby="tq-rail-poster">
-        <h2 id="tq-rail-poster" className="section-label mb-1.5 ml-2">
-          Posted by
-        </h2>
-        {/* biome-ignore lint/a11y/useSemanticElements: a labelled cluster of toggle chips, not form fields */}
-        <div className="flex flex-wrap gap-1.5 px-2" role="group" aria-label="Posted by">
-          {POSTER_OPTIONS.map(([k, l]) => (
-            <Chip key={k} label={l} selected={filters.poster === k} onClick={() => setPoster(k)} />
-          ))}
-        </div>
-      </section>
-      <section className="tq-filters">
-        <div className="px-2 py-1.5">
-          <Checkbox
-            label="Show closed"
-            checked={filters.showClosed}
-            onCheckedChange={(v) => onFilters({ ...filters, showClosed: v === true })}
-          />
-        </div>
-      </section>
-    </aside>
+          </Tip>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
+/** The rail on a phone: one Select, its options carrying the same counts. */
+export function InboxSelect({ inboxes, counts, picked, onPick }: Props) {
+  const label = (name: string, c: RailCounts | undefined) => {
+    const line = countLine(c);
+    return line ? `${name} · ${line}` : name;
+  };
+  return (
+    // The options name inboxes with their counts, so the field needs no visible label.
+    <Select value={picked} onSelect={onPick} triggerProps={{ "aria-label": "Inbox" }}>
+      {inboxes.length > 1 && <Select.Item value={ALL_INBOXES}>{label("All inboxes", totalsOf(counts))}</Select.Item>}
+      {inboxes.map((i) => (
+        <Select.Item key={i.inbox} value={i.inbox}>
+          {label(i.inbox, countsOf(counts, i.inbox))}
+        </Select.Item>
+      ))}
+    </Select>
   );
 }

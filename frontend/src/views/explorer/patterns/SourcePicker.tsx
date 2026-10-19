@@ -13,6 +13,7 @@ import {
   type TrackerSource,
   type TrackerSourceNamespace,
 } from "../../../lib/trackerSources";
+import { Loading } from "../../../components/ui";
 
 /**
  * SourcePicker — Patterns mode opened on a namespace that has no QA binding. The mode
@@ -99,11 +100,7 @@ export function SourcePicker({
         Patterns reads a tracker namespace. <span className="font-mono">{current}</span> has none bound, so pick one you
         read; the page then stays on it.
       </p>
-      {sources === null && (
-        <p role="status" className="text-sm text-text-muted mt-4">
-          Looking up the tracker sources you can read…
-        </p>
-      )}
+      {sources === null && <Loading layout="inline" label="Loading the tracker sources" className="mt-4" />}
       {absent && (
         <p role="status" className="text-sm text-text-muted mt-4">
           This server lists no tracker sources yet.

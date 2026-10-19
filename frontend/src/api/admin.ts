@@ -4,7 +4,7 @@
 import { post } from "../api";
 import type { Identity, RequestOpts } from "../api";
 import { listAuditLog, parseAuditSubject, type AutoResolveReason } from "./audit";
-import { parseIso } from "../lib/format";
+import { parseChTime } from "../lib/format";
 
 // ===== Namespace usage audit =====
 
@@ -702,8 +702,8 @@ export function autoResolveReasonText(reason: string): string | null {
   return Object.hasOwn(AUTO_RESOLVE_REASON_TEXT, reason) ? AUTO_RESOLVE_REASON_TEXT[reason as AutoResolveReason] : null;
 }
 
-/** An audit row's time in ms: one without an offset is UTC (`parseIso`); 0 if unreadable. */
-export const auditInstant = (ts: string): number => parseIso(ts)?.getTime() ?? 0;
+/** An audit row's time in ms: one without an offset is UTC (`parseChTime`); 0 if unreadable. */
+export const auditInstant = (ts: string): number => parseChTime(ts)?.getTime() ?? 0;
 
 /** Pages of `memory.unsupersede` records `listUnsuperseded` reads at most. A restore is
  *  one record, made by a person clicking Undo or Restore, so 5 pages of 500 cover far more
@@ -842,7 +842,7 @@ export async function memoryHistory(
 export interface RelatedMemoryRow {
   memory_key: string;
   shared_entities: string[];
-  overlap: number;
+  overlap_count: number;
 }
 
 /** Memories that share entities with this one. */
@@ -850,7 +850,7 @@ export async function memoryRelated(
   id: Identity,
   memoryKey: string,
   topK: number = 5,
-): Promise<{ rows: RelatedMemoryRow[] }> {
+): Promise<{ results: RelatedMemoryRow[] }> {
   return post("/v1/memory.related", {
     org: id.org,
     namespace: id.namespace,

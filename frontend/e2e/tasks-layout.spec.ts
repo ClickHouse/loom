@@ -20,7 +20,9 @@ for (const width of [1280, 1400, 1440]) {
         const title = row.querySelector(".title");
         if (!title || box(title).width < 40)
           out.push(`${row.getAttribute("aria-label")}: title ${box(title!).width}px`);
-        const parts = [...row.querySelectorAll(".t > *, .tq-sub, .tq-meta > :not(.tq-acts), .tq-acts > *")].filter(
+        // The priority, the title, each piece of the meta (Accept, assignee, age, menu) and the
+        // second line (the kind, the state's line).
+        const parts = [...row.querySelectorAll(".tq-pri, .title, .tq-meta > *, .tq-sub > *")].filter(
           (e) => box(e).width > 0,
         );
         for (let i = 0; i < parts.length; i++)

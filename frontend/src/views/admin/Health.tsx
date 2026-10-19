@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -17,15 +17,19 @@ import {
   type OpsHealthCheck,
   type OpMixData,
 } from "../../api";
-
-import { humanizeError, relativeTime } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { isRecord } from "../../lib/guards";
-import { Skeleton } from "../../components/Skeleton";
+import { Skeleton, TableSkeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
+import { ListState } from "../../components/ui/ListState";
+import { ApiError } from "../../lib/errors";
+import { ListTime } from "../../components/ui/ListTime";
+import { parseChTime } from "../../lib/format";
+import { ListToolbar } from "../../components/ui/ListToolbar";
+import { BusyButton } from "../../components/ui/BusyButton";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { PageContainer } from "../../layout/PageContainer";
-import { Alert, PageHeader, Stat, TabTrigger } from "../../components/ui";
+import { Alert, LoadingSkeleton, PageHeader, Stat, TabTrigger } from "../../components/ui";
 
 // Friendly label + blurb per worker; unknown workers fall through to
 // a default rendering (raw name + "background worker").
@@ -242,10 +246,11 @@ function statusOf(w: WorkerRow): WorkerStatus {
   if (w.last_pass_status === "failed" || w.last_pass_status === "timeout" || w.last_pass_status === "partial") {
     return "degraded";
   }
-  if (!w.last_run_at) return "waiting";
+  const lastRun = parseChTime(w.last_run_at);
+  if (!lastRun) return "waiting";
   // Stalled = last tick older than 3× the interval. Unknown interval → healthy.
   if (w.interval_seconds && w.interval_seconds > 0) {
-    const ageMs = Date.now() - new Date(w.last_run_at).getTime();
+    const ageMs = Date.now() - lastRun.getTime();
     if (ageMs > w.interval_seconds * 1000 * 3) return "stalled";
   }
   return "healthy";
@@ -275,25 +280,37 @@ function fmtDuration(ms: number): string {
   return `${Math.round(ms / 60000)} min`;
 }
 
+// A worker's interval is in its own column ("Every"), so the pass line keeps to the pass.
+const WORKER_HEADERS = [
+  { label: "Worker" },
+  { label: "Status", width: "300px" },
+  { label: "Last pass" },
+  { label: "Every", width: "80px" },
+];
+
 export function WorkersPanel() {
   const [rows, setRows] = useState<WorkerRow[] | null>(null);
   const [store, setStore] = useState<WorkersStore | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showAll, setShowAll] = useState(false);
+  const [error, setError] = useState<unknown>(null);
   // workers.status is a /v1/admin/* handler: the JWT claim alone opens it. Without the
   // claim there is no request — the panel reads "not reachable from here" (the dashboard
   // never issues a request the token cannot make).
   const whoami = useStore((s) => s.whoami);
   const canReadWorkers = canCall("admin/workers.status", null, whoami);
+  // Refresh keeps the workers on screen, marked busy, until the read answers.
+  const [refreshing, setRefreshing] = useState(false);
 
   useAbortableEffect(
     (signal, live) => {
-      setRows(null);
       if (!canReadWorkers) {
         setRows([]);
         setStore(null);
         return;
       }
+      setRefreshing(true);
+      setError(null);
       getJson<unknown>("/v1/admin/workers.status", { signal })
         .then((d) => {
           if (!live()) return;
@@ -301,11 +318,11 @@ export function WorkersPanel() {
           setStore(parsed.store);
           setRows(parsed.rows);
         })
-        .catch(() => {
-          if (live()) {
-            setRows([]);
-            setStore(null);
-          }
+        .catch((e) => {
+          if (live()) setError(e);
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
         });
     },
     [refreshKey, canReadWorkers],
@@ -330,52 +347,74 @@ export function WorkersPanel() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3 flex-wrap">
-          <ScopeBadge kind="loom-wide" />
-          {/* With no rows at all the empty state below says it. */}
-          {rows !== null &&
-            rows.length > 0 &&
-            (allHealthy ? (
-              <Badge text="All systems running" state="success" iconDir="start" />
-            ) : issues.length > 0 ? (
-              <Badge
-                text={`${issues.length} ${issues.length === 1 ? "issue" : "issues"}`}
-                state="danger"
-                iconDir="start"
-              />
-            ) : (
-              <span className="text-sm text-text-muted">No workers reporting</span>
-            ))}
-          {rows !== null && colours.length > 0 && (
-            <span className="text-xs text-text-muted" data-testid="reporting-colours">
-              Reporting from {colours.join(", ")}
-              {store?.rows ? (
-                <>
-                  {" "}
-                  · {store.rows} {store.rows === 1 ? "row" : "rows"} in {store.table || "loom.worker_status"}
-                </>
-              ) : null}
-            </span>
-          )}
-        </div>
-        <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => setRefreshKey((k) => k + 1)}>
+      <ListToolbar
+        label="Workers status"
+        search={false}
+        count={
+          !error && rows !== null && visible.length > 0
+            ? `${visible.length} ${visible.length === 1 ? "worker" : "workers"}`
+            : undefined
+        }
+      >
+        <ScopeBadge kind="loom-wide" />
+        {/* With no rows at all the empty state below says it. */}
+        {!error &&
+          rows !== null &&
+          rows.length > 0 &&
+          (allHealthy ? (
+            <Badge text="All systems running" state="success" />
+          ) : issues.length > 0 ? (
+            <Badge text={`${issues.length} ${issues.length === 1 ? "issue" : "issues"}`} state="danger" />
+          ) : (
+            <span className="truncate text-sm text-text-muted">No workers reporting</span>
+          ))}
+        <BusyButton
+          type="secondary"
+          htmlType="button"
+          iconLeft="refresh"
+          onClick={() => setRefreshKey((k) => k + 1)}
+          busy={refreshing}
+          className="ml-auto shrink-0"
+        >
           Refresh
-        </Button>
-      </div>
-      {rows === null && <Skeleton className="h-40 w-full" />}
-      {rows !== null && (rows.length === 0 || visible.length === 0) && (
-        <EmptyState
+        </BusyButton>
+      </ListToolbar>
+      {!error && rows !== null && colours.length > 0 && (
+        <p className="mb-3 text-xs text-text-muted" data-testid="reporting-colours">
+          Reporting from {colours.join(", ")}
+          {store?.rows ? (
+            <>
+              {" "}
+              · {store.rows} {store.rows === 1 ? "row" : "rows"} in {store.table || "loom.worker_status"}
+            </>
+          ) : null}
+        </p>
+      )}
+      {!!error && <ListState kind="error" things="workers" error={error} onRetry={() => setRefreshKey((k) => k + 1)} />}
+      {!error && rows === null && (
+        <Table
+          aria-label="Workers"
+          aria-busy
+          size="sm"
+          headers={WORKER_HEADERS}
+          rows={[]}
+          noDataMessage={<TableSkeleton label="Loading workers" />}
+        />
+      )}
+      {!error && rows !== null && (rows.length === 0 || visible.length === 0) && (
+        <ListState
+          kind="empty"
           icon="settings"
           title={rows.length === 0 ? "No workers reporting" : "Nothing to show"}
           description={
             rows.length === 0
               ? "Neither this process nor loom.worker_status has a worker pass on record. Either no workers colour is running, or /v1/admin/workers.status is not reachable from here."
-              : "All workers are disabled in config. Toggle Show all to see them."
+              : "All workers are disabled in config."
           }
+          action={rows.length > 0 ? { label: "Show all", onClick: () => setShowAll(true) } : undefined}
         />
       )}
-      {rows !== null && rows.length > 0 && reporting.length === 0 && effective.length > 0 && (
+      {!error && rows !== null && rows.length > 0 && reporting.length === 0 && effective.length > 0 && (
         <Alert
           role="status"
           className="mb-3"
@@ -390,98 +429,120 @@ export function WorkersPanel() {
           }
         />
       )}
-      {rows !== null && visible.length > 0 && (
-        <div className="space-y-1.5">
-          {visible.map((w) => {
-            const status = statusOf(w);
-            const info = WORKER_INFO[w.name] || {
-              label: w.name.replace(/_/g, " "),
-              blurb: "Background worker.",
-            };
-            const pill = w.last_pass_status ? PASS_PILL[w.last_pass_status] : null;
-            const from = colourOf(w.reporting_from);
-            const written = w.rows_written ?? 0;
-            return (
-              <div key={w.name} className="flex items-start gap-3 p-3 rounded-xl border border-border bg-surface">
-                <div
-                  className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
-                    status === "healthy"
-                      ? "bg-success"
-                      : status === "degraded"
-                        ? "bg-danger"
-                        : status === "stalled"
-                          ? "bg-warn"
-                          : "bg-text-muted"
-                  }`}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium text-text">{info.label}</span>
-                    <span className="text-xs text-text-muted font-mono">{w.name}</span>
-                    {(w.consecutive_failures ?? 0) > 0 && (
-                      <Badge
-                        size="sm"
-                        state="danger"
-                        text={`${w.consecutive_failures} consecutive failure${(w.consecutive_failures ?? 0) === 1 ? "" : "s"}${(w.consecutive_failures ?? 0) >= 3 ? " — DEGRADED" : ""}`}
-                      />
-                    )}
-                    {pill && status !== "disabled" && <Badge size="sm" state={pill.state} text={pill.label} />}
-                    {status === "stalled" && <Badge size="sm" state="warning" text="Stalled — overdue for a tick" />}
-                    {status === "disabled" && (
-                      <Badge
-                        size="sm"
-                        state="disabled"
-                        text={
-                          w.disabled_reason === "disabled_by_setting"
-                            ? "Off in config"
-                            : w.disabled_reason || "Disabled"
-                        }
-                      />
-                    )}
-                  </div>
-                  <div className="text-xs text-text-muted mt-1">{info.blurb}</div>
-                  {status !== "disabled" && (
-                    <div className="text-xs text-text-muted mt-1 tabular">
-                      {w.last_run_at ? (
-                        <>
-                          Last ran {relativeTime(w.last_run_at)}
-                          {w.last_duration_ms != null && <> · took {fmtDuration(w.last_duration_ms)}</>}
-                          {written > 0 && <> · {written.toLocaleString()} rows written</>}
-                          {w.total_runs != null && <> · {w.total_runs.toLocaleString()} runs total</>}
-                          {w.interval_seconds ? <> · every {fmtInterval(w.interval_seconds)}</> : null}
-                          {from && (
-                            <>
-                              {" "}
-                              · reporting from{" "}
-                              <span className="font-mono">
-                                {from}
-                                {from !== w.reporting_from && <span className="sr-only"> ({w.reporting_from})</span>}
-                              </span>
-                            </>
-                          )}
-                          {w.namespace && (
-                            <>
-                              {" "}
-                              · last namespace reached: <span className="font-mono">{w.namespace}</span>
-                            </>
-                          )}
-                          {w.trigger === "manual" && <> · manual run</>}
-                        </>
+      {!error && rows !== null && visible.length > 0 && (
+        <div className="space-y-1.5" data-testid="workers-list" aria-busy={refreshing || undefined}>
+          <Table
+            aria-label="Workers"
+            size="sm"
+            headers={WORKER_HEADERS}
+            rows={visible.map((w) => {
+              const status = statusOf(w);
+              const info = WORKER_INFO[w.name] || {
+                label: w.name.replace(/_/g, " "),
+                blurb: "Background worker.",
+              };
+              const pill = w.last_pass_status ? PASS_PILL[w.last_pass_status] : null;
+              const from = colourOf(w.reporting_from);
+              const written = w.rows_written ?? 0;
+              return {
+                id: w.name,
+                isDisabled: status === "disabled",
+                items: [
+                  {
+                    overflowMode: "wrap",
+                    label: (
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium text-text">{info.label}</span>
+                          <span className="text-xs text-text-muted font-mono">{w.name}</span>
+                        </div>
+                        <div className="text-xs text-text-muted mt-0.5">{info.blurb}</div>
+                      </div>
+                    ),
+                  },
+                  {
+                    overflowMode: "wrap",
+                    label: (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {status === "healthy" && !pill && <Badge size="sm" state="success" text="Healthy" />}
+                        {(w.consecutive_failures ?? 0) > 0 && (
+                          <Badge
+                            size="sm"
+                            state="danger"
+                            text={`${w.consecutive_failures} consecutive failure${(w.consecutive_failures ?? 0) === 1 ? "" : "s"}${(w.consecutive_failures ?? 0) >= 3 ? ", degraded" : ""}`}
+                          />
+                        )}
+                        {pill && status !== "disabled" && <Badge size="sm" state={pill.state} text={pill.label} />}
+                        {status === "stalled" && (
+                          <Badge size="sm" state="warning" text="Stalled — overdue for a tick" />
+                        )}
+                        {status === "disabled" && (
+                          <Badge
+                            size="sm"
+                            state="disabled"
+                            text={
+                              w.disabled_reason === "disabled_by_setting"
+                                ? "Off in config"
+                                : w.disabled_reason || "Disabled"
+                            }
+                          />
+                        )}
+                      </div>
+                    ),
+                  },
+                  {
+                    overflowMode: "wrap",
+                    label:
+                      status === "disabled" ? (
+                        <span className="text-xs text-text-muted">—</span>
                       ) : (
-                        <>
-                          No pass reported yet
-                          {w.interval_seconds ? <> (every {fmtInterval(w.interval_seconds)})</> : null}
-                        </>
-                      )}
-                      {w.last_error && status !== "healthy" && (
-                        <span className="block text-danger mt-0.5">Error: {w.last_error.slice(0, 200)}</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+                        <div className="text-xs text-text-muted tabular">
+                          {w.last_run_at ? (
+                            <>
+                              Last ran <ListTime time={w.last_run_at} quiet />
+                              {w.last_duration_ms != null && <> · took {fmtDuration(w.last_duration_ms)}</>}
+                              {written > 0 && <> · {written.toLocaleString()} rows written</>}
+                              {w.total_runs != null && <> · {w.total_runs.toLocaleString()} runs total</>}
+                              {from && (
+                                <>
+                                  {" "}
+                                  · reporting from{" "}
+                                  <span className="font-mono">
+                                    {from}
+                                    {from !== w.reporting_from && (
+                                      <span className="sr-only"> ({w.reporting_from})</span>
+                                    )}
+                                  </span>
+                                </>
+                              )}
+                              {w.namespace && (
+                                <>
+                                  {" "}
+                                  · last namespace reached: <span className="font-mono">{w.namespace}</span>
+                                </>
+                              )}
+                              {w.trigger === "manual" && <> · manual run</>}
+                            </>
+                          ) : (
+                            <>No pass reported yet</>
+                          )}
+                          {w.last_error && status !== "healthy" && (
+                            <span className="block text-danger mt-0.5">Error: {w.last_error.slice(0, 200)}</span>
+                          )}
+                        </div>
+                      ),
+                  },
+                  {
+                    label: (
+                      <span className="text-xs text-text-muted tabular">
+                        {w.interval_seconds ? fmtInterval(w.interval_seconds) : "—"}
+                      </span>
+                    ),
+                  },
+                ],
+              };
+            })}
+          />
           {hiddenByConfig > 0 && !showAll && (
             <Button type="empty" htmlType="button" fillWidth iconLeft="eye" onClick={() => setShowAll(true)}>
               {`Show ${hiddenByConfig} worker${hiddenByConfig === 1 ? "" : "s"} disabled in config`}
@@ -549,17 +610,36 @@ export function parseOpMix(d: unknown): OpMixData | null {
   };
 }
 
-/** ops.health's op_mix answer: a report ({check, data}), a check the server ran but could
- *  not compute (data: null — status "fail", detail says why), or null when the request
- *  did not answer (an answer always carries the op_mix check). */
+/** ops.health's op_mix answer, with the scope it was read for: a report ({check, data}), a
+ *  check the server ran but could not compute (data: null — status "fail", detail says
+ *  why), or null when the request was refused (an answer always carries the op_mix
+ *  check). Any other failed read is said as one. */
 export function OpMixPanel() {
   const identity = useIdentity();
-  const [op, setOp] = useState<{ check: OpsHealthCheck; data: OpMixData | null } | null | undefined>(undefined);
   const [scope, setScope] = useState<"namespace" | "org">("namespace");
+  const [op, setOp] = useState<
+    { check: OpsHealthCheck; data: OpMixData | null; scope: typeof scope } | null | undefined
+  >(undefined);
+  const [error, setError] = useState<unknown>(null);
+  // Retry reads again through the effect.
+  const [reads, setReads] = useState(0);
+  // A scope toggle keeps the mix (and the toggle) on screen, marked busy, until it answers;
+  // another namespace starts over, during render, so its figures never draw under the new
+  // namespace's badge.
+  const [refreshing, setRefreshing] = useState(false);
+  const opKey = `${identity.org}/${identity.namespace}`;
+  const [opFor, setOpFor] = useState(opKey);
+  if (opFor !== opKey) {
+    setOpFor(opKey);
+    setOp(undefined);
+    setError(null);
+  }
 
   useAbortableEffect(
     (signal, live) => {
-      setOp(undefined);
+      setRefreshing(true);
+      setError(null);
+      const asked = scope;
       getOpsHealth(
         { org: identity.org, namespace: identity.namespace },
         { namespace: scope === "namespace" ? identity.namespace : null, signal },
@@ -567,33 +647,82 @@ export function OpMixPanel() {
         .then((r) => {
           if (!live()) return;
           const check = r.checks.find((c) => c.name === "op_mix");
-          setOp(check ? { check, data: parseOpMix(check.data) } : null);
+          // Every answer carries the op_mix check: one without it is a failed read.
+          if (check) setOp({ check, data: parseOpMix(check.data), scope: asked });
+          else setError(new Error("ops.health answered without its op_mix check"));
         })
-        .catch(() => {
-          if (live()) setOp(null);
+        .catch((e) => {
+          if (!live()) return;
+          // A refusal is the role, said as such; any other failure is a failed read.
+          if (e instanceof ApiError && e.status === 403) setOp(null);
+          else setError(e);
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
         });
     },
-    [identity.org, identity.namespace, scope],
+    [identity.org, identity.namespace, scope, reads],
   );
 
-  if (op === undefined) return <Skeleton className="h-40 w-full" />;
-  if (op === null) {
+  if (op === undefined && !error)
     return (
+      <LoadingSkeleton label="Loading the operation mix">
+        <Skeleton className="h-40 w-full" />
+      </LoadingSkeleton>
+    );
+  // The scope row stays above every state: a scope whose read failed is left with it. Its
+  // badge names the scope of what is shown: the read's scope over a report or a failed
+  // check (a toggle's read has not yet replaced it), the asked one over a failed read.
+  const scopeRow = (shown: typeof scope, summary?: ReactNode) => (
+    <div className="flex flex-wrap items-center gap-3">
+      {shown === "namespace" ? (
+        <ScopeBadge kind="namespace" value={identity.namespace} />
+      ) : (
+        <Badge size="sm" state="neutral" text={`org · ${identity.org}`} />
+      )}
+      <ButtonGroup
+        aria-label="Operation mix scope"
+        options={[
+          { value: "namespace", label: "This namespace" },
+          { value: "org", label: "Whole org" },
+        ]}
+        selected={scope}
+        onClick={(value) => setScope(value === "org" ? "org" : "namespace")}
+      />
+      {summary}
+    </div>
+  );
+  const withScope = (shown: typeof scope, body: ReactNode) => (
+    <div className="space-y-4" aria-busy={refreshing || undefined}>
+      {scopeRow(shown)}
+      {body}
+    </div>
+  );
+  if (error)
+    return withScope(
+      scope,
+      <ListState kind="error" things="the operation mix" error={error} onRetry={() => setReads((n) => n + 1)} />,
+    );
+  if (!op) {
+    return withScope(
+      scope,
       <EmptyState
         icon="pie-chart"
         title="Operation mix unavailable"
-        description="ops.health did not answer (it needs an org-admin token)."
-      />
+        description="ops.health needs an org-admin token."
+      />,
     );
   }
   const { check, data } = op;
   if (data === null) {
-    return (
+    // The check's detail is the read for op.scope, which the badge names.
+    return withScope(
+      op.scope,
       <EmptyState
         icon="pie-chart"
         title="Operation mix check failed"
         description={check.repair ? `${check.detail} — ${check.repair}` : check.detail}
-      />
+      />,
     );
   }
   const total = Object.values(data.counts).reduce((a, b) => a + b, 0);
@@ -603,26 +732,13 @@ export function OpMixPanel() {
   const tone = check.status === "ok" ? "bg-success" : check.status === "warn" ? "bg-warn" : "bg-danger";
   const fmt = (n: number) => n.toLocaleString();
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        {scope === "namespace" ? (
-          <ScopeBadge kind="namespace" value={identity.namespace} />
-        ) : (
-          <Badge size="sm" state="neutral" text={`org · ${identity.org}`} />
-        )}
-        <ButtonGroup
-          aria-label="Operation mix scope"
-          options={[
-            { value: "namespace", label: "This namespace" },
-            { value: "org", label: "Whole org" },
-          ]}
-          selected={scope}
-          onClick={(value) => setScope(value === "org" ? "org" : "namespace")}
-        />
+    <div className="space-y-4" aria-busy={refreshing || undefined}>
+      {scopeRow(
+        op.scope,
         <span className="text-xs text-text-muted">
           last {data.window_days} d · {fmt(total)} calls · {data.agents} agent{data.agents === 1 ? "" : "s"}
-        </span>
-      </div>
+        </span>,
+      )}
 
       <div className="rounded-xl border border-border bg-surface p-4">
         <div className="flex items-start gap-2">
@@ -706,22 +822,33 @@ const CLASS_BAR: Record<string, string> = {
 function ConsolidationsPanel() {
   const identity = useIdentity();
   const [rows, setRows] = useState<ConsolidationRunRow[] | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [reload, setReload] = useState(0);
 
   useAbortableEffect(
     (signal, live) => {
       setRows(null);
+      setError(null);
       listConsolidations({ org: identity.org, namespace: identity.namespace }, { limit: 50, signal })
         .then((r) => {
           if (live()) setRows(r.rows || []);
         })
-        .catch(() => {
-          if (live()) setRows([]);
+        .catch((e) => {
+          if (live()) setError(e);
         });
     },
-    [identity.org, identity.namespace],
+    [identity.org, identity.namespace, reload],
   );
 
-  if (rows === null) return <Skeleton className="h-40 w-full" />;
+  if (error) {
+    return <ListState kind="error" things="consolidations" error={error} onRetry={() => setReload((n) => n + 1)} />;
+  }
+  if (rows === null)
+    return (
+      <LoadingSkeleton label="Loading consolidations">
+        <Skeleton className="h-40 w-full" />
+      </LoadingSkeleton>
+    );
   return (
     <div>
       <div className="mb-3">
@@ -735,7 +862,8 @@ function ConsolidationsPanel() {
 function ConsolidationsTable({ rows }: { rows: ConsolidationRunRow[] }) {
   if (rows.length === 0) {
     return (
-      <EmptyState
+      <ListState
+        kind="empty"
         icon="cards"
         title="No consolidation runs yet"
         description="The background consolidator merges semantically-similar memories. Runs appear here once it fires."
@@ -761,7 +889,7 @@ function ConsolidationsTable({ rows }: { rows: ConsolidationRunRow[] }) {
           { label: <span className="tabular">{r.cluster_size}</span> },
           { label: <span className="tabular">{(r.tokens_in ?? 0) + (r.tokens_out ?? 0)}</span> },
           { label: <span className="tabular">{r.duration_ms}ms</span> },
-          { label: <span className="tabular text-text-muted">{relativeTime(r.ran_at)}</span> },
+          { label: <ListTime time={r.ran_at} quiet className="text-text-muted" /> },
         ],
       }))}
     />
@@ -774,21 +902,27 @@ const RUN_STATE: Record<string, BadgeState> = { written: "success", failed: "dan
 function ExtractionQualityPanel() {
   const identity = useStore((s) => s.identity);
   const [rows, setRows] = useState<ExtractionQualityRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   // Refresh re-runs the effect, so a refresh superseded by an org switch is aborted and its
   // answer dropped like any other stale read.
   const [refreshKey, setRefreshKey] = useState(0);
+  // Refresh keeps the figures on screen, marked busy, until the read answers.
+  const [refreshing, setRefreshing] = useState(false);
 
   useAbortableEffect(
     (signal, live) => {
       if (!identity) return;
       setError(null);
+      setRefreshing(true);
       getExtractionQuality({ org: identity.org }, { signal })
         .then((r) => {
           if (live()) setRows(r.rows || []);
         })
         .catch((e: unknown) => {
-          if (live()) setError(humanizeError(e));
+          if (live()) setError(e);
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
         });
     },
     [identity?.org, refreshKey],
@@ -796,19 +930,24 @@ function ExtractionQualityPanel() {
 
   if (!identity) return null;
   if (error) {
-    return <EmptyState icon="sparkle" title="Couldn't load extraction quality" description={error} />;
+    return (
+      <ListState kind="error" things="extraction quality" error={error} onRetry={() => setRefreshKey((k) => k + 1)} />
+    );
   }
   if (rows === null) {
     return (
-      <div className="space-y-2">
-        <Skeleton className="h-10" />
-        <Skeleton className="h-10" />
-      </div>
+      <LoadingSkeleton label="Loading extraction quality">
+        <div className="space-y-2">
+          <Skeleton className="h-10" />
+          <Skeleton className="h-10" />
+        </div>
+      </LoadingSkeleton>
     );
   }
   if (rows.length === 0) {
     return (
-      <EmptyState
+      <ListState
+        kind="empty"
         icon="sparkle"
         title="No extraction activity yet"
         description="Nothing has been extracted from saved conversations yet. Once it starts, this panel shows how many candidates were proposed, approved and rejected, so you can tune extraction for signal."
@@ -824,7 +963,7 @@ function ExtractionQualityPanel() {
   const orgRatio = totalDecided > 0 ? totalPromoted / totalDecided : 0;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" aria-busy={refreshing || undefined}>
       <div className="grid grid-cols-4 gap-3">
         <Stat label="Pending" value={totalPending} hint="awaiting review" />
         <Stat label="Promoted" value={totalPromoted} hint="approved → memory" />
@@ -838,9 +977,15 @@ function ExtractionQualityPanel() {
       </div>
       <div className="flex items-center justify-between">
         <div className="text-xs text-text-muted">By namespace, org={identity.org}</div>
-        <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => setRefreshKey((k) => k + 1)}>
+        <BusyButton
+          type="secondary"
+          htmlType="button"
+          iconLeft="refresh"
+          onClick={() => setRefreshKey((k) => k + 1)}
+          busy={refreshing}
+        >
           Refresh
-        </Button>
+        </BusyButton>
       </div>
       <Table
         size="sm"

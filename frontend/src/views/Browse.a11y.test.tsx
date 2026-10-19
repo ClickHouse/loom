@@ -29,14 +29,14 @@ afterEach(() => {
 });
 
 describe("Browse: the namespace count", () => {
-  it("is a status region whose text follows the search", async () => {
+  it("is the toolbar's live count, the same element through a search", async () => {
     render(<Browse />);
-    const status = await screen.findByRole("status");
     expect(await screen.findByText("alpha")).toBeInTheDocument();
-    expect(status).toHaveTextContent("2 namespaces");
+    const count = screen.getByText("2 namespaces");
+    expect(count).toHaveAttribute("aria-live");
     await userEvent.setup().type(screen.getByRole("textbox", { name: "Search namespaces" }), "alp");
-    expect(screen.getByRole("status")).toBe(status);
-    expect(status).toHaveTextContent("1 namespace");
+    expect(count).toHaveTextContent("1 namespace");
+    expect(count).toBeInTheDocument();
   });
 });
 
