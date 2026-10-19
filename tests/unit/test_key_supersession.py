@@ -1127,7 +1127,6 @@ async def test_a_fallback_marker_closed_in_the_same_second_gets_a_marker_of_its_
 
     monkeypatch.setattr(graph_undo, "reopen_held_facts", reopen)
     monkeypatch.setattr(graph_holders, "live_holders", all_held_by_one_row)
-    monkeypatch.setattr(triple_projections, "live_holders", all_held_by_one_row)
     inp = SimpleNamespace(org="o", namespace="ns", agent="a")
     await triple_projections._keep_one_current(inp, list(stored), ch=None)
     stored.append(paris(closed.replace(microsecond=5)))  # the marker, closed again
@@ -1172,7 +1171,6 @@ async def test_a_fallback_asks_each_value_its_own_newest_holders(monkeypatch) ->
 
     monkeypatch.setattr(graph_undo, "reopen_held_facts", reopen)
     monkeypatch.setattr(graph_holders, "live_holders", holders)
-    monkeypatch.setattr(triple_projections, "live_holders", holders)
     inp = SimpleNamespace(org="o", namespace="ns", agent="a")
     await triple_projections._keep_one_current(inp, stored, ch=None)
     (ids,) = asked

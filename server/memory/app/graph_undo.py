@@ -8,7 +8,6 @@ from datetime import date, datetime, timedelta
 from typing import Any, NamedTuple
 
 from server.memory.app import graph_holders
-from server.memory.app.graph_holders import held_by_unlinked_rows, stated_by_live_rows
 from server.memory.app.projection_errors import TriplesRepairFailed
 from server.memory.app.projections import (
     entity_edge_row,
@@ -37,10 +36,14 @@ async def _held_now(input: Any, ids: list[str], *, ch: Any) -> frozenset[Any]:
     """What the rows `ids` hold now. Only their own values: another row's claim keeps a
     fact from closing, but never reopens one."""
     linked = await linked_triples(input, ids, ch=ch)
-    held = await stated_by_live_rows(input.org, input.namespace, linked, ch=ch, rows=ids)
+    held = await graph_holders.stated_by_live_rows(
+        input.org, input.namespace, linked, ch=ch, rows=ids
+    )
     # A row with no links of its value's own (written before row links, or by a build
     # without them): read what its value names of its key's facts.
-    held |= await held_by_unlinked_rows(input.org, input.namespace, None, ch=ch, rows=ids)
+    held |= await graph_holders.held_by_unlinked_rows(
+        input.org, input.namespace, None, ch=ch, rows=ids
+    )
     return held
 
 

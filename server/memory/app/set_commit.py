@@ -176,7 +176,7 @@ async def _project_set_entities_fail_open(
     a projection landing after a revision of the row leaves no edge.
     """
     try:
-        from server.memory.app.extract.handler import project_memory_set_entities
+        from server.memory.app.edge_links import project_memory_set_entities
 
         await project_memory_set_entities(
             input,

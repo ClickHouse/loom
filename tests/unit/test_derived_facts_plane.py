@@ -224,7 +224,7 @@ def _input_with_derived(derived: list[dict[str, Any]]) -> MemoryBulkSetInput:
 
 
 async def _write_rows(derived: list[dict[str, Any]], **entry_over) -> list[dict[str, Any]]:
-    from server.memory.app.extract.handler import write_derived_facts
+    from server.memory.app.triple_projections import write_derived_facts
 
     inp = _input_with_derived(derived)
     if entry_over:
@@ -287,7 +287,7 @@ async def test_write_occurred_at_falls_back_to_temporal_anchor() -> None:
 
 @pytest.mark.asyncio
 async def test_write_empty_derived_inserts_nothing() -> None:
-    from server.memory.app.extract.handler import write_derived_facts
+    from server.memory.app.triple_projections import write_derived_facts
 
     inp = _input_with_derived([])
     ch = _InsertCH()

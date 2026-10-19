@@ -877,7 +877,7 @@ async def test_the_repair_of_a_high_rows_close_ends_the_values_it_no_longer_hold
     value the row no longer holds, and keeps its current one's; a deleted row holds
     none, its last value included."""
     from server.memory.api.models_crud import MemoryDeleteInput
-    from server.memory.app import edge_links, edge_repair, projections
+    from server.memory.app import edge_links, edge_repair, projections, triple_projections
     from server.memory.app.handlers import handle_memory_delete
     from server.memory.app.projection_errors import ProjectionScope
     from server.memory.app.projection_failures import retry_projection_failures
@@ -894,6 +894,7 @@ async def test_the_repair_of_a_high_rows_close_ends_the_values_it_no_longer_hold
     if then == "deleted":
         # The delete's own edge close is lost.
         monkeypatch.setattr(projections, "end_edges", nothing)
+        monkeypatch.setattr(triple_projections, "end_edges", nothing)
         await handle_memory_delete(
             MemoryDeleteInput(
                 org=org,
@@ -922,7 +923,7 @@ async def test_a_value_less_close_dates_each_high_value_by_when_the_row_left_it(
     value-less closes ends each older value's edge when the next value was written,
     asking each value with its own entities (not the close's), so no end is the
     repair's clock, and keeps the current value's edge open."""
-    from server.memory.app import edge_links, edge_repair, projections
+    from server.memory.app import edge_links, edge_repair, projections, triple_projections
     from server.memory.app.projection_errors import ProjectionScope
     from server.memory.app.projection_failures import retry_projection_failures
 
@@ -931,6 +932,7 @@ async def test_a_value_less_close_dates_each_high_value_by_when_the_row_left_it(
 
     monkeypatch.setattr(edge_links, "drop_undeclared_links", nothing)
     monkeypatch.setattr(projections, "end_edges", nothing)
+    monkeypatch.setattr(triple_projections, "end_edges", nothing)
     for i, value in enumerate(("Alice met Carol", "Alice met Dan", "Alice met Bob")):
         if i:
             # Each value's end is read from the next version's write time, in seconds.

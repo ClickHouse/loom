@@ -11,13 +11,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
-from server.memory.app import graph_holders, projections
-from server.memory.app.graph_holders import (
-    as_bulk_write,
-    holds_graph_facts,
-    live_holders,
-    stated_by_live_rows,
-)
+from server.memory.app import graph_holders
 from server.memory.app.projection_errors import (
     ProjectionScope,
     bulk_projection_payload,
@@ -30,7 +24,9 @@ from server.memory.app.projection_failures import (
     TRIPLES_REOPEN,
 )
 from server.memory.app.projections import (
+    as_bulk_write,
     close_triples,
+    end_edges,
     end_triples_now,
     entity_triple_row,
     open_triples_among,
@@ -71,7 +67,7 @@ async def project_stated_relations(
     another write revised or retired the row, and is reconciled as a revision if that
     happened while it wrote. Fail-open: a failed write is recorded for the projection
     repair to replay."""
-    if relations and holds_graph_facts(row):
+    if relations and graph_holders.holds_graph_facts(row):
         # A revision closes what it dropped itself, after these land.
         if revised or await _holds_its_value(row, ch=ch):
             await _write_stated_relations(row, value, relations, op=op, ch=ch)
@@ -184,7 +180,7 @@ async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
     revision that no longer states them (`tfr.carried`), or that made its row one
     that holds none. One still valid later ends now."""
     linked = await linked_triples(input, ids, ch=ch)
-    held = await stated_by_live_rows(input.org, input.namespace, linked, ch=ch)
+    held = await graph_holders.stated_by_live_rows(input.org, input.namespace, linked, ch=ch)
     gone = [t for t in linked if t not in held]
     opened = await open_triples_among(ch, org=input.org, namespace=input.namespace, triples=gone)
     if opened:
@@ -249,9 +245,9 @@ async def _close_dropped_edges(
     others = sorted(
         {(str(r["subject"]), str(r["relation"]), str(r["object"])) for r in rows} - known
     )
-    held = held | await stated_by_live_rows(input.org, input.namespace, others, ch=ch)
+    held = held | await graph_holders.stated_by_live_rows(input.org, input.namespace, others, ch=ch)
     ends = tfr.edge_ends(gone, held, rows, naive_utc_now())
-    await projections.end_edges(ch, org=input.org, namespace=input.namespace, ends=ends)
+    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends)
 
 
 async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: Any) -> None:
@@ -294,7 +290,7 @@ async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: An
     ]
     if not closed:
         return
-    held = await live_holders(
+    held = await graph_holders.live_holders(
         input.org,
         input.namespace,
         sorted({(r["subject"], r["relation"], r["object"]) for r in closed}),
@@ -553,7 +549,7 @@ async def reopen_held(
     state a triple it closed ("back to London"): the close also ends the open row that
     write inserted. Every writer lands a triple's row links first, so once the close is
     queued they are found here."""
-    held = await stated_by_live_rows(org, namespace, [c[:3] for c in closes], ch=ch)
+    held = await graph_holders.stated_by_live_rows(org, namespace, [c[:3] for c in closes], ch=ch)
     await reopen_triples(
         ch,
         org=org,

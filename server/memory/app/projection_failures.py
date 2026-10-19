@@ -95,8 +95,9 @@ TRIPLES_RECONCILE = "triples_reconcile"
 # repair closes each of the row's values it no longer holds.
 EDGES_CLOSE = "entity_edges_close"
 # Rows a write made 'high' (or whose declared entities it narrowed) whose links to
-# undeclared pairs are not dropped yet: payload rows (memory_id -> the entities whose
-# edges it keeps) and versions (memory_id -> the version of that write).
+# undeclared pairs are not dropped yet: payload versions (memory_id -> the version of
+# that write, which dates the edges' end) and rows (memory_id -> the entities it
+# declared then; the replay reads the row's current ones).
 EDGES_DROP_UNDECLARED = "entity_edges_drop_undeclared"
 
 
@@ -694,15 +695,15 @@ async def _retry_edges_drop(failure: ProjectionFailureRow, *, ch: Any) -> str:
     versions = failure.payload.get("versions")
     if not isinstance(rows, dict) or not all(isinstance(d, list) for d in rows.values()):
         return "malformed_payload"
-    # The version of the write that owes the drop: a row written since is skipped, and
-    # the edges end when that write landed.
+    # The version of the write that owes the drop dates the edges' end.
     if not isinstance(versions, dict) or not all(
         isinstance(versions.get(memory_id), int) for memory_id in rows
     ):
         return "malformed_payload"
     scope = _failure_scope(failure)
-    declared = {str(memory_id): [str(d) for d in ents] for memory_id, ents in rows.items()}
-    await drop_undeclared_links(scope, declared, versions, ch=ch)
+    await drop_undeclared_links(
+        scope, {str(memory_id): int(versions[memory_id]) for memory_id in rows}, ch=ch
+    )
     return ""
 
 

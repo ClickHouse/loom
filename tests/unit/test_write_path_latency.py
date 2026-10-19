@@ -385,6 +385,7 @@ async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) 
         edge_links,
         edge_repair,
         graph_holders,
+        projections,
         set_entities,
     )
 
@@ -397,7 +398,7 @@ async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) 
         written.append(bulk.entries[0].entities)
 
     monkeypatch.setattr(set_entities, "set_entities_for_projection", _mined)
-    monkeypatch.setattr(edge_links, "write_entity_edges", _edges)
+    monkeypatch.setattr(projections, "write_entity_edges", _edges)
 
     async def _held(*_: Any, **__: Any) -> set[str]:
         return {"m"}
@@ -422,7 +423,7 @@ async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) 
 
 @pytest.mark.asyncio
 async def test_a_projection_of_a_value_revised_away_writes_nothing(monkeypatch) -> None:
-    from server.memory.app import edge_links, graph_holders
+    from server.memory.app import edge_links, graph_holders, projections
 
     written: list[Any] = []
 
@@ -432,7 +433,7 @@ async def test_a_projection_of_a_value_revised_away_writes_nothing(monkeypatch) 
     async def _revised(*_: Any, **__: Any) -> set[str]:
         return set()  # the row holds another value now
 
-    monkeypatch.setattr(edge_links, "write_entity_edges", _edges)
+    monkeypatch.setattr(projections, "write_entity_edges", _edges)
     monkeypatch.setattr(graph_holders, "rows_holding", _revised)
     n = await edge_links.project_memory_set_entities(
         _set_input(),

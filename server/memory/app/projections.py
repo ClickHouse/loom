@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.core.hashing import sha256_value
 from server.core.repo_base import param_slices
-from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
+from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app import conflicts as _conflicts
 from server.memory.app.projection_errors import TriplesInsertFailed, TriplesRepairFailed
 from server.memory.domain.graph_quality import (
@@ -39,6 +39,7 @@ log = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from server.memory.domain import triples_follow_rows as tfr
     from server.memory.domain.graph_quality import IntervalRepair
 
 
@@ -1161,6 +1162,34 @@ _HELD_PAIRS_CTES = f"""
                AND (k.memory_key, k.entity_a, k.entity_b) NOT IN (
                    SELECT memory_key, entity_a, entity_b FROM linked))
     )"""
+
+
+def as_bulk_write(
+    row: Mapping[str, Any], value: Any, relations: list[tfr.Triple]
+) -> tuple[MemoryBulkSetInput, list[_BulkSetResult]]:
+    """A point write's row as the one-entry bulk write the triple writer reads."""
+    anchor = row.get("temporal_anchor")
+    entry = _BulkSetEntry(
+        memory_key=row["memory_key"],
+        value=value,
+        relations=relations,
+        confidence=row["confidence"],
+        temporal_anchor=anchor.isoformat() if isinstance(anchor, datetime) else anchor,
+        valid_at=row.get("valid_at"),
+        valid_to=row.get("valid_to"),
+    )
+    write = MemoryBulkSetInput(
+        org=row["org"],
+        namespace=row["namespace"],
+        agent=row["agent"],
+        user_id=row["user_id"],
+        session_id=row["session_id"],
+        entries=[entry],
+    )
+    result = _BulkSetResult(
+        memory_key=entry.memory_key, version=int(row["version"]), memory_id=str(row["memory_id"])
+    )
+    return write, [result]
 
 
 async def end_edges(

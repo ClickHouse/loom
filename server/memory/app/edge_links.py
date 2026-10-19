@@ -14,7 +14,6 @@ from server.core.repo_base import param_slices, query_all_sliced
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app import graph_holders, projections, set_entities
 from server.memory.app.edge_repair import end_overtaken_edges
-from server.memory.app.graph_holders import as_bulk_write, holds_graph_facts
 from server.memory.app.projection_errors import (
     bulk_projection_payload,
     record_input_projection_failure,
@@ -23,11 +22,6 @@ from server.memory.app.projection_failures import (
     EDGES_DROP_UNDECLARED,
     record_projection_failure,
 )
-from server.memory.app.projections import (
-    value_sha256,
-    write_entity_edges,
-)
-from server.memory.app.set_entities import declared_entities
 from server.memory.domain.temporal_sql import (
     edge_holder_sql,
 )
@@ -103,7 +97,7 @@ async def project_memory_set_entities(
     ):
         return 0
     with traced("entities.write_edges", entities=len(ents)):
-        await write_entity_edges(bulk_like, [result], ch=ch, wait_visible=wait_visible)
+        await projections.write_entity_edges(bulk_like, [result], ch=ch, wait_visible=wait_visible)
     # Revised or retired while the edges were written: its close may have run before
     # they landed, so end the ones no live row names.
     version = (memory_id, memory_key, content_sha256)
@@ -120,19 +114,20 @@ def owes_undeclared_drop(previous: Any, declared: Sequence[str]) -> bool:
     the edges of the entities it named, so only the ones it no longer names go."""
     if str(getattr(previous, "sensitivity", "") or "") != "high":
         return True
-    return not set(declared) >= set(declared_entities(getattr(previous, "entities", None)))
+    return not set(declared) >= set(
+        set_entities.declared_entities(getattr(previous, "entities", None))
+    )
 
 
-async def drop_undeclared_links(
-    input: Any, rows: Mapping[str, list[str]], versions: Mapping[str, int], *, ch: Any
-) -> None:
-    """Rows a write left 'high' (`rows`, by memory_id; `versions`: the version that write
-    gave each row) keep only the edges of the entities on the row now: their links to
-    any other pair go, and those edges end when that write landed unless another row
-    names them. A row no longer 'high' is skipped: a later plain write's links are its
-    own. One still 'high' is read as it is now, so a later write that kept it high (a
-    pin, a lock, a relabel) neither skips the drop nor brings back what it dropped."""
-    params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "ids": sorted(rows)}
+async def drop_undeclared_links(input: Any, versions: Mapping[str, int], *, ch: Any) -> None:
+    """Rows a write left 'high' (`versions`: memory_id -> the version that write gave the
+    row) keep only the edges of the entities on the row now: their links to any other
+    pair go, and those edges end when that write landed unless another row names them,
+    on a replay too (a later write that kept the row high does not move the end). A row
+    no longer 'high' is skipped: a later plain write's links are its own. One still
+    'high' is read as it is now, so a later write that kept it high (a pin, a lock, a
+    relabel) neither skips the drop nor brings back what it dropped."""
+    params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "ids": sorted(versions)}
     current = await query_all_sliced(
         ch,
         """
@@ -144,7 +139,7 @@ async def drop_undeclared_links(
         params,
         "ids",
     )
-    keep = {str(r["id"]): set(declared_entities(r["entities"])) for r in current}
+    keep = {str(r["id"]): set(set_entities.declared_entities(r["entities"])) for r in current}
     if keep:
         await _drop_links_of(input, keep, versions, ch=ch)
 
@@ -210,8 +205,9 @@ async def _drop_links_of(
 
 
 def drop_payload(rows: Mapping[str, list[str]], versions: Mapping[str, int]) -> dict[str, Any]:
-    """An EDGES_DROP_UNDECLARED payload: each row's declared entities and the version of
-    the write that owes the drop, which dates the edges' end."""
+    """An EDGES_DROP_UNDECLARED payload: the version of the write that owes the drop for
+    each row, which dates the edges' end. `rows` (each row's declared entities when the
+    write landed) is kept in its shape, though the drop now reads the row's own."""
     return {
         "rows": {memory_id: list(declared) for memory_id, declared in rows.items()},
         "versions": {memory_id: int(versions[memory_id]) for memory_id in rows},
@@ -224,7 +220,7 @@ async def drop_undeclared_edges(
     """`drop_undeclared_links`, fail-open: a failure is recorded for the projection repair
     (`EDGES_DROP_UNDECLARED`), which drops them again."""
     try:
-        await drop_undeclared_links(input, rows, versions, ch=ch)
+        await drop_undeclared_links(input, versions, ch=ch)
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair drops them
         log.warning("%s: undeclared edges of %d rows not dropped (recorded): %s", op, len(rows), e)
         await record_projection_failure(
@@ -244,8 +240,8 @@ async def drop_undeclared_edges_beside(
     input: Any, rows: Mapping[str, list[str]], versions: Mapping[str, int], *, op: str
 ) -> None:
     """`drop_undeclared_links` after the response, for the rows a write made 'high' or
-    whose declared entities it narrowed (`rows`: memory_id -> its declared entities;
-    `versions`: the version the write gave each; callers pick them by
+    whose declared entities it narrowed (`versions`: the version the write gave each;
+    `rows`, their declared entities, for the payload; callers pick them by
     `owes_undeclared_drop`). Owed first, as a retirement is: one EDGES_DROP_UNDECLARED
     intent for the whole write goes in before the drop is scheduled and is resolved in
     the next batched mark once the drop lands, so a stop between them leaves it to the
@@ -276,7 +272,7 @@ async def drop_undeclared_edges_beside(
             await drop_undeclared_edges(input, rows, versions, ch=get_client(), op=op)
             return
         try:
-            await drop_undeclared_links(input, rows, versions, ch=get_client())
+            await drop_undeclared_links(input, versions, ch=get_client())
         except Exception as e:  # noqa: BLE001 — the intent stays; the repair drops them
             log.warning("%s: undeclared edges of %d rows not dropped (owed): %s", op, len(rows), e)
             return
@@ -292,18 +288,18 @@ async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, 
     open. A row that may not hold graph facts (`holds_graph_facts`: retired, 'high',
     ...) projects none. Fail-open: a failed write is recorded for the projection
     repair to replay."""
-    if not holds_graph_facts(row):
+    if not graph_holders.holds_graph_facts(row):
         return
     scope = SimpleNamespace(tags=row.get("tags"), source_trace=row.get("source_trace", ""))
     # From the new value only: the row's stored `entities` describe the value it replaced.
     ents = set_entities.set_entities_for_projection(scope, value)
     if len(ents) < 2:
         return
-    write, results = as_bulk_write(row, value, [])
+    write, results = projections.as_bulk_write(row, value, [])
     entry = write.entries[0].model_copy(update={"entities": ents})
     write = write.model_copy(update={"entries": [entry]})
     try:
-        await write_entity_edges(write, results, ch=ch, wait_visible=True)
+        await projections.write_entity_edges(write, results, ch=ch, wait_visible=True)
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
         log.warning("%s: edges projection failed (recorded for repair): %s", op, e)
         await record_input_projection_failure(
@@ -316,5 +312,5 @@ async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, 
             source_resource_id=f"{op}:{results[0].memory_id}",
         )
         return
-    version = (results[0].memory_id, entry.memory_key, value_sha256(entry))
+    version = (results[0].memory_id, entry.memory_key, projections.value_sha256(entry))
     await end_overtaken_edges(write, [version], op=op, ch=ch, entities=ents)

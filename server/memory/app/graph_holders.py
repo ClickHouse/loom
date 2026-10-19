@@ -9,7 +9,6 @@ from datetime import datetime
 from typing import Any, NamedTuple
 
 from server.core.datetimes import naive_utc_now, parse_iso_dt
-from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.domain import triples_follow_rows as tfr
 from server.memory.domain.temporal_sql import (
     EDGE_HOLDS_VALUE_SQL,
@@ -28,34 +27,6 @@ def holds_graph_facts(row: Mapping[str, Any]) -> bool:
     if any(end is not None and end <= naive_utc_now() for end in ends):
         return False
     return row.get("sensitivity") != "high"
-
-
-def as_bulk_write(
-    row: Mapping[str, Any], value: Any, relations: list[tfr.Triple]
-) -> tuple[MemoryBulkSetInput, list[_BulkSetResult]]:
-    """A point write's row as the one-entry bulk write the triple writer reads."""
-    anchor = row.get("temporal_anchor")
-    entry = _BulkSetEntry(
-        memory_key=row["memory_key"],
-        value=value,
-        relations=relations,
-        confidence=row["confidence"],
-        temporal_anchor=anchor.isoformat() if isinstance(anchor, datetime) else anchor,
-        valid_at=row.get("valid_at"),
-        valid_to=row.get("valid_to"),
-    )
-    write = MemoryBulkSetInput(
-        org=row["org"],
-        namespace=row["namespace"],
-        agent=row["agent"],
-        user_id=row["user_id"],
-        session_id=row["session_id"],
-        entries=[entry],
-    )
-    result = _BulkSetResult(
-        memory_key=entry.memory_key, version=int(row["version"]), memory_id=str(row["memory_id"])
-    )
-    return write, [result]
 
 
 def as_text(raw: Any) -> str:

@@ -335,7 +335,7 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
     # to come. Rome was stored before Berlin, so Berlin's marker is the later.
     from types import SimpleNamespace
 
-    from server.memory.app import graph_undo
+    from server.memory.app import graph_holders, graph_undo
 
     restored = datetime(2026, 10, 15, 9, 0, 0, 123456)
     stored = datetime(2026, 10, 1)
@@ -386,8 +386,8 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
         return []
 
     monkeypatch.setattr(graph_undo, "linked_triples", held)
-    monkeypatch.setattr(graph_undo, "stated_by_live_rows", _as_set(held))
-    monkeypatch.setattr(graph_undo, "held_by_unlinked_rows", _none_held)
+    monkeypatch.setattr(graph_holders, "stated_by_live_rows", _as_set(held))
+    monkeypatch.setattr(graph_holders, "held_by_unlinked_rows", _none_held)
     monkeypatch.setattr(graph_undo, "repair_intervals", repair)
     ch = _WeighingCH()
     scope = SimpleNamespace(org="o", namespace="ns")
@@ -474,8 +474,8 @@ async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeyp
 
     restored = datetime(2026, 10, 15, 9, 0, 0, 5)
     monkeypatch.setattr(graph_undo, "linked_triples", held)
-    monkeypatch.setattr(graph_undo, "stated_by_live_rows", _as_set(held))
-    monkeypatch.setattr(graph_undo, "held_by_unlinked_rows", _none_held)
+    monkeypatch.setattr(graph_holders, "stated_by_live_rows", _as_set(held))
+    monkeypatch.setattr(graph_holders, "held_by_unlinked_rows", _none_held)
     monkeypatch.setattr(edge_links, "record_input_projection_failure", record)
     monkeypatch.setattr(triple_projections, "record_input_projection_failure", record)
     monkeypatch.setattr(graph_undo, "repair_intervals", repair)
@@ -513,7 +513,7 @@ async def _undo_of_rome_and(
     from types import SimpleNamespace
 
     import server.identity.app.namespace_ontology as onto
-    from server.memory.app import graph_undo
+    from server.memory.app import graph_holders, graph_undo
 
     stored = datetime(2026, 10, 1)
 
@@ -559,8 +559,8 @@ async def _undo_of_rome_and(
         return []
 
     monkeypatch.setattr(graph_undo, "linked_triples", linked)
-    monkeypatch.setattr(graph_undo, "stated_by_live_rows", _as_set(stated))
-    monkeypatch.setattr(graph_undo, "held_by_unlinked_rows", _none_held)
+    monkeypatch.setattr(graph_holders, "stated_by_live_rows", _as_set(stated))
+    monkeypatch.setattr(graph_holders, "held_by_unlinked_rows", _none_held)
     monkeypatch.setattr(graph_undo, "repair_intervals", repair)
     monkeypatch.setattr(onto, "load_relation_cardinality", declared)
     ch = _ClosedCH()
@@ -775,7 +775,7 @@ async def test_an_undo_reads_legacy_rows_whatever_links_its_rows_have(monkeypatc
     # the read decides by the links of its current value.
     from types import SimpleNamespace
 
-    from server.memory.app import graph_undo
+    from server.memory.app import graph_holders, graph_undo
 
     read: list[list[str]] = []
 
@@ -787,8 +787,8 @@ async def test_an_undo_reads_legacy_rows_whatever_links_its_rows_have(monkeypatc
         return frozenset()
 
     monkeypatch.setattr(graph_undo, "linked_triples", linked)
-    monkeypatch.setattr(graph_undo, "stated_by_live_rows", _none_held)
-    monkeypatch.setattr(graph_undo, "held_by_unlinked_rows", legacy)
+    monkeypatch.setattr(graph_holders, "stated_by_live_rows", _none_held)
+    monkeypatch.setattr(graph_holders, "held_by_unlinked_rows", legacy)
     scope = SimpleNamespace(org="o", namespace="ns")
     await graph_undo.reopen_held_facts(
         scope, ids, ch=_CH(), restored_at=datetime(2026, 10, 15), restore_id="u1"
