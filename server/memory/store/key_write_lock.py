@@ -1,7 +1,8 @@
-"""Per-key lock for conditional memory writes (`if_match_sha256`).
+"""Per-key lock for conditional memory writes (`memory.set`'s `if_match_sha256`,
+`memory.delete`'s `if_version`).
 
-The hash check runs before the embed and the insert, so two writers holding the same
-hash could both pass it. Writers of one key are serialized per process, and across
+The check runs before the insert (for a set, before the embed too), so two writers could
+both pass it. Writers of one key are serialized per process, and across
 processes by a lease (`server.core.leases`); a Keeper that fails refuses the write
 (503) rather than lock this process alone.
 `lease` holds a lock of any name across hosts for as long as a job runs.
