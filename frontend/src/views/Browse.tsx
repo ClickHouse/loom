@@ -254,25 +254,23 @@ export function Browse() {
   };
   // The rows call the latest render's handlers through one object that keeps its identity,
   // so a memoised row renders again only when its own fields change.
-  const handlers = useRef({ withdraw, leave, setSettingsNs, setManageNs, setJoinDialog, rows });
-  handlers.current = { withdraw, leave, setSettingsNs, setManageNs, setJoinDialog, rows };
+  const handlers = useRef({ withdraw, leave });
+  handlers.current = { withdraw, leave };
   const rowActions = useMemo<SpaceActions>(
     () => ({
-      open: (ns, standing) => {
-        const h = handlers.current;
-        if (standing === "pending") void h.withdraw(ns);
-        else if (standing === "admin") h.setSettingsNs(ns);
-        else {
-          const row = h.rows?.find((r) => r.namespace === ns);
-          if (row) h.setJoinDialog({ ns, row });
-        }
-      },
-      invite: (ns) => handlers.current.setManageNs(ns),
-      settings: (ns) => handlers.current.setSettingsNs(ns),
+      withdraw: (ns) => void handlers.current.withdraw(ns),
+      settings: setSettingsNs,
+      join: (row) => setJoinDialog({ ns: row.namespace, row }),
+      invite: setManageNs,
       leave: (ns) => void handlers.current.leave(ns),
     }),
     [],
   );
+  const standingOf = (ns: string): SpaceStanding => {
+    if (!mine.has(ns)) return "none";
+    if (pending.has(ns)) return "pending";
+    return myRole[ns] === "admin" ? "admin" : "member";
+  };
 
   return (
     <PageContainer>
@@ -390,30 +388,21 @@ export function Browse() {
 
           {rows !== null && filtered.length > 0 && (
             <div className="space-y-2" data-testid="browse-list" aria-busy={refreshing || undefined}>
-              {filtered.map((r) => {
-                const role = myRole[r.namespace];
-                const standing: SpaceStanding = !mine.has(r.namespace)
-                  ? "none"
-                  : pending.has(r.namespace)
-                    ? "pending"
-                    : role === "admin"
-                      ? "admin"
-                      : "member";
-                return (
-                  <SpaceRow
-                    key={r.namespace}
-                    namespace={r.namespace}
-                    visibility={r.visibility ?? "public"}
-                    kind={isSystemKind(r.kind) ? r.kind : undefined}
-                    description={r.description}
-                    members={r.member_count}
-                    standing={standing}
-                    role={role}
-                    joining={joining === r.namespace}
-                    actions={rowActions}
-                  />
-                );
-              })}
+              {filtered.map((r) => (
+                <SpaceRow
+                  key={r.namespace}
+                  namespace={r.namespace}
+                  visibility={r.visibility ?? "public"}
+                  kind={isSystemKind(r.kind) ? r.kind : undefined}
+                  description={r.description}
+                  members={r.member_count}
+                  standing={standingOf(r.namespace)}
+                  role={myRole[r.namespace]}
+                  entry={r}
+                  joining={joining === r.namespace}
+                  actions={rowActions}
+                />
+              ))}
             </div>
           )}
         </section>
@@ -478,9 +467,11 @@ const matchesSpace = (r: { namespace: string; description?: string }, q: string)
 type SpaceStanding = "none" | "pending" | "member" | "admin";
 
 interface SpaceActions {
-  open: (ns: string, standing: SpaceStanding) => void;
-  invite: (ns: string) => void;
+  withdraw: (ns: string) => void;
   settings: (ns: string) => void;
+  /** The join dialog: Join, or Request upgrade for a member. */
+  join: (row: BrowseEntry) => void;
+  invite: (ns: string) => void;
   leave: (ns: string) => void;
 }
 
@@ -499,6 +490,7 @@ const SpaceRow = memo(function SpaceRow({
   members,
   standing,
   role,
+  entry,
   joining = false,
   actions,
 }: {
@@ -509,15 +501,20 @@ const SpaceRow = memo(function SpaceRow({
   members?: number;
   standing: SpaceStanding;
   role?: string;
+  /** The browse row the join dialog opens on; a managed row has none (it is never joined). */
+  entry?: BrowseEntry;
   joining?: boolean;
   actions: SpaceActions;
 }) {
-  const open = () => actions.open(namespace, standing);
+  const join = () => entry && actions.join(entry);
+  const withdraw = () => actions.withdraw(namespace);
+  const settings = () => actions.settings(namespace);
+  const open = standing === "pending" ? withdraw : standing === "admin" ? settings : join;
   const member = standing === "member" || standing === "admin";
   /** The More menu: Settings where you manage it, Copy name, Leave where you belong. */
   const menu: RowMenuItem[] = [
     ...(standing === "admin"
-      ? [{ label: "Settings", icon: "gear" as const, onSelect: () => actions.settings(namespace) }]
+      ? [{ label: "Settings", icon: "gear" as const, onSelect: settings }]
       : []),
     {
       label: "Copy name",
@@ -535,7 +532,7 @@ const SpaceRow = memo(function SpaceRow({
   const action =
     standing === "pending" ? (
       <Tip content="Your request is waiting for an admin">
-        <Button type="secondary" htmlType="button" iconLeft="clock" onClick={open}>
+        <Button type="secondary" htmlType="button" iconLeft="clock" onClick={withdraw}>
           Withdraw request
         </Button>
       </Tip>
@@ -553,12 +550,12 @@ const SpaceRow = memo(function SpaceRow({
       </Tip>
     ) : standing === "member" ? (
       <Tip content={`You're a ${role} — request writer or admin`}>
-        <Button type="secondary" htmlType="button" onClick={open}>
+        <Button type="secondary" htmlType="button" onClick={join}>
           Request upgrade
         </Button>
       </Tip>
     ) : (
-      <Button type="secondary" htmlType="button" loading={joining} onClick={open}>
+      <Button type="secondary" htmlType="button" loading={joining} onClick={join}>
         Join
       </Button>
     );
