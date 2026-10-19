@@ -272,6 +272,7 @@ async def _retire(
         source_resource_id=f"{CONFLICT_RESOLVER}:{pair[1]}",
         error="conflict_resolver: retirement to follow",
         payload={"pairs": [list(pair)], "retired": [entry], "reason": CONFLICT_RESOLVER},
+        user_id=str(loser.user_id),
     )
     into: dict[str, list[dict[str, Any]]] = {}
     await apply_refines(
@@ -312,7 +313,8 @@ async def _after_retire(org: str, namespace: str, done: Retired, intents: Intent
         request_id=done.intent,
     )
     pairs = [(str(r["memory_id"]), str(r["superseded_by"])) for r in done.retired]
-    if await _follow(org, namespace, done.agent, pairs) and recorded:
+    user_id = str(done.retired[0].get("user_id") or "") if done.retired else ""
+    if await _follow(org, namespace, done.agent, pairs, user_id=user_id) and recorded:
         _done(intents, org, done.intent)
 
 
@@ -334,13 +336,16 @@ async def resolve_done_intents(intents: Intents) -> None:
     intents.clear()
 
 
-async def _follow(org: str, namespace: str, agent: str, pairs: list[tuple[str, str]]) -> bool:
+async def _follow(
+    org: str, namespace: str, agent: str, pairs: list[tuple[str, str]], *, user_id: str = ""
+) -> bool:
     """The triple plane follows the retirement; True when every pair was followed.
-    A failure is left to the repair, which holds the pairs as the follow intent."""
+    A failure is left to the repair, which holds the pairs as the follow intent;
+    `user_id` (the retired row's) goes on any failure the follow records."""
     from server.core.ch import get_client
     from server.memory.app.entity_projections import follow_row_supersessions
 
-    scope = SimpleNamespace(org=org, namespace=namespace, agent=agent)
+    scope = SimpleNamespace(org=org, namespace=namespace, agent=agent, user_id=user_id)
     try:
         left = (await follow_row_supersessions(scope, pairs, ch=get_client())).unfollowed
     except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them later

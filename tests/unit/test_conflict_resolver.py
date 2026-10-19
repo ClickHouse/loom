@@ -1106,7 +1106,7 @@ def retire_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         e.records.append(kw)
         return e.record_ok
 
-    async def follow(org, namespace, agent, pairs):
+    async def follow(org, namespace, agent, pairs, *, user_id=""):
         e.followed.extend(pairs)
         return e.follow_ok
 

@@ -687,6 +687,7 @@ async def _record_edges_close(
         error=error,
         payload=payload,
         ch=ch,
+        user_id=str(getattr(input, "user_id", "") or ""),
     )
 
 
@@ -805,6 +806,7 @@ async def drop_undeclared_edges(
             error=e,
             payload={"memory_id": memory_id, "declared": list(declared)},
             ch=ch,
+            user_id=str(getattr(input, "user_id", "") or ""),
         )
 
 
@@ -890,7 +892,9 @@ async def project_stated_relations(
             if not revised and not await _holds_its_value(row, ch=ch):
                 revised = True
     if revised:
-        scope = SimpleNamespace(org=row["org"], namespace=row["namespace"], agent=row["agent"])
+        scope = SimpleNamespace(
+            org=row["org"], namespace=row["namespace"], agent=row["agent"], user_id=row["user_id"]
+        )
         await reconcile_row_facts(scope, [str(row["memory_id"])], reopen=False, op=op, ch=ch)
 
 

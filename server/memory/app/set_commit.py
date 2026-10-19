@@ -787,6 +787,7 @@ async def _set_after_write(
         pairs=w.follows,
         op="memory.set",
         agent=input.agent,
+        user_id=input.user_id,
     )
 
     # A long value is also written as verbatim chunks under the key, after the row is in and

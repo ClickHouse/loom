@@ -405,7 +405,10 @@ async def _revised_edges(
         await project_revised_edges(memory_row, new_value, op=op, ch=ch)
     if sensitivity == "high":
         scope = SimpleNamespace(
-            org=existing.org, namespace=existing.namespace, agent=str(existing.agent)
+            org=existing.org,
+            namespace=existing.namespace,
+            agent=str(existing.agent),
+            user_id=str(existing.user_id),
         )
         declared = declared_entities(SimpleNamespace(entities=memory_row.get("entities")))
         drop_undeclared_edges_beside(scope, str(existing.memory_id), declared, op=op)
@@ -754,7 +757,12 @@ async def _write_revision(
     )
     # After the revision's own relations, so the follow sees the successor they state.
     follow_beside_response(
-        org=input.org, namespace=existing.namespace, pairs=follows, op=op, agent=str(existing.agent)
+        org=input.org,
+        namespace=existing.namespace,
+        pairs=follows,
+        op=op,
+        agent=str(existing.agent),
+        user_id=str(existing.user_id),
     )
     return MemoryUpdateByIdOutput(
         updated=True,

@@ -7265,3 +7265,45 @@ async def test_a_high_row_keeps_its_declared_edge_through_a_revision(ch, org, pa
         )
     await after_write.drain()
     assert await _open_edge_pairs(ch, org) == declared
+
+
+async def test_a_user_erasure_deletes_every_kind_of_projection_failure_of_that_user(
+    ch, org, monkeypatch
+) -> None:
+    """Each failure kind a write can leave names its writer's user, so a user erasure
+    deletes them all and leaves another user's."""
+    from types import SimpleNamespace
+
+    from server.erasure.store import steps_ledgers
+    from server.memory.app import entity_projections as ep
+    from server.memory.app.projection_errors import record_input_projection_failure
+    from server.memory.app.projection_failures import (
+        EDGES_CLOSE,
+        FOLLOW_ROWS,
+        TRIPLES_RECONCILE,
+        TRIPLES_REOPEN,
+    )
+
+    async def boom(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("CH down")
+
+    for user in ("alice", "bob"):
+        scope = SimpleNamespace(org=org, namespace=NS, agent="bot", user_id=user)
+        with monkeypatch.context() as m:
+            m.setattr(ep, "drop_undeclared_links", boom)
+            await ep.drop_undeclared_edges(
+                scope, str(uuid.uuid4()), ["acme"], ch=ch, op="memory.set"
+            )
+        for kind in (TRIPLES_REOPEN, TRIPLES_RECONCILE, EDGES_CLOSE, FOLLOW_ROWS):
+            await record_input_projection_failure(
+                scope, projection=kind, error="x", payload={"closes": [["alice", "lives_in", "x"]]}
+            )
+    await asyncio.sleep(1.0)
+    await steps_ledgers.delete_projection_failures_by_user(org, "alice", ch=ch)
+    rows = await ch.query_all(
+        "SELECT projection, JSONExtractString(payload, 'user_id') AS u"
+        " FROM loom.memory_projection_failures WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert {r["u"] for r in rows} == {"bob"} and len(rows) == 5, rows

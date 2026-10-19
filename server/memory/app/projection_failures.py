@@ -107,13 +107,16 @@ async def record_projection_failure(
     error: BaseException | str,
     payload: dict[str, Any] | None = None,
     ch: Any | None = None,
+    user_id: str = "",
 ) -> str:
-    """Append one projection failure row; returns its failure_id.
-
-    Callers should wrap this helper in their own fail-open guard.
-    """
+    """Append one projection failure row; returns its failure_id. `user_id`: the
+    writer's, kept in the payload so a user erasure finds the row. Callers wrap this
+    helper in their own fail-open guard."""
 
     ch = ch or get_client()
+    payload = dict(payload or {})
+    if user_id and not payload.get("user_id"):
+        payload["user_id"] = user_id
     now = naive_utc_now()
     error_type = type(error).__name__ if isinstance(error, BaseException) else "Error"
     error_message = str(error)
@@ -508,7 +511,12 @@ async def _retry_follow_rows(failure: ProjectionFailureRow, *, ch: Any) -> str:
             raise ValueError("no pairs")
     except (KeyError, TypeError, ValueError):
         return "malformed_payload"
-    scope = SimpleNamespace(org=failure.org, namespace=failure.namespace, agent=failure.agent)
+    scope = SimpleNamespace(
+        org=failure.org,
+        namespace=failure.namespace,
+        agent=failure.agent,
+        user_id=str(failure.payload.get("user_id") or ""),
+    )
     async with _recording_restated_repair(failure, ch=ch):
         await _finish_restated_repair(failure, scope, ch=ch)
         outcome = await follow_row_supersessions(scope, pairs, ch=ch, hops=REPAIR_CHAIN_HOPS)
@@ -641,7 +649,11 @@ async def _retry_edges_drop(failure: ProjectionFailureRow, *, ch: Any) -> str:
     declared = failure.payload.get("declared")
     if not memory_id or not isinstance(declared, list):
         return "malformed_payload"
-    scope = SimpleNamespace(org=failure.org, namespace=failure.namespace)
+    scope = SimpleNamespace(
+        org=failure.org,
+        namespace=failure.namespace,
+        user_id=str(failure.payload.get("user_id") or ""),
+    )
     await drop_undeclared_links(scope, memory_id, [str(d) for d in declared], ch=ch)
     return ""
 
@@ -717,7 +729,12 @@ async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) ->
     ids = [str(i) for i in failure.payload.get("memory_ids") or []]
     if not ids:
         return "malformed_payload"
-    scope = SimpleNamespace(org=failure.org, namespace=failure.namespace, agent=failure.agent)
+    scope = SimpleNamespace(
+        org=failure.org,
+        namespace=failure.namespace,
+        agent=failure.agent,
+        user_id=str(failure.payload.get("user_id") or ""),
+    )
     async with _recording_restated_repair(failure, ch=ch):
         await _finish_restated_repair(failure, scope, ch=ch)
         if failure.payload.get("reopen"):

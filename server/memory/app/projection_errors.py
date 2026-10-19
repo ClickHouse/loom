@@ -116,6 +116,7 @@ async def record_input_projection_failure(
             memory_keys=memory_keys or [],
             error=error,
             payload=payload or {},
+            user_id=str(getattr(input, "user_id", "") or ""),
         )
     except Exception as log_error:  # noqa: BLE001 — must not fail the write it describes
         log.warning(

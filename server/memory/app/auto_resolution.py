@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from server.memory.domain.temporal_sql import LIVE_STATUSES
@@ -256,8 +257,6 @@ async def record_or_owe(
 async def _owe(
     *, org: str, namespace: str, left: list[dict[str, Any]], reason: str, agent: str
 ) -> None:
-    from types import SimpleNamespace
-
     from server.memory.app.projection_errors import record_input_projection_failure
     from server.memory.app.projection_failures import FOLLOW_OWED
 
@@ -273,7 +272,7 @@ async def _owe(
 
 
 def follow_beside_response(
-    *, org: str, namespace: str, pairs: list[Follow], op: str, agent: str = ""
+    *, org: str, namespace: str, pairs: list[Follow], op: str, agent: str = "", user_id: str = ""
 ) -> None:
     """The triple plane's follow of rows a point write retired, beside the response
     (`after_write.schedule`) once the write's relations are in; what it could not follow
@@ -285,28 +284,23 @@ def follow_beside_response(
         from server.memory.app import after_write
 
         intents = sorted({p.intent for p in pairs if p.intent})
-        follow = _follow(org, namespace, agent, [(p.loser, p.winner) for p in pairs], op, intents)
+        scope = SimpleNamespace(org=org, namespace=namespace, agent=agent, user_id=user_id)
+        follow = _follow(scope, [(p.loser, p.winner) for p in pairs], op, intents)
         after_write.schedule(follow, name=f"{op}.follow")
     except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them
         log.warning("%s: scheduling the triples follow failed: %s", op, e)
 
 
 async def _follow(
-    org: str,
-    namespace: str,
-    agent: str,
-    pairs: list[tuple[str, str]],
-    op: str,
-    intents: list[str] | None = None,
+    scope: Any, pairs: list[tuple[str, str]], op: str, intents: list[str] | None = None
 ) -> None:
-    from types import SimpleNamespace
-
+    """Follow the pairs as `scope` (org, namespace, agent and the writer's user_id, which
+    a failure records); what is left goes to the repair."""
     from server.core.ch import get_client
     from server.memory.app.entity_projections import follow_row_supersessions
     from server.memory.app.projection_errors import record_input_projection_failure
     from server.memory.app.projection_failures import FOLLOW_ROWS
 
-    scope = SimpleNamespace(org=org, namespace=namespace, agent=agent)
     try:
         left = (await follow_row_supersessions(scope, pairs, ch=get_client())).unfollowed
     except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them
@@ -325,4 +319,4 @@ async def _follow(
         from server.memory.app import intent_marks
 
         # Recorded and followed: nothing is left for the intent to owe.
-        intent_marks.resolve_soon(org, intents)
+        intent_marks.resolve_soon(scope.org, intents)
