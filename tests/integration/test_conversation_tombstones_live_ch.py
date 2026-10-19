@@ -578,6 +578,45 @@ async def test_a_late_reconcile_to_a_removed_peer_passes_to_the_one_left(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("whole_delete", [True, False])
+async def test_a_late_reconcile_of_an_orphan_row_passes_to_the_one_left(
+    ch, scope, whole_delete
+) -> None:
+    """A's message row is gone (the retention TTL), so A's delete selects the row
+    through its agent alone. A's reconcile hands it to B and lands after B's whole
+    delete: the re-read still covers the row, which ends with C."""
+    for agent in "bc":
+        await _message(ch, scope, agent, "1", "shared", T0 + timedelta(seconds="cb".index(agent)))
+    await _embedding(ch, scope, "a", "1", "shared", T0)
+    when = datetime.now(UTC).replace(tzinfo=None)
+
+    async def b_deletes() -> None:
+        await repo.tombstone_thread(scope["org"], scope["ns"], "b", scope["tid"], when=when, ch=ch)
+
+    late = _LateReconcile(ch, b_deletes)
+    if whole_delete:
+        await repo.tombstone_thread(
+            scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=late
+        )
+    else:
+        await repo.tombstone_embeddings(
+            scope["org"], scope["ns"], "a", scope["tid"], msg_ids=None, when=when, ch=late
+        )
+    assert await _holders(ch, scope) == [("c", True)]
+
+
+@pytest.mark.asyncio
+async def test_a_peer_with_an_empty_agent_name_keeps_the_row(ch, scope) -> None:
+    """An empty agent name is accepted, so a peer logged under it holds the turn: the
+    delete hands the row to it instead of tombstoning it."""
+    await _message(ch, scope, "", "1", "shared", T0)
+    await _message(ch, scope, "a", "1", "shared", T0)
+    await _embedding(ch, scope, "a", "1", "shared", T0)
+    await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=T0, ch=ch)
+    assert await _holders(ch, scope) == [("", True)]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["tool", "system"])
 @pytest.mark.parametrize("op", ["delete", "compact"])
 async def test_a_transcript_only_peer_turn_does_not_keep_the_row(ch, scope, role, op) -> None:

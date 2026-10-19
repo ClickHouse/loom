@@ -327,7 +327,7 @@ async def test_a_reconcile_that_never_settles_fails_instead_of_looping() -> None
 
     with pytest.raises(OverloadedError, match="kept changing"):
         await repo.tombstone_embeddings(
-            "o", "n", "a", "t", msg_ids=None, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
+            "o", "n", "a", "t", msg_ids=["m"], when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
         )
     assert _CH.rounds == repo._RECONCILE_ROUNDS
 

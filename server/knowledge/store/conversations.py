@@ -843,8 +843,10 @@ def _unheld_embeddings(turns: str) -> str:
 def _reconcile_sql(turns: str) -> str:
     """A version row for each unheld row: passed to the latest peer copy that holds
     it (its agent, role, run and user, so it answers that copy's searches and
-    erasure), or tombstoned when none does (a peer agent is never empty)."""
-    keep = "p.holder.1 != ''"
+    erasure), or tombstoned when none does. `matched` marks a join match: an unmatched
+    row reads its default, 0 (any field of `holder`, the agent included, can be
+    empty)."""
+    keep = "p.matched = 1"
     return (
         "INSERT INTO loom.conversation_embeddings"
         " SELECT e.* REPLACE ("
@@ -853,7 +855,8 @@ def _reconcile_sql(turns: str) -> str:
         f" if({keep}, p.holder.4, e.user_id) AS user_id,"
         f" if({keep}, NULL, {{now:DateTime}}) AS tombstoned_at)"
         " FROM (" + _unheld_embeddings(turns) + ") AS e"
-        " LEFT JOIN (SELECT msg_id, excerpt, argMax((agent, role, run_id, user_id), ts) AS holder"
+        " LEFT JOIN (SELECT msg_id, excerpt, 1 AS matched,"
+        " argMax((agent, role, run_id, user_id), ts) AS holder"
         " FROM (" + _PEER_COPIES + ") GROUP BY msg_id, excerpt) AS p"
         " ON e.msg_id = p.msg_id AND e.content_excerpt = p.excerpt"
     )
@@ -886,17 +889,25 @@ async def tombstone_embeddings(
         "embedded": EMBEDDED_EXCERPT_CHARS,
         "short": _SHORT_EXCERPT_CHARS,
     }
-    # Named turns bind in byte-bounded slices.
-    parts: list[tuple[str, dict[str, Any]]] = (
-        [(_THREAD_TURNS, params)]
-        if msg_ids is None
-        else [
-            ("msg_id IN {ids:Array(String)}", {**params, "ids": p}) for p in param_slices(msg_ids)
-        ]
-    )
     # Sequential reads: on a multi-replica service a lagging replica could miss a turn
     # appended just before, leaving its embedding live once its message is tombstoned.
     with sequential_reads():
+        if msg_ids is None:
+            # The rows `_THREAD_TURNS` selects, by key, read once: a row selected only
+            # through `agent` (its message row gone) stops matching once handed to a
+            # peer, and the re-read must still see it if that hand-off lands late.
+            rows = await ch.query_all(
+                "SELECT DISTINCT embedding_model, msg_id FROM loom.conversation_embeddings FINAL"
+                " WHERE org = {org:String} AND namespace = {ns:String}"
+                " AND thread_id = {tid:String} AND tombstoned_at IS NULL AND " + _THREAD_TURNS,
+                params=params,
+            )
+            turns = "(embedding_model, msg_id) IN {keys:Array(Tuple(String, String))}"
+            keys = [(str(r["embedding_model"]), str(r["msg_id"])) for r in rows]
+            parts = [(turns, {**params, "keys": p}) for p in param_slices(keys)]
+        else:
+            turns = "msg_id IN {ids:Array(String)}"
+            parts = [(turns, {**params, "ids": p}) for p in param_slices(msg_ids)]
         for turns, bound in parts:
             # A reconcile can read a peer's copy as live and land after that peer's whole
             # delete. So it repeats until a read taken after its last write finds no
