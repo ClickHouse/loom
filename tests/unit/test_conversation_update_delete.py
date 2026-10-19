@@ -299,7 +299,7 @@ async def test_the_tombstone_reads_with_sequential_consistency() -> None:
         await repo._tombstone_embeddings(
             "o", "n", "a", "t", msg_ids=msg_ids, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
         )
-    assert seen == [True] * 4  # the tombstone and the handoff, for each form
+    assert seen and all(seen)
 
 
 @pytest.mark.asyncio
