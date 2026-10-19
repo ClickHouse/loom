@@ -695,6 +695,11 @@ Source: `server/settings/_memory.py`
 | `LOOM_MEMORY_EXPIRY_SWEEP_ENABLED` | `bool` | `True` | Apply each expired row's `on_expire` (tombstone \| demote \| anonymize) as a version row. Reads already hide expired rows; the sweep records it. |
 | `LOOM_MEMORY_EXPIRY_SWEEP_INTERVAL_SECONDS` | `int` | `300` | Seconds between expiry sweep passes. |
 | `LOOM_MEMORY_EXPIRY_SWEEP_BATCH_SIZE` | `int` | `500` | Expired rows one sweep pass applies. |
+| `LOOM_DELETE_VERSION_CHECK_ENABLED` | `bool` | `True` | Finish the checks memory.delete_version could not run after its tombstone (a failed read), so a write that landed between its version check and its tombstone is written back above it rather than left deleted. |
+| `LOOM_DELETE_VERSION_CHECK_INTERVAL_SECONDS` | `int` | `60` | Seconds between passes while checks are owed. |
+| `LOOM_DELETE_VERSION_CHECK_IDLE_INTERVAL_SECONDS` | `int` | `300` | Seconds between passes that found none. |
+| `LOOM_DELETE_VERSION_CHECK_GRACE_SECONDS` | `int` | `60` | Seconds a check is left to the delete that owes it before a pass runs it. |
+| `LOOM_DELETE_VERSION_CHECK_BATCH_SIZE` | `int` | `200` | Checks one pass runs. |
 | `LOOM_MEMORY_EXPIRY_DEMOTE_FACTOR` | `float` | `0.5` | `demote` multiplies confidence by this factor, never below the floor. |
 | `LOOM_MEMORY_EXPIRY_DEMOTE_FLOOR` | `float` | `0.05` | Lowest confidence a `demote` (expiry or run.complete) leaves on a row. |
 

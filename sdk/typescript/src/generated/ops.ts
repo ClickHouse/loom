@@ -3735,6 +3735,7 @@ export interface MemoryGetOutput {
   memory_type?: string | null;
   confidence?: number | null;
   version?: number | null;
+  version_text?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
   expires_at?: string | null;
@@ -4653,6 +4654,7 @@ export interface MemoryListEntry {
   memory_type: string;
   confidence: number;
   version: number;
+  version_text?: string;
   source_trace?: string;
   created_at: string; // date-time
   updated_at?: string | null;

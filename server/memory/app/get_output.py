@@ -32,6 +32,7 @@ def row_output(
         memory_type=row.memory_type,
         confidence=row.confidence,
         version=row.version,
+        version_text=None if row.version is None else str(row.version),
         created_at=row.created_at,
         updated_at=row.updated_at or row.created_at,
         expires_at=row.expires_at,

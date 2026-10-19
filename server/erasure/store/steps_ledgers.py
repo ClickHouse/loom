@@ -203,6 +203,27 @@ async def delete_memory_drops_by_namespace(
     )
 
 
+async def delete_delete_version_checks_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """memory.delete_version's owed checks name a row's identity and key; 30-day TTL."""
+    return await delete_scoped(
+        "loom.delete_version_checks",
+        org=org,
+        scope_where=NS_EQ,
+        params={"ns": namespace},
+        ch=ch,
+    )
+
+
+async def delete_delete_version_checks_by_user(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    return await delete_scoped(
+        "loom.delete_version_checks", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+    )
+
+
 _TASK_TABLES = ("loom.tasks", "loom.task_events")
 
 

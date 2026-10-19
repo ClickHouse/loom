@@ -19,7 +19,7 @@ from server.auth.context import current_auth
 from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
-from server.core.errors import ValidationError
+from server.core.errors import BackendUnavailableError, ValidationError
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
@@ -650,27 +650,58 @@ async def handle_memory_delete_version(
         _lock.assert_unlocked(existing, "delete", op="memory.delete_version")
         assert_own_row(existing, op="memory.delete_version")
         version = next_version()
+        # The check this delete owes after its tombstone, recorded first: when the check
+        # cannot run now, the delete_version_check worker runs it, so a write it would
+        # have found is never left under the tombstone. A failure here deletes nothing.
+        await memory_repo.record_delete_check(
+            existing, checked=int(input.version), tombstone=version, done=False
+        )
         await _write_tombstone_row(
             existing, version=version, trace=delete_version_trace(input.version)
         )
-        # A plain write or delete takes no key lock: see _key_moved_on.
         try:
-            moved_on = await _key_moved_on(existing, checked=int(input.version), tombstone=version)
-        except Exception as e:  # noqa: BLE001 — the tombstone is in: what it removed still retires
-            degradations.note("memory.delete_version", "later_write_unchecked", e)
-            log.warning("memory.delete_version: the read after the tombstone failed: %s", e)
-            moved_on = None
-        if moved_on is not None:
-            return moved_on
+            return await finish_delete_check(
+                existing, checked=int(input.version), tombstone=version
+            )
+        except Exception as e:  # the check is recorded: the worker finishes it
+            degradations.note("memory.delete_version", "check_deferred", e)
+            log.warning("memory.delete_version: the check after the tombstone failed: %s", e)
+            raise BackendUnavailableError(
+                "the delete is recorded but its check did not run; it finishes in the "
+                "background, and the key reads as deleted until it does"
+            ) from e
+
+
+async def finish_delete_check(
+    existing: Any, *, checked: int, tombstone: int
+) -> MemoryDeleteVersionOutput:
+    """The check memory.delete_version owes after its tombstone, and its answer: when the
+    key moved on (`_key_moved_on`) nothing derived is retired; otherwise the delete
+    stands and what `existing` (the removed version) derived retires. The recorded check
+    is then marked done. Safe to run again: the delete_version_check worker runs it for a
+    delete whose own run failed."""
+    import server.memory.store as memory_repo
+
+    moved_on = await _key_moved_on(existing, checked=checked, tombstone=tombstone)
+    if moved_on is not None:
+        answer = moved_on
+    else:
         tombstoned, downgraded = await _retire_derived(
-            existing, version=version, op="memory.delete_version"
+            existing, version=tombstone, op="memory.delete_version", only_its_chunks=True
         )
-    return MemoryDeleteVersionOutput(
-        tombstoned=True,
-        version=version,
-        dependents_tombstoned=tombstoned,
-        dependents_downgraded=downgraded,
-    )
+        answer = MemoryDeleteVersionOutput(
+            tombstoned=True,
+            version=tombstone,
+            dependents_tombstoned=tombstoned,
+            dependents_downgraded=downgraded,
+        )
+    try:
+        await memory_repo.record_delete_check(
+            existing, checked=checked, tombstone=tombstone, done=True
+        )
+    except Exception as e:  # noqa: BLE001 — a check left open runs again, harmlessly
+        log.warning("memory.delete_version: the check ran but was not marked done: %s", e)
+    return answer
 
 
 async def _key_moved_on(
@@ -757,7 +788,9 @@ async def _write_tombstone_row(existing: Any, *, version: int, trace: str = "") 
         await insert_memory_versions([tombstone_row], ch=get_client())
 
 
-async def _retire_derived(existing: Any, *, version: int, op: str) -> tuple[int, int]:
+async def _retire_derived(
+    existing: Any, *, version: int, op: str, only_its_chunks: bool = False
+) -> tuple[int, int]:
     """Retire what was derived from the row a tombstone at `version` removed: its vectors,
     its chunks, a procedure's run ledger, and the summaries built from it. Returns how many
     consolidated summaries it tombstoned and downgraded."""
@@ -795,7 +828,10 @@ async def _retire_derived(existing: Any, *, version: int, op: str) -> tuple[int,
     if is_searchable_type(existing.memory_type):
         from server.memory.app import set_chunks as _set_chunks
 
-        await _set_chunks.tombstone_row_chunks_fail_open(existing, ch=ch)
+        # memory.delete_version removes one version: a newer value's chunks stay.
+        await _set_chunks.tombstone_row_chunks_fail_open(
+            existing, ch=ch, only_its_own=only_its_chunks
+        )
 
     # A procedure's run ledger must not outlive the procedure.
     # Best-effort: the tombstone above is the erasure of record; a ledger

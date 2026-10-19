@@ -116,6 +116,9 @@ class MemoryGetOutput(ProjectedRow):
     confidence: float | None = None
     # Nanosecond version of the live row; send it back as `if_version` to poll.
     version: int | None = None
+    # The same version as a decimal string, exact for a JavaScript caller (the number is
+    # above 2^53, which JSON.parse rounds): send this one to memory.delete_version.
+    version_text: str | None = None
     # When the key was first written; kept across later versions.
     created_at: datetime | None = None
     # Last write to this key; distinct from created_at, which is preserved across updates.
@@ -647,6 +650,8 @@ class _MemoryListEntry(ProjectedRow):
     memory_type: MemoryType
     confidence: float
     version: int
+    # The same version as a decimal string, exact for a JavaScript caller.
+    version_text: str = ""
     # Provenance, e.g. "conversation:<thread_id>" for seeder-promoted facts.
     source_trace: str = ""
     created_at: datetime

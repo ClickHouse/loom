@@ -214,29 +214,47 @@ async def _insert_tombstones(ch: Any, tombstones: list[dict[str, Any]]) -> None:
 
 
 async def tombstone_set_chunks_fail_open(
-    *, org: str, namespace: str, memory_key: str, user_id: str, ch: Any = None
+    *,
+    org: str,
+    namespace: str,
+    memory_key: str,
+    user_id: str,
+    ch: Any = None,
+    only: frozenset[tuple[int, str]] | None = None,
 ) -> int:
     """`tombstone_set_chunks` for memory.delete: the fact's tombstone is the
     record of the delete; a chunk failure is logged, never raised."""
     try:
         return await tombstone_set_chunks(
-            org=org, namespace=namespace, memory_key=memory_key, user_id=user_id, ch=ch
+            org=org, namespace=namespace, memory_key=memory_key, user_id=user_id, ch=ch, only=only
         )
     except Exception as e:  # noqa: BLE001 — the delete stands
         log.warning("memory.delete: chunk tombstones failed for %s (non-fatal): %s", memory_key, e)
         return 0
 
 
-async def tombstone_row_chunks_fail_open(row: Any, *, ch: Any = None) -> int:
+async def tombstone_row_chunks_fail_open(
+    row: Any, *, ch: Any = None, only_its_own: bool = False
+) -> int:
     """`tombstone_set_chunks_fail_open` for the memory row a delete or move
-    retires: its key, under its own user."""
+    retires: its key, under its own user. `only_its_own` retires only the chunks
+    this row's own value writes, so a newer value's chunks of the key stay."""
+    only = set_chunk_identities(row.value, row.memory_type) if only_its_own else None
     return await tombstone_set_chunks_fail_open(
         org=row.org,
         namespace=row.namespace,
         memory_key=row.memory_key,
         user_id=str(row.user_id or "-"),
         ch=ch,
+        only=only,
     )
+
+
+def set_chunk_identities(value: Any, memory_type: str) -> frozenset[tuple[int, str]]:
+    """The `(chunk_index, content_sha256)` of each chunk `write_set_chunks` writes for
+    `value`: the identities of that value's chunk rows."""
+    chunks, _truncated = plan_set_chunks(value, memory_type)
+    return frozenset((i, _chunk_sha(chunk)) for i, (chunk, _start, _end) in enumerate(chunks))
 
 
 async def _embed_chunks(embedder: Any, chunks: list[str]) -> list[list[float]]:

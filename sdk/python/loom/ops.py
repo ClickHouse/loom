@@ -9970,6 +9970,7 @@ class MemoryGetOutput(TypedDict, total=False):
     memory_type: NotRequired[Optional[str]]
     confidence: NotRequired[Optional[float]]
     version: NotRequired[Optional[int]]
+    version_text: NotRequired[Optional[str]]
     created_at: NotRequired[Optional[str]]
     updated_at: NotRequired[Optional[str]]
     expires_at: NotRequired[Optional[str]]
@@ -11270,6 +11271,7 @@ class MemoryListEntry(TypedDict, total=False):
     memory_type: Required[str]
     confidence: Required[float]
     version: Required[int]
+    version_text: NotRequired[str]
     source_trace: NotRequired[str]
     created_at: Required[str]  # date-time as ISO-8601 text
     updated_at: NotRequired[Optional[str]]

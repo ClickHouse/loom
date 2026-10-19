@@ -99,6 +99,11 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(key_write_lock.key_write_locks, "hold", _no_lease)
     # memory.delete_version's re-read after its tombstone: no write landed in between.
     monkeypatch.setattr(memory_repo, "versions_above", _no_later_write)
+
+    async def _record_check(_existing: Any, **check: Any) -> None:
+        state.setdefault("checks", []).append(check)
+
+    monkeypatch.setattr(memory_repo, "record_delete_check", _record_check)
     monkeypatch.setattr(hm, "get_client", lambda: state["ch"])
     monkeypatch.setattr(_stack_mod, "get_client", lambda: state["ch"])
     monkeypatch.setattr(_restore_mod, "get_client", lambda: state["ch"])

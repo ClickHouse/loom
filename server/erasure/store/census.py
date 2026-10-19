@@ -276,6 +276,14 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate("loom.code_search_outcome", "1", None, "code_search_trace.delete", None),
     Substrate("loom.events", "1", UID, "events.delete", "events.delete"),
     Substrate("loom.memory_drops", "1", None, "memory_drops.delete", None),
+    # memory.delete_version's owed checks: a row's identity and key, 30-day TTL.
+    Substrate(
+        "loom.delete_version_checks",
+        "1",
+        UID,
+        "delete_version_checks.delete",
+        "delete_version_checks.delete",
+    ),
     Substrate("loom.entity_degree", "1", None, "entity_graph.delete", None),
     Substrate("loom.learnings_queue", "1", None, "learnings_queue.delete", None),
     # Task inbox plane: the brief and the notes quote source

@@ -794,6 +794,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `memory_type` | `str \| None` | The row's memory type; None when not found. |
 | `confidence` | `float \| None` | The writer's confidence in the fact, 0..1 (a `demote` expiry lowers it). |
 | `version` | `int \| None` | Nanosecond version of the live row; send it back as `if_version` to poll. |
+| `version_text` | `str \| None` | The same version as a decimal string, exact for a JavaScript caller (the number is above 2^53, which JSON.parse rounds): send this one to memory.delete_version. |
 | `created_at` | `datetime \| None` | When the key was first written; kept across later versions. |
 | `updated_at` | `datetime \| None` | Last write to this key; distinct from created_at, which is preserved across updates. |
 | `expires_at` | `datetime \| None` | When the row expires (memory.get hides it after that, with `as_of` only a high one; memory.list serves it until the expiry sweep, and memory.bulk_get does too, except a high one); None = no expiry. |
