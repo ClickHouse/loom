@@ -13,8 +13,8 @@ former holder made (parent before child, `hand_down_lineage`); then an
 address's sign-up claim (`self_signup.email_claim`); then a subject's
 repository claim (`maintainers.repo_change`), the repository's admins and the
 namespaces' admins, or the trusts; then an org's collection tree or a SCIM
-group; then a bot or a grant (several sorted by namespace). Taken the other way round, two changes wait each other out and
-both answer 503.
+group; then a bot or a grant (several sorted by namespace). Taken the other
+way round, two changes wait each other out and both answer 503.
 """
 
 from __future__ import annotations
