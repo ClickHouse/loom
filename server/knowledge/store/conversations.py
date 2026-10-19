@@ -904,11 +904,11 @@ async def tombstone_embeddings(
             )
             turns = "(embedding_model, msg_id) IN {keys:Array(Tuple(String, String))}"
             keys = [(str(r["embedding_model"]), str(r["msg_id"])) for r in rows]
-            parts = [(turns, {**params, "keys": p}) for p in param_slices(keys)]
+            parts = [{**params, "keys": p} for p in param_slices(keys)]
         else:
             turns = "msg_id IN {ids:Array(String)}"
-            parts = [(turns, {**params, "ids": p}) for p in param_slices(msg_ids)]
-        for turns, bound in parts:
+            parts = [{**params, "ids": p} for p in param_slices(msg_ids)]
+        for bound in parts:
             # A reconcile can read a peer's copy as live and land after that peer's whole
             # delete. So it repeats until a read taken after its last write finds no
             # unheld row; a round goes again only when a write landed on these turns

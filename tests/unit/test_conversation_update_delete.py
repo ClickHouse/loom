@@ -310,7 +310,8 @@ async def test_the_tombstone_reads_with_sequential_consistency() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_reconcile_that_never_settles_fails_instead_of_looping() -> None:
+@pytest.mark.parametrize("msg_ids", [None, ["m1"]])
+async def test_a_reconcile_that_never_settles_fails_instead_of_looping(msg_ids) -> None:
     """A re-read that keeps finding unheld rows stops after a fixed number of rounds and
     answers OVERLOADED, which the client retries."""
     from server.core.errors import OverloadedError
@@ -320,6 +321,8 @@ async def test_a_reconcile_that_never_settles_fails_instead_of_looping() -> None
         rounds = 0
 
         async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            if sql.startswith("SELECT DISTINCT embedding_model, msg_id"):
+                return [{"embedding_model": "m", "msg_id": "m1"}]  # the delete's key read
             return [{"1": 1}]
 
         async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
@@ -327,7 +330,7 @@ async def test_a_reconcile_that_never_settles_fails_instead_of_looping() -> None
 
     with pytest.raises(OverloadedError, match="kept changing"):
         await repo.tombstone_embeddings(
-            "o", "n", "a", "t", msg_ids=["m"], when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
+            "o", "n", "a", "t", msg_ids=msg_ids, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
         )
     assert _CH.rounds == repo._RECONCILE_ROUNDS
 
