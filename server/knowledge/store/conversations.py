@@ -344,10 +344,11 @@ async def tombstone_thread(
     )
     counts["loom.conversations"] = int(msg_n["n"]) if msg_n else 0
 
-    # 3. Embeddings again: a turn appended during the delete has its message tombstoned
-    # above, and its embedding, written after the message, can land after step 1. One
-    # that lands after this read is caught by its writer's re-check
-    # (`tombstone_embedding_if_message_gone`).
+    # 3. Embeddings again: a turn appended during the delete whose message step 2
+    # tombstoned can have its embedding land after step 1. One that lands after this
+    # read is caught by its writer's re-check (`tombstone_embedding_if_message_gone`).
+    # A message that lands after step 2 began is not tombstoned, so its turn and
+    # embedding both stay live.
     await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
     # One per turn (FINAL, however many embedding models hold it), earlier calls'
     # tombstones included, as the messages count is. Sequential: the tombstones are
@@ -766,8 +767,9 @@ async def tombstone_embedding_if_message_gone(
     ch: _CHClient | None = None,
 ) -> None:
     """Tombstone a just-stored embedding whose message a delete or compaction tombstoned
-    meanwhile. Those tombstone the messages before their last embeddings read, so either
-    that read sees this embedding or this read sees the message's tombstone."""
+    meanwhile. Those tombstone the messages before their last embeddings read, so for a
+    message that mutation covered, either that read sees this embedding or this read
+    sees the message's tombstone."""
     ch = ch or _default_client()
     with sequential_reads():
         row = await ch.query_one(
