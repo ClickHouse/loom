@@ -794,6 +794,59 @@ _THREAD_TURNS = """(agent = {agent:String} OR msg_id IN (
 _SHORT_EXCERPT_CHARS = 240
 
 
+# Another agent's live copies of the thread's turns, by msg_id and the text a row would
+# hold for them at either excerpt length, with the latest copy's identity.
+_PEER_COPIES = """
+    SELECT msg_id, excerpt, argMax((agent, run_id, user_id), ts) AS holder FROM (
+      SELECT msg_id, agent, run_id, user_id, ts, arrayJoin([
+        substringUTF8(content, 1, {embedded:UInt32}),
+        substringUTF8(content, 1, {short:UInt32})
+      ]) AS excerpt
+      FROM loom.conversations
+      WHERE org = {org:String} AND namespace = {ns:String}
+        AND thread_id = {tid:String} AND agent != {agent:String}
+        AND tombstoned_at IS NULL
+    )
+    GROUP BY msg_id, excerpt
+"""
+
+
+def _live_embeddings(turns: str) -> str:
+    """The thread's live embedding rows of the turns `turns` selects."""
+    return (
+        "SELECT * FROM loom.conversation_embeddings FINAL"
+        " WHERE org = {org:String} AND namespace = {ns:String}"
+        " AND thread_id = {tid:String} AND tombstoned_at IS NULL AND " + turns
+    )
+
+
+def _tombstone_sql(turns: str) -> str:
+    """A tombstone version row for each live row no peer holds. The live rows are
+    filtered in the inner query: in the outer one the REPLACE alias would shadow
+    `tombstoned_at`."""
+    return (
+        "INSERT INTO loom.conversation_embeddings"
+        " SELECT * REPLACE ({now:DateTime} AS tombstoned_at) FROM ("
+        + _live_embeddings(turns)
+        + " AND (msg_id, content_excerpt) NOT IN (SELECT msg_id, excerpt FROM ("
+        + _PEER_COPIES
+        + ")))"
+    )
+
+
+def _handoff_sql(turns: str) -> str:
+    """A version row moving each kept row `agent` wrote last to the peer copy that
+    holds it: its agent, run and user, so it answers that copy's searches and
+    erasure."""
+    return (
+        "INSERT INTO loom.conversation_embeddings"
+        " SELECT e.* REPLACE (p.holder.1 AS agent, p.holder.2 AS run_id, p.holder.3 AS user_id)"
+        " FROM (" + _live_embeddings(turns) + " AND agent = {agent:String}) AS e"
+        " INNER JOIN (" + _PEER_COPIES + ") AS p"
+        " ON e.msg_id = p.msg_id AND e.content_excerpt = p.excerpt"
+    )
+
+
 async def _tombstone_embeddings(
     org: str,
     namespace: str,
@@ -812,8 +865,9 @@ async def _tombstone_embeddings(
     per agent only), and one `agent` wrote last passes to that copy (its agent, run and
     user), so `agent`'s own search drops it. Both writes are version rows: the live row
     again, with the same `ts` (so the same partition) and `tombstoned_at` or the
-    holder's identity set. On a `ts` tie the later insert wins, and a peer's row
-    written since carries a newer `ts` and stays.
+    holder's identity set. On a `ts` tie the later insert wins. A peer's row written
+    since stays when its `ts` is newer, which holds unless the peer's append started
+    before this agent's and landed after the read (a known gap).
     Named ids are bound in byte-bounded slices (`param_slices`)."""
     params: dict[str, Any] = {
         "now": when,
@@ -824,55 +878,15 @@ async def _tombstone_embeddings(
         "embedded": EMBEDDED_EXCERPT_CHARS,
         "short": _SHORT_EXCERPT_CHARS,
     }
-    # Another agent's live copies of the thread's turns, by msg_id and the text a row
-    # would hold for them at either excerpt length, with the latest copy's identity.
-    peers = """
-        SELECT msg_id, excerpt, argMax((agent, run_id, user_id), ts) AS holder FROM (
-          SELECT msg_id, agent, run_id, user_id, ts, arrayJoin([
-            substringUTF8(content, 1, {embedded:UInt32}),
-            substringUTF8(content, 1, {short:UInt32})
-          ]) AS excerpt
-          FROM loom.conversations
-          WHERE org = {org:String} AND namespace = {ns:String}
-            AND thread_id = {tid:String} AND agent != {agent:String}
-            AND tombstoned_at IS NULL
-        )
-        GROUP BY msg_id, excerpt"""
-    live = """
-          SELECT * FROM loom.conversation_embeddings FINAL
-          WHERE org = {org:String} AND namespace = {ns:String}
-            AND thread_id = {tid:String} AND tombstoned_at IS NULL
-            AND <turns>"""
-    # The live rows are filtered in the inner query: in the outer one the REPLACE alias
-    # would shadow `tombstoned_at`.
-    tombstone = """
-        INSERT INTO loom.conversation_embeddings
-        SELECT * REPLACE ({now:DateTime} AS tombstoned_at) FROM (<live>
-            AND (msg_id, content_excerpt) NOT IN (SELECT msg_id, excerpt FROM (<peers>))
-        )
-        """
-    # The kept row takes the holder's agent, run and user, so it answers that copy's
-    # searches and erasure.
-    handoff = """
-        INSERT INTO loom.conversation_embeddings
-        SELECT e.* REPLACE (
-          p.holder.1 AS agent, p.holder.2 AS run_id, p.holder.3 AS user_id
-        )
-        FROM (<live> AND agent = {agent:String}) AS e
-        INNER JOIN (<peers>) AS p ON e.msg_id = p.msg_id AND e.content_excerpt = p.excerpt
-        """
-    tombstone, handoff = (
-        sql.replace("<live>", live).replace("<peers>", peers) for sql in (tombstone, handoff)
-    )
     # Sequential reads: on a multi-replica service a lagging replica could miss a turn
     # appended just before, leaving its embedding live once its message is tombstoned.
     with sequential_reads():
-        for sql in (tombstone, handoff):
+        for build in (_tombstone_sql, _handoff_sql):
             if msg_ids is None:
-                await ch.execute(sql.replace("<turns>", _THREAD_TURNS), params)
+                await ch.execute(build(_THREAD_TURNS), params)
                 continue
             # Named turns are the agent's own (compaction reads them from its live turns).
-            named = sql.replace("<turns>", "msg_id IN {ids:Array(String)}")
+            named = build("msg_id IN {ids:Array(String)}")
             for part in param_slices(msg_ids):
                 await ch.execute(named, {**params, "ids": part})
 
