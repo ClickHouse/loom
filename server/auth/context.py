@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from server.auth.directory import ClassificationUnavailable, directory
+from server.auth.fail_closed import note_answered_unverified
 from server.core.ch import set_quota_key
 
 if TYPE_CHECKING:
@@ -238,8 +239,6 @@ async def restricted_namespaces_hidden_from(org: str) -> list[str]:
         # Cannot tell which are restricted: the rollup gets no filter it can
         # trust, so the caller must see nothing of the org's namespaces, and
         # the request that hid it all is the server's (fail_closed).
-        from server.auth.fail_closed import note_answered_unverified
-
         note_answered_unverified()
         return ["*"]
     # A namespace hidden for want of a read marks the request (restricted_allows).

@@ -587,23 +587,23 @@ async def handle_task_fail(input: TaskFailInput) -> TaskOutput:
 
 
 async def _load_for_reason_op(
-    input: TaskReasonInput, *, poster_may: bool = True
+    input: TaskReasonInput, *, poster_may_finish: bool = True
 ) -> tuple[TaskRow, bool]:
     """The row and whether the caller is on the owner side (else the poster).
-    `poster_may=False` for an op only the owner side may finish, which then
-    refuses the poster itself, after the state checks."""
+    `poster_may_finish=False` for an op only the owner side may finish, which
+    then refuses the poster itself, after the state checks."""
     task = await repo.fetch_task(input.org, input.task_id)
     if task is None:
         raise _not_found()
     poster = _is_poster(task, _caller_subject())
-    # The owner check decides alone unless a poster's way in (no read) admits;
-    # on an in-progress task only the owner side may act.
-    # A finished task answers its 409 whichever side the caller is on.
-    admitted = (
-        poster and task["status"] != "in_progress" and (poster_may or task["status"] in TERMINAL)
+    # Unless this, the owner check alone decides the answer (and marks it).
+    poster_admitted_without_read = (
+        poster
+        and task["status"] != "in_progress"
+        and (poster_may_finish or task["status"] in TERMINAL)
     )
     owner_side = await _in_scope(
-        input.org, task["namespace"], write=True, hides_answer=not admitted
+        input.org, task["namespace"], write=True, hides_answer=not poster_admitted_without_read
     )
     if not owner_side and not poster:
         raise _not_found()
@@ -620,7 +620,7 @@ async def _load_for_reason_op(
 async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
     """Owner side (an approver from triage, the owner from anywhere)."""
 
-    task, owner_side = await _load_for_reason_op(input, poster_may=False)
+    task, owner_side = await _load_for_reason_op(input, poster_may_finish=False)
     if not owner_side:
         raise _not_found()
     await _drop_lease(task)

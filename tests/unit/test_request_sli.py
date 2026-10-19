@@ -1348,7 +1348,7 @@ def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
         # Only the owner side may finish it: the handler 404s the poster, and
         # the owner check that decided it marks.
         _as("poster")
-        _row, owner_side = await transitions._load_for_reason_op(reason, poster_may=False)
+        _row, owner_side = await transitions._load_for_reason_op(reason, poster_may_finish=False)
         return owner_side, answered_unverified()
 
     async def _refused(subject: str, **k: Any) -> bool:
@@ -1364,7 +1364,7 @@ def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
     assert asyncio.run(_cancel_as_poster()) == (False, False)
     assert asyncio.run(_wont_do_as_poster()) == (False, True)
     status["value"] = "done"  # a finished task answers 409 whichever side asks
-    assert asyncio.run(_refused("poster", poster_may=False)) is False
+    assert asyncio.run(_refused("poster", poster_may_finish=False)) is False
     status["value"] = "todo"
     assert asyncio.run(_read_as_poster()) == (True, False)
     assert asyncio.run(_refused("someone-else")) is True
@@ -1416,6 +1416,7 @@ def test_a_restricted_namespace_left_out_of_a_rollup_for_want_of_a_grant_is_the_
 
     unreadable: set[str] = set()  # the namespaces whose grant read fails
 
+    @fail_closed.marks_unverified  # as the real one is
     async def _check(auth: Any, role: Any, org: str, ns: str, grants: Any) -> None:
         if ns in unreadable:
             fail_closed.note_unreadable()

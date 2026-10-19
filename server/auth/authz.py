@@ -430,6 +430,7 @@ async def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> li
     return [ns for ns in namespaces if ns and ns != "*" and await claim_cap(auth, org, ns) != 0]
 
 
+@marks_unverified
 async def _check_restricted(
     auth: AuthInfo,
     required_role: Role,
@@ -495,7 +496,7 @@ async def restricted_allows(
     needed failed marks the request the server's, as `row_in_scope` does
     (`hides_answer` there)."""
     try:
-        await marks_unverified(_check_restricted)(auth, required_role, org, namespace, grants)
+        await _check_restricted(auth, required_role, org, namespace, grants)
     except PermissionError as e:
         if hides_answer and getattr(e, "unverified", False):  # the server's failure
             note_answered_unverified()

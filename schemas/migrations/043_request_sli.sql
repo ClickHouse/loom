@@ -113,7 +113,8 @@ SELECT
     fold_to AS ingested_hwm
 HAVING fold_to > folded
 -- One insert stream, so the sentinel and the rows it vouches for are squashed
--- into the same parts rather than written by separate threads; and no block
--- deduplication, which on a replicated table could drop a previous-month
--- fold identical to an earlier one (it carries no sentinel to tell them apart).
-SETTINGS max_insert_threads = 1, insert_deduplicate = 0;
+-- into the same parts rather than written by separate threads, in blocks cut
+-- by rows alone (a busy minute's latency states must not split an hour by
+-- bytes); and no block deduplication, which on a replicated table could drop
+-- a previous-month fold identical to an earlier one (it has no sentinel).
+SETTINGS max_insert_threads = 1, min_insert_block_size_bytes = 0, insert_deduplicate = 0;
