@@ -1988,8 +1988,9 @@ def test_a_remove_drops_the_entries_its_value_names(
         {"value": "lee@example.com", "type": "home"},
         {"value": "lee@other.example"},
     ]
-    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com", "emails": emails})
-    r = _patch(client, uid.json()["id"], {"op": "remove", "path": "emails", "value": [named]})
+    created = client.post("/scim/v2/Users", json={"userName": "lee@example.com", "emails": emails})
+    assert created.status_code == 201, created.text
+    r = _patch(client, created.json()["id"], {"op": "remove", "path": "emails", "value": [named]})
     assert r.status_code == 200, r.text
     assert [e.get("type", "") for e in r.json()["emails"]] == left
 
@@ -2003,8 +2004,33 @@ def test_a_remove_of_the_emails_with_no_value_drops_every_one(client: TestClient
 
 @pytest.mark.parametrize("emails", ["", False, 0, None, []])
 def test_a_falsy_emails_sends_none(client: TestClient, world, emails: Any) -> None:
-    created = client.post("/scim/v2/Users", json={"userName": "lee@example.com", "emails": emails})
+    body = {"userName": "lee@example.com", "emails": emails}
+    created = client.post("/scim/v2/Users", json=body)
     assert created.status_code == 201 and created.json()["emails"] == []
+    uid = created.json()["id"]
+    assert client.put(f"/scim/v2/Users/{uid}", json=body).json()["emails"] == []
+    for op in (
+        {"op": "replace", "path": "emails", "value": emails},
+        {"op": "replace", "value": {"emails": emails}},
+    ):
+        r = _patch(client, uid, op)
+        assert r.status_code == 200 and r.json()["emails"] == [], r.text
+
+
+@pytest.mark.parametrize("named", [{"value": 5, "type": "work"}, {"type": ["work"]}])
+def test_a_remove_naming_a_value_or_type_not_a_string_is_refused(
+    client: TestClient, world, named: dict[str, Any]
+) -> None:
+    uid = _user(client, [{"value": "lee@example.com", "type": "work"}])
+    r = _patch(client, uid, {"op": "remove", "path": "emails", "value": [named]})
+    assert r.status_code == 400 and r.json()["scimType"] == "invalidValue"
+
+
+def test_a_type_is_compared_trimmed_everywhere(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "a@example.com"}, {"value": "lee@example.com", "type": "Work "}])
+    assert uid == scim.user_id("lee@example.com")  # keyed as the work entry
+    by_mail = 'emails[type eq "work"].value eq "lee@example.com"'
+    assert client.get("/scim/v2/Users", params={"filter": by_mail}).json()["totalResults"] == 1
 
 
 def test_a_blank_primary_entry_does_not_take_the_flag(client: TestClient, world) -> None:

@@ -258,7 +258,7 @@ def _patched_emails(
                 return []
             named = [_naming(n) for n in _listed(value)]
             return [e for e in emails if not any(_names(n, e) for n in named)]
-        written = _entries(_listed(value))  # a null is unassigned (RFC 7643 §2.5)
+        written = _entries(_listed(value or None))  # a null (or falsy) one is none
         if kind == "replace":
             return _one_primary(written, range(len(written)))
         return _added(emails, written)
@@ -295,15 +295,15 @@ def _added(emails: list[dict[str, Any]], written: list[dict[str, Any]]) -> list[
 
 
 def _same(a: dict[str, Any], b: dict[str, Any]) -> bool:
-    return scim.normalized(a["value"]) == scim.normalized(b["value"]) and (
-        a["type"].lower() == b["type"].lower()
-    )
+    return scim.normalized(a["value"]) == scim.normalized(b["value"]) and (_type(a) == _type(b))
 
 
 def _naming(named: Any) -> dict[str, str]:
     """What a remove's value says of an entry to drop: its address and/or type."""
     if not isinstance(named, dict):
         raise ScimError(400, "an emails entry must be an object", "invalidValue")
+    if any(not isinstance(named.get(k), str | None) for k in ("value", "type")):
+        raise ScimError(400, "an email's value and type must be strings", "invalidValue")
     said = {k: named[k] for k in ("value", "type") if isinstance(named.get(k), str)}
     if not said:
         raise ScimError(400, "a remove names an entry by its value or type", "invalidValue")
@@ -313,7 +313,12 @@ def _naming(named: Any) -> dict[str, str]:
 def _names(said: dict[str, str], entry: dict[str, Any]) -> bool:
     if "value" in said and scim.normalized(said["value"]) != scim.normalized(entry["value"]):
         return False
-    return "type" not in said or said["type"].lower() == entry["type"].lower()
+    return "type" not in said or scim.normalized(said["type"]) == _type(entry)
+
+
+def _type(entry: dict[str, Any]) -> str:
+    """An entry's type as filters compare it: trimmed, in any case."""
+    return scim.normalized(str(entry.get("type") or ""))
 
 
 def _listed(value: Any) -> list[Any]:
@@ -410,7 +415,7 @@ def _rank(entry: dict[str, Any]) -> int:
     """Which emails entry Loom keys on: the primary, else the work one, else the first."""
     if scim.is_primary(entry.get("primary")):
         return 2
-    return 1 if str(entry.get("type") or "").lower() == "work" else 0
+    return 1 if _type(entry) == "work" else 0
 
 
 def _nonempty(value: Any) -> bool:
@@ -433,7 +438,7 @@ def user_name_and_email(body: dict[str, Any]) -> tuple[str, str, list[dict[str, 
     name = body.get("userName")
     if not isinstance(name, str) or not name.strip():
         raise ScimError(400, "userName is required", "invalidValue")
-    emails = _entries(_listed(body.get("emails") or None))  # a falsy one sends none
+    emails = _entries(_listed(body.get("emails") or None))  # a null (or falsy) one is none
     emails = _one_primary(emails, range(len(emails)))  # the first primary with an address keys it
     entry = keyed_entry(emails) or {}
     email = scim.normalized(entry.get("value") or name)
@@ -529,8 +534,7 @@ async def list_users(request: Request) -> JSONResponse:
 def _lists(row: dict[str, Any], email: str, work: bool) -> bool:
     """Whether the user's `emails` hold `email`, as a work entry when `work`."""
     return any(
-        scim.normalized(e["value"]) == scim.normalized(email)
-        and (not work or e["type"].lower() == "work")
+        scim.normalized(e["value"]) == scim.normalized(email) and (not work or _type(e) == "work")
         for e in scim.emails_of(row)
     )
 
