@@ -150,19 +150,29 @@ async def hand_down_lineage(org: str, name: str) -> None:
     params = {"org": org, "by": made_by, "above": above}
     with own_write_reads():
         made = await ch.query_all(f"SELECT name {find}", params=params)
-    for r in made:
-        # Its claim's errors name it, and it may be another person's token.
-        try:
-            await _add_lineage(org, str(r["name"]), find, params, above)
-        except GrantBusyError:
+    gate = asyncio.Semaphore(_CLAIMS_AT_ONCE)  # as `_revoke_all`: each its own claim
+
+    async def add(child: str) -> None:
+        async with gate:
+            await _add_lineage(org, child, find, params, above)
+
+    try:
+        async with asyncio.TaskGroup() as tasks:
+            for r in made:
+                tasks.create_task(add(str(r["name"])))
+    except ExceptionGroup as e:  # the failure itself, as `_revoke_all` raises it
+        first = e.exceptions[0]
+        # A claim's errors name its token, and it may be another person's.
+        if isinstance(first, GrantBusyError):
             raise GrantBusyError(
                 "a change to a token made under this name is running; retry shortly"
             ) from None
-        except NotClaimed:
+        if isinstance(first, NotClaimed):
             raise NotClaimed(
                 "changes to the tokens made under this name cannot be claimed; retry shortly",
                 operation="grant_change",
             ) from None
+        raise first from e
 
 
 async def _add_lineage(
