@@ -217,8 +217,7 @@ def test_a_summary_that_cannot_be_embedded_compacts_nothing(monkeypatch) -> None
         )
     )
     assert (out.compacted, out.reason) == (False, "embed-failed")
-    assert fake.inserted == [] and fake.embedded == []
-    assert not [sql for sql, _ in fake.executed if "ALTER TABLE" in sql]
+    assert fake.inserted == [] and fake.embedded == [] and fake.executed == []
 
 
 def test_a_rerun_on_a_compacted_thread_compacts_nothing(monkeypatch) -> None:

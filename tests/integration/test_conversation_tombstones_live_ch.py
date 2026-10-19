@@ -83,12 +83,11 @@ async def _rows(ch: Any, s: dict[str, str]) -> list[tuple[str, str, bool]]:
     return [(r["msg_id"], r["content_excerpt"], bool(r["live"])) for r in rows]
 
 
-class _AfterFirstTombstone:
-    """Passes through to ClickHouse, and runs `then` once the first embeddings
-    tombstone has landed."""
+class _PassThrough:
+    """Passes every statement through to ClickHouse; a test overrides `execute`."""
 
-    def __init__(self, ch: Any, then: Any) -> None:
-        self.ch, self.then = ch, then
+    def __init__(self, ch: Any) -> None:
+        self.ch = ch
 
     async def query_all(self, sql: str, params: Any = None) -> Any:
         return await self.ch.query_all(sql, params=params)
@@ -97,11 +96,36 @@ class _AfterFirstTombstone:
         return await self.ch.query_one(sql, params=params)
 
     async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
-        out = await self.ch.execute(sql, params, **kw)
+        return await self.ch.execute(sql, params, **kw)
+
+
+class _AfterFirstTombstone(_PassThrough):
+    """Runs `then` once the first embeddings tombstone has landed."""
+
+    def __init__(self, ch: Any, then: Any) -> None:
+        super().__init__(ch)
+        self.then = then
+
+    async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
+        out = await super().execute(sql, params, **kw)
         if self.then and "INSERT INTO loom.conversation_embeddings" in sql:
             then, self.then = self.then, None
             await then()
         return out
+
+
+class _FailOnce(_PassThrough):
+    """Fails the `fail_at`-th write statement (0-based)."""
+
+    def __init__(self, ch: Any, fail_at: int) -> None:
+        super().__init__(ch)
+        self.fail_at, self.writes = fail_at, 0
+
+    async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
+        self.writes += 1
+        if self.writes - 1 == self.fail_at:
+            raise RuntimeError("statement failed")
+        return await super().execute(sql, params, **kw)
 
 
 @pytest.mark.asyncio
@@ -303,28 +327,10 @@ async def test_a_failed_compaction_step_never_leaves_a_hidden_turn_searchable(
     await _message(ch, scope, "a", "1", "retry me", T0)
     await _embedding(ch, scope, "a", "1", "retry me", T0)
 
-    class _FailOnce:
-        """Passes through, and fails the `fail_at`-th write statement."""
-
-        def __init__(self) -> None:
-            self.writes = 0
-
-        async def query_all(self, sql: str, params: Any = None) -> Any:
-            return await ch.query_all(sql, params=params)
-
-        async def query_one(self, sql: str, params: Any = None) -> Any:
-            return await ch.query_one(sql, params=params)
-
-        async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
-            self.writes += 1
-            if self.writes - 1 == fail_at:
-                raise RuntimeError("statement failed")
-            return await ch.execute(sql, params, **kw)
-
     when = datetime.now(UTC).replace(tzinfo=None)
     args = (scope["org"], scope["ns"], "a", scope["tid"], ["1"])
     with pytest.raises(RuntimeError):
-        await repo.tombstone_messages(*args, when=when, ch=_FailOnce())
+        await repo.tombstone_messages(*args, when=when, ch=_FailOnce(ch, fail_at))
     live = await repo.live_messages(scope["org"], scope["ns"], "a", scope["tid"], ch=ch)
     [(_, _, embedding_live)] = await _rows(ch, scope)
     assert live or not embedding_live  # a hidden turn is never searchable
