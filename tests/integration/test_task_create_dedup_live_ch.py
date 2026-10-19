@@ -977,7 +977,8 @@ async def test_a_claim_racing_a_cancel_leaves_the_task_cancelled(
     ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The cancel dropped the lease row; a claim that read the task todo finds no row: it
-    loses, and once the cancel finishes the task is cancelled with no lease row."""
+    loses without writing one, and once the cancel finishes the task is cancelled with no
+    lease row."""
     org = f"itest-cancel-{uuid.uuid4().hex[:8]}"
     await inboxes.handle_inbox_register(
         wire.InboxRegisterInput(
@@ -1007,31 +1008,136 @@ async def test_a_claim_racing_a_cancel_leaves_the_task_cancelled(
         )
     backend = await repo.lease_backend()
     await backend.delete(tid)  # the cancel's first drop
-    real_ensure = backend.ensure_row
-    cancelled = False
 
-    async def cancel() -> None:
-        nonlocal cancelled
-        cancelled = True
-        await transitions.handle_task_cancel(
-            wire.TaskReasonInput(org=org, namespace="private", agent="bot", task_id=tid, reason="x")
-        )
+    async def no_lease_write(*a: Any, **k: Any) -> None:
+        pytest.fail("a claim writes no lease row")
 
-    async def ensure(*a: Any, **k: Any) -> None:
-        # A claim that wrote a lease row back would do it here: the cancel finishes first.
-        monkeypatch.setattr(backend, "ensure_row", real_ensure)
-        await cancel()
-        await real_ensure(*a, **k)
-
-    monkeypatch.setattr(backend, "ensure_row", ensure)
+    monkeypatch.setattr(backend, "ensure_row", no_lease_write)
     with pytest.raises(Exception, match="TASK_ALREADY_CLAIMED"):
         await transitions.handle_task_claim(
             wire.TaskClaimInput(org=org, namespace="private", agent="bot", task_id=tid)
         )
-    if not cancelled:  # the claim wrote no lease row: the cancel lands after it
-        await cancel()
+    monkeypatch.undo()
+    await transitions.handle_task_cancel(
+        wire.TaskReasonInput(org=org, namespace="private", agent="bot", task_id=tid, reason="x")
+    )
     assert (await repo.fetch_task(org, tid))["status"] == "cancelled"
     leases = await ch.query_all(
         "SELECT task_id FROM loom.task_leases WHERE task_id = {t:String}", params={"t": tid}
     )
     assert leases == []
+
+
+async def _todo_task(org: str, **create: Any) -> str:
+    await inboxes.handle_inbox_register(
+        wire.InboxRegisterInput(
+            org=org,
+            namespace="private",
+            agent="admin",
+            inbox="bot",
+            owner_agent="bot",
+            accept_disclosure=["internal"],
+        )
+    )
+    first = await transitions.handle_task_create(
+        wire.TaskCreateInput(
+            org=org,
+            namespace="private",
+            agent="poster",
+            inbox="bot",
+            kind="chore",
+            title="t",
+            disclosure="internal",
+            **create,
+        )
+    )
+    tid = first.task.task_id
+    if first.task.status == "triage":
+        await transitions.handle_task_accept(
+            wire.TaskAcceptInput(org=org, namespace="private", agent="bot", task_id=tid)
+        )
+    return tid
+
+
+def _reason(org: str, tid: str) -> Any:
+    return wire.TaskReasonInput(org=org, namespace="private", agent="bot", task_id=tid, reason="x")
+
+
+@pytest.mark.asyncio
+async def test_a_claim_won_on_a_stray_lease_row_of_a_cancelled_task_backs_out(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A create retry writes the lease row back after a reopen, and a cancel lands before
+    that write: a stray row for a cancelled task. A claim that read the task todo wins
+    the row, reads the task again, backs out and deletes it: the task stays cancelled."""
+    org = f"itest-stray-{uuid.uuid4().hex[:8]}"
+    tid = await _todo_task(org, idempotency_key="k1")
+    prior = await repo.fetch_task(org, tid)  # the retry's read: todo, fence 0
+    await transitions.handle_task_cancel(_reason(org, tid))
+    backend = await repo.lease_backend()
+    real_delete, real_ensure = backend.delete, backend.ensure_row
+    deleted, stale = False, {}
+
+    async def delete(task_id: str) -> None:
+        nonlocal deleted
+        monkeypatch.setattr(backend, "delete", real_delete)
+        await transitions.handle_task_reopen(_reason(org, tid))  # lands before the delete
+        await real_delete(task_id)
+        deleted = True
+
+    async def ensure(*a: Any, **k: Any) -> None:
+        nonlocal deleted
+        if deleted:  # the retry's write after its re-read saw todo
+            deleted = False
+            stale["task"] = await repo.fetch_task(org, tid)  # a claimer reads todo
+            await transitions.handle_task_cancel(_reason(org, tid))
+        await real_ensure(*a, **k)
+
+    monkeypatch.setattr(backend, "delete", delete)
+    monkeypatch.setattr(backend, "ensure_row", ensure)
+    await transitions._prior_task(prior)
+    monkeypatch.undo()
+    got = await transitions._claim_one(
+        stale["task"], claimant="bot", actor="process:bot", lease_seconds=60
+    )
+    assert got is None
+    assert (await repo.fetch_task(org, tid))["status"] == "cancelled"
+    leases = await ch.query_all(
+        "SELECT task_id FROM loom.task_leases WHERE task_id = {t:String}", params={"t": tid}
+    )
+    assert leases == []
+
+
+@pytest.mark.asyncio
+async def test_a_reopen_takes_back_a_lease_row_a_late_write_left_at_an_older_fence(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reopen's second lease write is slow: the task is claimed and cancelled meanwhile,
+    and the write leaves an idle row at the older fence. The next reopen moves that row to
+    the task's fence, so the task is claimable again."""
+    org = f"itest-strand-{uuid.uuid4().hex[:8]}"
+    tid = await _todo_task(org)
+    await transitions.handle_task_cancel(_reason(org, tid))
+    backend = await repo.lease_backend()
+    real_ensure = backend.ensure_row
+    calls = 0
+
+    async def ensure(*a: Any, **k: Any) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:  # the reopen's write after its status row
+            monkeypatch.setattr(backend, "ensure_row", real_ensure)
+            await transitions.handle_task_claim(
+                wire.TaskClaimInput(org=org, namespace="private", agent="bot", task_id=tid)
+            )
+            await transitions.handle_task_cancel(_reason(org, tid))
+        await real_ensure(*a, **k)
+
+    monkeypatch.setattr(backend, "ensure_row", ensure)
+    await transitions.handle_task_reopen(_reason(org, tid))
+    monkeypatch.undo()
+    await transitions.handle_task_reopen(_reason(org, tid))
+    out = await transitions.handle_task_claim(
+        wire.TaskClaimInput(org=org, namespace="private", agent="bot", task_id=tid)
+    )
+    assert out.task.status == "in_progress"

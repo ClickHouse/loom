@@ -731,9 +731,14 @@ class KeeperLeases:
     def ch(self) -> _CHClient:
         return self._ch or _default_client()
 
-    async def ensure_row(self, task_id: str, org: str, inbox: str, fence: int) -> None:
+    async def ensure_row(
+        self, task_id: str, org: str, inbox: str, fence: int, *, reset_idle: bool = False
+    ) -> None:
         """Insert the lease row for a new task (owner empty). A retry that
-        finds the key present is fine: the row is the same."""
+        finds the key present is fine: the row is the same. `reset_idle` (a reopen):
+        a row already present with no owner and an older fence takes `fence`, so a stray
+        row a late write left behind cannot keep every claim losing. Fences only grow,
+        so a late reset never lowers one."""
         try:
             await self.ch.execute(
                 "INSERT INTO loom.task_leases "
@@ -746,6 +751,22 @@ class KeeperLeases:
         except Exception as e:  # the key exists: a retried create
             if "Node exists" not in str(e):
                 raise
+            if reset_idle:
+                await self._reset_idle_fence(task_id, fence)
+
+    async def _reset_idle_fence(self, task_id: str, fence: int) -> None:
+        try:
+            await self.ch.execute(
+                "ALTER TABLE loom.task_leases UPDATE fence = {fence:UInt32}, updated_at = now() "
+                "WHERE task_id = {tid:String} AND owner = '' AND fence < {fence:UInt32} "
+                "SETTINGS keeper_map_strict_mode = 1",
+                params={"tid": task_id, "fence": int(fence)},
+            )
+        except Exception as e:
+            # Lost to a claim that took the row meanwhile: its fence is the current one.
+            if "KEEPER_EXCEPTION" in str(e) or "Bad version" in str(e):
+                return
+            raise
 
     async def try_claim(
         self, task_id: str, claimant: str, *, expected_fence: int, lease_until: datetime

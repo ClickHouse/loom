@@ -312,13 +312,21 @@ async def _claim_one(
     backend = await repo.lease_backend()
     lease_until = _naive(_now() + timedelta(seconds=lease_seconds))
     assert lease_until is not None
+    task_id, fence = str(task["task_id"]), int(task.get("fence") or 0)
     result = await backend.try_claim(
-        str(task["task_id"]),
-        claimant,
-        expected_fence=int(task.get("fence") or 0),
-        lease_until=lease_until,
+        task_id, claimant, expected_fence=fence, lease_until=lease_until
     )
     if not result.won:
+        return None
+    # A lease row can be written from a status read nobody holds (a late create retry or
+    # reopen): the claim stands only if the task, read after winning, is still the todo
+    # task at the fence it claimed.
+    now = await repo.fetch_task(task["org"], task_id)
+    if now is None or now["status"] != "todo" or int(now.get("fence") or 0) != fence:
+        if now is None or now["status"] in TERMINAL:
+            await backend.delete(task_id)
+        else:
+            await _release_lease({**now, "fence": result.fence}, status=str(now["status"]))
         return None
     return await _record(
         task,
@@ -753,7 +761,9 @@ async def handle_task_reopen(input: TaskReasonInput) -> TaskOutput:
     if task["status"] not in ("failed", "wont_do", "cancelled"):
         raise await _state_conflict("TASK_NOT_REOPENABLE", task)
     backend = await repo.lease_backend()
-    await backend.ensure_row(str(task["task_id"]), task["org"], task["inbox"], int(task["fence"]))
+    await backend.ensure_row(
+        str(task["task_id"]), task["org"], task["inbox"], int(task["fence"]), reset_idle=True
+    )
     row, seq = await _record(
         task,
         event="reopened",
@@ -767,7 +777,9 @@ async def handle_task_reopen(input: TaskReasonInput) -> TaskOutput:
     )
     # Again after the status row, as an end drops it before and after its own: a create
     # retry that read the task ended may delete the row between the two.
-    await backend.ensure_row(str(row["task_id"]), row["org"], row["inbox"], int(row["fence"]))
+    await backend.ensure_row(
+        str(row["task_id"]), row["org"], row["inbox"], int(row["fence"]), reset_idle=True
+    )
     return TaskOutput(task=_payload(row), seq=seq)
 
 

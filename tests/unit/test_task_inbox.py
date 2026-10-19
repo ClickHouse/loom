@@ -54,8 +54,12 @@ class FakeLeases:
         self.rows: dict[str, dict[str, Any]] = {}
         self.deleted: list[str] = []
 
-    async def ensure_row(self, task_id: str, org: str, inbox: str, fence: int) -> None:
-        self.rows.setdefault(task_id, {"owner": "", "fence": fence, "lease_until": None})
+    async def ensure_row(
+        self, task_id: str, org: str, inbox: str, fence: int, *, reset_idle: bool = False
+    ) -> None:
+        row = self.rows.setdefault(task_id, {"owner": "", "fence": fence, "lease_until": None})
+        if reset_idle and row["owner"] == "" and row["fence"] < fence:
+            row["fence"] = fence
 
     async def try_claim(self, task_id, claimant, *, expected_fence, lease_until) -> ClaimResult:
         row = self.rows.setdefault(task_id, {"owner": "", "fence": expected_fence})
