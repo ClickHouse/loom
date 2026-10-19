@@ -88,7 +88,7 @@ Tombstoned turns are filtered from every read. They are removed from disk only i
 operator set a table TTL (`LOOM_RETENTION_CONVERSATIONS_DAYS`, 0 = keep forever). That
 TTL covers `loom.conversations` only: a turn's embedding row, which keeps up to 2,048
 characters of its text, has no TTL; an erasure request tombstones it, and removes it
-only when the request sets `purge`.
+only on a `namespace_list` erasure with `purge`.
 
 ### Thread titles
 
