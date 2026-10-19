@@ -40,9 +40,12 @@ by `{COMMAND}`; edit the comment, not this file.
 
 
 def _comment_block(lines: list[str], lineno: int) -> tuple[str | None, str]:
-    """The heading (a `# --- x ---` line) and the comment text directly above `lineno`."""
+    """The heading (a `# --- x ---` line) and the comment text directly above `lineno`,
+    up to an empty `#` line: what a section's first field has above that is the
+    section's lead-in, not its meaning."""
     out: list[str] = []
     heading = None
+    own = True
     i = lineno - 2
     while i >= 0 and lines[i].strip().startswith("#"):
         text = lines[i].strip()
@@ -50,7 +53,10 @@ def _comment_block(lines: list[str], lineno: int) -> tuple[str | None, str]:
         if m:
             heading = m.group(1)
             break
-        out.append(text.lstrip("#").strip())
+        if text == "#":
+            own = False
+        elif own:
+            out.append(text.lstrip("#").strip())
         i -= 1
     return heading, " ".join(reversed(out)).strip()
 

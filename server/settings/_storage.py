@@ -20,14 +20,14 @@ class StorageSettings(BaseModel):
     # it and deletes every original of its scope.
     document_blob_min_age_seconds: int = 3600
 
+    # ---- retention and tiering ----
     # Opt-in retention/tiering, applied as idempotent ALTER TABLE MODIFY TTL by
     # server/storage/retention_overrides.py:
     #   - retention_*_days: delete rows older than N days. 0 = keep forever.
     #   - tiering_*_warm_days: move rows older than W days to
     #     tiering_warm_volume_name. 0 = no tiering.
     # With both set, W must be < N or the move is a no-op (logged WARN).
-
-    # ---- retention and tiering ----
+    #
     # Days `loom.audit_log` rows are kept; 0 = forever. A person's Undo of a
     # retirement holds by its record there: one aged out stops holding, and the
     # conflict resolver may judge and retire that pair again.
