@@ -604,3 +604,94 @@ async def test_a_delete_of_a_row_still_holding_a_sweeps_marker_is_a_delete(
     await set_commit._set_plain_insert(w, ch)
     got = await _read_back(ch)
     assert got is not None and got.value == "Thursdays"
+
+
+@pytest.mark.asyncio
+async def test_a_write_committed_between_the_check_and_the_tombstone_is_put_back(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A plain set takes no key lock: it commits after delete_version read the old head and
+    # before its tombstone. The delete then finds it and writes it back above the tombstone,
+    # as if the write had come first (the delete refuses).
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    w = _in_flight_set(time.time_ns() - 1_000_000)
+    write_row = hm._write_tombstone_row
+
+    async def set_lands_first(existing: Any, **kw: Any) -> None:
+        await set_commit._set_plain_insert(w, ch)
+        await write_row(existing, **kw)
+
+    monkeypatch.setattr(hm, "_write_tombstone_row", set_lands_first)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is False and out.reason == "version_changed"
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays"
+
+
+@pytest.mark.asyncio
+async def test_a_write_whose_fence_read_missed_a_conditional_delete_lifts_after_its_insert(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The set reads its fence, then the whole delete_version runs (the set is not in yet,
+    # so nothing is put back), then the set inserts under the tombstone. Its read after the
+    # insert finds a tombstone aimed at an older version and writes the row again above it,
+    # as if the delete had come first.
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    w = _in_flight_set(head + 5_000_000)
+    insert = set_commit.insert_memory_versions
+    answers: list[Any] = []
+
+    async def delete_then_insert(rows: list[dict[str, Any]], **kw: Any) -> int:
+        if not answers:
+            answers.append(
+                await hm.handle_memory_delete_version(
+                    MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+                )
+            )
+        return await insert(rows, **kw)
+
+    monkeypatch.setattr(set_commit, "insert_memory_versions", delete_then_insert)
+    await set_commit._set_plain_insert(w, ch)
+    assert answers[0].tombstoned is True
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays" and got.version == w.version
+    assert w.version > answers[0].version
+
+
+@pytest.mark.asyncio
+async def test_a_batch_keeps_a_row_already_above_the_tombstone_where_it_is(
+    ch: _StatefulCH,
+) -> None:
+    # Two entries of one key straddle a delete: the earlier moves just above the
+    # tombstone, the later keeps its version, so a delayed write drawn between them
+    # stays under the batch's newest value.
+    from server.memory.app.write_fence import lift_above_deletes
+
+    delete_at = _FIXED_HEAD
+    await ch.insert(
+        "loom.memory",
+        [
+            {
+                **_row("Tuesdays", delete_at),
+                "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+            }
+        ],
+    )
+    earlier, later = (
+        _row("Wednesdays", delete_at - 1_000_000),
+        _row("Fridays", delete_at + 1_000_000),
+    )
+    vectors = [{**_ID, "memory_key": _KEY, "version": int(r["version"])} for r in (earlier, later)]
+    lifted = await lift_above_deletes("o", "n", [earlier, later], vectors, ch=ch)
+    assert delete_at < earlier["version"] < delete_at + 1_000 + 1
+    assert later["version"] == delete_at + 1_000_000 and list(lifted) == [
+        (_KEY, delete_at - 1_000_000)
+    ]
+    assert [v["version"] for v in vectors] == [earlier["version"], later["version"]]
+    await ch.insert("loom.memory", [earlier, later, _row("Thursdays", delete_at + 500_000)])
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Fridays"

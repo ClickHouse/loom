@@ -43,7 +43,7 @@ from server.memory.app.projections import (
     write_entity_vectors,
 )
 from server.memory.app.provenance import writer_actor
-from server.memory.app.write_fence import lift_above_deletes
+from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.memory_types import is_embedded
 
 if TYPE_CHECKING:
@@ -314,6 +314,15 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         _insert_memory_rows(),
         memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
     )
+    if state.memory_rows:
+        # A memory.delete_version that landed after the fence read: the rows go above it.
+        lifted = await lift_after_insert(
+            first["org"], first["namespace"], state.memory_rows, state.embedding_rows, ch=ch
+        )
+        if lifted:
+            for res in state.results:
+                res.version = lifted.get((res.memory_key, res.version), res.version)
+            retire = _vectors_to_retire(state)
     # The entries' versions were drawn before the batch embedded: a slow batch indexes
     # its own BM25 stats.
     await memory_repo.index_late_rows(state.embedding_rows, ch=ch)

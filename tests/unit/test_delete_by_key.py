@@ -92,8 +92,13 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _no_lease(*_key: str) -> AsyncIterator[None]:
         yield
 
+    async def _no_later_write(*_a: Any, **_k: Any) -> dict[Any, Any]:
+        return {}
+
     monkeypatch.setattr(memory_repo, "get_by_key", _get_by_key)
     monkeypatch.setattr(key_write_lock.key_write_locks, "hold", _no_lease)
+    # memory.delete_version's re-read after its tombstone: no write landed in between.
+    monkeypatch.setattr(memory_repo, "versions_above", _no_later_write)
     monkeypatch.setattr(hm, "get_client", lambda: state["ch"])
     monkeypatch.setattr(_stack_mod, "get_client", lambda: state["ch"])
     monkeypatch.setattr(_restore_mod, "get_client", lambda: state["ch"])

@@ -49,6 +49,7 @@ from server.memory.app.provenance import writer_actor
 from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
+from server.memory.domain.delete_marks import delete_version_trace
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
@@ -615,8 +616,10 @@ async def handle_memory_delete_version(
     input: MemoryDeleteVersionInput,
 ) -> MemoryDeleteVersionOutput:
     """Tombstone one version of a key under this exact identity, or nothing when the row
-    under it has moved on. Conditional writes of the key wait for the key lock; a
-    memory.set or memory.bulk_set in flight across it may land above it (`write_fence`)."""
+    under it has moved on. Conditional writes of the key wait for the key lock. A plain
+    write takes none: one that committed after the version check is put back above the
+    tombstone here, and one still in flight lifts itself above it when it lands
+    (`write_fence`). Either way the write after the named version stays."""
     import server.memory.store as memory_repo
 
     if input.agent == "*":
@@ -646,7 +649,15 @@ async def handle_memory_delete_version(
         _lock.assert_unlocked(existing, "delete", op="memory.delete_version")
         assert_own_row(existing, op="memory.delete_version")
         version = next_version()
-        tombstoned, downgraded = await _tombstone(
+        await _write_tombstone_row(
+            existing, version=version, trace=delete_version_trace(input.version)
+        )
+        # A plain write takes no key lock: one that committed after the check above sits
+        # under the tombstone now. It came after the version this delete names, so it
+        # stays: its row goes back above the tombstone, and nothing derived is retired.
+        if await _put_back_a_later_write(existing, checked=int(input.version), tombstone=version):
+            return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
+        tombstoned, downgraded = await _retire_derived(
             existing, version=version, op="memory.delete_version"
         )
     return MemoryDeleteVersionOutput(
@@ -657,14 +668,55 @@ async def handle_memory_delete_version(
     )
 
 
+async def _put_back_a_later_write(existing: Any, *, checked: int, tombstone: int) -> bool:
+    """Whether a write of the key committed between the version check (`checked`) and the
+    tombstone; if so its row is written again above the tombstone. A write still in flight
+    lifts itself when it lands (`write_fence.lift_after_insert`)."""
+    import server.memory.store as memory_repo
+
+    key = {
+        "agent": existing.agent,
+        "user_id": existing.user_id,
+        "session_id": existing.session_id,
+        "memory_key": existing.memory_key,
+        "version": checked,
+    }
+    committed = await memory_repo.versions_above(existing.org, existing.namespace, [key])
+    above = committed.get(
+        (existing.agent, existing.user_id, existing.session_id, existing.memory_key), []
+    )
+    later = [v for v, deleted, _target in above if not deleted and v != tombstone]
+    if not later:
+        return False
+    rows = await memory_repo.fetch_version_rows(
+        existing.org, existing.namespace, [(existing.memory_key, max(later))]
+    )
+    rows = [
+        r
+        for r in rows
+        if (r.agent, r.user_id, r.session_id)
+        == (existing.agent, existing.user_id, existing.session_id)
+    ]
+    if rows:
+        back = memory_repo.build_memory_version_row(
+            rows[0], version=next_version(), updated_at=memory_repo.written_now()
+        )
+        await insert_memory_versions([back], ch=get_client())
+    return True
+
+
 async def _tombstone(existing: Any, *, version: int, op: str) -> tuple[int, int]:
-    """Write the tombstone of `existing` at `version` and retire what was derived from it:
-    its vectors, its chunks, a procedure's run ledger, and the summaries built from it.
+    """Write the tombstone of `existing` at `version` and retire what was derived from it.
     Returns how many consolidated summaries it tombstoned and downgraded."""
+    await _write_tombstone_row(existing, version=version)
+    return await _retire_derived(existing, version=version, op=op)
+
+
+async def _write_tombstone_row(existing: Any, *, version: int, trace: str = "") -> None:
+    """The loom.memory tombstone of `existing` at `version`, `trace` as its source_trace."""
     import server.memory.store as memory_repo
     from server.observability.otel import traced
 
-    ch = get_client()
     now = datetime.now(UTC)
     # build_memory_version_row carries every live column forward (avoiding
     # silent column loss); only the tombstone deltas override.
@@ -673,11 +725,21 @@ async def _tombstone(existing: Any, *, version: int, op: str) -> tuple[int, int]
         version=version,
         updated_at=memory_repo.written_now(),
         tombstoned_at=now,
-        source_trace="",
+        source_trace=trace,
         expires_at=None,
     )
     with traced("ch.insert.memory.tombstone", table="loom.memory"):
-        await insert_memory_versions([tombstone_row], ch=ch)
+        await insert_memory_versions([tombstone_row], ch=get_client())
+
+
+async def _retire_derived(existing: Any, *, version: int, op: str) -> tuple[int, int]:
+    """Retire what was derived from the row a tombstone at `version` removed: its vectors,
+    its chunks, a procedure's run ledger, and the summaries built from it. Returns how many
+    consolidated summaries it tombstoned and downgraded."""
+    import server.memory.store as memory_repo
+
+    ch = get_client()
+    now = datetime.now(UTC)
 
     # Propagate the tombstone to memory_embeddings — search reads that table, so without it
     # soft-deleted memories keep surfacing. Each live row of the key (one per scope and

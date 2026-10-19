@@ -12,6 +12,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.core.tag_sql import TagFilter, tag_where
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
+from server.memory.domain.delete_marks import DELETE_VERSION_TRACE
 from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 from server.memory.domain.temporal_sql import as_of_predicate
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
@@ -898,10 +899,11 @@ async def versions_above(
     rows: list[dict[str, Any]],
     *,
     ch: _CHClient | None = None,
-) -> dict[tuple[str, str, str, str], list[tuple[int, bool]]]:
+) -> dict[tuple[str, str, str, str], list[tuple[int, bool, int]]]:
     """Every committed version of each row's key (agent, user_id, session_id, memory_key)
     above the lowest version among `rows`, newest first, with whether it is a delete's
-    tombstone (a blacklist sweep's is not one). From loom.memory_versions, which keeps
+    tombstone (a blacklist sweep's is not one) and, for memory.delete_version's tombstone,
+    the version it removed (0 otherwise). From loom.memory_versions, which keeps
     every version (a merge of loom.memory keeps only the newest). Read with sequential
     consistency, since the answer feeds the write."""
     if not rows:
@@ -914,15 +916,21 @@ async def versions_above(
         "keys": keys,
         "v": min(int(r["version"]) for r in rows),
         "sweep": SWEEP_REASON_PREFIX,
+        "dv": DELETE_VERSION_TRACE,
     }
     found = await ch.query_all(
         f"""
         SELECT agent, user_id, session_id, memory_key,
-               arrayReverseSort(groupArray((version, deleted))) AS versions
+               arrayReverseSort(groupArray((version, deleted, target))) AS versions
         FROM (
             SELECT agent, user_id, session_id, memory_key, version,
                    tombstoned_at IS NOT NULL
-                       AND NOT startsWith(expire_reason, {{sweep:String}}) AS deleted
+                       AND NOT startsWith(expire_reason, {{sweep:String}}) AS deleted,
+                   if(
+                       tombstoned_at IS NOT NULL AND startsWith(source_trace, {{dv:String}}),
+                       toUInt64OrZero(substring(source_trace, length({{dv:String}}) + 1)),
+                       0
+                   ) AS target
             FROM loom.memory_versions
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND (agent, user_id, session_id, memory_key)
@@ -936,7 +944,7 @@ async def versions_above(
     )
     return {
         (f["agent"], f["user_id"], f["session_id"], f["memory_key"]): [
-            (int(v), bool(d)) for v, d in f["versions"]
+            (int(v), bool(d), int(t)) for v, d, t in f["versions"]
         ]
         for f in found
     }

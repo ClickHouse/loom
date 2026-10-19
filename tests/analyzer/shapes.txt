@@ -106,6 +106,7 @@
 1425256025b1	SELECT src, dst, relation, direction, pair_co_occur, provenance FROM ( -- The aggregate alias must NOT be `co_occur`: shadowing the source -- column makes ClickHouse resolve the HAVING reference into 
 145e6b643cb8	SELECT org, namespace, agent, user_id, session_id, memory_key FROM loom.memory AS m WHERE m.memory_type IN (?, ?, ?) GROUP BY org, namespace, agent, user_id, session_id, memory_key HAVING argMax(empty
 14832d2f7a3a	SELECT count() AS n FROM loom.entity_edges WHERE org = {org:String} AND (namespace, entity_a, entity_b) IN (SELECT namespace, entity_a, entity_b FROM loom.entity_edge_memories FINAL WHERE org = {org:S
+14c924c1ec78	SELECT agent, user_id, session_id, memory_key, arrayReverseSort(groupArray((version, deleted, target))) AS versions FROM ( SELECT agent, user_id, session_id, memory_key, version, tombstoned_at IS NOT 
 151bb818f3c6	SELECT count() AS n FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND status != ? AND agent = {agent:String} AND user_id = {uid:String} AND sess
 154aea8f41f9	SELECT toString(evidence_id) AS eid, session_id, role, actor, toString(observed_at) AS observed, content, matched FROM ( SELECT evidence_id, session_id, role, actor, observed_at, content, tombstoned_a
 155d5ce80570	ALTER TABLE loom.shared DELETE WHERE (org = {org:String} AND arrayExists(x -> splitByChar(?, x)[?] = {uid:String}, promoted_from)) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) S
@@ -826,7 +827,6 @@
 84503eca22ec	ALTER TABLE loom.memory UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND has(tags, ?) AND hasAny(tags, (SELECT groupArray(concat(?, memory_key)) FROM loom.
 8452df8453eb	DELETE FROM loom.memory_embeddings WHERE (org = {org:String} AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS lightweight_deletes_sync = ?
 847f10f435b6	SELECT memory_id, memory_key, memory_type, version, pinned, created_at, conflict_with, sensitivity FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND status = ? AND tombst
-84959cc2dd7a	SELECT agent, user_id, session_id, memory_key, arrayReverseSort(groupArray((version, deleted))) AS versions FROM ( SELECT agent, user_id, session_id, memory_key, version, tombstoned_at IS NOT NULL AND
 8499dcb5bf9a	SELECT path, scope, symbol_ids, start_line, end_line, content FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, tombstoned_at FROM loom.code_chunks WHERE org = {org:Strin
 850f03574fca	ALTER TABLE loom.memory_records UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_muta
 85659ea30b8c	SELECT c.session_id AS session_id, c.chunk_index AS chunk_index, c.parent_memory_key AS parent_memory_key, cosineDistance(c.embedding, {q:Array(Float32)}) AS distance FROM loom.memory_chunks AS c WHER
