@@ -390,13 +390,17 @@ def _update_sensitivity(
     level memory.set would give the new value (autodetected when the setting is on),
     never below the row's own label."""
     from server.memory.domain.sensitivity import (
+        detector_text,
         max_sensitivity,
         resolve_sensitivity,
         sensitivity_tags,
     )
 
     level = max_sensitivity(
-        [getattr(existing, "sensitivity", ""), resolve_sensitivity("", serialized_value)]
+        [
+            getattr(existing, "sensitivity", ""),
+            resolve_sensitivity("", detector_text(serialized_value)),
+        ]
     )
     return level, [*tags, *sensitivity_tags(level, tags)]
 

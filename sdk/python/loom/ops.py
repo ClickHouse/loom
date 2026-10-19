@@ -7102,6 +7102,7 @@ class ConflictRow(TypedDict, total=False):
     created_at: Required[str]  # date-time as ISO-8601 text
     conflict_with: Required[list[str]]
     content_sha256: NotRequired[str]
+    sensitivity: NotRequired[str]
 
 
 class ConflictsProposeRevisionInput(TypedDict, total=False):
@@ -10546,6 +10547,7 @@ class MemoryExportEvidenceInput(TypedDict, total=False):
     session_id: NotRequired[str]
     limit: NotRequired[int]
     cursor: NotRequired[str]
+    include_high: NotRequired[bool]
 
 
 class MemoryExportEvidenceBody(TypedDict, total=False):
@@ -10555,6 +10557,7 @@ class MemoryExportEvidenceBody(TypedDict, total=False):
     session_id: NotRequired[str]
     limit: NotRequired[int]
     cursor: NotRequired[str]
+    include_high: NotRequired[bool]
 
 
 class MemoryExportEvidenceOutput(TypedDict, total=False):
@@ -10563,6 +10566,7 @@ class MemoryExportEvidenceOutput(TypedDict, total=False):
     edges: NotRequired[list["EvidenceEdge"]]
     has_more: NotRequired[bool]
     next_cursor: NotRequired[str]
+    held_high: NotRequired[int]
 
 
 class EvidenceChunk(TypedDict, total=False):
@@ -11224,6 +11228,7 @@ class MemoryListEntry(TypedDict, total=False):
     value_truncated: NotRequired[bool]
     content_sha256: NotRequired[str]
     char_limit: NotRequired[Optional[int]]
+    sensitivity: NotRequired[str]
 
 
 class MemoryLockInput(TypedDict, total=False):
@@ -11326,6 +11331,7 @@ class MemoryMoveOutput(TypedDict, total=False):
     dry_run: NotRequired[bool]
     memory_type: NotRequired[str]
     value_preview: NotRequired[str]
+    sensitivity: NotRequired[str]
 
 
 class MemoryOutcomeInput(TypedDict, total=False):
@@ -11686,6 +11692,7 @@ class MemoryProposal(TypedDict, total=False):
     agent: NotRequired[str]
     memory_type: NotRequired[str]
     value_preview: NotRequired[str]
+    sensitivity: NotRequired[str]
     tags: NotRequired[list[str]]
     created_at: NotRequired[str]
     graded_passes: NotRequired[int]

@@ -42,6 +42,7 @@ async def test_the_locate_statement_reads_no_value_and_the_fetch_reads_no_final(
             "pinned": False,
             "created_at": _T,
             "conflict_with": ["b"],
+            "sensitivity": "",
         },
         {
             "memory_id": "c",
@@ -51,6 +52,7 @@ async def test_the_locate_statement_reads_no_value_and_the_fetch_reads_no_final(
             "pinned": True,
             "created_at": _T,
             "conflict_with": [],
+            "sensitivity": "",
         },
     ]
     values = [
@@ -97,6 +99,7 @@ async def test_a_row_whose_value_vanished_between_the_statements_is_null_not_los
             "pinned": False,
             "created_at": _T,
             "conflict_with": [],
+            "sensitivity": "",
         }
     ]
     ch = _CH(located, [])
@@ -119,6 +122,7 @@ async def test_two_identities_sharing_a_key_and_version_each_get_their_own_value
             "pinned": False,
             "created_at": _T,
             "conflict_with": [],
+            "sensitivity": "",
         }
         for mid in ("m-a", "m-b")
     ]

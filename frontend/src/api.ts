@@ -156,6 +156,8 @@ export interface MemoryListEntry {
   value_truncated?: boolean;
   content_sha256?: string;
   char_limit?: number | null;
+  // "" | low | medium | high. A high row's value is not in the list: memory.get reads it.
+  sensitivity?: string;
 }
 
 /** human | process: attested and unchanged since. stale: attested, then
@@ -759,6 +761,8 @@ export interface ConflictRow {
   created_at: string;
   conflict_with: string[];
   content_sha256: string;
+  // A high row comes without its value; the inspector reads it by key.
+  sensitivity?: string;
 }
 
 export async function listConflicts(

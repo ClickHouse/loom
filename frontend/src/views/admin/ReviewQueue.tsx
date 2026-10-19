@@ -35,7 +35,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
-import { relativeTime, formatValue, truncate, humanizeError } from "../../lib/format";
+import { relativeTime, formatValue, truncate, humanizeError, SENSITIVE_READ_BY_KEY } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { useNamespaceRole } from "../../lib/namespaceRole";
 import { canCall } from "../../lib/canCall";
@@ -278,6 +278,7 @@ function ConflictsPanel() {
             version={current.version}
             pinned={current.pinned}
             createdAt={current.created_at}
+            sensitive={current.sensitivity === "high"}
           />
           <PeerSide rows={rows} peerId={peerId} />
         </div>
@@ -799,6 +800,7 @@ function Side({
   pinned,
   createdAt,
   peerId,
+  sensitive,
 }: {
   label: string;
   memKey: string;
@@ -807,13 +809,16 @@ function Side({
   pinned?: boolean;
   createdAt?: string;
   peerId?: string;
+  sensitive?: boolean;
 }) {
   return (
     <Panel tone="surface-2" padding="sm">
       <div className="text-xs text-text-muted mb-1.5">{label}</div>
       <div className="font-mono text-xs text-text mb-2 truncate">{memKey}</div>
       <div className="text-sm text-text mb-2 leading-snug min-h-10">
-        {value == null ? (
+        {sensitive ? (
+          <span className="text-text-muted">{SENSITIVE_READ_BY_KEY}</span>
+        ) : value == null ? (
           <span className="text-text-muted">
             Peer: <span className="font-mono">{peerId?.slice(0, 12)}…</span>
           </span>

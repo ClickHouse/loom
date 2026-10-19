@@ -13,11 +13,12 @@ from server.auth.jwt import AuthInfo
 from server.core.errors import AuthInsufficientError
 from server.memory.api.models_crud import MemoryGetInput
 from server.memory.app import handlers as mem
+from server.memory.store.rows import MemoryRow
 
 
-def _row(version: int = 7, sensitivity: str = "") -> SimpleNamespace:
+def _row(version: int = 7, sensitivity: str = "") -> MemoryRow:
     now = datetime(2026, 9, 12, tzinfo=UTC)
-    return SimpleNamespace(
+    return MemoryRow(
         memory_id="11111111-1111-1111-1111-111111111111",
         value={"text": "deploys on Tuesday"},
         memory_type="semantic",
@@ -53,6 +54,12 @@ def _row(version: int = 7, sensitivity: str = "") -> SimpleNamespace:
         evidence="",
         char_limit=None,
         mentioned_at=None,
+        org="acme",
+        namespace="ns",
+        agent="a",
+        user_id="-",
+        session_id="-",
+        memory_key="k",
     )
 
 
@@ -69,6 +76,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 
     async def emit(kind: str, **kw: Any) -> None:
         e.audits.append(kind)
+        e.actor = kw.get("actor")
 
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
     monkeypatch.setattr(audit, "emit", emit)
@@ -138,8 +146,61 @@ async def test_exact_get_obeys_the_tokens_pinned_user(env) -> None:
 async def test_a_get_names_the_rows_user_and_session(env) -> None:
     """A write back to the row (the dashboard's restore and verify) names its identity:
     a key repeats across users and sessions."""
-    env.row.agent, env.row.user_id, env.row.session_id = "bot", "u1", "s2"
+    env.row = env.row.model_copy(update={"agent": "bot", "user_id": "u1", "session_id": "s2"})
     out = await mem.handle_memory_get(_input())
     assert (out.agent, out.user_id, out.session_id) == ("bot", "u1", "s2")
     dumped = out.model_dump()
     assert dumped["user_id"] == "u1" and dumped["session_id"] == "s2"
+
+
+@pytest.mark.asyncio
+async def test_a_high_read_is_audited_as_the_tokens_principal(env) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.memory.domain.trust import actor_for
+
+    env.row = _row(sensitivity="high")
+    set_current_auth(
+        AuthInfo(
+            subject="reader", org="acme", namespaces=("ns",), roles=(), is_service_account=True
+        )
+    )
+    try:
+        out = await mem._handle_memory_get(_input())
+    finally:
+        set_current_auth(None)
+    assert out.found and env.audits == ["memory.sensitive_read"]
+    assert env.actor == actor_for("reader", is_service_account=True)
+
+
+@pytest.mark.asyncio
+async def test_a_high_read_by_id_is_audited_as_the_tokens_principal(
+    env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import server.memory.store as memory_repo
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.memory.api.models_crud import MemoryGetByIdInput
+    from server.memory.domain.trust import actor_for
+
+    async def by_id(*_a: Any, **_k: Any) -> Any:
+        return _row(sensitivity="high")
+
+    async def in_scope(*_a: Any, **_k: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(memory_repo, "get_by_id", by_id)
+    monkeypatch.setattr("server.auth.authz.row_in_scope", in_scope)
+    set_current_auth(
+        AuthInfo(
+            subject="reader", org="acme", namespaces=("ns",), roles=(), is_service_account=True
+        )
+    )
+    try:
+        await mem.handle_memory_get_by_id(
+            MemoryGetByIdInput(org="acme", memory_id="11111111-1111-1111-1111-111111111111")
+        )
+    finally:
+        set_current_auth(None)
+    assert env.audits == ["memory.sensitive_read"]
+    assert env.actor == actor_for("reader", is_service_account=True)

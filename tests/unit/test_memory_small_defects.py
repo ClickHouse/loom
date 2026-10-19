@@ -297,6 +297,8 @@ def _row(
         last_recalled_at=None,
         evidence_count=1,
         agent="a",
+        user_id="-",
+        session_id="-",
         reinforcement_count=1,
         last_reinforced_at=None,
         tags=[],
@@ -510,7 +512,7 @@ async def test_get_never_names_a_canonical_outside_the_read_scope(
 
     monkeypatch.setattr(memory_repo, "canonical_rows_by_ids", canonical_rows_by_ids)
     monkeypatch.setattr("server.memory.app.served_duplicates.request_scope", lambda: only_u)
-    monkeypatch.setattr(mem, "request_narrowed", lambda: True)
+    monkeypatch.setattr("server.memory.app.get_output.request_narrowed", lambda: True)
     follow_env.row = _row("k", "duplicate", _CANON_ID)
 
     out = await mem.handle_memory_get(

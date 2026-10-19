@@ -79,5 +79,8 @@ class MemoryMoveOutput(BaseModel):
     dry_run: bool = False
     # Dry-run preview of the destination: its type and the first 200 chars.
     memory_type: str = ""
-    # Dry run only: the first 200 chars of the destination value.
+    # Dry run only: the first 200 chars of the destination value; "" for a high source,
+    # whose value is read by key (memory.get).
     value_preview: str = ""
+    # Dry run only: the source's sensitivity tier ('' | low | medium | high).
+    sensitivity: str = ""

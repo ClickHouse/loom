@@ -20,9 +20,10 @@ be pulled into a prompt by similarity, which is what embedding it would do.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable
-from typing import Final
+from typing import Any, Final
 
 HIGH: Final = "high"
 MEDIUM: Final = "medium"
@@ -173,6 +174,63 @@ def detect_sensitivity(text: str) -> str:
     return ""
 
 
+# A line no pattern matches across: `;` ends the assignment shape's token class, and the
+# phone shape allows only one space, dot or dash between its groups.
+_SCALAR_SEP = "\n;\n"
+
+
+def detector_text(value: Any) -> str:
+    """Decoded text of a stored value for the detector: a JSON string is parsed, and each key
+    and scalar is its own line, so a token after a newline keeps its word boundary. The lines
+    are joined by `_SCALAR_SEP`, which no pattern crosses, so two scalars never read as one
+    (`Password:` then the next key, or `256`, `512`, `1024` as a phone number). Iterative, so
+    a deeply nested value cannot stop a worker pass."""
+    if isinstance(value, str):
+        text = value
+        try:
+            value = json.loads(text)
+        except (ValueError, RecursionError):
+            return text
+    lines: list[str] = []
+    stack: list[Any] = [value]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, dict):
+            for k, x in reversed(list(v.items())):
+                stack.append(x)
+                stack.append(str(k))
+        elif isinstance(v, list | tuple):
+            stack.extend(reversed(v))
+        elif v is not None:
+            lines.append(str(v))
+    return _SCALAR_SEP.join(lines)
+
+
+def value_reads_high(value: Any) -> bool:
+    """Whether a stored value holds a credential shape, read decoded (`detector_text`), whatever
+    the autodetect setting. For a value; raw stored text (a chunk, a passage) goes through
+    `reads_high`, which also undoes JSON escapes."""
+    return detect_sensitivity(detector_text(value)) == HIGH
+
+
+# A JSON string escape, decoded once and in order (so `\\n`, an escaped backslash then `n`,
+# stays a backslash and an `n`).
+_JSON_ESCAPE = re.compile(r'\\(["\\/bfnrt])')
+_JSON_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f"}
+
+
+def reads_high(text: str) -> bool:
+    """Whether `text` holds a credential shape, whatever the autodetect setting: the rule for
+    text copied from a row (a digest's key facts, an observation sent to a model, a raw
+    chunk), which has no label of its own or carries one a later sweep may not have set
+    yet. Text holding JSON (a chunk of an object value) is read with its string escapes
+    undone too, where a token after `\\n` or a quoted password keeps its word boundary."""
+    if detect_sensitivity(text) == HIGH:
+        return True
+    unescaped = _JSON_ESCAPE.sub(lambda m: _JSON_ESCAPES.get(m.group(1), m.group(1)), text)
+    return unescaped != text and detect_sensitivity(unescaped) == HIGH
+
+
 def resolve_sensitivity(requested: str | None, text: str) -> str:
     """The caller's explicit level wins; an unset level is detected from the
     value when `memory_sensitivity_autodetect` is on, else stays ''."""
@@ -213,6 +271,15 @@ _CONTACT_INTENT = re.compile(
     r"who (?:do|should) i (?:call|email|contact))\b",
     re.IGNORECASE,
 )
+
+
+def is_high(level: object, tags: object) -> bool:
+    """High by the sensitivity column or by the `sensitivity:high` tag memory.set adds."""
+    if str(level or "").strip().lower() == HIGH:
+        return True
+    if not isinstance(tags, list):
+        return False
+    return SENSITIVITY_TAG_PREFIX + HIGH in {str(t).strip().lower() for t in tags}
 
 
 def sensitivity_tags(level: str | None, existing: Iterable[str] = ()) -> list[str]:

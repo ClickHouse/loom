@@ -12,7 +12,7 @@ import { MemoryTabs } from "../components/MemoryTabs";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { Chip, PageHeader, TabTrigger, TipTarget } from "../components/ui";
-import { humanizeError, relativeTime, displayAgent, previewValue } from "../lib/format";
+import { humanizeError, relativeTime, displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, whyTerms } from "../lib/whyNote";
 
@@ -318,6 +318,7 @@ export function RecallLab() {
         search.catch(() => {}); // awaited below; a rejection before then is not unhandled
         const kw = await listMemories(identity, KEYWORD_PAGE, {
           contains: q,
+          // `sensitivity` comes with every entry; naming it would 422 on an older replica
           fields: ["memory_key", "memory_type", "value"],
           previewChars: 200,
           signal: ac.signal,
@@ -339,7 +340,9 @@ export function RecallLab() {
             const entry = keyword.get(key);
             return {
               key,
-              text: hit?.content_excerpt ?? previewValue(entry?.value),
+              // A high row comes without its value: say so rather than show an empty row.
+              text:
+                hit?.content_excerpt ?? (entry?.sensitivity === "high" ? SENSITIVE_LABEL : previewValue(entry?.value)),
               memoryType: hit?.memory_type ?? entry?.memory_type ?? "",
               keyword: entry !== undefined,
               hit,

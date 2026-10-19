@@ -396,11 +396,12 @@ class MemoryBulkGetInput(_Identity):
     """Fetch many memory entries by key in one CH round-trip."""
 
     # Keys to read under this identity; a `chunk:memory.set:<key>:<n>` id from a
-    # search reads its parent fact.
+    # search reads its parent fact when no row is stored under that key, and the
+    # parent answers under the id it was asked by.
     memory_keys: list[str] = Field(..., min_length=1, max_length=1000)
     # Whitelist of output field names applied to every entry
-    # in `results` (each keeps `found`). Empty = every field. See
-    # MemoryGetInput.fields.
+    # in `results` (each keeps `found`, and `resolved_from` when set). Empty = every field.
+    # See MemoryGetInput.fields.
     fields: list[str] = Field(default_factory=list, max_length=64)
 
 
@@ -408,7 +409,8 @@ class MemoryBulkGetOutput(BaseModel):
     # Named `results` (not `found`) to avoid colliding with the per-row
     # `found: bool` inside MemoryGetOutput. Every value is a hit; `missing` is misses.
     results: dict[str, MemoryGetOutput] = Field(default_factory=dict)
-    # Asked keys with no live row under this identity.
+    # Asked keys with no live row under this identity. A row past `expires_at` is served
+    # until the expiry sweep, as memory.list serves it, except a high one, which lands here.
     missing: list[str] = Field(default_factory=list)
 
 

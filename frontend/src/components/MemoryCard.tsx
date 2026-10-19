@@ -5,9 +5,11 @@ import type { Identity, MemoryListEntry } from "../api";
 import { getMemory } from "../api";
 import { AgentBadge } from "./AgentBadge";
 import { Chip } from "./ui";
-import { relativeTime, timeOfDay, truncate, previewValue } from "../lib/format";
+import { relativeTime, timeOfDay, truncate, previewValue, SENSITIVE_LABEL } from "../lib/format";
 import { detectEncodedValue, detectEncodedRecord } from "../lib/encoded";
 import { useAbortableEffect } from "../lib/hooks";
+
+const SENSITIVE = { value: SENSITIVE_LABEL, encoded: false };
 
 /** The bounded preview a card shows for a value, and whether the value was
  *  an agent-encoded (base64) envelope whose decoded text is shown instead. */
@@ -63,13 +65,19 @@ export const MemoryCard = memo(function MemoryCard({
   // render for every card on the page (a page of 99 cards paid ~220 ms of script for that
   // at 4x CPU). The base64 envelope check runs on the parsed object, or on a string value
   // directly; the inspector still shows both forms in full.
-  const preview = useMemo(() => (preloaded === undefined ? null : describe(preloaded)), [preloaded]);
+  // A high row's value is readable by key only, and every such read is audited: the card
+  // says so and leaves the read to the inspector.
+  const sensitive = entry.sensitivity === "high";
+  const preview = useMemo(
+    () => (sensitive ? SENSITIVE : preloaded === undefined ? null : describe(preloaded)),
+    [sensitive, preloaded],
+  );
   // For a parent that has no value: one memory.get per card, shown when it lands.
   const [fetched, setFetched] = useState<{ value: string; encoded: boolean } | null>(null);
 
   useAbortableEffect(
     (signal, live) => {
-      if (preloaded !== undefined) return;
+      if (sensitive || preloaded !== undefined) return;
       // memory.get requires the strict identity tuple that wrote the row. The
       // list view queries cross-agent (agent="*"), so we use each entry's own
       // agent from the list response, falling back to the current
@@ -87,7 +95,7 @@ export const MemoryCard = memo(function MemoryCard({
           /* fail-quiet — card just shows no value */
         });
     },
-    [identity.org, identity.namespace, identity.agent, entry.memory_key, entry.agent, preloaded],
+    [identity.org, identity.namespace, identity.agent, entry.memory_key, entry.agent, preloaded, sensitive],
   );
 
   const shown = preview ?? fetched;

@@ -35,7 +35,7 @@ from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
 from server.memory.domain.sensitive_retention import sensitive_retention
-from server.memory.domain.sensitivity import resolve_sensitivity
+from server.memory.domain.sensitivity import detector_text, resolve_sensitivity
 from server.memory.store.rows import next_version
 
 if TYPE_CHECKING:
@@ -697,13 +697,14 @@ async def _bulk_build_rows(
         version = next_version()
         expires_at = _entry_expiry(state, entry, entry_sha, now_utc)
         serialized_value = json.dumps(entry.value)
+        decoded_value = detector_text(serialized_value)
         # Sensitivity tier: caller's level, the repeated value's, or detected from
         # the value; rides the row, its `sensitivity:` tag and the embed gate.
         repeated_level = _repeated_level(state, entry, entry_sha)
         entry_sensitivity = (
             repeated_level
             if repeated_level is not None
-            else resolve_sensitivity(getattr(entry, "sensitivity", ""), serialized_value)
+            else resolve_sensitivity(getattr(entry, "sensitivity", ""), decoded_value)
         )
         # Sensitive retention window, same rule as memory.set.
         from server.settings import settings as _sr_settings
@@ -760,7 +761,7 @@ async def _bulk_build_rows(
         # The protected-attribute and sensitivity labels ride the row's tags, and the
         # embedding row's: the ranking reads them there.
         row_tags = _with_sensitivity_tag(
-            _with_attribute_tags(entry_tags, serialized_value, input.namespace),
+            _with_attribute_tags(entry_tags, decoded_value, input.namespace),
             entry_sensitivity,
         )
         state.entry_metas.append((entry, serialized_value, row_tags, entry_entities, expires_at))

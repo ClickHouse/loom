@@ -105,10 +105,12 @@ async def superseded_rows_for_pool(
                 WHERE {" AND ".join(inner)}
                   AND memory_key IN {{keys:Array(String)}}
                   AND tombstoned_at IS NULL
+                  AND sensitivity != 'high'
             ) AS s ON s.mid = m.superseded_by
             WHERE {" AND ".join(where)}
               AND m.status = 'superseded'
               AND m.tombstoned_at IS NULL
+              AND m.sensitivity != 'high'
               AND (m.memory_key IN {{keys:Array(String)}} OR s.mid != '')
             LIMIT {{lim:UInt32}}
             """,

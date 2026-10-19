@@ -86,8 +86,6 @@ async def emit(
     request produces carries it without per-call plumbing. Outside the hash
     payload, like the build/instance stamps."""
     try:
-        # Inside the try: a subject whose keys sort_keys cannot order (mixed
-        # str/int) raises TypeError, and that must not reach the write path.
         return await emit_strict(
             event_type,
             org=org,
@@ -116,6 +114,51 @@ async def emit_strict(
 ) -> str:
     """`emit` that raises when the row is not written: for a record an op depends on
     (an Undo's, which the conflict resolver reads), written before the op's change."""
+    row = _audit_row(
+        event_type,
+        org,
+        namespace,
+        actor,
+        subject,
+        request_id=request_id,
+        ts=ts,
+        consumer=consumer,
+    )
+    await get_client().insert("loom.audit_log", [row])
+    return str(row["row_hash"])
+
+
+async def emit_many(
+    event_type: str,
+    *,
+    org: str,
+    namespace: str,
+    actor: str,
+    subjects: list[dict[str, Any]],
+) -> None:
+    """`emit` for several subjects of one event, in one insert. Never raises."""
+    if not subjects:
+        return
+    try:
+        rows = [_audit_row(event_type, org, namespace, actor, s) for s in subjects]
+        await get_client().insert("loom.audit_log", rows)
+    except Exception as e:  # fail open: an audit write never fails the op it records
+        log.exception("audit.emit_many failed for event_type=%s: %s", event_type, e)
+
+
+def _audit_row(
+    event_type: str,
+    org: str,
+    namespace: str,
+    actor: str,
+    subject: dict[str, Any] | list[Any] | str | None,
+    *,
+    request_id: str = "",
+    ts: datetime | None = None,
+    consumer: str | None = None,
+) -> dict[str, Any]:
+    # A subject whose keys sort_keys cannot order (mixed str/int) raises TypeError;
+    # the callers catch it so it never reaches the write path.
     ts_norm = _normalize_ts(ts or datetime.now(UTC))
     subject_json = json.dumps(subject if subject is not None else {}, sort_keys=True, default=str)
     canonical = {
@@ -127,7 +170,6 @@ async def emit_strict(
         "subject": subject_json,
         "request_id": request_id,
     }
-    rh = _row_hash(canonical)
     row = {
         "ts": ts_norm,
         "event_type": event_type,
@@ -136,7 +178,7 @@ async def emit_strict(
         "actor": actor,
         "subject": subject_json,
         "request_id": request_id,
-        "row_hash": rh,
+        "row_hash": _row_hash(canonical),
     }
     # Which build, process and launcher wrote the
     # row; outside the hash payload.
@@ -148,9 +190,7 @@ async def emit_strict(
     # token's sha256 prefix — server/auth/jwt.py::token_id_of), outside
     # the hash payload like consumer; '' outside a request.
     row["token_id"] = _current_token_id()
-    ch = get_client()
-    await ch.insert("loom.audit_log", [row])
-    return rh
+    return row
 
 
 def _current_token_id() -> str:

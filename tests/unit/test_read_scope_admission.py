@@ -724,6 +724,7 @@ async def test_conflicts_list_drops_peers_outside_the_scope() -> None:
             "pinned": 0,
             "created_at": None,
             "conflict_with": ["p-in", "p-out"],
+            "sensitivity": "",
         }
     ]
     ch = _CH(located, [{"mid": "p-in"}], [])
