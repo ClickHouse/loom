@@ -15,7 +15,7 @@ type Stop = {
   /** Each clipping box the ring overflows, described. */
   clipped: string[];
   /** The focused element shows focus by no ring, and is not a text field (which shows it by
-   *  its border, styles.css). */
+   *  its border, styles.css; fieldsWithoutFocusLook checks that border). */
   ringless: boolean;
   /** The targets the focused element or its ring's element matches. */
   matched: string[];
@@ -365,6 +365,69 @@ test("a focused button that draws no ring fails the walk; a text field shows foc
   const { failures, stops } = await walk(page, "probe");
   expect(stops).toEqual(['input "Name"', 'button "Bare"']);
   expect(failures).toEqual(['probe: no ring on button "Bare"']);
+});
+
+/** The text fields on the page, outside any dialog, whose look does not change on focus:
+ *  the walk passes a ringless field because it shows focus by its border, so each field's
+ *  border colour, box shadow or outline, or its wrapper's (Click UI's field box, the
+ *  chip field), must differ focused from blurred. Transitions are off while it compares. */
+async function fieldsWithoutFocusLook(page: Page): Promise<{ checked: number; flat: string[] }> {
+  return page.evaluate(() => {
+    const off = document.createElement("style");
+    off.textContent = "*, *::before, *::after { transition: none !important; animation: none !important; }";
+    document.head.append(off);
+    const look = (el: Element) => {
+      const parts: string[] = [];
+      // The field and the two boxes around it: Click UI draws the border on its wrapper.
+      for (let e: Element | null = el, i = 0; e && i < 3; e = e.parentElement, i++) {
+        const s = getComputedStyle(e);
+        parts.push(
+          [s.borderTopColor, s.borderBottomColor, s.borderLeftColor, s.boxShadow, s.outlineStyle, s.outlineWidth].join(
+            " ",
+          ),
+        );
+      }
+      return parts.join(" | ");
+    };
+    const fields = [
+      ...document.querySelectorAll<HTMLElement>(
+        'input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([disabled]), textarea:not([disabled])',
+      ),
+    ].filter((el) => !el.closest('[role="dialog"], [role="alertdialog"]') && el.getClientRects().length > 0);
+    const flat: string[] = [];
+    for (const el of fields) {
+      el.blur();
+      const blurred = look(el);
+      el.focus();
+      const focused = look(el);
+      el.blur();
+      if (focused === blurred)
+        flat.push(el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.outerHTML.slice(0, 80));
+    }
+    off.remove();
+    return { checked: fields.length, flat };
+  });
+}
+
+test("a text field whose look does not change on focus is found; one with a focused border is not", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <style>input { border: 1px solid #ccc; outline: none; } #good:focus { border-color: #000; }</style>
+    <input id="good" aria-label="Good"><input aria-label="Flat">`);
+  expect(await fieldsWithoutFocusLook(page)).toEqual({ checked: 2, flat: ["Flat"] });
+});
+
+test.describe("text fields", () => {
+  test.use({ reducedMotion: "reduce" });
+  for (const path of ROUTES) {
+    test(`${path}: every text field changes its border or shadow on focus`, async ({ page }) => {
+      await open(page, path);
+      const { checked, flat } = await fieldsWithoutFocusLook(page);
+      test.info().annotations.push({ type: "text_fields", description: String(checked) });
+      expect(flat).toEqual([]);
+    });
+  }
 });
 
 for (const phone of [false, true]) {
