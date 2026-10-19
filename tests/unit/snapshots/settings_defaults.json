@@ -384,6 +384,7 @@
  "git_history": "local",
  "grant_cache_ttl_seconds": 10.0,
  "identity_provider": "",
+ "inference_token_audience": "",
  "inference_token_scope": "",
  "inference_token_url": "",
  "inference_workload_token_file": "",

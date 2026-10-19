@@ -2054,6 +2054,11 @@
           "type": "string",
           "description": "Identity mode; decides how callers authenticate. single-user    — no auth, one anonymous identity. trust-network  — self-signup, first-claim-wins. gateway        — an upstream proxy mints short-lived Loom JWTs with the shared HS256 secret; Loom only validates. Empty = inferred from auth_required + self_signup at boot."
         },
+        "inference_token_audience": {
+          "default": "",
+          "type": "string",
+          "description": "With inference_token_url and no workload token: the audience of the identity token Loom signs (issuer <https public_base_url>/v1, newest RS256 key); never jwt_audience."
+        },
         "inference_token_scope": {
           "default": "",
           "type": "string",
@@ -2062,12 +2067,12 @@
         "inference_token_url": {
           "default": "",
           "type": "string",
-          "description": "Model calls with no provider key: exchange the workload's OIDC token (RFC 8693) at this token endpoint of the gateway, and send the answer as the bearer (server/llm/gateway.py). The gateway must trust the workload's issuer. \"\" = the provider keys."
+          "description": "Model calls with no provider key: exchange an identity token (RFC 8693) at this token endpoint of the gateway, and send the answer as the bearer (server/llm/gateway.py). The gateway must trust the token's issuer. \"\" = the provider keys."
         },
         "inference_workload_token_file": {
           "default": "",
           "type": "string",
-          "description": "The workload's OIDC token, as a file its platform rotates (a projected service-account token on Kubernetes). Needed with inference_token_url."
+          "description": "The workload's OIDC token, as a file its platform rotates (a projected service-account token on Kubernetes). With inference_token_url, this or inference_token_audience."
         },
         "instance_heartbeat_seconds": {
           "default": 10.0,

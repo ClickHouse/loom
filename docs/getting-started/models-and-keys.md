@@ -227,6 +227,47 @@ gateway's audience; the gateway must trust the cluster's OIDC issuer and match
 Loom's service account (`system:serviceaccount:<namespace>:<name>`), not just
 the issuer, since every pod of the cluster can get a token from it.
 
+#### Without a workload token
+
+Where the platform gives Loom no token (a VM, a container host), Loom signs
+its own: set an audience instead of the token file, and the gateway trusts Loom
+as an issuer.
+
+```bash
+LOOM_INFERENCE_TOKEN_URL=https://gateway.example/oauth/token
+LOOM_INFERENCE_TOKEN_AUDIENCE=loom-inference   # what the gateway's entry for Loom names
+LOOM_PUBLIC_BASE_URL=https://loom.example      # the issuer is <this>/v1
+LOOM_OPENAI_BASE_URL=https://gateway.example/v1
+LOOM_ANTHROPIC_BASE_URL=https://gateway.example
+LOOM_LLM_PROVIDER=openai
+LOOM_LLM_MODEL=gpt-6-luna
+LOOM_EMBEDDING_MODEL=text-embedding-3-large
+```
+
+Each exchange sends a new token that lives five minutes: issuer
+`<LOOM_PUBLIC_BASE_URL>/v1`, subject `loom`, the audience above, signed RS256
+with the newest RS256 key of the signing keyring. Create one first with `loom
+signing-key rotate --algorithm RS256`, unless `LOOM_JWT_SECRET` is an RSA key,
+which signs as RS256 already. That key signs Loom's own tokens too from then
+on, which every Loom of the deployment verifies; an HS256 secret is never used,
+since the gateway could not verify it. Spend is attributed to that one subject.
+
+The gateway's entry for Loom names that issuer, the audience, subject `loom`,
+RS256, and the keys at `<LOOM_PUBLIC_BASE_URL>/v1/.well-known/jwks.json` (OIDC
+discovery is at `/v1/.well-known/openid-configuration`). The gateway must be
+able to fetch that URL over https; where it cannot reach Loom, publish a copy of
+the key set somewhere it can. Each Loom publishes a key at its next keyring
+refresh after `rotate` writes it, and the key signs only `--activate-in` later
+(300 s by default): rotate with an `--activate-in` longer than the gateway
+keeps its copy of the keys, or than copying them takes. A retired key stays
+trusted at the gateway until its copy is refreshed. `loom signing-key retire`
+refuses to retire the last active RS256 key when `LOOM_INFERENCE_TOKEN_AUDIENCE`
+is set in its own environment, so run it with the servers'. Loom (the server
+and every `loom` command) refuses these settings without an https
+`LOOM_PUBLIC_BASE_URL`, with `LOOM_JWT_AUDIENCE` as the audience, or with an
+issuer its own verifier trusts, and its own verifier never accepts a token with
+the gateway's audience.
+
 ## Apply changes and check the result
 
 **Dashboard changes:** wait for Models & keys to report the active configuration. If a

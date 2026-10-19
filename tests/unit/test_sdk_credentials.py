@@ -3,6 +3,7 @@ its lock, and which credential an Agent picks. The server is a MockTransport."""
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import stat
@@ -567,3 +568,411 @@ def test_a_refresh_answered_without_the_mark_still_rotates(server) -> None:
     with pytest.raises(BackendUnavailable, match="predates"):
         credentials.access_token(refused="a2")
     assert credentials.stored_login(_SERVER) is not None
+
+
+def _lock_dir(home) -> Any:
+    return home / "loom" / ".credentials.lock.d"
+
+
+def test_the_credentials_lock_holds_a_lock_directory_naming_its_holder(_home) -> None:
+    # The lock the TypeScript SDK takes too: Node has no flock.
+    with credentials._locked():
+        owner = json.loads((_lock_dir(_home) / "owner").read_text())
+        assert owner["pid"] == os.getpid()
+        assert isinstance(owner["host"], str) and isinstance(owner["time"], float)
+    assert not _lock_dir(_home).exists()
+
+
+def test_the_credentials_lock_waits_while_another_process_holds_the_directory(_home) -> None:
+    import threading
+    import time as _time
+
+    lock = _held_by(_home, 1, "another-machine")  # as a Node process mid-refresh holds it
+    threading.Timer(0.3, lambda: credentials.shutil.rmtree(lock)).start()
+    t0 = _time.monotonic()
+    with credentials._locked():
+        waited = _time.monotonic() - t0
+    assert waited >= 0.25
+
+
+def _held_by(home: Any, pid: int, host: str, age_s: float = 0.0) -> Any:
+    lock = _lock_dir(home)
+    lock.mkdir(parents=True)
+    (lock / "owner").write_text(json.dumps({"pid": pid, "host": host, "time": time.time()}))
+    _age(lock, age_s)
+    return lock
+
+
+def _age(path: Any, age_s: float) -> None:
+    at = time.time() - age_s
+    os.utime(path, (at, at))
+
+
+def _leftovers(home: Any) -> list[str]:
+    return sorted(p.name for p in (home / "loom").glob(".credentials.lock.d.*"))
+
+
+def _dead_pid() -> int:
+    import subprocess
+    import sys
+
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    return child.pid
+
+
+def test_a_lock_whose_holder_on_another_machine_went_silent_is_broken(_home) -> None:
+    lock = _held_by(_home, 1, "another-machine", credentials._LOCK_STALE_S + 1)
+    t0 = time.monotonic()
+    with credentials._locked():
+        assert json.loads((lock / "owner").read_text())["pid"] == os.getpid()
+    assert time.monotonic() - t0 < 2
+    assert not lock.exists()
+    assert _leftovers(_home) == []  # the renamed lock is removed too
+
+
+def test_a_lock_that_missed_two_heartbeats_and_whose_holder_here_died_is_broken(_home) -> None:
+    import socket
+
+    lock = _held_by(_home, _dead_pid(), socket.gethostname(), credentials._LOCK_SILENT_S + 1)
+    t0 = time.monotonic()
+    with credentials._locked():
+        assert json.loads((lock / "owner").read_text())["pid"] == os.getpid()
+    assert time.monotonic() - t0 < 2
+
+
+@pytest.mark.parametrize(
+    ("where", "alive"),
+    [("this machine", True), ("another machine", False), ("this machine", False)],
+)
+def test_a_lock_with_a_recent_heartbeat_is_waited_for(_home, where, alive) -> None:
+    import socket
+    import threading
+
+    # pid 1 runs (as another user: EPERM counts as running); a holder on
+    # another machine cannot be asked, and one in another pid namespace here
+    # (a container sharing the home) looks dead: its heartbeat decides.
+    host = socket.gethostname() if where == "this machine" else "another-machine"
+    lock = _held_by(_home, 1 if alive else _dead_pid(), host)
+    threading.Timer(0.3, lambda: credentials.shutil.rmtree(lock)).start()
+    t0 = time.monotonic()
+    with credentials._locked():
+        waited = time.monotonic() - t0
+    assert waited >= 0.25
+
+
+def test_the_holder_touches_the_lock_while_it_holds_it(_home, monkeypatch) -> None:
+    monkeypatch.setattr(credentials, "_LOCK_HEARTBEAT_S", 0.05)
+    lock = _lock_dir(_home)
+    with credentials._locked():
+        old = time.time() - 3600
+        os.utime(lock, (old, old))
+        time.sleep(0.3)
+        assert time.time() - lock.stat().st_mtime < 5
+
+
+def test_breaking_leaves_a_lock_that_changed_hands_or_another_waiter_is_breaking(_home) -> None:
+    lock = _held_by(_home, 1, "another-machine", credentials._LOCK_STALE_S + 1)
+    held = (lock / "owner").read_text()
+    claim = lock.with_name(".credentials.lock.d.breaking")
+    # Taken over between the read and the break: left alone, claim withdrawn.
+    credentials._break(lock, '{"pid": 2}')
+    assert lock.exists() and not claim.exists()
+    # Another waiter is breaking it: this one waits, and the lock still looks stale.
+    claim.mkdir()
+    credentials._break(lock, held)
+    assert (lock / "owner").read_text() == held
+    assert credentials._stale(lock, held)
+    claim.rmdir()
+    credentials._break(lock, held)
+    assert not lock.exists() and _leftovers(_home) == []
+
+
+def test_a_claim_left_by_a_breaker_that_died_is_cleared_once_old(_home) -> None:
+    lock = _held_by(_home, 1, "another-machine", credentials._LOCK_STALE_S + 1)
+    claim = lock.with_name(".credentials.lock.d.breaking")
+    claim.mkdir()
+    _age(claim, credentials._LOCK_STALE_S + 1)
+    t0 = time.monotonic()
+    with credentials._locked():
+        assert json.loads((lock / "owner").read_text())["pid"] == os.getpid()
+    assert time.monotonic() - t0 < 2
+    # Renamed away, never removed by its path, and deleted by the next sweep.
+    (left,) = _leftovers(_home)
+    assert left.startswith(".credentials.lock.d.breaking.") and left.endswith(".stale")
+    with credentials._locked():
+        pass
+    assert _leftovers(_home) == []
+
+
+def test_clearing_an_old_claim_leaves_a_fresh_one_made_after_it(_home) -> None:
+    lock = _held_by(_home, 1, "another-machine", credentials._LOCK_STALE_S + 1)
+    held = (lock / "owner").read_text()
+    claim = lock.with_name(".credentials.lock.d.breaking")
+    claim.mkdir()
+    _age(claim, credentials._LOCK_STALE_S + 1)
+    credentials._break(lock, held)
+    assert not claim.exists()
+    claim.mkdir()  # another waiter's, made right after
+    credentials._break(lock, held)
+    assert claim.exists() and (lock / "owner").read_text() == held
+
+
+def test_a_release_waits_for_a_breaker_s_claim(_home) -> None:
+    import threading
+
+    lock = _lock_dir(_home)
+    claim = lock.with_name(".credentials.lock.d.breaking")
+    with credentials._locked():
+        claim.mkdir()  # a waiter breaking it, judged stale
+        threading.Timer(0.3, claim.rmdir).start()
+        t0 = time.monotonic()
+    assert time.monotonic() - t0 >= 0.25
+    assert not lock.exists() and not claim.exists()
+
+
+def test_a_release_that_never_gets_the_claim_leaves_the_lock(_home, monkeypatch) -> None:
+    # Renaming it then could rename away a lock a third process takes after it.
+    monkeypatch.setattr(credentials, "_RELEASE_WAIT_S", 0.1)
+    lock = _lock_dir(_home)
+    claim = lock.with_name(".credentials.lock.d.breaking")
+    with credentials._locked():
+        claim.mkdir()
+        owner = (lock / "owner").read_text()
+    assert (lock / "owner").read_text() == owner and claim.exists()
+
+
+def test_a_heartbeat_that_cannot_start_still_releases_the_lock(_home, monkeypatch) -> None:
+    def fail(self: Any) -> None:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(credentials.threading.Thread, "start", fail)
+    with pytest.raises(RuntimeError):
+        with credentials._locked():
+            pass
+    assert not _lock_dir(_home).exists()
+
+
+def _busy_rename(monkeypatch: Any, path: Any, times: int, code: int = errno.EACCES) -> list[int]:
+    """Refuse the next `times` renames of `path` as Windows does while a file
+    in it is open; answers the list of refusals made."""
+    refused: list[int] = []
+    real = credentials.os.rename
+
+    def rename(src: Any, dst: Any) -> None:
+        if str(src) == str(path) and len(refused) < times:
+            refused.append(code)
+            raise OSError(code, os.strerror(code))
+        real(src, dst)
+
+    monkeypatch.setattr(credentials.os, "rename", rename)
+    return refused
+
+
+@pytest.mark.parametrize("code", [errno.EACCES, errno.EPERM, errno.EBUSY])
+def test_releasing_retries_a_rename_refused_while_a_waiter_reads_the_owner(
+    _home, monkeypatch, code
+) -> None:
+    lock = _lock_dir(_home)
+    with credentials._locked():
+        refused = _busy_rename(monkeypatch, lock, 2, code)
+    assert refused == [code, code]
+    assert not lock.exists() and _leftovers(_home) == []
+
+
+def test_a_busy_stale_lock_is_broken_on_a_later_try(_home, monkeypatch) -> None:
+    lock = _held_by(_home, 1, "another-machine", credentials._LOCK_STALE_S + 1)
+    held = (lock / "owner").read_text()
+    _busy_rename(monkeypatch, lock, credentials._RENAME_TRIES, errno.EBUSY)
+    credentials._break(lock, held)  # busy every try: no error, left for the next
+    assert (lock / "owner").read_text() == held
+    assert not lock.with_name(".credentials.lock.d.breaking").exists()
+    with credentials._locked():
+        assert json.loads((lock / "owner").read_text())["pid"] == os.getpid()
+
+
+def test_a_stale_lock_busy_past_twice_the_stale_age_raises(_home, monkeypatch) -> None:
+    lock = _held_by(_home, 1, "another-machine", 2 * credentials._LOCK_STALE_S + 1)
+    _busy_rename(monkeypatch, lock, 10**6)
+    with pytest.raises(credentials.LoomError, match="is stale but cannot be broken"):
+        with credentials._locked():
+            pass
+    assert lock.exists()
+
+
+def test_the_lock_waits_as_long_as_the_typescript_sdk_does() -> None:
+    assert credentials._RELEASE_WAIT_S == 2.0
+    assert credentials._RENAME_TRIES == 5
+    assert credentials._RENAME_WAIT_S == 0.02
+
+
+def _refuse_taking(monkeypatch: Any, lock: Any, times: int, code: int) -> list[int]:
+    """Refuse the next `times` renames onto `lock`, as Windows does while a
+    scanner holds a file in the private directory open."""
+    refused: list[int] = []
+    real = credentials.os.rename
+
+    def rename(src: Any, dst: Any) -> None:
+        if str(dst) == str(lock) and len(refused) < times:
+            refused.append(code)
+            raise OSError(code, os.strerror(code))
+        real(src, dst)
+
+    monkeypatch.setattr(credentials.os, "rename", rename)
+    return refused
+
+
+@pytest.mark.parametrize("code", [errno.EACCES, errno.EPERM, errno.EBUSY])
+def test_a_lock_that_is_not_there_is_taken_once_refusals_stop(_home, monkeypatch, code) -> None:
+    lock = _lock_dir(_home)
+    refused = _refuse_taking(monkeypatch, lock, credentials._RENAME_TRIES - 1, code)
+    with credentials._locked():
+        assert json.loads((lock / "owner").read_text())["pid"] == os.getpid()
+    assert len(refused) == credentials._RENAME_TRIES - 1
+    assert not lock.exists() and _leftovers(_home) == []
+
+
+def test_a_lock_that_is_not_there_and_is_refused_every_try_raises(_home, monkeypatch) -> None:
+    lock = _lock_dir(_home)
+    refused = _refuse_taking(monkeypatch, lock, 10**6, errno.EACCES)
+    with pytest.raises(credentials.LoomError, match="cannot take the credentials lock at") as e:
+        with credentials._locked():
+            pass
+    assert str(lock) in str(e.value) and os.strerror(errno.EACCES) in str(e.value)
+    assert len(refused) == credentials._RENAME_TRIES
+    assert _leftovers(_home) == []
+    lock.mkdir()  # there: held, so waited for
+    (lock / "owner").write_text("{}")
+    assert credentials._create(lock, "{}") is False
+
+
+def test_a_release_s_claim_is_dated_by_this_machine_s_clock(_home, monkeypatch) -> None:
+    # A file server whose clock lags would otherwise make a fresh claim look old to a breaker.
+    claim = _lock_dir(_home).with_name(".credentials.lock.d.breaking")
+    ages: list[float] = []
+    real_mkdir, real_rmdir = credentials.Path.mkdir, credentials.Path.rmdir
+
+    def mkdir(self: Any, *args: Any, **kw: Any) -> None:
+        real_mkdir(self, *args, **kw)
+        if self == claim:
+            _age(claim, 3600)  # dated by a file server an hour behind
+
+    def rmdir(self: Any) -> None:
+        if self == claim:
+            ages.append(time.time() - claim.stat().st_mtime)
+        real_rmdir(self)
+
+    with credentials._locked():
+        monkeypatch.setattr(credentials.Path, "mkdir", mkdir)
+        monkeypatch.setattr(credentials.Path, "rmdir", rmdir)
+    assert len(ages) == 1 and ages[0] < 5
+
+
+def test_taking_the_lock_sweeps_what_a_dead_taker_or_breaker_left(_home) -> None:
+    loom = _home / "loom"
+    for name in (
+        ".credentials.lock.d.0a.tmp",
+        ".credentials.lock.d.0b.stale",
+        ".credentials.lock.d.0c.tmp",
+    ):
+        (loom / name).mkdir(parents=True)
+        (loom / name / "owner").write_text("{}")
+    _age(loom / ".credentials.lock.d.0a.tmp", credentials._LOCK_STALE_S + 1)
+    _age(loom / ".credentials.lock.d.0b.stale", credentials._LOCK_STALE_S + 1)
+    with credentials._locked():
+        pass
+    assert _leftovers(_home) == [
+        ".credentials.lock.d.0c.tmp"
+    ]  # another process may be taking it now
+
+
+@pytest.mark.parametrize("fails", ["claiming it", "renaming it away"])
+def test_a_stale_lock_that_cannot_be_broken_raises_and_never_spins(
+    _home, monkeypatch, fails
+) -> None:
+    lock = _held_by(_home, 1, "another-machine", credentials._LOCK_STALE_S + 1)
+    denied = PermissionError(13, "Permission denied")
+    real_mkdir, real_rename = credentials.Path.mkdir, credentials.os.rename
+
+    def mkdir(self: Any, *args: Any, **kw: Any) -> None:
+        if fails == "claiming it" and self.name == ".credentials.lock.d.breaking":
+            raise denied
+        real_mkdir(self, *args, **kw)
+
+    def rename(src: Any, dst: Any) -> None:
+        if fails == "renaming it away" and str(src) == str(lock):
+            raise OSError(errno.EROFS, "Read-only file system")
+        real_rename(src, dst)
+
+    monkeypatch.setattr(credentials.Path, "mkdir", mkdir)
+    monkeypatch.setattr(credentials.os, "rename", rename)
+    with pytest.raises(credentials.LoomError, match="is stale but cannot be broken"):
+        with credentials._locked():
+            pass
+    assert lock.exists()
+
+
+def test_the_lock_is_dated_by_this_machine_s_clock(_home, monkeypatch) -> None:
+    # utime with no time takes the file server's clock on a network home.
+    touched: list[Any] = []
+    real = credentials.os.utime
+
+    def utime(path: Any, times: Any = None, **kw: Any) -> None:
+        touched.append((str(path), times))
+        real(path, times, **kw)
+
+    monkeypatch.setattr(credentials.os, "utime", utime)
+    monkeypatch.setattr(credentials, "_LOCK_HEARTBEAT_S", 0.05)
+    with credentials._locked():
+        time.sleep(0.2)
+    assert touched[0][0].endswith(".tmp")  # before the rename onto the lock
+    assert touched[1][0] == str(_lock_dir(_home))  # a heartbeat
+    assert all(times is not None for _, times in touched)
+
+
+def test_a_refresh_s_discovery_is_bounded_by_its_deadline(server, monkeypatch) -> None:
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    monkeypatch.setattr(credentials, "_REFRESH_DEADLINE_S", 5.0)
+    timeouts: dict[str, Any] = {}
+    real = server.__class__.__call__
+
+    def record(self: Any, request: httpx.Request) -> httpx.Response:
+        timeouts.setdefault(request.url.path, request.extensions["timeout"])
+        return real(self, request)
+
+    monkeypatch.setattr(server.__class__, "__call__", record)
+    credentials.access_token(refused="a1")
+    discovery = timeouts["/.well-known/oauth-authorization-server"]
+    assert max(discovery.values()) <= 5.0
+
+
+def test_a_refresh_ends_within_its_deadline(server, monkeypatch) -> None:
+    """A connect failure that used up the deadline is not retried: the lock
+    is held for a bounded time, and nothing was spent."""
+    from loom.errors import BackendUnavailable
+
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    real = server.__class__.__call__
+    clock = {"skew": 0.0}
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(credentials.time, "monotonic", lambda: real_monotonic() + clock["skew"])
+    posts: list[str] = []
+
+    def slow_connect_failure(self: Any, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token":
+            posts.append("token")
+            clock["skew"] += credentials._REFRESH_DEADLINE_S
+            raise httpx.ConnectTimeout("no connection", request=request)
+        return real(self, request)
+
+    monkeypatch.setattr(server.__class__, "__call__", slow_connect_failure)
+    with pytest.raises(BackendUnavailable, match="took over 90 s"):
+        credentials.access_token(refused="a1")
+    assert posts == ["token"]
+
+
+def test_releasing_leaves_a_lock_directory_another_process_took_over(_home) -> None:
+    lock = _lock_dir(_home)
+    with credentials._locked():
+        (lock / "owner").write_text('{"pid": 1}')  # broken as stale and taken meanwhile
+    assert lock.exists()

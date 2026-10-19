@@ -68,7 +68,7 @@ append it to its group's `OPERATIONS` list
 ([adding an operation](../development/adding-an-operation.md)). Both transports pick it up.
 
 A few HTTP routes are not registry ops: `/v1/health`, `/v1/whoami`, `/v1/operations`,
-`/v1/.well-known/jwks.json`, `/v1/knowledge.download`, `/v1/auth/login`, the dashboard's
+`/v1/.well-known/jwks.json`, `/v1/.well-known/openid-configuration`, `/v1/knowledge.download`, `/v1/auth/login`, the dashboard's
 `/v1/me/*` and `/v1/admin/*` helpers, and the OAuth and OIDC endpoints. The
 [HTTP API reference](../reference/http-api.md) lists them.
 

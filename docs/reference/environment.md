@@ -91,13 +91,14 @@ See [CLI reference](./cli.md).
 
 ## SDKs
 
-| Variable            | Read by                    | Default                                             | Meaning                                                                     |
-| ------------------- | -------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------- |
-| `LOOM_BASE_URL`     | Python and TypeScript SDKs | Python `http://localhost:7777`; TypeScript required | The server, when the constructor gives none.                                |
-| `LOOM_API_KEY`      | Python and TypeScript SDKs | Python falls back to `~/.loom/token`                | The bearer token, when the constructor gives none. Blank counts as unset.   |
-| `LOOM_LOG_LEVEL`    | Python and TypeScript SDKs | unset                                               | The SDK logger's level (`debug`, `info`, `warning`/`warn`, `error`, `off`). |
-| `LOOM_MENTOR_BRIEF` | Python and TypeScript SDKs | off                                                 | `on` fetches `mentor.brief` in the background on the first call.            |
-| `LOOM_AUTO_RUN`     | Python SDK                 | off                                                 | Bind an ambient run to each `Agent`'s lifetime.                             |
+| Variable            | Read by                    | Default                                        | Meaning                                                                                          |
+| ------------------- | -------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `LOOM_BASE_URL`     | Python and TypeScript SDKs | `http://localhost:7777`                        | The server, when the constructor gives none.                                                     |
+| `LOOM_API_KEY`      | Python and TypeScript SDKs | the `loom login` session, then `~/.loom/token` | The bearer token, when the constructor gives none. Blank counts as unset.                        |
+| `LOOM_PROFILE`      | Python and TypeScript SDKs | `default`                                      | The `loom login` session in `~/.loom/credentials` a client uses when the constructor names none. |
+| `LOOM_LOG_LEVEL`    | Python and TypeScript SDKs | unset                                          | The SDK logger's level (`debug`, `info`, `warning`/`warn`, `error`, `off`).                      |
+| `LOOM_MENTOR_BRIEF` | Python and TypeScript SDKs | off                                            | `on` fetches `mentor.brief` in the background on the first call.                                 |
+| `LOOM_AUTO_RUN`     | Python SDK                 | off                                            | Bind an ambient run to each `Agent`'s lifetime.                                                  |
 
 See [Python SDK](./python-sdk.md) and [TypeScript SDK](./typescript-sdk.md).
 

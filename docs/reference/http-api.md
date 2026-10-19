@@ -30,10 +30,11 @@ auth on, call the API with `curl`, an SDK or MCP.
 
 ### Health and keys
 
-| Method and path                 | Auth | What it is                                                                                                                                                                                                               |
-| ------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET /v1/health`                | none | Liveness: 200 when ClickHouse answers, 503 when it does not; the body carries subsystem state and the problem list. `?include=workers,langfuse,events,embedding_cache,llm_cache,otel,mirrors` adds per-subsystem checks. |
-| `GET /v1/.well-known/jwks.json` | none | The public keys of the keyring's RS256 signing keys; `{"keys": []}` while every key is HS256.                                                                                                                            |
+| Method and path                            | Auth | What it is                                                                                                                                                                                                               |
+| ------------------------------------------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /v1/health`                           | none | Liveness: 200 when ClickHouse answers, 503 when it does not; the body carries subsystem state and the problem list. `?include=workers,langfuse,events,embedding_cache,llm_cache,otel,mirrors` adds per-subsystem checks. |
+| `GET /v1/.well-known/jwks.json`            | none | The public keys of the keyring's RS256 signing keys; `{"keys": []}` while every key is HS256.                                                                                                                            |
+| `GET /v1/.well-known/openid-configuration` | none | The OIDC discovery document of the issuer of the identity tokens Loom signs for an inference gateway (`LOOM_INFERENCE_TOKEN_AUDIENCE`); 404 while it signs none.                                                         |
 
 The health body, its problem codes and how to use it as a readiness check are
 in [Monitoring](../operations/monitoring.md).

@@ -18,18 +18,41 @@ npm install ./loom/sdk/typescript          # or: npm pack in that directory, the
 ```
 
 The package ships ESM and CommonJS builds with their own declaration files and
-imports no Node built-in. The Strands adapter is a second entry point,
-`@clickhouse/loom/integrations/strands`.
+imports no Node built-in when it loads; signing in loads `node:fs` and the
+other built-ins it needs on first use. The Strands adapter is a second entry
+point, `@clickhouse/loom/integrations/strands`.
 
 ## Credentials
 
-`baseUrl` and `apiKey` come from the options, else from `LOOM_BASE_URL` and
-`LOOM_API_KEY` (`readEnv`). A missing base URL throws at construction. A blank
-or whitespace key counts as no credential, so an exported-but-empty variable
-does not become `Authorization: Bearer `. The key is held in an ECMAScript private field:
-`JSON.stringify` shows `apiKey: "…1234"` and `util.inspect` shows no key at
-all.
-Unlike the Python SDK, the TypeScript SDK does not read `~/.loom/token`.
+The client picks its server and credential as the Python SDK does (`readEnv`).
+The `profile` option names a `loom login` session and its server (Node 20.16
+or later, 22.3 or later on Node 22). Otherwise
+`baseUrl` wins, else `LOOM_BASE_URL`, else `http://localhost:7777`, and the
+credential is `tokenProvider` or `apiKey`, then `LOOM_API_KEY`, then a bot's
+`LOOM_CLIENT_ID` with its key or workload token (`MachineLogin`), then the
+session `login()` / `loom login` stored in `~/.loom/credentials` for that
+server (profile `LOOM_PROFILE`, default `default`; it refreshes itself), and
+finally the first line of `~/.loom/token`, the file `loom mint-token --save`
+writes. The last two are read in Node only, on the first request. A stored
+session is used only for the server it signed in to.
+
+`login(server?, { profile })` signs in with the OAuth device flow and stores
+the session in the file the Python SDK and the CLI share; `logout(profile?)`
+revokes it and `whoami(profile?)` asks the server who it says you are. A
+refresh holds the lock directory `~/.loom/.credentials.lock.d`, which the
+Python SDK takes too. A process takes it by renaming a private directory that
+holds an owner file (its pid and host) onto that path, and touches it every
+10 s by its own clock while it holds it. A waiter breaks a lock untouched for
+60 s, or one untouched for 20 s whose holder on this machine is no longer
+running; a Python waiter on Windows does not check the pid and waits the 60 s.
+Breaking a lock and releasing one both rename it away under the claim
+directory `~/.loom/.credentials.lock.d.breaking`, so a break never renames a
+lock taken after a release.
+
+A blank or whitespace key counts as no key, so an exported-but-empty
+variable does not become `Authorization: Bearer `. The key is held in an
+ECMAScript private field: `JSON.stringify` shows `apiKey: "…1234"` and
+`util.inspect` shows no key at all.
 
 ## Quick example
 

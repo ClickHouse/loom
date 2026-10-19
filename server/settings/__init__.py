@@ -14,8 +14,9 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
-from pydantic import PrivateAttr
+from pydantic import PrivateAttr, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from server.core.env_file import env_file_path
@@ -107,6 +108,40 @@ class Settings(
         """The fields `source` (env, env_file, env_copied_from_file, settings_file)
         supplied when this object loaded."""
         return self._loaded_from.get(source, frozenset())
+
+    def inference_issuer(self) -> str:
+        """The `iss` of the identity tokens Loom signs for an inference gateway
+        (`inference_token_audience`): its public address under /v1, where the
+        discovery document and the JWKS are served."""
+        return f"{self.public_base_url.strip().rstrip('/')}/v1"
+
+    @model_validator(mode="after")
+    def _check_inference_identity(self) -> Settings:
+        """Signing its own identity tokens, Loom needs an https public address
+        for their issuer (the gateway fetches the keys there, and a key swapped
+        on the way would be trusted), and they must not pass for Loom's own
+        tokens, which the same RS256 keys sign: the gateway would take those."""
+        if not self.inference_token_audience:
+            return self
+        base = urlsplit(self.public_base_url.strip())
+        if not base.hostname:
+            raise ValueError(
+                "LOOM_INFERENCE_TOKEN_AUDIENCE needs LOOM_PUBLIC_BASE_URL, the issuer of the "
+                "identity tokens Loom signs (the gateway reads its keys there)"
+            )
+        if base.scheme != "https" and base.hostname not in ("localhost", "127.0.0.1", "::1"):
+            raise ValueError("LOOM_INFERENCE_TOKEN_AUDIENCE needs an https LOOM_PUBLIC_BASE_URL")
+        if self.inference_token_audience == self.jwt_audience:
+            raise ValueError(
+                "LOOM_INFERENCE_TOKEN_AUDIENCE is LOOM_JWT_AUDIENCE, the audience of Loom's "
+                "own tokens; name the gateway's"
+            )
+        if self.inference_issuer() in self.trusted_issuers():
+            raise ValueError(
+                "the identity tokens' issuer (LOOM_PUBLIC_BASE_URL + /v1) is one Loom's own "
+                "verifier trusts (LOOM_JWT_ISSUER, LOOM_JWT_TRUSTED_ISSUERS)"
+            )
+        return self
 
     def _mask(self, key: str, value: object) -> object:
         # Only the length, so an operator can confirm it is set: even a short
