@@ -537,7 +537,7 @@ def test_a_summary_past_the_allowance_stays_live_and_the_turns_compact(monkeypat
 def test_the_compaction_window(
     lines: list[str], folded: list[bool], expected: tuple[list[int], str]
 ) -> None:
-    assert ch_mod._compaction_window(lines, folded) == expected
+    assert ch_mod._compaction_window(lines, folded, [False] * len(lines)) == expected
 
 
 def test_a_stale_summary_is_replaced_unread() -> None:
@@ -550,6 +550,30 @@ def test_a_stale_summary_is_replaced_unread() -> None:
     )
     assert replaced == [0, 1, 2]
     assert transcript == "system: " + "s" * 3_000 + "\nuser: a"
+
+
+def test_a_stale_summary_with_a_source_past_the_window_is_read() -> None:
+    """A resend whose window stops before one of a stale summary's sources (a larger
+    keep_recent) reads that summary, so the source left live keeps its cover."""
+    rows = [
+        {
+            "msg_id": "compact-1",
+            "role": "system",
+            "content": "t" * 100,
+            "metadata": '{"compacted_from": ["m1", "m2", "m3"]}',
+        },
+        *(
+            {"msg_id": f"m{i}", "role": "user", "content": f"turn {i}", "metadata": "{}"}
+            for i in (1, 2)
+        ),
+    ]
+    live = {"compact-1", "m1", "m2", "m3"}
+    replaced, transcript = ch_mod._window_of(rows, [True, False, False], live)
+    assert replaced == [0, 1, 2] and "ttt" in transcript
+    # Every source inside the window: replaced unread.
+    rows[0]["metadata"] = '{"compacted_from": ["m1", "m2"]}'
+    replaced, transcript = ch_mod._window_of(rows, [True, False, False], live)
+    assert replaced == [0, 1, 2] and "ttt" not in transcript
 
 
 def test_a_resent_compaction_replaces_the_summary_its_failed_run_left(monkeypatch) -> None:

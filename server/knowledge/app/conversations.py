@@ -688,7 +688,7 @@ def _fitting_prefix(lines: list[str], cap: int) -> int:
 
 
 def _compaction_window(
-    lines: list[str], folded: list[bool], stale: list[bool] | None = None
+    lines: list[str], folded: list[bool], stale: list[bool]
 ) -> tuple[list[int], str]:
     """`(replaced, transcript)`: the indices of the leading candidate lines the summary
     replaces, and the prompt transcript. `stale` marks summaries whose sources are all
@@ -699,7 +699,7 @@ def _compaction_window(
     # new turn. A stale summary is replaced unread: its sources say all it says.
     k, allowance, read, dropped = 0, _FOLDED_SUMMARY_CHARS, [], []
     while k < len(lines) and folded[k]:
-        if stale and stale[k]:
+        if stale[k]:
             dropped.append(k)
         elif len(lines[k]) <= allowance:
             allowance -= len(lines[k])
@@ -709,6 +709,25 @@ def _compaction_window(
     turns = "\n".join(lines[k:fit])[:_COMPACT_TRANSCRIPT_CHARS]
     transcript = "\n".join(part for part in (*(lines[i] for i in read), turns) if part)
     return sorted([*read, *dropped, *range(k, fit)]), transcript
+
+
+def _window_of(
+    candidates: list[dict[str, Any]], folded: list[bool], live_ids: set[str]
+) -> tuple[list[int], str]:
+    """`_compaction_window` over the candidate rows. A summary is stale when its sources
+    are all still live, and stays stale only while this window replaces every one of
+    them: otherwise it is read like any other summary, so no source loses its cover."""
+    lines = [f"{r['role']}: {r['content']}" for r in candidates]
+    sources = [set(_compacted_from(r)) for r in candidates]
+    stale = [bool(s) and s <= live_ids for s in sources]
+    while True:
+        replaced, transcript = _compaction_window(lines, folded, stale)
+        covered = {str(candidates[i]["msg_id"]) for i in replaced}
+        uncovered = [i for i in replaced if stale[i] and not sources[i] <= covered]
+        if not uncovered:
+            return replaced, transcript
+        for i in uncovered:
+            stale[i] = False
 
 
 def _compacted_from(row: Mapping[str, Any]) -> list[str]:
@@ -789,9 +808,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             reason="below-min-to-compact",
         )
 
-    lines = [f"{r['role']}: {r['content']}" for r in candidates]
-    stale = [bool(ids) and set(ids) <= live_ids for ids in map(_compacted_from, candidates)]
-    replaced, transcript = _compaction_window(lines, folded, stale)
+    replaced, transcript = _window_of(candidates, folded, live_ids)
     candidates = [candidates[i] for i in replaced]
     candidate_ids = {str(r["msg_id"]) for r in candidates}
 
