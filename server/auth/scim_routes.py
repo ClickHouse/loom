@@ -61,23 +61,23 @@ class ScimError(Exception):
 
 async def _authorized(request: Request) -> None:
     set_query_tag(f"scim.{request.method.lower()}")  # these routes are not under the transports
-    refused = "a valid SCIM bearer token is required"
+    message = "a valid SCIM bearer token is required"
     # Counted apart from Loom's own bearers: a provider holding a rotated token
-    # needs another fix than a storm of bad user tokens.
+    # needs a different fix from a storm of bad user tokens.
     try:
         token = bearer_token(request.headers.get("authorization"))
     except TokenError as e:
         record_auth_refusal(e, transport="scim")
-        raise ScimError(401, refused) from None
+        raise ScimError(401, message) from None
     if token is None:
         record_auth_refusal(None, transport="scim")
-        raise ScimError(401, refused)
+        raise ScimError(401, message)
     # Every token is compared, so the time taken doesn't say which one matched.
     presented = token.encode()
     matches = [hmac.compare_digest(presented, t.encode()) for t in scim.tokens(settings.scim_token)]
     if not any(matches):
         record_auth_refusal(TokenError(reason="invalid"), transport="scim")
-        raise ScimError(401, refused)
+        raise ScimError(401, message)
 
 
 def _answer(body: dict[str, Any], status: int = 200, **headers: str) -> JSONResponse:
