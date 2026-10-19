@@ -4,15 +4,24 @@
  * `deno/2.1.0 …`, `workers`, `browser`. Nothing that identifies the host.
  */
 
-type ProcessLike = {
+/** The parts of Node's `process` the SDK reads, each absent on some runtime. */
+export type ProcessLike = {
   versions?: Record<string, string | undefined>;
   platform?: string;
   arch?: string;
   argv?: string[];
   env?: Record<string, string | undefined>;
+  pid?: number;
+  stdout?: { isTTY?: boolean };
+  getBuiltinModule?: (id: string) => unknown;
+  kill?: (pid: number, signal?: string | number) => boolean;
+  on?: (event: string, listener: (signal: string) => void) => unknown;
+  off?: (event: string, listener: (signal: string) => void) => unknown;
+  listenerCount?: (event: string) => number;
 };
 
-function proc(): ProcessLike | undefined {
+/** Node's `process`, or undefined on a runtime without one. */
+export function proc(): ProcessLike | undefined {
   return (globalThis as { process?: ProcessLike }).process;
 }
 
