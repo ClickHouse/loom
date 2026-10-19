@@ -259,13 +259,9 @@ class MemorySetInput(_Identity):
     # scales confidence down; 'anonymize' replaces the value with a marker
     # and drops the embeddings, keeping the shell row. Applied by the sweep.
     on_expire: Literal["", "tombstone", "demote", "anonymize"] = ""
-    # Why the expiry is set (at most 512 chars); '' keeps the row's current reason.
+    # Why the expiry is set (at most 512 chars, not starting with `blacklist.sweep:`); ''
+    # keeps the row's current reason.
     expire_reason: str = Field(default="", max_length=512)
-
-    @field_validator("expire_reason")
-    @classmethod
-    def _expire_reason(cls, v: str) -> str:
-        return caller_reason(v)
 
     # Real-world time the fact became true (distinct from created_at and from
     # temporal_anchor). NULL = unknown; as-of reads fall through to created_at.
@@ -307,6 +303,11 @@ class MemorySetInput(_Identity):
     # that already holds one is refused (409 KEY_HOLDS_FACT) — propose under a
     # new key.
     proposed: bool = False
+
+    @field_validator("expire_reason")
+    @classmethod
+    def _expire_reason(cls, v: str) -> str:
+        return caller_reason(v)
 
 
 class MemorySetOutput(BaseModel):
@@ -523,7 +524,8 @@ class MemoryTouchInput(_Identity):
     clear_expiry: bool = False
     # Optionally re-declare the post-action alongside the new expiry.
     on_expire: Literal["", "tombstone", "demote", "anonymize"] = ""
-    # Why the new expiry is set (at most 512 chars); '' keeps the row's reason.
+    # Why the new expiry is set (at most 512 chars, not starting with `blacklist.sweep:`);
+    # '' keeps the row's reason.
     expire_reason: str = Field(default="", max_length=512)
 
     @field_validator("expire_reason")

@@ -31,6 +31,10 @@ from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, ddl, run
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 
+# A fixed version for the lift tests: the offset hashes the drawn version, so a fixed one
+# keeps their expected versions the same on every run (a multiple of 1,000, as a clock that
+# reports microseconds draws).
+_FIXED_HEAD = 1_900_000_000_000_000_000
 _ID = {"org": "o", "namespace": "n", "agent": "okf-sync", "user_id": "-", "session_id": "-"}
 _MID = "00000000-0000-0000-0000-00000000000a"
 _KEY = "deploy_window"
@@ -264,12 +268,15 @@ async def test_a_blacklist_sweeps_tombstone_keeps_the_write_under_it(ch: _Statef
 
 
 @pytest.mark.asyncio
-async def test_two_writes_lifted_over_one_delete_never_share_a_version(ch: _StatefulCH) -> None:
-    # The deleting replica's clock runs a minute ahead. Both writes read the fence before
-    # either lands: each sits just above the tombstone, offset by its own drawn version.
+async def test_two_writes_lifted_over_one_delete_differ_under_clock_skew(
+    ch: _StatefulCH,
+) -> None:
+    # The deleting replica's clock runs ahead. Both writes read the fence before either
+    # lands: each sits just above the tombstone, offset by a hash of its row. The versions
+    # are fixed, so the offsets are too.
     from server.memory.app.write_fence import lift_above_deletes
 
-    head = time.time_ns() + 60_000_000_000
+    head = _FIXED_HEAD
     tombstone = {
         **_row("Tuesdays", head),
         "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
@@ -291,7 +298,7 @@ async def test_writes_drawn_on_a_microsecond_clock_lifted_together_differ(
     # from a hash of the row, not from the clock's last digits.
     from server.memory.app.write_fence import lift_above_deletes
 
-    head = time.time_ns() // 1_000 * 1_000 + 60_000_000_000
+    head = _FIXED_HEAD
     tombstone = {
         **_row("Tuesdays", head),
         "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
@@ -501,21 +508,79 @@ async def test_a_delete_after_a_conditional_sets_check_answers_409(
     assert await _read_back(ch) is None
 
 
-@pytest.mark.parametrize("field", ["memory.set", "memory.touch", "memory.apply"])
-def test_no_caller_writes_a_sweeps_expire_reason(field: str) -> None:
-    # The fence tells a sweep's tombstone by this prefix, so only the sweep stamps it.
-    import pydantic
-
+def _refused_inputs() -> list[tuple[Any, dict[str, Any]]]:
     from server.memory.api.models_apply import MemoryApplyInput
     from server.memory.api.models_crud import MemoryTouchInput
 
     reason = "blacklist.sweep:x"
+    keys = {"org": "o", "namespace": "n", "agent": "a", "target": {"keys": [_KEY]}}
+    return [
+        (MemorySetInput, {**_ID, "memory_key": _KEY, "value": "v", "expire_reason": reason}),
+        (
+            MemoryTouchInput,
+            {**_ID, "memory_keys": [_KEY], "ttl_seconds": 60, "expire_reason": reason},
+        ),
+        (
+            MemoryApplyInput,
+            {**keys, "action": "expire", "expire": {"ttl_seconds": 60}, "reason": reason},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(("model", "body"), _refused_inputs())
+def test_no_caller_writes_a_sweeps_expire_reason(model: Any, body: dict[str, Any]) -> None:
+    # The fence tells a sweep's tombstone by this prefix, so only the sweep stamps it.
+    import pydantic
+
     with pytest.raises(pydantic.ValidationError, match="may not start with"):
-        if field == "memory.set":
-            MemorySetInput(**_ID, memory_key=_KEY, value="v", expire_reason=reason)
-        elif field == "memory.touch":
-            MemoryTouchInput(**_ID, memory_keys=[_KEY], ttl_seconds=60, expire_reason=reason)
-        else:
-            MemoryApplyInput(
-                org="o", namespace="n", target={"keys": [_KEY]}, action="delete", reason=reason
-            )
+        model(**body)
+
+
+def test_a_lock_reason_may_start_with_the_sweeps_prefix() -> None:
+    # memory.apply stores `reason` as an expire_reason only for `expire`.
+    from server.memory.api.models_apply import MemoryApplyInput
+
+    MemoryApplyInput(
+        org="o",
+        namespace="n",
+        agent="a",
+        target={"keys": [_KEY]},
+        action="lock",
+        lock={"mode": "no_delete"},
+        reason="blacklist.sweep:audit",
+    )
+
+
+def test_a_bulk_write_does_not_carry_a_sweeps_marker() -> None:
+    from server.memory.app.bulk_rows import _bulk_carried, _BulkWriteState
+
+    state = _BulkWriteState()
+    state.existing_carried[_KEY] = {"expire_reason": "blacklist.sweep:p1"}
+    assert _bulk_carried(state, _KEY)["expire_reason"] == ""
+    state.existing_carried[_KEY] = {"expire_reason": "rotated"}
+    assert _bulk_carried(state, _KEY)["expire_reason"] == "rotated"
+
+
+@pytest.mark.asyncio
+async def test_a_set_and_a_touch_do_not_carry_a_sweeps_marker(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A row an older build restored from a sweep still holds the marker; the next write of
+    # the key leaves it off, so a later delete is a delete to the fence.
+    from server.memory.api.models_crud import MemoryTouchInput
+
+    await ch.insert(
+        "loom.memory",
+        [{**_row("Tuesdays", time.time_ns() - 1_000_000), "expire_reason": "blacklist.sweep:p1"}],
+    )
+    await hm.handle_memory_touch(MemoryTouchInput(**_ID, memory_keys=[_KEY], ttl_seconds=600))
+    touched = await _read_back(ch)
+    assert touched is not None and touched.expire_reason == ""
+
+    await ch.insert(
+        "loom.memory",
+        [{**_row("Tuesdays", time.time_ns()), "expire_reason": "blacklist.sweep:p1"}],
+    )
+    await _conditional_set(ch, monkeypatch, sha="")
+    written = await _read_back(ch)
+    assert written is not None and written.value == "Thursdays" and written.expire_reason == ""

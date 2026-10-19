@@ -37,6 +37,7 @@ from server.memory.app.set_commit import (
 )
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
+from server.memory.domain.expire_reasons import carried_reason
 from server.memory.domain.files import files_for_set
 from server.memory.domain.graph_quality import canonical_entities
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
@@ -570,7 +571,7 @@ def _set_build_memory_row(w: _SetWrite) -> None:
         # Expiry post-action: the caller's, else the row's.
         "on_expire": _sens_on_expire,
         "expire_reason": (input.expire_reason or "")[:512]
-        or ((getattr(existing, "expire_reason", "") or "") if existing is not None else ""),
+        or (carried_reason(getattr(existing, "expire_reason", "")) if existing is not None else ""),
         # Canonical, as search reads them; the embedding row copies them. This key must be
         # present: `ch.insert` derives its column list from `rows[0].keys()`, so an omission
         # silently writes the schema default. `find_unentitied_memories` selects on

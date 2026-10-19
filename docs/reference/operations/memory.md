@@ -68,7 +68,7 @@ One scope grammar for every write that can touch more than one row.
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `target` | `ApplyTarget` | required | Which rows: exactly one of `keys` (up to 500), `filter` (predicates, ANDed) or `search` (a query, optional `min_score`). |
 | `action` | `Literal['delete', 'expire', 'lock', 'label', 'demote']` | required | What to do to each row; every action but `delete` needs its block below. |
-| `reason` | `str` | required | Why (1..512 chars); stored as lock_reason / expire_reason where the action has such a column. |
+| `reason` | `str` | required | Why (1..512 chars, and for `expire` not starting with `blacklist.sweep:`); stored as lock_reason / expire_reason where the action has such a column. |
 | `limit` | `int \| None` | `None` | Row cap for a `filter` or `search` target, where it is required; unused for `keys`. |
 | `dry_run` | `bool` | `True` | True (the default) reports `would_apply` rows without writing; false writes. |
 | `expire` | `ApplyExpire \| None` | `None` | For `expire`: `ttl_seconds` or `until`, and an optional `on_expire`. |
@@ -1298,7 +1298,7 @@ WHAT: Save a standing fact and protect it.
 | `ttl_seconds` | `int \| None` | `None` | Expire the row this many seconds from now. |
 | `clear_expiry` | `bool` | `False` | Force expires_at=NULL, ignoring per-type/namespace retention defaults. |
 | `on_expire` | `Literal['', 'tombstone', 'demote', 'anonymize']` | `''` | What happens when expires_at passes: '' keeps the row's current action (tombstone for a new row); 'demote' clears the expiry and scales confidence down; 'anonymize' replaces the value with a marker and drops the embeddings, keeping the… |
-| `expire_reason` | `str` | `''` | Why the expiry is set (at most 512 chars); '' keeps the row's current reason. |
+| `expire_reason` | `str` | `''` | Why the expiry is set (at most 512 chars, not starting with `blacklist.sweep:`); '' keeps the row's current reason. |
 | `valid_at` | `datetime \| None` | `None` | Real-world time the fact became true (distinct from created_at and from temporal_anchor). |
 | `valid_to` | `datetime \| None` | `None` | Closing bound of the fact's stated validity ("until 2024"); NULL = open interval. |
 | `pinned` | `bool` | `False` | True when written via memory.pin (explicit-save) |
@@ -1957,7 +1957,7 @@ Save a fact to Loom — shared across every AI tool the user runs; native memory
 | `ttl_seconds` | `int \| None` | `None` | Expire the row this many seconds from now. |
 | `clear_expiry` | `bool` | `False` | Force expires_at=NULL, ignoring per-type/namespace retention defaults. |
 | `on_expire` | `Literal['', 'tombstone', 'demote', 'anonymize']` | `''` | What happens when expires_at passes: '' keeps the row's current action (tombstone for a new row); 'demote' clears the expiry and scales confidence down; 'anonymize' replaces the value with a marker and drops the embeddings, keeping the… |
-| `expire_reason` | `str` | `''` | Why the expiry is set (at most 512 chars); '' keeps the row's current reason. |
+| `expire_reason` | `str` | `''` | Why the expiry is set (at most 512 chars, not starting with `blacklist.sweep:`); '' keeps the row's current reason. |
 | `valid_at` | `datetime \| None` | `None` | Real-world time the fact became true (distinct from created_at and from temporal_anchor). |
 | `valid_to` | `datetime \| None` | `None` | Closing bound of the fact's stated validity ("until 2024"); NULL = open interval. |
 | `pinned` | `bool` | `False` | True when written via memory.pin (explicit-save) |
@@ -2155,7 +2155,7 @@ Change only a memory's expiry: set a new TTL (`ttl_seconds`) or clear it (`clear
 | `ttl_seconds` | `int \| None` | `None` | New expiry this many seconds from now; send it or `clear_expiry: true`, not both. |
 | `clear_expiry` | `bool` | `False` | "never expire" — expires_at becomes NULL. |
 | `on_expire` | `Literal['', 'tombstone', 'demote', 'anonymize']` | `''` | Optionally re-declare the post-action alongside the new expiry. |
-| `expire_reason` | `str` | `''` | Why the new expiry is set (at most 512 chars); '' keeps the row's reason. |
+| `expire_reason` | `str` | `''` | Why the new expiry is set (at most 512 chars, not starting with `blacklist.sweep:`); '' keeps the row's reason. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

@@ -58,7 +58,8 @@ async def lift_above_deletes(
         key = (row["agent"], row["user_id"], row["session_id"], row["memory_key"])
         by_key.setdefault(key, []).append(row)
     for key, rows in by_key.items():
-        lowest = min(int(r["version"]) for r in rows)
+        ordered = sorted(rows, key=lambda r: int(r["version"]))
+        lowest = int(ordered[0]["version"])
         above = [(v, deleted) for v, deleted in committed.get(key, []) if v > lowest]
         if not above or not all(deleted for _, deleted in above):
             continue
@@ -70,10 +71,9 @@ async def lift_above_deletes(
                     "message": "the key was deleted after the if_match_sha256 check",
                 },
             )
-        first = min(rows, key=lambda r: int(r["version"]))
-        spread = zlib.crc32(f"{first.get('memory_id', '')}:{lowest}".encode()) % _LIFT_SPREAD_NS
+        spread = zlib.crc32(f"{ordered[0]['memory_id']}:{lowest}".encode()) % _LIFT_SPREAD_NS
         base = above[0][0] + 1 + spread
-        for i, row in enumerate(sorted(rows, key=lambda r: int(r["version"]))):
+        for i, row in enumerate(ordered):
             old, new = int(row["version"]), base + i
             row["version"] = new
             for vec in embedding_rows:
