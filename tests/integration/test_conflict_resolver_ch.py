@@ -1124,6 +1124,11 @@ async def test_the_by_id_reads_use_the_memory_id_skip_index(ch, wired) -> None:
     for name, (sql, params) in statements.items():
         plan = await ch.query_all("EXPLAIN indexes = 1 " + sql, params=params)
         assert "memory_id_skip" in " ".join(str(v) for r in plan for v in r.values()), name
+    # The Undo read is bounded by ts, a primary-key column: it reads from the rows'
+    # first versions on, not the namespace's every Undo.
+    plan = await ch.query_all("EXPLAIN indexes = 1 " + queue._UNDOS_SQL, params=base)
+    key = " ".join(str(v) for r in plan for v in r.values()).split("PrimaryKey", 1)[1]
+    assert "(ts in [" in key.split("Granules", 1)[0], key
 
 
 async def test_a_value_that_came_back_orders_from_its_return(ch, wired) -> None:
