@@ -680,9 +680,9 @@ async def _key_moved_on(
     newest version other than this delete's own `tombstone`, read with sequential
     consistency; None when it did not. A live row means `version_changed`, and a live row
     below the tombstone (a plain write between the check and the tombstone) is written
-    again above it. Another delete's or a sweep's tombstone means that delete removed the
-    key, not this one (`found=False`); one below this tombstone is written again above it,
-    stamped as this delete's own, so the key's head is the row that delete removed. A
+    again above it. Another delete's or a sweep's tombstone means that delete or sweep
+    removed the key, not this one (`found=False`); one below this tombstone is written again
+    above it, stamped as this delete's own, so the key's head is the row it removed. A
     write still in flight lifts itself when it lands (`write_fence.lift_after_insert`)."""
     import server.memory.store as memory_repo
 
@@ -715,16 +715,17 @@ async def _key_moved_on(
     )
     if row is None:
         raise RuntimeError(f"version {newest} of {existing.memory_key!r} was listed, not read")
+    gone = row.tombstoned_at is not None  # another delete or a sweep removed it
     if newest < tombstone:
         # Written again above this tombstone. A tombstone's copy is this delete's own, aimed
         # at `checked`: a write after it lifts over it as over this tombstone (a sweep's
         # marker stays on the sweep's tombstone, which keeps the writes it caught).
-        trace = {"source_trace": delete_version_trace(checked)} if row.tombstoned_at else {}
+        trace = {"source_trace": delete_version_trace(checked)} if gone else {}
         back = memory_repo.build_memory_version_row(
             row, version=next_version(), updated_at=memory_repo.written_now(), **trace
         )
         await insert_memory_versions([back], ch=get_client())
-    if row.tombstoned_at is not None:
+    if gone:
         return MemoryDeleteVersionOutput(tombstoned=False, found=False)
     return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
 

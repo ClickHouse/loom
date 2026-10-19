@@ -1011,3 +1011,43 @@ async def test_a_sweep_above_the_tombstone_answers_not_found_and_retires_nothing
         MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
     )
     assert out.tombstoned is False and out.found is False and retired == []
+
+
+@pytest.mark.asyncio
+async def test_a_write_the_sweep_caught_stays_under_it_after_the_copy(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A sweep removes the key after delete_version's check; a write drawn before the sweep's
+    # tombstone (one the sweep caught) lands after the copy is written back above the
+    # tombstone. The sweep's own tombstone still sits above it, so neither fence lifts it.
+    from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
+
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    caught: dict[str, Any] = {}
+    get_by_key = memory_repo.get_by_key
+
+    async def check_then_sweep(identity: Any, key: str, **kw: Any) -> Any:
+        found = await get_by_key(identity, key, **kw)
+        if not caught:
+            swept_at = time.time_ns()
+            caught.update(_row("leaked token", swept_at - 1))  # drawn before the sweep
+            swept = {
+                **_row("Tuesdays", swept_at),
+                "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+                "expire_reason": "blacklist.sweep:p1",
+            }
+            await ch.insert("loom.memory", [swept])
+        return found
+
+    monkeypatch.setattr(memory_repo, "get_by_key", check_then_sweep)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.found is False
+    monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
+    drawn = caught["version"]
+    assert await lift_above_deletes("o", "n", [caught], [], ch=ch) == {}
+    await ch.insert("loom.memory", [caught])
+    assert await lift_after_insert("o", "n", [caught], [], ch=ch) == {}
+    assert caught["version"] == drawn and await _read_back(ch) is None

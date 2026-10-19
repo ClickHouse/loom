@@ -349,9 +349,9 @@ first. The delete stamps the version it removed in its tombstone's `source_trace
 reads the key's newest version other than its own tombstone after writing it. A live row
 means the key moved on (`version_changed`); one below the tombstone, a plain write between
 the check and the tombstone, is written back above it. Another delete's or a sweep's
-tombstone means that delete removed the key (`found=false`); one below this tombstone is
-written back above it, stamped as this delete's own tombstone, so a restore brings back
-the row that delete removed and a write after it lifts over the copy as over this
+tombstone means that delete or sweep removed the key (`found=false`); one below this
+tombstone is written back above it, stamped as this delete's own tombstone, so a restore
+brings back the row it removed and a write after it lifts over the copy as over this
 tombstone. Only when the key did not move on does the delete stand and retire vectors and
 chunks. A `memory.delete` whose insert lands after that read can still answer `tombstoned`
 alongside it, as two racing `memory.delete` calls can. Between the tombstone and a write
