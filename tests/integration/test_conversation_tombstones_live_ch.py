@@ -293,6 +293,47 @@ async def test_a_kept_row_passes_to_the_agent_that_still_holds_the_turn(ch, scop
         ]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_at", [0, 1, 2, 3, 4])
+async def test_a_failed_compaction_step_never_leaves_a_hidden_turn_searchable(
+    ch, scope, fail_at
+) -> None:
+    """Whichever statement of the compaction tombstone fails, no turn is left with its
+    message tombstoned and its embedding live, and a retry finishes the job."""
+    await _message(ch, scope, "a", "1", "retry me", T0)
+    await _embedding(ch, scope, "a", "1", "retry me", T0)
+
+    class _FailOnce:
+        """Passes through, and fails the `fail_at`-th write statement."""
+
+        def __init__(self) -> None:
+            self.writes = 0
+
+        async def query_all(self, sql: str, params: Any = None) -> Any:
+            return await ch.query_all(sql, params=params)
+
+        async def query_one(self, sql: str, params: Any = None) -> Any:
+            return await ch.query_one(sql, params=params)
+
+        async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
+            self.writes += 1
+            if self.writes - 1 == fail_at:
+                raise RuntimeError("statement failed")
+            return await ch.execute(sql, params, **kw)
+
+    when = datetime.now(UTC).replace(tzinfo=None)
+    args = (scope["org"], scope["ns"], "a", scope["tid"], ["1"])
+    with pytest.raises(RuntimeError):
+        await repo.tombstone_messages(*args, when=when, ch=_FailOnce())
+    live = await repo.live_messages(scope["org"], scope["ns"], "a", scope["tid"], ch=ch)
+    [(_, _, embedding_live)] = await _rows(ch, scope)
+    assert live or not embedding_live  # a hidden turn is never searchable
+
+    await repo.tombstone_messages(*args, when=when, ch=ch)
+    assert await repo.live_messages(scope["org"], scope["ns"], "a", scope["tid"], ch=ch) == []
+    assert await _rows(ch, scope) == [("1", "retry me", False)]
+
+
 _LONG_IDS = [f"{i:04d}" + "x" * 508 for i in range(300)]  # 512-character ids
 
 

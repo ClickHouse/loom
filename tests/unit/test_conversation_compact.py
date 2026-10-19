@@ -156,28 +156,21 @@ def test_compact_tombstones_only_the_messages_the_summary_read(monkeypatch) -> N
     assert '"compacted_from": ["m0", "m1"]' in summary["metadata"]
 
     # The compacted turns leave conversation.search too: their embeddings are
-    # tombstoned with the messages, by the same ids, before and after them.
-    def step(sql: str) -> str:
-        if "AS tombstoned_at" in sql:
-            return "tombstone"
-        return "handoff" if "INSERT INTO loom.conversation_embeddings" in sql else "messages"
-
-    steps = [
-        (step(sql), p["ids"])
-        for sql, p in fake.executed
-        if "INSERT INTO loom.conversation_embeddings" in sql
-        or "ALTER TABLE loom.conversations\n" in sql
-    ]
-    # Embeddings first, so a retry after a failed messages mutation repeats both; each
-    # pass hands rows another agent still holds to that agent.
-    ids = ["m0", "m1"]
-    assert steps == [
-        ("tombstone", ids),
-        ("handoff", ids),
-        ("messages", ids),
-        ("tombstone", ids),
-        ("handoff", ids),
-    ]
+    # tombstoned by the same ids as the messages (the live ClickHouse tests cover what
+    # the passes produce, a retry after a failure included).
+    tombstoned = {
+        table: params["ids"]
+        for sql, params in fake.executed
+        for table, marker in (
+            ("loom.conversations", "ALTER TABLE loom.conversations\n"),
+            ("loom.conversation_embeddings", "AS tombstoned_at"),
+        )
+        if marker in sql
+    }
+    assert tombstoned == {
+        "loom.conversations": ["m0", "m1"],
+        "loom.conversation_embeddings": ["m0", "m1"],
+    }
 
 
 def test_fitting_prefix_keeps_at_least_one_line() -> None:
