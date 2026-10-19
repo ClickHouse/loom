@@ -5,12 +5,11 @@ entity-overlap neighbours. Outputs are `MemoryRow`s or plain row dicts.
 
 from __future__ import annotations
 
-import itertools
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from server.core.repo_base import _CHClient, _default_client
+from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.core.tag_sql import TagFilter, tag_where
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.domain.temporal_sql import as_of_predicate
@@ -179,30 +178,22 @@ _STATUSES_SQL = """
         """
 
 
-# Ids one statuses read names: a query parameter is one HTTP form field, which
-# ClickHouse caps at 128 KiB (`http_max_field_value_size`), about 3,000 UUIDs.
-_STATUS_IDS_PER_QUERY = 1000
-
-
 async def statuses_by_ids(
     org: str, namespace: str, ids: list[str], *, scope: ReadFilters, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
     """[{memory_id, status, superseded_by}] for the ids among `ids` the namespace holds
     inside `scope`, read strongly; a tombstoned row's status is `deleted`."""
     ch = ch or _default_client()
-    out = []
-    for chunk in itertools.batched(ids, _STATUS_IDS_PER_QUERY):
-        params: dict[str, Any] = {"org": org, "ns": namespace, "ids": list(chunk)}
-        rows = await ch.query_all(_STATUSES_SQL % scope_and(scope, params), params)
-        out += [
-            {
-                "memory_id": str(r["id"]),
-                "status": "deleted" if r["deleted"] else str(r["status"]),
-                "superseded_by": str(r["superseded_by"] or ""),
-            }
-            for r in rows
-        ]
-    return out
+    params: dict[str, Any] = {"org": org, "ns": namespace, "ids": ids}
+    sql = _STATUSES_SQL % scope_and(scope, params)
+    return [
+        {
+            "memory_id": str(r["id"]),
+            "status": "deleted" if r["deleted"] else str(r["status"]),
+            "superseded_by": str(r["superseded_by"] or ""),
+        }
+        for r in await query_all_sliced(ch, sql, params, "ids")
+    ]
 
 
 async def get_by_id(
