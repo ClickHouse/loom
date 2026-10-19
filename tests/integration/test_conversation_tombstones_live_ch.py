@@ -618,6 +618,67 @@ async def test_a_late_reconcile_of_an_orphan_row_passes_to_the_one_left(
     assert await _holders(ch, scope) == [("c", True)]
 
 
+class _LateThenFail(_LateReconcile):
+    """A `_LateReconcile` whose next read fails, as an OVERLOADED call does."""
+
+    async def query_all(self, sql: str, params: Any = None) -> Any:
+        if self.meanwhile is None and "LIMIT 1" in sql:
+            raise RuntimeError("read failed")
+        return await super().query_all(sql, params)
+
+
+@pytest.mark.asyncio
+async def test_a_resent_delete_finishes_an_orphan_row_a_late_handoff_left(ch, scope) -> None:
+    """A's message row is gone. A's reconcile hands the row to B and lands after B's
+    whole delete, then A's call fails before its re-read. The row now matches neither
+    A's agent nor A's turns; the resend still finds it, held by B that deleted its
+    copy, and passes it to C."""
+    for agent in "bc":
+        await _message(ch, scope, agent, "1", "shared", T0 + timedelta(seconds="cb".index(agent)))
+    await _embedding(ch, scope, "a", "1", "shared", T0)
+    when = datetime.now(UTC).replace(tzinfo=None)
+
+    async def b_deletes() -> None:
+        await repo.tombstone_thread(scope["org"], scope["ns"], "b", scope["tid"], when=when, ch=ch)
+
+    with pytest.raises(RuntimeError):
+        await repo.tombstone_thread(
+            scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=_LateThenFail(ch, b_deletes)
+        )
+    assert await _holders(ch, scope) == [("b", True)]
+    await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=ch)
+    assert await _holders(ch, scope) == [("c", True)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("theirs", "holder"), [("to monday", ("a", False)), ("to friday", ("b", True))]
+)
+async def test_a_short_excerpt_passes_only_to_a_copy_of_the_whole_embedded_text(
+    ch, scope, theirs, holder
+) -> None:
+    """A row holding the first 240 characters of A's turn was built from up to 2,048.
+    A peer's turn that shares only those 240 characters is a different text, so the
+    delete tombstones the row; a copy of the whole turn takes it."""
+    head = "deploy " * 40
+    await _message(ch, scope, "a", "1", head + "to friday", T0)
+    await _message(ch, scope, "b", "1", head + theirs, T0)
+    await _embedding(ch, scope, "a", "1", head[:240], T0)
+    await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=T0, ch=ch)
+    assert await _holders(ch, scope) == [holder]
+
+
+@pytest.mark.asyncio
+async def test_a_short_excerpt_with_no_message_to_check_passes_to_nobody(ch, scope) -> None:
+    """A's message row is gone, so nothing shows what built A's 240-character row: the
+    delete tombstones it rather than pass it to a peer sharing those characters."""
+    head = "deploy " * 40
+    await _message(ch, scope, "b", "1", head[:240], T0)
+    await _embedding(ch, scope, "a", "1", head[:240], T0)
+    await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=T0, ch=ch)
+    assert await _holders(ch, scope) == [("a", False)]
+
+
 @pytest.mark.asyncio
 async def test_a_peer_with_an_empty_agent_name_keeps_the_row(ch, scope) -> None:
     """An empty agent name is accepted, so a peer logged under it holds the turn: the

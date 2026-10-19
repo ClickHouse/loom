@@ -812,9 +812,10 @@ _SHORT_EXCERPT_CHARS = 240
 
 # Another agent's live copies of the thread's turns that search indexes (user and
 # assistant turns, and compaction summaries), by msg_id and the text a row would hold
-# for them at either excerpt length.
+# for them at either excerpt length; `full` is the text append embeds.
 _PEER_COPIES = """
-    SELECT msg_id, agent, role, run_id, user_id, ts, arrayJoin([
+    SELECT msg_id, agent, role, run_id, user_id, ts,
+      substringUTF8(content, 1, {embedded:UInt32}) AS full, arrayJoin([
       substringUTF8(content, 1, {embedded:UInt32}),
       substringUTF8(content, 1, {short:UInt32})
     ]) AS excerpt
@@ -849,20 +850,33 @@ def _reconcile_sql(turns: str) -> str:
     it (its agent, role, run and user, so it answers that copy's searches and
     erasure), or tombstoned when none does. `matched` marks a join match: an unmatched
     row reads its default, 0 (any field of `holder`, the agent included, can be
-    empty)."""
-    keep = "p.matched = 1"
+    empty).
+
+    The copy must hold the text the row's vector was built from (`embedded`). A row
+    holding the 240-character cut of its own agent's message (a tombstoned one keeps
+    its content) was built from that message's longer cut; one holding exactly 240
+    characters with no such message to check could have been built from more, so it
+    passes to nobody (`known = 0`)."""
+    keep = "p.matched = 1 AND e.known = 1"
+    own = "s.found = 1 AND u.content_excerpt = substringUTF8(s.src, 1, {short:UInt32})"
     return (
         "INSERT INTO loom.conversation_embeddings"
-        " SELECT e.* REPLACE ("
+        " SELECT e.* EXCEPT (embedded, known) REPLACE ("
         f"if({keep}, p.holder.1, e.agent) AS agent, if({keep}, p.holder.2, e.role) AS role,"
         f" if({keep}, p.holder.3, e.run_id) AS run_id,"
         f" if({keep}, p.holder.4, e.user_id) AS user_id,"
         f" if({keep}, NULL, {{now:DateTime}}) AS tombstoned_at)"
-        " FROM (" + _unheld_embeddings(turns) + ") AS e"
-        " LEFT JOIN (SELECT msg_id, excerpt, 1 AS matched,"
+        f" FROM (SELECT u.*, if({own}, s.src, u.content_excerpt) AS embedded,"
+        f" ({own}) OR lengthUTF8(u.content_excerpt) != {{short:UInt32}} AS known"
+        " FROM (" + _unheld_embeddings(turns) + ") AS u"
+        " LEFT JOIN (SELECT agent, msg_id, 1 AS found,"
+        " any(substringUTF8(content, 1, {embedded:UInt32})) AS src FROM loom.conversations"
+        " WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String}"
+        " GROUP BY agent, msg_id) AS s ON u.agent = s.agent AND u.msg_id = s.msg_id) AS e"
+        " LEFT JOIN (SELECT msg_id, full, 1 AS matched,"
         " argMax((agent, role, run_id, user_id), ts) AS holder"
-        " FROM (" + _PEER_COPIES + ") GROUP BY msg_id, excerpt) AS p"
-        " ON e.msg_id = p.msg_id AND e.content_excerpt = p.excerpt"
+        " FROM (" + _PEER_COPIES + ") GROUP BY msg_id, full) AS p"
+        " ON e.msg_id = p.msg_id AND e.embedded = p.full"
     )
 
 
@@ -899,11 +913,19 @@ async def tombstone_embeddings(
         if msg_ids is None:
             # The rows `_THREAD_TURNS` selects, by key, read once: a row selected only
             # through `agent` (its message row gone) stops matching once handed to a
-            # peer, and the re-read must still see it if that hand-off lands late.
+            # peer, and the re-read must still see it if that hand-off lands late. Rows
+            # held by an agent that has since deleted its copy are added: a late
+            # hand-off can land one there after this call's snapshot, and the resend
+            # reaches it only this way.
             rows = await ch.query_all(
                 "SELECT DISTINCT embedding_model, msg_id FROM loom.conversation_embeddings FINAL"
                 " WHERE org = {org:String} AND namespace = {ns:String}"
-                " AND thread_id = {tid:String} AND tombstoned_at IS NULL AND " + _THREAD_TURNS,
+                " AND thread_id = {tid:String} AND tombstoned_at IS NULL AND ("
+                + _THREAD_TURNS
+                + " OR (agent, msg_id) IN (SELECT agent, msg_id FROM loom.conversations"
+                " WHERE org = {org:String} AND namespace = {ns:String}"
+                " AND thread_id = {tid:String} GROUP BY agent, msg_id"
+                " HAVING countIf(tombstoned_at IS NULL) = 0))",
                 params=params,
             )
             turns = "(embedding_model, msg_id) IN {keys:Array(Tuple(String, String))}"
