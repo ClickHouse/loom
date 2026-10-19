@@ -2805,7 +2805,8 @@ async def test_an_undone_row_keeps_its_first_assertion(ch, wired) -> None:
         " SETTINGS select_sequential_consistency = 1",
         params={"o": org, "m": loser["id"]},
     )
-    got, _ = await queue.asserted_versions(org, NS, [(loser["id"], history[-1]["h"])], ch=ch)
+    found = await queue.asserted_versions(org, NS, [(loser["id"], history[-1]["h"])], ch=ch)
+    got = found.asserted
     assert got[loser["id"]] == history[0]["version"]
 
 

@@ -456,7 +456,7 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         undos = [
             queue.Undo(lo, w, str(e.heads[lo].content_sha256 or ""), 10**20) for lo, w in e.undone
         ]
-        return {i: e.asserted[i] for i, _ in rows if i in e.asserted}, undos
+        return queue.Asserted({i: e.asserted[i] for i, _ in rows if i in e.asserted}, undos)
 
     async def head(org: str, mid: str) -> Any:
         return e.heads.get(mid)
@@ -632,11 +632,11 @@ def test_a_value_its_writer_restated_after_a_retirement_is_asserted_then() -> No
     """Versions (version, holds the hash, superseded): the row held the value at 10, was
     retired at 20, and holds it again at 30, written by an Undo or by its writer."""
     run = [(10, True, False), (20, True, True), (30, True, False)]
-    assert queue._run_start(run, undos=set()) == 30, "restated: a new statement"
-    assert queue._run_start(run, undos={30}) == 10, "the Undo's restore: still 10"
-    assert queue._run_start(run, undos={25}) == 30, "another Undo's version: restated"
-    assert queue._run_start([(10, True, False), (15, True, False)], undos=set()) == 10
-    assert queue._run_start([(10, True, False), (15, False, False)], undos=set()) is None
+    assert queue._run_start(run, undo_versions=set()) == 30, "restated: a new statement"
+    assert queue._run_start(run, undo_versions={30}) == 10, "the Undo's restore: still 10"
+    assert queue._run_start(run, undo_versions={25}) == 30, "another Undo's version: restated"
+    assert queue._run_start([(10, True, False), (15, True, False)], undo_versions=set()) == 10
+    assert queue._run_start([(10, True, False), (15, False, False)], undo_versions=set()) is None
 
 
 async def test_a_retirement_a_person_undid_is_not_made_again(row_env: NS) -> None:
@@ -1189,7 +1189,9 @@ async def test_the_order_is_finer_than_the_second_and_ignores_metadata_writes(
     peer = _mem("m2", version=1_767_398_400_000_000_001, created_at=second, updated_at=touched)
 
     async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> Any:
-        return {"m1": 1_767_312_000_010_000_000, "m2": 1_767_312_000_005_000_000}, []
+        return queue.Asserted(
+            {"m1": 1_767_312_000_010_000_000, "m2": 1_767_312_000_005_000_000}, []
+        )
 
     monkeypatch.setattr(queue, "asserted_versions", asserted)
     order, _ = await resolver._assertion_order("o", "ns", [row, peer])
@@ -1210,7 +1212,7 @@ async def test_the_order_reads_valid_time_in_utc_caps_it_at_the_assertion_and_fa
     asserted_at = {"m1": 1_800_000_000 * ns}
 
     async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> Any:
-        return dict(asserted_at), []
+        return queue.Asserted(dict(asserted_at), [])
 
     monkeypatch.setattr(queue, "asserted_versions", asserted)
     # 01:00 at -07:00 is 08:00 UTC.

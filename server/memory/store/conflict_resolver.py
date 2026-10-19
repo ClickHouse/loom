@@ -487,7 +487,15 @@ class Undo(NamedTuple):
     version: int
 
 
-def _run_start(run: list[tuple[int, bool, bool]], undos: set[int]) -> int | None:
+class Asserted(NamedTuple):
+    """`asserted_versions`' answer: {memory_id: when its current value was asserted, in
+    ns} and the rows' Undos."""
+
+    asserted: dict[str, int]
+    undos: list[Undo]
+
+
+def _run_start(run: list[tuple[int, bool, bool]], undo_versions: set[int]) -> int | None:
     """The first version of the current run of versions holding the hash. A version right
     after a retirement continues the run only when an Undo wrote it; otherwise the writer
     stated the value again, and a new run starts."""
@@ -496,7 +504,7 @@ def _run_start(run: list[tuple[int, bool, bool]], undos: set[int]) -> int | None
     for version, held, superseded in run:
         if not held:
             start = None
-        elif start is None or (after_retirement and version not in undos):
+        elif start is None or (after_retirement and version not in undo_versions):
             start = version
         after_retirement = held and superseded
     return start
@@ -504,15 +512,15 @@ def _run_start(run: list[tuple[int, bool, bool]], undos: set[int]) -> int | None
 
 async def asserted_versions(
     org: str, namespace: str, rows: list[tuple[str, str]], *, ch: _CHClient | None = None
-) -> tuple[dict[str, int], list[Undo]]:
-    """{memory_id: the first version of the current run of history rows holding `sha`}
-    for each (memory_id, sha) in `rows`: when the row's current value was asserted, in
-    wall-clock ns. A metadata copy (touch, pin, tags) keeps the hash, so it does not
-    move it; a value that came back, or that its writer restated after a retirement no
-    one undid, is asserted then. An id the history does not hold is left out. With
-    them, the rows' Undos."""
+) -> Asserted:
+    """`asserted`: {memory_id: the first version of the current run of history rows
+    holding `sha`} for each (memory_id, sha) in `rows`: when the row's current value was
+    asserted, in wall-clock ns. A metadata copy (touch, pin, tags) keeps the hash, so it
+    does not move it; a value that came back, or that its writer restated after a
+    retirement no one undid, is asserted then. An id the history does not hold is left
+    out. `undos`: the rows' Undos."""
     if not rows:
-        return {}, []
+        return Asserted({}, [])
     ch = ch or _default_client()
     ids = [str(i) for i, _ in rows]
     params = {
@@ -543,12 +551,13 @@ async def asserted_versions(
         start = _run_start(run, undone.get(str(h["memory_id"]), set()))
         if start is not None:
             out[str(h["memory_id"])] = start
-    return out, undos
+    return Asserted(out, undos)
 
 
 __all__ = [
     "JUDGED_MARK",
     "OWED_MARK",
+    "Asserted",
     "Undo",
     "asserted_versions",
     "cluster_peers",

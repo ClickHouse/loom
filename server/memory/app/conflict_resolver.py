@@ -218,18 +218,18 @@ async def _assertion_order(
     not move a row. An explicit valid_at earlier than the assertion moves it back: the
     fact held then."""
     keys = [(str(_field(r, "memory_id")), str(_field(r, "content_sha256") or "")) for r in rows]
-    first, undos = await queue.asserted_versions(org, namespace, keys)
+    found = await queue.asserted_versions(org, namespace, keys)
     out: dict[str, tuple[int, int]] = {}
     for r in rows:
         mid = str(_field(r, "memory_id"))
         # A row the history does not hold: its current version.
-        asserted = first.get(mid, int(_field(r, "version") or 0))
+        asserted = found.asserted.get(mid, int(_field(r, "version") or 0))
         holds = asserted
         valid = _field(r, "valid_at")
         if isinstance(valid, datetime):
             holds = min(holds, calendar.timegm(valid.utctimetuple()) * 1_000_000_000)
         out[mid] = (holds, asserted)
-    return out, undos
+    return out, found.undos
 
 
 @dataclass
