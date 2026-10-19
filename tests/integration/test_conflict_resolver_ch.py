@@ -3604,3 +3604,38 @@ async def test_an_undelete_whose_answer_and_reread_were_lost_finishes_on_retry(
     assert search and all(r["tombstoned_at"] is None for r in search)
     again = await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="home3"))
     assert not again.restored, "finished: a plain no-op now"
+
+
+async def test_a_flapping_provider_stops_the_pass(ch, wired, monkeypatch) -> None:
+    """No connection, then a 503, then a timeout: transient failures of any kind, row
+    after row, are an outage, and stop the pass."""
+    import httpx
+
+    import server.llm.client as llm_client
+    from server.memory.workers import conflict_resolver as worker
+
+    org, _ = wired
+    await _seed(ch, org, monkeypatch)
+
+    class _Flapping:
+        provider, model = "fake", "flapping"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, system: str, user: str, **kw: Any) -> Any:
+            self.calls += 1
+            request = httpx.Request("POST", "https://provider.invalid/v1")
+            if self.calls % 3 == 1:
+                raise httpx.ConnectError("unreachable", request=request)
+            if self.calls % 3 == 2:
+                response = httpx.Response(503, request=request)
+                raise httpx.HTTPStatusError("503", request=request, response=response)
+            raise TimeoutError("read timed out")
+
+    flapping = _Flapping()
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: flapping)
+    monkeypatch.setattr(worker.settings, "memory_conflict_resolver_concurrency", 1)
+    await worker.run_pass()
+    assert flapping.calls == worker.SAME_REFUSAL_STOP
+    assert worker._state.paused_until > 0

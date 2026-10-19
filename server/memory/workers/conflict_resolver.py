@@ -82,9 +82,11 @@ class _Pass:
         self.slots = asyncio.Semaphore(int(settings.memory_conflict_resolver_concurrency))
         # Why the pass stopped: the model, the keys' locks or the provider is unavailable.
         self.unavailable: Exception | None = None
-        # Per (org, namespace) for refusals, and once for outages: the last kind and how
-        # many rows in a row got it, with no answer between.
-        self.streaks: dict[Any, tuple[str, int]] = {}
+        # Per (org, namespace): the last refusal's kind and how many of its rows in a row
+        # got it, with no answer between.
+        self.refusals: dict[tuple[str, str], tuple[str, int]] = {}
+        # Rows in a row with a transient provider failure, any kind, and no answer between.
+        self.outage = 0
         # Namespaces whose refusals stopped them in this pass.
         self.stopped: set[tuple[str, str]] = set()
         # Rows refused for a reason of their own: stamped once the pass ends, unless the
@@ -170,8 +172,8 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             )
             if p.counts.judged > answered:
                 # An answer: the namespace's refusals and the outages are not in a row.
-                p.streaks.pop((org, namespace), None)
-                p.streaks.pop("outage", None)
+                p.refusals.pop((org, namespace), None)
+                p.outage = 0
             if judged is not None and await _out_of_attempts(r, judged):
                 p.counts.errored += 1
                 p.errors.append(f"{namespace}/{r.get('memory_key')}: a flagged peer never judged")
@@ -184,7 +186,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             p.counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {e}")
             p.refused.append(r)
-            if _streak(p, (org, namespace), e):
+            if _refusal_streak(p, (org, namespace), e):
                 p.stopped.add((org, namespace))
                 _state.paused_namespaces[(org, namespace)] = time.monotonic() + PAUSE_AFTER_STOP_S
             # An answer with nothing usable was paid for: it counts an attempt, so a row
@@ -196,7 +198,8 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             # no attempt; the same outage row after row stops the pass.
             p.counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {type(e).__name__}: {e}")
-            if _streak(p, "outage", e):
+            p.outage += 1
+            if p.outage >= SAME_REFUSAL_STOP:  # a flapping provider stops the pass too
                 p.unavailable = p.unavailable or e
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the pass
             p.counts.errored += 1
@@ -240,15 +243,15 @@ async def _out_of_attempts(r: Mapping[str, Any], judged: frozenset[str] = frozen
 SAME_REFUSAL_STOP = 3
 
 
-def _streak(p: _Pass, where: Any, e: Exception) -> bool:
-    """Count `e` in its streak (`where`: a namespace, or the provider); True once the
-    same kind came SAME_REFUSAL_STOP rows in a row with no answer between."""
+def _refusal_streak(p: _Pass, namespace: tuple[str, str], e: Exception) -> bool:
+    """Count the refusal `e` in its namespace's streak; True once the same kind came
+    SAME_REFUSAL_STOP rows in a row with no answer between."""
     # Its kind, not its message: an Unanswered names the cluster's output cap.
-    response = getattr(e, "response", None) or getattr(e.__cause__, "response", None)
+    response = getattr(e.__cause__, "response", None)
     kind = f"{type(e).__name__}:{getattr(response, 'status_code', '')}"
-    last, count = p.streaks.get(where, ("", 0))
+    last, count = p.refusals.get(namespace, ("", 0))
     count = count + 1 if kind == last else 1
-    p.streaks[where] = (kind, count)
+    p.refusals[namespace] = (kind, count)
     return count >= SAME_REFUSAL_STOP
 
 
