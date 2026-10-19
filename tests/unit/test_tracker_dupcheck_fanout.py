@@ -34,7 +34,7 @@ def _wire_namespaces(
         lambda: {"code-example-private*": PRIV, "code-clickhouse*": PUB},
     )
 
-    async def _scope(org, n, role=None):
+    async def _scope(org, n, role=None, *, additive=False):
         return n in readable or n in code_readable
 
     monkeypatch.setattr("server.auth.authz.row_in_scope", _scope)

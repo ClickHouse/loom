@@ -46,7 +46,7 @@ def wired(monkeypatch):
     )
     readable: set[str] = {CODE}
 
-    async def _scope(org, ns, role=None):
+    async def _scope(org, ns, role=None, *, additive=False):
         return ns in readable
 
     monkeypatch.setattr(authz, "row_in_scope", _scope)

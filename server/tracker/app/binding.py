@@ -156,7 +156,9 @@ async def _gated(org: str, code_namespace: str, ns: str) -> bool:
 
         target = tracker_namespace(org, ns)
         standard = target is not None and not target.restricted
-        return bool(await row_in_scope(org, code_namespace if standard else ns, Role.VIEWER))
+        return bool(
+            await row_in_scope(org, code_namespace if standard else ns, Role.VIEWER, additive=True)
+        )
     except Exception as e:  # noqa: BLE001 — the binding gate fails closed on any error
         log.debug("qa binding authorization failed (closed): %s", e)
         return False

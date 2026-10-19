@@ -34,7 +34,7 @@ async def _may_read_tracker(org: str, ns: str, code_kinds: dict[str, str]) -> bo
     target = tracker_namespace(org, ns)
     if target is None:
         return False
-    if await row_in_scope(org, ns, Role.VIEWER):
+    if await row_in_scope(org, ns, Role.VIEWER, additive=True):
         return True
     if target.restricted:
         return False
@@ -45,7 +45,7 @@ async def _may_read_tracker(org: str, ns: str, code_kinds: dict[str, str]) -> bo
     for code_ns in code:
         if code_ns not in linking and not any(fnmatch.fnmatchcase(code_ns, p) for p in patterns):
             continue
-        if await row_in_scope(org, code_ns, Role.VIEWER):
+        if await row_in_scope(org, code_ns, Role.VIEWER, additive=True):
             return True
     return False
 

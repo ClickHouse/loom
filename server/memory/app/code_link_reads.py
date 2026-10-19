@@ -121,7 +121,9 @@ async def readable_namespaces(org: str, namespaces: set[str]) -> set[str]:
     from server.operations.base import Role
 
     names = sorted(namespaces)
-    allowed = await asyncio.gather(*(row_in_scope(org, ns, Role.VIEWER) for ns in names))
+    allowed = await asyncio.gather(
+        *(row_in_scope(org, ns, Role.VIEWER, additive=True) for ns in names)
+    )
     return {ns for ns, ok in zip(names, allowed, strict=True) if ok}
 
 

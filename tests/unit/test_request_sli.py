@@ -929,7 +929,7 @@ def test_an_id_lookup_hidden_for_want_of_a_grants_read_is_the_server_s(monkeypat
         request_work.begin()
         set_current_auth(eve)
         # Run as handlers fan namespace checks out: in a child task.
-        (hidden,) = await asyncio.gather(authz.row_in_scope("o", "other", by_id=True))
+        (hidden,) = await asyncio.gather(authz.row_in_scope("o", "other"))
         assert hidden is False
         http._emit_event(
             OPERATIONS_BY_NAME["memory.get_by_id"], "r", {}, 3, success=True, error_code=""
@@ -944,7 +944,7 @@ def test_an_id_lookup_hidden_for_want_of_a_grants_read_is_the_server_s(monkeypat
     async def _additive() -> bool:
         request_work.begin()
         set_current_auth(eve)
-        assert await authz.row_in_scope("o", "docs") is False
+        assert await authz.row_in_scope("o", "docs", additive=True) is False
         from server.auth.fail_closed import answered_unverified
 
         return answered_unverified()
@@ -1045,7 +1045,7 @@ def test_an_mcp_call_that_hid_a_row_unverified_is_the_server_s_and_the_next_star
 
     async def _lookup(inp: Any) -> _Out:
         if inp.hide:  # as get_by_id hides a row the caller may not see
-            return _Out(found=await authz.row_in_scope("o", "elsewhere", by_id=True))
+            return _Out(found=await authz.row_in_scope("o", "elsewhere"))
         return _Out(found=True)
 
     async def _unverified(*a: Any, **k: Any) -> None:
@@ -1165,15 +1165,33 @@ def test_a_5xx_while_mcp_computes_the_caller_s_defaults_is_ledgered(monkeypatch)
     ]
 
 
-def test_the_ops_addressed_by_an_org_wide_id_mark_an_unverified_refusal() -> None:
-    """Only there does a hidden row mean the caller's own request went unanswered."""
-    import inspect
+def test_only_the_namespaces_loom_adds_on_its_own_leave_an_unverified_refusal_unmarked() -> None:
+    """A refusal `row_in_scope` makes without a readable grant marks the request
+    the server's unless the site is additive: a namespace Loom adds to the
+    answer on its own. Marking is the default, so a new call site counts an
+    outage; this pins which sites opt out."""
+    import re
+    from pathlib import Path
 
-    from server.memory.app import curation, handlers, update
+    from server.core.paths import REPO_ROOT
 
-    for handler in (
-        handlers.handle_memory_get_by_id,
-        update.handle_memory_update_by_id,
-        curation.handle_memory_redact,
-    ):
-        assert "by_id=True" in inspect.getsource(handler), handler.__name__
+    additive = set()
+    for path in (REPO_ROOT / "server").rglob("*.py"):
+        for line in path.read_text().splitlines():
+            if "row_in_scope(" in line and "additive=True" in line:
+                additive.add(str(Path(path).relative_to(REPO_ROOT)))
+    assert additive == {
+        "server/code/app/answers.py",  # memory enrichment of a code answer
+        "server/code/app/answers_cache.py",  # reusing a trunk's cached answer
+        "server/code/app/search_fanout.py",  # the readable subset of a fan-out
+        "server/memory/app/code_link_reads.py",  # code links on a memory read
+        "server/memory/app/code_grounding.py",  # memory.ask's code grounding
+        "server/knowledge/app/repo_docs.py",  # repository documents on a search
+        "server/tracker/app/dupcheck_fanout.py",  # the namespaces a dupcheck adds
+        "server/tracker/app/binding.py",  # a tracker's bound code namespace
+        "server/tracker/app/test_signal.py",  # the configured code namespace
+    }
+    assert re.search(
+        r"if not additive and getattr\(e, \"unverified\"",
+        Path(REPO_ROOT / "server/auth/authz.py").read_text(),
+    )

@@ -38,7 +38,7 @@ def test_unset_or_bad_json_binds_nothing(monkeypatch) -> None:
 async def test_authorized_binding_runs_the_gate(bound, monkeypatch) -> None:
     seen = []
 
-    async def _scope(org, ns, role):
+    async def _scope(org, ns, role, *, additive=False):
         seen.append((org, ns, role.name))
         return ns == "tracker-clickhouse"
 
@@ -57,7 +57,7 @@ async def test_authorized_binding_runs_the_gate(bound, monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_gate_failure_is_closed(bound, monkeypatch) -> None:
-    async def _boom(org, ns, role):
+    async def _boom(org, ns, role, *, additive=False):
         raise RuntimeError("down")
 
     monkeypatch.setattr(authz, "row_in_scope", _boom)
@@ -93,7 +93,7 @@ async def test_standard_target_is_read_by_whoever_reads_the_code_namespace(
     the repository's read right instead."""
     seen = []
 
-    async def _scope(org, ns, role):
+    async def _scope(org, ns, role, *, additive=False):
         seen.append(ns)
         return ns.startswith("code-")  # may read the repository, holds nothing on qa-*
 
@@ -111,7 +111,7 @@ async def test_restricted_target_keeps_its_own_two_factor_gate(
 ) -> None:
     seen = []
 
-    async def _scope(org, ns, role):
+    async def _scope(org, ns, role, *, additive=False):
         seen.append(ns)
         return ns.startswith("code-")
 
@@ -130,7 +130,7 @@ async def test_unknown_target_is_gated_strictly_on_the_tracker_namespace(
     so the gate stays on the tracker namespace (fail closed)."""
     seen = []
 
-    async def _scope(org, ns, role):
+    async def _scope(org, ns, role, *, additive=False):
         seen.append(ns)
         return False
 

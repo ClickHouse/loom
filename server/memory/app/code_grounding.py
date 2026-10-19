@@ -76,7 +76,7 @@ async def _authorized_code_target(search_input: Any, settings: Any) -> tuple[str
         from server.auth.authz import row_in_scope
         from server.operations.base import Role
 
-        if not await row_in_scope(code_org, code_ns, Role.VIEWER):
+        if not await row_in_scope(code_org, code_ns, Role.VIEWER, additive=True):
             _warn_once(
                 "code grounding skipped (the caller may not read the code target): %s",
                 PermissionError(f"{code_org}/{code_ns}"),

@@ -14,7 +14,7 @@ from server.code.app import search_fanout as fanout
 
 
 def _patch_readable(monkeypatch: pytest.MonkeyPatch, readable: set[str]) -> None:
-    async def row_in_scope(org: str, ns: str, role: object) -> bool:
+    async def row_in_scope(org: str, ns: str, role: object, *, additive=False) -> bool:
         return ns in readable
 
     import server.auth.authz as authz
