@@ -770,11 +770,11 @@ async def tombstone_embedding_if_message_gone(
     meanwhile.
 
     A writer lands the message, then the embedding, then calls this. A delete or
-    compaction tombstones the messages in one mutation, then runs its last embeddings
-    pass. So for a message that mutation covered, either that last pass sees the
-    embedding or this read sees the tombstone. A compaction covers only the turns it
-    read, so a turn appended meanwhile keeps its embedding. During a delete, a message
-    that lands after the mutation began is not covered and stays live; the delete's last
+    compaction tombstones the messages (a compaction in one mutation per id slice), then
+    runs its last embeddings pass. So for a message a mutation covered, either that last
+    pass sees the embedding or this read sees the tombstone. A compaction covers only the
+    turns it read, so a turn appended meanwhile keeps its embedding. A message that lands
+    after a delete's mutation began is not covered and stays live; the delete's last
     pass covers every embedding of this agent's turns in the thread, so it takes that
     turn's embedding if the embedding lands before the pass, and leaves it otherwise."""
     ch = ch or _default_client()
