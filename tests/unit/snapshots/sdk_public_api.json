@@ -2049,6 +2049,91 @@
           "setup"
         ],
         "workers_status": []
+      },
+      "nested": {
+        "routes": {
+          "class": "AdminRoutes",
+          "methods": {
+            "audit_summary": [
+              "body"
+            ],
+            "bots_create": [
+              "body"
+            ],
+            "bots_disable": [
+              "body"
+            ],
+            "bots_list": [
+              "body"
+            ],
+            "budget_set": [
+              "body"
+            ],
+            "budget_violations": [
+              "body"
+            ],
+            "claim_release": [
+              "body"
+            ],
+            "consumers": [
+              "body"
+            ],
+            "events_tail": [
+              "body"
+            ],
+            "fleet_cost": [
+              "body"
+            ],
+            "model_configuration_status": [],
+            "namespace_adopt": [
+              "body"
+            ],
+            "prompts_evaluate": [
+              "body"
+            ],
+            "ratelimit_set": [
+              "body"
+            ],
+            "reset_model_configuration": [
+              "body"
+            ],
+            "retry_model_configuration": [
+              "body"
+            ],
+            "save_model_configuration": [
+              "body"
+            ],
+            "schema_status": [],
+            "settings_history": [
+              "body"
+            ],
+            "settings_list": [
+              "body"
+            ],
+            "settings_set": [
+              "body"
+            ],
+            "sso_adopt": [
+              "body"
+            ],
+            "sso_link": [
+              "body"
+            ],
+            "sso_password_link": [
+              "body"
+            ],
+            "sso_unlink": [
+              "body"
+            ],
+            "token_mint": [
+              "body"
+            ],
+            "validate_model_configuration": [
+              "body"
+            ],
+            "workers_status": []
+          }
+        }
       }
     },
     "erasure": {

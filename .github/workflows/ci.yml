@@ -71,6 +71,7 @@ jobs:
         run: |
           python scripts/codegen/sdk_py_gen.py --check
           python scripts/codegen/sdk_py_client_gen.py --check
+          python scripts/codegen/sdk_py_admin_gen.py --check
       # The Codex plugin's hook scripts, library and skills are copies of the
       # Claude Code plugin's; a change to one must be synced. The check compares
       # bytes and the executable bit.

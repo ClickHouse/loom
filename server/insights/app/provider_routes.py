@@ -130,14 +130,16 @@ def _status_values(saved: ProviderSetupInput | None) -> dict[str, Any]:
 
 @provider_router.post("/validate", response_model=ProviderValidation)
 async def validate_model_configuration(request: Request) -> ProviderValidation:
-    """An explicit operator action; small model requests may incur provider fees."""
+    """Check a model setup against the providers before saving it. An explicit operator
+    action: the small model requests it sends may incur provider fees."""
     setup = await _input(request, ProviderSetupInput)
     return await validate_providers(setup, await _existing_keys())
 
 
 @provider_router.get("", response_model=ProviderSetupStatus)
 async def model_configuration_status() -> ProviderSetupStatus:
-    """Describe one committed revision without disclosing saved credentials."""
+    """The LLM and embedding settings in force and any change pending, without the saved
+    credentials."""
     rows = await configurations()
     active = committed_configuration(rows)
     saved = (
@@ -170,14 +172,18 @@ async def model_configuration_status() -> ProviderSetupStatus:
 
 @provider_router.post("", response_model=ProviderSaveResult)
 async def save_model_configuration(request: Request) -> ProviderSaveResult:
+    """Save the LLM and embedding setup as the next configuration; an embedding change
+    queues a rebuild of the vector tables."""
     return await save_configuration(await _input(request, ProviderSetupInput))
 
 
 @provider_router.post("/reset", response_model=ProviderSaveResult)
 async def reset_model_configuration(request: Request) -> ProviderSaveResult:
+    """Go back to the model settings the environment gives."""
     return await reset_configuration(await _input(request, ProviderResetInput))
 
 
 @provider_router.post("/retry", response_model=ProviderSaveResult)
 async def retry_model_configuration(request: Request) -> ProviderSaveResult:
+    """Run a failed model transition again."""
     return await retry_configuration(await _input(request, ProviderRetryInput))

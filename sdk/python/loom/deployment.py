@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from loom.admin_routes import AdminRoutes
+
 if TYPE_CHECKING:
     from loom.agent import Agent
 
@@ -18,6 +20,9 @@ if TYPE_CHECKING:
 class DeploymentClient:
     def __init__(self, agent: Agent) -> None:
         self._agent = agent
+        # Every /v1/admin/* route, one method each (generated); these methods are the
+        # curated layer over them.
+        self.routes = AdminRoutes(agent)
 
     async def _call(
         self, method: str, path: str, body: dict[str, Any] | None = None

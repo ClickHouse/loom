@@ -139,6 +139,31 @@ def test_account_and_admin_clients_reach_the_routes_outside_the_registry(wire) -
     ]
 
 
+def test_the_generated_admin_client_has_a_method_per_route() -> None:
+    from loom.admin_routes import AdminRoutes
+
+    from scripts.codegen.sdk_py_admin_gen import admin_routes
+
+    names = {n for n in dir(AdminRoutes) if not n.startswith("_")}
+    assert names == {r.name for r in admin_routes()}
+
+
+def test_the_generated_admin_client_sends_the_body_as_given(wire) -> None:
+    async def go() -> None:
+        agent = Agent("acme", "support", "t", base_url="http://loom.test", api_key="k")
+        try:
+            await agent.deployment.routes.settings_list({"prefix": "memory_ask_"})
+            await agent.deployment.routes.workers_status()
+        finally:
+            await agent.close()
+
+    asyncio.run(go())
+    assert wire.seen == [
+        ("POST", "/v1/admin/settings.list", {"prefix": "memory_ask_"}),
+        ("GET", "/v1/admin/workers.status", None),
+    ]
+
+
 def test_route_errors_are_the_typed_sdk_errors(wire) -> None:
     wire.status, wire.body = (
         403,

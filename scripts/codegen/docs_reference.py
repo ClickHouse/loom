@@ -43,6 +43,7 @@ if str(ROOT) not in sys.path:  # run as a file
     sys.path.insert(0, str(ROOT))
 
 from scripts.codegen.common import write_atomic  # noqa: E402
+from scripts.codegen.sdk_py_admin_gen import render_admin_routes_table  # noqa: E402
 
 COMMAND = "python scripts/codegen/docs_reference.py"
 REFERENCE = ROOT / "docs" / "reference"
@@ -602,6 +603,7 @@ RENDERERS: dict[str, Callable[[], str]] = {
     "cli": render_cli,
     "errors": render_errors,
     "schema": render_schema,
+    "admin_routes": render_admin_routes_table,
 }
 
 
