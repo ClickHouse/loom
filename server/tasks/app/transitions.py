@@ -598,7 +598,10 @@ async def _load_for_reason_op(
     poster = _is_poster(task, _caller_subject())
     # The owner check decides alone unless a poster's way in (no read) admits;
     # on an in-progress task only the owner side may act.
-    admitted = poster_may and poster and task["status"] != "in_progress"
+    # A finished task answers its 409 whichever side the caller is on.
+    admitted = (
+        poster and task["status"] != "in_progress" and (poster_may or task["status"] in TERMINAL)
+    )
     owner_side = await _in_scope(
         input.org, task["namespace"], write=True, hides_answer=not admitted
     )

@@ -765,7 +765,10 @@ def _register_health_gauges(meter: Any) -> None:
     meter.create_observable_gauge(
         name="loom.health.problems",
         callbacks=[_problems],
-        description="Open /v1/health problems on this process, by code and severity (1 = open)",
+        description=(
+            "Open /v1/health problems on this process, by code and severity: 1 while "
+            "open; a resolved problem stops reporting, so alert on a recent window"
+        ),
         unit="1",
     )
 

@@ -1342,6 +1342,9 @@ def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
 
     assert asyncio.run(_cancel_as_poster()) == (False, False)
     assert asyncio.run(_wont_do_as_poster()) == (False, True)
+    status["value"] = "done"  # a finished task answers 409 whichever side asks
+    assert asyncio.run(_refused("poster", poster_may=False)) is False
+    status["value"] = "todo"
     assert asyncio.run(_read_as_poster()) == (True, False)
     assert asyncio.run(_refused("someone-else")) is True
     status["value"] = "in_progress"

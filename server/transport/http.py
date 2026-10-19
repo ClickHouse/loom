@@ -324,8 +324,8 @@ def _validate_payload(op: Operation, request_id: str, raw_body: Any, auth: AuthI
 
 def _refused_body(raw_body: dict[str, Any], auth: AuthInfo | None) -> dict[str, Any]:
     """The body a refusal before authorization is ledgered with: one naming an
-    org the token may not act in is recorded in the token's org, never the
-    named one, as MCP records its refusals."""
+    org the token may not act in is recorded in the token's org with
+    namespace `-`, never the named one."""
     from server.auth.authz import may_act_in_org
 
     named = str(raw_body.get("org") or "")

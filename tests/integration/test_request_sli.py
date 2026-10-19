@@ -232,3 +232,11 @@ def test_each_row_is_folded_once_however_late_and_a_refresh_is_bounded(ch_client
         assert refresh() == (3, 2, 2)
     finally:
         ch_client.command(f"DROP DATABASE IF EXISTS {db} SYNC")
+
+
+def test_the_view_refresh_gauges_name_the_rollup_with_its_database(ch_client) -> None:
+    """`loom.ch.view_refresh.*` covers the rollup's refresh, named outside `loom`."""
+    from server.observability.otel_probes import _VIEW_REFRESH_SQL
+
+    views = {row[0] for row in ch_client.query(_VIEW_REFRESH_SQL).result_rows}
+    assert "loom_telemetry.sli_minute_refresh" in views
