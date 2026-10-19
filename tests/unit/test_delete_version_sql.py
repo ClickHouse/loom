@@ -1312,7 +1312,10 @@ async def test_the_worker_leaves_a_check_to_its_delete_during_the_grace(
 
     await _owed_after_a_failed_check(ch, monkeypatch)
     monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 3600)
+    idle: list[bool] = []
+    monkeypatch.setattr(delete_version_check.pass_context, "mark_idle", lambda: idle.append(True))
     assert await delete_version_check.run_pass() == 0
+    assert idle == [True]  # nothing it may run: the supervisor sleeps the idle interval
     assert [c["done"] for c in await _recorded_checks(ch)] == [0]
     assert await _read_back(ch) is None
 
@@ -1370,13 +1373,13 @@ async def test_a_retry_whose_check_fails_again_answers_503_and_leaves_it_owed(
 async def test_a_worker_pass_runs_at_most_its_batch(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Two owed checks of two keys, a batch of one: a pass runs the older, the next the other.
+    # Two owed checks of two keys, a batch of one: each pass runs one.
     from server.memory.workers import delete_version_check
     from server.settings import settings
 
     for key in ("first", "second"):
         await memory_repo.record_delete_check(
-            {**_ID, "memory_key": key, "checked": 1, "tombstone": 2 if key == "first" else 3},
+            {**_ID, "memory_key": key, "checked": 1, "tombstone": 2},
             done=False,
         )
     monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
