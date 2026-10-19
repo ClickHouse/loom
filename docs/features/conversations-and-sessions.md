@@ -91,11 +91,10 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   user, so the deleting agent's own search drops it (compaction does the same). A row
   of exactly 240 characters (an earlier build's cut, or a turn of that length) is kept
   only for a copy whose first 2,048 characters match its agent's turn, and is
-  tombstoned when no message row is left to check that against. A
-  delete also finishes rows of the thread whose own agent no longer holds a live message
-  for the turn: one it deleted or compacted (earlier builds left some), or one the
-  retention TTL expired. For a
-  person's or a namespace's data everywhere, use
+  tombstoned when no message row is left to check that against. A delete also finishes
+  rows of the thread whose own agent no longer holds a live message for the turn: one
+  it deleted or compacted (earlier builds left some), or one the retention TTL expired.
+  For a person's or a namespace's data everywhere, use
   [`erasure.request`](./memory/retention-and-erasure.md).
 
 Tombstoned turns are filtered from every read. They are removed from disk only if the
