@@ -7602,11 +7602,11 @@ async def test_a_bulk_write_answers_when_its_holder_read_and_its_record_both_fai
     assert out.written[0].version
 
 
-async def test_a_failed_holder_read_records_every_close_in_one_insert_and_no_high_row(
+async def test_a_failed_holder_read_records_every_close_in_one_insert_and_no_high_value(
     ch, org, monkeypatch
 ) -> None:
     """The holder read after a bulk revision of plain and high rows fails: one insert
-    records the plain rows' closes, and no record names a high row."""
+    records every close, and the high row's names no value."""
     from server.memory.api.models_bulk import MemoryBulkSetInput
     from server.memory.app import after_write, bulk_set, entity_projections
 
@@ -7651,8 +7651,10 @@ async def test_a_failed_holder_read_records_every_close_in_one_insert_and_no_hig
             params={"org": org},
         )
     )["id"]
-    assert len(inserts) == 1 and len(inserts[0]) == 3
-    assert not [r for r in inserts[0] if high_id in r["payload"]]
+    assert len(inserts) == 1 and len(inserts[0]) == 4
+    payloads = [json.loads(r["payload"]) for r in inserts[0]]
+    (high_close,) = [p for p in payloads if p["memory_id"] == high_id]
+    assert "content_sha256" not in high_close
 
 
 async def _recorded_closes(monkeypatch: Any) -> list[dict[str, Any]]:
