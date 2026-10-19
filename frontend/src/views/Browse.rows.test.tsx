@@ -47,12 +47,14 @@ const mine: MyNamespaceEntry[] = [
 ];
 
 const leaveNamespace = vi.fn(async () => ({}));
+const joinNamespace = vi.fn(async () => ({ joined: true, role: "viewer", status: "active" }));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
     browseNamespaces: vi.fn(async () => browse),
     leaveNamespace: (...a: unknown[]) => leaveNamespace(...(a as [])),
+    joinNamespace: (...a: unknown[]) => joinNamespace(...(a as [])),
   };
 });
 vi.mock("../lib/sharedReads", () => ({ sharedMine: () => Promise.resolve(mine) }));
@@ -161,5 +163,19 @@ describe("Spaces: the rows", () => {
     expect(opens[1]).toHaveFocus();
     await user.keyboard("{End}");
     expect(opens[2]).toHaveFocus();
+  });
+});
+
+describe("Spaces: requesting a private namespace by name", () => {
+  it("empties the search once the typed name is joined", async () => {
+    render(<Browse />);
+    await screen.findByText("Support team runbooks");
+    const box = screen.getByRole("textbox", { name: "Search namespaces" });
+    await userEvent.type(box, "secret-ops");
+    await userEvent.click(await screen.findByRole("button", { name: "Request access" }));
+    await waitFor(() => expect(box).toHaveValue(""));
+    expect(joinNamespace).toHaveBeenCalledWith("acme", "secret-ops", { role: "viewer" });
+    // The card names the deferred text, so it leaves a render after the box empties.
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Request access" })).toBeNull());
   });
 });

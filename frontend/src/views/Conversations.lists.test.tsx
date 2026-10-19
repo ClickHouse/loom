@@ -169,6 +169,17 @@ describe("Conversations list", () => {
     expect(await screen.findByText("Payments API 5xx spike")).toBeInTheDocument();
   });
 
+  it("Clear filters on a search with no hits empties the box and brings the threads back", async () => {
+    api.searchConversations.mockResolvedValueOnce({ hits: [] });
+    render(<Conversations />);
+    await screen.findByText("Payments API 5xx spike");
+    await search("nothing");
+    await userEvent.click(await screen.findByRole("button", { name: "Clear filters" }));
+    expect(screen.getByLabelText("Search conversation transcripts")).toHaveValue("");
+    expect(screen.queryByText(/No conversations match/)).toBeNull();
+    expect(document.querySelectorAll("[data-thread-row]")).toHaveLength(3);
+  });
+
   it("says a failed search with a Retry, not 'no matches'", async () => {
     api.searchConversations.mockRejectedValueOnce(new Error("search down")).mockResolvedValueOnce({
       hits: [hit("t-incident", "a1", "assistant", "refund")],
