@@ -3321,3 +3321,36 @@ async def test_a_pass_stopped_by_the_lease_store_pauses_the_worker(ch, wired, mo
     before = len(llm.calls)
     await worker.run_pass()
     assert len(llm.calls) > before, "the pause ended: rows are judged again"
+
+
+async def test_an_undelete_whose_insert_answer_was_lost_finishes(ch, wired, monkeypatch) -> None:
+    """The undelete's insert lands with its answer lost: the re-read finds it, so the
+    search row and the facts come back as on any undelete, and it answers restored."""
+    import asyncio
+
+    from server.memory.api.models_crud import MemoryDeleteInput, MemoryRestoreInput
+    from server.memory.app import restore
+    from server.memory.app.handlers import handle_memory_delete
+
+    org, _ = wired
+    key = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s1"}
+    await _set(org, "s1", "home2", "Ana lives in Porto", relations=[("ana", "lives_in", "porto")])
+    await asyncio.sleep(1.0)
+    await handle_memory_delete(MemoryDeleteInput(**key, memory_key="home2"))
+    await asyncio.sleep(1.0)
+    real = restore.insert_memory_versions
+
+    async def lands_then_fails(rows: Any, **kw: Any) -> None:
+        await real(rows, **kw)
+        raise RuntimeError("answer lost")
+
+    with monkeypatch.context() as m:
+        m.setattr(restore, "insert_memory_versions", lands_then_fails)
+        out = await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="home2"))
+    assert out.restored and out.from_status == "tombstoned"
+    search = await ch.query_all(
+        "SELECT tombstoned_at FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+        " AND memory_key = 'home2' SETTINGS select_sequential_consistency = 1",
+        params={"o": org},
+    )
+    assert search and all(r["tombstoned_at"] is None for r in search)

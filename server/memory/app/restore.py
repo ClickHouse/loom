@@ -511,7 +511,15 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
             invalid_at=_invalid_at_after_restore(existing),
             expires_at=None,
         )
-        await insert_memory_versions([restore_row], ch=ch)
+        try:
+            await insert_memory_versions([restore_row], ch=ch)
+        except Exception as e:  # an insert whose answer was lost may have landed
+            if not await _restore_landed(input, new_version):
+                raise BackendUnavailableError(
+                    "the restore may not have landed; retry it",
+                    operation="memory.restore",
+                    outcome_unknown=True,
+                ) from e
         if existing.sensitivity == "high":
             # The key is high again: a plain write still embedding lands below the fence.
             from server.memory.app.high_fence import fence_high
