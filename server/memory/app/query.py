@@ -810,7 +810,9 @@ async def _handle_memory_bulk_get(
         parent = chunk_parent_key(k)
         if parent:
             parent_of[k] = parent
-    wanted = list(dict.fromkeys([parent_of.get(k, k) for k in input.memory_keys]))
+    # The literal keys too: `memory.set` takes a key shaped like a chunk id, and its own row
+    # answers before the parent (the alias below fills only a real miss).
+    wanted = list(dict.fromkeys([*input.memory_keys, *parent_of.values()]))
     rows = await memory_repo.get_many_by_keys(identity, wanted, scope=request_scope())
     if _wants_usage(keep):
         rows = await memory_repo.overlay_usage_totals_many(rows)

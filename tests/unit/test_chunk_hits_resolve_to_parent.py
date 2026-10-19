@@ -180,7 +180,8 @@ async def test_bulk_get_answers_a_chunk_id_with_its_parent_row(
 
     async def fake_get_many(identity, keys, **kw):
         asked.append(list(keys))
-        return [_row(k) for k in keys if k != "gone"]
+        # chunk ids are search hits, not stored keys
+        return [_row(k) for k in keys if k != "gone" and not k.startswith("chunk:")]
 
     monkeypatch.setattr(memory_repo, "get_many_by_keys", fake_get_many)
     out = await Q.handle_memory_bulk_get(
@@ -197,8 +198,17 @@ async def test_bulk_get_answers_a_chunk_id_with_its_parent_row(
             ],
         )
     )
-    # the repository was asked for parents, once each, in request order
-    assert asked == [["lesson_a", "gone", "lesson_b"]]
+    # one read: the keys as asked, then the parents not already among them
+    assert asked == [
+        [
+            "chunk:memory.set:lesson_a:0",
+            "lesson_a",
+            "chunk:memory.set:lesson_a:2",
+            "chunk:memory.set:gone:1",
+            "lesson_b",
+            "gone",
+        ]
+    ]
     assert set(out.results) == {
         "chunk:memory.set:lesson_a:0",
         "lesson_a",
@@ -263,3 +273,23 @@ def test_finish_pool_with_a_zero_cap_serves_no_chunks(monkeypatch: pytest.Monkey
     )
     window2 = asyncio.run(S._finish_pool(None, list(hits), q2))  # type: ignore[arg-type]
     assert sum(1 for h in window2 if h.source == "chunk") >= 2
+
+
+@pytest.mark.asyncio
+async def test_bulk_get_answers_a_stored_key_shaped_like_a_chunk_id_with_its_own_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # memory.set takes such a key; its own row answers, not its "parent"'s.
+    from server.memory import store as memory_repo
+    from server.memory.api.models_bulk import MemoryBulkGetInput
+    from server.memory.app import query as Q
+
+    async def fake_get_many(identity, keys, **kw):
+        return [_row(k) for k in keys]
+
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", fake_get_many)
+    key = "chunk:memory.set:a:0"
+    out = await Q.handle_memory_bulk_get(
+        MemoryBulkGetInput(org="o", namespace="n", agent="clickgap", memory_keys=[key])
+    )
+    assert out.results[key].value == {"v": key} and out.results[key].canonical_key is None

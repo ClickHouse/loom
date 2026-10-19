@@ -508,11 +508,11 @@ are in [SECURITY.md](../../SECURITY.md#retrieval-and-memory-leakage).
 
 `server/memory/domain/sensitivity.py` classifies a value with deterministic regexes:
 
-| Level    | Matches                                                                     |
-| -------- | --------------------------------------------------------------------------- |
-| `high`   | A credential shape: prefixed API key, access key id, private-key block, JWT |
-| `medium` | An email or phone number                                                    |
-| `low`    | Set only by a caller                                                        |
+| Level    | Matches                                                                                                                                        |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `high`   | A credential shape: prefixed API key, access key id, private-key block, JWT, or a `password=` / `api_key:` assignment of an 8+ character token |
+| `medium` | An email or phone number                                                                                                                       |
+| `low`    | Set only by a caller                                                                                                                           |
 
 A caller-supplied level wins. Detection is `LOOM_MEMORY_SENSITIVITY_AUTODETECT`. A `high`
 row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so no search
@@ -577,17 +577,18 @@ Search demotes labelled rows on questions that did not ask for a contact detail
 The detector runs on `memory.set`, `memory.bulk_set`, `memory.update` and extraction when
 `LOOM_MEMORY_SENSITIVITY_AUTODETECT` is on, and reads the decoded value (`value_text`): each
 key and scalar of the stored JSON on its own line, so a token after a newline, or a quoted
-password, keeps the word boundary it matches on, and a secret held in a key is seen. Keys
-and values are never joined, so a config object (`{"password": "required"}`) is not read as
-an assignment. Text that has no level of its own, or carries one a later sweep may not have
-set yet, is checked whatever the setting (`reads_high`): `memory.export_evidence` (chunks,
-and digests with their key facts decoded), `bodies: "source"`, the observations
-`observe_extract` sends its model, the entity extractor's input, the existing memories an
-extraction prompt shows, and a session digest's key facts when written, listed by
-`memory.digests` or read by the outcome judge. The `sensitivity_sweep` worker (on, daily)
-labels rows from paths that skip it, every high shape counting as `credential` for its
-default shape filter: a new version per row and, for `high`, tombstoned embedding rows and
-entity vectors.
+password, keeps the word boundary it matches on, and a secret held in a key is seen. Lines
+are joined by a separator no pattern crosses, so two scalars never read as one: a config
+object (`{"password": "required"}`, a form label `Password:` before the next key, a list of
+numbers) reads as the stored JSON always did. Text that has no level of its own, or carries
+one a later sweep may not have set yet, is checked whatever the setting (`reads_high`):
+`memory.export_evidence` (chunks, and digests with their key facts decoded), `bodies:
+"source"`, the observations `observe_extract` sends its model, the entity extractor's input,
+the existing memories an extraction prompt shows, and a session digest's key facts when
+written, listed by `memory.digests` or read by the outcome judge. The `sensitivity_sweep`
+worker (on, daily) labels rows from paths that skip it, every high shape counting as
+`credential` for its default shape filter: a new version per row and, for `high`, tombstoned
+embedding rows and entity vectors.
 
 ## Audit log
 

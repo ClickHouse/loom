@@ -176,9 +176,10 @@ def detect_sensitivity(text: str) -> str:
 
 def value_text(value: Any) -> str:
     """Decoded text of a stored value for the detector: a JSON string is parsed, and each key
-    and scalar is its own line, so a token after a newline keeps its word boundary. Keys and
-    values never join into `key: value`, which would read a config object as an assignment.
-    Iterative, so a deeply nested value cannot stop a worker pass."""
+    and scalar is its own line, so a token after a newline keeps its word boundary. The lines
+    are joined by `_SCALAR_SEP`, which no pattern crosses, so two scalars never read as one
+    (`Password:` then the next key, or `256`, `512`, `1024` as a phone number). Iterative, so
+    a deeply nested value cannot stop a worker pass."""
     if isinstance(value, str):
         text = value
         try:
@@ -197,7 +198,12 @@ def value_text(value: Any) -> str:
             stack.extend(reversed(v))
         elif v is not None:
             lines.append(str(v))
-    return "\n".join(lines)
+    return _SCALAR_SEP.join(lines)
+
+
+# A line no pattern matches across: `;` ends the assignment shape's token class, and the
+# phone shape allows only one space, dot or dash between its groups.
+_SCALAR_SEP = "\n;\n"
 
 
 def reads_high(text: str) -> bool:

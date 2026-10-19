@@ -390,9 +390,8 @@ async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
 
     # Detected on the decoded value: in the stored JSON a token after a newline loses its
     # word boundary.
-    effective_sensitivity = resolve_sensitivity(
-        getattr(input, "sensitivity", ""), value_text(serialized_value)
-    )
+    decoded_value = value_text(serialized_value)
+    effective_sensitivity = resolve_sensitivity(getattr(input, "sensitivity", ""), decoded_value)
     # A sensitive row carries its retention window: the caller's or the type's expiry stays
     # when shorter; on_expire defaults to the sensitive post-action when the caller set none.
     from server.memory.domain.sensitive_retention import sensitive_retention
@@ -408,7 +407,7 @@ async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
     # Protected-attribute label: a tag, never a refusal.
     from server.memory.domain.sensitivity import attribute_tags
 
-    _attr_tags = attribute_tags(value_text(serialized_value), input.tags or [])
+    _attr_tags = attribute_tags(decoded_value, input.tags or [])
     if _attr_tags:
         input = input.model_copy(update={"tags": [*(input.tags or []), *_attr_tags]})
     # The sensitivity tier rides the tags too: the embeddings table has no sensitivity

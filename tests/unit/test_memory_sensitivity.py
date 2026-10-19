@@ -316,11 +316,27 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
         {"password_hint": "first pet"},
         {"token_count": 123456789},
         {"secret_santa": "alice to bob"},
+        # two scalars never read as one: a form label then the next key, or a number list
+        {"label": "Password:", "placeholder": "Enter your password"},
+        {"label": "Secret:", "required": True},
+        {"batch_sizes": [256, 512, 1024]},
     ],
 )
-def test_an_ordinary_object_never_reads_as_a_credential(value: object) -> None:
-    # Keys and values are separate lines: a config object is never read as an assignment,
-    # as the stored JSON never was.
-    from server.memory.domain.sensitivity import reads_high, value_text
+def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
+    # Each key and scalar is its own line, joined by a separator no pattern crosses: a config
+    # object reads as the stored JSON always did, neither high nor medium.
+    from server.memory.domain.sensitivity import detect_sensitivity, value_text
 
-    assert not reads_high(value_text(value))
+    assert detect_sensitivity(value_text(value)) == ""
+
+
+def test_a_protected_attribute_after_a_newline_is_tagged(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The write path tags attributes on the decoded value: in the stored JSON `\nmarried` has
+    # no word boundary before the word.
+    from server.memory.domain.sensitivity import attribute_tags, value_text
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_attribute_tagging", True)
+    stored = json.dumps({"note": "status update:\nmarried last spring"})
+    assert attribute_tags(stored) == []
+    assert attribute_tags(value_text(stored)) != []
