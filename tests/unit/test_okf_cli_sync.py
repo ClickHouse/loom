@@ -664,11 +664,29 @@ def test_an_older_target_deletes_nothing(
     assert {("okf-sync", "-", "gone-1"), ("okf-sync", "-", "gone-2")} <= set(loom.rows)
 
 
-def test_prune_never_deletes_without_a_version_to_check(tmp_path: Path, loom: _FakeLoom) -> None:
+def test_prune_keeps_a_row_read_without_a_version(tmp_path: Path, loom: _FakeLoom) -> None:
+    # Nothing to name in memory.delete_version: the copy is kept.
     assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
     del loom.rows[("okf-sync", "-", "gone")]["version"]
-    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 1
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
     assert "memory.delete_version" not in loom.writes()
+    assert ("okf-sync", "-", "gone") in loom.rows
+
+
+def test_prune_reports_a_copy_whose_key_reads_as_a_chunk(
+    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # memory.get answers a `chunk:` key from the chunk table, never the row: prune cannot
+    # check it, so it keeps the copy and counts the failure instead of skipping it silently.
+    key = "chunk:memory.set:x:0"
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry(key)])) == 0
+    capsys.readouterr()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 1
+    out = capsys.readouterr()
+    assert "memory.get reads a key starting with 'chunk:'" in out.err
+    assert "0 pruned (1 failed)" in out.out
+    assert ("okf-sync", "-", key) in loom.rows
+    assert not any(op == "memory.get" and b["memory_key"] == key for op, b in loom.calls)
 
 
 def test_only_an_export_that_read_every_row_is_marked_complete(
@@ -919,17 +937,6 @@ def test_a_copy_gone_before_the_delete_counts_as_kept(
     capsys.readouterr()
     assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
     assert "0 pruned (1 kept" in capsys.readouterr().out
-
-
-def test_a_dry_run_counts_a_row_without_a_version_as_the_real_run_does(
-    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
-) -> None:
-    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
-    del loom.rows[("okf-sync", "-", "gone")]["version"]
-    capsys.readouterr()
-    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune", "--dry-run") == 1
-    out = capsys.readouterr().out
-    assert "would delete" not in out and "0 would be pruned (1 failed)" in out
 
 
 def test_an_export_says_when_a_row_was_deleted_before_its_full_read(

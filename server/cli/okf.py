@@ -1109,6 +1109,16 @@ async def _prune(
             "session_id": session_id,
             "memory_key": key,
         }
+        if key.startswith("chunk:"):
+            # memory.get reads such a key from the chunk table, so prune cannot check the row
+            # before a delete; it keeps the copy and says so.
+            n["prune_failed"] += 1
+            print(
+                f"  ✗ prune {key}: memory.get reads a key starting with 'chunk:' as a search "
+                "chunk, so the copy cannot be checked; delete it with memory.delete",
+                file=sys.stderr,
+            )
+            continue
         try:
             got = await client.post(
                 "memory.get", {**ident, "fields": ["agent", "actor", "version", "lock_mode"]}
@@ -1116,15 +1126,12 @@ async def _prune(
             if not got.get("found") or got.get("agent") != args.agent:
                 continue
             listed = live[(session_id, key)].get("version")
-            if listed is None or got.get("version") is None:
-                n["prune_failed"] += 1
-                print(f"  ✗ prune {key}: no version to delete it by", file=sys.stderr)
-                continue
             # Another writer's row, a copy someone locked to keep it, or one rewritten since
             # the listing that saw its import trace.
             if (
                 got.get("actor") != actor
                 or got.get("lock_mode")
+                or got.get("version") is None
                 or str(got["version"]) != str(listed)
             ):
                 n["prune_kept"] += 1
