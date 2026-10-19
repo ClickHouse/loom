@@ -516,6 +516,10 @@ async def _settle_locked_pair(
         if _undone(row, head, found.when, found.undos):
             counts.skipped_no_action += 1
             return None, None  # a person undid a retirement between them: that stands
+        if action == cr.RETIRE and cr.same_fact_day(
+            _dated_note(row, found.when), _dated_note(head, found.when)
+        ):
+            action = cr.FLAG  # a date corrected during the call put both on one day
         head_at, row_at = found.when[str(head.memory_id)], found.when[str(row.memory_id)]
         if action == cr.RETIRE and not head_at < row_at:
             action = cr.FLAG  # the order does not show the judged row is newer: a person decides
@@ -541,6 +545,13 @@ async def _settle_locked_pair(
         # or it stays on the review queue, stamped and never re-checked.
         taken["flag_cleared"] = await _unlink(org, row, str(head.memory_id))
     return taken, retired
+
+
+def _dated_note(r: Any, when: Mapping[str, tuple[int, int]]) -> cr.Note:
+    """`r` as the prompt dates it (its value aside), from the order read under the locks."""
+    mid = str(r.memory_id)
+    written = cr.written_at(when.get(mid, (0, 0))[0], r.valid_at)
+    return cr.Note(mid, str(r.memory_key), "", written=written, dated=r.valid_at is not None)
 
 
 def _undone(
@@ -732,6 +743,7 @@ def notes_for(
         str(row.memory_key),
         _plain(memory_repo.stored_value_text(row)),
         written=cr.written_at(holds.get(str(row.memory_id)), row.valid_at),
+        dated=row.valid_at is not None,
     )
     notes = [
         cr.Note(
@@ -740,6 +752,7 @@ def notes_for(
             _plain(str(p["value"])),
             p["similarity"],
             written=cr.written_at(holds.get(str(p["memory_id"])), p.get("valid_at")),
+            dated=p.get("valid_at") is not None,
             session=cr.session_relation(
                 str(row.agent), str(row.session_id), str(p["agent"]), str(p["session_id"])
             ),
@@ -806,15 +819,14 @@ async def _act_on_verdicts(
     """Settle each pair the answer acts on, then one audit row for the row, written
     even when a later pair fails, for the pairs done. `new` and `notes`: the row and its
     peers as the prompt showed them."""
-    shown = {n.memory_id: n.written for n in notes}
+    shown = {n.memory_id: n for n in notes}
     acted: list[dict[str, Any]] = []
     try:
         for peer in peers:
             v = verdicts.get(str(peer["memory_id"]))
             cross = _cross_session(row, peer)
-            # Both writers dated the fact, and the prompt shows the same day for both.
-            dated = row.valid_at is not None and peer.get("valid_at") is not None
-            same = dated and bool(new.written) and new.written == shown.get(str(peer["memory_id"]))
+            note = shown.get(str(peer["memory_id"]))
+            same = note is not None and cr.same_fact_day(new, note)
             action = (
                 cr.NOTHING
                 if v is None

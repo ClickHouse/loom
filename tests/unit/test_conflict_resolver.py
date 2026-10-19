@@ -2094,3 +2094,21 @@ async def test_an_update_retires_only_a_fact_dated_an_earlier_day(
     row_env.asserted = {"m1": _ROW_AT + 10**9, "m2": _ROW_AT if want == cr.FLAG else _PEER_AT}
     await _resolve()
     assert row_env.acted == [(want, "m1", "m2")]
+
+
+async def test_a_date_corrected_during_the_call_onto_the_same_day_flags(row_env: NS) -> None:
+    # The prompt showed the peer a day earlier; by the re-read under the locks its writer
+    # had dated it the judged row's day: the update goes to review.
+    row_env.mem.valid_at = datetime(2026, 1, 3)
+    row_env.peers[0]["valid_at"] = datetime(2026, 1, 2)
+    row_env.heads["m2"].valid_at = datetime(2026, 1, 3)
+    row_env.asserted = {"m1": _ROW_AT + 10**9, "m2": _ROW_AT}
+    await _resolve()
+    assert row_env.acted == [(cr.FLAG, "m1", "m2")]
+
+
+def test_same_fact_day_needs_both_dates() -> None:
+    day = cr.Note("a", "k", "v", written="2026-01-03", dated=True)
+    assert cr.same_fact_day(day, cr.Note("b", "k", "v", written="2026-01-03", dated=True))
+    assert not cr.same_fact_day(day, cr.Note("b", "k", "v", written="2026-01-03"))
+    assert not cr.same_fact_day(day, cr.Note("b", "k", "v", written="2026-01-02", dated=True))

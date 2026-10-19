@@ -136,8 +136,9 @@ RESPONSE_FORMAT: dict[str, Any] = {
 
 @dataclass(frozen=True)
 class Note:
-    """One memory as the prompt shows it. `written` is when it was stated, `session` how
-    its session relates to the judged row's (for a peer)."""
+    """One memory as the prompt shows it. `written` is when it was stated (a day when its
+    writer dated the fact: `dated`), `session` how its session relates to the judged
+    row's (for a peer)."""
 
     memory_id: str
     memory_key: str
@@ -145,6 +146,13 @@ class Note:
     similarity: float = 1.0
     written: str = ""
     session: str = ""
+    dated: bool = False
+
+
+def same_fact_day(a: Note, b: Note) -> bool:
+    """Both writers dated the fact and the prompt shows one day for both: two facts from
+    one conversation day have no order, so an update between them goes to review."""
+    return a.dated and b.dated and bool(a.written) and a.written == b.written
 
 
 def written_at(holds_ns: int | None, valid_at: Any = None) -> str:
