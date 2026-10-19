@@ -298,10 +298,14 @@ async def test_a_changed_answer_policy_setting_misses_the_precedent(
     monkeypatch.setattr(settings, "memory_ask_world_knowledge", "forbid")
     out = await _ask()
     assert out.source == "synthesized" and len(prec_env.llm.calls) == 2
+    # Retrieval's fusion weights shape the window too.
+    monkeypatch.setattr(settings, "memory_rrf_lexical_weight_floor", 0.3)
+    out = await _ask()
+    assert out.source == "synthesized" and len(prec_env.llm.calls) == 3
     # The precedent settings only decide reuse; they leave the stored answer valid.
     monkeypatch.setattr(settings, "memory_ask_precedents_max_age_hours", 48)
     out = await _ask()
-    assert out.source == "precedent" and len(prec_env.llm.calls) == 2
+    assert out.source == "precedent" and len(prec_env.llm.calls) == 3
 
 
 @pytest.mark.asyncio

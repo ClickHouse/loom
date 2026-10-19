@@ -586,7 +586,7 @@ _ASK_SHAPE_EXCLUDE = frozenset({"query", "org", "namespace", "run_id", "preceden
 # forbid) misses every precedent written under the old value. Like the request
 # fields, only a value off its default is hashed, so a release that adds a setting
 # keeps the stored precedents. The precedent settings only decide whether to reuse.
-_ASK_SHAPE_SETTINGS = ("memory_ask_", "memory_search_")
+_ASK_SHAPE_SETTINGS = ("memory_ask_", "memory_search_", "memory_rrf_")
 
 
 def _shape_settings(settings: Any) -> dict[str, Any]:
