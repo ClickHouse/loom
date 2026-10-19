@@ -715,10 +715,10 @@ def _compaction_window(
 def _window_of(
     candidates: list[dict[str, Any]], folded: list[bool], live_ids: set[str]
 ) -> tuple[list[int], str]:
-    """`_compaction_window` over the candidate rows. A summary is stale when it is what a
-    failed run leaves: its sources all still live, and it sitting at the earliest `ts`
-    among them. It stays stale only while this window replaces every source; otherwise it is
-    read like any other summary, so no source loses its cover."""
+    """`_compaction_window` over the candidate rows. A summary is stale when a failed run
+    could have left it: its sources are all live and all among the candidates, and its
+    `ts` is the earliest of theirs. It stays stale only while this window replaces every
+    source; otherwise it is read like any other summary, so no source loses its cover."""
     lines = [f"{r['role']}: {r['content']}" for r in candidates]
     sources = [set(_compacted_from(r)) for r in candidates]
     ts_of = {str(r["msg_id"]): r["ts"] for r in candidates}

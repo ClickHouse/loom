@@ -654,16 +654,17 @@ def test_only_a_system_turn_with_a_compacted_from_list_is_a_summary(
 
 
 def test_a_summary_after_its_first_source_is_not_stale() -> None:
-    """Only a summary at the earliest ts of its sources is what a failed run leaves: one
-    a client wrote later, naming earlier turns, is read like any other summary."""
+    """Only a summary at the earliest ts of its sources is what a failed run leaves. A
+    client summary appended later over a live summary (rows in live_messages order:
+    s1, then s2 naming s1, then a turn) is read like any other summary."""
 
-    def row(mid: str, ts: datetime, metadata: str = "{}", role: str = "user") -> dict[str, Any]:
+    def row(mid: str, ts: datetime, metadata: str, role: str = "system") -> dict[str, Any]:
         return {"msg_id": mid, "role": role, "content": mid * 10, "ts": ts, "metadata": metadata}
 
-    meta = '{"compacted_from": ["m1", "m2"]}'
-    late = [row("s", T0 + timedelta(seconds=1), meta, "system"), row("m1", T0), row("m2", T0)]
-    _, transcript = ch_mod._window_of(late, [True, False, False], {"s", "m1", "m2"})
-    assert "ssss" in transcript
-    tied = [row("s", T0, meta, "system"), row("m1", T0), row("m2", T0)]
-    _, transcript = ch_mod._window_of(tied, [True, False, False], {"s", "m1", "m2"})
-    assert "ssss" not in transcript
+    s1 = row("s1", T0, '{"compacted_from": ["m0"]}')
+    turn = row("m1", T0 + timedelta(seconds=2), "{}", "user")
+    live = {"s1", "s2", "m1"}
+    for s2_ts, read in ((T0 + timedelta(seconds=1), True), (T0, False)):
+        rows = [s1, row("s2", s2_ts, '{"compacted_from": ["s1"]}'), turn]
+        _, transcript = ch_mod._window_of(rows, [True, True, False], live)
+        assert ("s2s2" in transcript) is read
