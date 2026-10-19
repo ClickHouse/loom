@@ -558,7 +558,9 @@ body {
    ============================================================ */
 
 /* Unlayered, as every ring rule here: in a layer an override would lose to the unlayered
-   *:focus-visible ring. */
+   *:focus-visible ring. With the light-theme token corrections above, these are the only
+   Loom rules outside a layer besides the base page styles (page, scrollbars, animations,
+   selection); every component rule sits in `@layer components`. */
 
 /* Click UI's focus ring (outline-default, 2 px, 2 px offset) on every focusable
    element, including the ones Click UI draws none on (checkbox, switch, tabs,
@@ -624,16 +626,18 @@ textarea[aria-invalid="true"]:focus-visible {
 
 /* A table whose column header another table above it already shows: the header stays
    for a screen reader, out of sight (Tailwind's sr-only). */
-.table-header-sr-only > thead {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border-width: 0;
+@layer components {
+  .table-header-sr-only > thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border-width: 0;
+  }
 }
 
 /* ============================================================
@@ -1240,11 +1244,13 @@ textarea[aria-invalid="true"]:focus-visible {
 /* A list page's sticky toolbar (ui/ListToolbar): Click UI's 1 px separator under it, only
    once it is stuck over the rows. A shadow, so the bar keeps its 48 px. `main` scrolls
    a focused row clear of it (WCAG 2.4.11): the bar's height and a little air. */
-.list-toolbar[data-stuck] {
-  box-shadow: 0 1px 0 var(--global-color-stroke-default);
-}
-#main {
-  scroll-padding-top: 56px;
+@layer components {
+  .list-toolbar[data-stuck] {
+    box-shadow: 0 1px 0 var(--global-color-stroke-default);
+  }
+  #main {
+    scroll-padding-top: 56px;
+  }
 }
 
 /* ui/ListRow: a list page's row on Click UI's CardHorizontal md tokens (CardHorizontal's one
@@ -1400,14 +1406,15 @@ textarea[aria-invalid="true"]:focus-visible {
 }
 
 /* AgentBadge: a long agent name is cut at 180 px with an ellipsis (the whole name is in
-   its tooltip); every box inside Click UI's Badge may shrink to it. Unlayered: in the
-   components layer it would lose to the Badge's own unlayered styles. */
-.agent-badge {
-  max-width: 180px;
-}
-.agent-badge * {
-  min-width: 0;
-  max-width: 100%;
+   its tooltip); every box inside Click UI's Badge may shrink to it. */
+@layer components {
+  .agent-badge {
+    max-width: 180px;
+  }
+  .agent-badge * {
+    min-width: 0;
+    max-width: 100%;
+  }
 }
 
 /* ui/ListPager: Click UI's Pagination stacks into a column under 768 px (its containers are
@@ -1415,41 +1422,47 @@ textarea[aria-invalid="true"]:focus-visible {
    wrapping above the arrows, and keeps the widths it sets (a 50 px page field). Click UI's
    Container marks itself `data-testid="container"`, the one stable hook its build keeps;
    e2e/overlap.spec.ts checks the pager is one row at 375 px. */
-@media (max-width: 768px) {
-  .list-pager [data-testid="container"] {
-    flex-direction: row;
-    width: var(--container-width);
-    max-width: var(--container-max-width);
-  }
-  .list-pager > [data-testid="container"] {
-    flex-wrap: wrap;
-    row-gap: 8px;
+@layer components {
+  @media (max-width: 768px) {
+    .list-pager [data-testid="container"] {
+      flex-direction: row;
+      width: var(--container-width);
+      max-width: var(--container-max-width);
+    }
+    .list-pager > [data-testid="container"] {
+      flex-wrap: wrap;
+      row-gap: 8px;
+    }
   }
 }
 
 /* Namespace picker rows (NamespacePicker.tsx): Click UI's card hover, and the current
    namespace in the tint Click UI's Table gives a selected row. */
-.ns-row:hover {
-  background: var(--click-card-horizontal-default-color-background-hover);
-}
-.ns-row[data-current] {
-  background: var(--click-table-row-color-background-active);
+@layer components {
+  .ns-row:hover {
+    background: var(--click-card-horizontal-default-color-background-hover);
+  }
+  .ns-row[data-current] {
+    background: var(--click-table-row-color-background-active);
+  }
 }
 
 /* A scroll area that fades out at an edge it can still scroll past, so the rows below the
    fold read as more to come (`data-fade` is set from the scroll position). The scroll
    padding matches the fade, so a row focused with the arrow keys stops clear of it. */
-.scroll-fade {
-  scroll-padding-block: 24px;
-}
-.scroll-fade[data-fade="top"] {
-  mask-image: linear-gradient(to bottom, transparent, black 24px);
-}
-.scroll-fade[data-fade="bottom"] {
-  mask-image: linear-gradient(to top, transparent, black 24px);
-}
-.scroll-fade[data-fade="both"] {
-  mask-image: linear-gradient(to bottom, transparent, black 24px, black calc(100% - 24px), transparent);
+@layer components {
+  .scroll-fade {
+    scroll-padding-block: 24px;
+  }
+  .scroll-fade[data-fade="top"] {
+    mask-image: linear-gradient(to bottom, transparent, black 24px);
+  }
+  .scroll-fade[data-fade="bottom"] {
+    mask-image: linear-gradient(to top, transparent, black 24px);
+  }
+  .scroll-fade[data-fade="both"] {
+    mask-image: linear-gradient(to bottom, transparent, black 24px, black calc(100% - 24px), transparent);
+  }
 }
 
 /* Inline code in copy (an op name, a setting, a query example): Click UI's CodeInline tokens,
@@ -1570,8 +1583,10 @@ textarea[aria-invalid="true"]:focus-visible {
 
 /* A table row being acted on (the review queue's current conflict) carries aria-current on
    its key; Table's active tint alone is 1.03:1, so a bar marks it. */
-tbody tr:has([aria-current="true"]) > td:first-child {
-  box-shadow: inset 3px 0 0 var(--color-text);
+@layer components {
+  tbody tr:has([aria-current="true"]) > td:first-child {
+    box-shadow: inset 3px 0 0 var(--color-text);
+  }
 }
 
 /* Kbd (ui/Kbd.tsx): a key or a short chord. It stands in for Click UI's inline code
@@ -1668,41 +1683,43 @@ tbody tr:has([aria-current="true"]) > td:first-child {
   .runs-numeric-header > div {
     justify-content: flex-end;
   }
+
+  /* The graph caption's arrow at the caption's size, not Click UI's fixed 12 px, which the
+     viewBox shrinks. */
+  .graph-svg .graph-relation svg {
+    width: 1em;
+    height: 1em;
+  }
 }
 
-/* Unlayered: it must beat Click UI's unlayered Icon size. The graph caption's arrow at the
-   caption's size, not Click UI's fixed 12 px, which the viewBox shrinks. */
-.graph-svg .graph-relation svg {
-  width: 1em;
-  height: 1em;
-}
-
-/* Repositories: a row's one action is Click UI's SplitButton. On a phone it takes the row's
-   width under the summary line. */
-@media (max-width: 639px) {
-  .repo-action {
-    display: block;
+@layer components {
+  /* Repositories: a row's one action is Click UI's SplitButton. On a phone it takes the row's
+     width under the summary line. */
+  @media (max-width: 639px) {
+    .repo-action {
+      display: block;
+    }
+    .repo-action .split-button > div {
+      display: flex;
+      width: 100%;
+    }
+    .repo-action .split-button > div > button {
+      flex: 1;
+    }
   }
-  .repo-action .split-button > div {
-    display: flex;
-    width: 100%;
+  /* Under a coarse pointer the split button's menu half (a div that ui/SplitButton makes a
+     button) is a 44 px target like every other button. */
+  @media (pointer: coarse) {
+    .repo-action [data-testid="split-button-dropdown"] {
+      display: grid;
+      place-items: center;
+      min-width: var(--spacing-hit);
+      min-height: var(--spacing-hit);
+    }
   }
-  .repo-action .split-button > div > button {
-    flex: 1;
+  /* The onboarding steps: Click UI's incomplete step title is #c0c0c0 on white (1.8:1); the
+     muted text colour passes. */
+  .repo-onboarding {
+    --click-stepper-vertical-numbered-color-title-incomplete: var(--color-text-muted);
   }
-}
-/* Under a coarse pointer the split button's menu half (a div that ui/SplitButton makes a
-   button) is a 44 px target like every other button. */
-@media (pointer: coarse) {
-  .repo-action [data-testid="split-button-dropdown"] {
-    display: grid;
-    place-items: center;
-    min-width: var(--spacing-hit);
-    min-height: var(--spacing-hit);
-  }
-}
-/* The onboarding steps: Click UI's incomplete step title is #c0c0c0 on white (1.8:1); the
-   muted text colour passes. */
-.repo-onboarding {
-  --click-stepper-vertical-numbered-color-title-incomplete: var(--color-text-muted);
 }
