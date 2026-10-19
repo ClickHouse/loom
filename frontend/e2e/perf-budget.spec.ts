@@ -225,13 +225,13 @@ test("the Memories search asks for memory legs only and aborts a stale search", 
 
 // The Memories page asks for the twelve fields its cards read and the preview length they
 // show; the list answers nothing else.
-test("the Memories list asks for the twelve fields the page reads and a 321-character preview", async ({ page }) => {
+test("the Memories list asks for the twelve fields the page reads and a 320-character preview", async ({ page }) => {
   const calls = await installApi(page, { memoryRows: 12 });
   await page.goto("/memories", { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-memory-key]").first()).toBeVisible();
   await expect.poll(() => calls.list.length).toBeGreaterThanOrEqual(1);
   const body = calls.list[0];
-  expect(body.preview_chars, "preview_chars rides on the list request").toBe(321);
+  expect(body.preview_chars, "preview_chars rides on the list request").toBe(320);
   const fields = stringArray(body.fields) ?? [];
   expect(fields.length > 0, "fields rides on the list request").toBe(true);
   for (const f of ["memory_key", "value", "tags", "agent", "created_at", "pinned", "verification"]) {

@@ -2,7 +2,7 @@
 
 `memory.list` gains `preview_chars` (40–2,048; hidden from the MCP listing)
 and its entries gain `value_truncated`, `content_sha256` and `char_limit`,
-so a page can ask for the 400 characters its cards show and know when a
+so a page can ask for the 320 characters its cards show and know when a
 row holds more. The Memories page sends `fields` and `preview_chars`."""
 
 from __future__ import annotations
@@ -116,8 +116,9 @@ def test_the_projection_accepts_the_three_new_entry_fields() -> None:
 def test_the_memories_page_asks_for_the_fields_it_renders() -> None:
     reads = (_ROOT / "frontend/src/views/memoryListReads.ts").read_text()
     card = (_ROOT / "frontend/src/components/MemoryCard.tsx").read_text()
-    # The list asks for what the card shows: two lines at a 1400 px window.
-    assert "const MEMORIES_PREVIEW_CHARS = CARD_VALUE_CHARS + 1;" in reads
+    # The list asks for as many characters as a card shows (two lines at a 1400 px window);
+    # the server ends a value it cut in "…".
+    assert "const MEMORIES_PREVIEW_CHARS = CARD_VALUE_CHARS;" in reads
     assert "export const CARD_VALUE_CHARS = 320;" in card
     fields_src = reads[
         reads.index("MEMORIES_LIST_FIELDS = [") : reads.index(

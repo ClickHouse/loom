@@ -12,8 +12,8 @@ import { useAbortableEffect } from "../lib/hooks";
 
 /** The characters of a value a card shows: two lines of the 14 px body at a 1400 px window
  *  (list-pages.spec.ts checks a value this long fills both). The Memories list asks
- *  memory.list for one more, and the card cuts a longer value here, ending it in "…",
- *  before the clamp. */
+ *  memory.list for this many; the server ends a value it cut in "…", and the card cuts a
+ *  longer value here, ending it in "…", before the clamp. */
 export const CARD_VALUE_CHARS = 320;
 
 /** The bounded preview a card shows for a value; whether it was an agent-encoded (base64)
@@ -23,6 +23,8 @@ function describe(v: unknown): { value: string; encoded: boolean; pairs: boolean
   const enc = typeof v === "string" ? detectEncodedValue(v) : detectEncodedRecord(v);
   if (enc) return { value: enc.decoded, encoded: true, pairs: false };
   const pairs = valuePairs(v);
+  // One past CARD_VALUE_CHARS keeps the "…" the server adds to a value it cut, or the
+  // character that tells `truncate` there is more; the default 320 sliced the mark off.
   return pairs
     ? { value: pairs, encoded: false, pairs: true }
     : { value: previewValue(v, CARD_VALUE_CHARS + 1), encoded: false, pairs: false };

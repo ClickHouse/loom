@@ -78,7 +78,22 @@ describe("MemoryCard preview", () => {
   });
 
   it("ends a value the list cut in a cut mark, and shows one that fits whole", async () => {
-    // The list sends one character more than a card shows, cut there with no mark.
+    // The server cuts a value to the preview_chars the list asks for (a card's worth) and
+    // adds "…": one character past what a card shows.
+    const server = render(
+      <MemoryCard
+        identity={identity}
+        entry={entry}
+        onSelect={() => {}}
+        active={false}
+        value={`${"x".repeat(CARD_VALUE_CHARS)}…`}
+      />,
+    );
+    const marked = must((await screen.findByText(/^xxx/)).textContent, "preview text");
+    expect(marked.endsWith("…")).toBe(true);
+    expect(marked.length).toBeLessThanOrEqual(CARD_VALUE_CHARS);
+    server.unmount();
+    // A value one character longer than a card shows, with no mark, ends in one too.
     const cut = "word ".repeat(100).slice(0, CARD_VALUE_CHARS + 1);
     const { unmount } = render(
       <MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value={cut} />,
