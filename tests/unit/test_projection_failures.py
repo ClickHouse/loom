@@ -898,3 +898,26 @@ async def test_a_failed_late_edges_cleanup_records_when_the_value_ended(monkeypa
     await edge_repair.end_overtaken_edges(scope, versions, op="memory.set", ch=None)
     payload = {"memory_id": _ROW_ID, "content_sha256": "a" * 64, "ended_at": ended.isoformat()}
     assert recorded == [payload]
+
+
+@pytest.mark.parametrize(("values", "resolved"), [(99, True), (100, False)])
+async def test_a_value_less_close_past_its_cap_stays_active(monkeypatch, values, resolved) -> None:
+    """A 'high' row's close reads at most 100 of its values a pass: one that reached the
+    cap stays active for the next pass instead of resolving with values left open."""
+    from server.memory.app import edge_repair
+
+    class _ValuesCH(_GraphCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            if "GROUP BY content_sha256" in sql:
+                return [{"sha": f"{i:064x}", "entities": ["a", "b"]} for i in range(values)]
+            return []
+
+    async def close_late_edges(*a: Any, **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(edge_repair, "close_late_edges", close_late_edges)
+    failure = dataclasses.replace(
+        _graph_failure("entity_edges_close"), payload={"memory_id": _ROW_ID}
+    )
+    (out,) = await retry_failures([failure], ch=_ValuesCH())
+    assert out.resolved is resolved and not out.abandoned
