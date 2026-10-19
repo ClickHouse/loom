@@ -846,3 +846,63 @@ async def test_a_create_retry_landing_after_an_end_takes_its_lease_row_back(
         params={"t": first.task.task_id},
     )
     assert rows == [], rows
+
+
+@pytest.mark.asyncio
+async def test_a_create_retry_racing_a_claim_keeps_the_claimants_lease(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retry read the task todo, then a claim landed, then the retry wrote its lease row:
+    the claimant keeps its lease, and its heartbeat holds."""
+    org = f"itest-claim-{uuid.uuid4().hex[:8]}"
+    await inboxes.handle_inbox_register(
+        wire.InboxRegisterInput(
+            org=org,
+            namespace="private",
+            agent="admin",
+            inbox="bot",
+            owner_agent="bot",
+            accept_disclosure=["internal"],
+        )
+    )
+    body = {
+        "org": org,
+        "namespace": "public",
+        "agent": "poster",
+        "inbox": "bot",
+        "kind": "chore",
+        "title": "t",
+        "disclosure": "internal",
+        "idempotency_key": "k1",
+    }
+    first = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    tid = first.task.task_id
+    await transitions.handle_task_accept(
+        wire.TaskAcceptInput(org=org, namespace="private", agent="bot", task_id=tid)
+    )
+    backend = await repo.lease_backend()
+    real_ensure = type(backend).ensure_row
+    claimed: dict[str, Any] = {}
+
+    async def claim_then_ensure(self: Any, *a: Any, **kw: Any) -> Any:
+        monkeypatch.setattr(type(backend), "ensure_row", real_ensure)
+        claimed["out"] = await transitions.handle_task_claim(
+            wire.TaskClaimInput(org=org, namespace="private", agent="bot", task_id=tid)
+        )
+        return await real_ensure(self, *a, **kw)
+
+    monkeypatch.setattr(type(backend), "ensure_row", claim_then_ensure)
+    await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    rows = await ch.query_all(
+        "SELECT owner FROM loom.task_leases WHERE task_id = {t:String}", params={"t": tid}
+    )
+    assert rows, "the claimant keeps its lease row"
+    await transitions.handle_task_heartbeat(
+        wire.TaskHeartbeatInput(
+            org=org,
+            namespace="private",
+            agent="bot",
+            task_id=tid,
+            fence=int(claimed["out"].task.fence),
+        )
+    )
