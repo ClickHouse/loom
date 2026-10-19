@@ -57,7 +57,7 @@ def test_every_intended_edit_stamps_updated_at() -> None:
         + inspect.getsource(update)
         + inspect.getsource(restore)
     )
-    restored = 'status=status,\n            superseded_by="",'
+    restored = 'status=status,\n        superseded_by="",'
     for marker in ("tombstoned_at=now,", restored, "run_id=revision_run_id,"):
         i = msrc.index(marker)
         assert stamp in msrc[max(0, i - 200) : i], marker
