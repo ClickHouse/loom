@@ -428,8 +428,7 @@ async def _bind_context_and_policy(
     then the read scope, then the history policy gate (a structured 403 when
     it denies) on the scoped input. Returns the input the handler runs with."""
     request_id, raw_body, auth = call.request_id, call.raw_body, call.auth
-    # Make auth visible to handlers via request.state and a ContextVar
-    # (so handlers can read the caller's identity without taking Request).
+    # For handlers that take Request; the ContextVar is bound at verification.
     request.state.auth = auth
     # The SDK's ambient run labels reads through a header rather than the
     # body's `run_id` (which would filter the read to the run's own rows).
