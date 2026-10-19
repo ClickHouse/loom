@@ -11,12 +11,15 @@ export function keywordThenRanked(keywordKeys: string[], rankedKeys: string[]): 
   return [...keywordKeys, ...rankedKeys.filter((k) => !keyword.has(k))];
 }
 
+/** A parsed search: the text the server is asked, and the tag and agent filters. */
+export type SearchQuery = { text: string; tags: string[]; agent: string | null };
+
 /** A search box's text split into what the server is asked and the filters the list
  *  applies itself: `tag:work coffee` searches "coffee" among memories tagged `work`;
  *  `agent:foo bar` does the same for an agent. Whitespace runs count as one space. The
  *  prefixes read in any case ("TAG:work"); the values keep the case they were typed in,
  *  and a caller matching them ignores case. */
-export function parseSearchQuery(query: string): { text: string; tags: string[]; agent: string | null } {
+export function parseSearchQuery(query: string): SearchQuery {
   const tags: string[] = [];
   let agent: string | null = null;
   const rest: string[] = [];

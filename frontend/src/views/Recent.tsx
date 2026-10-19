@@ -34,7 +34,7 @@ import { MentorPanel } from "../components/MentorPanel";
 import { Unavailable } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
-import { parseSearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
+import { parseSearchQuery, type SearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
 import { oneOf } from "../lib/oneOf";
 import { shortcutOff } from "../lib/shortcuts";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
@@ -61,7 +61,7 @@ const STATUSES: ReadonlyArray<{ value: Status; label: string }> = [
 const EVERY_AGENT = "*";
 
 /** The tags and agent a parsed search filters the list by. */
-function filterOf({ tags, agent }: ReturnType<typeof parseSearchQuery>): TagAgentFilter {
+function filterOf({ tags, agent }: SearchQuery): TagAgentFilter {
   return { tags, agent: agent ?? "" };
 }
 
