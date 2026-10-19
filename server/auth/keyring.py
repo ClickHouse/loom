@@ -298,11 +298,16 @@ def rs256_signing_key() -> SigningKey | None:
     """The newest active RS256 key, for a token a party outside this deployment
     verifies against the JWKS (`/v1/.well-known/jwks.json`); None when every
     active key is HS256, whose secret no one else may hold."""
-    if not _view.loaded or stale():
-        raise BackendUnavailableError("the signing keyring is not loaded; retry shortly")
-    now = server_now(_view)
-    rsa = [k for k in _keys(_view).values() if k.algorithm == "RS256" and k.activate_at <= now]
+    if not _view.loaded:
+        raise BackendUnavailableError("the signing keyring is not loaded yet; retry shortly")
+    if stale():
+        raise BackendUnavailableError("the signing keyring is stale; retry shortly")
+    rsa = _active_rs256(_view, server_now(_view))
     return max(rsa, key=lambda k: (k.activate_at, k.kid)) if rsa else None
+
+
+def _active_rs256(view: _View, now: datetime) -> list[SigningKey]:
+    return [k for k in _keys(view).values() if k.algorithm == "RS256" and k.activate_at <= now]
 
 
 def status(rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -726,6 +731,13 @@ async def _retire(kid: str, *, ch: _CHClient, held: Callable[[], bool]) -> bool:
         signers.add(ROOT_KID)
     if signers <= {kid}:
         raise ValueError(f"retiring {kid!r} would leave no key to sign with; rotate first")
+    rsa = {k.kid for k in _active_rs256(view, now)}
+    if settings.inference_token_audience and rsa == {kid}:
+        # The inference gateway verifies only RS256: model calls would stop.
+        raise ValueError(
+            f"retiring {kid!r} would leave no RS256 key to sign the inference gateway's "
+            "identity tokens; rotate one with --algorithm RS256 first"
+        )
     if not held():
         raise ValueError(_LAPSED)
     row = row or {**_root_row_values(), "sealed_key": _root_record()}

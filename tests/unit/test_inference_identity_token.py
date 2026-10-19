@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -66,7 +67,7 @@ class _Gateway:
 
 
 @pytest.fixture
-def signs(monkeypatch: pytest.MonkeyPatch) -> _Gateway:
+def signs(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Gateway]:
     monkeypatch.setattr(settings, "jwt_secret", "r" * 40)
     monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
     monkeypatch.setattr(settings, "inference_token_url", "https://gateway.example/oauth/token")
@@ -152,9 +153,9 @@ def test_the_discovery_document_names_the_issuer_and_its_keys(signs: _Gateway) -
 
 
 def test_no_discovery_document_while_loom_signs_no_identity_token(
-    monkeypatch: pytest.MonkeyPatch,
+    signs: _Gateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(settings, "inference_token_audience", "")
+    monkeypatch.setattr(settings, "inference_token_audience", "")  # the exchange stays on
     assert _discovery().status_code == 404
 
 
@@ -183,16 +184,57 @@ def test_the_exchange_takes_exactly_one_token_source(
         Settings(_env_file=None)  # type: ignore[call-arg]
 
 
-def test_it_will_not_start_signing_with_no_public_address(signs: _Gateway, monkeypatch) -> None:
-    monkeypatch.setattr(settings, "public_base_url", "")
-    with pytest.raises(gateway.InferenceIdentityRefused, match="LOOM_PUBLIC_BASE_URL"):
+@pytest.mark.parametrize(
+    ("setting", "value", "message"),
+    [
+        ("public_base_url", "", "needs LOOM_PUBLIC_BASE_URL"),
+        ("public_base_url", "http://loom.example", "https"),
+        # Loom's own tokens carry this audience, signed by the same RS256 keys.
+        ("inference_token_audience", "loom-platform", "LOOM_JWT_AUDIENCE"),
+        ("jwt_trusted_issuers", "https://loom.example/v1", "own verifier trusts"),
+        ("jwt_issuer", "https://loom.example/v1", "own verifier trusts"),
+    ],
+)
+def test_it_will_not_start_signing_tokens_loom_or_a_wire_tap_could_misuse(
+    signs: _Gateway, monkeypatch: pytest.MonkeyPatch, setting: str, value: str, message: str
+) -> None:
+    monkeypatch.setattr(settings, "jwt_audience", "loom-platform")
+    monkeypatch.setattr(settings, setting, value)
+    with pytest.raises(gateway.InferenceIdentityRefused, match=message):
         gateway.require_inference_identity_settings()
 
 
-def test_it_will_not_start_signing_for_its_own_audience(signs: _Gateway, monkeypatch) -> None:
-    monkeypatch.setattr(settings, "inference_token_audience", settings.jwt_issuer)
-    with pytest.raises(gateway.InferenceIdentityRefused, match="LOOM_JWT_ISSUER"):
-        gateway.require_inference_identity_settings()
+def test_it_starts_signing_with_a_loopback_http_address(
+    signs: _Gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "public_base_url", "http://127.0.0.1:7777")
+    gateway.require_inference_identity_settings()
+
+
+def test_a_process_running_no_refresh_loop_reads_the_keyring_to_sign(
+    signs: _Gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A CLI command calling models (`loom reembed`) never started the loop.
+    rs, _ = _row("r1", "RS256")
+    keyring._reset_for_tests(loaded=False)
+    real = keyring.refresh
+    monkeypatch.setattr(keyring, "refresh", lambda **_: real(ch=_Keys([rs])))
+    assert asyncio.run(gateway.bearer("", _GW)) == "gw-1"
+    assert pyjwt.get_unverified_header(signs.sent[0]["subject_token"])["kid"] == "r1"
+
+
+def test_a_keyring_that_cannot_be_read_is_an_outage(
+    signs: _Gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keyring._reset_for_tests(loaded=False)
+
+    async def away(**_: Any) -> bool:
+        return False  # the read failed; the keyring stays unloaded
+
+    monkeypatch.setattr(keyring, "refresh", away)
+    with pytest.raises(gateway.GatewayUnavailable):
+        asyncio.run(gateway.bearer("", _GW))
+    assert signs.sent == []
 
 
 def test_the_keys_stay_reachable_while_a_model_change_drains() -> None:

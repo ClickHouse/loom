@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import secrets
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -60,7 +59,7 @@ def exchanging() -> bool:
 
 async def bearer(provider_key: str, url: str) -> str:
     """What a model call to `url` presents: the gateway's token when Loom
-    exchanges its workload's, else the provider key. A call any path (a model
+    exchanges an identity token there, else the provider key. A call any path (a model
     named per request, the dashboard's check) sends to a provider's own API
     gets no gateway token."""
     if not exchanging():
@@ -91,7 +90,7 @@ async def _renew() -> None:
         }
         if settings.inference_token_scope:
             form["scope"] = settings.inference_token_scope
-        # Never followed: a redirect would carry the workload's token elsewhere.
+        # Never followed: a redirect would carry the identity token elsewhere.
         r = await http().post(
             settings.inference_token_url, data=form, timeout=10.0, follow_redirects=False
         )
@@ -125,9 +124,15 @@ async def _renew() -> None:
 async def _identity_token() -> str:
     """What Loom exchanges: the workload's token from its file, else one it
     signs itself."""
+    from server.auth import keyring
+
     if settings.inference_workload_token_file:
         workload = await asyncio.to_thread(Path(settings.inference_workload_token_file).read_text)
         return workload.strip()
+    if not keyring.loaded() or keyring.stale():
+        # A CLI command calling models (`loom reembed`) runs no refresh loop, and
+        # a server's first model call can come before the loop's first read.
+        await keyring.refresh()
     return signed_identity_token()
 
 
@@ -135,7 +140,9 @@ def issuer() -> str:
     """The `iss` of the identity tokens Loom signs: its public address under
     /v1, where `/.well-known/openid-configuration` and `/.well-known/jwks.json`
     are served."""
-    return f"{settings.public_base_url.strip().rstrip('/')}/v1"
+    from server.auth.public_url import public_base_url
+
+    return f"{public_base_url(None, configured=settings.public_base_url)}/v1"
 
 
 def signed_identity_token() -> str:
@@ -145,12 +152,13 @@ def signed_identity_token() -> str:
     import jwt as pyjwt
 
     from server.auth import keyring
+    from server.auth.jwt import new_jti
 
     key = keyring.rs256_signing_key()
     if key is None:
         raise ValueError(
             "no RS256 signing key to sign the identity token: run "
-            "`loom signing-key rotate --algorithm RS256`"
+            "`loom signing-key rotate --algorithm RS256` (or make LOOM_JWT_SECRET an RSA key)"
         )
     now = int(time.time())
     claims = {
@@ -160,7 +168,7 @@ def signed_identity_token() -> str:
         "iat": now,
         "nbf": now,
         "exp": now + IDENTITY_TOKEN_LIFE_S,
-        "jti": secrets.token_urlsafe(16),
+        "jti": new_jti(),
     }
     return pyjwt.encode(claims, key.secret, algorithm="RS256", headers={"kid": key.kid})
 
@@ -171,19 +179,37 @@ class InferenceIdentityRefused(RuntimeError):
 
 def require_inference_identity_settings() -> None:
     """Refuse to start when Loom is to sign its own identity tokens but has no
-    public address for their issuer (a gateway fetches the keys from there), or
-    names its own audience: such a token would open Loom itself."""
+    https public address for their issuer (a gateway fetches the keys from
+    there, and a key swapped on the way would be trusted), or when they could
+    be taken for Loom's own tokens: the same audience, or an issuer Loom's
+    verifier accepts. Either way the gateway would also take the tokens Loom
+    mints for its users, which the same RS256 keys sign."""
+    from server.auth.public_url import is_loopback_host
+
     if not (settings.inference_token_url and settings.inference_token_audience):
         return
-    if not settings.public_base_url.strip():
+    base = urlsplit(settings.public_base_url.strip())
+    if not base.hostname:
         raise InferenceIdentityRefused(
             "refusing to start: LOOM_INFERENCE_TOKEN_AUDIENCE needs LOOM_PUBLIC_BASE_URL, "
             "the issuer of the identity tokens Loom signs (the gateway reads its keys there)"
         )
-    if settings.inference_token_audience == settings.jwt_issuer:
+    if base.scheme != "https" and not is_loopback_host(base.hostname):
         raise InferenceIdentityRefused(
-            "refusing to start: LOOM_INFERENCE_TOKEN_AUDIENCE is LOOM_JWT_ISSUER, the audience "
-            "of Loom's own tokens; name the gateway's"
+            "refusing to start: LOOM_INFERENCE_TOKEN_AUDIENCE needs an https "
+            "LOOM_PUBLIC_BASE_URL: the gateway fetches the issuer's keys there"
+        )
+    if settings.inference_token_audience == settings.jwt_audience:
+        raise InferenceIdentityRefused(
+            "refusing to start: LOOM_INFERENCE_TOKEN_AUDIENCE is LOOM_JWT_AUDIENCE, the "
+            "audience of Loom's own tokens; name the gateway's"
+        )
+    from server.auth.jwt import trusted_issuers
+
+    if issuer() in trusted_issuers():
+        raise InferenceIdentityRefused(
+            f"refusing to start: the identity tokens' issuer {issuer()!r} is one Loom's "
+            "own verifier trusts (LOOM_JWT_ISSUER, LOOM_JWT_TRUSTED_ISSUERS)"
         )
 
 

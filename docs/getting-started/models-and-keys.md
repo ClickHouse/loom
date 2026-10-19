@@ -247,20 +247,24 @@ LOOM_EMBEDDING_MODEL=text-embedding-3-large
 Each exchange sends a new token that lives five minutes: issuer
 `<LOOM_PUBLIC_BASE_URL>/v1`, subject `loom`, the audience above, signed RS256
 with the newest RS256 key of the signing keyring. Create one first with `loom
-signing-key rotate --algorithm RS256` (it signs Loom's own tokens too from
-then on, which every Loom of the deployment verifies); an HS256 secret is never
-used, since the gateway could not verify it. Spend is attributed to that one
-subject.
+signing-key rotate --algorithm RS256`, unless `LOOM_JWT_SECRET` is an RSA key,
+which signs as RS256 already. That key signs Loom's own tokens too from then
+on, which every Loom of the deployment verifies; an HS256 secret is never used,
+since the gateway could not verify it. Spend is attributed to that one subject.
 
-The gateway's entry for Loom names that issuer, the audience, RS256, and the
-keys at `<LOOM_PUBLIC_BASE_URL>/v1/.well-known/jwks.json` (OIDC discovery is at
-`/v1/.well-known/openid-configuration`). The gateway must be able to fetch that
-URL; where it cannot reach Loom, publish a copy of the key set somewhere it
-can, and copy it again at each rotation. A rotated key is published as soon as
-it is written, before it signs, so a gateway that refreshes its copy within
-the rotation's delay never sees a token it cannot verify. Loom refuses to start
-without `LOOM_PUBLIC_BASE_URL`, or with an audience that is `LOOM_JWT_ISSUER`,
-and its own verifier never accepts a token with the gateway's audience.
+The gateway's entry for Loom names that issuer, the audience, subject `loom`,
+RS256, and the keys at `<LOOM_PUBLIC_BASE_URL>/v1/.well-known/jwks.json` (OIDC
+discovery is at `/v1/.well-known/openid-configuration`). The gateway must be
+able to fetch that URL over https; where it cannot reach Loom, publish a copy of
+the key set somewhere it can. Each Loom publishes a key at its next keyring
+refresh after `rotate` writes it, and the key signs only `--activate-in` later
+(300 s by default): rotate with an `--activate-in` longer than the gateway
+keeps its copy of the keys, or than copying them takes. A retired key stays
+trusted at the gateway until its copy is refreshed, and Loom refuses to retire
+the last active RS256 key while it signs these tokens. Loom refuses to start
+without an https `LOOM_PUBLIC_BASE_URL`, with `LOOM_JWT_AUDIENCE` as the
+audience, or with an issuer its own verifier trusts, and its own verifier never
+accepts a token with the gateway's audience.
 
 ## Apply changes and check the result
 

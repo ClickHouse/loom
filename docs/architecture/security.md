@@ -61,7 +61,10 @@ secret (HS256, or RS256 for a PEM RSA one; any other PEM signs nothing and sign-
 `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (at least three refresh intervals) verifies
 nothing (503 `AUTH_UNAVAILABLE`) and signs nothing (503 `BACKEND_UNAVAILABLE`) until a read
 lands: a retire since may be unseen. The public keys of RS256 keys are served at
-`GET /v1/.well-known/jwks.json`. The `default` row holds `HMAC(root, label)`, written by
+`GET /v1/.well-known/jwks.json`. With `LOOM_INFERENCE_TOKEN_AUDIENCE` the newest RS256 key
+also signs the identity token Loom exchanges at an inference gateway; that gateway trusts
+those keys, so Loom refuses to start when the token's audience is `LOOM_JWT_AUDIENCE` or its
+issuer one Loom's verifier accepts, and a retire may not leave no RS256 key active. The `default` row holds `HMAC(root, label)`, written by
 the workers leader or a keyring command (never a replica's first boot, which would trust a
 mistyped secret); a process whose root does not match it reports
 `keyring_root_mismatch`, and the keyring commands and `loom mint-token` refuse there.

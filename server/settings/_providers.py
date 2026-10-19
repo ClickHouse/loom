@@ -147,7 +147,7 @@ class ProviderSettings(ModelSettings):
                 raise ValueError(f"LOOM_{name.upper()} must be an http(s) URL, got {value!r}")
         token = urlsplit(self.inference_token_url)
         if token.scheme == "http" and token.hostname not in ("localhost", "127.0.0.1", "::1"):
-            # The workload's own OIDC token goes there.
+            # The identity token goes there.
             raise ValueError("LOOM_INFERENCE_TOKEN_URL must be https")
         sources = bool(self.inference_workload_token_file) + bool(self.inference_token_audience)
         if self.inference_token_url and sources != 1:
