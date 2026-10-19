@@ -33,18 +33,19 @@ LOOM_API_KEY="$PUBLIC_WRITER" loom import-okf /tmp/bundle --server-url "$PUBLIC_
   `derived` or `external` keeps that class; every other row is stored as `imported`,
   which the server derives from the `okf:` trace. With the same org and namespace on both
   sides the copy carries no `origin:` tags.
-- **One `memory.delete_version` per pruned row.** `--prune` deletes only rows under the import's
-  `--agent`, written by its token, whose `source_trace` starts with `okf:` and whose key is
-  no longer in the bundle. Rows anyone else wrote in the namespace stay. Give each bundle
-  imported into the namespace its own `--agent` (`--prune` refuses without one). A delete
-  is a tombstone: `memory.restore` brings the row back within its 14-day window.
+- **One `memory.delete_version` per pruned row.** `--prune` deletes only rows under the
+  import's `--agent`, written by its token, whose `source_trace` starts with `okf:` and
+  whose key is no longer in the bundle. Rows anyone else wrote in the namespace stay. Give
+  each bundle imported into the namespace its own `--agent` (`--prune` refuses without
+  one). A delete is a tombstone: `memory.restore` brings the row back within its 14-day
+  window.
 
 The last line reports the counts:
 `500 rows from the bundle into acme/shared-lessons: 0 written, 500 unchanged, 0 failed …,
 0 pruned`.
 Exit 1 means the target could not be read or a write, link, delete, evidence batch or
-`--verify` failed; exit 2 means the import refused before any request: a lint finding, a prune
-guard, a path that is not a directory, or a missing `--agent`, token or org.
+`--verify` failed; exit 2 means the import refused before any request: a lint finding, a
+prune guard, a path that is not a directory, or a missing `--agent`, token or org.
 
 ## Guards
 
@@ -105,9 +106,9 @@ A run that finds nothing to change sends only reads. For a namespace of N rows:
 A 501-row namespace with one writer takes 15 requests in all (6 `memory.list` calls, 1
 `memory.keys`, 1 health read, 2 `memory.bulk_get` and 1 edge page on the export side; 1, 2
 and 1 on the import side). At 50,000 rows under one identity a run is about 750 requests,
-under one a second over a 15-minute schedule; a namespace spread over many sessions, as
-hooks write it, takes one `memory.bulk_get` per session instead, and the export lists the
-source up to three times in all when it changed while it was paged.
+fewer than one a second over a 15-minute schedule; a namespace spread over many sessions,
+as hooks write it, takes one `memory.bulk_get` per session instead, and the export lists
+the source up to three times in all when it changed while it was paged.
 
 ## Tokens
 
@@ -149,16 +150,16 @@ candidate as kept.
 Everything in the namespace reaches the public Loom within one schedule interval. Treat a
 write to it on the private side as publishing: keep anything confidential in another
 namespace. Rows marked `sensitivity: high` stay on the private side (the export leaves
-them out unless `--include-high`), and a row that becomes `high` is pruned from the
-public side on the next run, unless it was the last row the export would carry: the
-bundle then has no concepts, the import refuses it, and the public copies stay. Delete
-them on the public Loom with `memory.delete`, or through erasure when the content must
-go. The export knows a `high` row by its `sensitivity`, which it reads through
-`memory.bulk_get`, or by the `sensitivity:high` tag `memory.set` and `memory.update` add.
-Against a private Loom whose `memory.bulk_get` does not return `sensitivity`, every row
-stays home (the export counts them under "no known sensitivity"), so the bundle has no
-concepts and `--prune` refuses it. A prune is a tombstone: the value stays restorable for 14 days and in the public Loom's
-version history. Content that must leave the public Loom goes through
+them out unless `--include-high`), and a row that becomes `high` is pruned from the public
+side on the next run, unless it was the last row the export would carry: the bundle then
+has no concepts, the import refuses it, and the public copies stay. Delete them on the
+public Loom with `memory.delete`, or through erasure when the content must go. The export
+knows a `high` row by its `sensitivity`, which it reads through `memory.bulk_get`, or by
+the `sensitivity:high` tag `memory.set` and `memory.update` add. Against a private Loom
+whose `memory.bulk_get` does not return `sensitivity`, every row stays home (the export
+counts them under "no known sensitivity"), so the bundle has no concepts and `--prune`
+refuses it. A prune is a tombstone: the value stays restorable for 14 days and in the
+public Loom's version history. Content that must leave the public Loom goes through
 [erasure](../features/memory/retention-and-erasure.md).
 
 ## Network
