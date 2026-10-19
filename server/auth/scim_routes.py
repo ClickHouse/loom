@@ -241,17 +241,16 @@ def _keyed_written(
     alone. `earlier` is the entry an earlier operation of the request left, as
     each operation sees the ones before it (RFC 7644 §3.5.2). Removing the
     keyed entry, or not saying what replaces it, is refused."""
-    if earlier is None:
-        stored = {"value": row["email"], "type": row["email_type"], "primary": row["email_primary"]}
-        # An email the userName gave is outranked by any entry (`user_name_and_email`).
-        here = -1 if row["email_from_user_name"] else _rank(stored)
-    else:
+    stored = {"value": row["email"], "type": row["email_type"], "primary": row["email_primary"]}
+    # An email the userName gave is outranked by any entry (`user_name_and_email`).
+    # The place to keep is the stored one: a request may raise it and lower it back.
+    here = -1 if row["email_from_user_name"] else _rank(stored)
+    if earlier is not None:
         stored = {
             "value": earlier.get("value") or row["email"],
             "type": earlier.get("type") or "",
             "primary": earlier.get("primary") or False,
         }
-        here = _rank(stored)
     if attr == "emails":
         if kind == "remove":
             raise _no_change("the email cannot be removed")
@@ -458,7 +457,7 @@ async def list_users(request: Request) -> JSONResponse:
     if text is not None:
         attribute, value = parse_filter(text)
         row = await (scim.find(value) if attribute == "userName" else scim.get(scim.user_id(value)))
-        if row and attribute == "work email" and str(row["email_type"]).lower() != "work":
+        if row and attribute == "work email" and row["email_type"] != "work":
             row = None
         total, rows = (1, [row]) if row else (0, [])
         rows = rows[start - 1 : start - 1 + count]

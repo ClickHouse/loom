@@ -212,6 +212,11 @@ class _Table:
         return sorted((r for r in heads if r and not r["deleted"]), key=lambda r: r["user_name"])
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        if "id != {id:String} AND email IN" in sql:  # another inactive user reaching it
+            p = params or {}
+            heads = [self.newest(uid) for uid in {r["id"] for r in self.rows} - {p["id"]}]
+            reached = [r for r in heads if r and p["s"] in self.accounts.get(r["email"], [])]
+            return {"x": 1} if any(not r["active"] for r in reached) else None
         if "loom.service_accounts" in sql:
             p = params or {}
             live = [r for r in self.made_by(sql, p) if r["revoked_at"] is None]
@@ -232,15 +237,6 @@ class _Table:
         return row
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-        if "id != {id:String} AND email IN" in sql:  # another inactive user reaching it
-            heads = [self.newest(uid) for uid in {r["id"] for r in self.rows} - {params["id"]}]
-            reach = self.accounts
-            held = [
-                r
-                for r in heads
-                if r and not r["active"] and params["s"] in reach.get(r["email"], [])
-            ]
-            return [{"email": r["email"]} for r in held[:1]]
         if "loom.service_accounts" in sql:
             rows = [{**r, "live": r["revoked_at"] is None} for r in self.made_by(sql, params)]
             if self.shuffle is not None:
@@ -1752,6 +1748,15 @@ def test_each_email_operation_sees_the_ones_before_it(client: TestClient, world)
     )
     assert r.status_code == 200, r.text
     assert r.json()["emails"] == [{"value": "lee@example.com", "type": "work", "primary": True}]
+
+
+def test_a_patch_may_raise_an_emails_place_and_lower_it_back(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "lee@example.com", "type": "work"}])
+    keyed = 'emails[value eq "lee@example.com"].primary'
+    up, down = ({"op": "replace", "path": keyed, "value": flag} for flag in (True, False))
+    r = _patch(client, uid, up, down)
+    assert r.status_code == 200, r.text
+    assert r.json()["emails"] == [{"value": "lee@example.com", "type": "work", "primary": False}]
 
 
 def test_a_new_work_entry_would_take_a_plain_entrys_place(client: TestClient, world) -> None:

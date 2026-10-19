@@ -517,12 +517,11 @@ def _newest_cutoff(rows: dict[str, dict[str, Any]]) -> datetime | None:
 
 async def _held_by_another_inactive(uid: str, subject: str) -> bool:
     """Whether another deactivated (or deleted) user's email reaches `subject`
-    now, as `_subjects` reads reach: not the `subjects` a row recorded, which
-    lag an account linked since or a deactivation whose row write failed."""
+    now, by `_subjects`' rules."""
     with own_write_reads():
-        rows = await get_client().query_all(
+        row = await get_client().query_one(
             f"""
-            SELECT email FROM {TABLE} FINAL
+            SELECT 1 AS x FROM {TABLE} FINAL
             WHERE active = 0 AND id != {{id:String}} AND email IN (
                 SELECT contact_email FROM loom.namespaces FINAL
                 WHERE owner_email = {{s:String}} AND active = 1
@@ -535,7 +534,7 @@ async def _held_by_another_inactive(uid: str, subject: str) -> bool:
             """,
             params={"id": uid, "s": subject},
         )
-    return bool(rows)
+    return row is not None
 
 
 async def _write(row: dict[str, Any]) -> None:
