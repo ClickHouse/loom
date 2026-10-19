@@ -78,7 +78,8 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   turns is left alone. Earlier summaries at the start of the window fold into the prompt
   without counting, one too long to fold in whole stays live, and one a failed run left
   (its turns all still live and in the window, at the first one's `ts`) is replaced
-  unread. A summary further into the window counts like any turn.
+  unread. A summary further into the window takes prompt budget like any turn and is
+  replaced with it, but is not counted.
   A summary that cannot be embedded compacts nothing (`reason: "embed-failed"`).
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
