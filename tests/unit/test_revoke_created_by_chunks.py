@@ -22,6 +22,7 @@ class _CH:
                 "name": f"{i:064d}",  # the longest token name
                 "sa_subject": f"sa:{i:064d}-abc123",
                 "created_by": "lee",
+                "lineage": ["lee"],
                 "created_at": None,
                 "live": False,
             }

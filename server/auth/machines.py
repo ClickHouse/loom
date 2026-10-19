@@ -164,7 +164,7 @@ async def save(m: Machine, *, by: str, active: bool = True, ch: Any = None) -> N
     # Past the name's newest row, whichever replica's clock wrote it: under
     # FINAL a later change with a lower version would be lost.
     ch = ch or get_client()
-    version = await next_version(ch, TABLE, "name", m["name"])
+    version = await next_version(ch, TABLE, {"name": m["name"]})
     await ch.insert(
         TABLE,
         [

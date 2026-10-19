@@ -454,8 +454,8 @@ they run side by side: only those for people who reach a shared account wait
 on each other (a busy one answers 503 and the provider retries it). The
 filters served are `userName eq "<userName>"` and, on the email,
 `emails[type eq "work"].value eq "<email>"` (or `emails.value eq`), which
-match the address Loom keys a user on when its `emails` list holds it, and
-for `emails[type eq "work"].value` only as a `work` entry. `GET /Users`,
+match every user with an `emails` entry holding the address, in any case (a
+`work` entry for the first), not only the one keyed on it. `GET /Users`,
 `GET /Users/{id}` and `GET /ServiceProviderConfig` answer as RFC 7644 says,
 and `GET /Groups` answers an empty list.
 
@@ -526,8 +526,12 @@ before adopting accounts or relying on a logout or a bot disable. The
 previous build serves no SCIM and reads neither deactivations nor SCIM's
 revocations: a person deactivated over SCIM still signs in there, and their
 tokens still work there. Set `LOOM_SCIM_TOKEN` only once every replica runs
-this build, and do not roll back past it while anyone is deactivated (revoke
-each of their subjects with `loom revoke-token --subject` first).
+this build, and do not roll back past it while anyone is deactivated: the
+previous build lets them sign in. Before a rollback, block each of them at the
+identity provider (suspend them, or remove them from the application), and
+revoke each subject they reach with `loom revoke-token --subject`. A
+deactivated email that reaches no account has no subject to revoke: the
+provider's block is all that keeps it out of the previous build.
 
 A browser sign-in whose steps land on both builds (a code exchanged, an
 identity provider's callback) fails and is started again. The SDK and `loom

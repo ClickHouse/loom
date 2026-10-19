@@ -5,6 +5,7 @@ revoked from it, whether or not a bearer is sent."""
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -35,6 +36,8 @@ class _Store:
     async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any] | None:
         if "loom.revoked_tokens" in sql:
             return revocation_read(self.revocations, sql, params)
+        if "max(version)" in sql:  # a new token's version, past its name's rows
+            return {"v": time.time_ns()}
         row = self.rows.get((params["org"], params["name"]))
         if row is None or ("revoked_at IS NULL" in sql and row["revoked_at"] is not None):
             return None

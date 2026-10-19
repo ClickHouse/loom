@@ -178,10 +178,15 @@ class _Table:
         unexpired, when `sql` says so."""
         subs = params.get("subs")
         unexpired = "expires_at > now()" in sql
+        by_lineage = "hasAny(lineage" in sql
         return [
             r
             for r in self.heads()
-            if (subs is None or r["created_by"] in subs)
+            if (
+                subs is None
+                or r["created_by"] in subs
+                or (by_lineage and set(r["lineage"]) & set(subs))
+            )
             and not (unexpired and r["expires_at"] and r["expires_at"] <= datetime.now())
         ]
 
@@ -213,6 +218,13 @@ class _Table:
         heads = [self.newest(uid) for uid in {r["id"] for r in self.rows}]
         return sorted((r for r in heads if r and not r["deleted"]), key=lambda r: r["user_name"])
 
+    def listed(self, sql: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
+        """The live users a page reads: those holding the address it names, if any."""
+        column = "work_addresses" if "has(work_addresses" in sql else "addresses"
+        if "has(" not in sql:
+            return self.live()
+        return [r for r in self.live() if (params or {})["a"] in r[column]]
+
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
         if "id != {id:String} AND email IN" in sql:  # another inactive user reaching it
             p = params or {}
@@ -226,12 +238,12 @@ class _Table:
         if "loom.revoked_tokens" in sql:
             return revocation_read(self.revocations, sql, params)
         if "count()" in sql:
-            return {"n": len(self.live())}
+            return {"n": len(self.listed(sql, params))}
         if "lowerUTF8(user_name) =" in sql:
             want = params["n"].lower()
             return next((r for r in self.live() if r["user_name"].lower() == want), None)
         if "max(version)" in sql:
-            newest = self.newest(params["k"])
+            newest = self.newest(params["k0"])
             return {"v": max(time.time_ns(), newest["version"] + 1 if newest else 0)}
         row = self.newest(params["id"]) if params else None
         if "active = 0" in sql:
@@ -257,7 +269,7 @@ class _Table:
                 for s in subjects
                 for o in self.reached_in.get(s, ["acme"])
             ]
-        return self.live()[params["skip"] : params["skip"] + params["count"]]
+        return self.listed(sql, params)[params["skip"] : params["skip"] + params["count"]]
 
     async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
         if table == "loom.revoked_tokens":
@@ -685,7 +697,11 @@ async def test_reactivating_lifts_the_refusal_and_keeps_old_tokens_revoked(world
 
 
 def _saved_token(
-    name: str, created_by: str, *, expires_at: datetime | None = None
+    name: str,
+    created_by: str,
+    *,
+    expires_at: datetime | None = None,
+    lineage: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
         "org": "acme",
@@ -704,7 +720,22 @@ def _saved_token(
         "client": "claude-code",
         "inherit_creator_grants": True,
         "ns_roles": '{"ns": "writer"}',
+        "lineage": [created_by] if lineage is None else lineage,
     }
+
+
+async def test_a_token_whose_parents_name_was_reused_is_still_revoked(world) -> None:
+    # lee's token `parent` made `child`; `parent` was revoked and its name reused
+    # by someone else's token, so no live row names the subject `child` was made by.
+    world.person("lee@example.com", "lee")
+    parent = {**_saved_token("parent", "lee"), "revoked_at": datetime(2026, 2, 1), "version": 2}
+    reused = {**_saved_token("parent", "admin"), "sa_subject": "sa:parent-other", "version": 3}
+    child = _saved_token("child", "sa:parent-abc123", lineage=["lee", "sa:parent-abc123"])
+    world.table.tokens += [_saved_token("parent", "lee"), parent, reused, child]
+    uid = await _create("lee@example.com")
+    await scim.update(uid, active=False)
+    assert (world.table.token("acme", "child") or {})["revoked_at"] is not None
+    assert (world.table.token("acme", "parent") or {})["revoked_at"] is None  # the new holder's
 
 
 async def test_a_deactivated_persons_tokens_read_revoked_and_free_their_names(world) -> None:
@@ -2088,6 +2119,65 @@ async def test_a_delete_clears_the_other_addresses(world) -> None:
     row = await scim.create("lee@example.com", "lee@example.com", active=True, emails=[home])
     await scim.delete(row["id"])
     assert scim.emails_of(world.table.newest(row["id"]) or {}) == []
+
+
+_MIXED_CASE = [{"Value": "lee@example.com", "TYPE": "work", "Primary": True}]
+
+
+@pytest.mark.parametrize("text", ['emails[type eq "work"].value eq "{a}"', 'emails.value eq "{a}"'])
+def test_an_email_filter_matches_any_entry_holding_the_address(
+    client: TestClient, world, text: str
+) -> None:
+    # Keyed on the primary; the work address is another entry, and another user's too.
+    work = {"value": "lee@corp.example", "type": "work"}
+    lee = _user(client, [{"value": "lee@example.com", "type": "home", "primary": True}, work])
+    other = client.post(
+        "/scim/v2/Users",
+        json={"userName": "kim@example.com", "emails": [{**work, "value": "Lee@Corp.example"}]},
+    ).json()["id"]
+    page = client.get("/scim/v2/Users", params={"filter": text.format(a="lee@corp.example")})
+    assert page.json()["totalResults"] == 2
+    assert {u["id"] for u in page.json()["Resources"]} == {lee, other}
+    second = client.get(
+        "/scim/v2/Users",
+        params={"filter": text.format(a="lee@corp.example"), "startIndex": 2, "count": 1},
+    ).json()
+    assert second["totalResults"] == 2 and len(second["Resources"]) == 1
+
+
+def test_the_work_filter_skips_an_address_that_is_not_a_work_entry(
+    client: TestClient, world
+) -> None:
+    _user(client, [{"value": "lee@example.com", "type": "home"}])
+    by_work = 'emails[type eq "work"].value eq "lee@example.com"'
+    assert client.get("/scim/v2/Users", params={"filter": by_work}).json()["totalResults"] == 0
+
+
+def test_attribute_names_match_in_any_case(client: TestClient, world) -> None:
+    # RFC 7643 §2.1: the names of attributes, sub-attributes and operations.
+    body = {"UserName": "lee.upn@corp.example", "Emails": _MIXED_CASE, "ACTIVE": True}
+    created = client.post("/scim/v2/Users", json=body)
+    assert created.status_code == 201, created.text
+    uid = created.json()["id"]
+    assert uid == scim.user_id("lee@example.com")  # not the UPN
+    assert created.json()["emails"] == [
+        {"value": "lee@example.com", "type": "work", "primary": True}
+    ]
+    put = client.put(f"/scim/v2/Users/{uid}", json={**body, "Active": False})
+    assert put.status_code == 200 and put.json()["active"] is False, put.text
+    ops = [
+        {"OP": "Replace", "Path": "Active", "Value": True},
+        {"op": "replace", "path": 'emails[type eq "work"]', "value": {"Primary": False}},
+        {"op": "add", "value": {"Emails": [{"Value": "lee@home.example", "Type": "home"}]}},
+    ]
+    r = client.patch(f"/scim/v2/Users/{uid}", json={"operations": ops})
+    assert r.status_code == 200 and r.json()["active"] is True, r.text
+    assert r.json()["emails"] == [
+        {"value": "lee@example.com", "type": "work", "primary": False},
+        {"value": "lee@home.example", "type": "home", "primary": False},
+    ]
+    gone = {"op": "remove", "path": "emails", "value": [{"Value": "lee@home.example"}]}
+    assert len(_patch(client, uid, gone).json()["emails"]) == 1
 
 
 def test_a_new_work_entry_would_take_a_plain_entrys_place(client: TestClient, world) -> None:

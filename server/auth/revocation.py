@@ -378,7 +378,7 @@ async def _next_version(jti: str) -> int:
     from server.core.ch import get_client
     from server.core.versions import next_version
 
-    return await next_version(get_client(), "loom.revoked_tokens", "jti", jti)
+    return await next_version(get_client(), "loom.revoked_tokens", {"jti": jti})
 
 
 async def has_outright_row(jti: str) -> bool:

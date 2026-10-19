@@ -10,7 +10,7 @@ from typing import Any
 def revocation_read(rows: list[dict[str, Any]], sql: str, params: Any) -> dict[str, Any] | None:
     """`next_version`'s read (on ClickHouse's clock, here this process's), and
     whether the key's newest row revokes it outright; None for anything else."""
-    key = (params or {}).get("k", (params or {}).get("j"))
+    key = (params or {}).get("k0", (params or {}).get("j"))
     mine = [r for r in rows if r.get("jti") == key]
     newest = max(mine, key=lambda r: int(r.get("version") or 0), default=None)
     if "max(version)" in sql:

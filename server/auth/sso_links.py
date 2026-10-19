@@ -148,7 +148,7 @@ async def _write(
     ch = ch or get_client()
     # Past the email's newest link row, whichever replica's clock wrote it: under
     # FINAL a later unlink with a lower version would be lost.
-    version = await next_version(ch, TABLE, "email", email.strip().lower())
+    version = await next_version(ch, TABLE, {"email": email.strip().lower()})
     now = datetime.now(UTC)
     await ch.insert(
         TABLE,

@@ -154,6 +154,20 @@ def parse_active(value: Any) -> bool:
 _USER_URN = USER_SCHEMA.lower() + ":"
 
 
+def _lowered(attrs: dict[str, Any]) -> dict[str, Any]:
+    """`attrs` with its names lower-cased (RFC 7643 §2.1: they match in any case)."""
+    return {str(k).lower(): v for k, v in attrs.items()}
+
+
+def _operations(body: dict[str, Any]) -> Any:
+    ops = _lowered(body).get("operations")
+    return (
+        [_lowered(op) if isinstance(op, dict) else op for op in ops]
+        if isinstance(ops, list)
+        else ops
+    )
+
+
 def _attributes(op: Any) -> list[tuple[str, Any]]:
     """The (attribute, value) pairs an operation sets, lower-cased and without
     the User schema prefix: its path's, or each key of a path-less value's."""
@@ -179,7 +193,7 @@ def _replaces(op: dict[str, Any]) -> bool:
 def patched_active(body: dict[str, Any]) -> bool | None:
     """What a PatchOp sets `active` to, or None when it leaves it alone.
     Operations on other attributes are accepted and dropped."""
-    ops = body.get("Operations")
+    ops = _operations(body)
     if not isinstance(ops, list):
         raise ScimError(400, "a PatchOp needs Operations", "invalidSyntax")
     active = None
@@ -197,7 +211,7 @@ def patched_active(body: dict[str, Any]) -> bool | None:
 
 def _sets_inactive(body: dict[str, Any]) -> bool:
     """Whether any operation of a PatchOp sets `active` to false, whatever else fails."""
-    ops = body.get("Operations")
+    ops = _operations(body)
     if not isinstance(ops, list):
         return False
     for op in ops:
@@ -220,7 +234,7 @@ def patched_names(
     the ones before it left (RFC 7644 §3.5.2). Call after `patched_active`,
     which checks the shape."""
     user_name, emails = None, None
-    for op in body["Operations"]:
+    for op in _operations(body):
         pairs = _attributes(op)  # refuses an operation that is not an object
         kind = str(op.get("op") or "").lower()
         if kind not in ("add", "remove", "replace"):
@@ -271,7 +285,7 @@ def _patched_emails(
         return [{**e, sub: blank} if i in picked else e for i, e in enumerate(emails)]
     if not sub and not isinstance(value, dict):
         raise ScimError(400, "an emails entry must be an object", "invalidValue")
-    changes = value if not sub else {sub: value}
+    changes = _lowered(value) if not sub else {sub: value}
     if not picked and comparison is not None:
         # Entra writes `emails[type eq "work"].value` for an entry not there yet,
         # by add or replace; the list it leaves is checked as any other.
@@ -303,6 +317,7 @@ def _naming(named: Any) -> dict[str, str]:
     """What a remove's value says of an entry to drop: its address and/or type."""
     if not isinstance(named, dict):
         raise ScimError(400, "an emails entry must be an object", "invalidValue")
+    named = _lowered(named)
     if any(not isinstance(named.get(k), str | None) for k in ("value", "type")):
         raise ScimError(400, "an email's value and type must be strings", "invalidValue")
     said = {k: named[k] for k in ("value", "type") if isinstance(named.get(k), str)}
@@ -356,6 +371,7 @@ def _entries(items: list[Any]) -> list[dict[str, Any]]:
     for e in items:
         if not isinstance(e, dict):
             raise ScimError(400, "an emails entry must be an object", "invalidValue")
+        e = _lowered(e)
         value, kind = e.get("value"), e.get("type")
         if not isinstance(value, str | None) or not isinstance(kind, str | None):
             raise ScimError(400, "an email's value and type must be strings", "invalidValue")
@@ -436,7 +452,8 @@ def keyed_entry(emails: Any) -> dict[str, Any] | None:
 def user_name_and_email(body: dict[str, Any]) -> tuple[str, str, list[dict[str, Any]]]:
     """The userName, the email SSO sign-in will carry (the keyed `emails`
     entry's, else the userName) and the `emails` list as Loom keeps it."""
-    name = body.get("userName")
+    body = _lowered(body)
+    name = body.get("username")
     if not isinstance(name, str) or not name.strip():
         raise ScimError(400, "userName is required", "invalidValue")
     emails = _entries(_listed(body.get("emails") or None))  # a null (or falsy) one is none
@@ -514,11 +531,13 @@ async def list_users(request: Request) -> JSONResponse:
     text = request.query_params.get("filter")
     if text is not None:
         attribute, value = parse_filter(text)
-        row = await (scim.find(value) if attribute == "userName" else scim.get(scim.user_id(value)))
-        if row and attribute != "userName" and not _lists(row, value, attribute == "work email"):
-            row = None
-        total, rows = (1, [row]) if row else (0, [])
-        rows = rows[start - 1 : start - 1 + count]
+        if attribute == "userName":
+            row = await scim.find(value)
+            total, rows = (1, [row]) if row else (0, [])
+            rows = rows[start - 1 : start - 1 + count]
+        else:  # any entry with the address matches (RFC 7644 §3.4.2.2)
+            work = attribute == "work email"
+            total, rows = await scim.page(start, count, email=value, work=work)
     else:
         total, rows = await scim.page(start, count)
     return _answer(
@@ -529,14 +548,6 @@ async def list_users(request: Request) -> JSONResponse:
             "itemsPerPage": len(rows),
             "Resources": [_resource(request, r) for r in rows],
         }
-    )
-
-
-def _lists(row: dict[str, Any], email: str, work: bool) -> bool:
-    """Whether the user's `emails` hold `email`, as a work entry when `work`."""
-    return any(
-        scim.normalized(e["value"]) == scim.normalized(email) and (not work or _type(e) == "work")
-        for e in scim.emails_of(row)
     )
 
 
@@ -567,7 +578,7 @@ async def get_user(uid: str, request: Request) -> JSONResponse:
 @router.post("/Users")
 async def create_user(request: Request) -> JSONResponse:
     """Records the email; the Loom account comes from the person's first sign-in."""
-    body = await _body(request)
+    body = _lowered(await _body(request))
     name, email, emails = user_name_and_email(body)
     # A null is unassigned (RFC 7643 §2.5): a new user is active.
     active = parse_active(True if body.get("active") is None else body["active"])
@@ -581,7 +592,7 @@ async def create_user(request: Request) -> JSONResponse:
 
 @router.put("/Users/{uid}")
 async def replace_user(uid: str, request: Request) -> JSONResponse:
-    body = await _body(request)
+    body = _lowered(await _body(request))
     if "id" in body and body["id"] != uid:
         raise ScimError(400, "the body names another user", "invalidValue")
     active = None if body.get("active") is None else parse_active(body["active"])

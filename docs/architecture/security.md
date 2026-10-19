@@ -281,7 +281,9 @@ operator's time-box or lift does not let a deactivated person in, and a reactiva
 lift an operator's revocation. One shared key would make SCIM read, merge and repair the
 operator's row around each write, and an operator's write landing in between could still
 replace SCIM's or be replaced by it; the operator cutoffs (`CUTOFF_PREFIX`) are kept apart
-for the same reason.
+for the same reason. A SCIM user's id is a UUIDv5 of its email, so it is a pseudonym, not a
+secret: anyone who knows an address can compute its id. Keying it with the root secret would
+change every id when that secret rotates, and the provider would find none of its users.
 
 Loom stays the authorization server for every client (the dashboard, `loom login`, MCP
 clients); the provider only authenticates the person. The OAuth server:

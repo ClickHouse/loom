@@ -6,7 +6,9 @@
 -- marked primary, else the first work one, else the first; with none, the
 -- userName. emails is the provider's emails list as last written (JSON:
 -- value, type, primary), so a PATCH is applied to it and refused when the
--- email it leaves keyed differs.
+-- email it leaves keyed differs. addresses holds its entries' addresses and
+-- work_addresses its work entries' (trimmed, lower-cased), which the emails
+-- filters match.
 -- active = 0 is a deactivation: subjects lists what an SSO sign-in with the
 -- email could reach when it was deactivated, or since. Each one the email
 -- still reaches is revoked unless an operator gave it back
@@ -19,6 +21,8 @@ CREATE TABLE IF NOT EXISTS loom.scim_users
     `user_name` String,
     `email` String,
     `emails` String,
+    `addresses` Array(String),
+    `work_addresses` Array(String),
     `active` UInt8,
     `deleted` UInt8,
     `subjects` Array(String),

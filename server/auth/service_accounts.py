@@ -113,6 +113,7 @@ def revoked_row(row: dict[str, Any], *, revoked_at: datetime, revoked_by: str) -
         "client": row["client"],
         "inherit_creator_grants": row["inherit_creator_grants"],
         "ns_roles": row["ns_roles"],
+        "lineage": row["lineage"],
     }
 
 
@@ -123,6 +124,9 @@ _CLAIMS_AT_ONCE = 8
 # longest names, three keys each, stay under a quarter of it.
 _CREATORS_AT_ONCE = 100
 _UNEXPIRED = "(expires_at IS NULL OR expires_at > now())"
+# Made by one of the subjects, or below one: a token whose parent's name was
+# reused is found by its lineage, as the row its parent held is gone.
+_MADE_BY = "(created_by IN {subs:Array(String)} OR hasAny(lineage, {subs:Array(String)}))"
 
 
 async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
@@ -147,9 +151,9 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
             chunk = creators[i : i + _CREATORS_AT_ONCE]
             with own_write_reads():
                 rows = await ch.query_all(
-                    "SELECT org, name, sa_subject, created_by, created_at, "
+                    "SELECT org, name, sa_subject, created_by, created_at, lineage, "
                     "revoked_at IS NULL AS live FROM loom.service_accounts FINAL "
-                    f"WHERE created_by IN {{subs:Array(String)}} AND {_UNEXPIRED}",
+                    f"WHERE {_MADE_BY} AND {_UNEXPIRED}",
                     params={"subs": chunk},
                 )
             # Read after the list, so it tells whether each token listed is dead.
@@ -168,21 +172,27 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
 
 
 def _is_dead(row: dict[str, Any], revoked: dict[str, int | None], dead: set[str]) -> bool:
-    """Whether the token `row` lists is dead: the token that made it is, or its
-    creator is revoked outright, or narrowed to a cutoff later than the row's
+    """Whether the token `row` lists is dead: a token above it is, or a subject
+    above it is revoked outright, or narrowed to a cutoff later than the row's
     `created_at`. Judged by the row's `created_at`, which is never earlier
     than the chain's oldest `iat`: a token this calls live may still be dead
     at the gate (a revocation landed between its mint's check and its save),
     never the reverse."""
     from server.auth import revocation
 
-    creator = str(row["created_by"])
-    if creator in dead:
+    above = _above(row)
+    if above & dead:
         return True
-    if creator not in revoked:
+    cutoffs = [revoked[s] for s in above if s in revoked]
+    if not cutoffs:
         return False
-    cutoff = revoked[creator]
-    return revocation.kills(cutoff, int(as_aware_utc(row["created_at"]).timestamp()))
+    made_at = int(as_aware_utc(row["created_at"]).timestamp())
+    return any(revocation.kills(cutoff, made_at) for cutoff in cutoffs)
+
+
+def _above(row: dict[str, Any]) -> set[str]:
+    """The subjects above the token `row` lists: its creator and its lineage."""
+    return {str(row["created_by"]), *row["lineage"]}
 
 
 async def _revoke_all(
@@ -213,8 +223,7 @@ async def _revoke_all(
                 row = await ch.query_one(
                     "SELECT * FROM loom.service_accounts FINAL "
                     "WHERE org = {org:String} AND name = {name:String} "
-                    "AND created_by IN {subs:Array(String)} AND revoked_at IS NULL "
-                    f"AND {_UNEXPIRED}",
+                    f"AND {_MADE_BY} AND revoked_at IS NULL AND {_UNEXPIRED}",
                     params={"org": org, "name": name, "subs": creators},
                 )
             if row is None:
@@ -223,7 +232,7 @@ async def _revoke_all(
             # A token made since the list may postdate `revoked` (a reactivation's).
             now_revoked = revoked
             if row["sa_subject"] not in listed:
-                now_revoked = await revocation.cutoffs([row["created_by"]])
+                now_revoked = await revocation.cutoffs(sorted(_above(row)))
             if not _is_dead(row, now_revoked, dead):
                 return None
             revoked_copy = revoked_row(

@@ -43,6 +43,8 @@ COLUMNS = (
     "user_name",
     "email",
     "emails",
+    "addresses",
+    "work_addresses",
     "active",
     "deleted",
     "subjects",
@@ -56,11 +58,8 @@ Patch = Callable[[dict[str, Any]], tuple[str | None, list[dict[str, Any]] | None
 DEACTIVATED = "scim: deactivated"
 REACTIVATED = "scim: reactivated"
 _BY = "scim"
-# SCIM ids are uuid5 of the email under this namespace: one id per person,
-# whichever replica or retry computes it. The provider holds the email anyway.
-# The id is a pseudonym, not a secret: from an address one already knows,
-# anyone can compute it. Keying it would change every id when the root secret
-# rotates, and the provider would find none of its users.
+# SCIM ids are uuid5 of the email: the same across replicas, retries and a
+# root-secret rotation (docs/architecture/security.md says why it is unkeyed).
 _ID_NAMESPACE = uuid.UUID("6f1c3e0a-5b7d-4c2e-9a41-2d8f0b6e7c13")
 _LEASE_TTL_S = 60.0
 _LEASE_WAIT_S = 10.0
@@ -103,16 +102,27 @@ async def find(user_name: str) -> dict[str, Any] | None:
     return None if row is None else dict(row)
 
 
-async def page(start: int, count: int) -> tuple[int, list[dict[str, Any]]]:
-    """The total of live SCIM users and those from `start` (1-based), at most `count`."""
+async def page(
+    start: int, count: int, *, email: str | None = None, work: bool = False
+) -> tuple[int, list[dict[str, Any]]]:
+    """The total of live SCIM users, with `email` among their `emails` entries
+    when given (their work entries when `work`), and those from `start`
+    (1-based), at most `count`."""
     ch = get_client()
-    total = await ch.query_one(f"SELECT count() AS n FROM {TABLE} FINAL WHERE deleted = 0")
+    where = "deleted = 0"
+    params: dict[str, Any] = {"count": count, "skip": max(0, start - 1)}
+    if email is not None:
+        where += f" AND has({'work_addresses' if work else 'addresses'}, {{a:String}})"
+        params["a"] = normalized(email)
+    total = await ch.query_one(
+        f"SELECT count() AS n FROM {TABLE} FINAL WHERE {where}", params=params
+    )
     rows = await ch.query_all(
         f"""
-        SELECT * FROM {TABLE} FINAL WHERE deleted = 0
+        SELECT * FROM {TABLE} FINAL WHERE {where}
         ORDER BY user_name LIMIT {{count:UInt32}} OFFSET {{skip:UInt32}}
         """,
-        params={"count": count, "skip": max(0, start - 1)},
+        params=params,
     )
     return int((total or {}).get("n") or 0), [dict(r) for r in rows]
 
@@ -538,8 +548,14 @@ async def _held_by_another_inactive(uid: str, subject: str) -> bool:
 
 async def _write(row: dict[str, Any]) -> None:
     ch = get_client()
-    version = await next_version(ch, TABLE, "id", row["id"])
-    row.update(updated_at=datetime.now(UTC), version=version)
+    version = await next_version(ch, TABLE, {"id": row["id"]})
+    entries = [e for e in emails_of(row) if normalized(e["value"])]
+    row.update(
+        addresses=[normalized(e["value"]) for e in entries],
+        work_addresses=[normalized(e["value"]) for e in entries if normalized(e["type"]) == "work"],
+        updated_at=datetime.now(UTC),
+        version=version,
+    )
     await ch.insert(TABLE, [{c: row[c] for c in COLUMNS}])
 
 

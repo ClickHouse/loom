@@ -3113,6 +3113,8 @@ CREATE TABLE IF NOT EXISTS loom.scim_users
     `user_name` String,
     `email` String,
     `emails` String,
+    `addresses` Array(String),
+    `work_addresses` Array(String),
     `active` UInt8,
     `deleted` UInt8,
     `subjects` Array(String),
@@ -3171,7 +3173,8 @@ CREATE TABLE IF NOT EXISTS loom.service_accounts
     `kind` LowCardinality(String) DEFAULT 'service_account',
     `client` LowCardinality(String) DEFAULT '',
     `inherit_creator_grants` Bool DEFAULT true,
-    `ns_roles` String DEFAULT '{}'
+    `ns_roles` String DEFAULT '{}',
+    `lineage` Array(String) DEFAULT []
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY org
