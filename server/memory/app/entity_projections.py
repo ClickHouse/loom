@@ -44,7 +44,12 @@ from server.memory.app.projections import (
     write_entity_triples,
 )
 from server.memory.domain import triples_follow_rows as tfr
-from server.memory.domain.temporal_sql import GRAPH_HOLDER_SQL, HOLDS_VALUE_SQL, LIVE_STATUSES
+from server.memory.domain.temporal_sql import (
+    EDGE_HOLDS_VALUE_SQL,
+    GRAPH_HOLDER_SQL,
+    HOLDS_VALUE_SQL,
+    LIVE_STATUSES,
+)
 
 log = logging.getLogger(__name__)
 
@@ -565,7 +570,7 @@ async def project_memory_set_entities(
         input.namespace,
         [(memory_id, content_sha256)],
         ch=ch,
-        holder_sql=HOLDS_VALUE_SQL,
+        holder_sql=EDGE_HOLDS_VALUE_SQL,
         key=key,
     ):
         return 0
@@ -591,7 +596,7 @@ async def close_late_edges(
     edges of that value at `ended_at` (when the row stopped holding it; read again
     when not given) unless the row holds it again. Safe to run twice."""
     version = [(memory_id, content_sha256)]
-    if await rows_holding(org, namespace, version, ch=ch, holder_sql=HOLDS_VALUE_SQL):
+    if await rows_holding(org, namespace, version, ch=ch, holder_sql=EDGE_HOLDS_VALUE_SQL):
         return
     if ended_at is None:
         ended_at = await value_ended_at(org, namespace, memory_id, content_sha256, ch=ch)
@@ -610,7 +615,7 @@ async def end_overtaken_edges(
     try:
         holding = [(memory_id, sha) for memory_id, _, sha in versions]
         held = await versions_held(
-            input.org, input.namespace, holding, ch=ch, holder_sql=HOLDS_VALUE_SQL
+            input.org, input.namespace, holding, ch=ch, holder_sql=EDGE_HOLDS_VALUE_SQL
         )
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
         for memory_id, memory_key, sha in versions:
@@ -672,7 +677,7 @@ async def value_ended_at(
             FROM loom.memory_versions
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND memory_id = {{id:UUID}} AND content_sha256 = {{sha:String}}
-              AND {HOLDS_VALUE_SQL}
+              AND {EDGE_HOLDS_VALUE_SQL}
         ) AS holder
         -- A tombstone or retirement can keep the row's updated_at. A tombstoned_at here is
         -- fresh (the holders had none); an invalid_at is fresh when the holder's differs,
@@ -713,6 +718,44 @@ async def _end_edges_of(
     )
     ends = [(str(p["entity_a"]), str(p["entity_b"]), ended_at) for p in pairs]
     await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, open_only=True)
+
+
+async def drop_undeclared_edges(
+    input: Any, memory_id: str, declared: list[str], *, ch: Any
+) -> None:
+    """A row now 'high' keeps only the edges of the entities its writer `declared`: its
+    links to any other pair go, and those edges end unless another row names them.
+    Fail-open: a projection; the write stands."""
+    keep = set(declared)
+    params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "id": memory_id}
+    try:
+        links = await ch.query_all(
+            """
+            SELECT DISTINCT entity_a, entity_b FROM loom.entity_edge_rows
+            WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}
+            SETTINGS select_sequential_consistency = 1
+            """,
+            params=params,
+        )
+        drop = sorted(
+            {(str(r["entity_a"]), str(r["entity_b"])) for r in links}
+            - {(a, b) for a in keep for b in keep}
+        )
+        if not drop:
+            return
+        await ch.execute(
+            """
+            DELETE FROM loom.entity_edge_rows
+            WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}
+              AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
+            """,
+            params={**params, "pairs": drop},
+        )
+        now = naive_utc_now()
+        ends = [(a, b, now) for a, b in drop]
+        await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, open_only=True)
+    except Exception as e:  # noqa: BLE001 — a projection; the write stands
+        log.warning("high relabel: undeclared edges not dropped for %s: %s", memory_id, e)
 
 
 async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, ch: Any) -> None:

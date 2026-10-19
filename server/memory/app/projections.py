@@ -30,7 +30,7 @@ from server.memory.domain.graph_quality import (
     order_ended_before_dated,
     restates_current,
 )
-from server.memory.domain.temporal_sql import GRAPH_HOLDER_SQL
+from server.memory.domain.temporal_sql import EDGE_HOLDER_SQL, GRAPH_HOLDER_SQL
 
 log = logging.getLogger(__name__)
 
@@ -1144,7 +1144,7 @@ _HELD_PAIRS_CTES = f"""
             SELECT memory_id, content_sha256 FROM loom.memory FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND memory_id IN (SELECT memory_id FROM rowed)
-              AND {GRAPH_HOLDER_SQL})
+              AND {EDGE_HOLDER_SQL})
         UNION ALL
         SELECT k.entity_a AS entity_a, k.entity_b AS entity_b
         FROM keyed AS k

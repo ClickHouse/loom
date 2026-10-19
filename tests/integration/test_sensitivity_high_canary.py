@@ -361,8 +361,7 @@ def test_a_high_value_is_never_mined_into_the_entity_graph(
     control_plane_url: str, ch_client, token: str
 ) -> None:
     """A point write mines entity nodes from its value; a high row's value would put its
-    secret's words into facts.traverse. A high row holds nothing in the shared graph, so
-    not even the entities its caller declared project."""
+    secret's words into facts.traverse. Only the caller's declared entities project."""
     plain, secret, declared = (f"{k}_{uuid.uuid4().hex[:6]}" for k in ("plain", "vault", "named"))
     for key, extra in (
         (plain, {}),
@@ -394,4 +393,5 @@ def test_a_high_value_is_never_mined_into_the_entity_graph(
         return {str(row[0]) for row in res.result_rows}
 
     _wait(lambda: plain in keys())
-    assert secret not in keys() and declared not in keys()
+    _wait(lambda: declared in keys())
+    assert secret not in keys()

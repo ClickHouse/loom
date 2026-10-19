@@ -6885,3 +6885,112 @@ async def test_a_retirement_whose_supersede_answer_was_lost_is_recorded_by_the_r
     assert intent["status"] == "active"
     await _replay_owed(ch, org, monkeypatch)
     assert [r["request_id"] for r in await _records(ch, org)] == [intent["id"]]
+
+
+async def _open_edges(ch: Any, org: str) -> set[tuple[str, str]]:
+    await _mutations_done(ch, org)
+    rows = await ch.query_all(
+        "SELECT entity_a, entity_b FROM loom.entity_edges WHERE org = {org:String}"
+        " AND valid_to IS NULL SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    return {(str(r["entity_a"]), str(r["entity_b"])) for r in rows}
+
+
+async def _high_set(org: str, session: str, key: str, value: str, **kw: Any) -> Any:
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write
+    from server.memory.app.write import handle_memory_set
+
+    out = await handle_memory_set(
+        MemorySetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id=session,
+            memory_key=key,
+            value=value,
+            memory_type="semantic",
+            **kw,
+        )
+    )
+    await after_write.drain()
+    return out
+
+
+async def test_a_revision_of_a_high_row_keeps_its_declared_edges(ch, org) -> None:
+    """A high row's value is never mined, but the entities its writer declared project:
+    a revision naming the same entities leaves their edge open."""
+    await _high_set(
+        org,
+        "s1",
+        "vault",
+        "Orchid Falcon rotate the Vault Key",
+        sensitivity="high",
+        entities=["Billing", "Stripe"],
+    )
+    edges = await _open_edges(ch, org)
+    assert len(edges) == 1 and all("orchid" not in a + b for a, b in edges), edges
+    await _high_set(
+        org,
+        "s1",
+        "vault",
+        "Quartz Meridian rotate the Vault Key",
+        sensitivity="high",
+        entities=["Billing", "Stripe"],
+    )
+    assert await _open_edges(ch, org) == edges
+
+
+async def test_a_relabel_to_high_closes_mined_facts_and_keeps_declared_edges(ch, org) -> None:
+    """The sensitivity sweep relabels a row high: the edges its text gave the graph and
+    its triples close; the edge of the entities its writer declared stays."""
+    from server.memory.app import sensitivity_sweep
+
+    out = await _high_set(
+        org,
+        "s1",
+        "door",
+        "Ana keeps the vault key in Porto",
+        entities=["Ana", "Porto"],
+        relations=[("ana", "keeps_key_in", "porto")],
+    )
+    declared = await _open_edges(ch, org)
+    assert declared, "the declared pair projects"
+    assert await _open_facts(ch, org, {("keep_key_in", "porto")}) == {("keep_key_in", "porto")}
+    # A mined edge linked to the same row (as a plain row's text would give it).
+    await ch.insert(
+        "loom.entity_edge_rows",
+        [
+            {
+                "org": org,
+                "namespace": NS,
+                "memory_id": out.memory_id,
+                "user_id": USER,
+                "content_sha256": out.content_sha256,
+                "entity_a": "vault key",
+                "entity_b": "zzz",
+            }
+        ],
+    )
+    await ch.insert(
+        "loom.entity_edges",
+        [{"org": org, "namespace": NS, "entity_a": "vault key", "entity_b": "zzz"}],
+    )
+    assert ("vault key", "zzz") in await _open_edges(ch, org)
+    candidate = sensitivity_sweep.SweepCandidate(
+        memory_id=out.memory_id,
+        org=org,
+        namespace=NS,
+        agent="bot",
+        user_id=USER,
+        session_id="s1",
+        memory_key="door",
+        level="high",
+        shapes=("credential",),
+    )
+    result = await sensitivity_sweep.apply([candidate], ch=ch)
+    assert result.high == 1, result
+    assert await _open_edges(ch, org) == declared
+    assert await _open_facts(ch, org, set()) == set()

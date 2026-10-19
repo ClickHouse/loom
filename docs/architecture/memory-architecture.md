@@ -586,7 +586,11 @@ row still stating a fact, a revision, an Undo and a replay all read it; a point 
 checks the same rule on the row it just wrote.
 
 Edges fence on a weaker rule (`HOLDS_VALUE_SQL`) that counts a proposal, so a proposal's
-co-occurrence edges are written when it is proposed. Its triples are not, and accepting
+co-occurrence edges are written when it is proposed. An edge also counts a `high` row
+(`EDGE_HOLDER_SQL`, `EDGE_HOLDS_VALUE_SQL`): its value is never mined, so the only edges
+linked to it are those of the entities its writer declared, which project and stay. A
+row made `high` (re-set as `high`, or by `loom sensitivity-sweep`) drops its links to any
+other pair and those edges end; its triples close as for a row that holds none. Its triples are not, and accepting
 it (`memory.proposal_decide`) writes none: they are graphed once a later write states
 them. A rejection, by `memory.proposal_decide` or `memory.reject` (of any row), only
 flips the status: it ends none of the row's edges or triples.
@@ -731,7 +735,7 @@ the triple links carry) and still holds it (not deleted, retired or `high`: a pr
 or a fact dated in the past still projects, as the write did), so a revision since stays
 current; with none left the failure resolves with nothing to do. A `memory.bulk_set`
 entry whose row is `high` projects nothing into the graph and records nothing for a
-replay.
+replay; a `memory.set` of a `high` row projects only the edges of its declared entities.
 
 A failed triple write records when it arrived: a replay of a failed insert inserts the
 triples seen at that arrival, not at its own clock, so an older value replayed after a

@@ -31,7 +31,8 @@ walk is capped.
 
 The memory row lands first; the graph rows are projections of it. A failed projection is logged to
 `loom.memory_projection_failures` and retried, only while the row still has the value that failed to project. It
-never fails the write. A `high`-sensitivity bulk entry projects nothing.
+never fails the write. A `high`-sensitivity bulk entry projects nothing; a `high` `memory.set` projects only the
+edges of the entities its writer declared, never its text.
 
 1. **Entities.** The writer passes `entities` on `memory.set`, or `memory.set_from_messages` extracts them. The
    `entity_extractor` worker (`LOOM_ENTITY_EXTRACT_ENABLED`, on) tags rows written without them, off the write path;

@@ -245,6 +245,23 @@ async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
     return len(out)
 
 
+async def _close_mined_facts(c: SweepCandidate, declared: list[Any], *, ch: _CHClient) -> None:
+    """A row relabelled high: what its value gave the graph closes (its triples, the edges
+    of entities its writer did not declare); the edges of the declared ones stay."""
+    from types import SimpleNamespace
+
+    from server.memory.app.entity_projections import (
+        declared_entities,
+        drop_undeclared_edges,
+        reconcile_row_facts,
+    )
+
+    scope = SimpleNamespace(org=c.org, namespace=c.namespace, agent=c.agent)
+    keep = declared_entities(SimpleNamespace(entities=declared))
+    await drop_undeclared_edges(scope, c.memory_id, keep, ch=ch)
+    await reconcile_row_facts(scope, [c.memory_id], reopen=False, op="sensitivity_sweep", ch=ch)
+
+
 async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None) -> ApplyResult:
     """Label each candidate as the write path would have: one new memory
     version, then the tier's mirror on the tables search reads."""
@@ -256,10 +273,12 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
     for c in candidates:
         try:
             version = memory_repo.next_version()  # the relabel's, which the high retire carries
+            declared: list[Any] = []  # the entities its writer gave the row
 
             def _relabel(
-                existing: Any, _c: SweepCandidate = c, _v: int = version
+                existing: Any, _c: SweepCandidate = c, _v: int = version, _d: list[Any] = declared
             ) -> dict[str, Any]:
+                _d[:] = list(getattr(existing, "entities", None) or [])
                 tags = list(getattr(existing, "tags", None) or [])
                 return {
                     "sensitivity": _c.level,
@@ -295,6 +314,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                     await memory_repo.retire_vectors_for_keys(
                         [(key, memory_repo.next_version())], ch=ch
                     )
+                await _close_mined_facts(c, declared, ch=ch)
             else:
                 result.medium += 1
                 result.embeddings_tagged += await _tag_embeddings(c, ch=ch)

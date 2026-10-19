@@ -524,7 +524,7 @@ leg returns it. The other reads that could serve its value follow three rules:
   and stale-fact masks, `conflicts.propose_revision`, `namespace.validate`'s checks that
   quote a value, a search's duplicate substitution (a `high` canonical is not seated in its
   duplicate's place), the profile fold, the entity graph (a row written as `high` projects
-  nothing into it, not even the entities its writer declared, and the entity extractor never sends it to its
+  only the entities its writer declared, and the entity extractor never sends it to its
   model, nor an unlabelled value that reads as a credential; for a fact
   `memory.set_from_messages` extracts, the declared entities are the extraction model's,
   read from the same turn), the entities of a `high` row in `memory.list`, `memory.related`

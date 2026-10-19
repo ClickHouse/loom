@@ -103,6 +103,12 @@ HOLDS_VALUE_SQL = (
 )
 
 
+# The same tests for an entity edge linked to the row: a 'high' row holds the edges of the
+# entities its writer declared, the only edges ever linked to it (its value is never mined).
+EDGE_HOLDER_SQL = GRAPH_HOLDER_SQL.removesuffix(" AND sensitivity != 'high'")
+EDGE_HOLDS_VALUE_SQL = HOLDS_VALUE_SQL.removesuffix(" AND sensitivity != 'high'")
+
+
 def _c(alias: str, col: str) -> str:
     return f"{alias}.{col}" if alias else col
 

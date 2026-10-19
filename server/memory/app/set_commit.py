@@ -35,7 +35,11 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app.auto_resolution import follow_beside_response
 from server.memory.app.drops import record_drop
-from server.memory.app.entity_projections import project_stated_relations
+from server.memory.app.entity_projections import (
+    declared_entities,
+    drop_undeclared_edges,
+    project_stated_relations,
+)
 from server.memory.app.high_fence import fence_high
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.trust import attests
@@ -273,14 +277,24 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
             await fence_high(
                 [(memory_repo.embedding_key(memory_row), int(memory_row["version"]))], ch=ch
             )
-    if memory_row.get("sensitivity") != "high":  # a high row's text stays out of the graph
-        # Fenced on its value as `_set_post_insert` projects it: a revision awaits it,
-        # a first write leaves it running beside the response.
+    # A high row's value is never mined into the graph; the entities its writer declared
+    # still project. Fenced on its value as `_set_post_insert` projects it: a revision
+    # awaits it, a first write leaves it running beside the response.
+    high = memory_row.get("sensitivity") == "high"
+    declared = declared_entities(input) if high else None
+    if not high or declared:
         await asyncio.gather(
             *_entity_projection_tail(
-                input, memory_id=memory_id, content_sha256=new_sha, revised=had_existing_row
+                input,
+                memory_id=memory_id,
+                content_sha256=new_sha,
+                revised=had_existing_row,
+                ents=declared,
             )
         )
+    if high and had_existing_row:
+        # Made high over a value it held: what its text gave the graph goes.
+        await drop_undeclared_edges(input, memory_id, declared or [], ch=ch)
     await project_stated_relations(
         memory_row,
         input.value,
@@ -883,7 +897,12 @@ async def _set_post_insert(
 
 
 def _entity_projection_tail(
-    input: MemorySetInput, *, memory_id: str, content_sha256: str, revised: bool
+    input: MemorySetInput,
+    *,
+    memory_id: str,
+    content_sha256: str,
+    revised: bool,
+    ents: list[str] | None = None,
 ) -> list[Awaitable[Any]]:
     """The entity-graph projection of a committed point write, as what its tail awaits.
 
@@ -893,7 +912,8 @@ def _entity_projection_tail(
     from server.memory.app import after_write, graph_write_marks
     from server.memory.app.entity_projections import set_entities_for_projection
 
-    ents = set_entities_for_projection(input, input.value)
+    if ents is None:
+        ents = set_entities_for_projection(input, input.value)
     if len(ents) < 2:
         return []
     projection = _project_set_entities_fail_open(
