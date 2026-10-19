@@ -589,14 +589,19 @@ row still stating a fact, a revision, an Undo and a replay all read it; a point 
 checks the same rule on the row it just wrote.
 
 Edges fence on a weaker rule (`HOLDS_VALUE_SQL`) that counts a proposal, so a proposal's
-co-occurrence edges are written when it is proposed. An edge also counts a `high` row
-(`EDGE_HOLDER_SQL`, `EDGE_HOLDS_VALUE_SQL`): its value is never mined, so the only edges
-linked to it are those of the entities its writer declared, which project and stay. A
-row made `high` (re-set as `high`, or by `loom sensitivity-sweep`) drops its links to any
-other pair and those edges end; its triples close as for a row that holds none. Its triples are not, and accepting
+co-occurrence edges are written when it is proposed. Its triples are not, and accepting
 it (`memory.proposal_decide`) writes none: they are graphed once a later write states
 them. A rejection, by `memory.proposal_decide` or `memory.reject` (of any row), only
 flips the status: it ends none of the row's edges or triples.
+
+A `high` row holds the edges of the entities on the row and nothing else of the graph.
+Its value is never mined: a `memory.set` as `high` projects only the entities its writer
+declared, and the edge rules (`EDGE_HOLDER_SQL`, `EDGE_HOLDS_VALUE_SQL`) count it as
+their holder, while mined edges fence on `HOLDS_VALUE_SQL`, which does not. A row made
+`high` (by `memory.set`, `memory.bulk_set`, a by-id update or `loom sensitivity-sweep`)
+drops its links to any other pair (a write, after its response), and those edges end
+unless another row names them; a failed drop is left to `projection_repair`. Its triples
+close as for a row that holds none.
 
 A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`) of a row that
 existed before the write closes the facts its row held that no row holds any longer, and

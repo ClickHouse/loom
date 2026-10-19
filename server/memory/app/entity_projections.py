@@ -25,6 +25,7 @@ from server.memory.app.projection_errors import (
 )
 from server.memory.app.projection_failures import (
     EDGES_CLOSE,
+    EDGES_DROP_UNDECLARED,
     TRIPLES_RECONCILE,
     TRIPLES_REOPEN,
     record_projection_failure,
@@ -755,42 +756,74 @@ async def _end_edges_of(
     await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, open_only=True)
 
 
-async def drop_undeclared_edges(
+async def drop_undeclared_links(
     input: Any, memory_id: str, declared: list[str], *, ch: Any
 ) -> None:
     """A row now 'high' keeps only the edges of the entities its writer `declared`: its
-    links to any other pair go, and those edges end unless another row names them.
-    Fail-open: a projection; the write stands."""
+    links to any other pair go, and those edges end unless another row names them."""
     keep = set(declared)
     params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "id": memory_id}
+    links = await ch.query_all(
+        """
+        SELECT DISTINCT entity_a, entity_b FROM loom.entity_edge_rows
+        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params=params,
+    )
+    drop = sorted(
+        {(str(r["entity_a"]), str(r["entity_b"])) for r in links}
+        - {(a, b) for a in keep for b in keep}
+    )
+    if not drop:
+        return
+    await ch.execute(
+        """
+        DELETE FROM loom.entity_edge_rows
+        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}
+          AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
+        """,
+        params={**params, "pairs": drop},
+    )
+    now = naive_utc_now()
+    ends = [(a, b, now) for a, b in drop]
+    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, open_only=True)
+
+
+async def drop_undeclared_edges(
+    input: Any, memory_id: str, declared: list[str], *, ch: Any, op: str
+) -> None:
+    """`drop_undeclared_links`, fail-open: a failure is recorded for the projection repair
+    (`EDGES_DROP_UNDECLARED`), which drops them again."""
     try:
-        links = await ch.query_all(
-            """
-            SELECT DISTINCT entity_a, entity_b FROM loom.entity_edge_rows
-            WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}
-            SETTINGS select_sequential_consistency = 1
-            """,
-            params=params,
+        await drop_undeclared_links(input, memory_id, declared, ch=ch)
+    except Exception as e:  # noqa: BLE001 — recorded; the projection repair drops them
+        log.warning("%s: undeclared edges not dropped for %s (recorded): %s", op, memory_id, e)
+        await record_projection_failure(
+            org=input.org,
+            namespace=input.namespace,
+            agent=str(getattr(input, "agent", "") or ""),
+            projection=EDGES_DROP_UNDECLARED,
+            source_operation=op,
+            error=e,
+            payload={"memory_id": memory_id, "declared": list(declared)},
+            ch=ch,
         )
-        drop = sorted(
-            {(str(r["entity_a"]), str(r["entity_b"])) for r in links}
-            - {(a, b) for a in keep for b in keep}
-        )
-        if not drop:
-            return
-        await ch.execute(
-            """
-            DELETE FROM loom.entity_edge_rows
-            WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}
-              AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
-            """,
-            params={**params, "pairs": drop},
-        )
-        now = naive_utc_now()
-        ends = [(a, b, now) for a, b in drop]
-        await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, open_only=True)
-    except Exception as e:  # noqa: BLE001 — a projection; the write stands
-        log.warning("high relabel: undeclared edges not dropped for %s: %s", memory_id, e)
+
+
+def drop_undeclared_edges_beside(
+    input: Any, memory_id: str, declared: list[str], *, op: str
+) -> None:
+    """`drop_undeclared_edges` after the response, for a write that made its row 'high':
+    the request waits on no DELETE. Scheduled after the write's own declared projection
+    returned, so it runs after its fence."""
+    from server.memory.app import after_write
+
+    after_write.schedule(
+        drop_undeclared_edges(input, memory_id, list(declared), ch=get_client(), op=op),
+        name=f"{op}.drop-undeclared",
+        scope=(input.org, input.namespace),
+    )
 
 
 async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, ch: Any) -> None:

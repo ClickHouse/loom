@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
@@ -29,7 +30,12 @@ from server.memory.api.models_crud import (
 from server.memory.app import provenance as app_provenance
 from server.memory.app.auto_resolution import follow_beside_response
 from server.memory.app.conflicts import same_key_mark
-from server.memory.app.entity_projections import project_revised_edges, project_stated_relations
+from server.memory.app.entity_projections import (
+    declared_entities,
+    drop_undeclared_edges_beside,
+    project_revised_edges,
+    project_stated_relations,
+)
 from server.memory.app.high_fence import fence_high
 from server.memory.domain import lock as _lock
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
@@ -383,6 +389,28 @@ def _check_update_precondition(input: Any, existing: MemoryRow) -> None:
         )
 
 
+async def _revised_edges(
+    existing: MemoryRow,
+    memory_row: dict[str, Any],
+    new_value: Any,
+    new_sha: str,
+    sensitivity: str,
+    *,
+    op: str,
+    ch: Any,
+) -> None:
+    """The edges of a revision's new value; a 'high' row keeps only its declared
+    entities' edges, so what any value's text gave the graph goes, after the response."""
+    if new_sha != existing.content_sha256:
+        await project_revised_edges(memory_row, new_value, op=op, ch=ch)
+    if sensitivity == "high":
+        scope = SimpleNamespace(
+            org=existing.org, namespace=existing.namespace, agent=str(existing.agent)
+        )
+        declared = declared_entities(SimpleNamespace(entities=memory_row.get("entities")))
+        drop_undeclared_edges_beside(scope, str(existing.memory_id), declared, op=op)
+
+
 def _update_sensitivity(
     existing: MemoryRow, serialized_value: str, tags: list[str]
 ) -> tuple[str, list[str]]:
@@ -720,8 +748,7 @@ async def _write_revision(
 
     # Same-key supersession, exactly as memory.set runs it after its insert.
     await _revision_supersession(input.org, existing, serialized_value, ch, cfg.policy, follows)
-    if new_sha != existing.content_sha256:
-        await project_revised_edges(memory_row, new_value, op=op, ch=ch)
+    await _revised_edges(existing, memory_row, new_value, new_sha, sensitivity, op=op, ch=ch)
     await project_stated_relations(
         memory_row, new_value, input.relations, revised=True, op=op, ch=ch
     )

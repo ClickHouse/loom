@@ -7031,3 +7031,88 @@ async def test_a_late_mined_projection_writes_nothing_on_a_row_made_high(
         params={"org": org, "id": first.memory_id},
     )
     assert links == []
+
+
+async def _edge_links(ch: Any, org: str) -> int:
+    rows = await ch.query_all(
+        "SELECT count() AS n FROM loom.entity_edge_rows WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    return int(rows[0]["n"])
+
+
+async def test_a_bulk_re_set_to_high_drops_the_mined_edges(ch, org) -> None:
+    """A plain row's text gave the graph edges; a bulk write of the same value as high
+    drops them after its response, as memory.set does."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    value = "Alice Smith met Bob Jones at Acme Corp in Berlin"
+    await _high_set(org, "s1", "contact", value)
+    assert await _edge_links(ch, org) > 0 and await _open_edge_pairs(ch, org)
+    await handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            entries=[{"memory_key": "contact", "value": value, "sensitivity": "high"}],
+        )
+    )
+    await after_write.drain()
+    assert await _edge_links(ch, org) == 0
+    assert await _open_edge_pairs(ch, org) == set()
+
+
+async def test_a_failed_drop_of_mined_edges_is_left_to_the_repair(ch, org, monkeypatch) -> None:
+    """The drop after a re-set to high fails: it is recorded, and the repair drops them."""
+    from server.memory.app import entity_projections
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    value = "Alice Smith met Bob Jones at Acme Corp in Berlin"
+    await _high_set(org, "s1", "contact", value)
+    real = entity_projections.drop_undeclared_links
+
+    async def down(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("DELETE refused")
+
+    with monkeypatch.context() as m:
+        m.setattr(entity_projections, "drop_undeclared_links", down)
+        await _high_set(org, "s1", "contact", value, sensitivity="high")
+    assert await _edge_links(ch, org) > 0
+    monkeypatch.setattr(entity_projections, "drop_undeclared_links", real)
+    results = await retry_projection_failures(
+        org=org, projection="entity_edges_drop_undeclared", ch=ch
+    )
+    assert results and all(r.resolved for r in results), results
+    assert await _edge_links(ch, org) == 0
+
+
+async def test_a_by_id_update_that_makes_a_row_high_drops_its_mined_edges(ch, org) -> None:
+    """The revised value holds a credential, so the update labels the row high: the edges
+    the old value's text gave the graph go after the response."""
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+    from server.memory.app import after_write
+    from server.memory.app.update import handle_memory_update_by_id
+
+    out = await _high_set(org, "s1", "contact", "Alice Smith met Bob Jones at Acme Corp in Berlin")
+    assert await _edge_links(ch, org) > 0
+    updated = await handle_memory_update_by_id(
+        MemoryUpdateByIdInput(
+            org=org,
+            memory_id=out.memory_id,
+            # A credential shape with a nonce body (never a real secret).
+            value=f"Alice Smith keeps sk-proj-{uuid.uuid4().hex} for Acme Corp in Berlin",
+        )
+    )
+    await after_write.drain()
+    head = await ch.query_all(
+        "SELECT sensitivity FROM loom.memory FINAL WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert updated.updated and head[0]["sensitivity"] == "high"
+    assert await _edge_links(ch, org) == 0

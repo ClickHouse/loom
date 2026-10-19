@@ -544,8 +544,9 @@ leg returns it. The other reads that could serve its value follow three rules:
   extractor ran (one written unlabelled, or arriving that way through `memory.copy_to` or an
   import) keeps the entities mined from its value on the row, not served by those reads. A
   row re-set as `high` through `memory.set` carries only its declared entities. Either way
-  the graph edges an earlier version projected remain: `facts.traverse` and `facts.path`
-  still walk them, as do `memory.backlinks` (which names a `high` key's shared entities and
+  the row keeps the graph edges of the entities on it and no other: those an earlier
+  version's text gave the graph end. The edges it keeps are walked by `facts.traverse` and
+  `facts.path`, as by `memory.backlinks` (which names a `high` key's shared entities and
   neighbours from them), `namespace.summary`'s top entities, `memory.outline`,
   `namespace.taxonomy`'s communities, the graph export and search's graph mode and
   expansion.

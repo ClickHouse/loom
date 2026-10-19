@@ -37,7 +37,7 @@ from server.memory.app.auto_resolution import follow_beside_response
 from server.memory.app.drops import record_drop
 from server.memory.app.entity_projections import (
     declared_entities,
-    drop_undeclared_edges,
+    drop_undeclared_edges_beside,
     project_stated_relations,
 )
 from server.memory.app.high_fence import fence_high
@@ -294,7 +294,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
         )
     if high and had_existing_row:
         # Made high over a value it held: what its text gave the graph goes.
-        await drop_undeclared_edges(input, memory_id, declared or [], ch=ch)
+        drop_undeclared_edges_beside(input, memory_id, declared or [], op="memory.set")
     await project_stated_relations(
         memory_row,
         input.value,

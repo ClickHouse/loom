@@ -90,6 +90,9 @@ TRIPLES_RECONCILE = "triples_reconcile"
 # updates) wrote for a value the row no longer holds, whose cleanup failed: payload
 # memory_id, content_sha256 and, when it was read, ended_at.
 EDGES_CLOSE = "entity_edges_close"
+# A row made 'high' whose links to undeclared pairs were not dropped: payload memory_id
+# and declared (the entities whose edges it keeps).
+EDGES_DROP_UNDECLARED = "entity_edges_drop_undeclared"
 
 
 async def record_projection_failure(
@@ -365,6 +368,8 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
             reason = await _retry_triples_reconcile(failure, ch=ch)
         elif failure.projection == EDGES_CLOSE:
             reason = await _retry_edges_close(failure, ch=ch)
+        elif failure.projection == EDGES_DROP_UNDECLARED:
+            reason = await _retry_edges_drop(failure, ch=ch)
         else:
             return ProjectionFailureRetryResult(
                 failure_id=failure.failure_id,
@@ -625,6 +630,22 @@ async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
         declared=bool(failure.payload.get("declared")),
         ch=ch,
     )
+    return ""
+
+
+async def _retry_edges_drop(failure: ProjectionFailureRow, *, ch: Any) -> str:
+    """Drop again the undeclared edge links of a row made 'high'; a failure raises and
+    leaves the row active."""
+    from types import SimpleNamespace
+
+    from server.memory.app.entity_projections import drop_undeclared_links
+
+    memory_id = str(failure.payload.get("memory_id") or "")
+    declared = failure.payload.get("declared")
+    if not memory_id or not isinstance(declared, list):
+        return "malformed_payload"
+    scope = SimpleNamespace(org=failure.org, namespace=failure.namespace)
+    await drop_undeclared_links(scope, memory_id, [str(d) for d in declared], ch=ch)
     return ""
 
 
