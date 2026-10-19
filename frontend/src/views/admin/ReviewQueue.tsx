@@ -521,7 +521,8 @@ function AutoResolvedPanel() {
           setUndoneSince(oldest);
         })
         .catch(() => {
-          // Unknown: offer Undo; restoring a live row answers restored=false.
+          // Unknown: offer Undo. A row an Undo restored answers restored; one changed since
+          // answers restored=false.
           if (live()) setUndoneSince(oldest);
         });
     },
@@ -530,11 +531,12 @@ function AutoResolvedPanel() {
 
   // A row retired again after an undo is retired, so the undo must be the later event, and
   // the row must no longer be retired behind that memory: an Undo record whose restore
-  // failed names a row still retired. With the row's state unknown, the record decides.
+  // failed names a row still retired. With the row's state unknown, Undo is offered: a
+  // repeat Undo of a restored row answers restored.
   const undoneBefore = (r: AutoResolvedRow) => {
     const at = undone.get(r.memory_id);
     const stillRetired =
-      r.current != null && r.current.status === "superseded" && r.current.superseded_by === r.superseded_by;
+      r.current == null || (r.current.status === "superseded" && r.current.superseded_by === r.superseded_by);
     return at != null && instant(at) >= instant(r.ts) && !stillRetired;
   };
   const known = (r: AutoResolvedRow) => undoneSince != null && instant(r.ts) >= instant(undoneSince);

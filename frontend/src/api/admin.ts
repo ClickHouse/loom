@@ -707,8 +707,9 @@ export const auditInstant = (ts: string): number => parseIso(ts)?.getTime() ?? 0
 
 /** Pages of `memory.unsupersede` records `listUnsuperseded` reads at most. A restore is
  *  one record, made by a person clicking Undo or Restore, so 5 pages of 500 cover far more
- *  restores than a 30-day window holds; past that, an older retirement shows Undo, and
- *  undoing a row already live answers `restored=false` ("Changed since"). */
+ *  restores than a 30-day window holds; past that, an older retirement shows Undo: undoing
+ *  a row an Undo restored answers restored, one changed since `restored=false`
+ *  ("Changed since"). */
 export const UNSUPERSEDED_MAX_PAGES = 5;
 
 /** memory_id -> when it was last restored from `superseded` (`memory.unsupersede` audit

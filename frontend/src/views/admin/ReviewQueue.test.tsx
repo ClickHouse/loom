@@ -360,19 +360,17 @@ describe("ReviewQueue", () => {
   });
 
   it("offers Undo for a row an Undo record names but that is still retired behind that memory", async () => {
-    // The record was written and its restore failed. With the state unknown, the record decides.
+    // The record was written and its restore failed.
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listAutoResolved).mockResolvedValue(
       page([
         retired("orphan", { current: { status: "superseded", superseded_by: "id-orphan-new" } }),
-        retired("unknown", { current: undefined }),
         retired("moved", { current: { status: "superseded", superseded_by: "id-elsewhere" } }),
       ]),
     );
     vi.mocked(listUnsuperseded).mockResolvedValue(
       new Map([
         ["id-orphan", "2026-10-02T10:00:00Z"],
-        ["id-unknown", "2026-10-02T10:00:00Z"],
         ["id-moved", "2026-10-02T10:00:00Z"],
       ]),
     );
@@ -380,10 +378,21 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
     expect(await screen.findByRole("button", { name: "Undo retirement of orphan" }, WAIT)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Undo retirement of unknown" })).toBeNull();
     // Retired behind another memory since: this retirement is undone.
     expect(screen.queryByRole("button", { name: "Undo retirement of moved" })).toBeNull();
-    expect(screen.getAllByText("Restored")).toHaveLength(2);
+    expect(screen.getAllByText("Restored")).toHaveLength(1);
+  });
+
+  it("offers Undo for a row whose state could not be read, whatever its records say", async () => {
+    // A repeat Undo of a restored row answers restored, so offering it is harmless.
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(page([retired("unknown", { current: undefined })]));
+    vi.mocked(listUnsuperseded).mockResolvedValue(new Map([["id-unknown", "2026-10-02T10:00:00Z"]]));
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    expect(await screen.findByRole("button", { name: "Undo retirement of unknown" }, WAIT)).toBeTruthy();
+    expect(screen.queryByText("Restored")).toBeNull();
   });
 
   it("orders audit times by instant, not by their text", async () => {

@@ -187,18 +187,20 @@ The Review queue's **Auto-resolved** tab lists the last 30 days, a page of 20 re
 a time. A row the re-read could not confirm is marked "may not have taken effect". To
 mark rows already restored, the tab reads up to 2,500 `memory.unsupersede` records (5
 pages of 500) back to the oldest retirement it shows. Past that, an older row still
-offers Undo, and undoing a row that is already live shows "Changed since". A row shows
+offers Undo: undoing a row an Undo already restored shows it restored, and one written
+or retired since shows "Changed since". A row shows
 as restored only while `memory.statuses` reads it no longer retired behind that memory,
-so the record of an Undo whose restore failed still offers Undo; when that read fails,
-the records alone decide.
+so the record of an Undo whose restore failed still offers Undo, and so does a row whose
+state could not be read: a repeat Undo of a restored row answers restored.
 
 #### Undo
 
 The tab's Undo calls `memory.restore` with `if_superseded_by`: the row comes back, and
 `memory.unsupersede` is recorded, only while it is still retired behind the memory the
 record names; a row deleted, revived or retired again since shows "Changed since". When
-the record cannot be written, the Undo fails and nothing is restored. It
-comes back `active`, or `conflicted` when it was under review when it retired: it still
+the record cannot be written, the Undo fails and nothing is restored. When the
+restore's answer is lost (503, outcome unknown), retrying the Undo finishes it and
+answers restored. It comes back `active`, or `conflicted` when it was under review when it retired: it still
 lists its peers, as they list it. A retired duplicate comes back `duplicate` while its
 original is still served, and `active` once it is not.
 

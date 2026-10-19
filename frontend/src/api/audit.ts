@@ -146,7 +146,7 @@ export async function listAutoResolved(
       for (const r of out) r.current = now.get(r.memory_id);
     } catch (e) {
       if (opts.signal?.aborted) throw e;
-      // Unknown: the tab goes by the Undo records alone.
+      // Unknown: the tab offers Undo, and a repeat Undo of a restored row answers restored.
     }
   }
   return { rows: out, next_cursor: page.next_cursor ?? null };
