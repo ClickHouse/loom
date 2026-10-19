@@ -161,7 +161,11 @@ export function isDrawerView(v: View): boolean {
 // Operator-only items — shown only when the caller's JWT carries
 // PLATFORM_ADMIN / ORG_ADMIN. The Users view is the most-load-bearing
 // of these (you can't manage who has access without seeing the list).
-export const ADMIN_OPERATOR_ONLY: NavItem[] = [{ id: "admin:users", label: "Users", icon: "users", scope: "org" }];
+export const ADMIN_OPERATOR_ONLY: NavItem[] = [
+  { id: "admin:users", label: "Users", icon: "users", scope: "org" },
+  // Deployment settings: every setting's value in force, and the live ones' overrides.
+  { id: "admin:settings", label: "Deployment settings", icon: "gear", scope: "org" },
+];
 /** The drawer's Access group: operator entries, shown to platform / org admins. */
 const ACCESS_GROUP: NavGroup = { label: "Access", items: ADMIN_OPERATOR_ONLY };
 
