@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
@@ -174,7 +174,10 @@ function MemoryList() {
     const parsed = parseSearchQuery(query);
     return { rawQuery: parsed.text, queryTags: parsed.tags, queryAgent: parsed.agent };
   }, [query]);
-  const activeTags = useMemo(() => new Set(queryTags.map((t) => t.toLowerCase())), [queryTags]);
+  // Built from the tags' text, so a keystroke that leaves the tags as they were hands every
+  // memoised card the same set.
+  const activeTagsKey = queryTags.map((t) => t.toLowerCase()).join("\n");
+  const activeTags = useMemo(() => new Set(activeTagsKey ? activeTagsKey.split("\n") : []), [activeTagsKey]);
   // A card's tag adds `tag:<tag>` to the search, or takes it out again, so tags stack the
   // way typed ones do. A tag picked elsewhere in the app (searchByTag) joins the same way.
   const toggleTag = useCallback((tag: string) => {
@@ -265,8 +268,29 @@ function MemoryList() {
     return () => cancelAnimationFrame(raf);
   }, [firstScreenOnly, entries]);
 
-  const { searchHits, searchWhy, searchExtra, searchAbstain, keywordTotal, keywordKeys, searching, ranking } =
-    useMemorySearch(identity, rawQuery, searchFilter, entries, memoriesVersion);
+  const {
+    searchHits,
+    searchWhy,
+    searchExtra,
+    searchAbstain,
+    keywordTotal,
+    keywordKeys,
+    keywordFor,
+    searching,
+    ranking,
+  } = useMemorySearch(identity, rawQuery, searchFilter, entries, memoriesVersion);
+  // Each hit's "Why this result", made when the results change rather than in every render:
+  // an element made in render is a new prop each time, and every memoised card would render
+  // again on each keystroke.
+  const searchAsides = useMemo(() => {
+    const asides = new Map<string, ReactNode>();
+    searchHits?.forEach((key, i) => {
+      const hit = searchWhy.get(key);
+      if (keywordKeys.has(key)) asides.set(key, <SearchWhy contains={keywordFor} />);
+      else if (hit) asides.set(key, <SearchWhy hit={hit} rank={i + 1} />);
+    });
+    return asides;
+  }, [searchHits, searchWhy, keywordKeys, keywordFor]);
 
   // Fetch conflicts once per identity change; cards consult this set to
   // flag rows that need review. One namespace-wide read beats N per-card calls.
@@ -779,7 +803,6 @@ function MemoryList() {
                 const isSelected = selected.has(e.memory_key);
                 const isTombstoned = !!e.tombstoned_at;
                 const isActive = inspectedKey === e.memory_key;
-                const why = searchActive ? searchWhy.get(e.memory_key) : undefined;
                 return (
                   <ListRow
                     key={e.memory_key}
@@ -812,13 +835,7 @@ function MemoryList() {
                       onSelect={openCard}
                       onTagClick={toggleTag}
                       activeTags={activeTags}
-                      aside={
-                        searchActive && keywordKeys.has(e.memory_key) ? (
-                          <SearchWhy contains={rawQuery.trim()} />
-                        ) : (
-                          why && <SearchWhy hit={why} rank={(searchHits?.indexOf(e.memory_key) ?? 0) + 1} />
-                        )
-                      }
+                      aside={searchAsides.get(e.memory_key)}
                     />
                     {isTombstoned && (
                       <div className="flex items-center justify-between mt-1 py-1 text-xs text-text-muted">

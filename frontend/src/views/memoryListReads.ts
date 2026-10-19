@@ -113,6 +113,8 @@ export function useMemorySearch(
   // a word that 150 memories name would otherwise hide the newest of them.
   const [keywordTotal, setKeywordTotal] = useState(0);
   const [keywordKeys, setKeywordKeys] = useState<Set<string>>(new Set());
+  // The text those rows hold: the query they were read for, not what the box says now.
+  const [keywordFor, setKeywordFor] = useState("");
   const [searching, setSearching] = useState(false);
   // The keyword rows are on screen and the ranked search is still answering.
   const [ranking, setRanking] = useState(false);
@@ -134,6 +136,7 @@ export function useMemorySearch(
     setSearchWhy(new Map());
     setSearchExtra(new Map());
     setKeywordKeys(new Set());
+    setKeywordFor("");
     setKeywordTotal(0);
     setRanking(false);
     setSearching(false);
@@ -154,6 +157,7 @@ export function useMemorySearch(
       setSearchExtra(new Map());
       setSearchWhy(new Map());
       setKeywordKeys(new Set());
+      setKeywordFor("");
       setKeywordTotal(0);
       setRanking(false);
       // A search cut short (the box cleared while it read) is not still searching.
@@ -210,6 +214,7 @@ export function useMemorySearch(
         const have = new Set(entriesRef.current.map((e) => e.memory_key));
         const kwExtra = kwEntries.filter((e) => !have.has(e.memory_key)).map((e) => [e.memory_key, e] as const);
         setKeywordKeys(kwKeys);
+        setKeywordFor(rawQuery.trim());
         setKeywordTotal(kw?.total ?? 0);
         // The ranked keys shown for this same query, kept until the new ranking answers, so
         // the list does not shrink to the keyword rows and grow back after a write. Only
@@ -292,6 +297,7 @@ export function useMemorySearch(
           setSearchExtra(new Map());
           setSearchWhy(new Map());
           setKeywordKeys(new Set());
+          setKeywordFor("");
           setKeywordTotal(0);
           setRanking(false);
         }
@@ -312,7 +318,17 @@ export function useMemorySearch(
     entriesRef.current = entries ?? [];
   }, [entries]);
 
-  return { searchHits, searchWhy, searchExtra, searchAbstain, keywordTotal, keywordKeys, searching, ranking };
+  return {
+    searchHits,
+    searchWhy,
+    searchExtra,
+    searchAbstain,
+    keywordTotal,
+    keywordKeys,
+    keywordFor,
+    searching,
+    ranking,
+  };
 }
 
 /**
