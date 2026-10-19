@@ -10,7 +10,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
-from server.erasure.store.predicates import NS_EQ, NS_IN, UID
+from server.erasure.store.predicates import NS_EQ, NS_IN, PAYLOAD_UID, UID
 
 # ---------------------------------------------------------------------------
 # Steps for tables outside the census. Every `loom.*` table is a census row,
@@ -297,11 +297,24 @@ async def delete_projection_failures_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
     """A failed projection keeps its payload (the row it could not write)
-    and the keys; no TTL, no soft-delete, no user axis."""
+    and the keys; no TTL, no soft-delete."""
     return await delete_scoped(
         "loom.memory_projection_failures",
         org=org,
         scope_where=NS_EQ,
         params={"ns": namespace},
+        ch=ch,
+    )
+
+
+async def delete_projection_failures_by_user(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    """By the identity its payload names: the entries a bulk write could not project."""
+    return await delete_scoped(
+        "loom.memory_projection_failures",
+        org=org,
+        scope_where=PAYLOAD_UID,
+        params={"uid": user_id},
         ch=ch,
     )

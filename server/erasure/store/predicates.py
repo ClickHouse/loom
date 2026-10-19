@@ -95,3 +95,5 @@ USER_COMMUNITY_ROWS = (
 # table with a user_id column.
 LIVE = "tombstoned_at IS NULL"
 UID = "user_id = {uid:String}"
+# A projection failure's writer: its payload's identity (a bulk write's, a replay's).
+PAYLOAD_UID = "JSONExtractString(payload, 'user_id') = {uid:String}"

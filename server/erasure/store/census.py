@@ -20,6 +20,7 @@ from server.erasure.store.predicates import (
     LIVE,
     NS_EQ,
     NS_IN,
+    PAYLOAD_UID,
     UID,
     USER_CHUNKS,
     USER_COMMUNITY_ROWS,
@@ -307,7 +308,14 @@ _CENSUS: tuple[Substrate, ...] = (
         "consolidation_runs.delete",
         "consolidation_runs.delete",
     ),
-    Substrate("loom.memory_projection_failures", "1", None, "projection_failures.delete", None),
+    # A failure's payload names its writer (a bulk write's identity).
+    Substrate(
+        "loom.memory_projection_failures",
+        "1",
+        PAYLOAD_UID,
+        "projection_failures.delete",
+        "projection_failures.delete",
+    ),
     # The repository index's two content tables — chunked
     # source text and file/directory summaries — are counted for a namespace
     # scope and owned by `code_index.purge`; no user axis (the rows are the

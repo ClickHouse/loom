@@ -142,6 +142,7 @@ _UNCOUNTED_STEPS_USER: tuple[UserStep, ...] = (
     ("events.delete", ledger_steps.delete_events_by_user),
     ("agent_runs.delete", ledger_steps.delete_agent_runs_by_user),
     ("consolidation_runs.delete", ledger_steps.delete_consolidation_runs_by_user),
+    ("projection_failures.delete", ledger_steps.delete_projection_failures_by_user),
     # Org-wide, not by the stamped subject: a replay a service account stored
     # while acting for the user carries the user's text under the account's
     # subject. A cache, so deleting more costs only misses.

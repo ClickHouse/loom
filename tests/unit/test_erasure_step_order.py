@@ -192,6 +192,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("events.delete", ((D, "loom.events"),)),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
     ("consolidation_runs.delete", ((D, "loom.consolidation_runs"),)),
+    ("projection_failures.delete", ((D, "loom.memory_projection_failures"),)),
     ("idempotency.delete", ((D, "loom.idempotency"),)),
 ]
 
