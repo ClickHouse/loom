@@ -302,9 +302,7 @@ async def test_a_bulk_write_reconciles_only_the_rows_it_revised(monkeypatch) -> 
         asked.extend(memory_id for memory_id, _ in versions)
         return {}  # revised again meanwhile: nothing holds it
 
-    from server.memory.app import entity_projections
-
-    monkeypatch.setattr(entity_projections, "edge_holders", no_holders)
+    monkeypatch.setattr(bulk_set, "edge_holders", no_holders)
     monkeypatch.setattr(bulk_set, "reconcile_row_facts", reconcile)
     monkeypatch.setattr(bulk_set, "end_overtaken_edges", end_overtaken)
     write = MemoryBulkSetInput(

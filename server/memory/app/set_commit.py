@@ -282,7 +282,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     # still project. Fenced on its value as `_set_post_insert` projects it: a revision
     # awaits it, a first write leaves it running beside the response.
     high = memory_row.get("sensitivity") == "high"
-    declared = declared_entities(input) if high else None
+    declared = declared_entities(input.entities) if high else None
     if not high or declared:
         await asyncio.gather(
             *_entity_projection_tail(

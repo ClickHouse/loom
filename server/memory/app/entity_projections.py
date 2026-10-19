@@ -494,19 +494,19 @@ def set_entities_for_projection(input: Any, value: Any) -> list[str]:
     mined."""
     from server.memory.domain.transcript_rows import is_transcript_row
 
-    declared = declared_entities(input)
+    declared = declared_entities(getattr(input, "entities", None))
     transcript = is_transcript_row(getattr(input, "tags", None), getattr(input, "source_trace", ""))
     if declared or transcript:
         return declared
     return _candidate_entities_from_value(value)
 
 
-def declared_entities(input: Any) -> list[str]:
+def declared_entities(entities: Sequence[Any] | None) -> list[str]:
     """The caller's own `entities`, canonical and capped, without mining the value."""
     from server.memory.domain.graph_quality import canonical_entity_text
 
     declared: list[str] = []
-    for raw in getattr(input, "entities", None) or []:
+    for raw in entities or []:
         canon = canonical_entity_text(str(raw))
         if len(canon) >= 2 and canon not in declared:
             declared.append(canon)
@@ -632,7 +632,7 @@ async def end_overtaken_edges(
         held = await versions_held(input.org, input.namespace, holding, ch=ch, holder=holder)
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
         for memory_id, memory_key, sha in versions:
-            await _record_edges_close(
+            await record_edges_close(
                 input, memory_id, memory_key, sha, e, op=op, ch=ch, entities=entities
             )
         return
@@ -646,7 +646,7 @@ async def end_overtaken_edges(
             )
             await _end_edges_of(input.org, input.namespace, memory_id, sha, ended_at, ch=ch)
         except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
-            await _record_edges_close(
+            await record_edges_close(
                 input,
                 memory_id,
                 memory_key,
@@ -659,7 +659,7 @@ async def end_overtaken_edges(
             )
 
 
-async def _record_edges_close(
+async def record_edges_close(
     input: Any,
     memory_id: str,
     memory_key: str,
@@ -761,7 +761,7 @@ def owes_undeclared_drop(previous: Any, declared: Sequence[str]) -> bool:
     the edges of the entities it named, so only the ones it no longer names go."""
     if str(getattr(previous, "sensitivity", "") or "") != "high":
         return True
-    return not set(declared) >= set(declared_entities(previous))
+    return not set(declared) >= set(declared_entities(getattr(previous, "entities", None)))
 
 
 async def drop_undeclared_links(input: Any, rows: Mapping[str, list[str]], *, ch: Any) -> None:

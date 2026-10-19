@@ -7449,7 +7449,7 @@ async def test_a_bulk_revision_asks_once_whether_its_rows_hold_their_edges(
     """A bulk revision of rows pairing different entities reads the rows' holders once,
     not once per set of entities, and every edge a current row names stays open."""
     from server.memory.api.models_bulk import MemoryBulkSetInput
-    from server.memory.app import after_write, entity_projections
+    from server.memory.app import after_write, bulk_set, entity_projections
     from server.memory.app.bulk_set import handle_memory_bulk_set
 
     def write(text: str) -> MemoryBulkSetInput:
@@ -7469,14 +7469,14 @@ async def test_a_bulk_revision_asks_once_whether_its_rows_hold_their_edges(
     await handle_memory_bulk_set(write("first value"))
     await after_write.drain()
     reads = {"edge_holders": 0, "versions_held": 0}
-    for name in reads:
-        real = getattr(entity_projections, name)
+    for module, name in ((bulk_set, "edge_holders"), (entity_projections, "versions_held")):
+        real = getattr(module, name)
 
         async def counted(*a: Any, _real: Any = real, _name: str = name, **k: Any) -> Any:
             reads[_name] += 1
             return await _real(*a, **k)
 
-        monkeypatch.setattr(entity_projections, name, counted)
+        monkeypatch.setattr(module, name, counted)
     await handle_memory_bulk_set(write("second value"))
     await after_write.drain()
     assert reads == {"edge_holders": 1, "versions_held": 0}, reads
@@ -7506,3 +7506,71 @@ async def test_a_row_written_high_by_bulk_holds_its_declared_edges(ch, org) -> N
     await _high_set(org, "s1", "plain", "Gina met Hank", entities=["Gina", "Hank"])
     await _high_set(org, "s1", "plain", "now secret", sensitivity="high", entities=["Ivy", "Zed"])
     assert ("gina", "hank") in await _open_edge_pairs(ch, org)
+
+
+async def test_a_failed_bulk_edges_leg_of_a_high_entry_records_no_value(
+    ch, org, monkeypatch
+) -> None:
+    """The edges leg fails for a batch holding a high entry: the failure it records names
+    only the plain entries, so no payload holds the high value."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write, bulk_set
+
+    secret = "sk-proj-" + uuid.uuid4().hex
+
+    async def down(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("edges down")
+
+    monkeypatch.setattr(bulk_set, "write_entity_edges", down)
+    entries = [
+        {
+            "memory_key": "vault",
+            "value": f"token {secret}",
+            "sensitivity": "high",
+            "entities": ["Gina", "Hank"],
+        },
+        {"memory_key": "plain", "value": "Ivy met Zed", "entities": ["Ivy", "Zed"]},
+    ]
+    await bulk_set.handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=entries
+        )
+    )
+    await after_write.drain()
+    rows = await ch.query_all(
+        "SELECT projection, payload FROM loom.memory_projection_failures WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert any(r["projection"] == "entity_edges" for r in rows), rows
+    assert not [r for r in rows if secret in r["payload"]]
+
+
+async def test_a_failed_holder_read_after_a_bulk_revision_is_left_to_the_repair(
+    ch, org, monkeypatch
+) -> None:
+    """The holder read after a bulk revision fails: the write still answers, each revised
+    row's edge close is recorded, and the repair runs it."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write, bulk_set
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    def write(text: str) -> MemoryBulkSetInput:
+        entry = {"memory_key": "k", "value": text, "entities": ["Gina", "Hank"]}
+        return MemoryBulkSetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=[entry]
+        )
+
+    await bulk_set.handle_memory_bulk_set(write("Gina met Hank"))
+    await after_write.drain()
+
+    async def down(*a: Any, **kw: Any) -> Any:
+        raise RuntimeError("read timed out")
+
+    monkeypatch.setattr(bulk_set, "edge_holders", down)
+    out = await bulk_set.handle_memory_bulk_set(write("Gina left Hank"))
+    assert out.written[0].version
+    monkeypatch.undo()
+    await after_write.drain()
+    results = await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    assert results and all(r.resolved for r in results), results

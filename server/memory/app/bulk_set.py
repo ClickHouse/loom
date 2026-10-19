@@ -39,8 +39,13 @@ from server.memory.app.bulk_verdicts import (
 )
 from server.memory.app.entity_projections import (
     _write_derived_facts,
+    declared_entities,
+    drop_undeclared_edges_beside,
+    edge_holders,
     end_overtaken_edges,
+    owes_undeclared_drop,
     reconcile_row_facts,
+    record_edges_close,
 )
 from server.memory.app.high_fence import fence_high
 from server.memory.app.projection_errors import (
@@ -424,19 +429,11 @@ async def _drop_undeclared_of_rows_made_high(
 ) -> None:
     """Each key the batch wrote 'high' over a row it already held: what its text gave the
     graph goes, after the response; the edges of the entities its row names stay."""
-    from types import SimpleNamespace
-
-    from server.memory.app.entity_projections import (
-        declared_entities,
-        drop_undeclared_edges_beside,
-        owes_undeclared_drop,
-    )
-
     rows: dict[str, list[str]] = {}
     for key, row in kept_versions(state.memory_rows).items():
         if str(row.get("sensitivity") or "") != "high" or key not in state.existing_rows:
             continue
-        declared = declared_entities(SimpleNamespace(entities=row.get("entities")))
+        declared = declared_entities(row.get("entities"))
         if owes_undeclared_drop(state.existing_rows[key], declared):
             rows[str(row["memory_id"])] = declared
     # One intent and one drop for the whole batch: a row each would cost a committed
@@ -713,8 +710,6 @@ def _projected(
     replay; a re-ingest of a fact already stored no longer re-counts its edges.
     `declared_high` (the edges leg): a 'high' entry stays with only the entities its
     writer declared and no facet nodes, as memory.set projects a high row."""
-    from server.memory.app.entity_projections import declared_entities
-
     # A row is its id and version: two entries of one key share the id.
     high = {
         (str(r["memory_id"]), int(r["version"]))
@@ -729,7 +724,7 @@ def _projected(
             kept.append((entry, res))
         elif declared_high:
             declared = {
-                "entities": declared_entities(entry),
+                "entities": declared_entities(entry.entities),
                 "topics": [],
                 "files": [],
                 "concepts": [],
@@ -761,9 +756,7 @@ async def _bulk_run_projections(
 
     # Graph/entity projections (entity_vectors / edges / triples / derived).
     # Each leg is fail-open + records a replayable projection_failure.
-    def _projection(
-        name: str, write: Any, inp: MemoryBulkSetInput = p_input, res: list[Any] = p_results
-    ) -> Any:
+    def _projection(name: str, write: Any, inp: MemoryBulkSetInput, res: list[Any]) -> Any:
         async def _run() -> None:
             try:
                 await write()
@@ -799,20 +792,29 @@ async def _bulk_run_projections(
                 entity_map=entity_resolution,
                 entity_embeddings=entity_embeddings,
             ),
+            p_input,
+            p_results,
         ),
+        # Recorded without the high entries, as memory.set records nothing for a high
+        # row's edges: a failure payload never holds a high value, so a failed declared
+        # edge of a high row is not replayed.
         _projection(
             "entity_edges",
             lambda: write_entity_edges(e_input, e_results, ch=ch, entity_map=entity_resolution),
-            e_input,
-            e_results,
+            p_input,
+            p_results,
         ),
         _projection(
             "entity_triples",
             lambda: write_entity_triples(p_input, p_results, ch=ch, entity_map=entity_resolution),
+            p_input,
+            p_results,
         ),
         _projection(
             "derived_facts",
             lambda: _write_derived_facts(p_input, p_results, ch=ch, entity_map=entity_resolution),
+            p_input,
+            p_results,
         ),
     ]
     await asyncio.gather(*(leg() for leg in _legs))
@@ -840,9 +842,8 @@ async def _close_overtaken_edges(
     """The revised rows' edges end with their value if another write revised it
     again while they were written (`end_overtaken_edges`). An entry with fewer than
     two graph nodes wrote no edge. One read for all of them: a row holds its edges
-    while it holds the value, and a 'high' one only while it names every node paired."""
-    from server.memory.app.entity_projections import edge_holders
-
+    while it holds the value, and a 'high' one only while it names every node paired.
+    A failed read is recorded for the projection repair, which ends them."""
     paired: dict[tuple[str, str, str], list[str]] = {}
     for entry, res in zip(input.entries, results, strict=True):
         nodes = edge_nodes(entry, entity_map)
@@ -850,20 +851,28 @@ async def _close_overtaken_edges(
             paired[(res.memory_id, res.memory_key, value_sha256(entry))] = nodes
     if not paired:
         return
-    current = await edge_holders(
-        input.org, input.namespace, [(mid, sha) for mid, _, sha in paired], ch=ch
-    )
-
-    def held(version: tuple[str, str, str]) -> bool:
-        found = current.get((version[0], version[2]))
+    try:
+        current = await edge_holders(
+            input.org, input.namespace, [(mid, sha) for mid, _, sha in paired], ch=ch
+        )
+    except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
+        for (memory_id, memory_key, sha), nodes in paired.items():
+            await record_edges_close(
+                input, memory_id, memory_key, sha, e, op="memory.bulk_set", ch=ch, entities=nodes
+            )
+        return
+    overtaken = []
+    for version, nodes in paired.items():
+        memory_id, _, sha = version
+        found = current.get((memory_id, sha))
         if found is None:
-            return False
+            overtaken.append(version)
+            continue
         sensitivity, entities = found
-        return sensitivity != "high" or set(paired[version]) <= entities
-
-    overtaken = sorted(v for v in paired if not held(v))
+        if sensitivity == "high" and not set(nodes) <= entities:
+            overtaken.append(version)
     if overtaken:
-        await end_overtaken_edges(input, overtaken, op="memory.bulk_set", ch=ch)
+        await end_overtaken_edges(input, sorted(overtaken), op="memory.bulk_set", ch=ch)
 
 
 # The most supersession pairs one write follows in the request.

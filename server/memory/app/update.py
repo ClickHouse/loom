@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
@@ -405,7 +404,7 @@ async def _revised_edges(
     entities' edges, so what any value's text gave the graph goes, after the response."""
     if new_sha != existing.content_sha256:
         await project_revised_edges(memory_row, new_value, op=op, ch=ch)
-    declared = declared_entities(SimpleNamespace(entities=memory_row.get("entities")))
+    declared = declared_entities(memory_row.get("entities"))
     if sensitivity == "high" and owes_undeclared_drop(existing, declared):
         scope = ProjectionScope(
             org=existing.org,

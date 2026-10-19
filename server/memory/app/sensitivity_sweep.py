@@ -249,7 +249,6 @@ async def _close_mined_facts(c: SweepCandidate, row_entities: list[Any], *, ch: 
     """A row relabelled high: what its text gave the graph closes (its triples, the edges
     of entities not on the row); the edges of the entities on the row stay, its writer's
     or the extractor's when it tagged the row, as the row keeps those entities."""
-    from types import SimpleNamespace
 
     from server.memory.app.entity_projections import (
         declared_entities,
@@ -259,7 +258,7 @@ async def _close_mined_facts(c: SweepCandidate, row_entities: list[Any], *, ch: 
     from server.memory.app.projection_errors import ProjectionScope
 
     scope = ProjectionScope(org=c.org, namespace=c.namespace, agent=c.agent, user_id=c.user_id)
-    keep = declared_entities(SimpleNamespace(entities=row_entities))
+    keep = declared_entities(row_entities)
     await drop_undeclared_edges(scope, {c.memory_id: keep}, ch=ch, op="sensitivity_sweep")
     await reconcile_row_facts(scope, [c.memory_id], reopen=False, op="sensitivity_sweep", ch=ch)
 

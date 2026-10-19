@@ -603,8 +603,8 @@ them. A rejection, by `memory.proposal_decide` or `memory.reject` (of any row), 
 flips the status: it ends none of the row's edges or triples.
 
 A `high` row holds the edges of the entities on the row and nothing else of the graph.
-Its value is never mined: a `memory.set` as `high` projects only the entities its writer
-declared, and the edge rules (`edge_holder_sql`) count a high row as an edge's holder
+Its value is never mined: `memory.set` and `memory.bulk_set` project only the edges of
+the entities a `high` row's writer declared, and the edge rules (`edge_holder_sql`) count a high row as an edge's holder
 only while it names every entity of the edge, while mined edges fence on
 `HOLDS_VALUE_SQL`, which never counts it. A row made `high` (by `memory.set`,
 `memory.bulk_set`, a by-id update or `loom sensitivity-sweep`), or a high row re-set
@@ -751,9 +751,10 @@ A replay of a failed triple, edge or entity-vector write writes only for the ent
 whose row still has the value the entry wrote (its id and `content_sha256`, the version
 the triple links carry) and still holds it (not deleted, retired or `high`: a proposal
 or a fact dated in the past still projects, as the write did), so a revision since stays
-current; with none left the failure resolves with nothing to do. A `memory.bulk_set`
-entry whose row is `high` projects nothing into the graph and records nothing for a
-replay; a `memory.set` of a `high` row projects only the edges of its declared entities.
+current; with none left the failure resolves with nothing to do. `memory.set` and
+`memory.bulk_set` project only the edges of a `high` row's declared entities, and a
+failure of that write records nothing: a failure payload never holds a `high` value, so
+a high row's failed declared-edge write is not replayed.
 
 A failed triple write records when it arrived: a replay of a failed insert inserts the
 triples seen at that arrival, not at its own clock, so an older value replayed after a
