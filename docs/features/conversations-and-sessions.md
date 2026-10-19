@@ -101,9 +101,9 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
 Tombstoned turns are filtered from every read. They are removed from disk only if the
 operator set a table TTL (`LOOM_RETENTION_CONVERSATIONS_DAYS`, 0 = keep forever). That
 TTL covers `loom.conversations` only: a turn's embedding row, which keeps up to 2,048
-characters of its text, has no TTL; a whole-thread delete in its thread tombstones
-it once its message has expired, as does an erasure request, which removes it only on
-a `namespace_list` erasure with `purge`.
+characters of its text, has no TTL. Once its message has expired, a whole-thread
+delete in its thread passes it to a live copy of the turn or tombstones it; an erasure
+request tombstones it, and removes it only on a `namespace_list` erasure with `purge`.
 
 ### Thread titles
 
