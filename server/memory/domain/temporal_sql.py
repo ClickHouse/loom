@@ -26,6 +26,9 @@ knowledge_time — "what loom KNEW at T". Record axis: written by T and not yet
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 # Status values a live (non-replay) read admits. Under knowledge_time a
 # 'superseded' row is admitted when its retirement postdates the anchor.
 LIVE_STATUSES: tuple[str, ...] = ("active", "duplicate", "conflicted")
@@ -103,9 +106,22 @@ EDGE_HOLDS_VALUE_SQL = (
     f" AND status IN ({', '.join(repr(s) for s in (*LIVE_STATUSES, PROPOSED_STATUS))})"
 )
 
-# The same for edges mined from the value: a row re-set as 'high' no longer holds them. A
-# point write's late projection of mined entities fences on it.
+# The same, not counting a row re-set as 'high': it holds none of its value's graph facts.
 HOLDS_VALUE_SQL = EDGE_HOLDS_VALUE_SQL + " AND sensitivity != 'high'"
+
+
+def edge_holder_sql(entities: Sequence[str]) -> tuple[str, dict[str, Any]]:
+    """(the test, its parameters) for a row still holding the value an edge between
+    `entities` was projected from: not deleted or retired, and not 'high' unless the row
+    names every one of them (a 'high' row keeps only the edges of the entities on it).
+    With no entities, a 'high' row holds none."""
+    if not entities:
+        return HOLDS_VALUE_SQL, {}
+    return (
+        f"{EDGE_HOLDS_VALUE_SQL}"
+        " AND (sensitivity != 'high' OR hasAll(entities, {edge_entities:Array(String)}))",
+        {"edge_entities": sorted(set(entities))},
+    )
 
 
 def _c(alias: str, col: str) -> str:

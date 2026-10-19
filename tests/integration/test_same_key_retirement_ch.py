@@ -7180,3 +7180,88 @@ async def test_point_write_intents_are_resolved_by_a_batched_flush(ch, org, monk
         " WHERE database = 'loom' AND name = 'memory_projection_failures'"
     )
     assert "TTL coalesce(resolved_at, created_at)" in table["q"]
+
+
+async def test_late_declared_edges_write_nothing_on_a_high_row_without_them(
+    ch, org, monkeypatch
+) -> None:
+    """A write's declared entities still projecting when the same value is re-set high
+    with no entities: the row no longer names them, so the late edges do not land."""
+    from server.memory.app import entity_projections
+
+    value = "Alice Smith met Bob Jones at Acme Corp in Berlin about Project Falcon"
+    gate = asyncio.Event()
+    real = entity_projections.rows_holding
+
+    async def slow(*a: Any, **kw: Any) -> Any:
+        await gate.wait()
+        return await real(*a, **kw)
+
+    monkeypatch.setattr(entity_projections, "rows_holding", slow)
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write
+    from server.memory.app.write import handle_memory_set
+
+    ids = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s1"}
+    first = await handle_memory_set(
+        MemorySetInput(
+            **ids, memory_key="contact", value=value, entities=["Alice Smith", "Bob Jones"]
+        )
+    )
+    monkeypatch.setattr(entity_projections, "rows_holding", real)
+    await handle_memory_set(
+        MemorySetInput(**ids, memory_key="contact", value=value, sensitivity="high")
+    )
+    gate.set()
+    await after_write.drain()
+    links = await ch.query_all(
+        "SELECT entity_a FROM loom.entity_edge_rows WHERE org = {org:String}"
+        " AND memory_id = {id:UUID} SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "id": first.memory_id},
+    )
+    assert links == []
+
+
+@pytest.mark.parametrize("path", ["bulk", "update_by_id"])
+async def test_a_high_row_keeps_its_declared_edge_through_a_revision(ch, org, path) -> None:
+    """A row declared Billing and Stripe, re-written high by a bulk write or a by-id
+    update that keeps those entities: the pair's edge stays open."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+    from server.memory.app import after_write
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+    from server.memory.app.update import handle_memory_update_by_id
+
+    out = await _high_set(
+        org, "s1", "vault", "Rotate the vault key weekly", entities=["Billing", "Stripe"]
+    )
+    declared = await _open_edge_pairs(ch, org)
+    assert len(declared) == 1, declared
+    if path == "bulk":
+        await handle_memory_bulk_set(
+            MemoryBulkSetInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                session_id="s1",
+                entries=[
+                    {
+                        "memory_key": "vault",
+                        "value": "Rotate the vault key daily",
+                        "sensitivity": "high",
+                        "entities": ["Billing", "Stripe"],
+                    }
+                ],
+            )
+        )
+    else:
+        await handle_memory_update_by_id(
+            MemoryUpdateByIdInput(
+                org=org,
+                memory_id=out.memory_id,
+                value=f"Rotate sk-proj-{uuid.uuid4().hex} daily",
+            )
+        )
+    await after_write.drain()
+    assert await _open_edge_pairs(ch, org) == declared

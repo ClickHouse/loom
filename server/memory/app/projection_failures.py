@@ -624,7 +624,7 @@ async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
         memory_id,
         content_sha256,
         ended_at=ended_at,
-        declared=bool(failure.payload.get("declared")),
+        entities=[str(e) for e in failure.payload.get("entities") or []],
         ch=ch,
     )
     return ""

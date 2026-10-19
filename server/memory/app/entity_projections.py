@@ -9,7 +9,7 @@ import logging
 import re
 import unicodedata
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, NamedTuple
@@ -46,10 +46,10 @@ from server.memory.app.projections import (
 )
 from server.memory.domain import triples_follow_rows as tfr
 from server.memory.domain.temporal_sql import (
-    EDGE_HOLDS_VALUE_SQL,
     GRAPH_HOLDER_SQL,
     HOLDS_VALUE_SQL,
     LIVE_STATUSES,
+    edge_holder_sql,
 )
 
 log = logging.getLogger(__name__)
@@ -564,17 +564,15 @@ async def project_memory_set_entities(
         )
     result = _BulkSetResult(memory_key=memory_key, version=0, memory_id=memory_id)
     ch = ch or get_client()
-    # Declared entities stay with a row made 'high'; mined ones do not.
-    declared = bool(declared_entities(input))
-    holder = EDGE_HOLDS_VALUE_SQL if declared else HOLDS_VALUE_SQL
     # A revision that ran first closed what it dropped already: this value is not current.
+    # A row made 'high' holds these edges only if it still names every entity.
     key = (str(input.agent), str(input.user_id), str(input.session_id), memory_key)
     if not await rows_holding(
         input.org,
         input.namespace,
         [(memory_id, content_sha256)],
         ch=ch,
-        holder_sql=holder,
+        holder=edge_holder_sql(ents),
         key=key,
     ):
         return 0
@@ -583,7 +581,7 @@ async def project_memory_set_entities(
     # Revised or retired while the edges were written: its close may have run before
     # they landed, so end the ones no live row names.
     version = (memory_id, memory_key, content_sha256)
-    await end_overtaken_edges(input, [version], op="memory.set", ch=ch, declared=declared)
+    await end_overtaken_edges(input, [version], op="memory.set", ch=ch, entities=ents)
     return len(ents)
 
 
@@ -594,20 +592,20 @@ async def close_late_edges(
     content_sha256: str,
     *,
     ended_at: datetime | None = None,
-    declared: bool = False,
+    entities: Sequence[str] = (),
     ch: Any,
 ) -> None:
     """The projection repair of a late projection whose cleanup failed: end the
     edges of that value at `ended_at` (when the row stopped holding it; read again
-    when not given) unless the row holds it again. `declared`: its edges were the
-    writer's declared entities, which a row made 'high' keeps. Safe to run twice."""
-    holder = EDGE_HOLDS_VALUE_SQL if declared else HOLDS_VALUE_SQL
+    when not given) unless the row holds it again (`edge_holder_sql` of the projected
+    `entities`). Safe to run twice."""
+    holder = edge_holder_sql(entities)
     version = [(memory_id, content_sha256)]
-    if await rows_holding(org, namespace, version, ch=ch, holder_sql=holder):
+    if await rows_holding(org, namespace, version, ch=ch, holder=holder):
         return
     if ended_at is None:
         ended_at = await value_ended_at(
-            org, namespace, memory_id, content_sha256, ch=ch, holder_sql=holder
+            org, namespace, memory_id, content_sha256, ch=ch, holder=holder
         )
     scope = SimpleNamespace(org=org, namespace=namespace)
     await _end_edges_of(scope, memory_id, content_sha256, ended_at, ch=ch)
@@ -619,23 +617,22 @@ async def end_overtaken_edges(
     *,
     op: str,
     ch: Any,
-    declared: bool = False,
+    entities: Sequence[str] = (),
 ) -> None:
     """After revisions wrote their edges: another write since may have revised or
     retired one of these `versions` (memory_id, memory_key, content_sha256) before
     they landed, so end its edges at the moment the row stopped holding it. One read
-    asks which rows still hold theirs. `declared`: the edges are the writer's declared
-    entities, which a row made 'high' keeps. A failure is recorded for the projection
-    repair."""
-    holder = EDGE_HOLDS_VALUE_SQL if declared else HOLDS_VALUE_SQL
+    asks which rows still hold theirs (`edge_holder_sql` of the projected `entities`).
+    A failure is recorded for the projection repair."""
+    holder = edge_holder_sql(entities)
     held: set[tuple[str, str]] = set()
     try:
         holding = [(memory_id, sha) for memory_id, _, sha in versions]
-        held = await versions_held(input.org, input.namespace, holding, ch=ch, holder_sql=holder)
+        held = await versions_held(input.org, input.namespace, holding, ch=ch, holder=holder)
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
         for memory_id, memory_key, sha in versions:
             await _record_edges_close(
-                input, memory_id, memory_key, sha, e, op=op, ch=ch, declared=declared
+                input, memory_id, memory_key, sha, e, op=op, ch=ch, entities=entities
             )
         return
     for memory_id, memory_key, sha in versions:
@@ -644,7 +641,7 @@ async def end_overtaken_edges(
         ended_at = None
         try:
             ended_at = await value_ended_at(
-                input.org, input.namespace, memory_id, sha, ch=ch, holder_sql=holder
+                input.org, input.namespace, memory_id, sha, ch=ch, holder=holder
             )
             await _end_edges_of(input, memory_id, sha, ended_at, ch=ch)
         except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
@@ -657,7 +654,7 @@ async def end_overtaken_edges(
                 ended_at=ended_at,
                 op=op,
                 ch=ch,
-                declared=declared,
+                entities=entities,
             )
 
 
@@ -671,13 +668,13 @@ async def _record_edges_close(
     ended_at: datetime | None = None,
     op: str,
     ch: Any,
-    declared: bool = False,
+    entities: Sequence[str] = (),
 ) -> None:
     """Record a failed `end_overtaken_edges` close for the projection repair, with
     the value's end when it was read: the repair ends the edges at the same moment."""
     payload: dict[str, Any] = {"memory_id": memory_id, "content_sha256": sha}
-    if declared:
-        payload["declared"] = True
+    if entities:
+        payload["entities"] = list(entities)
     if ended_at is not None:
         payload["ended_at"] = ended_at.isoformat()
     await record_projection_failure(
@@ -700,7 +697,7 @@ async def value_ended_at(
     content_sha256: str,
     *,
     ch: Any,
-    holder_sql: str = HOLDS_VALUE_SQL,
+    holder: tuple[str, dict[str, Any]] = (HOLDS_VALUE_SQL, {}),
 ) -> datetime:
     """When the row last stopped holding the value `content_sha256`: the first version
     after the last one that held it (a revision, a retirement, a delete), read from the
@@ -713,7 +710,7 @@ async def value_ended_at(
             FROM loom.memory_versions
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND memory_id = {{id:UUID}} AND content_sha256 = {{sha:String}}
-              AND {holder_sql}
+              AND {holder[0]}
         ) AS holder
         -- A tombstone or retirement can keep the row's updated_at. A tombstoned_at here is
         -- fresh (the holders had none); an invalid_at is fresh when the holder's differs,
@@ -731,7 +728,7 @@ async def value_ended_at(
           AND version > holder.1
         SETTINGS select_sequential_consistency = 1
         """,
-        params={"org": org, "ns": namespace, "id": memory_id, "sha": content_sha256},
+        params={"org": org, "ns": namespace, "id": memory_id, "sha": content_sha256, **holder[1]},
     )
     ended = row.get("ended") if row else None
     return to_naive_utc(ended) if isinstance(ended, datetime) else naive_utc_now()
@@ -858,7 +855,7 @@ async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, 
         )
         return
     version = (results[0].memory_id, entry.memory_key, value_sha256(entry))
-    await end_overtaken_edges(write, [version], op=op, ch=ch)
+    await end_overtaken_edges(write, [version], op=op, ch=ch, entities=ents)
 
 
 async def project_stated_relations(
@@ -1638,12 +1635,16 @@ async def rows_holding(
     ch: Any,
     holder_sql: str = GRAPH_HOLDER_SQL,
     key: tuple[str, str, str, str] | None = None,
+    holder: tuple[str, dict[str, Any]] | None = None,
 ) -> set[str]:
     """Of `versions`, (memory_id, content_sha256) pairs, the ids of the rows whose
     current value is still that version and that pass `holder_sql`: by default
     GRAPH_HOLDER_SQL (may hold graph facts), or a weaker test such as
-    HOLDS_VALUE_SQL (not deleted, retired or 'high'). `key` as `versions_held`."""
-    held = await versions_held(org, namespace, versions, ch=ch, holder_sql=holder_sql, key=key)
+    HOLDS_VALUE_SQL (not deleted, retired or 'high'); `holder` (a test and its
+    parameters, as `edge_holder_sql` builds one) instead. `key` as `versions_held`."""
+    held = await versions_held(
+        org, namespace, versions, ch=ch, holder_sql=holder_sql, key=key, holder=holder
+    )
     return {memory_id for memory_id, _ in held}
 
 
@@ -1655,6 +1656,7 @@ async def versions_held(
     ch: Any,
     holder_sql: str = GRAPH_HOLDER_SQL,
     key: tuple[str, str, str, str] | None = None,
+    holder: tuple[str, dict[str, Any]] | None = None,
 ) -> set[tuple[str, str]]:
     """`rows_holding`, answered by version: the pairs still current. A row revised
     twice in one write is asked about both values and holds only one. `key` (agent,
@@ -1663,6 +1665,9 @@ async def versions_held(
     if not versions:
         return set()
     params: dict[str, Any] = {"org": org, "ns": namespace, "versions": sorted(set(versions))}
+    if holder is not None:
+        holder_sql, extra = holder
+        params.update(extra)
     prewhere = ""
     if key is not None:
         prewhere = """PREWHERE agent = {agent:String} AND user_id = {uid:String}
