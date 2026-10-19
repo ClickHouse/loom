@@ -702,8 +702,8 @@ async def test_a_plain_delete_drawn_above_the_tombstone_is_not_undone(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A set lands, then a plain memory.delete removes it, both after delete_version's check
-    # and after it drew its tombstone's version: the plain delete's tombstone is the newer,
-    # so the key ends deleted (delete_version, then the plain delete).
+    # and after it drew its tombstone's version: the plain delete removed the key, not this
+    # one (found=False), and the key ends deleted.
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
     w = _in_flight_set(time.time_ns() - 1_000_000)
@@ -724,7 +724,7 @@ async def test_a_plain_delete_drawn_above_the_tombstone_is_not_undone(
     out = await hm.handle_memory_delete_version(
         MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
     )
-    assert out.tombstoned is True
+    assert out.tombstoned is False and out.found is False
     assert await _read_back(ch) is None
 
 
@@ -755,6 +755,17 @@ async def test_a_plain_delete_below_the_tombstone_answers_gone(
     )
     assert out.tombstoned is False and out.found is False
     assert await _read_back(ch) is None
+    # The key's head is the plain delete's tombstone again, so a restore brings back the row
+    # it removed, not the one delete_version checked.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore as restore_mod
+
+    monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
+    monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
+    restored = await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
+    assert restored.restored is True
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays"
 
 
 @pytest.mark.asyncio

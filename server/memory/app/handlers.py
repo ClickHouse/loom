@@ -653,17 +653,15 @@ async def handle_memory_delete_version(
         await _write_tombstone_row(
             existing, version=version, trace=delete_version_trace(input.version)
         )
-        # A plain write takes no key lock: see _key_moved_on.
+        # A plain write or delete takes no key lock: see _key_moved_on.
         try:
             moved_on = await _key_moved_on(existing, checked=int(input.version), tombstone=version)
         except Exception as e:  # noqa: BLE001 — the tombstone is in: what it removed still retires
             degradations.note("memory.delete_version", "later_write_unchecked", e)
             log.warning("memory.delete_version: the read after the tombstone failed: %s", e)
-            moved_on = ""
-        if moved_on == "gone":
-            return MemoryDeleteVersionOutput(tombstoned=False, found=False)
-        if moved_on:
-            return MemoryDeleteVersionOutput(tombstoned=False, reason=moved_on)
+            moved_on = None
+        if moved_on is not None:
+            return moved_on
         tombstoned, downgraded = await _retire_derived(
             existing, version=version, op="memory.delete_version"
         )
@@ -675,13 +673,17 @@ async def handle_memory_delete_version(
     )
 
 
-async def _key_moved_on(existing: Any, *, checked: int, tombstone: int) -> str:
-    """How the key moved on after the version check (`checked`), from its newest version
-    other than this delete's own `tombstone`, read with sequential consistency: "" when
-    it did not (or another delete came after this one), "version_changed" when a live row
-    decides it, and "gone" when another delete removed it first. A live row below the
-    tombstone (a plain write between the check and the tombstone) is written again above
-    it. A write still in flight lifts itself when it lands (`write_fence.lift_after_insert`)."""
+async def _key_moved_on(
+    existing: Any, *, checked: int, tombstone: int
+) -> MemoryDeleteVersionOutput | None:
+    """The answer when the key moved on after the version check (`checked`), from its
+    newest version other than this delete's own `tombstone`, read with sequential
+    consistency; None when it did not. A live row means `version_changed`, and a live row
+    below the tombstone (a plain write between the check and the tombstone) is written
+    again above it. Another delete's tombstone means that delete removed the key, not this
+    one (`found=False`); one below this tombstone is written again above it, so the key's
+    head is the row that delete removed. A write still in flight lifts itself when it
+    lands (`write_fence.lift_after_insert`)."""
     import server.memory.store as memory_repo
 
     key = {
@@ -697,7 +699,7 @@ async def _key_moved_on(existing: Any, *, checked: int, tombstone: int) -> str:
     )
     others = [v for v, _deleted, _target in above if v != tombstone]
     if not others:
-        return ""
+        return None
     newest = max(others)
     rows = await memory_repo.fetch_version_rows(
         existing.org, existing.namespace, [(existing.memory_key, newest)], sequential=True
@@ -713,16 +715,19 @@ async def _key_moved_on(existing: Any, *, checked: int, tombstone: int) -> str:
     )
     if row is None:
         raise RuntimeError(f"version {newest} of {existing.memory_key!r} was listed, not read")
-    if newest > tombstone:
-        # Another write or delete came after this delete and decides the key.
-        return "" if row.tombstoned_at is not None else "version_changed"
+    if newest < tombstone:
+        # Written again above this tombstone, as it was (a delete's or a sweep's marker too).
+        back = memory_repo.build_memory_version_row(
+            row,
+            version=next_version(),
+            updated_at=memory_repo.written_now(),
+            expire_reason=row.expire_reason,
+            source_trace=row.source_trace,
+        )
+        await insert_memory_versions([back], ch=get_client())
     if row.tombstoned_at is not None:
-        return "gone"
-    back = memory_repo.build_memory_version_row(
-        row, version=next_version(), updated_at=memory_repo.written_now()
-    )
-    await insert_memory_versions([back], ch=get_client())
-    return "version_changed"
+        return MemoryDeleteVersionOutput(tombstoned=False, found=False)
+    return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
 
 
 async def _tombstone(existing: Any, *, version: int, op: str) -> tuple[int, int]:

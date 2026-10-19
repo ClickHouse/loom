@@ -193,3 +193,29 @@ async def test_a_live_version_an_older_restore_stamped_comes_back_without_the_ma
     await rb.apply_rollback("test", "personal", plan, applied_at=_NOW, ch=object())
     (row,) = calls["memory"]
     assert row["expire_reason"] == "" and row["tombstoned_at"] is None
+
+
+@pytest.mark.parametrize(
+    ("tombstoned", "trace"),
+    [(True, "memory.delete_version:12"), (False, "")],
+)
+async def test_a_delete_version_marker_comes_back_only_on_its_tombstone(
+    calls: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch, tombstoned: bool, trace: str
+) -> None:
+    # A delete_version tombstone written back keeps its marker, so the write fence still
+    # reads it as one; a live row that carried the marker comes back without it.
+    version = _row(
+        "dv",
+        15,
+        tombstoned_at=_NOW if tombstoned else None,
+        source_trace="memory.delete_version:12",
+    )
+
+    async def _fetch(org: str, ns: str, pairs: list[Any], **_: Any) -> list[MemoryRow]:
+        return [version]
+
+    monkeypatch.setattr(store, "fetch_version_rows", _fetch)
+    plan = RollbackPlan(reinstate=[_action("dv", "reinstate", 15)], remove=[])
+    await rb.apply_rollback("test", "personal", plan, applied_at=_NOW, ch=object())
+    (row,) = calls["memory"]
+    assert row["source_trace"] == trace

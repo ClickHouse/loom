@@ -12,8 +12,6 @@ from typing import Any
 import server.memory.store as store
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain import rollback as svc
-from server.memory.domain.delete_marks import carried_trace
-from server.memory.domain.expire_reasons import carried_reason
 from server.memory.store.inserts import insert_memory_versions
 
 log = logging.getLogger(__name__)
@@ -140,14 +138,13 @@ async def apply_rollback(
                     h,
                     version=new_version,
                     updated_at=applied_at,
-                    # The row as it was at T; a sweep's or a delete_version's marker only on
-                    # its own tombstone (a live row an older restore stamped drops it).
-                    expire_reason=h.expire_reason
-                    if h.tombstoned_at
-                    else carried_reason(h.expire_reason),
-                    source_trace=h.source_trace
-                    if h.tombstoned_at
-                    else carried_trace(h.source_trace),
+                    # A tombstone as it was at T, a sweep's or a delete_version's marker too
+                    # (the builder drops them from every other version).
+                    **(
+                        {"expire_reason": h.expire_reason, "source_trace": h.source_trace}
+                        if h.tombstoned_at
+                        else {}
+                    ),
                 )
             )
             if is_embedded(h.memory_type, h.sensitivity):
