@@ -6,6 +6,8 @@ namespace, not the first alphabetically."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
 
@@ -16,6 +18,7 @@ from server.identity.app.caller_home import home_namespace
 from server.memory import store as memory_repo
 from server.memory.app import restore as _restore_mod
 from server.memory.app import stack as _stack_mod
+from server.memory.store import key_write_lock
 
 
 def test_home_namespace_prefers_the_callers_own() -> None:
@@ -85,7 +88,12 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             return state["row"]
         return None  # the caller's own identity never wrote this key
 
+    @asynccontextmanager
+    async def _no_lease(*_key: str) -> AsyncIterator[None]:
+        yield
+
     monkeypatch.setattr(memory_repo, "get_by_key", _get_by_key)
+    monkeypatch.setattr(key_write_lock.key_write_locks, "hold", _no_lease)
     monkeypatch.setattr(hm, "get_client", lambda: state["ch"])
     monkeypatch.setattr(_stack_mod, "get_client", lambda: state["ch"])
     monkeypatch.setattr(_restore_mod, "get_client", lambda: state["ch"])
@@ -257,3 +265,32 @@ def test_delete_does_not_tombstone_another_users_row(world) -> None:
     out = asyncio.run(_run())
     assert out.tombstoned is False and out.found is False
     assert world["ch"].inserts == []
+
+
+def test_a_versioned_delete_needs_a_concrete_agent(world) -> None:
+    from server.core.errors import ValidationError
+
+    with pytest.raises(ValidationError):
+        _delete_at(world["row"].version, agent="*")
+    assert world["lookups"] == [] and world["ch"].inserts == []
+
+
+def test_a_versioned_delete_checks_and_tombstones_under_the_key_lock(world, monkeypatch) -> None:
+    async def _get_by_key(identity: Any, key: str, **kw: Any) -> Any:
+        return world["row"]
+
+    held: list[tuple[str, ...]] = []
+
+    @asynccontextmanager
+    async def _hold(*key: str):
+        held.append(key)
+        yield
+        # the tombstone landed inside the lease
+        assert world["ch"].inserts
+
+    monkeypatch.setattr(memory_repo, "get_by_key", _get_by_key)
+    monkeypatch.setattr(key_write_lock.key_write_locks, "hold", _hold)
+    assert _delete_at(world["row"].version).tombstoned is True
+    assert held == [
+        ("clickhouse", "jdoe", "claude-code", "-", "sess-65187490", "user_home_location")
+    ]

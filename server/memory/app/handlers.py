@@ -19,6 +19,7 @@ from server.auth.context import current_auth
 from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.errors import ValidationError
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_narrowed, request_scope
@@ -45,6 +46,7 @@ from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
 from server.memory.domain.entity_sentinels import public_entities
+from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
 from server.settings import settings
@@ -587,6 +589,26 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
 
 
 async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
+    if input.if_version is None:
+        return await _memory_delete(input)
+    if input.agent == "*":
+        # The wildcard read answers any agent's row of the key; a version check is
+        # ownership only under one identity.
+        raise ValidationError("memory.delete: if_version needs a concrete agent, not '*'")
+    # The check and the tombstone are one step, as memory.set's if_match_sha256 is: a
+    # conditional write to the key waits for the lease instead of landing between them.
+    async with key_write_lock.key_write_locks.hold(
+        input.org,
+        input.namespace,
+        input.agent,
+        input.user_id,
+        input.session_id,
+        input.memory_key,
+    ):
+        return await _memory_delete(input)
+
+
+async def _memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     """Soft-delete: write a tombstone row with a higher version, so RMT
     collapse picks it and `memory.get`'s `tombstoned_at IS NULL` filter
     excludes it. Copies the live row's columns forward. Preserves the row

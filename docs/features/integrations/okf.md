@@ -129,11 +129,13 @@ Each bundle imported into a namespace with `--prune` needs an `--agent` of its o
 deletes the rows of that agent with an `okf:` trace, written by its token, that the bundle
 lacks. `--prune` refuses a bundle with no concepts, one whose root index does not carry
 `loom.complete: true` (export writes it only when it read every row, so not after
-`--limit` or from an older release), and one whose concept files do not hash to the root
+`--limit`, from an older release, or while the source changed under its pages), and one whose concept files do not hash to the root
 index's `loom.corpus_digest`, so a partial or hand-edited bundle never drives deletes.
 Each delete passes `memory.delete`'s `if_version` with the version prune just read: the
-server checks it against a strong read of the row under that exact identity just before
-the tombstone, and keeps a row rewritten since prune's read.
+server checks it against a strong read of the row under that exact identity, under the
+key's write lock, and keeps a row rewritten since prune's read. A copy someone locked with
+`memory.lock` is kept, and prune deletes nothing on a target whose `ops.capabilities` lacks
+`if_version`.
 Export into an empty directory for a prune: export overwrites concept files but never
 removes the file of a key that left the namespace, so a reused `--out` directory no longer
 matches its digest.

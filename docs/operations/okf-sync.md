@@ -50,23 +50,30 @@ guard, a path that is not a directory, or a missing `--agent`, token or org.
 
 - `--prune` refuses a bundle with no concepts, a bundle whose `index.md` does not carry
   `loom.complete: true` (export writes it only when it read every row: not after
-  `--limit`, and not from an older release), and one whose concept files do not hash to
+  `--limit`, not from an older release, and not when the source kept changing while it
+  paged), and one whose concept files do not hash to
   the `loom.corpus_digest` the export wrote into `index.md`. A partial or edited bundle
   never drives deletes, and neither does one exported into a directory that held an
   older bundle.
 - The export carries the source's superseded and duplicate rows as `status: deprecated`,
   so a key the source folds into another stays in the copy instead of being pruned.
+- Export pages the source by offset, so a row leaving the source mid-listing shifts the
+  pages and skips a live row. Export checks that the rows it read add up to the total the
+  first and the last page reported, lists again up to three times when they do not, and
+  otherwise leaves `loom.complete` off: that run's import with `--prune` refuses and the
+  next run tries again.
 - Before each delete it reads the row under its own identity again, and goes on only if
-  that row is under its `--agent` and was written by its own token, since the agent name
-  alone is the caller's choice. The delete passes `memory.delete`'s `if_version`, which
-  the server checks against a strong read under that exact identity just before the
-  tombstone: a row rewritten since prune's read is kept, and the delete does not fall
-  back to another agent's row. A write landing between that read and the tombstone is
-  the same window `memory.set`'s `if_match_sha256` has.
-- The target server must have `memory.delete`'s `if_version`. An older one ignores it
-  and names it in `ignored_args`; prune stops at the first such answer, reports it as
-  failed and the import exits 1, so at most one row per run is deleted without the check.
-  Upgrade the target before scheduling `--prune`.
+  that row is under its `--agent`, was written by its own token (the agent name alone is
+  the caller's choice) and carries no `memory.lock`: a locked copy is counted as kept.
+  The delete passes `memory.delete`'s `if_version`, which the server checks against a
+  strong read under that exact identity while it holds the key's write lock, the lock a
+  conditional `memory.set` takes: a row rewritten since prune's read is kept, and the
+  delete does not fall back to another agent's row.
+- The target server must have `memory.delete`'s `if_version`. Prune reads the target's
+  `ops.capabilities` first and deletes nothing when the field is missing. During a
+  rolling upgrade a delete can still reach a replica on the older build, which ignores
+  the field and names it in `ignored_args`; prune stops at the first such answer, reports
+  it as failed and the import exits 1.
 - The import runs only when the export exited 0 (`sh -e`), and each run writes its bundle
   to a fresh `emptyDir`, so a bundle left by an earlier run is never imported.
 - `--dry-run` lists what would be written and deleted, after the same checks, and writes
@@ -80,19 +87,17 @@ Suspend the CronJob (`kubectl patch cronjob okf-sync -p '{"spec":{"suspend":true
 delete the copies on the public Loom with `memory.delete`, or through erasure when the
 content must go.
 
-A key pruned by mistake is written again by the next run whose bundle holds it. That also
-covers the one race the guards leave: export pages the source by offset, so a source row
-deleted while a large export is paging can push one live row out of that bundle, and its
-copy is pruned until the next run.
+A key pruned by mistake is written again by the next run whose bundle holds it, as a new
+row: its `memory_id` changes. `memory.restore` brings back the original row instead.
 
 ## What a run costs
 
 A run that finds nothing to change sends only reads. For a namespace of N rows:
 
-| Side                 | Requests                                                                                                                                                                                                                        |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Export, private Loom | `memory.list` pages of 100 rows (`LOOM_MEMORY_LIST_VIEWER_LIMIT` caps a viewer token's page), one `memory.bulk_get` per 500 rows, and one `memory.export_evidence` page per 2,000 typed edges                                   |
-| Import, public Loom  | `memory.list` pages of 1,000 rows, one `memory.bulk_get` per 500 rows, and the edge pages again; then one `memory.set` per changed row, one `memory.link` per new edge, and a `memory.get` and a `memory.delete` per pruned row |
+| Side                 | Requests                                                                                                                                                                                                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Export, private Loom | `memory.list` pages of 100 rows (`LOOM_MEMORY_LIST_VIEWER_LIMIT` caps a viewer token's page), one `memory.bulk_get` per 500 rows, and one `memory.export_evidence` page per 2,000 typed edges                                                                            |
+| Import, public Loom  | `memory.list` pages of 1,000 rows, one `memory.bulk_get` per 500 rows, and the edge pages again; then one `memory.set` per changed row, one `memory.link` per new edge, a `memory.get` and a `memory.delete` per pruned row, and one `ops.capabilities` before the first |
 
 At 500 rows that is 13 requests; at 50,000 rows about 750, under one a second over a
 15-minute schedule.

@@ -64,6 +64,8 @@ from server.memory.domain.trust import actor_for
 
 _PAGE = 1000
 _BULK = 500
+# Listings of a namespace that keeps changing before the export gives up calling it complete.
+_LIST_ATTEMPTS = 3
 # Every concept row the import writes carries this source_trace prefix; --prune deletes
 # nothing else.
 _TRACE_PREFIX = "okf:"
@@ -158,10 +160,36 @@ async def _fetch_namespace(
     *,
     include_tombstoned: bool,
     limit: int | None = None,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], bool]:
     """Every live row of `namespace` (all agents, users and sessions), full
-    values, as memory_to_concept dicts. `limit` caps the rows for smoke runs."""
+    values, as memory_to_concept dicts, and whether the listing is known to hold
+    every row. `limit` caps the rows for smoke runs."""
+    entries, whole = await _list_namespace(
+        client, org, namespace, include_tombstoned=include_tombstoned, limit=limit
+    )
+    # Offset pages shift when a row leaves the namespace mid-listing, skipping a live
+    # row; a bundle that says complete without it would let --prune delete its copy.
+    for _ in range(_LIST_ATTEMPTS - 1):
+        if whole or limit is not None:
+            break
+        entries, whole = await _list_namespace(
+            client, org, namespace, include_tombstoned=include_tombstoned
+        )
+    return await _with_full_values(client, org, namespace, entries), whole
+
+
+async def _list_namespace(
+    client: _Client,
+    org: str,
+    namespace: str,
+    *,
+    include_tombstoned: bool,
+    limit: int | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """The `memory.list` entries of every row, and whether they add up to the total
+    the first and the last page reported."""
     entries: list[dict[str, Any]] = []
+    totals: list[int] = []
     offset = 0
     while True:
         page_size = _PAGE if limit is None else max(1, min(_PAGE, limit - len(entries)))
@@ -188,12 +216,24 @@ async def _fetch_namespace(
         )
         rows = page.get("entries") or []
         entries.extend(rows)
+        totals.append(int(page.get("total") or 0))
         if not page.get("truncated") or not rows or (limit is not None and len(entries) >= limit):
             break
         offset += len(rows)
-    if limit is not None:
-        entries = entries[:limit]
+    if limit is not None and len(entries) >= limit:
+        return entries[:limit], False
+    # A row a shifted page served twice counts once.
+    unique = list({_entry_id(r): r for r in entries}.values())
+    return unique, totals[0] == totals[-1] == len(unique)
 
+
+def _entry_id(r: dict[str, Any]) -> tuple[Any, ...]:
+    return (r.get("agent"), r.get("user_id"), r.get("session_id"), r.get("memory_key"))
+
+
+async def _with_full_values(
+    client: _Client, org: str, namespace: str, entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     # Full values (list previews are capped) grouped by the writer identity,
     # since bulk_get resolves keys within one identity tuple.
     by_ident: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
@@ -387,7 +427,7 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
         digests: list[okf_ev.DigestRecord] = []
         edges: list[dict[str, Any]] = []
         async with _Client(args.server_url, token) as client:
-            entries = await _fetch_namespace(
+            entries, whole = await _fetch_namespace(
                 client,
                 org,
                 args.namespace,
@@ -407,8 +447,7 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             title=args.title,
             include_high=bool(args.include_high),
             server_url=args.server_url,
-            # Fewer rows than --limit is the whole namespace.
-            complete=args.limit is None or len(entries) < args.limit,
+            complete=whole,
         )
         n_concepts = len(entries) - skipped_high
         evidence_note = (
@@ -492,7 +531,6 @@ async def _import_evidence(
     args: argparse.Namespace,
     chunks: list[okf_ev.ChunkRecord],
     digests: list[okf_ev.DigestRecord],
-    root: Path,
     *,
     batch: int = 64,
 ) -> dict[str, int]:
@@ -579,9 +617,7 @@ def _lint_before_import(root: Path, args: argparse.Namespace) -> int | None:
     return None
 
 
-def _concept_payload(
-    c: okf.Concept, org: str, args: argparse.Namespace, root: Path
-) -> dict[str, Any]:
+def _concept_payload(c: okf.Concept, org: str, args: argparse.Namespace) -> dict[str, Any]:
     """The memory.set body for one concept, identity included."""
     payload = okf.concept_to_memory(c, target_org=org, target_namespace=args.namespace)
     bundle_actor = okf.human_verified_actor(c)
@@ -670,7 +706,7 @@ def _when(v: Any) -> datetime | str | None:
 
 
 def _one_per_row(
-    concepts: list[okf.Concept], org: str, args: argparse.Namespace, root: Path
+    concepts: list[okf.Concept], org: str, args: argparse.Namespace
 ) -> list[tuple[okf.Concept, dict[str, Any]]]:
     """The concepts with their payloads, one per target row. An export holds a key once
     per writer, but the import writes every concept under its own identity: of the
@@ -678,7 +714,7 @@ def _one_per_row(
     not alternate between them."""
     newest: dict[tuple[str, str], tuple[okf.Concept, dict[str, Any]]] = {}
     for c in concepts:
-        p = _concept_payload(c, org, args, root)
+        p = _concept_payload(c, org, args)
         k = (p["session_id"], p["memory_key"])
         if k not in newest or _updated_at(c) > _updated_at(newest[k][0]):
             newest[k] = (c, p)
@@ -741,7 +777,7 @@ async def _import_concepts(
             # A skipped row is re-attested when no attestation binds its current content.
             unattested = row.get("verification") in ("none", "stale")
             if args.verify and bundle_actor and not args.dry_run and unattested:
-                n["verified"] += await _verify(client, org, args, payload, c)
+                n[await _verify(client, org, args, payload, c)] += 1
             continue
         if args.dry_run:
             note = (
@@ -773,14 +809,14 @@ async def _import_concepts(
         if verdict in ("conflict", "pending"):
             n[verdict] += 1
         if args.verify and bundle_actor:
-            n["verified"] += await _verify(client, org, args, payload, c)
+            n[await _verify(client, org, args, payload, c)] += 1
     return n
 
 
 async def _verify(
     client: _Client, org: str, args: argparse.Namespace, payload: dict[str, Any], c: okf.Concept
-) -> int:
-    """memory.verify as the caller; 1 when the row was found."""
+) -> str:
+    """memory.verify as the caller: the summary count it adds to."""
     try:
         v = await client.post(
             "memory.verify",
@@ -794,9 +830,9 @@ async def _verify(
             },
         )
     except RuntimeError as e:
-        print(f"  ! {c.path}: verify failed: {e}", file=sys.stderr)
-        return 0
-    return int(bool(v.get("found")))
+        print(f"  ✗ {c.path}: verify failed: {e}", file=sys.stderr)
+        return "verify_failed"
+    return "verified" if v.get("found") else "verify_missed"
 
 
 async def _import_links(
@@ -805,7 +841,6 @@ async def _import_links(
     args: argparse.Namespace,
     links: list[dict[str, str]],
     unresolved: list[dict[str, str]],
-    root: Path,
     live_edges: set[tuple[str, str, str]],
 ) -> Counter[str]:
     """Re-create the bundle's `relates_to` edges that are not live yet with memory.link; the
@@ -896,6 +931,14 @@ async def _prune(
         if k not in keep and str(r.get("source_trace") or "").startswith(_TRACE_PREFIX)
     )
     n: Counter[str] = Counter()
+    if gone and not await _deletes_by_version(client, org):
+        n["prune_failed"] += len(gone)
+        print(
+            "  ✗ prune: the target's memory.delete does not take if_version, so prune deletes "
+            "nothing. Upgrade it before pruning.",
+            file=sys.stderr,
+        )
+        return n
     for session_id, key in gone:
         ident = {
             "org": org,
@@ -907,11 +950,12 @@ async def _prune(
         }
         try:
             got = await client.post(
-                "memory.get", {**ident, "fields": ["agent", "actor", "version"]}
+                "memory.get", {**ident, "fields": ["agent", "actor", "version", "lock_mode"]}
             )
             if not got.get("found") or got.get("agent") != args.agent:
                 continue
-            if got.get("actor") != actor:
+            # Another writer's row, or a copy someone locked to keep it.
+            if got.get("actor") != actor or got.get("lock_mode"):
                 n["prune_kept"] += 1
                 continue
             if args.dry_run:
@@ -935,7 +979,8 @@ async def _prune(
         if res.get("tombstoned"):
             n["pruned"] += 1
         if "if_version" in res.get("ignored_args", []):
-            # An older server deleted without the check; stop before it does that again.
+            # A replica still on the older build deleted without the check (a rolling
+            # upgrade); stop before it does that again.
             done = "deleted" if res.get("tombstoned") else "found nothing to delete"
             print(
                 f"  ✗ prune {key}: the server ignored if_version and {done}; it is older "
@@ -945,6 +990,16 @@ async def _prune(
             n["prune_failed"] += 1
             break
     return n
+
+
+async def _deletes_by_version(client: _Client, org: str) -> bool:
+    """Whether the target's memory.delete takes `if_version`; an unreadable answer is no."""
+    try:
+        caps = await client.post("ops.capabilities", {"org": org})
+    except RuntimeError:
+        return False
+    delete = (caps.get("ops") or {}).get("memory.delete") or {}
+    return "if_version" in (delete.get("request_fields") or [])
 
 
 def _print_import_summary(
@@ -971,8 +1026,11 @@ def _print_import_summary(
             head += f", {n['merged']} merged into another key"
         head += (
             f" ({n['conflict']} flagged conflicted, {n['pending']} awaiting a conflict verdict, "
-            f"{n['verified']} re-attested as caller)"
+            f"{n['verified']} re-attested as caller"
         )
+        if n["verify_failed"]:
+            head += f", {n['verify_failed']} failed to re-attest"
+        head += ")"
     parts = [head]
     if not args.no_links:
         notes = [f"{n['links_unchanged']} unchanged"]
@@ -1022,7 +1080,7 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
         return 0
 
     async def _go() -> int:
-        planned = _one_per_row(concepts, org, args, root)
+        planned = _one_per_row(concepts, org, args)
         links, unresolved = okf.resolve_relates_to(concepts)
         n: Counter[str] = Counter()
         async with _Client(args.server_url, token) as client:
@@ -1047,11 +1105,9 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
                 n.update(await _prune(client, org, args, live, keep, actor))
             n.update(await _import_concepts(client, org, args, planned, live))
             if not args.no_links:
-                n.update(
-                    await _import_links(client, org, args, links, unresolved, root, live_edges)
-                )
+                n.update(await _import_links(client, org, args, links, unresolved, live_edges))
             if (ev_chunks or ev_digests) and not args.dry_run:
-                ev = await _import_evidence(client, org, args, ev_chunks, ev_digests, root)
+                ev = await _import_evidence(client, org, args, ev_chunks, ev_digests)
                 print(
                     f"  evidence: {ev['chunks_written']}/{len(ev_chunks)} raw chunks "
                     f"({ev['links_written']} links), {ev['digests_written']}/{len(ev_digests)} "
@@ -1062,7 +1118,7 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
                 )
                 n["evidence_failed"] = ev["failed"]
         _print_import_summary(n, args, org, len(planned), len(ev_chunks), len(ev_digests))
-        failures = ("failed", "links_failed", "prune_failed", "evidence_failed")
+        failures = ("failed", "links_failed", "prune_failed", "evidence_failed", "verify_failed")
         return 1 if any(n[k] for k in failures) else 0
 
     return asyncio.run(_go())

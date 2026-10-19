@@ -72,7 +72,10 @@ class _FakeLoom:
         self.edges: list[dict[str, Any]] = []
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.version = 0
-        self.older_server = False  # a build that ignores memory.delete's if_version
+        # A delete lands on a replica still on the older build (a rolling upgrade).
+        self.older_server = False
+        # The whole target is older: its catalogue has no if_version on memory.delete.
+        self.delete_fields = ["agent", "if_version", "memory_key", "namespace", "org"]
 
     def put(self, agent: str, key: str, session_id: str = "-", **row: Any) -> None:
         self.version += 1
@@ -101,6 +104,7 @@ class _FakeLoom:
             return {
                 "entries": [_project(r, body) for r in page],
                 "truncated": body["offset"] + len(page) < len(mine),
+                "total": len(mine),
             }
         if op == "memory.bulk_get":
             got = {
@@ -127,7 +131,10 @@ class _FakeLoom:
                 "agent": agent,
                 "actor": row.get("actor"),
                 "version": row.get("version"),
+                "lock_mode": row.get("lock_mode", ""),
             }
+        if op == "ops.capabilities":
+            return {"ops": {"memory.delete": {"request_fields": self.delete_fields}}}
         if op == "memory.verify":
             return {"found": True}
         if op == "memory.export_evidence":
@@ -832,3 +839,44 @@ def test_tags_that_are_not_a_list_refuse_the_import_and_force_import_drops_them(
     assert _run(root, "--force-import") == 0  # read with no tags, not a traceback
     (written,) = [b for op, b in loom.calls if op == "memory.set"]
     assert all(t.startswith(("okf:", "origin:")) for t in written["tags"])  # the import's own
+
+
+def test_prune_deletes_nothing_on_a_target_without_if_version(
+    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    loom.delete_fields = ["agent", "memory_key", "namespace", "org"]
+    capsys.readouterr()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 1
+    assert "memory.delete" not in loom.writes()
+    assert "0 pruned (1 failed)" in capsys.readouterr().out
+
+
+def test_prune_keeps_a_copy_someone_locked(
+    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    loom.rows[("okf-sync", "-", "gone")]["lock_mode"] = "no_delete"
+    capsys.readouterr()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
+    assert "memory.delete" not in loom.writes()
+    assert "0 pruned (1 kept" in capsys.readouterr().out
+
+
+def test_a_failed_verify_exits_1(
+    tmp_path: Path,
+    loom: _FakeLoom,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    entry = _entry("a", verification="human", verified_by="human:alice@example.com")
+    post = loom.post
+
+    async def verify_refused(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == "memory.verify":
+            raise RuntimeError("memory.verify → HTTP 503")
+        return await post(op, body)
+
+    monkeypatch.setattr(loom, "post", verify_refused)
+    assert _run(_bundle(tmp_path / "b", [entry]), "--verify") == 1
+    assert "1 failed to re-attest" in capsys.readouterr().out

@@ -36,6 +36,7 @@ class _FakeClient:
                     },
                 ],
                 "truncated": False,
+                "total": 2,
             }
         if op == "memory.bulk_get":
             return {
@@ -77,7 +78,8 @@ class _FakeClient:
 @pytest.mark.asyncio
 async def test_export_keeps_superseded_rows_and_pages_edges() -> None:
     client = _FakeClient()
-    rows = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    assert whole
     list_call = next(b for op, b in client.calls if op == "memory.list")
     assert list_call["include_superseded"] is True
     assert sorted(r["memory_key"] for r in rows) == ["new", "old"]
@@ -107,3 +109,47 @@ async def test_export_keeps_superseded_rows_and_pages_edges() -> None:
     assert newer.relates_to == [{"path": "semantic/old.md", "kind": "supersedes"}]
     assert orphans == [] and skipped == 0
     assert datetime.now(UTC).date().isoformat() in files["log.md"]
+
+
+class _ShiftingClient:
+    """Pages of one row. The first page's row leaves the namespace before the second
+    page is read on the first `shifts` listings, so that listing skips a live row."""
+
+    def __init__(self, shifts: int) -> None:
+        self.shifts = shifts
+        self.listings = 0
+
+    async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == "memory.bulk_get":
+            return {"results": {k: {"value": k} for k in body["memory_keys"]}}
+        assert op == "memory.list"
+        if body["offset"] == 0:
+            self.listings += 1
+        keys = ["a", "b", "c"]
+        if body["offset"] > 0 and self.listings <= self.shifts:
+            keys = ["b", "c"]  # "a" was deleted: "b" moved up to offset 0 and is skipped
+        page = keys[body["offset"] : body["offset"] + 1]
+        return {
+            "entries": [
+                {"memory_key": k, "agent": "x", "user_id": "-", "session_id": "-"} for k in page
+            ],
+            "truncated": body["offset"] + 1 < len(keys),
+            "total": len(keys),
+        }
+
+
+@pytest.mark.asyncio
+async def test_a_listing_that_skipped_a_row_is_read_again() -> None:
+    client = _ShiftingClient(shifts=1)
+    rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    assert whole and client.listings == 2
+    assert [r["memory_key"] for r in rows] == ["a", "b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_a_namespace_that_keeps_shifting_is_not_called_complete() -> None:
+    # The bundle then carries no completeness marker, and --prune refuses it.
+    client = _ShiftingClient(shifts=99)
+    rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    assert not whole and client.listings == cli_okf._LIST_ATTEMPTS
+    assert [r["memory_key"] for r in rows] == ["a", "c"]
