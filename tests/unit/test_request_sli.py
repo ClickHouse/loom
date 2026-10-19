@@ -908,7 +908,7 @@ def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> N
             op = OPERATIONS_BY_NAME["memory.set"]
             mcp_call._emit_refused(op.name, misspelt, error_code="UNKNOWN_ARGUMENT", request_id="r")
             emit_token_refusal(op.name, eve, error_code="NAMESPACE_NOT_ACCESSIBLE")
-            # A server fault is never deduped: each counts against availability.
+            # A server fault is written up to ten times; the rest count as lost rows.
             emit_token_refusal(
                 op.name, eve, error_code="NAMESPACE_NOT_ACCESSIBLE", server_fault=True
             )
