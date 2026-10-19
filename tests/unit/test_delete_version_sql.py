@@ -1364,3 +1364,24 @@ async def test_a_retry_whose_check_fails_again_answers_503_and_leaves_it_owed(
             MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
         )
     assert [c["done"] for c in await _recorded_checks(ch)] == [0]
+
+
+@pytest.mark.asyncio
+async def test_a_worker_pass_runs_at_most_its_batch(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two owed checks of two keys, a batch of one: a pass runs the older, the next the other.
+    from server.memory.workers import delete_version_check
+    from server.settings import settings
+
+    for key in ("first", "second"):
+        await memory_repo.record_delete_check(
+            {**_ID, "memory_key": key, "checked": 1, "tombstone": 2 if key == "first" else 3},
+            done=False,
+        )
+    monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
+    monkeypatch.setattr(settings, "delete_version_check_batch_size", 1)
+    assert await delete_version_check.run_pass() == 1
+    assert sorted(c["done"] for c in await _recorded_checks(ch)) == [0, 1]
+    assert await delete_version_check.run_pass() == 1
+    assert [c["done"] for c in await _recorded_checks(ch)] == [1, 1]
