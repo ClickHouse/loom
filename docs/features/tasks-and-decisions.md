@@ -187,7 +187,7 @@ async with Agent(org="acme", namespace="private", agent="private-bot", api_key=P
   when the task, read again after the claim wins its lease, is still `todo` at that fence; otherwise the claim
   gives the lease back as it found it. Each sweep also puts right a lease row a race left out of step with its
   task: a `todo` or triage task with no row gets one, an idle row takes its task's fence, and an ended task's row
-  goes. A cancel that lands between a claim's lease and its status write is overwritten by the claim, which leaves
+  goes. It skips rows written in the last 60 s, which may belong to a create or reopen still in flight. A cancel that lands between a claim's lease and its status write is overwritten by the claim, which leaves
   the task `in_progress`; this race predates the reconcile and is not closed by it.
 - **Other moves.** `task.defer` (with `resume_at`), `task.block` (`blocked_on`: `sender`, `human`, `external`),
   `task.wont_do`, and `task.progress` (a note, no state change).
