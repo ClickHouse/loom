@@ -64,7 +64,11 @@ class _FakeLLM:
     provider = "fake"
     model = "fake"
 
+    def __init__(self) -> None:
+        self.prompts: list[str] = []  # each call's user prompt
+
     async def complete(self, **kw: Any) -> LLMResult:
+        self.prompts.append(kw["user"])
         return LLMResult(text="a summary", tokens_in=1, tokens_out=2, provider="fake", model="fake")
 
 
@@ -299,16 +303,12 @@ def test_a_large_turn_behind_a_summary_is_compacted_whole(monkeypatch) -> None:
             for i in range(1, 4)
         ),
     ]
-    prompts: list[str] = []
-
-    class _RecordingLLM(_FakeLLM):
-        async def complete(self, **kw: Any) -> LLMResult:
-            prompts.append(kw["user"])
-            return await super().complete(**kw)
+    llm = _FakeLLM()
+    prompts = llm.prompts
 
     fake = _FakeCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
-    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _RecordingLLM())
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
     out = asyncio.run(
         ch_mod.handle_conversation_compact(
             ConversationCompactInput(
@@ -407,16 +407,12 @@ def test_client_written_summaries_cannot_lift_the_prompt(
             for i in range(1, 4)
         ),
     ]
-    prompts: list[str] = []
-
-    class _RecordingLLM(_FakeLLM):
-        async def complete(self, **kw: Any) -> LLMResult:
-            prompts.append(kw["user"])
-            return await super().complete(**kw)
+    llm = _FakeLLM()
+    prompts = llm.prompts
 
     fake = _FakeCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
-    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _RecordingLLM())
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
     out = asyncio.run(
         ch_mod.handle_conversation_compact(
             ConversationCompactInput(
@@ -470,16 +466,12 @@ def test_a_summary_past_the_allowance_stays_live_and_the_turns_compact(monkeypat
             for i in range(1, 5)
         ),
     ]
-    prompts: list[str] = []
-
-    class _RecordingLLM(_FakeLLM):
-        async def complete(self, **kw: Any) -> LLMResult:
-            prompts.append(kw["user"])
-            return await super().complete(**kw)
+    llm = _FakeLLM()
+    prompts = llm.prompts
 
     fake = _FakeCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
-    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _RecordingLLM())
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
     out = asyncio.run(
         ch_mod.handle_conversation_compact(
             ConversationCompactInput(
@@ -610,16 +602,12 @@ def test_a_resent_compaction_replaces_the_summary_its_failed_run_left(monkeypatc
         ),
         *(row(f"m{i}", f"turn {i}") for i in range(1, 5)),
     ]
-    prompts: list[str] = []
-
-    class _RecordingLLM(_FakeLLM):
-        async def complete(self, **kw: Any) -> LLMResult:
-            prompts.append(kw["user"])
-            return await super().complete(**kw)
+    llm = _FakeLLM()
+    prompts = llm.prompts
 
     fake = _FakeCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
-    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _RecordingLLM())
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
     out = asyncio.run(
         ch_mod.handle_conversation_compact(
             ConversationCompactInput(
@@ -700,16 +688,12 @@ def test_a_summary_inside_the_window_is_replaced_but_not_counted(
         row("m2", 3, "turn 2"),
         row("m3", 4, "turn 3"),
     ]
-    prompts: list[str] = []
-
-    class _RecordingLLM(_FakeLLM):
-        async def complete(self, **kw: Any) -> LLMResult:
-            prompts.append(kw["user"])
-            return await super().complete(**kw)
+    llm = _FakeLLM()
+    prompts = llm.prompts
 
     fake = _FakeCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
-    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _RecordingLLM())
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
     out = asyncio.run(
         ch_mod.handle_conversation_compact(
             ConversationCompactInput(
