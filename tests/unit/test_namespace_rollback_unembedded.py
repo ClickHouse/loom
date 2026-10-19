@@ -159,3 +159,20 @@ async def test_a_reinstated_stub_carries_its_memory_rows_version(
     [stub] = calls["stubs"]
     [mem] = calls["memory"]
     assert stub["version"] == mem["version"]
+
+
+async def test_a_swept_version_comes_back_with_the_sweeps_marker(
+    calls: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The key's row at T was a blacklist sweep's tombstone: the rollback writes it as it
+    # was, so the write fence still reads it as a sweep, not a delete.
+    swept = _row("swept", 13, tombstoned_at=_NOW, expire_reason="blacklist.sweep:p1")
+
+    async def _fetch(org: str, ns: str, pairs: list[Any], **_: Any) -> list[MemoryRow]:
+        return [swept]
+
+    monkeypatch.setattr(store, "fetch_version_rows", _fetch)
+    plan = RollbackPlan(reinstate=[_action("swept", "reinstate", 13)], remove=[])
+    await rb.apply_rollback("test", "personal", plan, applied_at=_NOW, ch=object())
+    (row,) = calls["memory"]
+    assert row["expire_reason"] == "blacklist.sweep:p1" and row["tombstoned_at"] == _NOW

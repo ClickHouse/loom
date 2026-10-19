@@ -148,11 +148,11 @@ async def _read_back(ch: _StatefulCH) -> Any:
 
 
 async def _delete_during_the_set(
-    ch: _StatefulCH, op: str, *, head_inserted: bool = False, head: int = 0
+    ch: _StatefulCH, op: str, *, head_row: dict[str, Any] | None = None
 ) -> set_commit._SetWrite:
-    if not head_inserted:
-        head = time.time_ns() - 10_000_000_000
-        await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    head_row = head_row or _row("Tuesdays", time.time_ns() - 10_000_000_000)
+    head = int(head_row["version"])
+    await ch.insert("loom.memory", [head_row])
     w = _in_flight_set(head + 5_000_000)  # drawn after the head, before the delete
     if op == "memory.delete":
         out: Any = await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
@@ -596,11 +596,11 @@ async def test_a_delete_of_a_row_still_holding_a_sweeps_marker_is_a_delete(
 ) -> None:
     # The row was restored from a sweep by an older build and never written since: the
     # delete's tombstone does not take the marker, so the set in flight keeps its row.
-    head = time.time_ns() - 10_000_000_000
-    await ch.insert(
-        "loom.memory", [{**_row("Tuesdays", head), "expire_reason": "blacklist.sweep:p1"}]
-    )
-    w = await _delete_during_the_set(ch, op, head_inserted=True, head=head)
+    head_row = {
+        **_row("Tuesdays", time.time_ns() - 10_000_000_000),
+        "expire_reason": "blacklist.sweep:p1",
+    }
+    w = await _delete_during_the_set(ch, op, head_row=head_row)
     await set_commit._set_plain_insert(w, ch)
     got = await _read_back(ch)
     assert got is not None and got.value == "Thursdays"

@@ -134,7 +134,13 @@ async def apply_rollback(
                 continue
             new_version = store.next_version()
             memory_rows.append(
-                store.build_memory_version_row(h, version=new_version, updated_at=applied_at)
+                store.build_memory_version_row(
+                    h,
+                    version=new_version,
+                    updated_at=applied_at,
+                    # The row as it was at T, a blacklist sweep's marker on its tombstone too.
+                    expire_reason=h.expire_reason,
+                )
             )
             if is_embedded(h.memory_type, h.sensitivity):
                 embedding_rows.append(_stub(h, version=new_version, tombstoned_at=h.tombstoned_at))
