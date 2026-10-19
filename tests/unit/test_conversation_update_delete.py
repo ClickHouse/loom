@@ -274,7 +274,7 @@ async def test_named_turns_are_tombstoned_in_byte_bounded_slices() -> None:
     await repo._tombstone_embeddings(
         "o", "n", "a", "t", msg_ids=ids, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
     )
-    slices = [p["ids"] for sql, p in executed if "INSERT INTO loom.conversation_embeddings" in sql]
+    slices = [p["ids"] for sql, p in executed if "AS tombstoned_at" in sql]
     assert len(slices) > 1
     assert sum(slices, []) == ids
     # Each one binds well under the server's 128 KiB form-field cap.
@@ -298,7 +298,7 @@ async def test_the_tombstone_reads_with_sequential_consistency() -> None:
         await repo._tombstone_embeddings(
             "o", "n", "a", "t", msg_ids=msg_ids, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
         )
-    assert seen == [True, True]
+    assert seen == [True] * 4  # the tombstone and the handoff, for each form
 
 
 @pytest.mark.asyncio

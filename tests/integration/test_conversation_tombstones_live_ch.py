@@ -253,6 +253,29 @@ async def test_a_peer_turn_sharing_only_a_prefix_does_not_keep_the_row(ch, scope
     assert await _rows(ch, scope) == [("1", mine, False)]
 
 
+@pytest.mark.asyncio
+async def test_a_kept_row_passes_to_the_agent_that_still_holds_the_turn(ch, scope) -> None:
+    """A shared row this agent wrote last stays live for the peer's copy, and is
+    rewritten under the peer's agent, so this agent's own search drops it."""
+    await _message(ch, scope, "b", "1", "shared", T0)
+    await _message(ch, scope, "a", "1", "shared", T0)
+    await _embedding(ch, scope, "a", "1", "shared", T0)
+    for tombstone in (
+        lambda: repo.tombstone_messages(
+            scope["org"], scope["ns"], "a", scope["tid"], ["1"], when=T0, ch=ch
+        ),
+        lambda: repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=T0, ch=ch),
+    ):
+        await tombstone()
+        rows = await ch.query_all(
+            "SELECT agent, tombstoned_at IS NULL AS live FROM loom.conversation_embeddings "
+            "FINAL WHERE org = {org:String} AND namespace = {ns:String} "
+            "AND thread_id = {tid:String}",
+            params={"org": scope["org"], "ns": scope["ns"], "tid": scope["tid"]},
+        )
+        assert [(r["agent"], bool(r["live"])) for r in rows] == [("b", True)]
+
+
 _LONG_IDS = [f"{i:04d}" + "x" * 508 for i in range(300)]  # 512-character ids
 
 

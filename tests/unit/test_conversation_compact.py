@@ -154,22 +154,29 @@ def test_compact_tombstones_only_the_messages_the_summary_read(monkeypatch) -> N
     assert out.compacted is True and out.messages_summarized == 2
     [summary] = fake.inserted
     assert '"compacted_from": ["m0", "m1"]' in summary["metadata"]
+
     # The compacted turns leave conversation.search too: their embeddings are
     # tombstoned with the messages, by the same ids, before and after them.
+    def step(sql: str) -> str:
+        if "AS tombstoned_at" in sql:
+            return "tombstone"
+        return "handoff" if "INSERT INTO loom.conversation_embeddings" in sql else "messages"
+
     steps = [
-        (
-            "embeddings" if "INSERT INTO loom.conversation_embeddings" in sql else "messages",
-            p["ids"],
-        )
+        (step(sql), p["ids"])
         for sql, p in fake.executed
         if "INSERT INTO loom.conversation_embeddings" in sql
         or "ALTER TABLE loom.conversations\n" in sql
     ]
-    # Embeddings first, so a retry after a failed messages mutation repeats both.
+    # Embeddings first, so a retry after a failed messages mutation repeats both; each
+    # pass hands rows another agent still holds to that agent.
+    ids = ["m0", "m1"]
     assert steps == [
-        ("embeddings", ["m0", "m1"]),
-        ("messages", ["m0", "m1"]),
-        ("embeddings", ["m0", "m1"]),
+        ("tombstone", ids),
+        ("handoff", ids),
+        ("messages", ids),
+        ("tombstone", ids),
+        ("handoff", ids),
     ]
 
 

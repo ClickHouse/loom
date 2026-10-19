@@ -273,7 +273,8 @@ async def test_a_compacted_turn_leaves_search(agent, ch_client) -> None:
 @pytest.mark.asyncio
 async def test_a_turn_another_agent_logged_survives_compaction(agent) -> None:
     """Two agents logging one turn share its embedding row: one agent's compaction
-    leaves the turn searchable across agents while the other's copy is still live."""
+    leaves the turn searchable while the other's copy is still live, and the row passes
+    to that agent, so the compacting agent's own search drops it."""
     tid = f"thr-{uuid.uuid4().hex[:6]}"
     nonce = uuid.uuid4().hex[:10]
     other = f"{agent.agent}-peer"
@@ -304,10 +305,11 @@ async def test_a_turn_another_agent_logged_survives_compaction(agent) -> None:
     assert out["compacted"] is True, out
 
     mine = await agent.conversations.search(f"okapi rollout {nonce}", thread_id=tid)
-    assert not {h["msg_id"] for h in mine["hits"]} & set(old[1:]), mine["hits"]
-    # Across agents ("*"): the shared row carries whichever agent wrote it last.
-    every = await agent.conversations.search(f"okapi rollout {nonce}", thread_id=tid, agent_id="*")
-    assert shared in {h["msg_id"] for h in every["hits"]}, every["hits"]
+    assert not {h["msg_id"] for h in mine["hits"]} & set(old), mine["hits"]
+    theirs = await agent.conversations.search(
+        f"okapi rollout {nonce}", thread_id=tid, agent_id=other
+    )
+    assert shared in {h["msg_id"] for h in theirs["hits"]}, theirs["hits"]
 
 
 @pytest.mark.asyncio
@@ -378,6 +380,13 @@ async def test_a_deleted_thread_leaves_search_but_another_agents_turn_stays(
 
     hits = await agent.conversations.search(f"ibex {nonce}", thread_id=tid, agent_id="*")
     assert {h["msg_id"] for h in hits["hits"]} == {shared}, hits["hits"]
+    # The shared row passed to the peer: this agent's own search drops it.
+    mine = await agent.conversations.search(f"ibex {nonce}", thread_id=tid)
+    assert mine["hits"] == [], mine["hits"]
+    theirs = await agent.conversations.search(
+        f"ibex {nonce}", thread_id=tid, agent_id=f"{agent.agent}-peer"
+    )
+    assert {h["msg_id"] for h in theirs["hits"]} == {shared}, theirs["hits"]
 
 
 @pytest.mark.asyncio
