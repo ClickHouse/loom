@@ -30,7 +30,7 @@ def test_a_code_call_resolves_consent_and_spans_under_the_plane(
         return base.output_model.model_construct()
 
     op = dataclasses.replace(base, handler=_handler)
-    monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, op.mcp_tool_name, op)
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, op.mcp_tool_name, op)
     monkeypatch.setattr(settings, "code_org", "acme")
     monkeypatch.setattr(settings, "code_namespace", "code-acme")
 

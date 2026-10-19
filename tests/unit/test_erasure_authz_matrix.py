@@ -115,7 +115,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Any:
         return [n for n in (auth.namespaces if auth else ()) if n != "*"]
 
     monkeypatch.setattr(authz, "_lookup_grant", _no_grant)
-    monkeypatch.setattr(authz, "_is_restricted", _false)
+    monkeypatch.setattr(authz, "may_be_restricted", _false)
     monkeypatch.setattr(authz, "_is_org_readable_code_namespace", _false)
     monkeypatch.setattr(handlers, "begin_erasure", _begin)
     for name in (

@@ -19,7 +19,7 @@ flowchart TD
 [Migrations](migrations.md) owns the rules: numbering, what counts as additive, runner directives, sort-key rebuilds, and `make schema-dump` / `make schema-check` against the pinned ClickHouse. In short:
 
 - Add `schemas/migrations/<NNN>_<what>.sql` with the next free number. Its header comment says what the change is for and what old rows and old builds see.
-- Address tables as `loom.<table>` and write `IF NOT EXISTS` / `IF EXISTS`.
+- Address tables as `loom.<table>` and write `IF NOT EXISTS` / `IF EXISTS`. Telemetry derived from Loom's own tables goes in `loom_telemetry` instead ([why](../architecture/clickhouse.md)); preflight already checks its grants, and the erasure census names the table with its database.
 - Never edit or delete a merged migration. Fix a mistake with a new file.
 - Run `make migrate`, `make schema-dump`, then `python scripts/codegen/docs_reference.py` so the [schema reference](../reference/schema.md) lists the table.
 

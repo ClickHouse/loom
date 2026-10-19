@@ -91,7 +91,7 @@ async def qa_route_answer(
         code_org, code_ns = _resolve_code_target(search_input, settings)
         if not code_ns:
             return None
-        tracker_ns = await authorized_tracker_namespace(code_org, code_ns)
+        tracker_ns = await authorized_tracker_namespace(code_org, code_ns, hides_answer=False)
         if not tracker_ns:
             return None
         source = tracker_source(code_org, tracker_ns)
@@ -135,7 +135,7 @@ async def _searched_everywhere(
     from server.tracker.app.binding import authorized_tracker_namespaces
     from server.tracker.app.source import tracker_source
 
-    others = await authorized_tracker_namespaces(org, code_ns)
+    others = await authorized_tracker_namespaces(org, code_ns, hides_answer=False)
     linked = [primary] + [t for t in others if t != primary]
     lines: list[str] = []
     unread: list[str] = []

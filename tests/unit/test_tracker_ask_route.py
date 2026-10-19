@@ -60,7 +60,7 @@ def wired(monkeypatch):
     monkeypatch.setattr(settings, "memory_ask_code_namespace", CODE_NS, raising=False)
     monkeypatch.setattr(settings, "memory_ask_code_org", ORG, raising=False)
 
-    async def _authorized(org, code_ns):
+    async def _authorized(org, code_ns, *, hides_answer=True):
         return QA if code_ns == CODE_NS else ""
 
     monkeypatch.setattr(binding, "authorized_tracker_namespace", _authorized)

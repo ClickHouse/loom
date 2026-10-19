@@ -175,3 +175,30 @@ def test_gauges_written_every_export_by_default(monkeypatch: pytest.MonkeyPatch)
     finally:
         provider.shutdown()
     assert [r["Value"] for r in gauges] == [7.0, 7.0]
+
+
+def test_delta_temporality_turns_an_observable_total_into_increases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """loom.ledger.dropped reports a running total; with delta on, its rows are
+    summed like every other counter's, so they must be the increases."""
+    monkeypatch.setattr(settings, "otel_metrics_delta_temporality", True)
+    monkeypatch.setattr(settings, "otel_gauge_heartbeat_s", 0)
+    client = _StubClient()
+    provider, reader, _ = _provider(monkeypatch, client)
+    totals = iter([3, 8, 8])  # the last for the collection shutdown runs
+    try:
+        from opentelemetry.metrics import Observation
+
+        meter = provider.get_meter("t")
+        meter.create_observable_counter(
+            "loom.ledger.dropped",
+            callbacks=[lambda _o: [Observation(next(totals), {"reason": "queue_full"})]],
+        )
+        reader.collect()
+        reader.collect()
+        sums = client.rows("default.otel_metrics_sum")
+    finally:
+        provider.shutdown()
+    assert [r["Value"] for r in sums] == [3.0, 5.0]
+    assert {r["AggregationTemporality"] for r in sums} == {1}

@@ -65,11 +65,12 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   profile of its own name) and logs in with `LOOM_CH_PASSWORD`; anything else of that name
   is left alone.
 - **Without admin rights.** When the user cannot create the database, read the system
-  tables the migrations read, or create the reader or its settings profile, `ch-setup`
-  stops and prints the SQL for an admin, with the password as a placeholder.
-  `loom ch-setup --print-sql` prints it without connecting. The SQL grants the Loom user
-  everything the admin holds on `loom.*` through `GRANT CURRENT GRANTS` (ClickHouse Cloud
-  does not accept `GRANT ALL`), `SELECT` on the system tables Loom reads, and
+  tables the migrations read, hold the `loom_telemetry` grants the migrations need, or
+  create the reader or its settings profile, `ch-setup` stops and prints the SQL for an
+  admin, with the password as a placeholder. `loom ch-setup --print-sql` prints it
+  without connecting. The SQL grants the Loom user everything the admin holds on
+  `loom.*` and on `loom_telemetry.*` through `GRANT CURRENT GRANTS` (ClickHouse Cloud does
+  not accept `GRANT ALL`), `SELECT` on the system tables Loom reads, and
   `READ ON REMOTE`, which `clusterAllReplicas` needs to ask every replica for its version
   (a self-managed server shows it as `REMOTE` in `SHOW GRANTS`; writes through `remote()`
   are still refused). It creates the reader with `OR REPLACE`, so check that no other
@@ -93,9 +94,15 @@ is checked, on every boot, for `CREATE TABLE`, `CREATE VIEW`, `ALTER TABLE`,
 `loom.*`, with boot migrations on or off: besides the migrations, it sets retention TTLs,
 compacts and rebuilds provider tables. Without `SYSTEM REFRESH VIEW` on `loom.*` it boots
 with a warning: purged code stays in the refreshable views until their next scheduled
-refresh. `GRANT CURRENT GRANTS ON loom.*` from an admin covers all of them. Only the
-replica-version and system-table reads, which only migrations need, relax while nothing
-is pending or when boot migrations are off.
+refresh. `GRANT CURRENT GRANTS ON loom.*` from an admin covers all of them. The process
+that migrates also needs `CREATE DATABASE`, `CREATE TABLE`, `CREATE VIEW`, `INSERT` and
+`SELECT` on `loom_telemetry.*` (`GRANT CURRENT GRANTS ON loom_telemetry.*`), the database
+of the request SLI rollup. Only the replica-version and system-table reads and the
+`loom_telemetry` grants, which only migrations need, relax while nothing is pending or
+when boot migrations are off. A server that does not migrate warns without `SELECT` on
+`loom_telemetry.*`: `/v1/admin/schema.status` then reports the rollup missing, the view
+refresh gauges leave its refresh out, and `loom.sli.rollup_lag_s` and
+`loom.sli.rollup_missed_rows` are never reported, so alerts on them cannot fire.
 `loom doctor` reports the checks as `clickhouse_preflight`.
 
 ### Local stack from a clone
@@ -318,13 +325,13 @@ Loom needs no server config of its own: the table settings it relies on are set 
 tables (`032_table_settings.sql`), and `loom ch-setup` makes the database and the reader
 user with SQL.
 
-| Requirement               | Why                                                                                                                                                                                                                                                 | ClickHouse Cloud                                 | Self-managed                                                                                                                                                                                            |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Version 26.4 or later     | the oldest server that applies every migration (26.3 still gates `stem()`); boot refuses an older one                                                                                                                                               | the service's version; the oldest replica counts | upgrade the server. CI tests only the latest release (`dev/clickhouse_release.sh`); a release bundle names the one that was latest when it was built                                                    |
-| Grants                    | everything on `loom.*` (`GRANT ALL`, or `GRANT CURRENT GRANTS` on Cloud): the migrations create, alter and drop tables and views, and Loom rebuilds tables and refreshes views at runtime; `SELECT` on the system tables it reads; `READ ON REMOTE` | the user `ch-setup --print-sql` grants           | an admin, or the same SQL                                                                                                                                                                               |
-| Keeper                    | required: every lease and claim is a KeeperMap key (the migration lock, the workers lease, the task-inbox leases, the sign-in state, and the sign-up, account, grant change and run id claims); Loom refuses to start without one                   | present                                          | the bundled stack runs an embedded Keeper (`deploy/clickhouse-config/keeper.xml`); for your own server, add that file to its `config.d/` (or a `<zookeeper>` section naming your Keeper) and restart it |
-| `Quantized` codec (26.8+) | codes-first vector search: a fresh install creates its vector columns coded when `LOOM_EMBEDDING_DIM` is a multiple of 8                                                                                                                            | where the service version has it                 | nothing to configure; an older server gets plain vectors and full-precision scans                                                                                                                       |
-| `aiEmbed` (26.7+)         | only `loom reembed --in-database`                                                                                                                                                                                                                   | where the service version has it                 | needs a named collection (`named_collections.xml.template`)                                                                                                                                             |
+| Requirement               | Why                                                                                                                                                                                                                                                                        | ClickHouse Cloud                                 | Self-managed                                                                                                                                                                                            |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Version 26.4 or later     | the oldest server that applies every migration (26.3 still gates `stem()`); boot refuses an older one                                                                                                                                                                      | the service's version; the oldest replica counts | upgrade the server. CI tests only the latest release (`dev/clickhouse_release.sh`); a release bundle names the one that was latest when it was built                                                    |
+| Grants                    | everything on `loom.*` and `loom_telemetry.*` (`GRANT ALL`, or `GRANT CURRENT GRANTS` on Cloud): the migrations create, alter and drop tables and views, and Loom rebuilds tables and refreshes views at runtime; `SELECT` on the system tables it reads; `READ ON REMOTE` | the user `ch-setup --print-sql` grants           | an admin, or the same SQL                                                                                                                                                                               |
+| Keeper                    | required: every lease and claim is a KeeperMap key (the migration lock, the workers lease, the task-inbox leases, the sign-in state, and the sign-up, account, grant change and run id claims); Loom refuses to start without one                                          | present                                          | the bundled stack runs an embedded Keeper (`deploy/clickhouse-config/keeper.xml`); for your own server, add that file to its `config.d/` (or a `<zookeeper>` section naming your Keeper) and restart it |
+| `Quantized` codec (26.8+) | codes-first vector search: a fresh install creates its vector columns coded when `LOOM_EMBEDDING_DIM` is a multiple of 8                                                                                                                                                   | where the service version has it                 | nothing to configure; an older server gets plain vectors and full-precision scans                                                                                                                       |
+| `aiEmbed` (26.7+)         | only `loom reembed --in-database`                                                                                                                                                                                                                                          | where the service version has it                 | needs a named collection (`named_collections.xml.template`)                                                                                                                                             |
 
 - **Newer servers.** Features past the floor are probed where they are used: the
   `Quantized` codec, `aiEmbed`, lightweight `UPDATE` (Loom falls back to a mutation where

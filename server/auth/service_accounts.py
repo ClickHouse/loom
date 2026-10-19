@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from server.auth.fail_closed import note_unreadable
 from server.core.datetimes import as_aware_utc
 from server.settings import settings
 
@@ -70,6 +71,7 @@ async def sa_creator(org: str, sa_subject: str, *, ch: Any | None = None) -> SAC
         )
     except Exception as e:  # noqa: BLE001 — a failed read inherits nothing (fail closed)
         log.warning("service_accounts lookup failed for %s/%s: %s", org, sa_subject, e)
+        note_unreadable()
         return None
     creator = str((row or {}).get("created_by") or "")
     if not creator:

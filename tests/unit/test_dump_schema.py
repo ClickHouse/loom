@@ -26,25 +26,40 @@ class _Client:
     def query(self, sql: str, parameters: dict[str, Any] | None = None) -> _Result:
         if sql == "SELECT version()":
             return _Result([(self.version,)])
-        if sql.startswith("SELECT name, engine FROM system.tables"):
-            assert parameters == {"db": "loom"}
-            return _Result([(n, e) for n, (e, _) in sorted(self.objects.items())])
-        name = sql.split("`.`", 1)[1].rstrip("`")
-        return _Result([(self.objects[name][1],)])
+        if sql.startswith("SELECT database, name, engine FROM system.tables"):
+            assert parameters == {"dbs": ["loom", "loom_telemetry"]}
+            dbs = parameters["dbs"]
+            rows = sorted(
+                (k.partition(".") + (e,) for k, (e, _) in self.objects.items()),
+                key=lambda r: (dbs.index(r[0]), r[2]),
+            )
+            return _Result([(d, n, e) for d, _, n, e in rows])
+        db, table = sql.removeprefix("SHOW CREATE TABLE `").rstrip("`").split("`.`", 1)
+        return _Result([(self.objects[f"{db}.{table}"][1],)])
 
 
 OBJECTS = {
-    "b": ("MergeTree", "CREATE TABLE loom.b\n(\n    `x` UInt8\n)\nENGINE = MergeTree\nORDER BY x"),
-    "a": ("ReplacingMergeTree", "CREATE TABLE loom.a\n(\n    `k` String\n)\nENGINE = RMT"),
-    "a_mv": ("MaterializedView", "CREATE MATERIALIZED VIEW loom.a_mv TO loom.b AS SELECT 1"),
+    "loom.b": (
+        "MergeTree",
+        "CREATE TABLE loom.b\n(\n    `x` UInt8\n)\nENGINE = MergeTree\nORDER BY x",
+    ),
+    "loom.a": ("ReplacingMergeTree", "CREATE TABLE loom.a\n(\n    `k` String\n)\nENGINE = RMT"),
+    "loom.a_mv": ("MaterializedView", "CREATE MATERIALIZED VIEW loom.a_mv TO loom.b AS SELECT 1"),
+    "loom_telemetry.t": (
+        "MergeTree",
+        "CREATE TABLE loom_telemetry.t\n(\n    `x` UInt8\n)\nENGINE = MergeTree\nORDER BY x",
+    ),
 }
 
 
 def test_dump_is_sorted_idempotent_and_version_free() -> None:
     text = ds.dump(_Client(OBJECTS))
     assert text == ds.dump(_Client(OBJECTS, version="26.8.8.8"))
-    assert "Counts: 2 tables + 1 materialized views." in text
-    assert text.index("-- loom.a\n") < text.index("-- loom.b\n") < text.index("-- loom.a_mv\n")
+    assert "Counts: 3 tables + 1 materialized views." in text
+    assert (
+        text.index("-- loom.a\n") < text.index("-- loom.b\n") < text.index("-- loom_telemetry.t\n")
+    )
+    assert text.index("-- loom_telemetry.t\n") < text.index("-- loom.a_mv\n")
     assert "CREATE TABLE IF NOT EXISTS loom.a\n" in text
     assert "CREATE MATERIALIZED VIEW IF NOT EXISTS loom.a_mv " in text
     assert ds.dump(_Client(OBJECTS)) == text

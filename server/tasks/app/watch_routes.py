@@ -115,11 +115,11 @@ def _bearer_auth(request: Request) -> Any:
     server runs with LOOM_AUTH_REQUIRED=false and its tests still mint
     tokens for strangers); a missing bearer is a 401 only when auth is on,
     and None (no principal, every scope check answers yes) otherwise."""
-    from server.auth.bearer import verify_bearer_header
+    from server.auth.bearer import missing_bearer, verify_bearer_header
 
     auth = verify_bearer_header(request.headers.get("Authorization"))
     if auth is None and settings.auth_actually_required():
-        raise _err(401, "AUTH_INVALID", "missing bearer token")
+        raise missing_bearer()
     return auth
 
 

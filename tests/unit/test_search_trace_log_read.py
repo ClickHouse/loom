@@ -85,7 +85,7 @@ def _as(monkeypatch, subject: str, *, admin: bool) -> None:
         )
     )
 
-    async def _row_in_scope(org, ns, role=Role.VIEWER):
+    async def _row_in_scope(org, ns, role=Role.VIEWER, *, hides_answer=True):
         return admin or role.value <= Role.VIEWER.value
 
     monkeypatch.setattr(authz, "row_in_scope", _row_in_scope)

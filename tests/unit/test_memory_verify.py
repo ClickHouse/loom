@@ -88,7 +88,7 @@ def _clear_auth(monkeypatch: pytest.MonkeyPatch):
     async def _grant(org: str, ns: str, subject: str) -> Role | None:
         return _GRANTS.get((org, ns, subject))
 
-    monkeypatch.setattr(authz, "_is_restricted", _plain)
+    monkeypatch.setattr(authz, "may_be_restricted", _plain)
     monkeypatch.setattr(authz, "_lookup_grant", _grant)
     _GRANTS.clear()
     set_current_auth(None)

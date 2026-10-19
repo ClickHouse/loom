@@ -16,13 +16,18 @@ from server.core.repo_base import _CHClient, _default_client
 
 
 async def list_loom_tables(*, ch: _CHClient | None = None) -> list[str]:
-    """Names of tables in the `loom` database (excluding CH MV inner_id
-    bookkeeping). Backs /v1/admin/schema.status."""
+    """Names of tables in the `loom` database, and `loom_telemetry.<name>` for
+    the telemetry database (excluding CH MV inner_id bookkeeping). Backs
+    /v1/admin/schema.status."""
     ch = ch or _default_client()
     rows = await ch.query_all(
-        "SELECT name FROM system.tables WHERE database = 'loom'",
+        "SELECT database, name FROM system.tables WHERE database IN ('loom', 'loom_telemetry')",
     )
-    return [r["name"] for r in rows if not r["name"].startswith(".inner")]
+    return [
+        r["name"] if r["database"] == "loom" else f"{r['database']}.{r['name']}"
+        for r in rows
+        if not r["name"].startswith(".inner")
+    ]
 
 
 # ----------------------------------------------------------------------

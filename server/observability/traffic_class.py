@@ -148,6 +148,15 @@ def reset_traffic_class(token: Token[tuple[str, str]]) -> None:
     _current.reset(token)
 
 
+def bind_claimed_class(auth: Any) -> None:
+    """Publish the token's `traffic_class` claim before the call is classified,
+    so a refusal recorded first carries it; classification then replaces it.
+    Without a claim the class stays '' until then."""
+    cls = normalize_class(getattr(auth, "traffic_class", None))
+    if cls:
+        set_current_traffic_class(cls, SOURCE_CLAIM)
+
+
 def current_traffic_class() -> str:
     """The request's class, or '' outside a request (a worker pass, a
     process-lifetime task). Callers that need a class treat '' as

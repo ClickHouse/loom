@@ -91,7 +91,7 @@ class _Single:
 
 @pytest.fixture
 def _authorized(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _ok(org: str, ns: str, role: Any = None) -> bool:
+    async def _ok(org: str, ns: str, role: Any = None, *, hides_answer=True) -> bool:
         return True
 
     monkeypatch.setattr(authz, "row_in_scope", _ok)
@@ -228,7 +228,7 @@ def test_handlers_dispatch_the_mode_to_the_presence_runner(monkeypatch: pytest.M
 def test_one_unreadable_namespace_refuses_the_whole_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _scope(org: str, ns: str, role: Any = None) -> bool:
+    async def _scope(org: str, ns: str, role: Any = None, *, hides_answer=True) -> bool:
         return ns != "code-clickhouse-26-3"
 
     monkeypatch.setattr(authz, "row_in_scope", _scope)

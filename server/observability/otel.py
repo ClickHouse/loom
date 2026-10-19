@@ -31,6 +31,7 @@ from server.observability.otel_exporters import (
     _make_clickhouse_log_exporter,
     _make_clickhouse_metric_exporter,
     _make_clickhouse_span_exporter,
+    _metric_preferred_temporality,
     _metric_reader_kwargs,
     _traces_backend_available,
 )
@@ -137,10 +138,10 @@ def init_otel(app: Any | None = None, *, enable_metrics: bool = True) -> Any:
     provider, resource, log_exporter = started
     _tracer_provider = provider
 
-    # Metrics: counter + duration histogram per operation, same direct-CH
-    # exporter pattern.
-    if exporter_mode == "ch" and enable_metrics:
-        _init_metrics(resource)
+    # Metrics go where the spans go: straight into ClickHouse, or to the
+    # OTLP endpoint (a collector in front of ClickStack, say).
+    if enable_metrics:
+        _init_metrics(resource, exporter_mode, endpoint)
 
     # Attach a LoggingHandler to the root logger: it stamps the active
     # span's trace_id/span_id on each record, so logs emitted inside a
@@ -237,7 +238,22 @@ def _start_tracing(exporter_mode: str, endpoint: str) -> tuple[Any, Any, Any] | 
     return provider, resource, log_exporter
 
 
-def _init_metrics(resource: Any) -> None:
+def _make_metric_exporter(exporter_mode: str, endpoint: str) -> Any:
+    """The ClickHouse metric exporter, or OTLP/HTTP to `endpoint`'s
+    `/v1/metrics` with the same temporality."""
+    if exporter_mode == "ch":
+        return _make_clickhouse_metric_exporter(settings.otel_service_name)
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+
+    headers = _parse_headers(settings.otel_exporter_otlp_headers)
+    return OTLPMetricExporter(
+        endpoint=endpoint.rstrip("/") + "/v1/metrics",
+        headers=headers if headers else None,
+        preferred_temporality=_metric_preferred_temporality(),
+    )
+
+
+def _init_metrics(resource: Any, exporter_mode: str, endpoint: str) -> None:
     """The MeterProvider, the per-op request instruments, the domain metrics and
     the state gauges. Never raises: metrics must not stop startup."""
     global _meter_provider, _request_counter, _request_duration
@@ -246,7 +262,7 @@ def _init_metrics(resource: Any) -> None:
         from opentelemetry.sdk.metrics import MeterProvider
         from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
-        metric_exporter = _make_clickhouse_metric_exporter(settings.otel_service_name)
+        metric_exporter = _make_metric_exporter(exporter_mode, endpoint)
         # One export a minute per process: a counter is read at minute
         # resolution, and the 3 s trace cadence would cost millions of rows
         # and hundreds of parts an hour per table.
@@ -281,12 +297,16 @@ def _init_metrics(resource: Any) -> None:
         except Exception as e:  # noqa: BLE001 — domain metrics must not stop OTel
             log.warning("domain metric wiring failed: %s", e)
 
+        # The gauge heartbeat is the ClickHouse exporter's filter; OTLP has none.
+        heartbeat = (
+            f", gauge heartbeat {settings.otel_gauge_heartbeat_s}s" if exporter_mode == "ch" else ""
+        )
         log.info(
-            "OTel metrics initialized — emitting every %ds (%s temporality, "
-            "gauge heartbeat %ss) to default.otel_metrics_{sum,histogram,gauge}",
+            "OTel metrics initialized — emitting every %ds (%s temporality%s) to %s",
             settings.otel_metrics_export_interval_s,
             "delta" if settings.otel_metrics_delta_temporality else "cumulative",
-            settings.otel_gauge_heartbeat_s,
+            heartbeat,
+            "default.otel_metrics_{sum,histogram,gauge}" if exporter_mode == "ch" else endpoint,
         )
     except Exception as e:  # noqa: BLE001 — metrics must not stop startup
         log.warning("OTel metrics init failed: %s", e)

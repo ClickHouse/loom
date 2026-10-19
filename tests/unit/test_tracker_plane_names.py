@@ -18,8 +18,8 @@ def test_no_op_route_or_tool_is_named_qa() -> None:
 
     assert not [op.name for op in ALL_OPERATIONS if op.name.startswith("qa.")]
     assert not [r.path for r in build_router().routes if r.path.startswith("/v1/qa.")]
-    assert not [n for n in mcp_call._TOOLS_BY_NAME if n.startswith("loom_qa_")]
-    assert "loom_tracker_duplicate_check" in mcp_call._TOOLS_BY_NAME
+    assert not [n for n in mcp_call.TOOLS_BY_NAME if n.startswith("loom_qa_")]
+    assert "loom_tracker_duplicate_check" in mcp_call.TOOLS_BY_NAME
 
 
 def test_every_source_op_is_served_under_its_tracker_name() -> None:

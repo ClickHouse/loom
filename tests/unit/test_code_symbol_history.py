@@ -249,7 +249,7 @@ def wired(monkeypatch):
 
     monkeypatch.setattr(cs, "_resolve_symbols", _resolve)
 
-    async def _authorized(org, code_ns):
+    async def _authorized(org, code_ns, *, hides_answer=True):
         return state["qa"]
 
     monkeypatch.setattr(binding, "authorized_tracker_namespace", _authorized)

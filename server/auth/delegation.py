@@ -20,8 +20,10 @@ from fastapi import HTTPException
 from server.auth import authz
 from server.auth import jwt as jwt_mod
 from server.auth.authz import grant_role
-from server.auth.jwt import AuthInfo
+from server.auth.fail_closed import note_unreadable, unreadable
+from server.auth.jwt import AuthInfo, TokenError
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
+from server.observability.metrics import record_auth_refusal
 from server.operations.base import GRANT_ROLES, Role, grant_rank
 from server.settings import settings
 
@@ -121,6 +123,7 @@ async def _refuse_a_revoked_parent(parent: AuthInfo, issued_at: int, tokens: lis
     # The sign-in session, first-party too (a logout ends it), owed revocations included.
     ended = bool(parent.session_id) and await revocation.revoked_outright(parent.session_id)
     if by_subject or any(t in cut for t in tokens) or ended:
+        record_auth_refusal(TokenError(reason="revoked"), transport="http")
         raise HTTPException(
             status_code=401,
             detail={
@@ -374,8 +377,11 @@ async def _creator_account(org: str, creator: str) -> _Account:
         )
     except Exception as e:  # noqa: BLE001 — an unreadable account counts as disabled (closed)
         log.warning("account lookup failed for %s/%s: %s", org, creator, e)
+        note_unreadable()
         return _Account(active=False, best_grant=None)
     account = _account_from_row(row or {})
+    if unreadable():  # read with only some of the creator's spellings: not kept
+        return account
     if len(_account_active) >= _ACCOUNT_CACHE_MAX:
         _account_active.clear()
     _account_active[key] = (now, account)

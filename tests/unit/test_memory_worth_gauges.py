@@ -253,6 +253,32 @@ def test_storage_probe_keeps_the_parts_when_view_refreshes_is_refused(monkeypatc
     assert "storage_view_refresh_scheduled" not in s
 
 
+def test_storage_probe_reads_how_far_the_sli_rollup_trails(monkeypatch) -> None:
+    class _Res:
+        def __init__(self, rows: list[Any]) -> None:
+            self.result_rows = rows
+
+    class _Sync:
+        def __init__(self, lag_rows: list[Any]) -> None:
+            self.lag_rows = lag_rows
+
+        def query(self, sql: str, parameters: dict[str, Any] | None = None) -> _Res:
+            if sql == otel_probes._SLI_MISSED_SQL:
+                return _Res([(3,)])
+            if "loom_telemetry.sli_minute" in sql:
+                return _Res(self.lag_rows)
+            return _Res([])
+
+    monkeypatch.setattr(otel_probes, "_probe_client", lambda: _Sync([(3725.5,)]))
+    series = otel_probes._probe_storage()
+    assert series["sli_rollup_lag_s"] == [(3725.5, {})]
+    assert series["sli_rollup_missed_rows"] == [(3.0, {})]
+    # No sentinel yet (a rollup that never ran): no point, not a huge lag.
+    monkeypatch.setattr(otel_probes, "_probe_client", lambda: _Sync([]))
+    series = otel_probes._probe_storage()
+    assert "sli_rollup_lag_s" not in series and "sli_rollup_missed_rows" not in series
+
+
 def test_storage_gauges_registered_only_with_a_probe_and_attributed_by_table() -> None:
     meter = _Meter()
     metrics_gauges.register_state_gauges(meter, ch_probe=dict)
@@ -272,6 +298,8 @@ def test_storage_gauges_registered_only_with_a_probe_and_attributed_by_table() -
         "loom.ch.table.bytes_on_disk",
         "loom.ch.view_refresh.scheduled",
         "loom.ch.view_refresh.age_s",
+        "loom.sli.rollup_lag_s",
+        "loom.sli.rollup_missed_rows",
     ):
         assert name in meter.gauges, name
     assert "index_granularity = 256" in meter.descriptions["loom.ch.table.rows_per_mark"]

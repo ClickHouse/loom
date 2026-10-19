@@ -22,6 +22,12 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from server.auth.directory import ClassificationUnavailable, directory
+from server.auth.fail_closed import (
+    marks_unverified,
+    note_answered_unverified,
+    note_unreadable,
+    unreadable,
+)
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
 
 # Re-export from operations.base so there's one canonical Role definition.
@@ -66,6 +72,7 @@ def may_act_in_org(auth: AuthInfo, org: str) -> bool:
     return auth.org in ("*", org) or auth.has_role(Role.PLATFORM_ADMIN)
 
 
+@marks_unverified
 async def check_authorized(
     auth: AuthInfo | None,
     required_role: Role,
@@ -129,7 +136,7 @@ async def check_authorized(
 
     # A restricted namespace is decided here and nowhere
     # below — none of the widening rules that follow may apply to it.
-    if org is not None and namespace is not None and await _is_restricted(org, namespace):
+    if org is not None and namespace is not None and await may_be_restricted(org, namespace):
         await _check_restricted(auth, required_role, org, namespace, grants)
         return
 
@@ -299,7 +306,7 @@ async def _check_delegated(
         f"principal {auth.subject!r} cannot access {org}/{namespace}", org, namespace
     )
     is_read = required_role.value <= Role.VIEWER.value
-    if await _is_restricted(org, namespace):
+    if await may_be_restricted(org, namespace):
         await _check_restricted(auth, required_role, org, namespace, grants)
     elif is_read and auth.org == org and await _is_org_readable_code_namespace(org, namespace):
         return
@@ -325,18 +332,19 @@ async def _creator_grant(org: str, namespace: str, creator: str) -> Role | None:
     if memo is not None and key in memo:
         return memo[key]
     role = await grant_role_for(org, namespace, creator)
-    if memo is not None:
+    if memo is not None and not unreadable():  # a failed read is retried, not remembered
         memo[key] = role
     return role
 
 
-async def _is_restricted(org: str, namespace: str) -> bool:
+async def may_be_restricted(org: str, namespace: str) -> bool:
     """A directory that cannot be read denies: the caller
     treats True as "run the restricted check", and the restricted check
     itself re-raises the outage as a refusal."""
     try:
         return await directory().is_restricted(org, namespace)
     except ClassificationUnavailable:
+        note_unreadable()
         return True
 
 
@@ -422,6 +430,7 @@ async def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> li
     return [ns for ns in namespaces if ns and ns != "*" and await claim_cap(auth, org, ns) != 0]
 
 
+@marks_unverified
 async def _check_restricted(
     auth: AuthInfo,
     required_role: Role,
@@ -453,6 +462,7 @@ async def _check_restricted(
     try:
         await directory().is_restricted(org, namespace)
     except ClassificationUnavailable as e:
+        note_unreadable()
         raise refusal from e
     if auth.org != org:
         raise refusal
@@ -480,12 +490,16 @@ async def restricted_allows(
     namespace: str,
     *,
     grants: GrantMap | None = None,
+    hides_answer: bool = True,
 ) -> bool:
-    """`_check_restricted` as a predicate, for the resolvers that build a
-    caller's namespace list (server/auth/context.py)."""
+    """`_check_restricted` as a predicate. A refusal made because a read it
+    needed failed marks the request the server's, as `row_in_scope` does
+    (`hides_answer` there)."""
     try:
         await _check_restricted(auth, required_role, org, namespace, grants)
-    except PermissionError:
+    except PermissionError as e:
+        if hides_answer and getattr(e, "unverified", False):  # the server's failure
+            note_answered_unverified()
         return False
     return True
 
@@ -514,6 +528,7 @@ async def grant_role_for(org: str, namespace: str, subject: str) -> Role | None:
     except Exception as e:  # noqa: BLE001 — CH glitch treated as no grant (closed)
         # Don't fail auth open on a CH glitch — treat as no grant.
         log.warning("namespace_grants lookup failed for %s/%s/%s: %s", org, namespace, subject, e)
+        note_unreadable()
         return None
     if row is None:
         return None
@@ -649,13 +664,16 @@ def scope_flags(op: Operation) -> dict[str, bool]:
     return {"deployment_scoped": op.deployment_scoped, "row_scoped": op.row_scoped}
 
 
-async def row_in_scope(org: str, namespace: str, required_role: Role = Role.VIEWER) -> bool:
-    """Second gate for ops addressed by an org-wide id (memory_id, …): the
-    transport could not bind a namespace, so the handler asks after it has
-    the row. True when the current principal may act on (org, namespace) at
-    `required_role`; True with no auth context (auth disabled); False on any
-    refusal so the caller can hide the row (`found=False`) rather than 403 —
-    a 403 would confirm the id exists."""
+async def row_in_scope(
+    org: str, namespace: str, required_role: Role = Role.VIEWER, *, hides_answer: bool = True
+) -> bool:
+    """Second gate for ops addressed by an org-wide id (memory_id, …), asked
+    once the handler has the row. True when the current principal may act on
+    (org, namespace) at `required_role`, or with no auth context; False on
+    any refusal, so the caller hides the row (`found=False`): a 403 would
+    confirm the id exists. A refusal that could not be verified marks the
+    request the server's (`fail_closed`); `hides_answer=False` when this
+    refusal does not decide what the caller asked for."""
     from server.auth.context import current_auth
     from server.core.errors import IdentityIncompleteError
 
@@ -664,7 +682,11 @@ async def row_in_scope(org: str, namespace: str, required_role: Role = Role.VIEW
         return True
     try:
         await check_authorized(auth, required_role=required_role, org=org, namespace=namespace)
-    except (PermissionError, IdentityIncompleteError):
+    except PermissionError as e:
+        if hides_answer and getattr(e, "unverified", False):  # the server's failure
+            note_answered_unverified()
+        return False
+    except IdentityIncompleteError:
         return False
     return True
 
@@ -679,6 +701,7 @@ __all__ = [
     "grant_role",
     "grant_role_for",
     "live_claims",
+    "may_be_restricted",
     "names_namespace",
     "restricted_allows",
     "row_in_scope",

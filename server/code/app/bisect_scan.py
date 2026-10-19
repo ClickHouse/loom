@@ -207,7 +207,9 @@ async def _linked_scan(
     from server.tracker.app.binding import authorized_tracker_namespaces
     from server.tracker.app.source import tracker_source
 
-    extra = [t for t in await authorized_tracker_namespaces(org, ns) if t != primary]
+    extra = [
+        t for t in await authorized_tracker_namespaces(org, ns, hides_answer=False) if t != primary
+    ]
     if not extra:
         return []
     found = await asyncio.gather(

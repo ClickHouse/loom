@@ -333,7 +333,7 @@ def wired(monkeypatch: pytest.MonkeyPatch, configured) -> Any:
     monkeypatch.setattr(h, "require_code_intel", lambda: None)
     monkeypatch.setattr(h, "schedule_code_trace", lambda **kw: None)
 
-    async def _authorized(org, code_ns):
+    async def _authorized(org, code_ns, *, hides_answer=True):
         return QA if code_ns == NS else ""
 
     monkeypatch.setattr(binding, "authorized_tracker_namespace", _authorized)
@@ -598,7 +598,7 @@ async def test_unavailable_record_and_unknown_fix_are_named(wired) -> None:
 
 @pytest.mark.asyncio
 async def test_unbound_code_namespace_reads_the_ledger_only(wired, monkeypatch) -> None:
-    async def _none(org, code_ns):
+    async def _none(org, code_ns, *, hides_answer=True):
         return ""
 
     monkeypatch.setattr(binding, "authorized_tracker_namespace", _none)

@@ -32,6 +32,8 @@ import time
 from collections.abc import Iterable
 from typing import Any
 
+from server.auth.fail_closed import note_unreadable
+
 log = logging.getLogger("loom.auth.aliases")
 
 _CACHE: dict[tuple[str, str], tuple[float, tuple[str, ...]]] = {}
@@ -60,6 +62,7 @@ async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -
         log.warning(
             "aliases: lookup failed for %r in %r; subject stands alone", subject, org, exc_info=True
         )
+        note_unreadable()
         return [subject]
     if len(_CACHE) >= _CACHE_MAX:
         _CACHE.clear()

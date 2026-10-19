@@ -144,7 +144,7 @@ def code_namespaces_linking(tracker_ns: str, code_namespaces: list[str]) -> list
     return [c for c in code_namespaces if tracker_ns in tracker_namespaces_for(c)]
 
 
-async def _gated(org: str, code_namespace: str, ns: str) -> bool:
+async def _gated(org: str, code_namespace: str, ns: str, *, hides_answer: bool) -> bool:
     """The binding gate for one linked tracker, as the current principal:
     a STANDARD one by whoever may read the code namespace, a RESTRICTED one
     (or one the tracker plane does not know) by its own two-factor gate.
@@ -156,22 +156,33 @@ async def _gated(org: str, code_namespace: str, ns: str) -> bool:
 
         target = tracker_namespace(org, ns)
         standard = target is not None and not target.restricted
-        return bool(await row_in_scope(org, code_namespace if standard else ns, Role.VIEWER))
+        return bool(
+            await row_in_scope(
+                org, code_namespace if standard else ns, Role.VIEWER, hides_answer=hides_answer
+            )
+        )
     except Exception as e:  # noqa: BLE001 — the binding gate fails closed on any error
         log.debug("qa binding authorization failed (closed): %s", e)
         return False
 
 
-async def authorized_tracker_namespaces(org: str, code_namespace: str) -> list[str]:
+async def authorized_tracker_namespaces(
+    org: str, code_namespace: str, *, hides_answer: bool = True
+) -> list[str]:
     """Every linked tracker the current principal may read,
-    primary first; a refused one is left out in silence (never named)."""
+    primary first; a refused one is left out in silence (never named).
+    `hides_answer`: see `authz.row_in_scope`."""
     await refresh_overrides()
     return [
-        ns for ns in tracker_namespaces_for(code_namespace) if await _gated(org, code_namespace, ns)
+        ns
+        for ns in tracker_namespaces_for(code_namespace)
+        if await _gated(org, code_namespace, ns, hides_answer=hides_answer)
     ]
 
 
-async def authorized_tracker_namespace(org: str, code_namespace: str) -> str:
+async def authorized_tracker_namespace(
+    org: str, code_namespace: str, *, hides_answer: bool = True
+) -> str:
     """`tracker_namespace_for` passed through the gate for the current principal;
     "" when unbound, unauthorized, or the check itself fails (closed).
 
@@ -181,10 +192,11 @@ async def authorized_tracker_namespace(org: str, code_namespace: str) -> str:
     so a reader of the repository never needs a grant, a join or a token
     naming the tracker namespace to see its public QA facts. A RESTRICTED QA
     namespace, or one the tracker plane does not know, keeps its
-    own two-factor gate on the tracker namespace itself."""
+    own two-factor gate on the tracker namespace itself. `hides_answer`: see
+    `authz.row_in_scope`."""
     await refresh_overrides()
     ns = tracker_namespace_for(code_namespace)
-    if not ns or not await _gated(org, code_namespace, ns):
+    if not ns or not await _gated(org, code_namespace, ns, hides_answer=hides_answer):
         return ""
     return ns
 
