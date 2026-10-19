@@ -635,15 +635,7 @@ async def resolve_row(
     if peers:
         row, peers = await _still_unprotected(org, row, peers)
     if row is not None and peers:
-        try:
-            unanswered = await _judge_and_act(
-                org, namespace, row, peers, policy=policy, counts=counts
-            )
-        except PreconditionFailedError as e:
-            # The judge answered, then a key another write held past the lock's wait
-            # stopped the act: the call was paid, so it counts as an attempt, and the row
-            # stays owed until its attempts run out.
-            raise JudgedThenFailed(f"{type(e).__name__}: {e}") from e
+        unanswered = await _judge_and_act(org, namespace, row, peers, policy=policy, counts=counts)
         judged_ids = frozenset(str(p["memory_id"]) for p in peers)
         if unanswered & {str(x) for x in row.conflict_with} or cluster.flags_left:
             # A flagged peer the answer left out, or one past the cluster's places: stamped,
@@ -680,18 +672,25 @@ async def _still_unprotected(
 ) -> tuple[Any, list[dict[str, Any]]]:
     """The row and its peers re-read right before the prompt is built: a row relabelled
     'high' since it was read (same bytes, same hash) is never sent, nor one whose value
-    holds a credential shape the sweep has not labelled yet. (None, []) when the judged
-    row is no longer eligible or holds one (it is stamped judged, with no model call);
-    such a peer is dropped."""
+    or key holds a credential shape the sweep has not labelled yet. (None, []) when the
+    judged row is no longer eligible or holds one (it is stamped judged, with no model
+    call); such a peer is dropped."""
     fresh = await _head(org, str(row.memory_id))
     if not _holds(fresh, str(row.namespace), str(row.content_sha256 or "")):
         return None, []
-    if value_reads_high(fresh.value):
+    if _reads_high(fresh.value, fresh.memory_key):
         return None, []
     high = await queue.protected_ids(org, str(row.namespace), [str(p["memory_id"]) for p in peers])
     return fresh, [
-        p for p in peers if str(p["memory_id"]) not in high and not value_reads_high(p["value"])
+        p
+        for p in peers
+        if str(p["memory_id"]) not in high and not _reads_high(p["value"], p["memory_key"])
     ]
+
+
+def _reads_high(value: Any, memory_key: Any) -> bool:
+    """A credential shape in the value or the key: the prompt shows both."""
+    return value_reads_high(value) or value_reads_high(str(memory_key))
 
 
 def _action(v: cr.PeerVerdict, policy: str, *, cross_session: bool, same_written: bool) -> str:
@@ -776,9 +775,11 @@ async def _judge_and_act(
             # Nobody awaits it after the raise: logged here, or lost.
             log.warning("conflict_resolver: acting on a verdict failed: %r", acting.exception())
         raise
-    except (PreconditionFailedError, LeaseUnavailable):
-        raise  # a busy key, or no lease store: the row stays owed (the latter stops the pass)
+    except LeaseUnavailable:
+        raise  # no lease store: the row stays owed and the pass stops
     except Exception as e:
+        # A busy key included: the call was paid, so it counts as an attempt, and the row
+        # stays owed until its attempts run out.
         raise JudgedThenFailed(f"{type(e).__name__}: {e}") from e
     return {str(p["memory_id"]) for p in peers} - set(verdicts)
 

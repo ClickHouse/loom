@@ -7743,23 +7743,42 @@ async def test_a_high_rows_edge_close_record_after_a_bulk_names_no_value(
     assert recorded and not high_shas & set(recorded), recorded
 
 
+@pytest.mark.parametrize("then", ["revised", "deleted"])
 async def test_the_repair_of_a_high_rows_close_ends_the_values_it_no_longer_holds(
-    ch, org, monkeypatch
+    ch, org, monkeypatch, then
 ) -> None:
     """A close recorded for a high row names no value: the repair ends the edges of each
-    value the row no longer holds, and keeps its current one's."""
+    value the row no longer holds, and keeps its current one's; a deleted row holds
+    none, its last value included."""
+    from server.memory.api.models_crud import MemoryDeleteInput
     from server.memory.app import entity_projections as ep
+    from server.memory.app import projections
+    from server.memory.app.handlers import handle_memory_delete
     from server.memory.app.projection_failures import retry_projection_failures
 
     await _high_set(org, "s1", "vault", "Alice met Carol", entities=["Alice", "Carol"])
 
-    async def no_drop(*a: Any, **kw: Any) -> None:
+    async def nothing(*a: Any, **kw: Any) -> None:
         return None
 
-    monkeypatch.setattr(ep, "drop_undeclared_links", no_drop)  # its links stay behind
+    monkeypatch.setattr(ep, "drop_undeclared_links", nothing)  # its links stay behind
     out = await _high_set(
         org, "s1", "vault", "Alice met Bob", sensitivity="high", entities=["Alice", "Bob"]
     )
+    if then == "deleted":
+        # The delete's own edge close is lost.
+        monkeypatch.setattr(projections, "end_edges", nothing)
+        monkeypatch.setattr(ep, "end_edges", nothing)
+        await handle_memory_delete(
+            MemoryDeleteInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                session_id="s1",
+                memory_key="vault",
+            )
+        )
     monkeypatch.undo()
     assert ("alice", "carol") in await _open_edge_pairs(ch, org)
     scope = ep.ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
@@ -7767,4 +7786,32 @@ async def test_the_repair_of_a_high_rows_close_ends_the_values_it_no_longer_hold
     await ep.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
     results = await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
     assert results and all(r.resolved for r in results), results
-    assert await _open_edge_pairs(ch, org) == {("alice", "bob")}
+    want = {("alice", "bob")} if then == "revised" else set()
+    assert await _open_edge_pairs(ch, org) == want
+
+
+async def test_a_value_less_close_dates_each_of_several_values_by_its_own_end(
+    ch, org, monkeypatch
+) -> None:
+    """The recorded end belongs to one value: a sha-less close over a row with several
+    values asks each value's own end instead of stamping that one on all of them."""
+    from server.memory.app import entity_projections as ep
+
+    for value in ("Alice met Carol", "Alice met Dan", "Alice met Bob"):
+        await _high_set(org, "s1", "vault", value, entities=value.split(" met "))
+    row = await ch.query_one(
+        "SELECT toString(memory_id) AS id FROM loom.memory FINAL WHERE org = {org:String}",
+        params={"org": org},
+    )
+    ends: list[Any] = []
+    real = ep.close_late_edges
+
+    async def seen(*a: Any, ended_at: Any = None, **kw: Any) -> None:
+        ends.append(ended_at)
+        await real(*a, ended_at=ended_at, **kw)
+
+    monkeypatch.setattr(ep, "close_late_edges", seen)
+    await ep.close_overtaken_values(
+        org, NS, row["id"], ended_at=datetime(2020, 1, 1), entities=["alice", "bob"], ch=ch
+    )
+    assert len(ends) == 3 and ends == [None, None, None]

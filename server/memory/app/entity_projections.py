@@ -603,22 +603,21 @@ async def close_overtaken_values(
     ch: Any,
 ) -> None:
     """`close_late_edges` for a close recorded without its value (a 'high' row's): each
-    value of the row that links edges and is not the row's current one."""
-    params = {"org": org, "ns": namespace, "id": memory_id}
+    value of the row that links edges, its current one included (a retired or deleted
+    row keeps its hash); close_late_edges keeps those the row still holds. The recorded
+    `ended_at` belongs to one value: with several, each value's own end is read."""
     rows = await ch.query_all(
         """
         SELECT DISTINCT toString(content_sha256) AS sha FROM loom.entity_edge_rows
         WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}
-          AND content_sha256 NOT IN (
-              SELECT content_sha256 FROM loom.memory FINAL
-              WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID})
         SETTINGS select_sequential_consistency = 1
         """,
-        params=params,
+        params={"org": org, "ns": namespace, "id": memory_id},
     )
+    end = ended_at if len(rows) == 1 else None
     for row in rows:
         await close_late_edges(
-            org, namespace, memory_id, str(row["sha"]), ended_at=ended_at, entities=entities, ch=ch
+            org, namespace, memory_id, str(row["sha"]), ended_at=end, entities=entities, ch=ch
         )
 
 

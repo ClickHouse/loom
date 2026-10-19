@@ -3682,7 +3682,7 @@ async def test_a_high_row_restored_after_a_lost_undelete_answers_not_restored(
     assert not out.restored
 
 
-@pytest.mark.parametrize("holder", ["judged row", "peer"])
+@pytest.mark.parametrize("holder", ["judged row", "peer", "peer key"])
 async def test_an_unlabelled_credential_never_reaches_the_judge(
     ch, wired, monkeypatch, holder
 ) -> None:
@@ -3704,14 +3704,16 @@ async def test_an_unlabelled_credential_never_reaches_the_judge(
 
     old = f"The deploy token is {secret}" if holder == "peer" else "The deploy token is unset"
     new = f"The deploy token is now {secret}" if holder == "judged row" else "The token rotated"
+    # The prompt shows each note's key too.
+    old_key = f"token/{secret}" if holder == "peer key" else "deploy_token"
     with monkeypatch.context() as m:
         m.setattr(settings, "memory_sensitivity_autodetect", False)
         m.setattr(conflicts, "check_on_commit", clear)
-        await _set(org, "s1", "deploy_token", old)
+        await _set(org, "s1", old_key, old)
         await _later()
         await _set(org, "s2", "deploy_token_now", new)
         await after_write.drain()
-    await _place(ch, org, "s1", "deploy_token", _vec((40, 1.0)), owed=False)
+    await _place(ch, org, "s1", old_key, _vec((40, 1.0)), owed=False)
     await _place(ch, org, "s2", "deploy_token_now", _vec((40, 0.8), (41, 0.6)), owed=True)
 
     out = await run_pass()
