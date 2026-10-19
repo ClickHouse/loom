@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from server.memory.app import conflict_resolver as resolver
+from server.memory.app import intent_marks
 from server.memory.domain import conflict_resolution as cr
 from server.memory.store import conflict_resolver as queue
 from server.settings import Settings, settings
@@ -477,7 +478,7 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     async def head(org: str, mid: str) -> Any:
         return e.heads.get(mid)
 
-    async def retire(org: str, namespace: str, row: Any, peer: Any, counts: Any) -> Any:
+    async def retire(org: str, namespace: str, row: Any, peer: Any) -> Any:
         e.acted.append((cr.RETIRE, row.memory_id, peer.memory_id))
         return resolver.Retired("f1", [], "a")
 
@@ -525,7 +526,7 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     monkeypatch.setattr(queue, "under_erasure", under_erasure)
     monkeypatch.setattr(resolver, "_head", head)
 
-    async def after_retire(org: str, namespace: str, done: Any, counts: Any) -> None:
+    async def after_retire(org: str, namespace: str, done: Any) -> None:
         e.after_retire = done
 
     monkeypatch.setattr(resolver, "_retire", retire)
@@ -558,7 +559,7 @@ async def test_the_record_and_follow_run_after_the_keys_locks_are_released(
 
     taken: list[str] = []
 
-    async def after_retire(org: str, namespace: str, done: Any, counts: Any) -> None:
+    async def after_retire(org: str, namespace: str, done: Any) -> None:
         # Both keys are free again: a revision of the peer does not wait for the graph.
         for session in ("s1", "s2"):
             async with kl.key_write_locks.hold("o", "ns", "a", "u", session, "office_city"):
@@ -880,7 +881,7 @@ async def test_a_row_or_peer_labelled_high_before_the_prompt_is_never_sent(row_e
 async def test_a_cancellation_while_acting_lets_the_act_and_its_audit_finish(
     row_env: NS, monkeypatch
 ) -> None:
-    async def slow_retire(org: str, namespace: str, row: Any, peer: Any, counts: Any) -> Any:
+    async def slow_retire(org: str, namespace: str, row: Any, peer: Any) -> Any:
         await asyncio.sleep(0.05)
         row_env.acted.append((cr.RETIRE, row.memory_id, peer.memory_id))
         return resolver.Retired("f1", [], "a")
@@ -1088,10 +1089,12 @@ async def test_unlinking_a_pair_leaves_other_flags_and_reactivates_a_row_left_wi
 
 @pytest.fixture
 def retire_env(monkeypatch: pytest.MonkeyPatch) -> NS:
-    from server.memory.app import auto_resolution, conflicts, projection_failures
+    from server.memory.app import auto_resolution, conflicts, intent_marks, projection_failures
 
     e = NS(seen={}, records=[], followed=[], log=[], follow_ok=True, retires=True, record_ok=True)
-    e.intents = {}
+    # The table's one batcher, empty and with no flusher of an earlier test's loop.
+    monkeypatch.setattr(intent_marks, "_pending", {})
+    monkeypatch.setattr(intent_marks, "_flusher", None)
 
     async def refines(**kw: Any) -> int:
         e.log.append("supersede")
@@ -1115,7 +1118,7 @@ def retire_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     async def intent(**kw: Any) -> str:
         e.intent_payload = kw["payload"]
         e.log.append(("intent", kw["projection"], kw["payload"]["pairs"]))
-        return "f1"
+        return f"f{sum(1 for x in e.log if x[0] == 'intent')}"
 
     async def resolved(*, org: str, failure_ids: list[str], **kw: Any) -> int:
         e.log.append(("resolved", failure_ids))
@@ -1147,38 +1150,33 @@ async def test_the_follow_is_owed_before_the_supersede_and_settled_after_it(
     late = _mem("m1", content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur")
     retire_env.heads["m1"] = late  # not retired: still live as judged
-    done = await resolver._retire("o", "ns", current, late, retire_env.intents)
+    done = await resolver._retire("o", "ns", current, late)
     assert (done is not None) is retires
     if done is not None:
-        await resolver._after_retire("o", "ns", done, retire_env.intents)
-    await resolver.resolve_done_intents(retire_env.intents)  # as the pass does at its end
+        await resolver._after_retire("o", "ns", done)
+    await intent_marks.drain()  # the batched mark
     assert retire_env.log[0] == ("intent", "triples_follow_owed", [["m1", "m2"]])
     assert retire_env.log[1] == "supersede"
     # A follow that failed stays owed to the repair; nothing retired, nothing owed.
     assert (("resolved", ["f1"]) in retire_env.log) is (follow_ok or not retires)
 
 
-async def test_a_pass_resolves_its_retirements_intents_in_one_mark(retire_env: NS) -> None:
+async def test_retirements_intents_are_resolved_in_one_batched_mark(retire_env: NS) -> None:
     for loser, winner in (("m1", "m2"), ("m3", "m4"), ("m5", "m6")):
         late = _mem(loser, content_sha256=f"sha-{loser}")
         current = _mem(winner, session_id="s2", content_sha256=f"sha-{winner}")
-        intents = retire_env.intents
-        await resolver._after_retire(
-            "o", "ns", await resolver._retire("o", "ns", current, late, intents), intents
-        )
-    assert not [x for x in retire_env.log if x[0] == "resolved"], "none before the pass ends"
-    await resolver.resolve_done_intents(retire_env.intents)
-    assert [x for x in retire_env.log if x[0] == "resolved"] == [("resolved", ["f1"] * 3)]
+        await resolver._after_retire("o", "ns", await resolver._retire("o", "ns", current, late))
+    assert not [x for x in retire_env.log if x[0] == "resolved"], "none before the flush"
+    await intent_marks.drain()
+    resolved = [x for x in retire_env.log if x[0] == "resolved"]
+    assert resolved == [("resolved", ["f1", "f2", "f3"])]
 
 
 async def test_a_record_that_failed_leaves_the_intent_with_its_entry(retire_env: NS) -> None:
     retire_env.record_ok = False
     late = _mem("m1", content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur", memory_key="office_town")
-    intents = retire_env.intents
-    await resolver._after_retire(
-        "o", "ns", await resolver._retire("o", "ns", current, late, intents), intents
-    )
+    await resolver._after_retire("o", "ns", await resolver._retire("o", "ns", current, late))
     assert ("resolved", ["f1"]) not in retire_env.log, "the repair writes the record"
     assert retire_env.intent_payload["reason"] == "conflict_resolver"
     (entry,) = retire_env.intent_payload["retired"]
@@ -1194,10 +1192,7 @@ async def test_a_retirement_behind_the_newer_row_of_the_pair(retire_env: NS) -> 
     # The peer, an older statement, retires behind the judged row.
     late = _mem("m1", valid_at=datetime(2024, 1, 1), content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur")
-    intents = retire_env.intents
-    await resolver._after_retire(
-        "o", "ns", await resolver._retire("o", "ns", current, late, intents), intents
-    )
+    await resolver._after_retire("o", "ns", await resolver._retire("o", "ns", current, late))
     assert seen["new_memory_id"] == "m2" and seen["expected_sha256"] == "sha-cur"
     assert [p.memory_id for p in seen["refined_peers"]] == ["m1"]
     assert seen["skip_peer"](NS(content_sha256="sha-late")) is False
@@ -1314,7 +1309,7 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         e.cap_reads.append(kw)
         return (org, namespace) in e.over
 
-    async def resolve(q, *, policy, counts, shown=frozenset(), intents=None):
+    async def resolve(q, *, policy, counts, shown=frozenset()):
         e.in_flight += 1
         e.most_in_flight = max(e.most_in_flight, e.in_flight)
         await asyncio.sleep(e.slow)
@@ -1550,7 +1545,7 @@ async def test_a_failure_that_escapes_a_row_ends_the_pass_with_no_row_running(
 
     running: set[str] = set()
 
-    async def resolve(q, *, policy, counts, shown=frozenset(), intents=None):
+    async def resolve(q, *, policy, counts, shown=frozenset()):
         running.add(q["memory_key"])
         try:
             await asyncio.sleep(0 if q["memory_key"] == "k1" else 0.2)

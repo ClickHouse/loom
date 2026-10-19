@@ -94,8 +94,6 @@ class _Pass:
         self.refused: list[dict[str, Any]] = []
         # The identities the pass took, judged once a pass whatever the burst reads again.
         self.tried: set[tuple[str, ...]] = set()
-        # The follow intents its retirements settled, resolved at its end.
-        self.done_intents: resolver.Intents = {}
 
 
 def _cap_share() -> dict[str, Any]:
@@ -167,9 +165,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             key = _attempt_key(r)
             shown = _state.attempts.get(key, (0, frozenset()))[1]
             answered = p.counts.judged
-            judged = await resolver.resolve_row(
-                r, policy=policy, counts=p.counts, shown=shown, intents=p.done_intents
-            )
+            judged = await resolver.resolve_row(r, policy=policy, counts=p.counts, shown=shown)
             if p.counts.judged > answered:
                 # An answer: the namespace's refusals and the outages are not in a row.
                 p.refusals.pop((org, namespace), None)
@@ -335,7 +331,6 @@ async def run_pass() -> dict[str, Any]:
             ):
                 break
         await _stamp_refused(p)
-        await resolver.resolve_done_intents(p.done_intents)
         if p.unavailable is not None:
             _state.paused_until = time.monotonic() + PAUSE_AFTER_STOP_S
         if not found:
