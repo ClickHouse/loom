@@ -37,6 +37,7 @@ for (const width of [1400, 375]) {
       const menu = page.getByRole("menu", { name: "More actions" });
       await expect(menu).toBeVisible();
       const items = menu.getByRole("menuitem");
+      expect(await items.count()).toBeGreaterThan(0);
       for (let i = 0; i < (await items.count()); i++) {
         const onTop = await items.nth(i).evaluate((el) => {
           const r = el.getBoundingClientRect();

@@ -1077,7 +1077,7 @@ textarea[aria-invalid="true"]:focus-visible {
   /* A lane's "Show all" row: a task row's cell padding across; down, the empty Button's own
      height and 4 px for its focus ring, which the lane would clip. */
   .tq-more {
-    padding: 4px var(--click-table-body-cell-space-sm-x);
+    padding: var(--spacing) var(--click-table-body-cell-space-sm-x);
     border-top: 1px solid var(--color-border);
   }
   .tq-lease {
