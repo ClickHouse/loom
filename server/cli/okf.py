@@ -862,8 +862,8 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         action="store_true",
         help="Also export rows with sensitivity=high, the raw chunks and digests linked to "
         "them, and raw text that reads as a credential; the server audits each released "
-        "item. A high row past its retention window is never read, so it is named and left "
-        "out. Off by default: a mirror repository is a wider audience than the "
+        "item. bulk_get does not serve a high row past its retention window, so it is named "
+        "and left out. Off by default: a mirror repository is a wider audience than the "
         "namespace's grants.",
     )
     p_exp.set_defaults(func=_cmd_export_okf)

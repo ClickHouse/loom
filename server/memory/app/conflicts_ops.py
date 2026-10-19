@@ -101,7 +101,9 @@ async def handle_conflicts_list(
         for r in rows
     ]
     next_before = out_rows[-1].version if has_next and out_rows else None
-    project_rows(out_rows, _ConflictRow, input.fields, always=frozenset({"memory_key"}))
+    project_rows(
+        out_rows, _ConflictRow, input.fields, always=frozenset({"memory_key", "sensitivity"})
+    )
     return ConflictsListOutput(rows=out_rows, next_before_version=next_before)
 
 

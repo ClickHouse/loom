@@ -78,3 +78,37 @@ def test_keys_only_is_hidden_from_the_mcp_listing() -> None:
     }
     out = _strip_blob_fields_from_knowledge("conflicts.list", schema)
     assert "keys_only" not in out["properties"] and "namespace" in out["properties"]
+
+
+@pytest.mark.asyncio
+async def test_a_projected_conflicts_list_still_says_why_a_value_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A high row is listed without its value; `sensitivity` rides every projection, as on
+    # memory.list, so a caller can tell that from a value that failed to load.
+    from datetime import datetime
+
+    from server.memory.api.models_conflicts import ConflictsListInput
+
+    async def _rows(org: str, namespace: str, **kw: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                "memory_id": "00000000-0000-0000-0000-000000000001",
+                "memory_key": "vault",
+                "memory_type": "semantic",
+                "value": None,
+                "version": 1,
+                "pinned": False,
+                "created_at": datetime(2026, 9, 1),
+                "conflict_with": [],
+                "sensitivity": "high",
+            }
+        ]
+
+    monkeypatch.setattr(conflicts_repo, "list_conflicted", _rows)
+    out = await conflicts_mod.handle_conflicts_list(
+        ConflictsListInput(org="acme", namespace="team", fields=["memory_key", "value"])
+    )
+    assert out.model_dump()["rows"] == [
+        {"memory_key": "vault", "value": None, "sensitivity": "high"}
+    ]

@@ -710,3 +710,27 @@ async def test_a_high_row_past_its_window_is_never_read_nor_hides_a_live_row() -
     assert [(r.agent, r.value) for r in rows] == [("a", "plain")]
     b = Identity(org="o", namespace="n", agent="b", user_id="-", session_id="-")
     assert await get_many_by_keys(b, ["k"], scope=WHOLE_NAMESPACE, ch=ch) == []
+
+
+@pytest.mark.asyncio
+async def test_an_as_of_read_never_serves_a_high_row_past_its_window() -> None:
+    # memory.get with as_of replays past expiry, but a high row's expiry is its retention.
+    from datetime import UTC, datetime
+
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import Identity, get_by_key
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version, created_at, expires_at) "
+        f"VALUES ('o', 'n', 'a', '-', '-', '{_A}', 'vault', 'semantic', 'v', 'active', 'high', 1, "
+        f"'2019-01-01 00:00:00', '2020-01-01 00:00:00'), ('o', 'n', 'a', '-', '-', '{_B}', "
+        "'old', 'semantic', 'v', 'active', '', 1, '2019-01-01 00:00:00', '2020-01-01 00:00:00')",
+    )
+    ident = Identity(org="o", namespace="n", agent="a", user_id="-", session_id="-")
+    now = datetime.now(UTC).replace(tzinfo=None)
+    read = {"scope": WHOLE_NAMESPACE, "ch": ch, "as_of": now, "include_expired": False}
+    assert await get_by_key(ident, "vault", **read) is None
+    plain = await get_by_key(ident, "old", **read)
+    assert plain is not None and plain.memory_key == "old"

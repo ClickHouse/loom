@@ -100,6 +100,11 @@ async def get_by_key(
     tomb_clause = "" if include_tombstoned else "AND tombstoned_at IS NULL"
     if not include_expired and as_of is None:
         tomb_clause += " AND (expires_at IS NULL OR expires_at > now())"
+    elif not include_expired:
+        # An as_of replay reads past expiry, but never a 'high' row past its retention window.
+        tomb_clause += (
+            " AND NOT (sensitivity = 'high' AND expires_at IS NOT NULL AND expires_at <= now())"
+        )
     params: dict[str, Any] = {
         "org": identity.org,
         "ns": identity.namespace,
@@ -403,9 +408,10 @@ async def get_many_by_keys(
     if exclude_high_sensitivity:
         session_clause += " AND sensitivity != 'high'"
     if not strong:
-        # A 'high' row past its retention window is never read, and left out here, before
-        # one row per key is picked, so it hides no other identity's live row of the key. A
-        # strong read feeds a write (memory.touch may extend that window) and still sees it.
+        # This read leaves out a 'high' row past its retention window, before one row
+        # per key is picked, so it hides no other identity's live row of the key. A
+        # strong read feeds a write (memory.touch may extend that window) and still sees
+        # it.
         session_clause += (
             " AND NOT (sensitivity = 'high' AND expires_at IS NOT NULL AND expires_at <= now())"
         )
