@@ -2073,6 +2073,13 @@ def test_a_patch_with_no_path_needs_a_target_or_an_object(
     assert (e.value.status, e.value.scim_type) == (400, scim_type)
 
 
+@pytest.mark.parametrize("ops", [5, True, "replace", None])
+def test_a_patch_whose_operations_are_no_list_is_a_400(client: TestClient, world, ops: Any) -> None:
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    r = client.patch(f"/scim/v2/Users/{uid}", json={"Operations": ops})
+    assert r.status_code == 400 and r.json()["scimType"] == "invalidSyntax"
+
+
 def test_a_disable_beside_a_refused_active_op_still_deactivates(client: TestClient, world) -> None:
     world.person("lee@example.com", "lee")
     uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]

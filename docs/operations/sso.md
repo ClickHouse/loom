@@ -389,9 +389,8 @@ What Loom does with each request:
   names are free again; a reactivation does not bring them back. A grant
   such a token held on a restricted namespace in its own name stays in the
   namespace's grant list, though it reaches nothing: revoke it there to tidy
-  the list. While it
-  lasts, SSO sign-in with the email is refused ("this account is
-  deactivated"), even if it reaches no account yet. The accounts, their
+  the list. While it lasts, SSO sign-in with the email is refused ("this
+  account is deactivated"), even if it reaches no account yet. The accounts, their
   grants and their data stay; this is not erasure. A password account that
   names the email but was never linked to it (not adopted, linked or proven
   at an SSO sign-in) is not one an SSO sign-in reaches, so it is left alone:
@@ -403,9 +402,8 @@ What Loom does with each request:
   when one also owns an account or holds a grant in an org where the email
   does not reach that subject (another person's `alice`), it is still
   revoked, and Loom logs a warning and audits `auth.scim_collateral` naming
-  those orgs.
-  Find it in `loom revoke-token --list` (`scim→<it>`) and, if it is someone
-  else's, give it back with
+  those orgs. Find it in `loom revoke-token --list` (`scim→<it>`) and, if it
+  is someone else's, give it back with
   `loom revoke-token --subject <it> --issued-before <now> --scim`: its new
   tokens work, and its tokens from before the deactivation stay dead (Loom
   refuses an earlier `--issued-before`). The provider repeating the

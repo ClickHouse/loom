@@ -185,7 +185,10 @@ def patched_active(body: dict[str, Any]) -> bool | None:
 
 def _sets_inactive(body: dict[str, Any]) -> bool:
     """Whether any operation of a PatchOp sets `active` to false, whatever else fails."""
-    for op in body.get("Operations") or []:
+    ops = body.get("Operations")
+    if not isinstance(ops, list):
+        return False
+    for op in ops:
         if not isinstance(op, dict) or not _replaces(op):
             continue
         for attr, value in _attributes(op):
@@ -515,8 +518,8 @@ async def patch_user(uid: str, request: Request) -> JSONResponse:
         active = patched_active(body)
     except ScimError:
         # Refused for another `active` op: one that does set false still deactivates.
-        if _sets_inactive(body) and await scim.get(uid) is not None:
-            await scim.update(uid, active=False)
+        if _sets_inactive(body):
+            await scim.update(uid, active=False)  # None for a user that is not there
         raise
     row = await scim.get(uid)
     if row is None:
