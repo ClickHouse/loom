@@ -158,14 +158,7 @@ async def test_a_reused_name_hands_its_ancestry_to_tokens_listed_before_lineage(
 
 async def _reuse(org: str, name: str, by: str) -> None:
     """Revoke the token holding `name`, then list another under it."""
-    held = await get_client().query_one(
-        "SELECT * FROM loom.service_accounts FINAL WHERE org = {org:String} AND name = {n:String}",
-        params={"org": org, "n": name},
-    )
-    gone = service_accounts.revoked_row(
-        dict(held or {}), revoked_at=datetime(2026, 1, 1), revoked_by=by
-    )
-    await get_client().insert("loom.service_accounts", [gone])
+    await _revoke_by_name(org, name, by=by)
     await _save(org, name, f"sa:{name}-new", "admin", ["admin"])
 
 
@@ -215,19 +208,7 @@ async def test_the_guide_lists_a_token_whose_root_was_lost_before_this_build(org
     await _listed_before_lineage(org, "top", "sa:top-old", root)
     await _listed_before_lineage(org, "mid", "sa:mid-old", "sa:top-old")
     await _listed_before_lineage(org, "leaf", "sa:leaf-1", "sa:mid-old")
-    before = await get_client().query_one(
-        "SELECT * FROM loom.service_accounts FINAL WHERE org = {org:String} AND name = 'top'",
-        params={"org": org},
-    )
-    replaced = {
-        **dict(before or {}),
-        "sa_subject": "sa:top-new",
-        "created_by": "kim",
-        "lineage": [],
-    }
-    replaced["version"] = int(replaced["version"]) + 1
-    # As the previous build reused the name: no hand-down.
-    await get_client().insert("loom.service_accounts", [replaced])
+    await _reused_by_the_previous_build(org, "top")
     await _reuse(org, "mid", root)
     assert await _lost(org) == ["leaf"]
 
@@ -270,13 +251,13 @@ async def _reused_by_the_previous_build(org: str, name: str) -> None:
     )
 
 
-async def _revoke_by_name(org: str, name: str) -> None:
+async def _revoke_by_name(org: str, name: str, *, by: str = "op") -> None:
     held = await get_client().query_one(
         "SELECT * FROM loom.service_accounts FINAL WHERE org = {org:String} AND name = {n:String}",
         params={"org": org, "n": name},
     )
     gone = service_accounts.revoked_row(
-        dict(held or {}), revoked_at=datetime(2026, 1, 1), revoked_by="op"
+        dict(held or {}), revoked_at=datetime(2026, 1, 1), revoked_by=by
     )
     await get_client().insert("loom.service_accounts", [gone])
 
@@ -308,3 +289,9 @@ async def test_the_guide_lists_no_expired_token(org: str) -> None:
     expired = {**row, "expires_at": datetime(2026, 1, 1), "version": int(row["version"]) + 1}
     await get_client().insert("loom.service_accounts", [expired])
     assert await _lost(org) == []
+
+
+async def test_the_guide_lists_a_token_made_from_an_operator_minted_subject(org: str) -> None:
+    # The case the guide tells an operator to keep: `sa:ci` has no row of its own.
+    await _save(org, "from-ci", "sa:from-ci-1", "sa:ci", ["sa:ci"])
+    assert await _lost(org) == ["from-ci"]
