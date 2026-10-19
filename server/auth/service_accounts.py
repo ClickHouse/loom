@@ -151,11 +151,17 @@ async def hand_down_lineage(org: str, name: str) -> None:
     with own_write_reads():
         made = await ch.query_all(f"SELECT name {find}", params=params)
     for r in made:
+        # Its claim's errors name it, and it may be another person's token.
         try:
             await _add_lineage(org, str(r["name"]), find, params, above)
-        except (GrantBusyError, NotClaimed):  # without naming another person's token
+        except GrantBusyError:
             raise GrantBusyError(
                 "a change to a token made under this name is running; retry shortly"
+            ) from None
+        except NotClaimed:
+            raise NotClaimed(
+                "changes to the tokens made under this name cannot be claimed; retry shortly",
+                operation="grant_change",
             ) from None
 
 
@@ -312,4 +318,11 @@ async def _revoke_all(
     return {subject for task in done if (subject := task.result()) is not None}
 
 
-__all__ = ["SACreator", "inheriting_creator", "revoke_created_by", "revoked_row", "sa_creator"]
+__all__ = [
+    "SACreator",
+    "hand_down_lineage",
+    "inheriting_creator",
+    "revoke_created_by",
+    "revoked_row",
+    "sa_creator",
+]

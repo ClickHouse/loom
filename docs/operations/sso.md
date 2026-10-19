@@ -551,10 +551,11 @@ WHERE revoked_at IS NULL AND empty(lineage) AND startsWith(created_by, 'sa:')
 It leaves out the agents of a machine trust (`sa:<trust>:<agent>`), which have
 no row there; a token made from an operator-minted `sa:` subject (`loom
 mint-token --subject sa:…`) shows up too, and is not one of these. Revoke each
-token it lists from its owner's Tokens list, or as a namespace admin
-(`/v1/me/service_accounts.revoke`), and then the tokens each one made (those
-whose `created_by` is its `sa_subject`), down the chain. While the previous
-build still serves, a token it lists, revokes or reuses the name of records no
+token it lists as an admin of one of its namespaces
+(`/v1/me/service_accounts.revoke`: the token that made it is gone, so no
+person's Tokens list shows it), and then the tokens each one made (those whose
+`created_by` is its `sa_subject`), down the chain. While the previous build
+still serves, a token it lists, revokes or reuses the name of records no
 lineage.
 
 A browser sign-in whose steps land on both builds (a code exchanged, an
