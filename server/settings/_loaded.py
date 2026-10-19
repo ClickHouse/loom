@@ -15,9 +15,10 @@ LOADING: dict[str, frozenset[str]] = {}
 
 
 class Recorded(PydanticBaseSettingsSource):
-    """`inner`, recording under `name` the fields it supplied. A dotenv value the
+    """`inner`, recording under `name` the fields it supplied. A file's value the
     environment also holds, unchanged, was copied there from the file (the CLI and
-    compose do that), so it stays the file's."""
+    compose copy the dotenv file, scripts/serve.sh the web tier's fields), so it
+    stays the file's."""
 
     def __init__(self, inner: PydanticBaseSettingsSource, name: str) -> None:
         super().__init__(inner.settings_cls)
@@ -30,10 +31,10 @@ class Recorded(PydanticBaseSettingsSource):
         values = self._inner()
         # A dotenv source also hands back the file's LOOM_* names no field reads.
         names = frozenset(values) & self.settings_cls.model_fields.keys()
-        if self._name == "env_file":
+        if self._name in ("env_file", "settings_file"):
             copied = frozenset(
                 n for n in names if os.environ.get(f"LOOM_{n.upper()}") == str(values[n])
             )
-            LOADING["env_copied_from_file"] = copied
+            LOADING[f"env_copied_from_{self._name}"] = copied
         LOADING[self._name] = names
         return values

@@ -156,8 +156,12 @@ def _sources() -> dict[str, str]:
     default, in the order startup ranks them, from what each source supplied
     when `settings` loaded."""
     by_code = {name: source for source, fields in _assigned.items() for name in fields()}
-    # The CLI and compose copy the dotenv file into the environment: those stay the file's.
-    env = settings.loaded_from("env") - settings.loaded_from("env_copied_from_file")
+    # The CLI and compose copy the dotenv file into the environment, and scripts/serve.sh
+    # the web tier's fields: those stay the file's.
+    copied = settings.loaded_from("env_copied_from_env_file") | settings.loaded_from(
+        "env_copied_from_settings_file"
+    )
+    env = settings.loaded_from("env") - copied
     out = {}
     for name, field in Settings.model_fields.items():
         if name in _applied:

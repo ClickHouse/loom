@@ -105,8 +105,8 @@ class Settings(
         self._loaded_from = dict(LOADING)
 
     def loaded_from(self, source: str) -> frozenset[str]:
-        """The fields `source` (env, env_file, env_copied_from_file, settings_file)
-        supplied when this object loaded."""
+        """The fields `source` (env, env_file, env_copied_from_env_file, settings_file,
+        env_copied_from_settings_file) supplied when this object loaded."""
         return self._loaded_from.get(source, frozenset())
 
     def inference_issuer(self) -> str:

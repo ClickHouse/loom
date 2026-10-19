@@ -3319,11 +3319,14 @@
         },
         "memory_search_key_axis_auto_reuse_share": {
           "default": 0.05,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "type": "number",
           "description": "\"auto\" key-axis threshold: share of a namespace's keys written more than once. 0.05 sits between product namespaces and chat namespaces."
         },
         "memory_search_key_axis_auto_ttl_seconds": {
           "default": 600,
+          "minimum": 1,
           "type": "integer",
           "description": "Seconds a namespace's \"auto\" key-axis probe result is cached before it is re-read."
         },

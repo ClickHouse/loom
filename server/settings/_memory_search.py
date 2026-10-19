@@ -38,9 +38,11 @@ class MemorySearchSettings(BaseModel):
     memory_search_key_axis: Annotated[Literal["auto", "on", "off"], CaseFolded, LIVE] = "auto"
     # "auto" key-axis threshold: share of a namespace's keys written more than
     # once. 0.05 sits between product namespaces and chat namespaces.
-    memory_search_key_axis_auto_reuse_share: Annotated[float, LIVE] = 0.05
+    memory_search_key_axis_auto_reuse_share: Annotated[float, LIVE] = Field(
+        default=0.05, ge=0.0, le=1.0
+    )
     # Seconds a namespace's "auto" key-axis probe result is cached before it is re-read.
-    memory_search_key_axis_auto_ttl_seconds: Annotated[int, LIVE] = 600
+    memory_search_key_axis_auto_ttl_seconds: Annotated[int, LIVE] = Field(default=600, ge=1)
     # No-probe fallback for the query-rewrite gate the calibration reports
     # (calibration.get's scalar row): ≈ question→fact P10 for
     # text-embedding-3-small.

@@ -5,6 +5,7 @@ which event loop they run."""
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -16,9 +17,9 @@ ROOT = Path(__file__).resolve().parents[2]
 _PYTHON = """#!/bin/sh
 case "$*" in
   "-m server.core.web_workers") echo 4 ;;
-  "-m server.settings.launch web_workers") echo "$STUB_ENV_FILE_WORKERS" ;;
-  "-m server.settings.launch runtime_dir") echo "${STUB_ENV_FILE_RUNTIME_DIR:-}" ;;
-  "-m server.settings.launch trusted_proxies") echo "" ;;
+  "-m server.settings.launch runtime_dir web_workers trusted_proxies")
+    echo "launch_runtime_dir='${STUB_LAUNCH_RUNTIME_DIR:-}'"
+    echo "launch_web_workers='$STUB_LAUNCH_WORKERS'" ;;
   "-m server.core.runtime_files")
     [ "$STUB_RUNTIME_DIR" = none ] && { echo "loom: no private directory" >&2; exit 2; }
     [ "$STUB_RUNTIME_DIR" = broken ] && { echo "Traceback: settings invalid" >&2; exit 1; }
@@ -37,8 +38,8 @@ def _launch(
     workers: str,
     runtime_dir: str,
     pinned: str = "",
-    env_file: str = "",
-    env_file_runtime_dir: str = "",
+    resolved_workers: str = "",
+    resolved_runtime_dir: str = "",
     loop: str = "",
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
@@ -50,8 +51,8 @@ def _launch(
         "PATH": f"{bin_dir}:/usr/bin:/bin",
         "STUB_RUNTIME_DIR": runtime_dir,
         "LOOM_WEB_WORKERS": workers,
-        "STUB_ENV_FILE_WORKERS": env_file,
-        "STUB_ENV_FILE_RUNTIME_DIR": env_file_runtime_dir,
+        "STUB_LAUNCH_WORKERS": resolved_workers,
+        "STUB_LAUNCH_RUNTIME_DIR": resolved_runtime_dir,
         "PORT": "1",
     }
     if loop:
@@ -97,12 +98,10 @@ def test_the_launcher_starts_what_it_can_share(
 
 
 @pytest.mark.parametrize(("workers", "started"), [("", "2"), ("3", "3")])
-def test_a_count_only_the_env_file_names_is_kept(
-    tmp_path: Path, workers: str, started: str
-) -> None:
-    """Outside Docker the server reads .env, so the launcher takes its count
-    too; the environment still wins."""
-    done = _launch(tmp_path, workers=workers, runtime_dir="/run/loom", env_file="2")
+def test_a_count_only_a_file_names_is_kept(tmp_path: Path, workers: str, started: str) -> None:
+    """The server reads .env and the settings file, so the launcher takes their
+    count too; the environment still wins."""
+    done = _launch(tmp_path, workers=workers, runtime_dir="/run/loom", resolved_workers="2")
     assert done.returncode == 0, done.stderr
     assert _workers(done.stdout) == started
 
@@ -120,7 +119,10 @@ def _resolved(name: str, **env: str) -> str:
         text=True,
         check=True,
     )
-    return done.stdout.strip()
+    # One shell assignment per name asked for.
+    assignment, value = done.stdout.strip().split("=", 1)
+    assert assignment == f"launch_{name}"
+    return shlex.split(value)[0]
 
 
 def test_the_launch_values_resolve_as_the_server_loads_them(tmp_path: Path) -> None:
@@ -136,11 +138,10 @@ def test_the_launch_values_resolve_as_the_server_loads_them(tmp_path: Path) -> N
     assert _resolved("trusted_proxies") == ""
 
 
-def test_the_settings_file_sets_the_web_tier_uvicorn_starts(tmp_path: Path) -> None:
-    """The real resolver behind the launcher: a count and proxies named only in the
-    settings file reach uvicorn's arguments."""
+def _launch_real(tmp_path: Path, settings_file: str) -> subprocess.CompletedProcess[str]:
+    """serve.sh with the real resolver and stub uvicorn and runtime check."""
     yaml = tmp_path / "loom.yaml"
-    yaml.write_text("version: 1\nsettings:\n  web_workers: 3\n  trusted_proxies: 10.0.0.0/8\n")
+    yaml.write_text(settings_file)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     shim = f'''#!/bin/sh
@@ -154,13 +155,20 @@ esac
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
     env = {**_without_loom(), "PATH": f"{bin_dir}:/usr/bin:/bin", "PORT": "1", "LOOM_ENV_FILE": ""}
-    done = subprocess.run(
+    return subprocess.run(
         ["sh", str(ROOT / "scripts" / "serve.sh")],
         env={**env, "LOOM_SETTINGS_FILE": str(yaml)},
         cwd=ROOT,
         capture_output=True,
         text=True,
         check=False,
+    )
+
+
+def test_the_settings_file_sets_the_web_tier_uvicorn_starts(tmp_path: Path) -> None:
+    """A count and proxies named only in the settings file reach uvicorn's arguments."""
+    done = _launch_real(
+        tmp_path, "version: 1\nsettings:\n  web_workers: 3\n  trusted_proxies: 10.0.0.0/8\n"
     )
     assert done.returncode == 0, done.stderr
     assert _workers(done.stdout) == "3"
@@ -191,11 +199,11 @@ def test_a_pin_it_cannot_use_refuses_to_start_even_with_a_chosen_count(tmp_path:
 
 
 @pytest.mark.parametrize("workers", ["", "1"])
-def test_a_pin_only_the_env_file_names_is_checked_too(tmp_path: Path, workers: str) -> None:
-    """The server reads .env, so a directory pinned there alone is refused, not
-    skipped or traded for one process."""
+def test_a_pin_only_a_file_names_is_checked_too(tmp_path: Path, workers: str) -> None:
+    """The server reads .env and the settings file, so a directory pinned there
+    alone is refused, not skipped or traded for one process."""
     done = _launch(
-        tmp_path, workers=workers, runtime_dir="none", env_file_runtime_dir="/nonexist/x"
+        tmp_path, workers=workers, runtime_dir="none", resolved_runtime_dir="/nonexist/x"
     )
     assert done.returncode == 2 and done.stdout == ""
     assert "not starting" in done.stderr
@@ -253,3 +261,9 @@ def test_the_launcher_runs_the_stdlib_loop_unless_told(
     done = _launch(tmp_path, workers="1", runtime_dir="none", loop=loop)
     assert done.returncode == 0, done.stderr
     assert _arg(done.stdout, "--loop") == started
+
+
+def test_a_settings_file_the_server_would_refuse_stops_the_launcher(tmp_path: Path) -> None:
+    done = _launch_real(tmp_path, "version: 1\nsettings: false\n")
+    assert done.returncode != 0 and done.stdout == ""
+    assert "`settings` must be a mapping" in done.stderr

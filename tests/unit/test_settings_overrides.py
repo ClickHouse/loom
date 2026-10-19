@@ -143,12 +143,14 @@ def test_rows_say_where_each_value_came_from(
     yaml_file = tmp_path / "loom.yaml"
     yaml_file.write_text(
         "version: 1\nsettings:\n  memory_ask_synth_budget_ratio: 0.4\n  ch_database: x\n"
+        "  web_workers: 3\n"
     )
     for name in [k for k in os.environ if k.startswith("LOOM_")]:
         monkeypatch.delenv(name)
     monkeypatch.setenv("LOOM_SETTINGS_FILE", str(yaml_file))
     monkeypatch.setenv("LOOM_CH_HOST", "from-env")
     monkeypatch.setenv("LOOM_CH_PORT", "9")  # the file's value, copied in as the CLI does
+    monkeypatch.setenv("LOOM_WEB_WORKERS", "3")  # exported by scripts/serve.sh
     monkeypatch.setenv("LOOM_LLM_MODEL", "gpt-4o")  # the provider is inferred from it
     loaded = settings.__class__(_env_file=str(env_file))
     monkeypatch.setattr(so, "settings", loaded)
@@ -159,6 +161,7 @@ def test_rows_say_where_each_value_came_from(
     assert by_name["ch_port"]["source"] == "env_file"
     assert by_name["memory_ask_synth_budget_ratio"]["source"] == "env_file"
     assert by_name["ch_database"]["source"] == "settings_file"
+    assert by_name["web_workers"]["source"] == "settings_file"
     assert by_name["llm_model"]["source"] == "env"
     assert (by_name["llm_provider"]["value"], by_name["llm_provider"]["source"]) == (
         "openai",
@@ -460,4 +463,50 @@ async def test_a_native_command_chunks_as_the_http_op_does_under_an_override(
         async with pc.model_command():
             assert len(writes._chunk_text(text)) == 1
     finally:
+        so.adopt({})
+
+
+async def test_a_running_command_follows_a_new_override_and_logs_a_failing_run_once(
+    stored: dict, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import asyncio
+    import logging
+
+    from server.insights.app import provider_command as pc
+
+    ticks: asyncio.Queue[None] = asyncio.Queue()
+
+    async def one_interval(_seconds: float) -> None:
+        await ticks.get()
+
+    async def tick() -> None:
+        ticks.put_nowait(None)
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    real_load = ro.load
+
+    async def unreachable(*, ch: Any = None) -> ro.Snapshot:
+        raise RuntimeError("ClickHouse client not connected")
+
+    so.adopt({})
+    keeper = asyncio.create_task(pc._keep_overrides(True, sleep=one_interval))
+    try:
+        stored[("knowledge_chunk_size",)] = 0  # stored while the command runs
+        await tick()
+        assert settings.knowledge_chunk_size == 0
+        monkeypatch.setattr(ro, "load", unreachable)
+        with caplog.at_level(logging.WARNING, logger=pc.log.name):
+            for _ in range(3):
+                await tick()
+        assert [r.getMessage() for r in caplog.records].count(
+            "live-setting overrides not adopted: ClickHouse client not connected"
+        ) == 1
+        assert settings.knowledge_chunk_size == 0  # the values it has
+        monkeypatch.setattr(ro, "load", real_load)
+        stored.pop(("knowledge_chunk_size",))
+        await tick()
+        assert settings.knowledge_chunk_size != 0
+    finally:
+        keeper.cancel()
         so.adopt({})

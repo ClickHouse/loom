@@ -339,19 +339,37 @@ async def test_uncited_or_hedged_answers_are_not_stored(prec_env) -> None:
 
 def test_ask_shape_carries_the_user_and_session_the_read_filters_on() -> None:
     from server.memory.app.ask.handler import ask_shape_sha256
+    from server.settings import settings
     from tests.unit.test_memory_ask import _input
 
-    base = ask_shape_sha256(_input())
+    base = ask_shape_sha256(_input(), settings)
     assert base == ask_shape_sha256(
-        _input(query="something else", org="o2", namespace="n2", run_id="r1")
+        _input(query="something else", org="o2", namespace="n2", run_id="r1"), settings
     )
     # A body user filters the read under namespace scope too: its own precedent.
-    assert base != ask_shape_sha256(_input(user_id="alice"))
-    assert ask_shape_sha256(_input(user_id="alice")) != ask_shape_sha256(_input(user_id="bob"))
-    assert base != ask_shape_sha256(_input(top_k=7))
-    assert base != ask_shape_sha256(_input(search_mode="semantic"))
-    own = ask_shape_sha256(_input(read_scope="own_user", user_id="alice"))
-    assert own != ask_shape_sha256(_input(read_scope="own_user", user_id="bob"))
+    assert base != ask_shape_sha256(_input(user_id="alice"), settings)
+    assert ask_shape_sha256(_input(user_id="alice"), settings) != ask_shape_sha256(
+        _input(user_id="bob"), settings
+    )
+    assert base != ask_shape_sha256(_input(top_k=7), settings)
+    assert base != ask_shape_sha256(_input(search_mode="semantic"), settings)
+    own = ask_shape_sha256(_input(read_scope="own_user", user_id="alice"), settings)
+    assert own != ask_shape_sha256(_input(read_scope="own_user", user_id="bob"), settings)
+
+
+def test_ask_shape_hashes_only_the_settings_off_their_default() -> None:
+    """A setting at its default leaves the shape as it was, so a release that adds one
+    keeps the stored precedents; a value off the default is a different shape."""
+    from server.memory.app.ask.handler import ask_shape_sha256
+    from server.settings import Settings
+    from tests.unit.test_memory_ask import _input
+
+    base = Settings(_env_file=None)  # type: ignore[call-arg]
+    at_default = base.model_copy(update={"memory_ask_world_knowledge": "forbid"})
+    allow = base.model_copy(update={"memory_ask_world_knowledge": "allow"})
+    assert Settings.model_fields["memory_ask_world_knowledge"].default == "forbid"
+    assert ask_shape_sha256(_input(), base) == ask_shape_sha256(_input(), at_default)
+    assert ask_shape_sha256(_input(), base) != ask_shape_sha256(_input(), allow)
 
 
 @pytest.mark.asyncio
@@ -703,6 +721,7 @@ def test_ask_shape_hashes_the_identity_the_token_pins() -> None:
     from server.auth.jwt import AuthInfo
     from server.memory.app.ask.handler import ask_shape_sha256
     from server.operations.base import Role
+    from server.settings import settings
     from tests.unit.test_memory_ask import _input
 
     def _token(pinned: str) -> AuthInfo:
@@ -717,13 +736,13 @@ def test_ask_shape_hashes_the_identity_the_token_pins() -> None:
 
     try:
         set_current_auth(_token("alice"))
-        alice = ask_shape_sha256(_input())
+        alice = ask_shape_sha256(_input(), settings)
         set_current_auth(_token("bob"))
-        bob = ask_shape_sha256(_input())
+        bob = ask_shape_sha256(_input(), settings)
         set_current_auth(_token(""))
-        shared = ask_shape_sha256(_input())
+        shared = ask_shape_sha256(_input(), settings)
     finally:
         set_current_auth(None)
     assert alice != bob
-    assert shared == ask_shape_sha256(_input())
-    assert alice == ask_shape_sha256(_input(read_scope="own_user", user_id="alice"))
+    assert shared == ask_shape_sha256(_input(), settings)
+    assert alice == ask_shape_sha256(_input(read_scope="own_user", user_id="alice"), settings)

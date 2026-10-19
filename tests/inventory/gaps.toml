@@ -145,7 +145,6 @@
 "setting:memory_ask_literal_completion_max" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_ask_mention_window_chunks" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_ask_precedents_fast_max_age_hours" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_ask_precedents_max_age_hours" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_ask_set_full_scan" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_ask_set_window" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_ask_synth_budget_cheap_ratio" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }

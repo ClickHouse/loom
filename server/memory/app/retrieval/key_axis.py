@@ -34,7 +34,7 @@ def _decide(share: float | None, settings_obj: Any) -> bool:
 def key_axis_auto_cached(
     org: str, namespace: str, settings_obj: Any | None = None
 ) -> tuple[bool, float] | None:
-    """The last auto decision for a namespace, for the handler's ledger."""
+    """The auto decision for a namespace from its cached share, for the handler's ledger."""
     from server.settings import settings as _default_settings
 
     hit = _KEY_AXIS_AUTO.get((str(org), str(namespace)))
@@ -55,7 +55,7 @@ async def key_axis_auto(
     from server.settings import settings as _default_settings
 
     _s = _default_settings if settings_obj is None else settings_obj
-    ttl = float(_s.memory_search_key_axis_auto_ttl_seconds or 600)
+    ttl = float(_s.memory_search_key_axis_auto_ttl_seconds)
     now = _time.monotonic()
     key = (str(org), str(namespace))
     hit = _KEY_AXIS_AUTO.get(key)

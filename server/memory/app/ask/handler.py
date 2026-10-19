@@ -583,20 +583,24 @@ def _precedents_namespace_allowed(namespace: str, globs: str) -> bool:
 _ASK_SHAPE_EXCLUDE = frozenset({"query", "org", "namespace", "run_id", "precedents"})
 # A request field left unset takes its setting, so the settings that shape retrieval
 # and synthesis are part of the shape too: a live change (world knowledge allow ->
-# forbid) misses every precedent written under the old value. The precedent
-# settings themselves only decide whether to reuse.
+# forbid) misses every precedent written under the old value. Like the request
+# fields, only a value off its default is hashed, so a release that adds a setting
+# keeps the stored precedents. The precedent settings only decide whether to reuse.
 _ASK_SHAPE_SETTINGS = ("memory_ask_", "memory_search_")
 
 
 def _shape_settings(settings: Any) -> dict[str, Any]:
-    return {
-        name: getattr(settings, name)
-        for name in type(settings).model_fields
-        if name.startswith(_ASK_SHAPE_SETTINGS) and not name.startswith("memory_ask_precedent")
-    }
+    shape = {}
+    for name, field in type(settings).model_fields.items():
+        if not name.startswith(_ASK_SHAPE_SETTINGS) or name.startswith("memory_ask_precedent"):
+            continue
+        value = getattr(settings, name)
+        if value != field.get_default(call_default_factory=True):
+            shape[name] = value
+    return shape
 
 
-def ask_shape_sha256(input: MemoryAskInput, settings: Any = None) -> str:
+def ask_shape_sha256(input: MemoryAskInput, settings: Any) -> str:
     """sha256 over the ask's non-default, non-identity fields. A `user_id` or
     `session_id` the read filters on is part of the shape, whatever the read
     scope: a namespace-scoped ask that names no user shares its precedent
@@ -616,8 +620,7 @@ def ask_shape_sha256(input: MemoryAskInput, settings: Any = None) -> str:
     # Only a user or session the read filters on is part of the shape.
     exclude |= {f for f in ("user_id", "session_id") if getattr(input, f) in (None, "-")}
     shape = input.model_dump(exclude=exclude, exclude_defaults=True)
-    if settings is not None:
-        shape["settings"] = _shape_settings(settings)
+    shape["settings"] = _shape_settings(settings)
     canonical = json.dumps(shape, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

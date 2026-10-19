@@ -3,7 +3,7 @@
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from server.core import settings_overrides
@@ -17,19 +17,27 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 
-async def _adopt_overrides() -> None:
+async def _adopt_overrides(*, failing: bool = False) -> bool:
+    """Whether the stored overrides loaded. A failure is logged when a run of them
+    starts: a command that closes its own client fails every refresh until it
+    reopens it."""
     try:
         await settings_overrides.refresh()
-    except Exception as e:  # noqa: BLE001 — the command runs on the values it has, said once
-        log.warning("live-setting overrides not adopted: %s", e)
+        return True
+    except Exception as e:  # noqa: BLE001 — the command runs on the values it has
+        if not failing:
+            log.warning("live-setting overrides not adopted: %s", e)
+        return False
 
 
-async def _keep_overrides() -> None:
+async def _keep_overrides(
+    loaded: bool, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+) -> None:
     """A long command (a rechunk, a re-embed) follows an override set while it runs."""
     set_query_tag("cli.settings_overrides")
     while True:
-        await asyncio.sleep(max(1.0, float(settings.runtime_overrides_refresh_seconds)))
-        await _adopt_overrides()
+        await sleep(max(1.0, float(settings.runtime_overrides_refresh_seconds)))
+        loaded = await _adopt_overrides(failing=not loaded)
 
 
 @asynccontextmanager
@@ -41,8 +49,8 @@ async def model_command() -> AsyncIterator[None]:
     keeper: asyncio.Task[None] | None = None
     try:
         await load_active_configuration()
-        await _adopt_overrides()
-        keeper = asyncio.create_task(_keep_overrides(), name="loom-cli-settings-overrides")
+        loaded = await _adopt_overrides()
+        keeper = asyncio.create_task(_keep_overrides(loaded), name="loom-cli-settings-overrides")
         async with get_model_work_gate().admit():
             yield
     finally:
