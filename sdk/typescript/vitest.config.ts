@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     include: ["src/**/*.test.ts"],
     environment: "node",
+    setupFiles: ["./test/setup.ts"],
     // Type-level tests: `*.test-d.ts` are checked by tsc, not run.
     typecheck: {
       enabled: true,

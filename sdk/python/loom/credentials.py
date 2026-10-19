@@ -15,6 +15,8 @@ The refresh token rotates on every use and the server ends the session when
 a spent one comes back, so two processes must never refresh the same profile
 at once: a refresh holds an exclusive lock on the credentials file and
 re-reads it first, so the second process finds the new token and uses it.
+The lock is a file lock (which older SDK builds take) and the directory
+`~/.loom/.credentials.lock.d` (which the TypeScript SDK takes too).
 """
 
 from __future__ import annotations
@@ -25,6 +27,8 @@ import errno
 import json
 import os
 import secrets
+import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -54,6 +58,30 @@ _REFRESH_MARGIN_S = 60
 # Longer than a refresh can take on the server, which asks the identity
 # provider first: giving up sooner turns a slow answer into a lost one.
 _REFRESH_TIMEOUT_S = 60.0
+_REQUEST_TIMEOUT_S = 30.0
+# Discovery, the exchange and its one retry together, so a refresh holds the
+# lock for a bounded time. httpx times each phase of a request (connect, each
+# write, each read), not the whole: every phase of every request is bounded by
+# what the deadline leaves, so a server that trickles its answer can hold the
+# lock past it. The TypeScript SDK bounds the whole refresh.
+_REFRESH_DEADLINE_S = 90.0
+# The lock both SDKs take: Node has no flock. Its holder touches the
+# directory every heartbeat; one silent for the stale age is broken, and so
+# is one silent for two heartbeats whose holder on this machine is no longer
+# running.
+_LOCK_DIR = ".credentials.lock.d"
+_LOCK_HEARTBEAT_S = 10.0
+_LOCK_SILENT_S = 2 * _LOCK_HEARTBEAT_S
+_LOCK_STALE_S = 60.0
+# How long a release waits for a breaker's claim to go.
+_RELEASE_WAIT_S = 2.0
+# What Windows refuses a rename with while another process has a file in the
+# directory open, as a waiter reading the owner file does for a moment.
+_BUSY = {errno.EACCES, errno.EPERM, errno.EBUSY}
+_RENAME_TRIES = 5
+_RENAME_WAIT_S = 0.02
+# How often a release asks again for the claim a breaker holds.
+_CLAIM_POLL_S = 0.02
 
 
 def _path() -> Path:
@@ -107,15 +135,238 @@ if hasattr(os, "register_at_fork"):  # not on Windows
 @contextlib.contextmanager
 def _locked() -> Iterator[None]:
     """Hold the credentials lock: this process's, then a sibling file's (so the
-    atomic replace of the credentials themselves never drops it)."""
+    atomic replace of the credentials themselves never drops it), then the
+    lock directory beside it."""
     path = _path()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with _in_process, open(path.with_name(".credentials.lock"), "a") as lock:
         _lock_file(lock.fileno())
         try:
-            yield
+            with _lock_dir(path.with_name(_LOCK_DIR)):
+                yield
         finally:
             _unlock_file(lock.fileno())
+
+
+@contextlib.contextmanager
+def _lock_dir(lock: Path) -> Iterator[None]:
+    """Hold `lock`, a directory whose owner file names the holder; wait while
+    another process holds it, and break it once stale."""
+    owner = json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "time": time.time()})
+    _sweep(lock)
+    stop = threading.Event()
+    beat = threading.Thread(target=_heartbeat, args=(lock, owner, stop), daemon=True)
+    # From the first try: an interrupt just after the rename that took the
+    # lock, or a heartbeat that cannot start, still releases it.
+    try:
+        wait = 0.01
+        while not _create(lock, owner):
+            held = _owner(lock)
+            if _stale(lock, held):
+                _break(lock, held)
+            time.sleep(wait)
+            wait = min(wait * 2, 0.2)
+        beat.start()
+        yield
+    finally:
+        stop.set()
+        if beat.ident is not None:  # started
+            beat.join()
+        with contextlib.suppress(OSError):
+            _release(lock, owner)
+
+
+def _create(lock: Path, owner: str) -> bool:
+    """Take `lock` by renaming a private directory that holds the owner file
+    onto it. The rename fails while the lock exists, and a lock never exists
+    without its owner. Answers whether it was taken."""
+    tmp = lock.with_name(f"{lock.name}.{secrets.token_hex(6)}.tmp")
+    tmp.mkdir(mode=0o700)
+    try:
+        (tmp / "owner").write_text(owner, encoding="utf-8")
+        _touch(tmp)
+        tries = 0
+        while True:
+            try:
+                os.rename(tmp, lock)
+                return True
+            except OSError as e:
+                # POSIX allows no rename onto a non-empty directory, and
+                # Windows none onto any directory, refused as access denied:
+                # held while the lock is there. With no lock, the refusal is
+                # a scanner holding a file in tmp open, or a holder renaming
+                # the lock away meanwhile: tried again, then raised.
+                if e.errno in (errno.EEXIST, errno.ENOTEMPTY):
+                    return False
+                if e.errno not in _BUSY:
+                    raise
+                if lock.exists():
+                    return False
+                tries += 1
+                if tries == _RENAME_TRIES:
+                    raise LoomError(
+                        f"cannot take the credentials lock at {lock} ({e.strerror or e})"
+                    ) from e
+                time.sleep(_RENAME_WAIT_S)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)  # gone already once renamed
+
+
+def _owner(lock: Path) -> str:
+    """The owner file's text; empty when the lock is gone."""
+    try:
+        return (lock / "owner").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _touch(path: Path) -> None:
+    # This machine's clock: utime with no time takes the file server's on a network home.
+    now = time.time()
+    os.utime(path, (now, now))
+
+
+def _heartbeat(lock: Path, owner: str, stop: threading.Event) -> None:
+    """Touch the lock while this process holds it, so waiters see it alive."""
+    while not stop.wait(_LOCK_HEARTBEAT_S):
+        if _owner(lock) == owner:
+            with contextlib.suppress(OSError):
+                _touch(lock)
+
+
+def _stale(lock: Path, held: str) -> bool:
+    """Whether the holder of `lock` is gone: silent for the stale age (a
+    holder on another machine, a reused pid, a hung process), or silent for
+    two heartbeats and no longer running on this machine. The pid is asked
+    only after the heartbeat stopped: a holder in another pid namespace on
+    this host (a container sharing the home directory) looks dead to it."""
+    age = _age_s(lock)
+    if age > _LOCK_STALE_S:
+        return True
+    if age <= _LOCK_SILENT_S:
+        return False
+    try:
+        owner = json.loads(held)
+    except ValueError:
+        return False
+    if not isinstance(owner, dict) or owner.get("host") != socket.gethostname():
+        return False  # another machine's pid means nothing here
+    pid = owner.get("pid")
+    return isinstance(pid, int) and not isinstance(pid, bool) and pid > 0 and not _running(pid)
+
+
+def _running(pid: int) -> bool:
+    if sys.platform == "win32":
+        return True  # os.kill would end the process there: the stale age decides
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True  # EPERM: running, as another user
+    return True
+
+
+def _break(lock: Path, held: str) -> None:
+    """Remove the stale lock whose owner file read `held`. A claim directory
+    beside it lets one waiter at a time do it, or the holder release it, and
+    the owner is read again under the claim, so a lock taken over meanwhile
+    is left alone."""
+    claim = lock.with_name(f"{lock.name}.breaking")
+    try:
+        claim.mkdir(mode=0o700)
+    except FileExistsError:
+        # Left by a process that died holding it: once as old as a stale
+        # lock, renamed away for the sweep to delete.
+        if _age_s(claim) > _LOCK_STALE_S:
+            with contextlib.suppress(OSError):
+                os.rename(claim, claim.with_name(f"{claim.name}.{secrets.token_hex(6)}.stale"))
+        return
+    except FileNotFoundError:
+        return  # the directory holding it is gone: try again
+    except OSError as e:
+        raise _unbreakable(lock, e) from e
+    try:
+        with contextlib.suppress(OSError):
+            _touch(claim)
+        if _owner(lock) == held:
+            _remove(lock)
+    except OSError as e:
+        # Busy on Windows: try again after the wait, until the lock is twice
+        # the stale age, so a lock that is never renamable still raises.
+        if e.errno in _BUSY and _age_s(lock) <= 2 * _LOCK_STALE_S:
+            return
+        raise _unbreakable(lock, e) from e
+    finally:
+        with contextlib.suppress(OSError):
+            claim.rmdir()
+
+
+def _release(lock: Path, owner: str) -> None:
+    """Remove our own lock, holding the claim a breaker takes: a breaker that
+    judged the lock stale renames it under the claim, and a release between
+    its check and its rename would let a third process take the path that
+    breaker then renames away. Without the claim in time the lock is left,
+    never renamed, and broken once its heartbeat has stopped."""
+    if _owner(lock) != owner:
+        return  # broken as stale: another process's by now
+    claim = lock.with_name(f"{lock.name}.breaking")
+    deadline = time.monotonic() + _RELEASE_WAIT_S
+    while True:
+        try:
+            claim.mkdir(mode=0o700)
+            break
+        except FileExistsError:
+            if time.monotonic() > deadline:
+                return
+            time.sleep(_CLAIM_POLL_S)
+    try:
+        with contextlib.suppress(OSError):
+            _touch(claim)  # as a breaker's is, so it never looks old to the next one
+        if _owner(lock) == owner:
+            _remove(lock)
+    finally:
+        with contextlib.suppress(OSError):
+            claim.rmdir()
+
+
+def _unbreakable(lock: Path, e: OSError) -> LoomError:
+    return LoomError(
+        f"the credentials lock at {lock} is stale but cannot be broken "
+        f"({e.strerror or e}); remove it by hand"
+    )
+
+
+def _remove(lock: Path) -> None:
+    """Rename `lock` away, then delete it: the lock path is never a
+    half-removed directory, empty, which a rename could replace."""
+    tomb = lock.with_name(f"{lock.name}.{secrets.token_hex(6)}.stale")
+    for attempt in range(_RENAME_TRIES):
+        try:
+            os.rename(lock, tomb)
+            break
+        except FileNotFoundError:
+            return  # released meanwhile
+        except OSError as e:
+            if e.errno not in _BUSY or attempt == _RENAME_TRIES - 1:
+                raise
+            time.sleep(_RENAME_WAIT_S)  # a waiter reading the owner file closes it in a moment
+    shutil.rmtree(tomb, ignore_errors=True)
+
+
+def _sweep(lock: Path) -> None:
+    """Delete what a process that died taking or breaking the lock left
+    beside it: its private directory, or the lock or claim it renamed away."""
+    for left in lock.parent.glob(f"{lock.name}.*"):
+        if left.suffix in (".tmp", ".stale") and _age_s(left) > _LOCK_STALE_S:
+            shutil.rmtree(left, ignore_errors=True)
+
+
+def _age_s(path: Path) -> float:
+    try:
+        return time.time() - path.stat().st_mtime
+    except FileNotFoundError:
+        return 0.0  # released meanwhile: take it on the next try
 
 
 if sys.platform == "win32":
@@ -148,7 +399,7 @@ def _server(url: str) -> Iterator[httpx.Client]:
     """A client for `url` whose failures to reach it come out as
     BackendUnavailable: callers catch LoomError, never httpx."""
     try:
-        with httpx.Client(base_url=url, timeout=30.0) as client:
+        with httpx.Client(base_url=url, timeout=_REQUEST_TIMEOUT_S) as client:
             yield client
     except httpx.TransportError as e:
         raise BackendUnavailable(f"cannot reach {url}: {type(e).__name__}") from e
@@ -181,10 +432,12 @@ def same_server(a: str, b: str) -> bool:
     return _origin(a) == _origin(b) and urlsplit(a).path.rstrip("/") == urlsplit(b).path.rstrip("/")
 
 
-def _endpoints(client: httpx.Client, *, signed_in: bool = False) -> dict[str, str]:
+def _endpoints(
+    client: httpx.Client, *, signed_in: bool = False, timeout: float = _REQUEST_TIMEOUT_S
+) -> dict[str, str]:
     """The server's sign-in endpoints, each checked to be on the server itself,
     so a code or token only ever goes where the user chose to sign in."""
-    r = client.get("/.well-known/oauth-authorization-server")
+    r = client.get("/.well-known/oauth-authorization-server", timeout=timeout)
     if r.status_code not in (200, 404):
         raise _failed(r, "reading the server's sign-in endpoints")
     meta = _json(r) if r.status_code == 200 else {}
@@ -369,15 +622,30 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
         "refresh_token": entry["refresh_token"],
         "client_id": CLIENT_ID,
     }
+    deadline = time.monotonic() + _REFRESH_DEADLINE_S
+
+    def left(usual: float) -> float:
+        # At most `usual`, and no more than the deadline leaves, as the
+        # timeout of each phase of the next request; nothing left, nothing is sent.
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise BackendUnavailable(
+                f"refreshing the session at {entry['server']} took over "
+                f"{_REFRESH_DEADLINE_S:.0f} s; retry"
+            )
+        return min(usual, remaining)
+
     with _server(entry["server"]) as client:
-        endpoint = _endpoints(client, signed_in=True)["token_endpoint"]
+        endpoint = _endpoints(client, signed_in=True, timeout=left(_REQUEST_TIMEOUT_S))[
+            "token_endpoint"
+        ]
         try:
-            r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
+            r = client.post(endpoint, data=form, timeout=left(_REFRESH_TIMEOUT_S))
         except (httpx.ConnectError, httpx.ConnectTimeout):
             # Nothing reached the server, so nothing was spent: try once more.
             # (A lost answer cannot be asked again: the server spent the token,
             # and presenting it twice ends the session.)
-            r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
+            r = client.post(endpoint, data=form, timeout=left(_REFRESH_TIMEOUT_S))
     marked = bool(entry.get("marked"))
     if marked and 400 <= r.status_code < 500 and _SESSIONS_HEADER not in r.headers:
         raise BackendUnavailable(
