@@ -561,9 +561,10 @@ def test_a_stale_summary_with_a_source_past_the_window_is_read() -> None:
             "role": "system",
             "content": "t" * 100,
             "metadata": '{"compacted_from": ["m1", "m2", "m3"]}',
+            "ts": T0,
         },
         *(
-            {"msg_id": f"m{i}", "role": "user", "content": f"turn {i}", "metadata": "{}"}
+            {"msg_id": f"m{i}", "role": "user", "content": f"turn {i}", "metadata": "{}", "ts": T0}
             for i in (1, 2)
         ),
     ]
@@ -652,51 +653,17 @@ def test_only_a_system_turn_with_a_compacted_from_list_is_a_summary(
     assert bool(ch_mod._compacted_from({"role": role, "metadata": metadata})) is summary
 
 
-def test_a_stale_summary_tied_with_its_first_source_still_leads(monkeypatch) -> None:
-    """A failed run's summary shares its first source's ts, and an id like `0001`
-    sorts before `compact-`: the summary is still put first and replaced unread."""
-    import server.core.ch
-    import server.llm.client
+def test_a_summary_after_its_first_source_is_not_stale() -> None:
+    """Only a summary at the earliest ts of its sources is what a failed run leaves: one
+    a client wrote later, naming earlier turns, is read like any other summary."""
 
-    def row(mid: str, content: str, metadata: str = "{}", role: str = "user") -> dict[str, Any]:
-        return {
-            "msg_id": mid,
-            "role": role,
-            "content": content,
-            "ts": T0,
-            "metadata": metadata,
-            "user_id": "alice",
-            "run_id": "run-1",
-        }
+    def row(mid: str, ts: datetime, metadata: str = "{}", role: str = "user") -> dict[str, Any]:
+        return {"msg_id": mid, "role": role, "content": mid * 10, "ts": ts, "metadata": metadata}
 
-    rows = [
-        *(row(f"000{i}", f"turn {i}") for i in range(1, 5)),
-        row("compact-1", "t" * 100, '{"compacted_from": ["0001", "0002", "0003"]}', "system"),
-    ]
-    prompts: list[str] = []
-
-    class _RecordingLLM(_FakeLLM):
-        async def complete(self, **kw: Any) -> LLMResult:
-            prompts.append(kw["user"])
-            return await super().complete(**kw)
-
-    fake = _FakeCH(rows)
-    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
-    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _RecordingLLM())
-    out = asyncio.run(
-        ch_mod.handle_conversation_compact(
-            ConversationCompactInput(
-                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=1
-            )
-        )
-    )
-    assert out.compacted is True and out.messages_summarized == 3
-    [prompt] = prompts
-    assert "ttt" not in prompt
-    [summary] = fake.inserted
-    assert json.loads(summary["metadata"])["compacted_from"] == [
-        "0001",
-        "0002",
-        "0003",
-        "compact-1",
-    ]
+    meta = '{"compacted_from": ["m1", "m2"]}'
+    late = [row("s", T0 + timedelta(seconds=1), meta, "system"), row("m1", T0), row("m2", T0)]
+    _, transcript = ch_mod._window_of(late, [True, False, False], {"s", "m1", "m2"})
+    assert "ssss" in transcript
+    tied = [row("s", T0, meta, "system"), row("m1", T0), row("m2", T0)]
+    _, transcript = ch_mod._window_of(tied, [True, False, False], {"s", "m1", "m2"})
+    assert "ssss" not in transcript

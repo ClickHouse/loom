@@ -691,8 +691,8 @@ def _compaction_window(
     lines: list[str], folded: list[bool], stale: list[bool]
 ) -> tuple[list[int], str]:
     """`(replaced, transcript)`: the indices of the leading candidate lines the summary
-    replaces, and the prompt transcript. `stale` marks summaries whose sources this
-    window replaces (`_window_of`), so dropping one loses nothing."""
+    replaces, and the prompt transcript. `stale` marks summaries to replace unread;
+    `_window_of` keeps that true only while every source is replaced."""
     # Leading summaries fold in free while each fits what is left of the allowance
     # whole. One that does not stays live and out of the prompt (tombstoning it would
     # drop text the summarizer never read), and the window still reaches the first
@@ -715,12 +715,17 @@ def _compaction_window(
 def _window_of(
     candidates: list[dict[str, Any]], folded: list[bool], live_ids: set[str]
 ) -> tuple[list[int], str]:
-    """`_compaction_window` over the candidate rows. A summary is stale when its sources
-    are all still live, and stays stale only while this window replaces every one of
-    them: otherwise it is read like any other summary, so no source loses its cover."""
+    """`_compaction_window` over the candidate rows. A summary is stale when it is what a
+    failed run leaves: its sources all still live, and it sitting at the earliest `ts`
+    among them. It stays stale only while this window replaces every source; otherwise it is
+    read like any other summary, so no source loses its cover."""
     lines = [f"{r['role']}: {r['content']}" for r in candidates]
     sources = [set(_compacted_from(r)) for r in candidates]
-    stale = [bool(s) and s <= live_ids for s in sources]
+    ts_of = {str(r["msg_id"]): r["ts"] for r in candidates}
+    stale = [
+        bool(s) and s <= live_ids and s <= ts_of.keys() and r["ts"] == min(ts_of[i] for i in s)
+        for r, s in zip(candidates, sources, strict=True)
+    ]
     while True:
         replaced, transcript = _compaction_window(lines, folded, stale)
         covered = {str(candidates[i]["msg_id"]) for i in replaced}
@@ -765,9 +770,6 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     rows = await conversation_repo.live_messages(
         input.org, input.namespace, input.agent, input.thread_id
     )
-    # A summary sits at its first source's ts: ahead of the turns at that ts, it leads
-    # the window it was written over.
-    rows.sort(key=lambda r: (r["ts"], not _compacted_from(r), str(r["msg_id"])))
     # A run that failed after tombstoning its turns leaves their embeddings to a retry,
     # whose window no longer holds those turns: the turns this agent's live summaries
     # name that are not live for it get an embeddings pass first. A replaced turn still live

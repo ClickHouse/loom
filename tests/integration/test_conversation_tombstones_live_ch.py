@@ -443,6 +443,19 @@ async def test_a_compaction_that_failed_before_the_mutation_keeps_live_turns_sea
     assert await _rows(ch, scope) == [("1", "still here", True)]
 
 
+@pytest.mark.asyncio
+async def test_a_summary_leads_the_turns_at_its_ts(ch, scope) -> None:
+    """A failed run's summary shares its first source's ts, and `0001` sorts before
+    `compact-`: live_messages still puts the summary first, so it leads the window."""
+    for i in (1, 2):
+        await _message(ch, scope, "a", f"000{i}", f"turn {i}", T0)
+    meta = '{"compacted_from": ["0001", "0002"]}'
+    await _message(ch, scope, "a", "compact-1", "summary", T0, role="system", metadata=meta)
+    await _message(ch, scope, "a", "compact-2", "no summary", T0, role="system")
+    rows = await repo.live_messages(scope["org"], scope["ns"], "a", scope["tid"], ch=ch)
+    assert [r["msg_id"] for r in rows] == ["compact-1", "0001", "0002", "compact-2"]
+
+
 class _LateReconcile(_PassThrough):
     """Runs the first embeddings reconcile as a read, then `meanwhile`, then the write
     of what it read: a reconcile whose rows land after another agent's whole delete."""

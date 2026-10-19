@@ -693,9 +693,10 @@ async def live_messages(
     *,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Every live message of one thread, oldest first. loom.conversations is a
-    plain MergeTree: FINAL is illegal there (code 181), and
-    conversation.append's existence check keeps msg_ids unique."""
+    """Every live message of one thread, oldest first, a compaction summary ahead of
+    the turns at its `ts` (it sits at its first source's `ts`, so it leads the window it
+    was written over). loom.conversations is a plain MergeTree: FINAL is illegal there
+    (code 181), and conversation.append's existence check keeps msg_ids unique."""
     ch = ch or _default_client()
     return await ch.query_all(
         """
@@ -706,7 +707,9 @@ async def live_messages(
           AND agent = {agent:String}
           AND thread_id = {tid:String}
           AND tombstoned_at IS NULL
-        ORDER BY ts ASC, msg_id ASC
+        ORDER BY ts ASC,
+          NOT (role = 'system' AND notEmpty(JSONExtractArrayRaw(metadata, 'compacted_from'))),
+          msg_id ASC
         """,
         params={"org": org, "ns": namespace, "agent": agent, "tid": thread_id},
     )
