@@ -91,11 +91,7 @@ class _FakeLoom:
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((op, body))
         # The server refuses a field its answer does not have (422).
-        served = {
-            "memory.get": MemoryGetOutput,
-            "memory.bulk_get": MemoryGetOutput,
-            "memory.list": _MemoryListEntry,
-        }.get(op)
+        served = {"memory.bulk_get": MemoryGetOutput, "memory.list": _MemoryListEntry}.get(op)
         if served is not None and not set(body.get("fields") or []) <= set(served.model_fields):
             raise RuntimeError(f"{op} → HTTP 422 VALIDATION_FAILED: fields")
         if op == "memory.keys":
@@ -133,24 +129,6 @@ class _FakeLoom:
                 and s == body["session_id"]
             }
             return {"results": got}
-        if op == "memory.get":
-            # The server's fallback: the same key under any agent when ours is gone.
-            ident = (body["agent"], body["session_id"], body["memory_key"])
-            row = self.rows.get(ident)
-            agent = body["agent"]
-            if row is None:
-                agent, row = next(
-                    ((a, r) for (a, _s, k), r in self.rows.items() if k == body["memory_key"]),
-                    ("", None),
-                )
-            row = row or {}
-            return {
-                "found": bool(row),
-                "agent": agent,
-                "actor": row.get("actor"),
-                "version": row.get("version"),
-                "lock_mode": row.get("lock_mode", ""),
-            }
         if op == "memory.verify":
             return {"found": True}
         if op == "memory.export_evidence":
@@ -691,7 +669,6 @@ def test_prune_deletes_a_copy_whose_key_is_shaped_like_a_chunk_id(
     assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry(key)])) == 0
     assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
     assert ("okf-sync", "-", key) not in loom.rows
-    assert not any(op == "memory.get" for op, _ in loom.calls)
 
 
 def test_prune_keeps_a_copy_bulk_get_answered_with_a_parent(

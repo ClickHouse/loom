@@ -1105,20 +1105,18 @@ async def _prune(
     )
     n: Counter[str] = Counter()
     for session_id, key in gone:
-        ident = {
+        who = {
             "org": org,
             "namespace": args.namespace,
             "agent": args.agent,
             "user_id": args.user_id,
             "session_id": session_id,
-            "memory_key": key,
         }
         try:
             # memory.bulk_get reads the row stored under the key itself, a key shaped like a
             # search chunk's id too (memory.get reads those from the chunk table).
-            read = {k: v for k, v in ident.items() if k != "memory_key"}
             answer = await client.post(
-                "memory.bulk_get", {**read, "memory_keys": [key], "fields": _PRUNE_FIELDS}
+                "memory.bulk_get", {**who, "memory_keys": [key], "fields": _PRUNE_FIELDS}
             )
             got = (answer.get("results") or {}).get(key) or {}
             # Gone, or answered by a chunk's parent fact rather than a row under the key.
@@ -1140,7 +1138,9 @@ async def _prune(
                 print(f"  would delete {key}{where}")
                 n["pruned"] += 1
                 continue
-            res = await client.post("memory.delete_version", {**ident, "version": str(listed)})
+            res = await client.post(
+                "memory.delete_version", {**who, "memory_key": key, "version": str(listed)}
+            )
         except RuntimeError as e:
             n["prune_failed"] += 1
             print(f"  ✗ prune {key}: {e}", file=sys.stderr)
