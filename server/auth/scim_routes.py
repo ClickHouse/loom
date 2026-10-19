@@ -723,7 +723,7 @@ async def delete_user(uid: str) -> Response:
 
 
 # Registered last, so it only answers what no route above matches: what a
-# provider probes (`/Groups`, `/Schemas`), and a known path's other methods.
+# provider probes (`/Schemas`), and a known path's other methods.
 @router.api_route(
     "/{rest:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
