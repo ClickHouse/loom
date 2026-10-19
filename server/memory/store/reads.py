@@ -352,8 +352,9 @@ async def get_many_by_keys(
     Used by memory.bulk_get, and by procedure.match and procedure.list for
     their candidate bodies. Tombstoned rows are filtered out. Empty
     `memory_keys` → empty result, no CH call. `exclude_high_sensitivity`
-    (the procedure reads) leaves 'high' rows out of the locate, so under an
-    open axis the newest other row of the key answers instead.
+    (the procedure, search-body and extraction-prompt reads) leaves 'high'
+    rows out of the locate, so under an open axis the newest other row of
+    the key answers instead.
     """
     if not memory_keys:
         return []
@@ -389,9 +390,6 @@ async def get_many_by_keys(
     if identity.session_id != "*" and not (wildcard_agent and identity.session_id == "-"):
         session_clause = "AND session_id = {sid:String}"
         params["sid"] = identity.session_id
-    session_clause += scope_and(scope, params)
-    if exclude_high_sensitivity:
-        session_clause += " AND sensitivity != 'high'"
     # With any axis open, several identities may hold the same key: the
     # newest row per key answers, the way `get_by_key`'s wildcard read orders
     # (version DESC, created_at DESC) and takes one.
@@ -400,6 +398,9 @@ async def get_many_by_keys(
         if not (agent_clause and user_clause and session_clause)
         else ""
     )
+    session_clause += scope_and(scope, params)
+    if exclude_high_sensitivity:
+        session_clause += " AND sensitivity != 'high'"
     # Locate the heads (key columns only) under
     # FINAL, then fetch the rows by their exact (memory_id, version) without
     # FINAL — 19 MB → about 1 MB for twenty keys on a namespace of 5 KB values.
@@ -478,39 +479,56 @@ _BULK_FETCH_SQL = """
 
 
 async def high_keys(
-    org: str,
-    namespace: str,
-    keys: Sequence[str],
-    *,
-    memory_ids: Sequence[str] = (),
-    ch: _CHClient | None = None,
+    org: str, namespace: str, keys: Sequence[str], *, ch: _CHClient | None = None
 ) -> set[str]:
     """The keys among `keys` with any version labelled 'high', live or deleted, under any
     memory id (a key deleted and written again gets a new one): the raw chunks and digests
-    behind such a row may hold its text. `memory_ids` narrows it to those rows' versions.
-    memory_key follows the identity columns in loom.memory_versions' sort key, so this
-    reads the namespace's memory_key and sensitivity columns."""
+    behind such a row may hold its text. memory_key follows the identity columns in
+    loom.memory_versions' sort key, so this reads the namespace's memory_key and
+    sensitivity columns."""
     if not keys:
         return set()
     ch = ch or _default_client()
-    params: dict[str, Any] = {"org": org, "ns": namespace, "keys": sorted(set(keys))}
-    of_rows = ""
-    if memory_ids:
-        of_rows = "AND toString(memory_id) IN {ids:Array(String)}"
-        params["ids"] = sorted(set(memory_ids))
     rows = await ch.query_all(
-        f"""
+        """
         SELECT DISTINCT memory_key
         FROM loom.memory_versions
-        WHERE org = {{org:String}}
-          AND namespace = {{ns:String}}
-          AND memory_key IN {{keys:Array(String)}}
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND memory_key IN {keys:Array(String)}
           AND sensitivity = 'high'
-          {of_rows}
         """,
-        params=params,
+        params={"org": org, "ns": namespace, "keys": sorted(set(keys))},
     )
     return {str(r["memory_key"]) for r in rows}
+
+
+async def high_memory_ids(
+    org: str,
+    namespace: str,
+    memory_key: str,
+    memory_ids: Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> set[str]:
+    """The ids among `memory_ids` of rows of `memory_key` with any version labelled 'high'.
+    The id filter is on the column itself, so the memory_id_skip index applies."""
+    if not memory_ids:
+        return set()
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT DISTINCT toString(memory_id) AS memory_id
+        FROM loom.memory_versions
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND memory_key = {key:String}
+          AND memory_id IN {ids:Array(UUID)}
+          AND sensitivity = 'high'
+        """,
+        params={"org": org, "ns": namespace, "key": memory_key, "ids": sorted(set(memory_ids))},
+    )
+    return {str(r["memory_id"]) for r in rows}
 
 
 async def find_related_by_entities(

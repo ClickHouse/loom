@@ -142,13 +142,15 @@ async def _fetch_relevant_existing_memories(
         user_id=identity.user_id,
         session_id="*",
     )
-    rows = await memory_repo.get_many_by_keys(any_session, hit_keys, scope=request_scope())
+    rows = await memory_repo.get_many_by_keys(
+        any_session, hit_keys, scope=request_scope(), exclude_high_sensitivity=True
+    )
     by_key = {r.memory_key: r for r in rows}
     out: list[dict[str, str]] = []
     for h in hits:
         r = by_key.get(h.memory_key)
-        # The lookup can answer another session's row of the key; a 'high' one never goes into
-        # the extraction prompt, which is sent to the LLM provider.
+        # A 'high' row never goes into the extraction prompt, which is sent to the LLM
+        # provider; the read leaves them out so another session's high row hides no plain one.
         if r is None or r.sensitivity == "high":
             continue
         # sha over canonical JSON so the caller can hash-dedup extractions.

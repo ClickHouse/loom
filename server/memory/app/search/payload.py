@@ -289,6 +289,7 @@ async def _expand_unit_bodies(
                 ),
                 [str(h.memory_key) for h in group],
                 scope=request_scope(),
+                exclude_high_sensitivity=True,
             )
         except Exception as e:  # noqa: BLE001 — a body read never fails a search
             log.debug("unit bodies read failed for %s/%s: %s", ns, sid, e)
@@ -296,8 +297,8 @@ async def _expand_unit_bodies(
 
     # one read per (namespace, session) the hits span, overlapped
     reads = await asyncio.gather(*(_read(ns, sid, group) for (ns, sid), group in by_scope.items()))
-    # The body read can answer another identity's row of the key; a 'high' one is never a
-    # search body, whoever wrote it.
+    # The read leaves 'high' rows out, so the plain row the search matched answers; the
+    # filter here keeps a 'high' body out whatever the read returns.
     values: dict[tuple[str, str], Any] = {
         (ns, str(r.memory_key)): r.value
         for (ns, _), rows in zip(by_scope, reads, strict=True)

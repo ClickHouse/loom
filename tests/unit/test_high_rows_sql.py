@@ -471,12 +471,33 @@ async def test_a_key_read_without_high_answers_nothing_when_the_head_is_high() -
 
 
 @pytest.mark.asyncio
-async def test_high_keys_narrowed_to_rows_ignores_another_rows_high_version() -> None:
+async def test_high_memory_ids_names_only_the_rows_with_a_high_version() -> None:
     ch = _LocalCH(
         ddl("memory_versions"),
         _version(_A, "k", 1, ""),
-        _version(_B, "k", 1, "high"),
+        _version(_B, "k", 1, ""),
+        _version(_B, "k", 2, "high"),
+        _version(_C, "other", 1, "high"),
     )
-    assert await memory_repo.high_keys("o", "n", ["k"], ch=ch) == {"k"}
-    assert await memory_repo.high_keys("o", "n", ["k"], memory_ids=[_A], ch=ch) == set()
-    assert await memory_repo.high_keys("o", "n", ["k"], memory_ids=[_B], ch=ch) == {"k"}
+    assert await memory_repo.high_memory_ids("o", "n", "k", [_A, _B, _C], ch=ch) == {_B}
+    assert await memory_repo.high_memory_ids("o", "n", "k", [_A], ch=ch) == set()
+
+
+@pytest.mark.asyncio
+async def test_a_key_read_without_high_still_answers_one_row_per_key() -> None:
+    # Agent and user pinned, session open: the high filter must not count as a pinned axis.
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import Identity, get_many_by_keys
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version) VALUES "
+        f"('o', 'n', 'a', 'u', 's1', '{_A}', 'p:deploy', 'procedural', 'old', 'active', '', 1), "
+        f"('o', 'n', 'a', 'u', 's2', '{_B}', 'p:deploy', 'procedural', 'new', 'active', '', 2)",
+    )
+    ident = Identity(org="o", namespace="n", agent="a", user_id="u", session_id="*")
+    rows = await get_many_by_keys(
+        ident, ["p:deploy"], scope=WHOLE_NAMESPACE, ch=ch, exclude_high_sensitivity=True
+    )
+    assert [r.value for r in rows] == ["new"]
