@@ -1214,12 +1214,12 @@ async def test_the_order_is_finer_than_the_second_and_ignores_metadata_writes(
         )
 
     monkeypatch.setattr(queue, "asserted_versions", asserted)
-    order = (await resolver._assertion_order("o", "ns", [row, peer])).order
+    order = (await resolver._assertion_order("o", "ns", [row, peer])).when
     assert order["m2"] < order["m1"]
     # An explicit valid_at earlier than the assertion moves the row back.
     peer.valid_at = datetime(2020, 1, 1)
     row.valid_at = datetime(2019, 1, 1)
-    order = (await resolver._assertion_order("o", "ns", [row, peer])).order
+    order = (await resolver._assertion_order("o", "ns", [row, peer])).when
     assert order["m1"] < order["m2"]
 
 
@@ -1237,16 +1237,16 @@ async def test_the_order_reads_valid_time_in_utc_caps_it_at_the_assertion_and_fa
     monkeypatch.setattr(queue, "asserted_versions", asserted)
     # 01:00 at -07:00 is 08:00 UTC.
     row = _mem("m1", valid_at=datetime(2023, 5, 30, 1, 0, tzinfo=timezone(timedelta(hours=-7))))
-    order = (await resolver._assertion_order("o", "ns", [row])).order
+    order = (await resolver._assertion_order("o", "ns", [row])).when
     assert order["m1"][0] == calendar.timegm(datetime(2023, 5, 30, 8, 0).utctimetuple()) * ns
     # A valid time after the assertion (a fact dated ahead) holds from the assertion.
     row.valid_at = datetime(2030, 1, 1)
-    assert (await resolver._assertion_order("o", "ns", [row])).order["m1"] == (
+    assert (await resolver._assertion_order("o", "ns", [row])).when["m1"] == (
         asserted_at["m1"],
     ) * 2
     # A row the history does not hold: its current version.
     other = _mem("m9", version=42)
-    assert (await resolver._assertion_order("o", "ns", [other])).order["m9"] == (42, 42)
+    assert (await resolver._assertion_order("o", "ns", [other])).when["m9"] == (42, 42)
 
 
 async def test_a_row_with_a_newer_flagged_peer_is_judged_as_itself(row_env: NS) -> None:
