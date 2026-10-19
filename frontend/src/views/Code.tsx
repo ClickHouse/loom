@@ -513,112 +513,90 @@ function RepositoriesHome({
   /** The links a repository holds now, primary first. */
   const linksOf = (g: RepoGroup): string[] => g.primary.bound_trackers ?? [];
 
-  const codeActions: CodeActions = {
-    onOpen: (b) => onOpen(b.namespace),
-    onJoin: (b) => void actions.join(b),
-    onRequest: (b, role) => setRequesting({ repo: b, role: role ?? "viewer" }),
-    onCancel: (b) => void actions.cancel(b),
-    onLeave: (b) => void actions.leave(b),
-    onJoinAll: (bs) => void actions.joinAll(bs),
-    onLeaveAll: (bs) => void actions.leaveAll(bs),
-    onManage: (g) => setManaging(g),
-    onAddBranch: canAdd ? (g) => setAddingBranch(g) : undefined,
-    onRefresh: (b) => void refreshBranch(b),
-    onRemove: (b) => void removeBranch(b),
-    // Every branch the person maintains takes the new access; the QA binding is set on
-    // the primary branch's namespace (the record is per repository)
-    onSetAccess: (g, classification, join_policy, opening) => {
-      void (async () => {
-        const mine = g.branches.filter((b) => b.my_role === "admin");
-        let confirm = "";
-        if (opening) {
-          const typed =
-            window.prompt(
-              `Opening ${g.primary.repo} to every reader of the org. Type the namespace (${g.primary.namespace}) to confirm.`,
-            ) ?? "";
-          if (typed.trim() !== g.primary.namespace) {
-            toast("Not opened — the namespace did not match", "error");
-            return;
-          }
-          confirm = typed.trim();
-        }
-        let done = 0;
-        for (const b of mine) {
-          try {
-            await setCodeRepoAccess(
-              b.org,
-              b.namespace,
-              classification,
-              join_policy,
-              opening ? (b.namespace === confirm ? confirm : b.namespace) : "",
-            );
-            done += 1;
-          } catch (e) {
-            toast(`${b.namespace}: ${humanizeError(e)}`, "error");
-          }
-        }
-        if (done)
-          toast(
-            `${g.primary.repo}: ${classification}, ${join_policy} — ${done} branch${done === 1 ? "" : "es"}; every process follows within a minute`,
-            "ok",
-          );
-        onChanged();
-      })();
-    },
-    onSetSource: (g, tracker_namespaces) => void bindSource(g, tracker_namespaces),
-    trackerSources: tracker.sources,
-    onRegisterSource: tracker.selfService ? (g) => setRegistering({ group: g }) : undefined,
-  };
-  const recordActions: RecordActionProps = {
-    onOpen: (r) => record.open(r.ns),
-    onJoin: (r, confirm) => void record.join(r.ns, confirm),
-    onRequest: (r) => void record.request(r.ns),
-    onCancel: (r) => void record.cancel(r.ns),
-    onLeave: (r) => void record.leave(r.ns),
-    org,
-    onSourcesChanged: () => {
-      void tracker.refresh();
-      onChanged();
-    },
+  // Every branch the person maintains takes the new access; the QA binding is set on
+  // the primary branch's namespace (the record is per repository).
+  const setAccess = async (
+    g: RepoGroup,
+    classification: "standard" | "restricted",
+    join_policy: "open" | "approval" | "closed",
+    opening: boolean,
+  ) => {
+    const mine = g.branches.filter((b) => b.my_role === "admin");
+    let confirm = "";
+    if (opening) {
+      const typed =
+        window.prompt(
+          `Opening ${g.primary.repo} to every reader of the org. Type the namespace (${g.primary.namespace}) to confirm.`,
+        ) ?? "";
+      if (typed.trim() !== g.primary.namespace) {
+        toast("Not opened — the namespace did not match", "error");
+        return;
+      }
+      confirm = typed.trim();
+    }
+    let done = 0;
+    for (const b of mine) {
+      try {
+        await setCodeRepoAccess(
+          b.org,
+          b.namespace,
+          classification,
+          join_policy,
+          opening ? (b.namespace === confirm ? confirm : b.namespace) : "",
+        );
+        done += 1;
+      } catch (e) {
+        toast(`${b.namespace}: ${humanizeError(e)}`, "error");
+      }
+    }
+    if (done)
+      toast(
+        `${g.primary.repo}: ${classification}, ${join_policy} — ${done} branch${done === 1 ? "" : "es"}; every process follows within a minute`,
+        "ok",
+      );
+    onChanged();
   };
   // The cards call the latest render's handlers through objects that keep their identity
   // while the data they carry is unchanged, so a memoised card renders again only when its
   // own fields change.
-  const latest = useRef({ code: codeActions, record: recordActions });
-  latest.current = { code: codeActions, record: recordActions };
-  const cardCode = useMemo<CodeActions>(() => {
-    const c = () => latest.current.code;
-    return {
-      onOpen: (b) => c().onOpen(b),
-      onJoin: (b) => c().onJoin(b),
-      onRequest: (b, role) => c().onRequest(b, role),
-      onCancel: (b) => c().onCancel(b),
-      onLeave: (b) => c().onLeave(b),
-      onJoinAll: (bs) => c().onJoinAll(bs),
-      onLeaveAll: (bs) => c().onLeaveAll(bs),
-      onManage: (g) => c().onManage(g),
-      onAddBranch: canAdd ? (g) => c().onAddBranch?.(g) : undefined,
-      onRefresh: (b) => c().onRefresh?.(b),
-      onRemove: (b) => c().onRemove?.(b),
+  const handlers = useRef({ onOpen, onChanged, actions, record, tracker, refreshBranch, removeBranch, setAccess, bindSource });
+  handlers.current = { onOpen, onChanged, actions, record, tracker, refreshBranch, removeBranch, setAccess, bindSource };
+  const cardCode = useMemo<CodeActions>(
+    () => ({
+      onOpen: (b) => handlers.current.onOpen(b.namespace),
+      onJoin: (b) => void handlers.current.actions.join(b),
+      onRequest: (b, role) => setRequesting({ repo: b, role: role ?? "viewer" }),
+      onCancel: (b) => void handlers.current.actions.cancel(b),
+      onLeave: (b) => void handlers.current.actions.leave(b),
+      onJoinAll: (bs) => void handlers.current.actions.joinAll(bs),
+      onLeaveAll: (bs) => void handlers.current.actions.leaveAll(bs),
+      onManage: setManaging,
+      onAddBranch: canAdd ? setAddingBranch : undefined,
+      onRefresh: (b) => void handlers.current.refreshBranch(b),
+      onRemove: (b) => void handlers.current.removeBranch(b),
       onSetAccess: (g, classification, join_policy, opening) =>
-        c().onSetAccess?.(g, classification, join_policy, opening),
-      onSetSource: (g, namespaces) => c().onSetSource?.(g, namespaces),
+        void handlers.current.setAccess(g, classification, join_policy, opening),
+      onSetSource: (g, namespaces) => void handlers.current.bindSource(g, namespaces),
       trackerSources: tracker.sources,
-      onRegisterSource: tracker.selfService ? (g) => c().onRegisterSource?.(g) : undefined,
-    };
-  }, [canAdd, tracker.sources, tracker.selfService]);
-  const cardRecord = useMemo<RecordActionProps>(() => {
-    const r = () => latest.current.record;
-    return {
-      onOpen: (n) => r().onOpen(n),
-      onJoin: (n, confirm) => r().onJoin(n, confirm),
-      onRequest: (n) => r().onRequest(n),
-      onCancel: (n) => r().onCancel(n),
-      onLeave: (n) => r().onLeave(n),
+      onRegisterSource: tracker.selfService ? (g) => setRegistering({ group: g }) : undefined,
+    }),
+    [canAdd, tracker.sources, tracker.selfService],
+  );
+  const cardRecord = useMemo<RecordActionProps>(
+    () => ({
+      onOpen: (r) => handlers.current.record.open(r.ns),
+      onJoin: (r, confirm) => void handlers.current.record.join(r.ns, confirm),
+      onRequest: (r) => void handlers.current.record.request(r.ns),
+      onCancel: (r) => void handlers.current.record.cancel(r.ns),
+      onLeave: (r) => void handlers.current.record.leave(r.ns),
       org,
-      onSourcesChanged: () => r().onSourcesChanged?.(),
-    };
-  }, [org]);
+      onSourcesChanged: () => {
+        void handlers.current.tracker.refresh();
+        handlers.current.onChanged();
+      },
+    }),
+    [org],
+  );
 
   return (
     <PageContainer>
