@@ -7811,7 +7811,57 @@ async def test_a_value_less_close_dates_each_of_several_values_by_its_own_end(
         await real(*a, ended_at=ended_at, **kw)
 
     monkeypatch.setattr(ep, "close_late_edges", seen)
-    await ep.close_overtaken_values(
-        org, NS, row["id"], ended_at=datetime(2020, 1, 1), entities=["alice", "bob"], ch=ch
-    )
+    await ep.close_overtaken_values(org, NS, row["id"], ended_at=datetime(2020, 1, 1), ch=ch)
     assert len(ends) == 3 and ends == [None, None, None]
+
+
+async def test_a_value_less_close_dates_an_older_high_value_by_when_the_row_left_it(
+    ch, org, monkeypatch
+) -> None:
+    """A high row revised twice while every drop and close was lost: the repair of its
+    value-less closes ends the first value's edge when the second was written, asking
+    that value with its own entities (not the close's), so its end is not the repair's
+    clock."""
+    from server.memory.app import entity_projections as ep
+    from server.memory.app import projections
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    async def nothing(*a: Any, **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(ep, "drop_undeclared_links", nothing)
+    monkeypatch.setattr(projections, "end_edges", nothing)
+    monkeypatch.setattr(ep, "end_edges", nothing)
+    for value in ("Alice met Carol", "Alice met Dan", "Alice met Bob"):
+        await _high_set(
+            org, "s1", "vault", value, sensitivity="high", entities=value.split(" met ")
+        )
+        await asyncio.sleep(2)
+    monkeypatch.undo()
+    row = await ch.query_one(
+        "SELECT toString(memory_id) AS id FROM loom.memory FINAL WHERE org = {org:String}",
+        params={"org": org},
+    )
+    versions = await ch.query_all(
+        "SELECT updated_at FROM loom.memory_versions WHERE org = {org:String} ORDER BY version"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    scope = ep.ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    for ents in (["alice", "carol"], ["alice", "dan"]):
+        close = ep.EdgeClose(row["id"], "vault", "x" * 64, ents, high=True)
+        await ep.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
+    results = await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    assert results and all(r.resolved for r in results), results
+    await _mutations_done(ch, org)
+    edges = await ch.query_all(
+        "SELECT entity_a, entity_b, valid_to FROM loom.entity_edges WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    carol = [e for e in edges if {e["entity_a"], e["entity_b"]} == {"alice", "carol"}]
+    dan_written = versions[1]["updated_at"]
+    assert carol and all(
+        e["valid_to"] is not None and abs((e["valid_to"] - dan_written).total_seconds()) < 1.5
+        for e in carol
+    ), (carol, dan_written)

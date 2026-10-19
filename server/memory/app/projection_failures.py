@@ -657,7 +657,7 @@ async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
     if not content_sha256:
         # A high row's close names no value: each one it no longer holds closes.
         await close_overtaken_values(
-            failure.org, failure.namespace, memory_id, ended_at=ended_at, entities=entities, ch=ch
+            failure.org, failure.namespace, memory_id, ended_at=ended_at, ch=ch
         )
         return ""
     await close_late_edges(
