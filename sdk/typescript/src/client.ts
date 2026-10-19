@@ -46,7 +46,13 @@ export type GroupClient<G extends string> = {
 export interface LoomClientOptions extends Omit<TransportOptions, "baseUrl"> {
   /** The server. Default `LOOM_BASE_URL`, else `http://localhost:7777`. */
   baseUrl?: string;
-  /** The `loom login` session to use, on the server it signed in to; not with `apiKey` or another `baseUrl`. Node only. */
+  /**
+   * The `loom login` session to use, on the server it signed in to; not with
+   * `apiKey` or another `baseUrl`. Needs Node 20.16 or later (22.3 or later
+   * on Node 22): the constructor reads the profile's server synchronously
+   * with `process.getBuiltinModule`, since the client's `baseUrl` is known
+   * from the start.
+   */
   profile?: string;
 }
 

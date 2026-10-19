@@ -24,7 +24,7 @@
 
 import { AuthError, BackendUnavailable, LoomError, NETWORK_ERROR_CODE } from "./errors.js";
 import type { TokenProvider } from "./machine.js";
-import { envVar } from "./runtime.js";
+import { envVar, proc } from "./runtime.js";
 
 export const DEFAULT_SERVER = "http://localhost:7777";
 export const CLIENT_ID = "loom-cli";
@@ -41,9 +41,14 @@ const REFRESH_MARGIN_S = 60;
 // provider first: giving up sooner turns a slow answer into a lost one.
 const REFRESH_TIMEOUT_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 30_000;
-/** A lock directory older than this was left by a process that died holding it. */
-export const LOCK_STALE_MS = 2 * REFRESH_TIMEOUT_MS;
+/** Discovery, the exchange and its one retry together, so a refresh holds the lock for a bounded time. */
+export const REFRESH_DEADLINE_MS = 90_000;
+// The lock both SDKs take. Its holder touches the directory every heartbeat;
+// one silent for the stale age is broken, and so is one whose holder on this
+// machine is no longer running.
 const LOCK_DIR = ".credentials.lock.d";
+export const LOCK_HEARTBEAT_MS = 10_000;
+export const LOCK_STALE_MS = 60_000;
 
 type FetchFn = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -86,17 +91,6 @@ interface NodeModules {
   path: typeof import("node:path");
   crypto: typeof import("node:crypto");
   childProcess: typeof import("node:child_process");
-}
-
-type NodeProcess = {
-  getBuiltinModule?: (id: string) => unknown;
-  platform?: string;
-  pid?: number;
-  stdout?: { isTTY?: boolean };
-};
-
-function proc(): NodeProcess | undefined {
-  return (globalThis as { process?: NodeProcess }).process;
 }
 
 /** The Node built-ins, loaded synchronously where the runtime can, else undefined. */
@@ -161,9 +155,12 @@ function read(n: NodeModules): CredentialsFile {
     return { profiles: {} };
   }
   const profiles = (data as { profiles?: unknown } | null)?.profiles;
-  if (!data || typeof data !== "object" || Array.isArray(data) || !profiles || typeof profiles !== "object")
-    return { profiles: {} };
+  if (!isObject(data) || !isObject(profiles)) return { profiles: {} };
   return data as CredentialsFile;
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /** Replace the file atomically, readable by this user only. */
@@ -228,13 +225,13 @@ function locked<T>(fn: (n: NodeModules) => Promise<T> | T): Promise<T> {
 /**
  * Take `~/.loom/.credentials.lock.d` by creating it (mkdir is atomic on
  * every filesystem the file can live on), with an owner file naming the
- * holder. A directory older than LOCK_STALE_MS is broken. Returns the release.
+ * holder, and touch it every heartbeat while held. A stale lock is broken.
+ * Returns the release, which also runs if the process exits holding it.
  */
 async function takeLockDir(n: NodeModules): Promise<() => void> {
   const dir = loomDir(n);
   n.fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const lock = n.path.join(dir, LOCK_DIR);
-  const ownerFile = n.path.join(lock, "owner");
   const owner = JSON.stringify({ pid: proc()?.pid ?? 0, host: n.os.hostname(), time: Date.now() / 1000 });
   let wait = 10;
   for (;;) {
@@ -244,34 +241,132 @@ async function takeLockDir(n: NodeModules): Promise<() => void> {
     } catch (e) {
       if ((e as { code?: string }).code !== "EEXIST") throw e;
     }
-    if (lockAgeMs(n, lock) > LOCK_STALE_MS) {
-      n.fs.rmSync(lock, { recursive: true, force: true });
-      continue;
-    }
+    const held = ownerOf(n, lock);
+    if (stale(n, lock, held) && breakLock(n, lock, held)) continue;
     await new Promise((resolve) => setTimeout(resolve, wait));
     wait = Math.min(wait * 2, 200);
   }
   try {
-    n.fs.writeFileSync(ownerFile, owner, { mode: 0o600 });
+    n.fs.writeFileSync(n.path.join(lock, "owner"), owner, { mode: 0o600 });
   } catch (e) {
     n.fs.rmSync(lock, { recursive: true, force: true });
     throw e;
   }
-  return () => {
-    // Only our own: a lock broken as stale may be another process's by now.
-    let held = "";
+  const beat = setInterval(() => {
+    if (ownerOf(n, lock) !== owner) return;
     try {
-      held = n.fs.readFileSync(ownerFile, "utf8");
+      const now = new Date();
+      n.fs.utimesSync(lock, now, now);
     } catch {
-      return;
+      /* released meanwhile */
     }
-    if (held === owner) n.fs.rmSync(lock, { recursive: true, force: true });
+  }, LOCK_HEARTBEAT_MS);
+  beat.unref?.();
+  const release = () => {
+    clearInterval(beat);
+    unhook();
+    // Only our own: a lock broken as stale may be another process's by now.
+    if (ownerOf(n, lock) === owner) n.fs.rmSync(lock, { recursive: true, force: true });
+  };
+  const unhook = releaseOnExit(release);
+  return release;
+}
+
+/**
+ * Run `release` if the process ends while holding the lock: at exit, and on
+ * SIGINT or SIGTERM when nothing else listens for it. The signal is then
+ * raised again, so the process ends as it would have; with a listener of
+ * its own, that listener decides, and an exit it makes releases. Returns
+ * the unhook.
+ */
+function releaseOnExit(release: () => void): () => void {
+  const p = proc();
+  const { on, off } = p ?? {};
+  if (!p || typeof on !== "function" || typeof off !== "function") return () => undefined;
+  const signals = ["SIGINT", "SIGTERM"];
+  const onSignal = (signal: string) => {
+    if (p.listenerCount?.(signal) !== 1) return;
+    release(); // which unhooks this listener, restoring the signal's default
+    p.kill?.(p.pid ?? 0, signal);
+  };
+  on.call(p, "exit", release);
+  for (const s of signals) on.call(p, s, onSignal);
+  return () => {
+    off.call(p, "exit", release);
+    for (const s of signals) off.call(p, s, onSignal);
   };
 }
 
-function lockAgeMs(n: NodeModules, lock: string): number {
+/** The owner file's text; empty when there is none (yet). */
+function ownerOf(n: NodeModules, lock: string): string {
   try {
-    return Date.now() - n.fs.statSync(lock).mtimeMs;
+    return n.fs.readFileSync(n.path.join(lock, "owner"), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Whether the holder of `lock` is gone: silent for the stale age (a holder
+ * on another machine, a reused pid, a hung process), or a process of this
+ * machine that is no longer running.
+ */
+function stale(n: NodeModules, lock: string, held: string): boolean {
+  if (ageMs(n, lock) > LOCK_STALE_MS) return true;
+  let owner: unknown;
+  try {
+    owner = JSON.parse(held);
+  } catch {
+    return false; // no owner file yet: its holder is between mkdir and write
+  }
+  if (!isObject(owner) || owner.host !== n.os.hostname()) return false;
+  const pid = owner.pid;
+  return Number.isInteger(pid) && (pid as number) > 0 && !running(pid as number);
+}
+
+function running(pid: number): boolean {
+  try {
+    proc()?.kill?.(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as { code?: string }).code !== "ESRCH"; // EPERM: running, as another user
+  }
+}
+
+/**
+ * Remove the stale lock whose owner file read `held`. A claim directory
+ * inside it lets one waiter at a time do it, and the owner is read again
+ * under the claim, so a lock taken over meanwhile is left alone. The lock is
+ * renamed away before it is removed, so a new holder never shares the path
+ * with a half-removed one. Answers whether to retry at once.
+ */
+function breakLock(n: NodeModules, lock: string, held: string): boolean {
+  const claim = n.path.join(lock, "breaking");
+  try {
+    n.fs.mkdirSync(claim);
+  } catch (e) {
+    if ((e as { code?: string }).code !== "EEXIST") return true; // released meanwhile
+    // Left by a waiter that died mid-break: cleared once as old as a stale lock.
+    if (ageMs(n, claim) > LOCK_STALE_MS) n.fs.rmSync(claim, { recursive: true, force: true });
+    return false;
+  }
+  if (ownerOf(n, lock) !== held) {
+    n.fs.rmSync(claim, { recursive: true, force: true });
+    return false;
+  }
+  const tomb = `${lock}.${hex(n, 6)}.stale`;
+  try {
+    n.fs.renameSync(lock, tomb);
+  } catch {
+    return true;
+  }
+  n.fs.rmSync(tomb, { recursive: true, force: true });
+  return true;
+}
+
+function ageMs(n: NodeModules, path: string): number {
+  try {
+    return Date.now() - n.fs.statSync(path).mtimeMs;
   } catch {
     return 0; // released meanwhile: take it on the next try
   }
@@ -384,8 +479,13 @@ function failed(r: Answer, doing: string): LoomError {
 type Endpoints = Record<"device_authorization_endpoint" | "token_endpoint" | "revocation_endpoint", string>;
 
 /** The server's sign-in endpoints, each checked to be on the server itself. */
-async function endpoints(f: FetchFn | undefined, server: string, signedIn = false): Promise<Endpoints> {
-  const r = await exchange(f, `${server}/.well-known/oauth-authorization-server`, {});
+async function endpoints(
+  f: FetchFn | undefined,
+  server: string,
+  signedIn = false,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<Endpoints> {
+  const r = await exchange(f, `${server}/.well-known/oauth-authorization-server`, {}, timeoutMs);
   if (r.status !== 200 && r.status !== 404) throw failed(r, "reading the server's sign-in endpoints");
   const meta = r.status === 200 ? json(r) : {};
   if (!("device_authorization_endpoint" in meta)) {
@@ -450,15 +550,22 @@ export async function login(server?: string, opts: LoginOptions = {}): Promise<W
 
 /** The platform's opener, detached; a machine with none just shows the URL. */
 function openBrowser(n: NodeModules, url: string): void {
-  if (!/^https?:\/\//i.test(url)) return;
+  let href: string;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return;
+    href = u.href;
+  } catch {
+    return;
+  }
   const platform = proc()?.platform;
   // rundll32 takes the URL as one argument, where `start` would hand it to cmd's parser.
   const [cmd, args] =
     platform === "darwin"
-      ? ["open", [url]]
+      ? ["open", [href]]
       : platform === "win32"
-        ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
-        : ["xdg-open", [url]];
+        ? ["rundll32", ["url.dll,FileProtocolHandler", href]]
+        : ["xdg-open", [href]];
   try {
     const child = n.childProcess.spawn(cmd, args, { detached: true, stdio: "ignore" });
     child.on("error", () => undefined);
@@ -535,16 +642,26 @@ async function refresh(
   if (usable(entry, refused)) return entry; // another process refreshed it while we waited
   if (!entry.refresh_token) throw new AuthError(`the session for profile '${profile}' ended; run \`loom login\``);
   const form = { grant_type: "refresh_token", refresh_token: entry.refresh_token, client_id: CLIENT_ID };
-  const endpoint = (await endpoints(f, entry.server, true)).token_endpoint;
+  const deadline = performance.now() + REFRESH_DEADLINE_MS;
+  // At most `usual`, and no more than the deadline leaves; nothing left, nothing is sent.
+  const left = (usual: number): number => {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0)
+      throw new BackendUnavailable(
+        `refreshing the session at ${entry.server} took over ${REFRESH_DEADLINE_MS / 1000} s; retry`,
+      );
+    return Math.min(usual, remaining);
+  };
+  const endpoint = (await endpoints(f, entry.server, true, left(REQUEST_TIMEOUT_MS))).token_endpoint;
   let r: Answer;
   try {
-    r = await exchange(f, endpoint, { form }, REFRESH_TIMEOUT_MS);
+    r = await exchange(f, endpoint, { form }, left(REFRESH_TIMEOUT_MS));
   } catch (e) {
     // Nothing reached the server, so nothing was spent: try once more. (A
     // lost answer cannot be asked again: the server spent the token, and
     // presenting it twice ends the session.)
     if (!neverConnected(e)) throw e;
-    r = await exchange(f, endpoint, { form }, REFRESH_TIMEOUT_MS);
+    r = await exchange(f, endpoint, { form }, left(REFRESH_TIMEOUT_MS));
   }
   const marked = Boolean(entry.marked);
   if (marked && r.status >= 400 && r.status < 500 && !r.headers.has(SESSIONS_HEADER))
@@ -648,7 +765,10 @@ export async function whoami(profile?: string, opts: CredentialOptions = {}): Pr
  */
 export function signedInServer(profile: string): string | undefined {
   const n = nodeNow();
-  if (!n) throw new LoomError("the `profile` option needs Node 20.16 or later (process.getBuiltinModule)");
+  if (!n)
+    throw new LoomError(
+      "the `profile` option needs process.getBuiltinModule (Node 20.16 or later, 22.3 or later on Node 22)",
+    );
   return read(n).profiles[profile]?.server;
 }
 

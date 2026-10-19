@@ -58,10 +58,15 @@ _REFRESH_MARGIN_S = 60
 # Longer than a refresh can take on the server, which asks the identity
 # provider first: giving up sooner turns a slow answer into a lost one.
 _REFRESH_TIMEOUT_S = 60.0
-# The lock both SDKs take: Node has no flock. A directory older than the
-# stale age was left by a process that died holding it.
+# Discovery, the exchange and its one retry together, so a refresh holds the
+# lock for a bounded time.
+_REFRESH_DEADLINE_S = 90.0
+# The lock both SDKs take: Node has no flock. Its holder touches the
+# directory every heartbeat; one silent for the stale age is broken, and so
+# is one whose holder on this machine is no longer running.
 _LOCK_DIR = ".credentials.lock.d"
-_LOCK_STALE_S = 2 * _REFRESH_TIMEOUT_S
+_LOCK_HEARTBEAT_S = 10.0
+_LOCK_STALE_S = 60.0
 
 
 def _path() -> Path:
@@ -140,8 +145,8 @@ def _lock_dir(lock: Path) -> Iterator[None]:
             break
         except FileExistsError:
             pass
-        if _lock_age_s(lock) > _LOCK_STALE_S:
-            shutil.rmtree(lock, ignore_errors=True)
+        held = _owner(lock)
+        if _stale(lock, held) and _break(lock, held):
             continue
         time.sleep(wait)
         wait = min(wait * 2, 0.2)
@@ -150,21 +155,96 @@ def _lock_dir(lock: Path) -> Iterator[None]:
     except BaseException:
         shutil.rmtree(lock, ignore_errors=True)
         raise
+    stop = threading.Event()
+    beat = threading.Thread(target=_heartbeat, args=(lock, owner, stop), daemon=True)
+    beat.start()
     try:
         yield
     finally:
+        stop.set()
+        beat.join()
         # Only our own: a lock broken as stale may be another process's by now.
-        try:
-            held = (lock / "owner").read_text(encoding="utf-8")
-        except OSError:
-            held = ""
-        if held == owner:
+        if _owner(lock) == owner:
             shutil.rmtree(lock, ignore_errors=True)
 
 
-def _lock_age_s(lock: Path) -> float:
+def _owner(lock: Path) -> str:
+    """The owner file's text; empty when there is none (yet)."""
     try:
-        return time.time() - lock.stat().st_mtime
+        return (lock / "owner").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _heartbeat(lock: Path, owner: str, stop: threading.Event) -> None:
+    """Touch the lock while this process holds it, so waiters see it alive."""
+    while not stop.wait(_LOCK_HEARTBEAT_S):
+        if _owner(lock) == owner:
+            with contextlib.suppress(OSError):
+                os.utime(lock)
+
+
+def _stale(lock: Path, held: str) -> bool:
+    """Whether the holder of `lock` is gone: silent for the stale age (a
+    holder on another machine, a reused pid, a hung process), or a process of
+    this machine that is no longer running."""
+    if _age_s(lock) > _LOCK_STALE_S:
+        return True
+    try:
+        owner = json.loads(held)
+    except ValueError:
+        return False  # no owner file yet: its holder is between mkdir and write
+    if not isinstance(owner, dict) or owner.get("host") != socket.gethostname():
+        return False
+    pid = owner.get("pid")
+    return isinstance(pid, int) and not isinstance(pid, bool) and pid > 0 and not _running(pid)
+
+
+def _running(pid: int) -> bool:
+    if sys.platform == "win32":
+        return True  # os.kill would end the process there: the stale age decides
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True  # EPERM: running, as another user
+    return True
+
+
+def _break(lock: Path, held: str) -> bool:
+    """Remove the stale lock whose owner file read `held`. A claim directory
+    inside it lets one waiter at a time do it, and the owner is read again
+    under the claim, so a lock taken over meanwhile is left alone. The lock
+    is renamed away before it is removed, so a new holder never shares the
+    path with a half-removed one. Answers whether to retry at once."""
+    claim = lock / "breaking"
+    try:
+        claim.mkdir()
+    except FileExistsError:
+        # Left by a waiter that died mid-break: cleared once as old as a stale lock.
+        if _age_s(claim) > _LOCK_STALE_S:
+            with contextlib.suppress(OSError):
+                claim.rmdir()
+        return False
+    except OSError:
+        return True  # released meanwhile
+    if _owner(lock) != held:
+        with contextlib.suppress(OSError):
+            claim.rmdir()
+        return False
+    tomb = lock.with_name(f"{lock.name}.{secrets.token_hex(6)}.stale")
+    try:
+        os.rename(lock, tomb)
+    except OSError:
+        return True
+    shutil.rmtree(tomb, ignore_errors=True)
+    return True
+
+
+def _age_s(path: Path) -> float:
+    try:
+        return time.time() - path.stat().st_mtime
     except FileNotFoundError:
         return 0.0  # released meanwhile: take it on the next try
 
@@ -420,15 +500,28 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
         "refresh_token": entry["refresh_token"],
         "client_id": CLIENT_ID,
     }
+    deadline = time.monotonic() + _REFRESH_DEADLINE_S
+
+    def left() -> float:
+        # What the deadline leaves, for each phase of the next request (httpx
+        # bounds phases, not a whole request); nothing left, nothing is sent.
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise BackendUnavailable(
+                f"refreshing the session at {entry['server']} took over "
+                f"{_REFRESH_DEADLINE_S:.0f} s; retry"
+            )
+        return min(_REFRESH_TIMEOUT_S, remaining)
+
     with _server(entry["server"]) as client:
         endpoint = _endpoints(client, signed_in=True)["token_endpoint"]
         try:
-            r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
+            r = client.post(endpoint, data=form, timeout=left())
         except (httpx.ConnectError, httpx.ConnectTimeout):
             # Nothing reached the server, so nothing was spent: try once more.
             # (A lost answer cannot be asked again: the server spent the token,
             # and presenting it twice ends the session.)
-            r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
+            r = client.post(endpoint, data=form, timeout=left())
     marked = bool(entry.get("marked"))
     if marked and 400 <= r.status_code < 500 and _SESSIONS_HEADER not in r.headers:
         raise BackendUnavailable(

@@ -205,13 +205,13 @@ console.log(await whoami());
 await logout();
 ```
 
-`login(server?, { profile, openBrowser, echo })` runs the OAuth device authorization grant (RFC 8628): it prints a URL and a short code, opens the page when stdout is a terminal, and resolves once you approve with your password or single sign-on. The access and refresh tokens go to `~/.loom/credentials` (mode 0600), the file `loom login` and the Python SDK's `loom.login()` use, so a session made by any of them serves all three. A client refreshes the hour-long access token a minute before it expires and once more on a 401, and sends a session only to the server it signed in to. `profile: "staging"` (or `LOOM_PROFILE=staging`) keeps a second server's session beside the first, and `new LoomClient({ profile: "staging" })` uses it. `logout(profile?)` revokes the session on the server and forgets it here; `accessToken(profile?)` returns a live token for requests of your own.
+`login(server?, { profile, openBrowser, echo })` runs the OAuth device authorization grant (RFC 8628): it prints a URL and a short code, opens the page when stdout is a terminal, and resolves once you approve with your password or single sign-on. The access and refresh tokens go to `~/.loom/credentials` (mode 0600), the file `loom login` and the Python SDK's `loom.login()` use, so a session made by any of them serves all three. A client refreshes the hour-long access token a minute before it expires and once more on a 401, and sends a session only to the server it signed in to. `profile: "staging"` (or `LOOM_PROFILE=staging`) keeps a second server's session beside the first, and `new LoomClient({ profile: "staging" })` uses it (Node 20.16 or later, or 22.3 or later on Node 22: the constructor reads the profile's server synchronously). `logout(profile?)` revokes the session on the server and forgets it here; `accessToken(profile?)` returns a live token for requests of your own.
 
-A refresh holds the lock directory `~/.loom/.credentials.lock.d`, which the Python SDK takes too, and re-reads the file first, so two processes never spend the same refresh token. Signing in is Node-only.
+A refresh holds the lock directory `~/.loom/.credentials.lock.d`, which the Python SDK takes too, and re-reads the file first, so two processes never spend the same refresh token. Its holder touches it every 10 s; a lock whose holder on this machine stopped running, or that went 60 s untouched, is broken. Signing in is Node-only.
 
 ### The key
 
-`apiKey` (or `LOOM_API_KEY`) is held in a private field: `JSON.stringify(loom)` and `util.inspect(loom)` show `apiKey: "…1234"`, never the token. A blank or whitespace value is no credential (`transport.hasCredential`), so an exported-but-empty variable does not turn into `Authorization: Bearer ` and a puzzling 401.
+`apiKey` (or `LOOM_API_KEY`) is held in a private field: `JSON.stringify(loom)` and `util.inspect(loom)` show `apiKey: "…1234"`, never the token. A blank or whitespace value is no key, so an exported-but-empty variable does not turn into `Authorization: Bearer ` and a puzzling 401: the client goes on down the list above, and with nothing found the request carries no `Authorization` header.
 
 ### Bots and CI jobs
 

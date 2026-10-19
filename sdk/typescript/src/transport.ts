@@ -202,7 +202,7 @@ export class Transport {
     return this.rate.get(op);
   }
 
-  /** Whether a key or a token provider is set; a provider may find nothing to send (no stored login, no token file). */
+  /** Whether a key or a token provider is set; a provider may find nothing to send (no stored login, no token file), and then no Authorization header goes out. */
   get hasCredential(): boolean {
     return this.#apiKey !== undefined || this.#provider !== undefined;
   }
@@ -367,8 +367,11 @@ export class Transport {
       });
     throwIfAborted(ctx);
     // The caller may give up on its wait, or time out; a renewal other calls share goes on.
-    ctx.bearer = await untilTimeoutOrAbort(provider.token(ctx.refused), timeoutMs, ctx);
+    const refused = ctx.refused;
+    ctx.bearer = await untilTimeoutOrAbort(provider.token(refused), timeoutMs, ctx);
     ctx.refused = undefined;
+    // No fresh token to send (a token file, a key that cannot renew): the 401 stands.
+    if (refused !== undefined && ctx.bearer === refused && ctx.refusal) throw ctx.refusal;
     // A provider with nothing to send (no stored login, no token file) sends no header.
     if (ctx.bearer) ctx.headers.Authorization = `Bearer ${ctx.bearer}`;
     else delete ctx.headers.Authorization;
@@ -481,6 +484,7 @@ export class Transport {
         ctx.reauthed = true;
         ctx.resending = true;
         ctx.refused = ctx.bearer;
+        ctx.refusal = errorFromResponse(op, res.status, parseBody(text), res.headers.get("X-Request-Id") ?? requestId);
         this.log.info(`${op} 401; retrying once with a fresh token (rid=${requestId})`);
         attempt--;
         continue;
@@ -522,12 +526,7 @@ export class Transport {
           hintCode,
         };
       }
-      let body: unknown = text;
-      try {
-        body = text ? JSON.parse(text) : {};
-      } catch {
-        /* keep text */
-      }
+      const body = parseBody(text);
       const retryAfterS = res.status === 429 ? retryAfterFrom(res.headers, this.now()) : undefined;
       const err = errorFromResponse(op, res.status, body, echoed, retryAfterS);
       if (err instanceof RateLimited) throw err;
@@ -587,6 +586,17 @@ interface AttemptContext {
   resending: boolean;
   /** The token the server just refused, which the next attempt replaces. */
   refused?: string;
+  /** The error for that 401, raised when the provider has no other token. */
+  refusal?: LoomError;
+}
+
+/** An error answer's JSON, else its text. */
+function parseBody(text: string): unknown {
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return text;
+  }
 }
 
 function resolveLogger(sink: Logger | undefined, level: LogLevel | undefined): Logger {

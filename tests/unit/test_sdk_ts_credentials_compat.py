@@ -8,8 +8,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
+import sys
 import textwrap
 import time
 from pathlib import Path
@@ -166,9 +168,19 @@ def test_python_waits_for_a_refresh_typescript_holds_the_lock_for(home, tmp_path
 def test_typescript_waits_for_a_lock_python_holds(home, tmp_path) -> None:
     tokens = {"access_token": "py-a1", "refresh_token": "py-r1", "expires_in": 30}
     credentials._save("work", SERVER, tokens, session="s1", marked=True)
-    argv = _script(tmp_path, 'console.log(await creds.accessToken("work", { fetch }));')
+    argv = _script(
+        tmp_path,
+        """
+        console.log("asking");
+        const t0 = performance.now();
+        const token = await creds.accessToken("work", { fetch });
+        console.log(JSON.stringify({ token, waited: performance.now() - t0 }));
+        """,
+    )
     with credentials._locked():
         node = subprocess.Popen(argv, env=_env(home), stdout=subprocess.PIPE, text=True)
+        assert node.stdout is not None
+        assert node.stdout.readline().strip() == "asking"  # Node is at the lock now
         time.sleep(0.5)
         assert node.poll() is None  # still waiting
         # What a Python refresh under this lock stored: Node must read it, not refresh.
@@ -176,4 +188,71 @@ def test_typescript_waits_for_a_lock_python_holds(home, tmp_path) -> None:
         credentials._save("work", SERVER, fresh, session="s1", marked=True)
     out, _ = node.communicate(timeout=60)
     assert node.returncode == 0
-    assert out.strip() == "py-a2"
+    answer = json.loads(out.strip().splitlines()[-1])
+    assert answer["token"] == "py-a2"
+    assert answer["waited"] >= 400
+
+
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
+def test_typescript_interrupted_mid_refresh_releases_the_lock(home, tmp_path, sig) -> None:
+    """Ended by a signal it has no handler for, Node still ends by that
+    signal, and the lock it held is gone."""
+    tokens = {"access_token": "py-a1", "refresh_token": "py-r1", "expires_in": 30}
+    credentials._save("work", SERVER, tokens, session="s1", marked=True)
+    argv = _script(tmp_path, 'console.log(await creds.accessToken("work", { fetch }));')
+    lock = home / ".loom" / ".credentials.lock.d"
+    with subprocess.Popen(
+        argv, env=_env(home, HOLD_MS="30000"), stdout=subprocess.PIPE, text=True
+    ) as node:
+        assert node.stdout is not None
+        assert node.stdout.readline().strip() == "refreshing"
+        assert lock.exists()
+        node.send_signal(sig)
+        assert node.wait(timeout=30) == -sig
+    assert not lock.exists()
+
+
+def test_typescript_breaks_at_once_a_lock_a_killed_python_process_held(home, tmp_path) -> None:
+    tokens = {"access_token": "py-a1", "refresh_token": "py-r1", "expires_in": 30}
+    credentials._save("work", SERVER, tokens, session="s1", marked=True)
+    hold = textwrap.dedent(
+        """
+        from loom import credentials
+        held = credentials._locked()
+        held.__enter__()
+        print("held", flush=True)
+        input()
+        """
+    )
+    env = _env(home, PYTHONPATH=str(Path(credentials.__file__).parents[1]))
+    with subprocess.Popen(
+        [sys.executable, "-c", hold],
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    ) as py:
+        assert py.stdout is not None
+        assert py.stdout.readline().strip() == "held"
+        py.kill()
+        py.wait(timeout=30)
+    assert (home / ".loom" / ".credentials.lock.d").exists()  # left behind
+    t0 = time.monotonic()
+    out = _run(_script(tmp_path, 'console.log(await creds.accessToken("work", { fetch }));'), home)
+    assert out == "node-a1"
+    assert time.monotonic() - t0 < 20  # not a wait for the stale age
+
+
+def test_both_sdks_time_the_lock_alike(home, tmp_path) -> None:
+    out = _run(
+        _script(
+            tmp_path,
+            """
+            const { LOCK_HEARTBEAT_MS, LOCK_STALE_MS, REFRESH_DEADLINE_MS } = creds;
+            console.log(JSON.stringify([LOCK_HEARTBEAT_MS, LOCK_STALE_MS, REFRESH_DEADLINE_MS]));
+            """,
+        ),
+        home,
+    )
+    py = [credentials._LOCK_HEARTBEAT_S, credentials._LOCK_STALE_S, credentials._REFRESH_DEADLINE_S]
+    assert json.loads(out) == [s * 1000 for s in py]

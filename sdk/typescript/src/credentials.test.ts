@@ -1,6 +1,7 @@
-import { mkdirSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import childProcess, { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readEnv } from "./client.js";
@@ -8,6 +9,8 @@ import {
   accessToken,
   type CredentialOptions,
   defaultProfile,
+  LOCK_HEARTBEAT_MS,
+  LOCK_STALE_MS,
   LocalCredential,
   type LoginOptions,
   login,
@@ -248,6 +251,13 @@ describe("login", () => {
     await expect(done).rejects.toThrow(/has no sign-in/);
   });
 
+  it("takes a credentials file whose profiles are not an object as empty", async () => {
+    mkdirSync(join(home, ".loom"), { recursive: true });
+    writeFileSync(credentialsPath(), JSON.stringify({ profiles: [] }));
+    await login(SERVER, { fetch: fakeServer().fetch, echo: () => undefined, sleep: noSleep });
+    expect(profiles().default).toMatchObject({ access_token: "a1" });
+  });
+
   it("ends the session of the profile it replaces", async () => {
     const srv = fakeServer();
     store("default", { refresh_token: "old-refresh" });
@@ -255,6 +265,75 @@ describe("login", () => {
     const revoke = srv.sent.find((c) => c.path === "/oauth/revoke");
     expect(revoke?.form.get("token")).toBe("old-refresh");
     expect(profiles().default.session).not.toBe("s0");
+  });
+});
+
+describe("the browser opener", () => {
+  let spawned: Array<[string, string[]]> = [];
+  const ttyBefore = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+  const platformBefore = Object.getOwnPropertyDescriptor(process, "platform") as PropertyDescriptor;
+
+  function tty(on: boolean): void {
+    Object.defineProperty(process.stdout, "isTTY", { value: on, configurable: true });
+  }
+
+  function platform(name: string): void {
+    Object.defineProperty(process, "platform", { value: name, configurable: true });
+  }
+
+  beforeEach(() => {
+    spawned = [];
+    vi.spyOn(childProcess, "spawn").mockImplementation(((cmd: string, args: string[]) => {
+      spawned.push([cmd, args]);
+      return { on: () => undefined, unref: () => undefined };
+    }) as unknown as typeof childProcess.spawn);
+    tty(true);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (ttyBefore) Object.defineProperty(process.stdout, "isTTY", ttyBefore);
+    else delete (process.stdout as { isTTY?: boolean }).isTTY;
+    Object.defineProperty(process, "platform", platformBefore);
+  });
+
+  /** Sign in with the approval page at `page`. */
+  async function signIn(page: string, opts: Partial<LoginOptions> = {}): Promise<void> {
+    const srv = fakeServer();
+    srv.queue("/oauth/device_authorization", {
+      status: 200,
+      body: {
+        device_code: "dc",
+        user_code: "BCDF-GHJK",
+        verification_uri: `${SERVER}/oauth/device`,
+        verification_uri_complete: page,
+        expires_in: 600,
+        interval: 0,
+      },
+    });
+    await login(SERVER, { fetch: srv.fetch, echo: () => undefined, sleep: noSleep, ...opts });
+  }
+
+  it.each([
+    ["darwin", "open", []],
+    ["win32", "rundll32", ["url.dll,FileProtocolHandler"]],
+    ["linux", "xdg-open", []],
+  ])("opens the page on %s with the platform's opener, the URL normalised", async (os, cmd, lead) => {
+    platform(os);
+    await signIn("HTTPS://loom.example/oauth/device?user_code=BCDF GHJK");
+    expect(spawned).toEqual([[cmd, [...lead, "https://loom.example/oauth/device?user_code=BCDF%20GHJK"]]]);
+  });
+
+  it("opens nothing but an http(s) URL", async () => {
+    for (const page of ["file:///etc/passwd", "javascript:alert(1)", "not a url"]) await signIn(page);
+    expect(spawned).toEqual([]);
+  });
+
+  it("opens nothing without a terminal or with openBrowser: false", async () => {
+    tty(false);
+    await signIn(`${SERVER}/oauth/device`);
+    tty(true);
+    await signIn(`${SERVER}/oauth/device`, { openBrowser: false });
+    expect(spawned).toEqual([]);
   });
 });
 
@@ -377,14 +456,126 @@ describe("the credentials lock", () => {
     expect(srv.sent).toHaveLength(0);
   });
 
-  it("breaks a lock directory older than two refresh timeouts", async () => {
+  /** A lock directory another process holds, as its owner file names it. */
+  function heldBy(pid: number, host: string, ageMs = 0): void {
+    mkdirSync(lockDir(), { recursive: true });
+    writeFileSync(join(lockDir(), "owner"), JSON.stringify({ pid, host, time: Date.now() / 1000 }));
+    const at = new Date(Date.now() - ageMs);
+    utimesSync(lockDir(), at, at);
+  }
+
+  const deadPid = () => spawnSync(process.execPath, ["-e", ""]).pid;
+  const leftovers = () => readdirSync(join(home, ".loom")).filter((f) => f.endsWith(".stale"));
+
+  it("breaks a lock whose holder on another machine went silent for the stale age", async () => {
     const srv = fakeServer();
     store("default", { expires_at: now() - 1 });
-    mkdirSync(lockDir());
-    const old = new Date(Date.now() - 121_000);
-    utimesSync(lockDir(), old, old);
+    heldBy(1, "another-machine", LOCK_STALE_MS + 1000);
     expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
     expect(() => statSync(lockDir())).toThrow();
+    expect(leftovers()).toEqual([]);
+  });
+
+  it("breaks at once a lock whose holder on this machine is no longer running", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    heldBy(deadPid(), hostname());
+    const t0 = performance.now();
+    expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
+    expect(performance.now() - t0).toBeLessThan(2000);
+  });
+
+  it.each([
+    ["on this machine, running", () => process.ppid, hostname()],
+    ["on another machine, heard from recently", deadPid, "another-machine"],
+  ])("waits for a holder %s", async (_, pid, host) => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    heldBy(pid(), host);
+    const done = accessToken(undefined, { fetch: srv.fetch });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(srv.sent).toHaveLength(0);
+    await rm(lockDir(), { recursive: true });
+    expect(await done).toBe("a1");
+  });
+
+  it("leaves a stale lock another waiter is breaking", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    heldBy(1, "another-machine");
+    mkdirSync(join(lockDir(), "breaking"));
+    const old = new Date(Date.now() - LOCK_STALE_MS - 1000);
+    utimesSync(lockDir(), old, old);
+    const done = accessToken(undefined, { fetch: srv.fetch });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(srv.sent).toHaveLength(0);
+    await rm(join(lockDir(), "breaking"), { recursive: true }); // that waiter gave up
+    utimesSync(lockDir(), old, old);
+    expect(await done).toBe("a1");
+  });
+
+  it("touches the lock every heartbeat while it holds it", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    let touched = Number.NaN;
+    srv.onRefresh = async () => {
+      const old = new Date(Date.now() - 3_600_000);
+      utimesSync(lockDir(), old, old);
+      vi.advanceTimersByTime(LOCK_HEARTBEAT_MS);
+      touched = Date.now() - statSync(lockDir()).mtimeMs;
+    };
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      await accessToken(undefined, { fetch: srv.fetch });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(touched).toBeLessThan(5000);
+  });
+
+  it("releases the lock when the process exits holding it, and unhooks after", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    const before = ["exit", "SIGINT", "SIGTERM"].map((e) => process.listenerCount(e));
+    let during: number[] = [];
+    srv.onRefresh = async () => {
+      during = ["exit", "SIGINT", "SIGTERM"].map((e) => process.listenerCount(e));
+      const exit = process.listeners("exit").at(-1) as () => void;
+      exit();
+      expect(() => statSync(lockDir())).toThrow();
+    };
+    expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
+    expect(during).toEqual(before.map((c) => c + 1));
+    expect(["exit", "SIGINT", "SIGTERM"].map((e) => process.listenerCount(e))).toEqual(before);
+  });
+
+  it("leaves a lock another process took over while it held it", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    srv.onRefresh = async () => {
+      writeFileSync(join(lockDir(), "owner"), '{"pid": 1}'); // broken as stale and taken meanwhile
+    };
+    await accessToken(undefined, { fetch: srv.fetch });
+    expect(readFileSync(join(lockDir(), "owner"), "utf8")).toBe('{"pid": 1}');
+  });
+
+  it("ends a refresh within its deadline: a connect failure past it is not retried", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    let skew = 0;
+    const real = performance.now.bind(performance);
+    vi.spyOn(performance, "now").mockImplementation(() => real() + skew);
+    srv.queue("/oauth/token", Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }));
+    const fetch = async (url: string, init: RequestInit) => {
+      if (new URL(url).pathname === "/oauth/token") skew += 90_000;
+      return srv.fetch(url, init);
+    };
+    try {
+      await expect(accessToken(undefined, { fetch })).rejects.toThrow(/took over 90 s; retry/);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(srv.sent.filter((c) => c.path === "/oauth/token")).toHaveLength(1);
   });
 
   it("names its holder in the owner file while held", async () => {
@@ -540,6 +731,15 @@ describe("the credential a client picks", () => {
     await expect(t.post("memory.get", {})).rejects.toThrow(AuthError);
     expect(srv.sent.map((c) => c.auth)).toEqual([null]);
     expect(t.apiKeyHint).toBe("none");
+  });
+
+  it("raises a 401 on the ~/.loom/token credential instead of resending the same token", async () => {
+    writeToken("file-token");
+    const srv = fakeServer();
+    srv.valid = "another";
+    const t = new Transport({ ...readEnv({ baseUrl: SERVER, fetch: srv.fetch }), fetch: srv.fetch });
+    await expect(t.post("memory.get", {})).rejects.toMatchObject({ status: 401 });
+    expect(srv.sent.map((c) => c.auth)).toEqual(["Bearer file-token"]);
   });
 
   it("never looks for a stored login or token file in a browser", () => {

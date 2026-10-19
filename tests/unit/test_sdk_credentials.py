@@ -596,16 +596,108 @@ def test_the_credentials_lock_waits_while_another_process_holds_the_directory(_h
     assert waited >= 0.25
 
 
-def test_a_stale_lock_directory_is_broken(_home) -> None:
-    lock = _lock_dir(_home)
-    lock.parent.mkdir(parents=True)
-    lock.mkdir()
+def _held_by(home: Any, pid: int, host: str) -> Any:
+    lock = _lock_dir(home)
+    lock.mkdir(parents=True)
+    (lock / "owner").write_text(json.dumps({"pid": pid, "host": host, "time": time.time()}))
+    return lock
+
+
+def _dead_pid() -> int:
+    import subprocess
+    import sys
+
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    return child.pid
+
+
+def test_a_lock_whose_holder_on_another_machine_went_silent_is_broken(_home) -> None:
+    lock = _held_by(_home, 1, "another-machine")
     old = time.time() - credentials._LOCK_STALE_S - 1
     os.utime(lock, (old, old))
+    t0 = time.monotonic()
     with credentials._locked():
-        assert lock.exists()
+        assert json.loads((lock / "owner").read_text())["pid"] == os.getpid()
+    assert time.monotonic() - t0 < 2
     assert not lock.exists()
-    assert credentials._LOCK_STALE_S == 2 * credentials._REFRESH_TIMEOUT_S
+    assert not list(lock.parent.glob("*.stale"))  # the renamed lock is removed too
+
+
+def test_a_lock_whose_holder_on_this_machine_died_is_broken_at_once(_home) -> None:
+    import socket
+
+    lock = _held_by(_home, _dead_pid(), socket.gethostname())  # its heartbeat just now
+    t0 = time.monotonic()
+    with credentials._locked():
+        assert json.loads((lock / "owner").read_text())["pid"] == os.getpid()
+    assert time.monotonic() - t0 < 2
+
+
+@pytest.mark.parametrize("where", ["this machine", "another machine"])
+def test_a_lock_with_a_recent_heartbeat_and_a_live_holder_is_waited_for(_home, where) -> None:
+    import socket
+    import threading
+
+    # pid 1 runs (as another user: EPERM counts as running); a holder on
+    # another machine cannot be asked, so its heartbeat decides.
+    host = socket.gethostname() if where == "this machine" else "another-machine"
+    lock = _held_by(_home, 1 if where == "this machine" else _dead_pid(), host)
+    threading.Timer(0.3, lambda: credentials.shutil.rmtree(lock)).start()
+    t0 = time.monotonic()
+    with credentials._locked():
+        waited = time.monotonic() - t0
+    assert waited >= 0.25
+
+
+def test_the_holder_touches_the_lock_while_it_holds_it(_home, monkeypatch) -> None:
+    monkeypatch.setattr(credentials, "_LOCK_HEARTBEAT_S", 0.05)
+    lock = _lock_dir(_home)
+    with credentials._locked():
+        old = time.time() - 3600
+        os.utime(lock, (old, old))
+        time.sleep(0.3)
+        assert time.time() - lock.stat().st_mtime < 5
+
+
+def test_breaking_leaves_a_lock_that_changed_hands_or_another_waiter_is_breaking(_home) -> None:
+    lock = _held_by(_home, 1, "another-machine")
+    held = (lock / "owner").read_text()
+    # Taken over between the read and the break: left alone, claim withdrawn.
+    assert credentials._break(lock, '{"pid": 2}') is False
+    assert lock.exists() and not (lock / "breaking").exists()
+    # Another waiter is breaking it: this one waits.
+    (lock / "breaking").mkdir()
+    assert credentials._break(lock, held) is False
+    assert (lock / "owner").read_text() == held
+    (lock / "breaking").rmdir()
+    assert credentials._break(lock, held) is True
+    assert not lock.exists() and not list(lock.parent.glob("*.stale"))
+
+
+def test_a_refresh_ends_within_its_deadline(server, monkeypatch) -> None:
+    """A connect failure that used up the deadline is not retried: the lock
+    is held for a bounded time, and nothing was spent."""
+    from loom.errors import BackendUnavailable
+
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    real = server.__class__.__call__
+    clock = {"skew": 0.0}
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(credentials.time, "monotonic", lambda: real_monotonic() + clock["skew"])
+    posts: list[str] = []
+
+    def slow_connect_failure(self: Any, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token":
+            posts.append("token")
+            clock["skew"] += credentials._REFRESH_DEADLINE_S
+            raise httpx.ConnectTimeout("no connection", request=request)
+        return real(self, request)
+
+    monkeypatch.setattr(server.__class__, "__call__", slow_connect_failure)
+    with pytest.raises(BackendUnavailable, match="took over 90 s"):
+        credentials.access_token(refused="a1")
+    assert posts == ["token"]
 
 
 def test_releasing_leaves_a_lock_directory_another_process_took_over(_home) -> None:

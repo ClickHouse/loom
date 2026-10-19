@@ -25,7 +25,8 @@ point, `@clickhouse/loom/integrations/strands`.
 ## Credentials
 
 The client picks its server and credential as the Python SDK does (`readEnv`).
-The `profile` option names a `loom login` session and its server. Otherwise
+The `profile` option names a `loom login` session and its server (Node 20.16
+or later, 22.3 or later on Node 22). Otherwise
 `baseUrl` wins, else `LOOM_BASE_URL`, else `http://localhost:7777`, and the
 credential is `tokenProvider` or `apiKey`, then `LOOM_API_KEY`, then a bot's
 `LOOM_CLIENT_ID` with its key or workload token (`MachineLogin`), then the
@@ -39,9 +40,10 @@ session is used only for the server it signed in to.
 the session in the file the Python SDK and the CLI share; `logout(profile?)`
 revokes it and `whoami(profile?)` asks the server who it says you are. A
 refresh holds the lock directory `~/.loom/.credentials.lock.d`, which the
-Python SDK takes too.
+Python SDK takes too. Its holder touches it every 10 s; a lock whose holder on
+this machine stopped running, or that went 60 s untouched, is broken.
 
-A blank or whitespace key counts as no credential, so an exported-but-empty
+A blank or whitespace key counts as no key, so an exported-but-empty
 variable does not become `Authorization: Bearer `. The key is held in an
 ECMAScript private field: `JSON.stringify` shows `apiKey: "…1234"` and
 `util.inspect` shows no key at all.
