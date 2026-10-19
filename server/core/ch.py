@@ -12,7 +12,6 @@ import asyncio
 import base64
 import logging
 import math
-import os
 import re
 import sys
 import time
@@ -424,8 +423,8 @@ def statement_settings(
     out = query_settings(extra)
     cls = cls or statement_class(sql)
     _apply_class_timeout(out, cls)
-    if os.environ.get("LOOM_CH_CAPTURE_STATEMENTS"):
-        capture_statement(sql)
+    if settings.ch_capture_statements:
+        capture_statement(sql, settings.ch_capture_statements)
     if settings.ch_log_comment_statement_digest:
         tag = str(out.get("log_comment") or "")
         out["log_comment"] = f"{tag} {statement_digest(sql)}".strip()

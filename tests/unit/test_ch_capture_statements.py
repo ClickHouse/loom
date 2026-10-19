@@ -8,10 +8,11 @@ from pathlib import Path
 import pytest
 
 from server.core import ch as ch_mod
+from server.settings import settings
 
 
 def test_capture_off_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("LOOM_CH_CAPTURE_STATEMENTS", raising=False)
+    monkeypatch.setattr(settings, "ch_capture_statements", "")
     out = ch_mod.statement_settings("SELECT 1 FROM loom.memory", None, cls="read")
     assert isinstance(out, dict)
     assert not list(tmp_path.iterdir())
@@ -19,7 +20,7 @@ def test_capture_off_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 def test_capture_appends_digest_and_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = tmp_path / "statements.jsonl"
-    monkeypatch.setenv("LOOM_CH_CAPTURE_STATEMENTS", str(target))
+    monkeypatch.setattr(settings, "ch_capture_statements", str(target))
     ch_mod.statement_settings("SELECT 1 FROM loom.memory WHERE org = 'a'", None, cls="read")
     ch_mod.statement_settings("SELECT 1 FROM loom.memory WHERE org = 'b'", None, cls="read")
     ch_mod.statement_settings("ALTER TABLE loom.memory DELETE WHERE org = 'c'", None, cls="write")
@@ -34,6 +35,6 @@ def test_capture_appends_digest_and_text(tmp_path: Path, monkeypatch: pytest.Mon
 def test_capture_write_failure_does_not_fail_the_statement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("LOOM_CH_CAPTURE_STATEMENTS", str(tmp_path / "no-such-dir" / "x.jsonl"))
+    monkeypatch.setattr(settings, "ch_capture_statements", str(tmp_path / "no-such-dir" / "x.jsonl"))
     out = ch_mod.statement_settings("SELECT 1", None, cls="read")
     assert isinstance(out, dict)

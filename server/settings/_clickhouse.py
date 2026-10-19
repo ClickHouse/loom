@@ -30,6 +30,10 @@ class ClickHouseSettings(BaseModel):
     # `log_comment` ("<op> <request_id>"), so query_log rows group by shape.
     # Off by default: readers that split log_comment on spaces gain tokens.
     ch_log_comment_statement_digest: bool = False
+    # A file path: append one JSON line (`digest`, `sql`) per executed statement, to
+    # collect the shapes an acceptance run executes for the analyzer corpus. '' = off;
+    # never set it in production.
+    ch_capture_statements: str = ""
     # HTTP connection pool size; the driver default (~8) exhausts under bulk
     # writes plus workers. Size to expected request concurrency.
     ch_pool_maxsize: int = 64

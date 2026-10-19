@@ -221,13 +221,13 @@ async def _rerank_with_builtin_cohere(
     query: str,
     candidates: list[RerankCandidate],
 ) -> list[RerankCandidate]:
-    """Cohere rerank via their hosted API. Reads COHERE_API_KEY from env.
+    """Cohere rerank via their hosted API, with COHERE_API_KEY.
 
     Fail-open: any error returns candidates in input order.
     """
-    import os
+    from server.core.provider_keys import rerank_key
 
-    api_key = os.environ.get("COHERE_API_KEY", "")
+    api_key = rerank_key("cohere")
     if not api_key:
         log.warning(
             "builtin:cohere rerank requested but COHERE_API_KEY unset; falling back to input order",
