@@ -28,7 +28,7 @@ import yaml
 
 from server.core.hashing import sha256_text
 from server.memory.domain.okf_bundle import slugify, split_frontmatter
-from server.memory.domain.sensitivity import reads_high
+from server.memory.domain.sensitivity import reads_high, value_text
 
 EVIDENCE_DIR = "evidence"
 DIGEST_DIR = "digests"
@@ -101,7 +101,8 @@ def evidence_is_high(item: ChunkLike | DigestLike, held_keys: set[str]) -> bool:
     reads as a credential: raw text has no sensitivity column, so the detector memory.set
     runs decides."""
     if isinstance(item, DigestLike):
-        text = "\n".join([item.summary_text, *item.key_facts])
+        # decoded: a key fact an earlier build stored as JSON hides a token after `\n`
+        text = "\n".join([item.summary_text, *(value_text(k) for k in item.key_facts)])
     else:
         text = item.content
     return bool(set(evidence_keys(item)) & held_keys) or reads_high(text)

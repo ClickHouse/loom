@@ -635,3 +635,41 @@ async def test_the_sweep_labels_a_token_on_its_own_line() -> None:
     report = await sensitivity_sweep.scan(org="o", namespace="n", ch=ch)
     found = sorted((c.memory_key, c.level) for c in report.candidates)
     assert found == [("note", "high"), ("obs/1", "high")]
+
+
+@pytest.mark.asyncio
+async def test_the_scheduled_sweep_applies_every_high_shape(monkeypatch) -> None:
+    # The worker keeps only `credential` and `email` rows by default; a `ghp_` token or a
+    # password assignment is high and must count as a credential, not `other`.
+    from server.memory.app import sensitivity_sweep as sweep
+    from server.memory.workers import sensitivity_sweep as worker
+
+    ch = _memory(
+        _row(_A, "gh", "the token is ghp_" + "a" * 36),
+        _row(_B, "pw", "db password: hunter2secret"),
+        _row(_C, "plain", "tea at four"),
+    )
+    applied: list[str] = []
+
+    async def _apply(candidates, **_k):
+        applied.extend(c.memory_key for c in candidates)
+        return sweep.ApplyResult()
+
+    monkeypatch.setattr(sweep, "apply", _apply)
+    await worker.run_pass(ch=ch)
+    assert sorted(applied) == ["gh", "pw"]
+
+
+@pytest.mark.asyncio
+async def test_an_earlier_builds_escaped_key_fact_keeps_its_digest_home() -> None:
+    import json
+
+    from server.memory.domain import okf_evidence
+
+    token = "ghp_" + "a" * 36
+    digest = okf_evidence.DigestRecord(
+        session_id="s",
+        summary_text="a session",
+        key_facts=[json.dumps({"note": "token:\n" + token})],  # as an earlier build stored it
+    )
+    assert okf_evidence.evidence_is_high(digest, set())

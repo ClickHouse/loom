@@ -393,7 +393,7 @@ async def _bulk_build_rows(
             "pinned": 1 if entry.pinned else 0,
             # Protected-attribute label rides the row's tags.
             "tags": _with_sensitivity_tag(
-                _with_attribute_tags(entry_tags, serialized_value, input.namespace),
+                _with_attribute_tags(entry_tags, value_text(serialized_value), input.namespace),
                 entry_sensitivity,
             ),
             "entities": entry_entities,

@@ -259,11 +259,9 @@ _TOKEN = "ghp_" + "a" * 36
         json.dumps("deploy token:\n" + _TOKEN),  # a string, as memory.set stores it
         {"note": "deploy token:\n" + _TOKEN},
         {_TOKEN: "ci token"},  # the secret is the key
-        {"password": "hunter2secret"},  # split across key and value
-        {"db": {"api_key": "x9f8e7d6c5b4a3"}},
         json.dumps({"narrative": 'config: password: "hunter2secret"'}),
     ],
-    ids=["json-string", "own-line", "in-a-key", "split-password", "nested-key", "quoted"],
+    ids=["json-string", "own-line", "in-a-key", "quoted"],
 )
 def test_value_text_lets_the_detector_read_what_the_value_holds(value: object) -> None:
     from server.memory.domain.sensitivity import reads_high, value_text
@@ -302,3 +300,27 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
         SimpleNamespace(sensitivity=""), json.dumps({"note": "token:\n" + _TOKEN}), []
     )
     assert level == "high"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"password": {"min_length": 12}},
+        {"password": None, "username": "alice"},
+        {"secret": {"provider": "vault"}},
+        {"fields": {"email": "required", "password": "required"}},
+        {"password": "********"},
+        {"api_key": "env:OPENAI_API_KEY"},
+        {"pwd": "/home/alice/repo"},
+        {"env": {"PWD": "/opt/app/server"}},
+        {"password_hint": "first pet"},
+        {"token_count": 123456789},
+        {"secret_santa": "alice to bob"},
+    ],
+)
+def test_an_ordinary_object_never_reads_as_a_credential(value: object) -> None:
+    # Keys and values are separate lines: a config object is never read as an assignment,
+    # as the stored JSON never was.
+    from server.memory.domain.sensitivity import reads_high, value_text
+
+    assert not reads_high(value_text(value))

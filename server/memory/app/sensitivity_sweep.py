@@ -97,7 +97,9 @@ def _shapes(text: str) -> tuple[str, ...]:
     import re
 
     shapes: list[str] = []
-    if re.search(_PROBE_CREDENTIAL, text):
+    # Every shape the detector reads as high is a credential, not only an `sk-` key: the
+    # scheduled pass applies `credential` and `email` rows by default.
+    if re.search(_PROBE_CREDENTIAL, text) or detect_sensitivity(text) == HIGH:
         shapes.append("credential")
     if re.search(_PROBE_EMAIL, text):
         shapes.append("email")
