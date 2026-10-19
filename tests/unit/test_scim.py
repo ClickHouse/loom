@@ -1759,6 +1759,37 @@ def test_a_patch_may_raise_an_emails_place_and_lower_it_back(client: TestClient,
     assert r.json()["emails"] == [{"value": "lee@example.com", "type": "work", "primary": False}]
 
 
+@pytest.mark.parametrize(
+    ("emails", "raise_", "other"),
+    [
+        (
+            [{"value": "lee@example.com"}],
+            {"op": "replace", "path": "emails.type", "value": "work"},
+            {
+                "op": "add",
+                "path": "emails",
+                "value": [{"value": "new@example.com", "type": "work"}],
+            },
+        ),
+        (
+            None,  # the email is the userName's
+            {"op": "add", "path": 'emails[type eq "work"].value', "value": "lee@example.com"},
+            {"op": "add", "path": 'emails[type eq "home"].value', "value": "lee@home.example"},
+        ),
+    ],
+)
+def test_an_entry_that_ties_with_a_raised_one_takes_no_place(
+    client: TestClient, world, emails: Any, raise_: dict[str, Any], other: dict[str, Any]
+) -> None:
+    body: dict[str, Any] = {"userName": "lee@example.com"}
+    if emails is not None:
+        body["emails"] = emails
+    uid = client.post("/scim/v2/Users", json=body).json()["id"]
+    r = _patch(client, uid, raise_, other)
+    assert r.status_code == 200, r.text
+    assert r.json()["emails"][0]["value"] == "lee@example.com"
+
+
 def test_a_new_work_entry_would_take_a_plain_entrys_place(client: TestClient, world) -> None:
     uid = _user(client, [{"value": "lee@example.com"}])
     work = {"op": "add", "path": 'emails[type eq "work"].value', "value": "new@example.com"}

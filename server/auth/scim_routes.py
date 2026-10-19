@@ -243,14 +243,17 @@ def _keyed_written(
     keyed entry, or not saying what replaces it, is refused."""
     stored = {"value": row["email"], "type": row["email_type"], "primary": row["email_primary"]}
     # An email the userName gave is outranked by any entry (`user_name_and_email`).
-    # The place to keep is the stored one: a request may raise it and lower it back.
-    here = -1 if row["email_from_user_name"] else _rank(stored)
+    # `floor` is the place the keyed entry may not fall below, the stored one (a
+    # request may raise it and lower it back); `here` is the place another entry
+    # must outrank to take it, the one the earlier operations left.
+    floor = here = -1 if row["email_from_user_name"] else _rank(stored)
     if earlier is not None:
         stored = {
             "value": earlier.get("value") or row["email"],
             "type": earlier.get("type") or "",
             "primary": earlier.get("primary") or False,
         }
+        here = _rank(stored)
     if attr == "emails":
         if kind == "remove":
             raise _no_change("the email cannot be removed")
@@ -284,7 +287,7 @@ def _keyed_written(
         if kind == "remove":
             raise _no_change("the email cannot be removed")
         entry = {**stored, **written}
-        if _rank(entry) < here:
+        if _rank(entry) < floor:
             raise _no_change("the email's entry cannot lose its place")
         return entry
     if kind == "remove":
