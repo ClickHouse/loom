@@ -12,6 +12,7 @@ Off by default (`LOOM_OBSERVE_EXTRACT_ENABLED`); requires LLM credentials.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,6 +23,7 @@ from server.memory.domain.observation_tags import (
     CRYSTALLIZE_READY_TAG,
     OBSERVATION_TAG,
 )
+from server.memory.domain.sensitivity import reads_high
 from server.memory.store.rows import next_version
 from server.workers.status import record_pass
 
@@ -214,9 +216,10 @@ async def _distill_session(
     (one synthetic `user` turn per narrative) and mark the sources DONE."""
     import server.memory.store as memory_repo
 
-    # A 'high' observation (a credential in tool output the sweep labelled) is never sent
-    # to the model; it is still marked DONE below.
-    readable = [o for o in observations if o.sensitivity != "high"]
+    # An observation that holds a credential is never sent to the model, labelled or not:
+    # capture writes it unlabelled and only the sweep labels it later. It is still marked
+    # DONE below.
+    readable = [o for o in observations if _sendable(o.sensitivity, o.value)]
     msgs = replay_messages(readable, agent=str(session.get("agent") or ""))
     # observation_date anchor: use the newest valid_at the capture path
     # stamped, if any, so relative time refs resolve.
@@ -303,7 +306,18 @@ async def _load_session_context(session: dict[str, Any], *, ch: Any) -> list[Any
     except Exception as e:  # noqa: BLE001 — the session distills without context
         log.debug("session context read skipped: %s", e)
         return []
-    return [tn.observation_from_row(SimpleNamespace(**dict(r))) for r in rows or []]
+    return [
+        tn.observation_from_row(SimpleNamespace(**dict(r)))
+        for r in rows or []
+        if _sendable("", r.get("value"))  # the statement already left out labelled rows
+    ]
+
+
+def _sendable(sensitivity: str, value: Any) -> bool:
+    """Whether an observation may go to the model: neither labelled 'high' nor reading as a
+    credential."""
+    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    return sensitivity != "high" and not reads_high(text)
 
 
 # The most observations a session's notes read: the notes

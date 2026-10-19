@@ -86,18 +86,25 @@ def test_defaults_match_schema_for_omitted_columns() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_top_key_facts_never_carry_a_high_fact() -> None:
-    # The digest is listed by memory.digests and sent to the outcome judge; a fact labelled
-    # high, or one whose text reads as a credential, stays out of its key facts.
+def test_top_key_facts_never_carry_a_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The digest is listed by memory.digests and sent to the outcome judge; a fact whose
+    # text reads as a credential stays out of its key facts, whatever the autodetect setting.
     from server.memory.app.extract.handler import _top_key_facts
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", False)
+    token = "ghp_" + "a" * 36
+    facts = [{"value": f"the deploy token is {token}"}, {"value": "user lives in Berlin"}]
+    assert _top_key_facts(facts) == ["user lives in Berlin"]
+
+
+def test_a_stored_digests_credential_key_fact_is_never_served_or_judged() -> None:
+    # Digests an earlier build wrote may hold one; the outcome judge's prompt drops it.
+    from server.memory.app.session_outcomes import judge_prompt
 
     token = "ghp_" + "a" * 36
-    facts = [
-        {"value": "door code 4412", "sensitivity": "high"},
-        {"value": f"the deploy token is {token}"},
-        {"value": "user lives in Berlin"},
-    ]
-    assert _top_key_facts(facts) == ["user lives in Berlin"]
+    _system, user = judge_prompt("a session", [f"the token is {token}", "ran the tests"])
+    assert token not in user and "ran the tests" in user
 
 
 def test_top_key_facts_dedups_and_caps() -> None:

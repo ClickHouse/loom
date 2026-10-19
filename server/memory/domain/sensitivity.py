@@ -173,6 +173,13 @@ def detect_sensitivity(text: str) -> str:
     return ""
 
 
+def reads_high(text: str) -> bool:
+    """Whether `text` holds a credential shape, whatever the autodetect setting: the rule for
+    text copied from a row (a digest's key facts, an observation sent to a model), which has
+    no label of its own or carries one a later sweep may not have set yet."""
+    return detect_sensitivity(text) == HIGH
+
+
 def resolve_sensitivity(requested: str | None, text: str) -> str:
     """The caller's explicit level wins; an unset level is detected from the
     value when `memory_sensitivity_autodetect` is on, else stays ''."""

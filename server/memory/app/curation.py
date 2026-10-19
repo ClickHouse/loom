@@ -53,6 +53,7 @@ from server.memory.api.models_temporal import (
     _OutlineSession,
 )
 from server.memory.app.provenance import writer_actor
+from server.memory.domain.sensitivity import reads_high
 from server.memory.domain.temporal_sql import status_predicate
 from server.memory.store.rows import MemoryRow
 from server.observability import audit as _audit
@@ -142,7 +143,8 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
             _DigestRow(
                 session_id=str(r.get("session_id") or ""),
                 summary_text=str(r.get("summary_text") or ""),
-                key_facts=[str(k) for k in (r.get("key_facts") or [])],
+                # a digest an earlier build wrote may still hold a credential as a key fact
+                key_facts=[str(k) for k in (r.get("key_facts") or []) if not reads_high(str(k))],
                 derived_from=[str(k) for k in (r.get("derived_from") or [])],
                 valid_at=r.get("valid_at"),
                 created_at=r.get("created_at"),

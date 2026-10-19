@@ -531,16 +531,21 @@ leg returns it. The other reads that could serve its value follow three rules:
   `procedure.list` summarises and the bodies `bodies: "unit"` reads (each read leaves `high`
   rows out before it picks a row, so another identity's `high` row of a key never hides the
   plain one), the existing memories an extraction prompt shows the LLM, the observations
-  `observe_extract` replays to its model, and the entities a period digest copies from its
-  sources and `namespace.taxonomy` counts, and a session digest's key facts. A row the
-  sensitivity sweep labels `high` after the extractor ran (one written unlabelled, or
-  arriving that way through `memory.copy_to` or an import) keeps the entities mined from its
-  value on the row, not served by those reads. A row re-set as `high` through `memory.set`
-  carries only its declared entities. Either way the graph edges an earlier version
-  projected remain: `facts.traverse` and `facts.path` still walk them, as do
-  `memory.backlinks` (which names a `high` key's shared entities and neighbours from them),
-  `namespace.summary`'s top entities, `memory.outline`, `namespace.taxonomy`'s communities,
-  the graph export and search's graph mode and expansion.
+  `observe_extract` sends its model (labelled `high` or reading as a credential: capture
+  writes them unlabelled), the entities a period digest copies from its sources and
+  `namespace.taxonomy` counts, and a session digest's key facts that read as a credential
+  (left out when the digest is written, listed by `memory.digests` and sent to the outcome
+  judge, so a digest an earlier build wrote is covered too). A period row an earlier build
+  wrote keeps its `high` sources' entities until it is written again: `loom period-digest
+--org <org> --namespace <ns> --rewrite` does that. A row the sensitivity sweep labels
+  `high` after the extractor ran (one written unlabelled, or arriving that way through
+  `memory.copy_to` or an import) keeps the entities mined from its value on the row, not
+  served by those reads. A row re-set as `high` through `memory.set` carries only its
+  declared entities. Either way the graph edges an earlier version projected remain:
+  `facts.traverse` and `facts.path` still walk them, as do `memory.backlinks` (which names a
+  `high` key's shared entities and neighbours from them), `namespace.summary`'s top
+  entities, `memory.outline`, `namespace.taxonomy`'s communities, the graph export and
+  search's graph mode and expansion.
 - Listed without the value: `memory.list` (no value or hash, `value_truncated: true`, and
   `contains` does not search it), `conflicts.list`, `memory.proposals`, and the preview of a
   `memory.move` dry run.
@@ -559,9 +564,9 @@ leaves out a passage whose text reads as a credential. Other raw text is served 
 of the namespace as it is: a caller-labelled `high` value that shares a passage with a plain
 row, `memory.search`'s `chunk` and `summary` hits (which `memory.ask` also hands its model),
 `memory.get` on a `chunk:` key, the session digests `memory.digests` lists (their summary
-text; key facts leave out a `high` fact), what the session-summary draft (the conversation
-turns), the period-digest draft and the outcome judge (session digest text) send their
-model, and `memory.recall`'s raw turns.
+text; key facts that read as a credential are left out), what the session-summary draft (the
+conversation turns), the period-digest draft and the outcome judge (session digest text)
+send their model, and `memory.recall`'s raw turns.
 
 Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).

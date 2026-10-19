@@ -115,6 +115,13 @@ async def test_a_high_observation_is_never_sent_to_the_model(
     high = SimpleNamespace(
         value={"narrative": "token sk-123"}, sensitivity="high", tags=[], valid_at=None
     )
+    # capture writes an observation unlabelled; the sweep labels it later
+    unlabelled = SimpleNamespace(
+        value={"narrative": "export GITHUB_TOKEN=ghp_" + "a" * 36},
+        sensitivity="",
+        tags=[],
+        valid_at=None,
+    )
     seen: dict[str, Any] = {}
 
     def _replay(obs: list[Any], **_k: Any) -> list[Any]:
@@ -139,6 +146,6 @@ async def test_a_high_observation_is_never_sent_to_the_model(
     monkeypatch.setattr(memory_repo, "build_memory_version_row", lambda o, **_k: o)
     monkeypatch.setattr(memory_repo, "insert_memory_versions", _insert)
     session = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "s"}
-    await ox._distill_session(session, [plain, high])
+    await ox._distill_session(session, [plain, high, unlabelled])
     assert seen["replayed"] == [plain] and seen["summarised"] == [plain]
-    assert seen["done"] == [plain, high]
+    assert seen["done"] == [plain, high, unlabelled]

@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.memory.api.models_crud import MemorySetInput
+from server.memory.domain.sensitivity import reads_high
 from server.memory.store.session_outcomes import insert_outcomes
 from server.observability.genai import llm_stage
 
@@ -107,7 +108,13 @@ class DistillResult:
 
 def judge_prompt(summary: str, key_facts: list[str]) -> tuple[str, str]:
     facts = (
-        "\n".join(f"- {str(f).strip()}" for f in (key_facts or []) if str(f).strip()) or "- (none)"
+        # A digest an earlier build wrote may still hold a credential among its key facts.
+        "\n".join(
+            f"- {str(f).strip()}"
+            for f in (key_facts or [])
+            if str(f).strip() and not reads_high(str(f))
+        )
+        or "- (none)"
     )
     return _JUDGE_SYSTEM, _JUDGE_USER.format(
         summary=str(summary or "").strip()[:4000], facts=facts[:2000]

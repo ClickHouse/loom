@@ -581,8 +581,32 @@ async def test_a_distill_pass_never_reads_a_high_observation_into_its_context() 
         "'{\"narrative\": \"ran the tests\"}', 'active', '', 1, "
         f"['{OBSERVATION_TAG}']), ('o', 'n', 'a', '-', 's', '{_B}', 'obs/2', 'episodic', "
         "'{\"narrative\": \"printed the token\"}', 'active', 'high', 1, "
+        f"['{OBSERVATION_TAG}']), ('o', 'n', 'a', '-', 's', '{_C}', 'obs/3', 'episodic', "
+        f"'{{\"narrative\": \"export GITHUB_TOKEN=ghp_{'a' * 36}\"}}', 'active', '', 1, "
         f"['{OBSERVATION_TAG}'])",
     )
     session = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "s"}
     context = await observe_extract._load_session_context(session, ch=ch)
     assert len(context) == 1 and "ran the tests" in str(context[0])
+
+
+@pytest.mark.asyncio
+async def test_memory_digests_never_serves_a_stored_credential_key_fact(monkeypatch) -> None:
+    # A digest an earlier build wrote may hold one: the read leaves it out.
+    from server.memory.api.models_temporal import MemoryDigestsInput
+    from server.memory.app import curation
+
+    token = "ghp_" + "a" * 36
+    ch = _LocalCH(
+        "SET enable_quantized_codec = 1",  # the summary embedding column's codec
+        ddl("session_summaries"),
+        "INSERT INTO loom.session_summaries (org, namespace, agent, user_id, session_id, "
+        "summary_text, key_facts, summary_embedding) VALUES ('o', 'n', 'a', '-', 's', "
+        f"'a session', ['the token is {token}', 'ran the tests'], "
+        "arrayWithConstant(3072, toFloat32(0)))",
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    out = await curation.handle_memory_digests(
+        MemoryDigestsInput(org="o", namespace="n", agent="a")
+    )
+    assert [r.key_facts for r in out.rows] == [["ran the tests"]]
