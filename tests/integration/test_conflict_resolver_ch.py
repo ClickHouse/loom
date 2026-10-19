@@ -3235,12 +3235,14 @@ async def test_a_repeat_undo_writes_no_new_facts_or_search_rows(ch, wired, monke
             " SETTINGS select_sequential_consistency = 1",
             params={"o": org},
         )
+        # The newest search-row version, not a row count: a merge of the
+        # ReplacingMergeTree drops replaced versions between two counts.
         search = await ch.query_all(
-            "SELECT count() AS n FROM loom.memory_embeddings WHERE org = {o:String}"
+            "SELECT max(version) AS v FROM loom.memory_embeddings WHERE org = {o:String}"
             " AND memory_key = 'office_city' SETTINGS select_sequential_consistency = 1",
             params={"o": org},
         )
-        return int(facts[0]["n"]), int(search[0]["n"])
+        return int(facts[0]["n"]), int(search[0]["v"])
 
     assert (await _undo(org, "office_city", winner)).restored
     first = await counts()

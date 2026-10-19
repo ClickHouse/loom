@@ -399,8 +399,13 @@ async def test_a_long_run_of_sessions_ends_with_one_live_value_per_attribute(ch,
             assert rows[older]["status"] == "superseded", (name, older)
             assert rows[older]["superseded_by"] == rows[newer]["id"], (name, older)
     # Nothing else retired or left flagged; the vector rows say the same.
+    key_of = {r["id"]: k for k, r in rows.items()}
     for k in KEPT:
-        assert (rows[k]["status"], rows[k]["conflict_with"]) == ("active", []), (k, rows[k])
+        # On a failure, name the flagged peers and the resolver's audit of the row.
+        flagged_with = [key_of.get(x, x) for x in rows[k]["conflict_with"]]
+        if (rows[k]["status"], flagged_with) != ("active", []):
+            audit = [a for a in await _audit(ch, org, "memory.conflict_resolver") if k in str(a)]
+            raise AssertionError((k, rows[k]["status"], flagged_with, audit, run.totals))
     vectors = await _vector_status(ch, org)
     assert {k for k, s in vectors.items() if s == "superseded"} == OLDER
     assert {k for k, s in vectors.items() if s != "superseded"} == CURRENT | KEPT
