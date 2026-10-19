@@ -496,7 +496,7 @@ async def test_a_failed_replay_keeps_only_the_entries_it_wrote(monkeypatch) -> N
     # acts on k2.
     from datetime import datetime
 
-    from server.memory.app import entity_projections, projections
+    from server.memory.app import edge_repair, graph_holders, projections
     from server.memory.app.projection_errors import TriplesRepairFailed
     from server.memory.domain.graph_quality import IntervalRepair
 
@@ -513,7 +513,8 @@ async def test_a_failed_replay_keeps_only_the_entries_it_wrote(monkeypatch) -> N
     async def fails(*a, **k):
         raise TriplesRepairFailed(datetime(2026, 10, 1, 9), RuntimeError("retire down"), [made])
 
-    monkeypatch.setattr(entity_projections, "versions_held", holding)
+    monkeypatch.setattr(graph_holders, "versions_held", holding)
+    monkeypatch.setattr(edge_repair, "versions_held", holding)
     monkeypatch.setattr(projections, "write_entity_triples", fails)
     assert not (await retry_failures([failure], ch=_FailureRowCH(failure)))[0].resolved
     payload = failure.payload
@@ -703,7 +704,7 @@ async def test_an_insert_failure_recorded_without_its_arrival_replays_as_it_did(
 async def test_a_follow_replay_first_finishes_a_fallbacks_recorded_repair(monkeypatch) -> None:
     # The follow's fallback closed Paris and failed to close its edge: the replay
     # finishes that repair from the recorded closes before following the pairs again.
-    from server.memory.app import entity_projections, graph_undo
+    from server.memory.app import graph_undo, triple_follow
     from server.memory.app.projection_errors import TriplesRepairFailed, restated_repair_payload
     from server.memory.domain.graph_quality import IntervalRepair
 
@@ -717,10 +718,10 @@ async def test_a_follow_replay_first_finishes_a_fallbacks_recorded_repair(monkey
 
     async def follow(input, pairs, *, ch, hops):
         calls.append(("follow", pairs))
-        return entity_projections.FollowOutcome(0, 0, [])
+        return triple_follow.FollowOutcome(0, 0, [])
 
     monkeypatch.setattr(graph_undo, "finish_restated_repair", finish)
-    monkeypatch.setattr(entity_projections, "follow_row_supersessions", follow)
+    monkeypatch.setattr(triple_follow, "follow_row_supersessions", follow)
     payload = json.loads(json.dumps({"pairs": [["a", "b"]], **restated_repair_payload(failed)}))
     failure = ProjectionFailureRow(
         failure_id="f1",
@@ -743,7 +744,7 @@ async def test_a_follow_replay_first_finishes_a_fallbacks_recorded_repair(monkey
 async def test_a_follow_replay_whose_fallback_fails_records_its_repair(monkeypatch) -> None:
     # The follow's failure was recorded with no markers; its replay's fallback states
     # Paris again and fails to close the edge. The next replay must finish that repair.
-    from server.memory.app import entity_projections
+    from server.memory.app import triple_follow
     from server.memory.app.projection_errors import TRIPLES_RESTORE_ID, TriplesRepairFailed
     from server.memory.app.projection_failures import _recorded_repairs
     from server.memory.domain.graph_quality import IntervalRepair
@@ -754,7 +755,7 @@ async def test_a_follow_replay_whose_fallback_fails_records_its_repair(monkeypat
     async def follow(input, pairs, *, ch, hops):
         raise TriplesRepairFailed(at, ConnectionError("edge close"), [paris], restore_id="r1")
 
-    monkeypatch.setattr(entity_projections, "follow_row_supersessions", follow)
+    monkeypatch.setattr(triple_follow, "follow_row_supersessions", follow)
     failure = ProjectionFailureRow(
         failure_id="f1",
         org="o",
@@ -848,7 +849,7 @@ async def test_a_late_edges_cleanup_replays_with_the_revisions_end(
 ) -> None:
     # The replay ends the edges when the revision ended the value, as the cleanup it
     # repeats would have; without a recorded end, `close_late_edges` reads it again.
-    from server.memory.app import entity_projections
+    from server.memory.app import edge_repair
 
     calls: list[tuple] = []
 
@@ -856,7 +857,7 @@ async def test_a_late_edges_cleanup_replays_with_the_revisions_end(
         assert entities == [], "recorded with no entities"
         calls.append((org, namespace, memory_id, sha, ended_at))
 
-    monkeypatch.setattr(entity_projections, "close_late_edges", close_late_edges)
+    monkeypatch.setattr(edge_repair, "close_late_edges", close_late_edges)
     payload = {"memory_id": _ROW_ID, "content_sha256": "a" * 64}
     if payload_end:
         payload["ended_at"] = payload_end
@@ -870,7 +871,7 @@ async def test_a_failed_late_edges_cleanup_records_when_the_value_ended(monkeypa
     # memory.bulk_set and the by-id updates alike: they share this cleanup).
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections
+    from server.memory.app import edge_repair, graph_holders
 
     ended = datetime(2026, 3, 1)
     recorded: list[dict] = []
@@ -887,12 +888,13 @@ async def test_a_failed_late_edges_cleanup_records_when_the_value_ended(monkeypa
     async def record(rows: list, **k: Any) -> None:
         recorded.extend(json.loads(r["payload"]) for r in rows)
 
-    monkeypatch.setattr(entity_projections, "versions_held", none_held)
-    monkeypatch.setattr(entity_projections, "value_ended_at", value_ended_at)
-    monkeypatch.setattr(entity_projections, "_end_edges_of", end_fails)
-    monkeypatch.setattr(entity_projections, "insert_projection_failures", record)
+    monkeypatch.setattr(graph_holders, "versions_held", none_held)
+    monkeypatch.setattr(edge_repair, "versions_held", none_held)
+    monkeypatch.setattr(edge_repair, "value_ended_at", value_ended_at)
+    monkeypatch.setattr(edge_repair, "_end_edges_of", end_fails)
+    monkeypatch.setattr(edge_repair, "insert_projection_failures", record)
     scope = SimpleNamespace(org="o", namespace="n", agent="a")
     versions = [(_ROW_ID, "k", "a" * 64)]
-    await entity_projections.end_overtaken_edges(scope, versions, op="memory.set", ch=None)
+    await edge_repair.end_overtaken_edges(scope, versions, op="memory.set", ch=None)
     payload = {"memory_id": _ROW_ID, "content_sha256": "a" * 64, "ended_at": ended.isoformat()}
     assert recorded == [payload]

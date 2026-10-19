@@ -189,7 +189,7 @@ async def test_set_returns_before_its_entity_projection_lands(post_insert) -> No
     assert seen["scheduled"] == ["loom-set-entities"]
     # Scoped to its namespace, so a walk there waits for it; its edges wait for their flush.
     # The entities decided once, handed to the projection rather than mined again.
-    from server.memory.app.entity_projections import set_entities_for_projection
+    from server.memory.app.set_entities import set_entities_for_projection
 
     ents = set_entities_for_projection(_set_input(), _set_input().value)
     assert seen["scope"] == ("o", "n")
@@ -381,7 +381,13 @@ async def test_update_reads_its_write_config_in_one_prefetch(wired, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) -> None:
-    from server.memory.app import entity_projections
+    from server.memory.app import (
+        edge_links,
+        edge_repair,
+        graph_holders,
+        set_entities,
+        triple_projections,
+    )
 
     def _mined(*_: Any) -> list[str]:
         raise AssertionError("mined twice")
@@ -391,8 +397,9 @@ async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) 
     async def _edges(bulk: Any, results: Any, **_: Any) -> None:
         written.append(bulk.entries[0].entities)
 
-    monkeypatch.setattr(entity_projections, "set_entities_for_projection", _mined)
-    monkeypatch.setattr(entity_projections, "write_entity_edges", _edges)
+    monkeypatch.setattr(set_entities, "set_entities_for_projection", _mined)
+    monkeypatch.setattr(edge_links, "set_entities_for_projection", _mined)
+    monkeypatch.setattr(edge_links, "write_entity_edges", _edges)
 
     async def _held(*_: Any, **__: Any) -> set[str]:
         return {"m"}
@@ -400,9 +407,13 @@ async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) 
     async def _no_overtaken(*_: Any, **__: Any) -> None:
         return None
 
-    monkeypatch.setattr(entity_projections, "rows_holding", _held)
-    monkeypatch.setattr(entity_projections, "end_overtaken_edges", _no_overtaken)
-    n = await entity_projections.project_memory_set_entities(
+    monkeypatch.setattr(graph_holders, "rows_holding", _held)
+    monkeypatch.setattr(edge_repair, "rows_holding", _held)
+    monkeypatch.setattr(edge_links, "rows_holding", _held)
+    monkeypatch.setattr(triple_projections, "rows_holding", _held)
+    monkeypatch.setattr(edge_repair, "end_overtaken_edges", _no_overtaken)
+    monkeypatch.setattr(edge_links, "end_overtaken_edges", _no_overtaken)
+    n = await edge_links.project_memory_set_entities(
         _set_input(),
         memory_key="k",
         value="v",
@@ -416,7 +427,7 @@ async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) 
 
 @pytest.mark.asyncio
 async def test_a_projection_of_a_value_revised_away_writes_nothing(monkeypatch) -> None:
-    from server.memory.app import entity_projections
+    from server.memory.app import edge_links, edge_repair, graph_holders, triple_projections
 
     written: list[Any] = []
 
@@ -426,9 +437,12 @@ async def test_a_projection_of_a_value_revised_away_writes_nothing(monkeypatch) 
     async def _revised(*_: Any, **__: Any) -> set[str]:
         return set()  # the row holds another value now
 
-    monkeypatch.setattr(entity_projections, "write_entity_edges", _edges)
-    monkeypatch.setattr(entity_projections, "rows_holding", _revised)
-    n = await entity_projections.project_memory_set_entities(
+    monkeypatch.setattr(edge_links, "write_entity_edges", _edges)
+    monkeypatch.setattr(graph_holders, "rows_holding", _revised)
+    monkeypatch.setattr(edge_repair, "rows_holding", _revised)
+    monkeypatch.setattr(edge_links, "rows_holding", _revised)
+    monkeypatch.setattr(triple_projections, "rows_holding", _revised)
+    n = await edge_links.project_memory_set_entities(
         _set_input(),
         memory_key="k",
         value="v",

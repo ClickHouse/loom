@@ -161,7 +161,7 @@ async def test_a_replay_that_inserted_records_it_in_the_failure_itself(monkeypat
 
 
 async def test_a_point_write_records_a_failed_repair_under_the_new_name(monkeypatch) -> None:
-    from server.memory.app import entity_projections as ep
+    from server.memory.app import edge_links, triple_projections
 
     async def fails(write, results, *, ch):
         raise TriplesRepairFailed(_AT, RuntimeError("down"))
@@ -171,8 +171,9 @@ async def test_a_point_write_records_a_failed_repair_under_the_new_name(monkeypa
     async def record(input, *, projection, **k):
         recorded.append(projection)
 
-    monkeypatch.setattr(ep, "write_entity_triples", fails)
-    monkeypatch.setattr(ep, "record_input_projection_failure", record)
+    monkeypatch.setattr(triple_projections, "write_entity_triples", fails)
+    monkeypatch.setattr(edge_links, "record_input_projection_failure", record)
+    monkeypatch.setattr(triple_projections, "record_input_projection_failure", record)
     row = {
         "org": "o",
         "namespace": "n",
@@ -184,7 +185,7 @@ async def test_a_point_write_records_a_failed_repair_under_the_new_name(monkeypa
         "version": 1,
         "confidence": 1.0,
     }
-    await ep._write_stated_relations(
+    await triple_projections._write_stated_relations(
         row, "alice works with bob", [("alice", "works_with", "bob")], op="memory.update", ch=None
     )
     assert recorded == [TRIPLES_REPAIR]

@@ -902,7 +902,7 @@ async def _follow_intents(ch: Any, org: str, want_active: int) -> list[dict[str,
 async def test_a_retirement_owes_its_follow_until_the_follow_lands(
     ch, wired, monkeypatch, follow_fails: bool
 ) -> None:
-    from server.memory.app import entity_projections
+    from server.memory.app import triple_follow
     from server.memory.workers.conflict_resolver import run_pass
 
     org, _ = wired
@@ -912,7 +912,7 @@ async def test_a_retirement_owes_its_follow_until_the_follow_lands(
         async def boom(*a: Any, **kw: Any) -> Any:
             raise RuntimeError("graph unavailable")
 
-        monkeypatch.setattr(entity_projections, "follow_row_supersessions", boom)
+        monkeypatch.setattr(triple_follow, "follow_row_supersessions", boom)
     out = await run_pass()
     assert out["retired"] == 1
     ids = {k: r["id"] for k, r in (await _rows(ch, org)).items()}
@@ -1454,7 +1454,7 @@ async def test_a_repair_before_the_supersede_commits_leaves_the_follow_owed(
     """The repair runs between the intent and the supersede: the loser is still live, so
     it leaves the intent alone. The supersede commits, the resolver's follow fails, and
     the next repair follows the pair."""
-    from server.memory.app import after_write, conflicts, entity_projections
+    from server.memory.app import after_write, conflicts, triple_follow
     from server.memory.app.projection_failures import FOLLOW_OWED, retry_projection_failures
     from server.memory.domain.conflicts import ConflictResult
     from server.memory.workers.conflict_resolver import run_pass
@@ -1474,7 +1474,7 @@ async def test_a_repair_before_the_supersede_commits_leaves_the_follow_owed(
     await _place(ch, org, "s1", "office_city", _vec((94, 1.0)), owed=False)
     await _place(ch, org, "s2", "office_location", _vec((94, 0.8), (95, 0.6)), owed=True)
     assert await _paris_open(ch, org, want=True)
-    refines, follow = conflicts.apply_refines, entity_projections.follow_row_supersessions
+    refines, follow = conflicts.apply_refines, triple_follow.follow_row_supersessions
     early: list[Any] = []
 
     async def repair_first(**kw: Any) -> Any:
@@ -1485,13 +1485,13 @@ async def test_a_repair_before_the_supersede_commits_leaves_the_follow_owed(
         raise RuntimeError("graph unavailable")
 
     monkeypatch.setattr(conflicts, "apply_refines", repair_first)
-    monkeypatch.setattr(entity_projections, "follow_row_supersessions", boom)
+    monkeypatch.setattr(triple_follow, "follow_row_supersessions", boom)
     assert (await run_pass())["retired"] == 1
     assert [(r.retried, r.reason) for r in early] == [(False, "pending")]
     (intent,) = await _follow_intents(ch, org, want_active=1)
     assert intent["status"] == "active"
 
-    monkeypatch.setattr(entity_projections, "follow_row_supersessions", follow)
+    monkeypatch.setattr(triple_follow, "follow_row_supersessions", follow)
     _past_the_writers_grace(monkeypatch)
     (retry,) = await retry_projection_failures(org=org, projection=FOLLOW_OWED)
     assert retry.resolved, retry

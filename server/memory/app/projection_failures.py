@@ -538,7 +538,7 @@ async def _retry_follow_rows(failure: ProjectionFailureRow, *, ch: Any) -> str:
     which no retry reads: the reason returned abandons the failure, as it does for
     a payload no retry can read."""
 
-    from server.memory.app.entity_projections import REPAIR_CHAIN_HOPS, follow_row_supersessions
+    from server.memory.app.triple_follow import REPAIR_CHAIN_HOPS, follow_row_supersessions
 
     try:
         pairs = [(str(o), str(n)) for o, n in failure.payload["pairs"]]
@@ -618,7 +618,7 @@ async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) ->
 async def _retry_triples_reopen(failure: ProjectionFailureRow, *, ch: Any) -> str:
     """Undo a follow's close for the triples a live row holds, as the follow would
     have. A payload no retry can read returns the reason that abandons it."""
-    from server.memory.app.entity_projections import reopen_held
+    from server.memory.app.triple_projections import reopen_held
 
     try:
         closes = [
@@ -644,7 +644,7 @@ async def _retry_triples_reopen(failure: ProjectionFailureRow, *, ch: Any) -> st
 async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
     """Run the failed cleanup of a late projection again. A payload no retry can
     read returns the reason that abandons it."""
-    from server.memory.app.entity_projections import close_late_edges, close_overtaken_values
+    from server.memory.app.edge_repair import close_late_edges, close_overtaken_values
 
     memory_id = str(failure.payload.get("memory_id") or "")
     content_sha256 = str(failure.payload.get("content_sha256") or "")
@@ -687,7 +687,7 @@ async def _retry_edges_drop(failure: ProjectionFailureRow, *, ch: Any) -> str:
     """Drop again the undeclared edge links of the rows a write made 'high'; a failure
     raises and leaves the row active."""
 
-    from server.memory.app.entity_projections import drop_undeclared_links
+    from server.memory.app.edge_links import drop_undeclared_links
 
     rows = failure.payload.get("rows")
     versions = failure.payload.get("versions")
@@ -769,8 +769,8 @@ async def _finish_restated_repair(failure: ProjectionFailureRow, scope: Any, *, 
 async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) -> str:
     """Reconcile the facts of the rows a revision or an Undo changed, as it would have."""
 
-    from server.memory.app.entity_projections import close_dropped_facts
     from server.memory.app.graph_undo import reopen_held_facts
+    from server.memory.app.triple_projections import close_dropped_facts
 
     ids = [str(i) for i in failure.payload.get("memory_ids") or []]
     if not ids:
@@ -1015,7 +1015,7 @@ async def _retry_graph_projection(
     # and so does a result recorded before results named their row: it has no id to check.
     kept: dict[str, Any] = {}
     if not failure.payload.get(TRIPLES_INSERTED_AT):
-        from server.memory.app.entity_projections import versions_held
+        from server.memory.app.graph_holders import versions_held
 
         pairs = list(zip(bulk_input.entries, bulk_results, strict=True))
         # By value: one bulk can revise a row twice, and only its last value is held.

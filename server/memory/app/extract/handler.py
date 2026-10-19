@@ -662,13 +662,7 @@ def _observe_task_result(task: asyncio.Task[Any]) -> None:
 #      server.memory.app.handlers) keeps resolving.
 # The sibling modules never import this module at module scope, so importing
 # them at the bottom here does not cycle.
-from server.memory.app.entity_projections import (  # noqa: E402, F401  (re-export)
-    _SET_ENTITY_MAX_CANDIDATES,
-    _SET_ENTITY_MIN_LEN,
-    _SET_ENTITY_PROPER_RE,
-    _SET_ENTITY_STOPWORDS,
-    _candidate_entities_from_value,
-    _write_derived_facts,
+from server.memory.app.edge_links import (  # noqa: E402  (re-export)
     project_memory_set_entities,
 )
 from server.memory.app.extract.evidence import (  # noqa: E402  (re-export)
@@ -693,6 +687,16 @@ from server.memory.app.session_summary import (  # noqa: E402, F401  (re-export)
     _draft_session_summary,
     _top_key_facts,
     _write_session_summary,
+)
+from server.memory.app.set_entities import (  # noqa: E402, F401  (re-export)
+    _SET_ENTITY_MAX_CANDIDATES,
+    _SET_ENTITY_MIN_LEN,
+    _SET_ENTITY_PROPER_RE,
+    _SET_ENTITY_STOPWORDS,
+    _candidate_entities_from_value,
+)
+from server.memory.app.triple_projections import (  # noqa: E402  (re-export)
+    _write_derived_facts,
 )
 
 __all__ = [

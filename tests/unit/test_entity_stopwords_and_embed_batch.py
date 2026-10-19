@@ -13,7 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from server.memory.app.entity_projections import (  # noqa: E402
+from server.memory.app.set_entities import (  # noqa: E402
     _candidate_entities_from_value,
 )
 from server.memory.domain.graph_quality import canonical_entity_text  # noqa: E402

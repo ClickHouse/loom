@@ -252,12 +252,10 @@ async def _close_mined_facts(
     of entities not on the row); the edges of the entities on the row stay, its writer's
     or the extractor's when it tagged the row, as the row keeps those entities. `version`:
     the relabel's, which dates the dropped edges' end."""
-    from server.memory.app.entity_projections import (
-        declared_entities,
-        drop_undeclared_edges,
-        reconcile_row_facts,
-    )
+    from server.memory.app.edge_links import drop_undeclared_edges
     from server.memory.app.projection_errors import ProjectionScope
+    from server.memory.app.set_entities import declared_entities
+    from server.memory.app.triple_projections import reconcile_row_facts
 
     scope = ProjectionScope(org=c.org, namespace=c.namespace, agent=c.agent, user_id=c.user_id)
     keep = declared_entities(row_entities)

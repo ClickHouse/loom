@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from server.memory.app import entity_projections
+from server.memory.app import graph_holders
 
 
 class _StubCH:
@@ -30,7 +30,7 @@ async def test_the_version_read_is_sequentially_consistent(monkeypatch) -> None:
     )
     ch = _StubCH()
     triple = ("user", "live_in", "paris")
-    await entity_projections._carried_by(
+    await graph_holders._carried_by(
         "o",
         "n",
         [{"id": "m1", "content_sha256": "new", "value": '"User lives in Rome."'}],

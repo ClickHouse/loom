@@ -10,8 +10,9 @@ from typing import Any
 
 import pytest
 
-from server.memory.app import entity_projections as proj
+from server.memory.app import triple_follow, triple_projections
 from server.memory.app.projections import entity_triple_row
+from server.memory.domain import triples_follow_rows as tfr
 
 A, B = "00000000-0000-0000-0000-00000000000a", "00000000-0000-0000-0000-00000000000b"
 
@@ -76,9 +77,9 @@ async def test_the_successor_triple_carries_the_predecessor_provenance(
     async def _no_close(*a: Any, **k: Any) -> None:
         return None
 
-    monkeypatch.setattr(proj, "close_triples", _no_close)
+    monkeypatch.setattr(triple_projections, "close_triples", _no_close)
     ch = _CH()
-    closed, inserted, _ = await proj.follow_row_supersessions(
+    closed, inserted, _ = await triple_follow.follow_row_supersessions(
         SimpleNamespace(org="o", namespace="n", agent="a"), [(A, B)], ch=ch
     )
     assert (closed, inserted) == (1, 1)
@@ -106,13 +107,9 @@ async def test_a_successor_is_repaired_when_its_old_value_is_kept(
 ) -> None:
     # Another live row still says Abbas, so the plan closes nothing; Kahlon is still
     # a newer value and goes through the interval repair, as a write of it would.
-    kahlon = proj.tfr.Successor("fatah", "chairperson_of", "moshe kahlon", "new", None, 0.9, "")
-    plan = proj.tfr.merge_plans(
-        [
-            proj.tfr.FollowPlan(
-                closes=[("fatah", "chairperson_of", "mahmoud abba")], inserts=[kahlon]
-            )
-        ],
+    kahlon = tfr.Successor("fatah", "chairperson_of", "moshe kahlon", "new", None, 0.9, "")
+    plan = tfr.merge_plans(
+        [tfr.FollowPlan(closes=[("fatah", "chairperson_of", "mahmoud abba")], inserts=[kahlon])],
         kept=frozenset({("fatah", "chairperson_of", "mahmoud abba")}),
     )
     assert plan.closes == []
@@ -130,6 +127,8 @@ async def test_a_successor_is_repaired_when_its_old_value_is_kept(
         repaired.extend(triples)
         return []
 
-    monkeypatch.setattr(proj, "repair_intervals", _repair)
-    await proj._write_follow_plan(SimpleNamespace(org="o", namespace="n"), plan, ch=_Stored())
+    monkeypatch.setattr(triple_projections, "repair_intervals", _repair)
+    await triple_projections._write_follow_plan(
+        SimpleNamespace(org="o", namespace="n"), plan, ch=_Stored()
+    )
     assert repaired == [{**stored, "valid_from": None, "seen_at": datetime(2026, 1, 1)}]

@@ -288,7 +288,7 @@ async def test_a_retirement_chain_is_read_to_its_end(ch, org) -> None:
     from types import SimpleNamespace
 
     from server.memory import store as M
-    from server.memory.app.entity_projections import _chain_head, _rows_along_chains
+    from server.memory.app.triple_follow import _chain_head, _rows_along_chains
 
     at = datetime(2026, 5, 1)
     c = _row(org, "s3", "Rome", at)
@@ -498,7 +498,7 @@ async def _follow_retirement(
     from types import SimpleNamespace
 
     from server.memory import store as M
-    from server.memory.app.entity_projections import follow_row_supersessions
+    from server.memory.app.triple_follow import follow_row_supersessions
 
     retired = {**loser, "version": M.next_version(), "status": "superseded"}
     retired["superseded_by"] = str(winner["memory_id"])
@@ -1365,19 +1365,19 @@ async def test_a_merged_write_links_the_facts_it_names_to_the_row_it_merged_into
 async def test_a_row_restating_a_triple_while_the_follow_closes_it_keeps_it(
     ch, org, monkeypatch
 ) -> None:
-    from server.memory.app import entity_projections
+    from server.memory.app import triple_projections
 
     london = await _stated(ch, org, "s1", "My favourite city is London")
     berlin = await _stated(ch, org, "s2", "My favourite city is Berlin")
     support = await _stated(ch, org, "s3", "My favourite city is Rome", pinned=1)
-    close = entity_projections.close_triples
+    close = triple_projections.close_triples
 
     async def _revised_back_first(*args: Any, **kw: Any) -> Any:
         # After the follow read its plan, before its close: the row says London again.
         await _stated(ch, org, "s3", "My favourite city is London", memory_id=support["memory_id"])
         return await close(*args, **kw)
 
-    monkeypatch.setattr(entity_projections, "close_triples", _revised_back_first)
+    monkeypatch.setattr(triple_projections, "close_triples", _revised_back_first)
     await _follow_retirement(ch, org, london, berlin)
     await _mutations_done(ch, org)
     want = {"london", "berlin", "rome"}
@@ -1798,7 +1798,7 @@ async def test_a_winner_revised_to_high_projects_nothing_when_the_follow_replays
     from types import SimpleNamespace
 
     from server.memory import store as M
-    from server.memory.app.entity_projections import follow_row_supersessions
+    from server.memory.app.triple_follow import follow_row_supersessions
 
     paris = await _stated(ch, org, "s1", "I currently live in Paris")
     london = await _stated(ch, org, "s2", "I currently live in London", extracted=False)
@@ -1935,14 +1935,14 @@ async def test_an_undo_leaves_the_graph_to_a_revision_made_before_its_graph_step
     # The Undo restores London and releases the key's lock; before its graph step runs,
     # the row is revised to Rome and Berlin is written. The Undo must not assert Rome.
     from server.memory.api.models_crud import MemoryRestoreInput
-    from server.memory.app import entity_projections
+    from server.memory.app import triple_projections
     from server.memory.app.restore import handle_memory_restore
 
     live = ("user", "live_in")
     london = await _stated(ch, org, "s1", "I currently live in London", (*live, "london"))
     paris = await _stated(ch, org, "s2", "I currently live in Paris", (*live, "paris"))
     await _follow_retirement(ch, org, london, paris)
-    reconcile, revised = entity_projections.reconcile_row_facts, []
+    reconcile, revised = triple_projections.reconcile_row_facts, []
 
     async def revised_first(*args: Any, **kwargs: Any) -> None:
         if kwargs.get("op") != "memory.restore" or revised:
@@ -1953,7 +1953,7 @@ async def test_an_undo_leaves_the_graph_to_a_revision_made_before_its_graph_step
         await _mutations_done(ch, org)
         await reconcile(*args, **kwargs)
 
-    monkeypatch.setattr(entity_projections, "reconcile_row_facts", revised_first)
+    monkeypatch.setattr(triple_projections, "reconcile_row_facts", revised_first)
     out = await handle_memory_restore(
         MemoryRestoreInput(
             org=org,
@@ -2252,10 +2252,10 @@ async def test_a_projection_landing_after_a_revision_leaves_no_edge(
     # The first write's edges are written beside its response; held back past the
     # revision (`late`), they must not walk once they land.
     from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import after_write, entity_projections
+    from server.memory.app import after_write, edge_links
     from server.memory.app.write import handle_memory_set
 
-    write_edges, release = entity_projections.write_entity_edges, asyncio.Event()
+    write_edges, release = edge_links.write_entity_edges, asyncio.Event()
     calls: list[str] = []
 
     async def _first_held(*args: Any, **kw: Any) -> Any:
@@ -2264,7 +2264,7 @@ async def test_a_projection_landing_after_a_revision_leaves_no_edge(
             await release.wait()
         return await write_edges(*args, **kw)
 
-    monkeypatch.setattr(entity_projections, "write_entity_edges", _first_held)
+    monkeypatch.setattr(edge_links, "write_entity_edges", _first_held)
 
     def _set(value: str, relations: list[Any]) -> Any:
         return handle_memory_set(
@@ -2300,10 +2300,10 @@ async def test_a_first_write_paused_past_a_conditional_revision_leaves_no_fact(
     # London's first write stops before its edges; a conditional revision to jazz
     # completes; then London resumes. Its edges and its stated relation must not walk.
     from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import after_write, entity_projections
+    from server.memory.app import after_write, edge_links
     from server.memory.app.write import handle_memory_set
 
-    write_edges, release, held = entity_projections.write_entity_edges, asyncio.Event(), []
+    write_edges, release, held = edge_links.write_entity_edges, asyncio.Event(), []
 
     async def _london_held(input: Any, *args: Any, **kw: Any) -> Any:
         if "London" in str(input.entries[0].value):
@@ -2311,7 +2311,7 @@ async def test_a_first_write_paused_past_a_conditional_revision_leaves_no_fact(
             await release.wait()
         return await write_edges(input, *args, **kw)
 
-    monkeypatch.setattr(entity_projections, "write_entity_edges", _london_held)
+    monkeypatch.setattr(edge_links, "write_entity_edges", _london_held)
 
     def _set(value: str, relations: list[Any], **extra: Any) -> Any:
         return handle_memory_set(
@@ -2418,7 +2418,7 @@ async def test_a_revisions_edges_landing_after_the_next_revision_end_with_it(
     ch, org, monkeypatch, memory_type
 ) -> None:
     from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import after_write, entity_projections
+    from server.memory.app import after_write, edge_links
     from server.memory.app.write import handle_memory_set
 
     def _set(value: str, relations: list[Any]) -> Any:
@@ -2441,7 +2441,7 @@ async def test_a_revisions_edges_landing_after_the_next_revision_end_with_it(
         ch,
         org,
         monkeypatch,
-        entity_projections,
+        edge_links,
         lambda: _set("Alice lives in London", [("alice", "live_in", "london")]),
         lambda: _set("Alice likes jazz", []),
     )
@@ -2452,7 +2452,7 @@ async def test_an_update_by_ids_edges_landing_after_the_next_revision_end_with_i
 ) -> None:
     # As above, through memory.update_by_id.
     from server.memory.api.models_crud import MemorySetInput, MemoryUpdateByIdInput
-    from server.memory.app import entity_projections
+    from server.memory.app import edge_links
     from server.memory.app.update import handle_memory_update_by_id
     from server.memory.app.write import handle_memory_set
 
@@ -2479,7 +2479,7 @@ async def test_an_update_by_ids_edges_landing_after_the_next_revision_end_with_i
         ch,
         org,
         monkeypatch,
-        entity_projections,
+        edge_links,
         lambda: _update("Alice lives in London", [("alice", "live_in", "london")]),
         lambda: _update("Alice likes jazz", []),
     )
@@ -2521,7 +2521,7 @@ async def test_an_overtaken_version_ends_its_edge_though_its_row_holds_another(c
     from server.memory import store as M
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.app import after_write
-    from server.memory.app.entity_projections import end_overtaken_edges
+    from server.memory.app.edge_repair import end_overtaken_edges
     from server.memory.app.write import handle_memory_set
 
     out = await handle_memory_set(
@@ -2599,15 +2599,15 @@ async def test_a_late_projection_whose_cleanup_failed_is_closed_by_the_repair(
     # As above with the edges landing late, but the cleanup that ends them fails
     # once: it is recorded, and the projection repair ends them.
     from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import after_write, entity_projections
+    from server.memory.app import after_write, edge_links, edge_repair
     from server.memory.app.projection_failures import (
         list_projection_failures,
         retry_projection_failures,
     )
     from server.memory.app.write import handle_memory_set
 
-    write_edges, release = entity_projections.write_entity_edges, asyncio.Event()
-    end_edges_of, failures = entity_projections._end_edges_of, ["once"]
+    write_edges, release = edge_links.write_entity_edges, asyncio.Event()
+    end_edges_of, failures = edge_repair._end_edges_of, ["once"]
     calls: list[str] = []
 
     async def _held(*args: Any, **kw: Any) -> Any:
@@ -2622,8 +2622,8 @@ async def test_a_late_projection_whose_cleanup_failed_is_closed_by_the_repair(
             raise RuntimeError("transient")
         return await end_edges_of(*args, **kw)
 
-    monkeypatch.setattr(entity_projections, "write_entity_edges", _held)
-    monkeypatch.setattr(entity_projections, "_end_edges_of", _fails_once)
+    monkeypatch.setattr(edge_links, "write_entity_edges", _held)
+    monkeypatch.setattr(edge_repair, "_end_edges_of", _fails_once)
 
     def _set(value: str, relations: list[Any]) -> Any:
         return handle_memory_set(
@@ -2668,12 +2668,12 @@ async def test_a_late_projections_edge_ends_when_the_revision_ended_its_value(
     # its replay, must end them at the revision, not when it runs: a walk as of a
     # moment in between must not reach London.
     from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import after_write, entity_projections
+    from server.memory.app import after_write, edge_links, edge_repair
     from server.memory.app.projection_failures import retry_projection_failures
     from server.memory.app.write import handle_memory_set
 
-    write_edges, release = entity_projections.write_entity_edges, asyncio.Event()
-    end_edges_of = entity_projections._end_edges_of
+    write_edges, release = edge_links.write_entity_edges, asyncio.Event()
+    end_edges_of = edge_repair._end_edges_of
     failures = ["once"] if cleanup == "by the repair" else []
     calls: list[str] = []
 
@@ -2689,8 +2689,8 @@ async def test_a_late_projections_edge_ends_when_the_revision_ended_its_value(
             raise RuntimeError("transient")
         return await end_edges_of(*args, **kw)
 
-    monkeypatch.setattr(entity_projections, "write_entity_edges", _held)
-    monkeypatch.setattr(entity_projections, "_end_edges_of", _fails_once)
+    monkeypatch.setattr(edge_links, "write_entity_edges", _held)
+    monkeypatch.setattr(edge_repair, "_end_edges_of", _fails_once)
 
     def _set(value: str, relations: list[Any]) -> Any:
         return handle_memory_set(
@@ -2743,15 +2743,15 @@ async def test_a_late_projections_edge_ends_when_a_bulk_retired_its_row(
     # walk between the two still reaches London, a walk after it does not.
     from server.memory.api.models_bulk import MemoryBulkSetInput
     from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import after_write, bulk_set, conflicts, entity_projections
+    from server.memory.app import after_write, bulk_set, conflicts, edge_links, edge_repair
     from server.memory.app.projection_failures import (
         list_projection_failures,
         retry_projection_failures,
     )
     from server.memory.app.write import handle_memory_set
 
-    write_edges, release, held = entity_projections.write_entity_edges, asyncio.Event(), []
-    end_edges_of = entity_projections._end_edges_of
+    write_edges, release, held = edge_links.write_entity_edges, asyncio.Event(), []
+    end_edges_of = edge_repair._end_edges_of
     failures = ["once"] if cleanup == "by the repair" else []
 
     async def _london_held(input: Any, *args: Any, **kw: Any) -> Any:
@@ -2769,8 +2769,8 @@ async def test_a_late_projections_edge_ends_when_a_bulk_retired_its_row(
     async def _newest_wins(org: str, namespace: str, ch: Any = None) -> str:
         return "newest_wins"  # a later write to the key retires the older rows
 
-    monkeypatch.setattr(entity_projections, "write_entity_edges", _london_held)
-    monkeypatch.setattr(entity_projections, "_end_edges_of", _fails_once)
+    monkeypatch.setattr(edge_links, "write_entity_edges", _london_held)
+    monkeypatch.setattr(edge_repair, "_end_edges_of", _fails_once)
     monkeypatch.setattr(conflicts, "namespace_conflict_policy", _newest_wins)
     written = naive_utc_now()
     london = await handle_memory_set(
@@ -2830,7 +2830,7 @@ async def test_a_late_cleanup_keeps_the_end_another_row_gave_the_pair(ch, org) -
     # Alice and London have two edge rows: one another row closed ten minutes after
     # the revision, and the late projection's own open one. The late cleanup ends
     # the open one at the revision and leaves the closed one's end alone.
-    from server.memory.app.entity_projections import close_late_edges
+    from server.memory.app.edge_repair import close_late_edges
     from server.memory.app.projections import entity_edge_row
 
     revised = naive_utc_now().replace(microsecond=0) - timedelta(hours=1)
@@ -2875,7 +2875,7 @@ async def test_a_value_ends_when_the_row_last_stopped_holding_it(ch, org, values
     # London ended with the last revision away from it, not the first.
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.app import after_write
-    from server.memory.app.entity_projections import value_ended_at
+    from server.memory.app.edge_repair import value_ended_at
     from server.memory.app.write import handle_memory_set
 
     for i, value in enumerate(values):
@@ -2911,7 +2911,7 @@ async def test_a_value_a_retirement_ended_ends_at_the_retirement(ch, org) -> Non
     # A retirement keeps the row's updated_at and stamps invalid_at: the value ended
     # when it was retired, not when it was written.
     from server.memory import store as M
-    from server.memory.app.entity_projections import value_ended_at
+    from server.memory.app.edge_repair import value_ended_at
 
     row = _row(org, "s1", "User lives in London", None, **_written_earlier())
     await M.insert_memory_versions([row], ch=ch)
@@ -2934,7 +2934,7 @@ async def test_a_value_an_undated_value_update_ended_ends_at_the_retirement(ch, 
     # A value update whose newer row has no valid_at retires the older row without an
     # invalid_at, keeping its updated_at: the value ended when it was retired.
     from server.memory import store as M
-    from server.memory.app.entity_projections import value_ended_at
+    from server.memory.app.edge_repair import value_ended_at
     from server.memory.app.value_updates import _supersession_update
 
     row = _row(org, "s1", "price is $10", None, **_written_earlier())
@@ -2950,7 +2950,7 @@ async def test_a_value_a_back_dated_value_update_ended_ends_at_its_date(ch, org)
     # A value update retires the older row as of the newer row's valid_at, which is
     # usually before the retirement was written: that date is the value's end.
     from server.memory import store as M
-    from server.memory.app.entity_projections import value_ended_at
+    from server.memory.app.edge_repair import value_ended_at
     from server.memory.app.value_updates import _supersession_update
 
     row = _row(org, "s1", "price is $10", datetime(2026, 1, 1))
@@ -2966,7 +2966,7 @@ async def test_a_value_a_by_id_tombstone_ended_ends_at_the_tombstone(ch, org) ->
     # A by-id tombstone (a conflict's losing side, a blacklist sweep) keeps the row's
     # updated_at and stamps only tombstoned_at.
     from server.memory import store as M
-    from server.memory.app.entity_projections import value_ended_at
+    from server.memory.app.edge_repair import value_ended_at
 
     row = _row(org, "s1", "User lives in London", None, **_written_earlier())
     await M.insert_memory_versions([row], ch=ch)
@@ -3006,7 +3006,7 @@ async def test_a_restored_tombstone_is_not_left_retired(ch, org) -> None:
 async def test_a_value_revised_after_a_restore_ends_at_the_revision(ch, org) -> None:
     # The tombstone's invalid_at must not date the end of a value the row held again.
     from server.memory.api.models_crud import MemoryUpdateByIdInput
-    from server.memory.app.entity_projections import value_ended_at
+    from server.memory.app.edge_repair import value_ended_at
     from server.memory.app.update import handle_memory_update_by_id
 
     row = await _restored_dependent(ch, org)
@@ -3069,16 +3069,25 @@ async def test_a_plain_first_write_projects_its_edge_fenced_on_its_value(
     # the response, flushed, and fenced as a semantic row's are: written only once the
     # row is asked whether it still holds the value.
     from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import after_write, entity_projections
+    from server.memory.app import (
+        after_write,
+        edge_links,
+        edge_repair,
+        graph_holders,
+        triple_projections,
+    )
     from server.memory.app.write import handle_memory_set
 
-    rows_holding, asked = entity_projections.rows_holding, []
+    rows_holding, asked = graph_holders.rows_holding, []
 
     async def _counted(*a: Any, **k: Any) -> Any:
         asked.append(True)
         return await rows_holding(*a, **k)
 
-    monkeypatch.setattr(entity_projections, "rows_holding", _counted)
+    monkeypatch.setattr(graph_holders, "rows_holding", _counted)
+    monkeypatch.setattr(edge_repair, "rows_holding", _counted)
+    monkeypatch.setattr(edge_links, "rows_holding", _counted)
+    monkeypatch.setattr(triple_projections, "rows_holding", _counted)
     out = await handle_memory_set(
         MemorySetInput(
             org=org,
@@ -3123,11 +3132,13 @@ async def test_an_undo_keeps_its_edge_open_past_another_relations_end(ch, org) -
 def _date_undos_at(monkeypatch: Any, clock: Any) -> None:
     """Date the next Undo by `clock`: the restore dates its facts by its version's time,
     and a direct reconcile reads the projections' clock."""
-    from server.memory.app import entity_projections, restore
+    from server.memory.app import edge_repair, graph_holders, restore, triple_projections
 
     monkeypatch.setattr(restore, "version_time", lambda version: clock())
     monkeypatch.setattr(restore, "naive_utc_now", clock)
-    monkeypatch.setattr(entity_projections, "naive_utc_now", clock)
+    monkeypatch.setattr(graph_holders, "naive_utc_now", clock)
+    monkeypatch.setattr(edge_repair, "naive_utc_now", clock)
+    monkeypatch.setattr(triple_projections, "naive_utc_now", clock)
 
 
 async def _undo_in_the_second_of(ch: Any, org: str, city: str, monkeypatch: Any) -> datetime:
@@ -3152,8 +3163,8 @@ async def test_an_undo_weighs_its_fact_after_the_retirements_closes_land(ch, org
 
     from server.memory import store as M
     from server.memory.api.models_crud import MemoryRestoreInput
-    from server.memory.app.entity_projections import follow_row_supersessions
     from server.memory.app.restore import handle_memory_restore
+    from server.memory.app.triple_follow import follow_row_supersessions
 
     london = await _stated(ch, org, "s1", "My favourite city is London")
     paris = await _stated(ch, org, "s2", "My favourite city is Paris")
@@ -3262,7 +3273,7 @@ async def test_a_deferred_undo_adds_no_weight_to_a_fact_another_live_row_holds(c
     # erasure and replayed after it, leaves London's weight at 2.
     from types import SimpleNamespace
 
-    from server.memory.app.entity_projections import reconcile_row_facts
+    from server.memory.app.triple_projections import reconcile_row_facts
 
     london = await _stated(ch, org, "s1", "My favourite city is London")
     await _stated(ch, org, "s3", "My favourite city is London", memory_key="k3")
@@ -5064,7 +5075,7 @@ async def test_a_replayed_fallback_dates_its_triple_as_its_edge(ch, org, monkeyp
     # The fallback's edge marker lands and its triple marker fails. Replayed later, the
     # triple starts when the edge does, so both walks agree in between.
     from server.core import ch as ch_mod
-    from server.memory.app import entity_projections
+    from server.memory.app import edge_repair, graph_holders, triple_projections
 
     london = await _london_undone_over_paris(ch, org, "live_in")
     await _edges_like_triples(ch, org)
@@ -5081,7 +5092,9 @@ async def test_a_replayed_fallback_dates_its_triple_as_its_edge(ch, org, monkeyp
     monkeypatch.setattr(client, "insert", insert)
     failure = await _recorded_reconcile(ch, org)
     later = naive_utc_now() + timedelta(seconds=30)
-    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: later)
+    monkeypatch.setattr(graph_holders, "naive_utc_now", lambda: later)
+    monkeypatch.setattr(edge_repair, "naive_utc_now", lambda: later)
+    monkeypatch.setattr(triple_projections, "naive_utc_now", lambda: later)
     assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     starts = await ch.query_all(
@@ -5174,7 +5187,7 @@ async def test_a_second_replay_closes_the_edge_the_first_replays_repair_missed(
     # closes it made must ride the failure, or the second replay finds the markers,
     # finds Paris's triple already closed, repairs nothing and leaves the edge open.
     from server.core import ch as ch_mod
-    from server.memory.app import entity_projections
+    from server.memory.app import triple_projections
 
     live = ("user", "live_in")
     london = await _london_undone_over_paris(ch, org, "live_in")
@@ -5188,7 +5201,7 @@ async def test_a_second_replay_closes_the_edge_the_first_replays_repair_missed(
         raise ConnectionError("transient")
 
     with monkeypatch.context() as patched:
-        patched.setattr(entity_projections, "_keep_one_current", _fallback_fails)
+        patched.setattr(triple_projections, "_keep_one_current", _fallback_fails)
         await _revise(
             "memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),)
         )
@@ -5252,7 +5265,7 @@ async def _replay_follow(ch: Any, org: str, loser: dict[str, Any], winner: dict[
 async def test_a_replayed_follow_ends_the_edge_its_failure_left_open(ch, org, monkeypatch) -> None:
     # London's close lands and its edge end fails: the replay plans no close, as
     # London is closed, and still ends the edge.
-    from server.memory.app import entity_projections
+    from server.memory.app import edge_links, edge_repair, triple_projections
 
     london = await _stated(ch, org, "s1", "I like London")
     paris = await _stated(ch, org, "s2", "I like Paris")
@@ -5262,7 +5275,9 @@ async def test_a_replayed_follow_ends_the_edge_its_failure_left_open(ch, org, mo
         raise RuntimeError("edges down")
 
     with monkeypatch.context() as patched:
-        patched.setattr(entity_projections, "end_edges", _fails)
+        patched.setattr(edge_repair, "end_edges", _fails)
+        patched.setattr(edge_links, "end_edges", _fails)
+        patched.setattr(triple_projections, "end_edges", _fails)
         with pytest.raises(RuntimeError):
             await _follow_retirement(ch, org, london, paris)
     await _mutations_done(ch, org)
@@ -6191,7 +6206,7 @@ async def test_a_follow_of_one_retirement_sends_few_statements(ch, org) -> None:
     from types import SimpleNamespace
 
     from server.memory import store as M
-    from server.memory.app.entity_projections import follow_row_supersessions
+    from server.memory.app.triple_follow import follow_row_supersessions
 
     live = ("user", "live_in")
     london = await _stated(ch, org, "s1", "I live in London", (*live, "london"))
@@ -6786,17 +6801,17 @@ async def test_a_retirement_stopped_before_its_follow_is_followed_by_the_repair(
     follows the intent's pair, then resolves it, and a second follow changes nothing."""
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections
+    from server.memory.app import triple_follow
 
     ids = await _newest_wins_two_offices(ch, org, monkeypatch, stop="follow")
     followed: list[Any] = []
-    real = entity_projections.follow_row_supersessions
+    real = triple_follow.follow_row_supersessions
 
     async def spy(scope: Any, pairs: Any, **kw: Any) -> Any:
         followed.append([tuple(p) for p in pairs])
         return await real(scope, pairs, **kw)
 
-    monkeypatch.setattr(entity_projections, "follow_row_supersessions", spy)
+    monkeypatch.setattr(triple_follow, "follow_row_supersessions", spy)
     await _replay_owed(ch, org, monkeypatch)
     assert followed == [[(ids["s1"], ids["s2"])]]
     (intent,) = await _owed(ch, org, "resolved")
@@ -7043,24 +7058,30 @@ async def test_a_late_mined_projection_writes_nothing_on_a_row_made_high(
     """A plain write's mined edges still projecting beside its response when the same
     value is re-set as high: the late projection's fence no longer counts the row, so
     no mined edge lands on it."""
-    from server.memory.app import entity_projections
+    from server.memory.app import edge_links, edge_repair, graph_holders, triple_projections
 
     value = "Alice Smith met Bob Jones at Acme Corp in Berlin about Project Falcon"
     gate = asyncio.Event()
-    real = entity_projections.rows_holding
+    real = graph_holders.rows_holding
 
     async def slow(*a: Any, **kw: Any) -> Any:
         await gate.wait()
         return await real(*a, **kw)
 
-    monkeypatch.setattr(entity_projections, "rows_holding", slow)
+    monkeypatch.setattr(graph_holders, "rows_holding", slow)
+    monkeypatch.setattr(edge_repair, "rows_holding", slow)
+    monkeypatch.setattr(edge_links, "rows_holding", slow)
+    monkeypatch.setattr(triple_projections, "rows_holding", slow)
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.app import after_write
     from server.memory.app.write import handle_memory_set
 
     ids = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s1"}
     first = await handle_memory_set(MemorySetInput(**ids, memory_key="contact", value=value))
-    monkeypatch.setattr(entity_projections, "rows_holding", real)
+    monkeypatch.setattr(graph_holders, "rows_holding", real)
+    monkeypatch.setattr(edge_repair, "rows_holding", real)
+    monkeypatch.setattr(edge_links, "rows_holding", real)
+    monkeypatch.setattr(triple_projections, "rows_holding", real)
     await handle_memory_set(
         MemorySetInput(**ids, memory_key="contact", value=value, sensitivity="high")
     )
@@ -7110,21 +7131,21 @@ async def test_a_bulk_re_set_to_high_drops_the_mined_edges(ch, org) -> None:
 
 async def test_a_failed_drop_of_mined_edges_is_left_to_the_repair(ch, org, monkeypatch) -> None:
     """The drop after a re-set to high fails: it is recorded, and the repair drops them."""
-    from server.memory.app import entity_projections
+    from server.memory.app import edge_links
     from server.memory.app.projection_failures import retry_projection_failures
 
     value = "Alice Smith met Bob Jones at Acme Corp in Berlin"
     await _high_set(org, "s1", "contact", value)
-    real = entity_projections.drop_undeclared_links
+    real = edge_links.drop_undeclared_links
 
     async def down(*a: Any, **kw: Any) -> None:
         raise RuntimeError("DELETE refused")
 
     with monkeypatch.context() as m:
-        m.setattr(entity_projections, "drop_undeclared_links", down)
+        m.setattr(edge_links, "drop_undeclared_links", down)
         await _high_set(org, "s1", "contact", value, sensitivity="high")
     assert await _edge_links(ch, org) > 0
-    monkeypatch.setattr(entity_projections, "drop_undeclared_links", real)
+    monkeypatch.setattr(edge_links, "drop_undeclared_links", real)
     results = await retry_projection_failures(
         org=org, projection="entity_edges_drop_undeclared", ch=ch
     )
@@ -7230,17 +7251,20 @@ async def test_late_declared_edges_write_nothing_on_a_high_row_without_them(
 ) -> None:
     """A write's declared entities still projecting when the same value is re-set high
     with no entities: the row no longer names them, so the late edges do not land."""
-    from server.memory.app import entity_projections
+    from server.memory.app import edge_links, edge_repair, graph_holders, triple_projections
 
     value = "Alice Smith met Bob Jones at Acme Corp in Berlin about Project Falcon"
     gate = asyncio.Event()
-    real = entity_projections.rows_holding
+    real = graph_holders.rows_holding
 
     async def slow(*a: Any, **kw: Any) -> Any:
         await gate.wait()
         return await real(*a, **kw)
 
-    monkeypatch.setattr(entity_projections, "rows_holding", slow)
+    monkeypatch.setattr(graph_holders, "rows_holding", slow)
+    monkeypatch.setattr(edge_repair, "rows_holding", slow)
+    monkeypatch.setattr(edge_links, "rows_holding", slow)
+    monkeypatch.setattr(triple_projections, "rows_holding", slow)
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.app import after_write
     from server.memory.app.write import handle_memory_set
@@ -7251,7 +7275,10 @@ async def test_late_declared_edges_write_nothing_on_a_high_row_without_them(
             **ids, memory_key="contact", value=value, entities=["Alice Smith", "Bob Jones"]
         )
     )
-    monkeypatch.setattr(entity_projections, "rows_holding", real)
+    monkeypatch.setattr(graph_holders, "rows_holding", real)
+    monkeypatch.setattr(edge_repair, "rows_holding", real)
+    monkeypatch.setattr(edge_links, "rows_holding", real)
+    monkeypatch.setattr(triple_projections, "rows_holding", real)
     await handle_memory_set(
         MemorySetInput(**ids, memory_key="contact", value=value, sensitivity="high")
     )
@@ -7318,7 +7345,7 @@ async def test_a_user_erasure_deletes_every_kind_of_projection_failure_of_that_u
     from types import SimpleNamespace
 
     from server.erasure.store import steps_ledgers
-    from server.memory.app import entity_projections as ep
+    from server.memory.app import edge_links
     from server.memory.app.projection_errors import record_input_projection_failure
     from server.memory.app.projection_failures import (
         EDGES_CLOSE,
@@ -7333,9 +7360,9 @@ async def test_a_user_erasure_deletes_every_kind_of_projection_failure_of_that_u
     for user in ("alice", "bob"):
         scope = SimpleNamespace(org=org, namespace=NS, agent="bot", user_id=user)
         with monkeypatch.context() as m:
-            m.setattr(ep, "drop_undeclared_links", boom)
+            m.setattr(edge_links, "drop_undeclared_links", boom)
             memory_id = str(uuid.uuid4())
-            await ep.drop_undeclared_edges(
+            await edge_links.drop_undeclared_edges(
                 scope, {memory_id: ["acme"]}, {memory_id: 1}, ch=ch, op="memory.set"
             )
         for kind in (TRIPLES_REOPEN, TRIPLES_RECONCILE, EDGES_CLOSE, FOLLOW_ROWS):
@@ -7388,7 +7415,7 @@ async def test_a_bulk_write_making_many_rows_high_owes_one_drop(ch, org, monkeyp
     leaves that intent to the repair, which drops every row's links."""
 
     from server.memory.api.models_bulk import MemoryBulkSetInput
-    from server.memory.app import after_write, entity_projections, intent_marks
+    from server.memory.app import after_write, edge_links, intent_marks
     from server.memory.app.bulk_set import handle_memory_bulk_set
     from server.memory.app.projection_failures import retry_projection_failures
 
@@ -7431,7 +7458,7 @@ async def test_a_bulk_write_making_many_rows_high_owes_one_drop(ch, org, monkeyp
         raise RuntimeError("DELETE refused")
 
     other = f"{org}-failed"
-    monkeypatch.setattr(entity_projections, "drop_undeclared_links", down)
+    monkeypatch.setattr(edge_links, "drop_undeclared_links", down)
     await handle_memory_bulk_set(write("").model_copy(update={"org": other}))
     await after_write.drain()
     await handle_memory_bulk_set(write("high").model_copy(update={"org": other}))
@@ -7451,7 +7478,7 @@ async def test_a_bulk_revision_asks_once_whether_its_rows_hold_their_edges(
     """A bulk revision of rows pairing different entities reads the rows' holders once,
     not once per set of entities, and every edge a current row names stays open."""
     from server.memory.api.models_bulk import MemoryBulkSetInput
-    from server.memory.app import after_write, bulk_set, entity_projections
+    from server.memory.app import after_write, bulk_set, edge_repair, graph_holders
     from server.memory.app.bulk_set import handle_memory_bulk_set
 
     def write(text: str) -> MemoryBulkSetInput:
@@ -7471,7 +7498,12 @@ async def test_a_bulk_revision_asks_once_whether_its_rows_hold_their_edges(
     await handle_memory_bulk_set(write("first value"))
     await after_write.drain()
     reads = {"edge_holders": 0, "versions_held": 0}
-    for module, name in ((bulk_set, "edge_holders"), (entity_projections, "versions_held")):
+    patched = (
+        (bulk_set, "edge_holders"),
+        (edge_repair, "versions_held"),
+        (graph_holders, "versions_held"),
+    )
+    for module, name in patched:
         real = getattr(module, name)
 
         async def counted(*a: Any, _real: Any = real, _name: str = name, **k: Any) -> Any:
@@ -7584,7 +7616,7 @@ async def test_a_bulk_write_answers_when_its_holder_read_and_its_record_both_fai
     """ClickHouse fails both the holder read and the edge-close record after a bulk
     revision committed: the write still answers."""
     from server.memory.api.models_bulk import MemoryBulkSetInput
-    from server.memory.app import after_write, bulk_set, entity_projections
+    from server.memory.app import after_write, bulk_set, edge_repair
 
     def write(text: str) -> MemoryBulkSetInput:
         entry = {"memory_key": "k", "value": text, "entities": ["Gina", "Hank"]}
@@ -7599,7 +7631,7 @@ async def test_a_bulk_write_answers_when_its_holder_read_and_its_record_both_fai
         raise RuntimeError("clickhouse down")
 
     monkeypatch.setattr(bulk_set, "edge_holders", down)
-    monkeypatch.setattr(entity_projections, "insert_projection_failures", down)
+    monkeypatch.setattr(edge_repair, "insert_projection_failures", down)
     out = await bulk_set.handle_memory_bulk_set(write("Gina left Hank"))
     assert out.written[0].version
 
@@ -7610,7 +7642,7 @@ async def test_a_failed_holder_read_records_every_close_in_one_insert_and_no_hig
     """The holder read after a bulk revision of plain and high rows fails: one insert
     records every close, and the high row's names no value."""
     from server.memory.api.models_bulk import MemoryBulkSetInput
-    from server.memory.app import after_write, bulk_set, entity_projections
+    from server.memory.app import after_write, bulk_set, edge_repair
 
     def write(text: str) -> MemoryBulkSetInput:
         entries = [
@@ -7636,14 +7668,14 @@ async def test_a_failed_holder_read_records_every_close_in_one_insert_and_no_hig
         raise RuntimeError("read timed out")
 
     inserts: list[list[dict[str, Any]]] = []
-    real_insert = entity_projections.insert_projection_failures
+    real_insert = edge_repair.insert_projection_failures
 
     async def counted(rows: list[dict[str, Any]], **kw: Any) -> None:
         inserts.append(rows)
         await real_insert(rows, **kw)
 
     monkeypatch.setattr(bulk_set, "edge_holders", down)
-    monkeypatch.setattr(entity_projections, "insert_projection_failures", counted)
+    monkeypatch.setattr(edge_repair, "insert_projection_failures", counted)
     await bulk_set.handle_memory_bulk_set(write("second"))
     monkeypatch.undo()
     high_id = (
@@ -7661,16 +7693,16 @@ async def test_a_failed_holder_read_records_every_close_in_one_insert_and_no_hig
 
 async def _recorded_closes(monkeypatch: Any) -> list[dict[str, Any]]:
     """Capture the edge-close failures written while the test runs (and write them)."""
-    from server.memory.app import entity_projections
+    from server.memory.app import edge_repair
 
     captured: list[dict[str, Any]] = []
-    real_insert = entity_projections.insert_projection_failures
+    real_insert = edge_repair.insert_projection_failures
 
     async def capture(rows: list[dict[str, Any]], **kw: Any) -> None:
         captured.extend(rows)
         await real_insert(rows, **kw)
 
-    monkeypatch.setattr(entity_projections, "insert_projection_failures", capture)
+    monkeypatch.setattr(edge_repair, "insert_projection_failures", capture)
     return captured
 
 
@@ -7679,12 +7711,12 @@ async def test_a_high_rows_edge_close_record_after_memory_set_names_no_value(
 ) -> None:
     """memory.set of a high row, its overtaken-edge read fails: the close is recorded
     without the row's content_sha256."""
-    from server.memory.app import entity_projections
+    from server.memory.app import edge_repair, graph_holders
 
     await _high_set(
         org, "s1", "vault", "Orchid one", sensitivity="high", entities=["Billing", "Stripe"]
     )
-    real_held, calls = entity_projections.versions_held, 0
+    real_held, calls = graph_holders.versions_held, 0
 
     async def second_down(*a: Any, **kw: Any) -> Any:
         nonlocal calls
@@ -7693,7 +7725,8 @@ async def test_a_high_rows_edge_close_record_after_memory_set_names_no_value(
             return await real_held(*a, **kw)
         raise RuntimeError("read timed out")  # end_overtaken_edges' read
 
-    monkeypatch.setattr(entity_projections, "versions_held", second_down)
+    monkeypatch.setattr(graph_holders, "versions_held", second_down)
+    monkeypatch.setattr(edge_repair, "versions_held", second_down)
     captured = await _recorded_closes(monkeypatch)
     await _high_set(
         org, "s1", "vault", "Orchid two", sensitivity="high", entities=["Billing", "Stripe"]
@@ -7710,7 +7743,7 @@ async def test_a_high_rows_edge_close_record_after_a_bulk_names_no_value(
     batch writes the key plain then high with the holder read failing: neither record
     names the high version's content_sha256."""
     from server.memory.api.models_bulk import MemoryBulkSetInput
-    from server.memory.app import after_write, bulk_set, entity_projections
+    from server.memory.app import after_write, bulk_set, edge_repair, graph_holders
 
     def write(*entries: dict[str, Any]) -> MemoryBulkSetInput:
         return MemoryBulkSetInput(
@@ -7728,7 +7761,8 @@ async def test_a_high_rows_edge_close_record_after_a_bulk_names_no_value(
         raise RuntimeError("read timed out")
 
     monkeypatch.setattr(bulk_set, "edge_holders", nobody_holds)
-    monkeypatch.setattr(entity_projections, "versions_held", down)
+    monkeypatch.setattr(graph_holders, "versions_held", down)
+    monkeypatch.setattr(edge_repair, "versions_held", down)
     captured = await _recorded_closes(monkeypatch)
     await bulk_set.handle_memory_bulk_set(write({**high, "value": "Orchid two"}))
     await after_write.drain()
@@ -7753,9 +7787,9 @@ async def test_the_repair_of_a_high_rows_close_ends_the_values_it_no_longer_hold
     value the row no longer holds, and keeps its current one's; a deleted row holds
     none, its last value included."""
     from server.memory.api.models_crud import MemoryDeleteInput
-    from server.memory.app import entity_projections as ep
-    from server.memory.app import projections
+    from server.memory.app import edge_links, edge_repair, projections, triple_projections
     from server.memory.app.handlers import handle_memory_delete
+    from server.memory.app.projection_errors import ProjectionScope
     from server.memory.app.projection_failures import retry_projection_failures
 
     await _high_set(org, "s1", "vault", "Alice met Carol", entities=["Alice", "Carol"])
@@ -7763,14 +7797,16 @@ async def test_the_repair_of_a_high_rows_close_ends_the_values_it_no_longer_hold
     async def nothing(*a: Any, **kw: Any) -> None:
         return None
 
-    monkeypatch.setattr(ep, "drop_undeclared_links", nothing)  # its links stay behind
+    monkeypatch.setattr(edge_links, "drop_undeclared_links", nothing)  # its links stay behind
     out = await _high_set(
         org, "s1", "vault", "Alice met Bob", sensitivity="high", entities=["Alice", "Bob"]
     )
     if then == "deleted":
         # The delete's own edge close is lost.
         monkeypatch.setattr(projections, "end_edges", nothing)
-        monkeypatch.setattr(ep, "end_edges", nothing)
+        monkeypatch.setattr(edge_repair, "end_edges", nothing)
+        monkeypatch.setattr(edge_links, "end_edges", nothing)
+        monkeypatch.setattr(triple_projections, "end_edges", nothing)
         await handle_memory_delete(
             MemoryDeleteInput(
                 org=org,
@@ -7783,9 +7819,9 @@ async def test_the_repair_of_a_high_rows_close_ends_the_values_it_no_longer_hold
         )
     monkeypatch.undo()
     assert ("alice", "carol") in await _open_edge_pairs(ch, org)
-    scope = ep.ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
-    close = ep.EdgeClose(str(out.memory_id), "vault", "-", ["alice", "bob"], high=True)
-    await ep.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
+    scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    close = edge_repair.EdgeClose(str(out.memory_id), "vault", "-", ["alice", "bob"], high=True)
+    await edge_repair.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
     results = await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
     assert results and all(r.resolved for r in results), results
     want = {("alice", "bob")} if then == "revised" else set()
@@ -7799,16 +7835,18 @@ async def test_a_value_less_close_dates_each_high_value_by_when_the_row_left_it(
     value-less closes ends each older value's edge when the next value was written,
     asking each value with its own entities (not the close's), so no end is the
     repair's clock, and keeps the current value's edge open."""
-    from server.memory.app import entity_projections as ep
-    from server.memory.app import projections
+    from server.memory.app import edge_links, edge_repair, projections, triple_projections
+    from server.memory.app.projection_errors import ProjectionScope
     from server.memory.app.projection_failures import retry_projection_failures
 
     async def nothing(*a: Any, **kw: Any) -> None:
         return None
 
-    monkeypatch.setattr(ep, "drop_undeclared_links", nothing)
+    monkeypatch.setattr(edge_links, "drop_undeclared_links", nothing)
     monkeypatch.setattr(projections, "end_edges", nothing)
-    monkeypatch.setattr(ep, "end_edges", nothing)
+    monkeypatch.setattr(edge_repair, "end_edges", nothing)
+    monkeypatch.setattr(edge_links, "end_edges", nothing)
+    monkeypatch.setattr(triple_projections, "end_edges", nothing)
     for i, value in enumerate(("Alice met Carol", "Alice met Dan", "Alice met Bob")):
         if i:
             # Each value's end is read from the next version's write time, in seconds.
@@ -7826,10 +7864,12 @@ async def test_a_value_less_close_dates_each_high_value_by_when_the_row_left_it(
         " SETTINGS select_sequential_consistency = 1",
         params={"org": org},
     )
-    scope = ep.ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
     for ents in (["alice", "carol"], ["alice", "dan"]):
-        close = ep.EdgeClose(row["id"], "vault", "x" * 64, ents, high=True)
-        await ep.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
+        close = edge_repair.EdgeClose(row["id"], "vault", "x" * 64, ents, high=True)
+        await edge_repair.record_edges_closes(
+            scope, [close], RuntimeError("x"), op="memory.set", ch=ch
+        )
     results = await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
     assert results and all(r.resolved for r in results), results
     await _mutations_done(ch, org)
@@ -7850,7 +7890,7 @@ async def test_a_replayed_drop_ends_the_edges_when_the_row_was_made_high(
 ) -> None:
     """The drop after a re-set to high fails and the repair runs it later: the dropped
     edges end when the row was made high, not at the repair's clock."""
-    from server.memory.app import entity_projections
+    from server.memory.app import edge_links
     from server.memory.app.projection_failures import retry_projection_failures
 
     value = "Alice Smith met Bob Jones at Acme Corp in Berlin"
@@ -7861,7 +7901,7 @@ async def test_a_replayed_drop_ends_the_edges_when_the_row_was_made_high(
 
     made_high = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     with monkeypatch.context() as m:
-        m.setattr(entity_projections, "drop_undeclared_links", down)
+        m.setattr(edge_links, "drop_undeclared_links", down)
         await _high_set(org, "s1", "contact", value, sensitivity="high")
     await asyncio.sleep(3)
     results = await retry_projection_failures(
@@ -7923,13 +7963,13 @@ async def test_a_bulk_making_hundreds_of_rows_high_drops_every_mined_link(ch, or
 async def _made_high_with_the_drop_lost(org: str, value: str, monkeypatch: Any) -> None:
     """The row `contact` re-set high (declaring Alice Smith and Bob Jones) with its drop
     failing: the drop is left to the repair."""
-    from server.memory.app import entity_projections
+    from server.memory.app import edge_links
 
     async def down(*a: Any, **kw: Any) -> None:
         raise RuntimeError("DELETE refused")
 
     with monkeypatch.context() as m:
-        m.setattr(entity_projections, "drop_undeclared_links", down)
+        m.setattr(edge_links, "drop_undeclared_links", down)
         await _high_set(
             org,
             "s1",
@@ -7972,8 +8012,8 @@ async def test_a_value_less_close_keeps_the_edges_a_high_row_still_names(ch, org
     only its earlier value links: the repair of a value-less close for it ends none of
     them."""
     from server.memory.api.models_crud import MemoryUpdateByIdInput
-    from server.memory.app import after_write
-    from server.memory.app import entity_projections as ep
+    from server.memory.app import after_write, edge_repair
+    from server.memory.app.projection_errors import ProjectionScope
     from server.memory.app.projection_failures import retry_projection_failures
     from server.memory.app.update import handle_memory_update_by_id
 
@@ -7995,9 +8035,9 @@ async def test_a_value_less_close_keeps_the_edges_a_high_row_still_names(ch, org
         )
     )
     await after_write.drain()
-    scope = ep.ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
-    close = ep.EdgeClose(str(out.memory_id), "contact", "-", [], high=True)
-    await ep.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
+    scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    close = edge_repair.EdgeClose(str(out.memory_id), "contact", "-", [], high=True)
+    await edge_repair.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
     results = await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
     assert results and all(r.resolved for r in results), results
     assert await _open_edge_pairs(ch, org) == named

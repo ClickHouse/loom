@@ -69,7 +69,7 @@ async def test_an_entry_that_wrote_no_row_links_nothing() -> None:
 def test_names_are_matched_in_the_decoded_value() -> None:
     import json
 
-    from server.memory.app.entity_projections import _text
+    from server.memory.app.graph_holders import _text
     from server.memory.domain.triples_follow_rows import still_states
 
     # Stored with ensure_ascii, "Zürich" is `Zürich` until decoded.
@@ -129,7 +129,7 @@ async def test_a_point_write_states_relations_only_for_a_row_that_may_hold_them(
     # The rule `GRAPH_HOLDER_SQL` keeps for the rows a fact stays open for: a row
     # already expired or past its validity holds none, as a 'high' row, a proposal or a
     # deleted row holds none.
-    from server.memory.app import entity_projections as ep
+    from server.memory.app import triple_projections
 
     seen: list = []
 
@@ -139,8 +139,8 @@ async def test_a_point_write_states_relations_only_for_a_row_that_may_hold_them(
     async def reconcile(input, ids, *, reopen, op, ch):
         pass
 
-    monkeypatch.setattr(ep, "_write_stated_relations", write)
-    monkeypatch.setattr(ep, "reconcile_row_facts", reconcile)
+    monkeypatch.setattr(triple_projections, "_write_stated_relations", write)
+    monkeypatch.setattr(triple_projections, "reconcile_row_facts", reconcile)
     row = {
         "org": "o",
         "namespace": "n",
@@ -150,7 +150,7 @@ async def test_a_point_write_states_relations_only_for_a_row_that_may_hold_them(
         "status": "active",
     }
     row.update(extra)
-    await ep.project_stated_relations(
+    await triple_projections.project_stated_relations(
         row, "I live in Rome", [("user", "live_in", "rome")], revised=True, op="o", ch=None
     )
     assert bool(seen) is written
@@ -159,18 +159,22 @@ async def test_a_point_write_states_relations_only_for_a_row_that_may_hold_them(
 async def test_a_point_write_reconciles_only_a_row_it_revised(monkeypatch) -> None:
     # A brand-new row held no facts before: there is nothing to reconcile, and the
     # sequentially consistent read it costs is skipped.
-    from server.memory.app import entity_projections as ep
+    from server.memory.app import triple_projections
 
     reconciled: list = []
 
     async def reconcile(input, ids, *, reopen, op, ch):
         reconciled.append(ids)
 
-    monkeypatch.setattr(ep, "reconcile_row_facts", reconcile)
+    monkeypatch.setattr(triple_projections, "reconcile_row_facts", reconcile)
     row = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "memory_id": "m1"}
-    await ep.project_stated_relations(row, "I live in Rome", [], revised=False, op="o", ch=None)
+    await triple_projections.project_stated_relations(
+        row, "I live in Rome", [], revised=False, op="o", ch=None
+    )
     assert reconciled == []
-    await ep.project_stated_relations(row, "I live in Rome", [], revised=True, op="o", ch=None)
+    await triple_projections.project_stated_relations(
+        row, "I live in Rome", [], revised=True, op="o", ch=None
+    )
     assert reconciled == [["m1"]]
 
 
@@ -184,7 +188,7 @@ async def test_a_first_write_states_relations_only_while_its_row_holds_the_value
 ) -> None:
     # The fence its edges have: a first write another write revised first states
     # nothing; one revised while it wrote closes what it wrote, as a revision would.
-    from server.memory.app import entity_projections as ep
+    from server.memory.app import edge_links, edge_repair, graph_holders, triple_projections
 
     answers, seen, closed = list(held), [], []
 
@@ -200,9 +204,12 @@ async def test_a_first_write_states_relations_only_while_its_row_holds_the_value
     async def reconcile(input, ids, *, reopen, op, ch):
         closed.append(ids)
 
-    monkeypatch.setattr(ep, "rows_holding", holding)
-    monkeypatch.setattr(ep, "_write_stated_relations", write)
-    monkeypatch.setattr(ep, "reconcile_row_facts", reconcile)
+    monkeypatch.setattr(graph_holders, "rows_holding", holding)
+    monkeypatch.setattr(edge_repair, "rows_holding", holding)
+    monkeypatch.setattr(edge_links, "rows_holding", holding)
+    monkeypatch.setattr(triple_projections, "rows_holding", holding)
+    monkeypatch.setattr(triple_projections, "_write_stated_relations", write)
+    monkeypatch.setattr(triple_projections, "reconcile_row_facts", reconcile)
     row = {
         "org": "o",
         "namespace": "n",
@@ -212,7 +219,7 @@ async def test_a_first_write_states_relations_only_while_its_row_holds_the_value
         "status": "active",
     }
     row.update(session_id="s", memory_key="k", content_sha256="sha")
-    await ep.project_stated_relations(
+    await triple_projections.project_stated_relations(
         row, "I live in Rome", [("user", "live_in", "rome")], revised=False, op="o", ch=None
     )
     assert bool(seen) is written and bool(closed) is reconciled and answers == []
@@ -414,8 +421,13 @@ async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeyp
     # failure is recorded, dated at the restore, for the repair worker to replay.
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections as ep
-    from server.memory.app import graph_undo
+    from server.memory.app import (
+        edge_links,
+        edge_repair,
+        graph_holders,
+        graph_undo,
+        triple_projections,
+    )
 
     refusal = (
         "Code: 36. DB::Exception: ALTER UPDATE/ALTER DELETE statement with subquery may"
@@ -467,12 +479,15 @@ async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeyp
     monkeypatch.setattr(graph_undo, "linked_triples", held)
     monkeypatch.setattr(graph_undo, "stated_by_live_rows", _as_set(held))
     monkeypatch.setattr(graph_undo, "held_by_unlinked_rows", _none_held)
-    monkeypatch.setattr(ep, "record_input_projection_failure", record)
+    monkeypatch.setattr(edge_links, "record_input_projection_failure", record)
+    monkeypatch.setattr(triple_projections, "record_input_projection_failure", record)
     monkeypatch.setattr(graph_undo, "repair_intervals", repair)
-    monkeypatch.setattr(ep, "naive_utc_now", lambda: restored)
+    monkeypatch.setattr(graph_holders, "naive_utc_now", lambda: restored)
+    monkeypatch.setattr(edge_repair, "naive_utc_now", lambda: restored)
+    monkeypatch.setattr(triple_projections, "naive_utc_now", lambda: restored)
     ch = _RefusingCH()
     scope = SimpleNamespace(org="o", namespace="ns", agent="a")
-    await ep.reconcile_row_facts(
+    await triple_projections.reconcile_row_facts(
         scope, ["m1"], reopen=True, op="memory.restore", ch=ch, hashes={"m1": "h"}
     )
     assert ch.inserts == {}
@@ -736,7 +751,7 @@ async def test_another_undos_marker_is_not_taken_for_this_ones(monkeypatch) -> N
 def test_the_row_links_migrations_the_legacy_checks_name_exist() -> None:
     # Renumbered and missed, a check would find no applied time and drop legacy rows.
     from server.core.paths import MIGRATIONS_DIR
-    from server.memory.app.entity_projections import _ROW_LINKS_MIGRATION
+    from server.memory.app.graph_holders import _ROW_LINKS_MIGRATION
     from server.memory.app.projections import _EDGE_ROW_LINKS_MIGRATION
 
     assert (MIGRATIONS_DIR / _ROW_LINKS_MIGRATION).exists()
@@ -791,8 +806,7 @@ async def test_a_failed_undo_reopen_records_no_high_rows_hash(monkeypatch, sensi
     as it is), and another row's hash is kept as its fence."""
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections as ep
-    from server.memory.app import graph_undo, restore
+    from server.memory.app import edge_links, graph_undo, restore, triple_projections
 
     recorded: dict[str, Any] = {}
 
@@ -803,7 +817,8 @@ async def test_a_failed_undo_reopen_records_no_high_rows_hash(monkeypatch, sensi
         recorded.update(kw)
 
     monkeypatch.setattr(graph_undo, "reopen_held_facts", down)
-    monkeypatch.setattr(ep, "record_input_projection_failure", record)
+    monkeypatch.setattr(edge_links, "record_input_projection_failure", record)
+    monkeypatch.setattr(triple_projections, "record_input_projection_failure", record)
     scope = SimpleNamespace(org="o", namespace="n", agent="a", user_id="-", session_id="-")
     row = SimpleNamespace(memory_id="m1", content_sha256="f" * 64, sensitivity=sensitivity)
     await restore._reopen_facts(scope, row, 1_700_000_000_000_000_000, ch=None)

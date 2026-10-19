@@ -94,7 +94,7 @@ EDGE_HOLDER_SQL = (
 # A row whose current value may hold graph facts mined or stated from its text: an edge
 # holder that is not 'high' (a 'high' row's content stays out of the shared graph). Every
 # path that keeps or reopens a row's triples asks this; a point write asks its Python twin
-# (`entity_projections.holds_graph_facts`) of the row it just wrote.
+# (`graph_holders.holds_graph_facts`) of the row it just wrote.
 GRAPH_HOLDER_SQL = EDGE_HOLDER_SQL + " AND sensitivity != 'high'"
 
 # A row that still holds the value it was written with, for the edges of its declared

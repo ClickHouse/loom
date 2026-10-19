@@ -7,13 +7,7 @@ from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any, NamedTuple
 
-from server.memory.app.entity_projections import (
-    close_dropped_facts,
-    held_by_unlinked_rows,
-    linked_triples,
-    rows_holding,
-    stated_by_live_rows,
-)
+from server.memory.app.graph_holders import held_by_unlinked_rows, rows_holding, stated_by_live_rows
 from server.memory.app.projection_errors import TriplesRepairFailed
 from server.memory.app.projections import (
     entity_edge_row,
@@ -21,6 +15,7 @@ from server.memory.app.projections import (
     finish_interval_repair,
     repair_intervals,
 )
+from server.memory.app.triple_projections import close_dropped_facts, linked_triples
 from server.memory.domain.graph_quality import (
     canonical_edge_pair,
     is_single_valued_relation,

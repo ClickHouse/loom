@@ -296,7 +296,7 @@ async def follow_pairs(scope: Any, pairs: list[tuple[str, str]], op: str) -> lis
     """The triple plane follows the retired (loser, winner) `pairs` as `scope`; the pairs
     left unfollowed, every one when the follow failed."""
     from server.core.ch import get_client
-    from server.memory.app.entity_projections import follow_row_supersessions
+    from server.memory.app.triple_follow import follow_row_supersessions
 
     try:
         return (await follow_row_supersessions(scope, pairs, ch=get_client())).unfollowed

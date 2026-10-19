@@ -234,7 +234,7 @@ async def test_follow_pairs_past_the_cap_or_in_a_failed_follow_go_to_the_repair(
 ) -> None:
     from types import SimpleNamespace
 
-    from server.memory.app import bulk_set, entity_projections
+    from server.memory.app import bulk_set, triple_follow
     from server.memory.app.bulk_verdicts import BulkVerdictPlan
     from server.memory.app.search.clock import StageClock
 
@@ -247,12 +247,12 @@ async def test_follow_pairs_past_the_cap_or_in_a_failed_follow_go_to_the_repair(
         if fail["now"]:
             raise RuntimeError("follow down")
         followed.append(len(pairs))
-        return entity_projections.FollowOutcome(0, 0, pairs[: unread["n"]])
+        return triple_follow.FollowOutcome(0, 0, pairs[: unread["n"]])
 
     async def record(input, *, projection, payload, **kw):
         recorded.append((projection, len(payload["pairs"])))
 
-    monkeypatch.setattr(entity_projections, "follow_row_supersessions", follow)
+    monkeypatch.setattr(triple_follow, "follow_row_supersessions", follow)
     monkeypatch.setattr(bulk_set, "record_input_projection_failure", record)
     monkeypatch.setattr(bulk_set, "bulk_source_resource_id", lambda input: "src")
     inp = SimpleNamespace(org="o", namespace="ns")
@@ -279,14 +279,14 @@ async def test_follow_pairs_past_the_cap_or_in_a_failed_follow_go_to_the_repair(
 async def test_the_repair_follows_the_pairs_a_write_left(monkeypatch) -> None:
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections, projection_failures
+    from server.memory.app import projection_failures, triple_follow, triple_projections
     from server.memory.domain.triples_follow_rows import FollowPlan
 
     chunks: list = []
 
     async def chunk(scope, pairs, *, ch=None, hops=0):
         chunks.append((scope.org, scope.namespace, len(pairs)))
-        assert hops == entity_projections.REPAIR_CHAIN_HOPS
+        assert hops == triple_follow.REPAIR_CHAIN_HOPS
         return FollowPlan(closes=[], inserts=[]), pairs[: unread["n"]]
 
     unread = {"n": 0}
@@ -302,9 +302,10 @@ async def test_the_repair_follows_the_pairs_a_write_left(monkeypatch) -> None:
     async def no_links(*a, **k):
         return []
 
-    monkeypatch.setattr(entity_projections, "_plan_chunk", chunk)
+    monkeypatch.setattr(triple_follow, "_plan_chunk", chunk)
     # The follow reads the losers' links after its plan; these rows have none.
-    monkeypatch.setattr(entity_projections, "linked_triples", no_links)
+    monkeypatch.setattr(triple_projections, "linked_triples", no_links)
+    monkeypatch.setattr(triple_follow, "linked_triples", no_links)
     monkeypatch.setattr(projection_failures, "mark_projection_failures_resolved", resolved)
     monkeypatch.setattr(projection_failures, "mark_projection_failures_abandoned", abandoned)
     failure = SimpleNamespace(
@@ -349,7 +350,7 @@ async def test_a_pair_that_no_longer_holds_is_not_followed() -> None:
     # Undone, or deleted, between the retirement and a deferred follow.
     from types import SimpleNamespace
 
-    from server.memory.app.entity_projections import _plan_chunk
+    from server.memory.app.triple_follow import _plan_chunk
 
     class CH:
         def __init__(self, rows):
@@ -369,7 +370,7 @@ async def test_a_pair_that_no_longer_holds_is_not_followed() -> None:
 
 
 def test_a_chain_that_loops_or_was_not_read_has_no_head() -> None:
-    from server.memory.app.entity_projections import _chain_head
+    from server.memory.app.triple_follow import _chain_head
 
     a, b, c = _pair_row("a", superseded_by="b"), _pair_row("b", superseded_by="a"), _pair_row("c")
     assert _chain_head(a, {a["id"]: a, b["id"]: b}) is None
@@ -533,15 +534,15 @@ async def _follow(monkeypatch, graph: _Graph, *batches: list[tuple[str, str]]):
     """Follow each batch in turn; the last batch's outcome."""
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections
+    from server.memory.app import triple_follow, triple_projections
 
-    monkeypatch.setattr(entity_projections, "close_triples", graph.close_triples)
-    monkeypatch.setattr(entity_projections, "reopen_triples", graph.reopen_triples)
+    monkeypatch.setattr(triple_projections, "close_triples", graph.close_triples)
+    monkeypatch.setattr(triple_projections, "reopen_triples", graph.reopen_triples)
     inp = SimpleNamespace(org="o", namespace="ns", agent="a")
     outcome = None
     for batch in batches:
         pairs = [(_uid(loser), _uid(winner)) for loser, winner in batch]
-        outcome = await entity_projections.follow_row_supersessions(inp, pairs, ch=graph)
+        outcome = await triple_follow.follow_row_supersessions(inp, pairs, ch=graph)
     return outcome
 
 
@@ -627,7 +628,7 @@ async def test_a_chain_ending_in_nothing_closes_and_writes_no_successor(monkeypa
 
 
 async def test_a_chain_past_the_hop_budget_is_left_open_and_logged(monkeypatch, caplog) -> None:
-    from server.memory.app.entity_projections import _CHAIN_HOPS
+    from server.memory.app.triple_follow import _CHAIN_HOPS
 
     cities = [f"User lives in City{i}" for i in range(_CHAIN_HOPS + 3)]
     graph = _Graph(_chain(*cities), {"city0"})
@@ -644,7 +645,7 @@ async def test_a_chain_past_the_hop_budget_is_left_open_and_logged(monkeypatch, 
 async def test_pairs_in_different_chunks_close_a_triple_once_at_the_later_date(
     monkeypatch, reverse
 ) -> None:
-    from server.memory.app.entity_projections import _FOLLOW_CHUNK
+    from server.memory.app.triple_follow import _FOLLOW_CHUNK
 
     # Paris is closed by the first pair and by one a chunk later; "near the river"
     # still stated it until 05-30.
@@ -897,7 +898,7 @@ async def test_a_row_that_states_a_triple_while_it_closes_opens_it_again(monkeyp
 async def test_a_reopen_that_fails_is_left_for_the_repair(monkeypatch) -> None:
     from datetime import datetime
 
-    from server.memory.app import entity_projections, projection_failures
+    from server.memory.app import edge_links, projection_failures, triple_projections
 
     rows = [
         _pair_row("a0", "I live in London", superseded_by="a1"),
@@ -911,8 +912,9 @@ async def test_a_reopen_that_fails_is_left_for_the_repair(monkeypatch) -> None:
     async def record(input, *, projection, payload, **kw):
         recorded.append((projection, payload))
 
-    monkeypatch.setattr(entity_projections, "record_input_projection_failure", record)
+    monkeypatch.setattr(edge_links, "record_input_projection_failure", record)
     # The row says London only once the follow's plan is read.
+    monkeypatch.setattr(triple_projections, "record_input_projection_failure", record)
     graph.during_close = lambda: graph.link("s", "london")
     graph.fail["reopen"] = 1
     await _follow(monkeypatch, graph, [("a0", "a1")])
@@ -1069,17 +1071,17 @@ async def test_a_shared_successor_is_written_once_with_each_winners_key(monkeypa
 async def test_the_repair_reads_a_chain_a_write_could_not(monkeypatch) -> None:
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections
+    from server.memory.app import triple_follow, triple_projections
 
     cities = [f"User lives in City{i}" for i in range(70)]
     graph = _Graph(_chain(*cities), {"city0"})
-    monkeypatch.setattr(entity_projections, "close_triples", graph.close_triples)
-    monkeypatch.setattr(entity_projections, "reopen_triples", graph.reopen_triples)
-    outcome = await entity_projections.follow_row_supersessions(
+    monkeypatch.setattr(triple_projections, "close_triples", graph.close_triples)
+    monkeypatch.setattr(triple_projections, "reopen_triples", graph.reopen_triples)
+    outcome = await triple_follow.follow_row_supersessions(
         SimpleNamespace(org="o", namespace="ns", agent="a"),
         [(_uid("c0"), _uid("c1"))],
         ch=graph,
-        hops=entity_projections.REPAIR_CHAIN_HOPS,
+        hops=triple_follow.REPAIR_CHAIN_HOPS,
     )
     assert outcome.unfollowed == [] and graph.objects() == {"city69"}
 
@@ -1097,7 +1099,7 @@ async def test_a_fallback_marker_closed_in_the_same_second_gets_a_marker_of_its_
     # first, rather than finding it written, and labels both as fallbacks, not Undos.
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections, graph_undo
+    from server.memory.app import graph_holders, graph_undo, triple_projections
 
     closed = datetime(2026, 9, 1, 12, 0, 0)
 
@@ -1121,14 +1123,15 @@ async def test_a_fallback_marker_closed_in_the_same_second_gets_a_marker_of_its_
         restated.append((restore_id, adapter_name))
 
     async def all_held_by_one_row(org, namespace, triples, *, ch, rows=None):
-        return {t: {entity_projections.Holder("m1", "sha", closed)} for t in triples}
+        return {t: {graph_holders.Holder("m1", "sha", closed)} for t in triples}
 
     monkeypatch.setattr(graph_undo, "reopen_held_facts", reopen)
-    monkeypatch.setattr(entity_projections, "live_holders", all_held_by_one_row)
+    monkeypatch.setattr(graph_holders, "live_holders", all_held_by_one_row)
+    monkeypatch.setattr(triple_projections, "live_holders", all_held_by_one_row)
     inp = SimpleNamespace(org="o", namespace="ns", agent="a")
-    await entity_projections._keep_one_current(inp, list(stored), ch=None)
+    await triple_projections._keep_one_current(inp, list(stored), ch=None)
     stored.append(paris(closed.replace(microsecond=5)))  # the marker, closed again
-    await entity_projections._keep_one_current(inp, list(stored), ch=None)
+    await triple_projections._keep_one_current(inp, list(stored), ch=None)
     assert len({restore_id for restore_id, _ in restated}) == 2
     assert {adapter for _, adapter in restated} == {"row-fallback"}
 
@@ -1138,7 +1141,7 @@ async def test_a_fallback_asks_each_value_its_own_newest_holders(monkeypatch) ->
     # Paris: the cap is per value, so Acme's holder is still asked.
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections, graph_undo
+    from server.memory.app import graph_holders, graph_undo, triple_projections
 
     closed = datetime(2026, 9, 1, 12, 0, 0)
 
@@ -1162,16 +1165,15 @@ async def test_a_fallback_asks_each_value_its_own_newest_holders(monkeypatch) ->
         asked.append(ids)
 
     async def holders(org, namespace, triples, *, ch, rows=None):
-        paris = {
-            entity_projections.Holder(f"p{i}", "sha", datetime(2026, 8, 2, i)) for i in range(9)
-        }
-        acme = {entity_projections.Holder("a0", "sha", datetime(2026, 8, 1))}
+        paris = {graph_holders.Holder(f"p{i}", "sha", datetime(2026, 8, 2, i)) for i in range(9)}
+        acme = {graph_holders.Holder("a0", "sha", datetime(2026, 8, 1))}
         found = {("user", "live_in", "paris"): paris, ("user", "work_at", "acme"): acme}
         return {t: found[t] for t in triples}
 
     monkeypatch.setattr(graph_undo, "reopen_held_facts", reopen)
-    monkeypatch.setattr(entity_projections, "live_holders", holders)
+    monkeypatch.setattr(graph_holders, "live_holders", holders)
+    monkeypatch.setattr(triple_projections, "live_holders", holders)
     inp = SimpleNamespace(org="o", namespace="ns", agent="a")
-    await entity_projections._keep_one_current(inp, stored, ch=None)
+    await triple_projections._keep_one_current(inp, stored, ch=None)
     (ids,) = asked
     assert "a0" in ids and len([i for i in ids if i.startswith("p")]) == 8

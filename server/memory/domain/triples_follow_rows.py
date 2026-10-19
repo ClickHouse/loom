@@ -20,7 +20,7 @@ superseded, every open triple the row attests that the successor row does
 not is closed, and — when the two rows differ by one substituted span — the
 successor triple is written under the predecessor's subject and relation
 with the new span as the object. Pure functions here; the ClickHouse side
-lives in `memory.app.entity_projections`.
+lives in `memory.app.triple_follow`.
 """
 
 from __future__ import annotations

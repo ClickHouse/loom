@@ -285,7 +285,7 @@ async def _reopen_facts(
     """Open again the facts the restored row states, dated at the restore (`version`):
     while it was retired or deleted, another row's revision or delete may have closed
     them. Named by the restore, so finishing it again writes nothing new."""
-    from server.memory.app.entity_projections import reconcile_row_facts
+    from server.memory.app.triple_projections import reconcile_row_facts
 
     restore = f"{existing.memory_id}:{version}"
     # No failure payload names a 'high' row's content: its reopen reads the row as it is.

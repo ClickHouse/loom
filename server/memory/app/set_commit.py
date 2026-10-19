@@ -35,13 +35,10 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app.auto_resolution import Follow, follow_beside_response
 from server.memory.app.drops import record_drop
-from server.memory.app.entity_projections import (
-    declared_entities,
-    drop_undeclared_edges_beside,
-    owes_undeclared_drop,
-    project_stated_relations,
-)
+from server.memory.app.edge_links import drop_undeclared_edges_beside, owes_undeclared_drop
 from server.memory.app.high_fence import fence_high
+from server.memory.app.set_entities import declared_entities
+from server.memory.app.triple_projections import project_stated_relations
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.trust import attests
 from server.memory.store.inserts import insert_memory_versions
@@ -921,7 +918,7 @@ def _entity_projection_tail(
     while the row still holds that value, and ends its edges if a revision overtook
     them. A write with fewer than two entities projects no edge: no task, no mark."""
     from server.memory.app import after_write, graph_write_marks
-    from server.memory.app.entity_projections import set_entities_for_projection
+    from server.memory.app.set_entities import set_entities_for_projection
 
     if ents is None:
         ents = set_entities_for_projection(input, input.value)

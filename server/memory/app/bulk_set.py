@@ -37,17 +37,9 @@ from server.memory.app.bulk_verdicts import (
     BulkVerdictPlan,
     apply_bulk_verdicts,
 )
-from server.memory.app.entity_projections import (
-    EdgeClose,
-    _write_derived_facts,
-    declared_entities,
-    drop_undeclared_edges_beside,
-    edge_holders,
-    end_overtaken_edges,
-    owes_undeclared_drop,
-    reconcile_row_facts,
-    record_edges_closes,
-)
+from server.memory.app.edge_links import drop_undeclared_edges_beside, owes_undeclared_drop
+from server.memory.app.edge_repair import EdgeClose, end_overtaken_edges, record_edges_closes
+from server.memory.app.graph_holders import edge_holders
 from server.memory.app.high_fence import fence_high
 from server.memory.app.projection_errors import (
     bulk_projection_payload,
@@ -66,6 +58,8 @@ from server.memory.app.projections import (
 )
 from server.memory.app.provenance import writer_actor
 from server.memory.app.set_commit import set_next
+from server.memory.app.set_entities import declared_entities
+from server.memory.app.triple_projections import _write_derived_facts, reconcile_row_facts
 from server.memory.domain.conflicts import kept_versions
 from server.memory.domain.memory_types import is_embedded
 
@@ -902,7 +896,7 @@ async def _bulk_follow_row_supersessions(
     _pairs += [(str(ln.older_id), str(ln.newer_id)) for ln in value_links]
     _pairs += intra_pairs
     if _pairs:
-        from server.memory.app.entity_projections import follow_row_supersessions
+        from server.memory.app.triple_follow import follow_row_supersessions
 
         first, later = _pairs[:_FOLLOW_MAX], _pairs[_FOLLOW_MAX:]
         restated: dict[str, Any] = {}

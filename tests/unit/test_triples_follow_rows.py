@@ -794,7 +794,7 @@ def test_a_question_closed_by_a_quote_or_bracket_states_nothing(text) -> None:
 
 
 def test_a_follow_reads_dashed_and_bare_ids_and_skips_the_rest() -> None:
-    from server.memory.app.entity_projections import _canonical_id
+    from server.memory.app.triple_follow import _canonical_id
 
     dashed = "22222222-AAAA-2222-2222-222222222222"
     assert _canonical_id(dashed) == dashed.lower()
