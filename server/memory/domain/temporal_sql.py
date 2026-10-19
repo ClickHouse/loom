@@ -79,34 +79,33 @@ def served_status_sql(
     return f"{_c(alias, 'status')} IN ({', '.join(repr(x) for x in statuses)})"
 
 
-# A `loom.memory` row whose current value may hold graph facts: live, not deleted, not
-# expired, its validity not ended, and not 'high' (a 'high' row's content stays out of
-# the shared graph). Every path that keeps or reopens a row's facts asks this; a point
-# write asks its Python twin (`entity_projections.holds_graph_facts`) of the row it
-# just wrote.
-GRAPH_HOLDER_SQL = (
+# An entity edge's holder: a `loom.memory` row live, not deleted, not expired and its
+# validity not ended. A 'high' row counts: the only edges linked to it are those of the
+# entities its writer declared (its value is never mined).
+EDGE_HOLDER_SQL = (
     f"tombstoned_at IS NULL AND status IN ({', '.join(repr(s) for s in LIVE_STATUSES)})"
     " AND (expires_at IS NULL OR expires_at > now())"
     " AND (valid_to IS NULL OR valid_to > now())"
-    " AND sensitivity != 'high'"
 )
 
-# A `loom.memory` row that still holds the value it was written with: not deleted, not
-# retired (superseded, rejected or tombstoned) and not re-set as 'high' — those keep the
-# row's value, so the columns tell. Weaker than GRAPH_HOLDER_SQL: no validity or expiry
-# test, so a proposal or a fact dated in the past still counts. A point write's late
-# edge projection fences on it.
-HOLDS_VALUE_SQL = (
+# A row whose current value may hold graph facts mined or stated from its text: an edge
+# holder that is not 'high' (a 'high' row's content stays out of the shared graph). Every
+# path that keeps or reopens a row's triples asks this; a point write asks its Python twin
+# (`entity_projections.holds_graph_facts`) of the row it just wrote.
+GRAPH_HOLDER_SQL = EDGE_HOLDER_SQL + " AND sensitivity != 'high'"
+
+# A row that still holds the value it was written with, for the edges of its declared
+# entities: not deleted and not retired (superseded, rejected or tombstoned), which keep
+# the row's value, so the columns tell. No validity or expiry test, so a proposal or a
+# fact dated in the past still counts.
+EDGE_HOLDS_VALUE_SQL = (
     "tombstoned_at IS NULL"
     f" AND status IN ({', '.join(repr(s) for s in (*LIVE_STATUSES, PROPOSED_STATUS))})"
-    " AND sensitivity != 'high'"
 )
 
-
-# The same tests for an entity edge linked to the row: a 'high' row holds the edges of the
-# entities its writer declared, the only edges ever linked to it (its value is never mined).
-EDGE_HOLDER_SQL = GRAPH_HOLDER_SQL.removesuffix(" AND sensitivity != 'high'")
-EDGE_HOLDS_VALUE_SQL = HOLDS_VALUE_SQL.removesuffix(" AND sensitivity != 'high'")
+# The same for edges mined from the value: a row re-set as 'high' no longer holds them. A
+# point write's late projection of mined entities fences on it.
+HOLDS_VALUE_SQL = EDGE_HOLDS_VALUE_SQL + " AND sensitivity != 'high'"
 
 
 def _c(alias: str, col: str) -> str:

@@ -6994,3 +6994,40 @@ async def test_a_relabel_to_high_closes_mined_facts_and_keeps_declared_edges(ch,
     assert result.high == 1, result
     assert await _open_edge_pairs(ch, org) == declared
     assert await _open_facts(ch, org, set()) == set()
+
+
+async def test_a_late_mined_projection_writes_nothing_on_a_row_made_high(
+    ch, org, monkeypatch
+) -> None:
+    """A plain write's mined edges still projecting beside its response when the same
+    value is re-set as high: the late projection's fence no longer counts the row, so
+    no mined edge lands on it."""
+    from server.memory.app import entity_projections
+
+    value = "Alice Smith met Bob Jones at Acme Corp in Berlin about Project Falcon"
+    gate = asyncio.Event()
+    real = entity_projections.rows_holding
+
+    async def slow(*a: Any, **kw: Any) -> Any:
+        await gate.wait()
+        return await real(*a, **kw)
+
+    monkeypatch.setattr(entity_projections, "rows_holding", slow)
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write
+    from server.memory.app.write import handle_memory_set
+
+    ids = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s1"}
+    first = await handle_memory_set(MemorySetInput(**ids, memory_key="contact", value=value))
+    monkeypatch.setattr(entity_projections, "rows_holding", real)
+    await handle_memory_set(
+        MemorySetInput(**ids, memory_key="contact", value=value, sensitivity="high")
+    )
+    gate.set()
+    await after_write.drain()
+    links = await ch.query_all(
+        "SELECT entity_a FROM loom.entity_edge_rows WHERE org = {org:String}"
+        " AND memory_id = {id:UUID} SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "id": first.memory_id},
+    )
+    assert links == []

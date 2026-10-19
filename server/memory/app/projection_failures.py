@@ -617,7 +617,13 @@ async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
     except (TypeError, ValueError):
         return "malformed_payload"
     await close_late_edges(
-        failure.org, failure.namespace, memory_id, content_sha256, ended_at=ended_at, ch=ch
+        failure.org,
+        failure.namespace,
+        memory_id,
+        content_sha256,
+        ended_at=ended_at,
+        declared=bool(failure.payload.get("declared")),
+        ch=ch,
     )
     return ""
 
