@@ -583,10 +583,21 @@ export function Runs() {
 
   // Another namespace is another list: its first page, from nothing on screen.
   const scope = `${identity.org}\n${identity.namespace}`;
+  // The old namespace's rows and agents go during render, before the new one's first read or
+  // paint can use them. Another namespace may be another server's answer: it is asked for a
+  // page first, and its agents are not this one's, so the agent filter goes too.
+  const [shownFor, setShownFor] = useState(scope);
+  if (shownFor !== scope) {
+    setShownFor(scope);
+    setShown(null);
+    setAgents([]);
+    setPage(0);
+    setLocal(false);
+    setAgent("");
+  }
   // What the list holds (a change starts it again from page 1), and what one read asked for.
   const filterKey = [scope, filter, agent, hideConn, q, order].join("\n");
   const readKey = `${filterKey}\n${pageSize}\n${local}`;
-  const shownScope = useRef(scope);
   // With `local`, the page, the search and the order are applied here: they read nothing.
   const readQ = local ? "" : q;
   const readOrder = local ? "" : order;
@@ -597,19 +608,6 @@ export function Runs() {
   // so A's rows never render under B's filter. Within a namespace the rows on screen stay,
   // marked busy, until the next page answers.
   useEffect(() => {
-    if (shownScope.current !== scope) {
-      shownScope.current = scope;
-      setShown(null);
-      setAgents([]);
-      // Another namespace may be another server's answer: ask it for a page first. Its
-      // agents are not this one's, so the agent filter goes too.
-      if (page !== 0 || local || agent !== "") {
-        setPage(0);
-        setLocal(false);
-        setAgent("");
-        return;
-      }
-    }
     let live = true;
     setLoading(true);
     setError(null);

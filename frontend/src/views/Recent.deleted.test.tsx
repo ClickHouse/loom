@@ -113,6 +113,8 @@ describe("Recently deleted status", () => {
     await userEvent.type(screen.getByLabelText("Search memories"), "tag:x");
     expect(screen.getByText("No recently deleted memories")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("No recently deleted memories")).toBeNull());
+    // The status is a filter too, so the row names the filters in force, not the tag alone.
+    expect(await screen.findByText(/No memories match/)).toHaveTextContent("No memories match the filters in force");
   });
 
   // The UTC rule itself is daysLeftToRestore's (lib/format.test.ts).

@@ -40,7 +40,7 @@ import { shortcutOff } from "../lib/shortcuts";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
 import { useRowSelection } from "../lib/useRowSelection";
-import { sameFilter, useMemoryListRead, useMemorySearch, useSameFilter } from "./memoryListReads";
+import { sameFilter, useMemoryListRead, useMemorySearch, useSameFilter, type TagAgentFilter } from "./memoryListReads";
 
 // The cards the first screen shows. A page of a hundred mounts them all in one task
 // (395–681 ms of long tasks at 4x CPU, LCP 0.9–1.4 s); the first screen is about two
@@ -59,6 +59,12 @@ const STATUSES: ReadonlyArray<{ value: Status; label: string }> = [
   { value: "deleted", label: "Recently deleted" },
 ];
 const EVERY_AGENT = "*";
+
+/** The tags and agent a search filters the list by. */
+function filterOf(query: string): TagAgentFilter {
+  const { tags, agent } = parseSearchQuery(query);
+  return { tags, agent: agent ?? "" };
+}
 
 /** Memories: the list, or the Insights tab (the usage audit and the mentor). */
 export function Recent() {
@@ -128,10 +134,7 @@ function MemoryList() {
   const [conflictKeys, setConflictKeys] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
   const [query, setQuery] = useState("");
-  // Set by a tag chosen on a card or elsewhere in the app, or by Clear filters, so the
-  // filter skips the typing delay.
-  const applyNow = useRef(false);
-  // Another namespace's conflict keys and agent are not this one's: they go during render,
+  // Another namespace's conflict keys and agents are not this one's: they go during render,
   // before the new namespace's first read or paint can use them (useMemorySearch drops its
   // results the same way).
   const namespaceKey = `${identity.org}/${identity.namespace}`;
@@ -140,6 +143,7 @@ function MemoryList() {
     setStateFor(namespaceKey);
     setConflictKeys(new Set());
     setAgentFilter(null);
+    setSeenAgents([]);
   }
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -171,42 +175,43 @@ function MemoryList() {
   //
   // A tag or agent filter narrows the read on the server (every tag, in any case); the
   // list applies the same filters to a search's hits, which the server ranks unfiltered.
-  const { rawQuery, queryTags, queryAgent } = useMemo(() => {
+  const { rawQuery, queryTags } = useMemo(() => {
     const parsed = parseSearchQuery(query);
-    return { rawQuery: parsed.text, queryTags: parsed.tags, queryAgent: parsed.agent };
+    return { rawQuery: parsed.text, queryTags: parsed.tags };
   }, [query]);
-  // A card's tag adds `tag:<tag>` to the search, or takes it out again, so tags stack the
-  // way typed ones do. A tag picked elsewhere in the app (searchByTag) joins the same way.
-  const toggleTag = useCallback((tag: string) => {
-    applyNow.current = true;
-    setQuery((q) => toggleQueryToken(q, `tag:${tag}`));
-  }, []);
-
   // A filter covers the whole namespace, not the page on screen. A tag or agent filter is
   // asked of the server, which returns the rows carrying every tag, in any case (a server a
   // release behind matches any one tag exactly, and the list then requires every tag
   // itself). Pinned, Conflicted and Verified have no server filter: the list reads the
   // newest 1,000 and keeps the matching ones. What is typed is debounced, so `tag:…` sends
   // one read, not one per key; a chip applies at once.
-  const typedNow = useSameFilter({ tags: queryTags, agent: queryAgent ?? "" });
+  const typedNow = useSameFilter(filterOf(query));
   const [typed, setTyped] = useState(typedNow);
-  useEffect(() => {
-    // A tag chosen on a card or elsewhere in the app, or Clear filters, applies at once;
-    // typing waits for a pause.
-    const t = setTimeout(() => setTyped(typedNow), applyNow.current ? 0 : 250);
-    applyNow.current = false;
-    return () => clearTimeout(t);
-  }, [typedNow]);
-  // Declared after the delay effect: on mount that one runs first and would otherwise take
-  // the flag set here for the tag.
+  // A tag chosen on a card or elsewhere in the app, or Clear filters, applies at once.
+  const applyQuery = useCallback((next: string) => {
+    setQuery(next);
+    setTyped(filterOf(next));
+  }, []);
+  // A card's tag adds `tag:<tag>` to the search, or takes it out again, so tags stack the
+  // way typed ones do. One callback for every card: it reads the query through a ref.
+  const queryRef = useRef(query);
+  queryRef.current = query;
+  const toggleTag = useCallback(
+    (tag: string) => applyQuery(toggleQueryToken(queryRef.current, `tag:${tag}`)),
+    [applyQuery],
+  );
+  // A tag picked elsewhere in the app (searchByTag) joins the same way.
   useEffect(() => {
     if (!memoryTagFilter) return;
     setMemoryTagFilter(null);
     if (queryTags.some((t) => t.toLowerCase() === memoryTagFilter.toLowerCase())) return;
-    // A tag picked elsewhere applies at once, as a card's does.
-    applyNow.current = true;
-    setQuery(`${query} tag:${memoryTagFilter}`.trim());
-  }, [memoryTagFilter, setMemoryTagFilter, query, queryTags]);
+    applyQuery(`${query} tag:${memoryTagFilter}`.trim());
+  }, [memoryTagFilter, setMemoryTagFilter, query, queryTags, applyQuery]);
+  // Typing waits for a pause.
+  useEffect(() => {
+    const t = setTimeout(() => setTyped((prev) => (sameFilter(prev, typedNow) ? prev : typedNow)), 250);
+    return () => clearTimeout(t);
+  }, [typedNow]);
   const filterPending = !sameFilter(typedNow, typed);
   // The list filters by what the read was asked for, so a half-typed `tag:`/`agent:` keeps
   // the cards on screen. Built from the tags' text (a tag holds no space), so a keystroke that
@@ -369,7 +374,6 @@ function MemoryList() {
 
   // The agents the namespace's rows were written by, gathered as pages and filters load
   // (sentinels "*" and "-" are not writers); a new namespace starts again.
-  useEffect(() => setSeenAgents([]), [identity.org, identity.namespace]);
   useEffect(() => {
     const here = (entries ?? []).map((e) => e.agent || "").filter((a) => a && !SENTINEL_AGENTS.has(a));
     setSeenAgents((prev) => {
@@ -512,7 +516,7 @@ function MemoryList() {
     agentFilter != null || status !== "live"
       ? ""
       : [
-          searchActive ? rawQuery.trim() : "",
+          searchActive ? keywordFor : "",
           ...typed.tags.map((t) => `tag:${t}`),
           typed.agent ? `agent:${typed.agent}` : "",
         ]
@@ -521,9 +525,7 @@ function MemoryList() {
   const clearFilters = () => {
     // Every Clear leaves with the filters it clears: focus goes to the search.
     searchInputRef.current?.focus();
-    // The typed tags and agent go at once too, not after the typing delay.
-    if (typedNow.tags.length > 0 || typedNow.agent) applyNow.current = true;
-    setQuery(rawQuery);
+    applyQuery(rawQuery);
     setStatus("live");
     setAgentFilter(null);
   };
@@ -549,7 +551,7 @@ function MemoryList() {
       ? ""
       : searchActive
         ? // What a search covers: the newest rows holding the word, when there are more.
-          `${matches(flatList.length)}${keywordTotal > keywordKeys.size ? ` · the newest ${keywordKeys.size.toLocaleString()} of ${keywordTotal.toLocaleString()} holding "${rawQuery.trim()}"` : ""}${ranking ? " · finding related…" : ""}`
+          `${matches(flatList.length)}${keywordTotal > keywordKeys.size ? ` · the newest ${keywordKeys.size.toLocaleString()} of ${keywordTotal.toLocaleString()} holding "${keywordFor}"` : ""}${ranking ? " · finding related…" : ""}`
         : showDeleted || listFiltered
           ? // A tag or agent filter is matched on the server, whose total is exact; a status
             // is kept here among the rows read.

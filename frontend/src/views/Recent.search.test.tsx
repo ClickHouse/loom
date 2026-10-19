@@ -334,6 +334,26 @@ describe("Recent search after a local write", () => {
     expect(await screen.findByText("milk_note")).toBeInTheDocument();
   });
 
+  // The row names the words the results were read for, not a retype whose search has not run.
+  it("names the searched words until the retyped search answers", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? { entries: [], total: 0, today: 0, truncated: false }
+        : { entries: [entry("milk_note")], total: 1, today: 0, truncated: false },
+    );
+    vi.mocked(searchMemory).mockResolvedValue({ results: [], embedding_model: "m" } as never);
+    render(<Recent />);
+    await screen.findByText("milk_note");
+    const box = screen.getByLabelText("Search memories");
+    await userEvent.type(box, "zebra");
+    const noMatch = (words: string) => (_: string, el: Element | null) =>
+      el?.textContent === `No memories match ${words}`;
+    expect(await screen.findByText(noMatch("zebra"), {}, { timeout: 3000 })).toBeInTheDocument();
+    fireEvent.change(box, { target: { value: "zzq" } });
+    expect(screen.getByText(noMatch("zebra"))).toBeInTheDocument();
+    expect(await screen.findByText(noMatch("zzq"), {}, { timeout: 3000 })).toBeInTheDocument();
+  });
+
   it("a search that failed outright brings none of its earlier ranked hits back on the next run", async () => {
     let phase = 0;
     vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
@@ -478,6 +498,32 @@ describe("Recent across a namespace switch", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByText("alice_only")).toBeNull());
+  });
+
+  // The agents seen in alice are not bob's: bob's first read sends the agent as typed.
+  it("sends a typed agent as typed in the new namespace's first read", async () => {
+    vi.mocked(listMemories).mockImplementation(async (id) => ({
+      entries: (id as { namespace: string }).namespace === "bob" ? [] : [{ ...entry("bot_row"), agent: "bot" }],
+      total: 1,
+      today: 0,
+      truncated: false,
+    }));
+    render(<Recent />);
+    await screen.findByText("bot_row");
+    await userEvent.type(screen.getByLabelText("Search memories"), "agent:Bot");
+    const reads = (ns: string) =>
+      vi
+        .mocked(listMemories)
+        .mock.calls.filter(([id, , o]) => (id as { namespace: string }).namespace === ns && !o?.contains);
+    await waitFor(() => expect(reads("alice").at(-1)?.[2]?.agent).toBe("bot"));
+    act(() =>
+      useStore.setState({
+        identity: { org: "dev", namespace: "bob", agent: "loom-ui" },
+        myNamespaces: [row("bob", "admin")],
+      }),
+    );
+    await waitFor(() => expect(reads("bob").length).toBeGreaterThan(0));
+    expect(reads("bob")[0][2]?.agent).toBe("Bot");
   });
 
   it("clearing the box while a search reads gives the count back", async () => {
