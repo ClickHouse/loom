@@ -16,6 +16,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -23,8 +25,10 @@ import jwt as pyjwt
 import pytest
 
 from server import cli
-from server.auth import revocation
+from server.auth import revocation, scim
 from server.auth.jwt import TokenError, mint_token, new_jti, verify_token
+from server.core import leases
+from tests.unit.revocation_fakes import revocation_read
 
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
@@ -111,6 +115,9 @@ class _FakeCH:
     async def disconnect(self) -> None:
         self.disconnected += 1
 
+    async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any] | None:
+        return revocation_read(self.rows, sql, params)
+
     async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
         self.inserts.append((table, rows))
         by_key = {r["jti"]: r for r in self.rows}
@@ -118,9 +125,12 @@ class _FakeCH:
             by_key[r["jti"]] = r  # ReplacingMergeTree: newest row per key
         self.rows = list(by_key.values())
 
-    async def query_all(self, sql: str, *a: Any, **kw: Any) -> list[dict[str, Any]]:
+    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         now = datetime.now(UTC).replace(tzinfo=None)
-        return [r for r in self.rows if r["expires_at"] > now]
+        keys = (params or {}).get("keys")
+        return [
+            r for r in self.rows if r["expires_at"] > now and (keys is None or r["jti"] in keys)
+        ]
 
 
 @pytest.fixture
@@ -258,6 +268,9 @@ class _WriteOnlyCH:
         self.fail = fail
         self.inserted: list[dict[str, Any]] = []
 
+    async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any] | None:
+        return revocation_read(self.inserted, sql, params)
+
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         self.inserted.extend(rows)
 
@@ -304,3 +317,138 @@ def test_a_local_revoke_does_not_pretend_the_list_is_loaded(
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     asyncio.run(revocation.revoke("sa:bot"))
     assert revocation.is_revoked("sa:bot") and not revocation.loaded()
+
+
+def test_cli_warns_when_a_cutoff_replaces_an_outright_revocation(
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Written by another process: this one's snapshot does not hold it.
+    never = datetime(2105, 12, 31)
+    fake_ch.rows.append({"jti": "alice", "issued_before": None, "expires_at": never, "version": 1})
+    rc = cli.main(["revoke-token", "--subject", "alice", "--issued-before", "2026-09-17T16:30:00Z"])
+    assert rc == 0 and "revoked outright" in capsys.readouterr().err
+    cli.main(["revoke-token", "--subject", "bob", "--issued-before", "2026-09-17T16:30:00Z"])
+    assert "revoked outright" not in capsys.readouterr().err
+
+
+@asynccontextmanager
+async def _busy(name: str) -> AsyncIterator[None]:
+    raise scim.Busy
+    yield  # never reached: it makes this a generator
+
+
+def test_cli_scim_gives_back_a_subject_a_deactivation_caught(
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Someone else's `alice`, revoked by a SCIM deactivation of another person.
+    asyncio.run(revocation.scim_revoke("alice", reason="scim: deactivated", revoked_by="scim"))
+    written_under_lease: list[int] = []
+
+    @asynccontextmanager
+    async def held(name: str) -> AsyncIterator[None]:
+        assert name.startswith("scim-subject:")
+        before = len(fake_ch.inserts)
+        yield
+        written_under_lease.append(len(fake_ch.inserts) - before)
+
+    monkeypatch.setattr(scim, "_held", held)
+    assert revocation.is_revoked("alice", issued_at=int(time.time()) + 60)
+    # Past the revocation's second and the skew: the earliest a give-back may take.
+    cutoff = datetime.now(UTC).replace(microsecond=0) + timedelta(
+        seconds=1 + revocation.CLOCK_SKEW_S
+    )
+    when = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+    rc = cli.main(["revoke-token", "--subject", "alice", "--issued-before", when, "--scim"])
+    assert rc == 0
+    assert "narrowed SCIM's revocation of subject 'alice'" in capsys.readouterr().out
+    rows = {r["jti"]: r for r in fake_ch.rows}
+    key = revocation.SCIM_PREFIX + "alice"
+    assert set(rows) == {key} and rows[key]["revoked_by"].startswith(
+        "cli:"
+    )  # its own row untouched
+    assert rows[key]["issued_before"] == cutoff.replace(tzinfo=None)
+    assert not revocation.is_revoked("alice", issued_at=int(cutoff.timestamp()))
+    assert revocation.is_revoked("alice", issued_at=int(cutoff.timestamp()) - 1)
+    assert written_under_lease == [1]  # SCIM's lease: never amid a reactivation's lift
+
+    rc = cli.main(["revoke-token", "--subject", "bob", "--issued-before", when, "--scim"])
+    assert rc == 1 and "SCIM has not revoked 'bob'" in capsys.readouterr().err
+    assert cli.main(["revoke-token", "--subject", "alice", "--scim"]) == 2
+
+    monkeypatch.setattr(scim, "_held", _busy)
+    rc = cli.main(["revoke-token", "--subject", "alice", "--issued-before", when, "--scim"])
+    assert rc == 1 and "SCIM is changing 'alice'" in capsys.readouterr().err
+
+    async def away(name: str) -> AsyncIterator[None]:
+        raise scim.Busy from leases.LeaseUnavailable("the lease store did not answer")
+        yield
+
+    monkeypatch.setattr(scim, "_held", asynccontextmanager(away))
+    rc = cli.main(["revoke-token", "--subject", "alice", "--issued-before", when, "--scim"])
+    assert rc == 1 and "the lease store did not answer" in capsys.readouterr().err
+
+
+def test_cli_and_servers_name_a_subjects_lease_alike_whatever_their_secret(
+    fake_ch: _FakeCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    asyncio.run(revocation.scim_revoke("alice", reason="scim: deactivated", revoked_by="scim"))
+    names: list[str] = []
+
+    @asynccontextmanager
+    async def held(name: str) -> AsyncIterator[None]:
+        names.append(name)
+        yield
+
+    monkeypatch.setattr(scim, "_held", held)
+    monkeypatch.setattr(settings, "jwt_secret", "the-servers-secret-" + "s" * 32)
+
+    async def server_side() -> None:
+        async with scim.subject_leases(["alice"]):
+            pass
+
+    asyncio.run(server_side())
+    monkeypatch.setattr(settings, "jwt_secret", "")  # a CLI without the servers' secret
+    later = datetime.now(UTC) + timedelta(seconds=1 + revocation.CLOCK_SKEW_S)
+    when = later.strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert cli.main(["revoke-token", "--subject", "alice", "--issued-before", when, "--scim"]) == 0
+    assert len(names) == 2 and names[0] == names[1]
+
+
+def test_a_scim_give_back_starts_past_the_revocations_second_and_the_skew(
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A token issued in the deactivation's own second is from before it: it stays dead.
+    asyncio.run(revocation.scim_revoke("alice", reason="scim: deactivated", revoked_by="scim"))
+
+    @asynccontextmanager
+    async def held(name: str) -> AsyncIterator[None]:
+        yield
+
+    monkeypatch.setattr(scim, "_held", held)
+    [row] = [r for r in fake_ch.rows if r["jti"] == revocation.SCIM_PREFIX + "alice"]
+    at = row["revoked_at"].replace(tzinfo=None, microsecond=0)
+
+    def give_back(when: datetime) -> int:
+        stamp = when.strftime("%Y-%m-%dT%H:%M:%SZ")
+        return cli.main(["revoke-token", "--subject", "alice", "--issued-before", stamp, "--scim"])
+
+    floor = at + timedelta(seconds=1 + revocation.CLOCK_SKEW_S)  # past a clock ahead too
+    assert give_back(datetime(2000, 1, 1)) == 2
+    assert give_back(at) == 2
+    assert "keeps the tokens issued before that dead" in capsys.readouterr().err
+    assert give_back(floor - timedelta(seconds=1)) == 2
+    assert give_back(floor) == 0
+    # Narrowed now, the floor is that cutoff: a later one may follow, an earlier one not.
+    assert give_back(floor - timedelta(seconds=1)) == 2
+    assert give_back(floor + timedelta(seconds=5)) == 0
+
+
+def test_a_plain_narrowing_says_scim_still_revokes_it(
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str]
+) -> None:
+    asyncio.run(revocation.scim_revoke("alice", reason="scim: deactivated", revoked_by="scim"))
+    when = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert cli.main(["revoke-token", "--subject", "alice", "--issued-before", when]) == 0
+    assert "SCIM also revokes 'alice' outright" in capsys.readouterr().err

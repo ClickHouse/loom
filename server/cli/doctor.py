@@ -253,6 +253,20 @@ _PROXY_MIN_ATTEMPTS = 20
 _LOOPBACK = ("127.0.0.1", "::1")
 
 
+def _doctor_scim_token_check(settings: Any) -> tuple[str, str, str]:
+    """The `scim_token` line: FAIL when the server would refuse to start with it."""
+    from server.auth.scim import tokens
+    from server.auth.scim_routes import scim_settings_problem
+
+    problem = scim_settings_problem(
+        settings.scim_token, settings.oauth_login_provider, settings.auth_actually_required()
+    )
+    if problem:
+        return ("scim_token", FAIL, problem)
+    count = len(tokens(settings.scim_token))
+    return ("scim_token", PASS, f"{count} token(s) set" if count else "SCIM off")
+
+
 def _doctor_trusted_proxies_check(settings: Any) -> tuple[str, str, str]:
     """The `trusted_proxies` doctor line: WARN when LOOM_TRUSTED_PROXIES is the
     default and the last day's address-keyed attempts all came from one
@@ -530,6 +544,8 @@ def _run_live_checks() -> list[tuple[str, str, str]]:
     else:
         jwt_grade, jwt_detail = PASS, "set"
     checks.append(("jwt_secret", jwt_grade, jwt_detail))
+    if settings_ok:
+        checks.append(_doctor_scim_token_check(settings))
 
     # 4. ClickHouse reachability. HTTP probe avoids spinning up asyncio.
     if not settings_ok or not ch_host:

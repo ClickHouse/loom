@@ -101,13 +101,15 @@ def test_the_journal_files() -> None:
         "040_oauth_signin_state.sql",
         "041_sso_links.sql",
         "042_machine_identities.sql",
-        "043_entity_triple_rows.sql",
-        "044_projection_failure_abandoned.sql",
-        "045_entity_triple_seen_at.sql",
-        "046_graph_restore_id.sql",
-        "047_entity_edge_rows.sql",
-        "048_entity_edge_close_id.sql",
-        "049_projection_failure_ttl.sql",
+        "043_scim_users.sql",
+        "044_service_account_lineage.sql",
+        "045_entity_triple_rows.sql",
+        "046_projection_failure_abandoned.sql",
+        "047_entity_triple_seen_at.sql",
+        "048_graph_restore_id.sql",
+        "049_entity_edge_rows.sql",
+        "050_entity_edge_close_id.sql",
+        "051_projection_failure_ttl.sql",
     ]
 
 

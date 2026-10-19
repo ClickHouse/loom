@@ -1088,7 +1088,7 @@ _STILL_OPEN_EDGES_WHERE = """org = {org:String} AND namespace = {ns:String}
 
 # The migration that started linking rows to edges: a value first written before it
 # was applied has no edge links of its own.
-_EDGE_ROW_LINKS_MIGRATION = "047_entity_edge_rows.sql"
+_EDGE_ROW_LINKS_MIGRATION = "049_entity_edge_rows.sql"
 
 # The pairs of {pairs} a live row still names: its current value has a link to the
 # pair, or it has no edge link of its own and its key's link to the pair counts, as for

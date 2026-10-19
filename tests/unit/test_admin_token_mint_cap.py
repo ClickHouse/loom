@@ -6,6 +6,7 @@ and the token is saved to the caller's token list under its own `sa:` subject.""
 
 from __future__ import annotations
 
+import time
 import uuid
 
 import pytest
@@ -60,6 +61,8 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     class _CH:
         async def query_one(self, sql, params=None):
+            if "max(version)" in sql:  # a new token's version, past its name's rows
+                return {"v": time.time_ns()}
             return next(
                 ({"created_by": r["created_by"]} for r in saved if r["name"] == params["name"]),
                 None,

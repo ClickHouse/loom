@@ -15,6 +15,7 @@ _SECRET = "s3cr3t-canary-value"
         ("ch_password", _SECRET),
         ("jwt_secret", _SECRET),
         ("oidc_client_secret", _SECRET),
+        ("scim_token", _SECRET),
         ("langfuse_admin_token", f"pk:{_SECRET}"),
         ("code_github_token", _SECRET),
         ("tracker_credentials_json", f'{{"src": {{"user": "u", "password": "{_SECRET}"}}}}'),

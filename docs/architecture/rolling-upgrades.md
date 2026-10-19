@@ -176,7 +176,7 @@ schema. These rules keep that safe. The operator procedure is in
     rollout an N-1 pin racing an N retirement can leave the pinned row's vector
     superseded until the row's next write (or `loom reconcile-status`).
 16. **A triple row N-1 writes arrives at its whole second.** N-1 does not set
-    `entity_triples.seen_at` (migration 045), so its rows take the column's default, their
+    `entity_triples.seen_at` (migration 047), so its rows take the column's default, their
     `last_seen` second (`.000000`). Two values of a single-valued relation starting the
     same day and arriving in the same second, one from each build, then order the N-1
     row first, whichever arrived later; the next write of either fact orders them again.
@@ -186,6 +186,10 @@ schema. These rules keep that safe. The operator procedure is in
     intent is resolved and its TTL ends it. A projection repair on N-1 leaves N's `triples_follow_owed`
     and `entity_edges_drop_undeclared` rows active as `unsupported_projection`; N's repair
     replays them once N-1 stops serving.
+18. **A new revocation key** (such as SCIM's `SCIM_PREFIX`): N-1 does not read
+    it, so a token it revokes still works on an N-1 replica. The feature that writes
+    it is turned on only once no N-1 replica serves: SCIM provisioning
+    (`LOOM_SCIM_TOKEN`) after the whole rollout.
 
 ## What checks them
 
@@ -208,5 +212,6 @@ more (N+1). It checks:
   higher schema version (rule 6).
 
 It does not check new enum values (rule 3), wire formats (rule 4), signing keys other
-than `default` (rule 5), or a process killed mid-migration. It skips with exit 0
-where docker is unreachable; CI passes `--require`, which fails there instead.
+than `default` (rule 5), new revocation keys (rule 10), or a process killed
+mid-migration. It skips with exit 0 where docker is unreachable; CI passes `--require`,
+which fails there instead.

@@ -109,6 +109,9 @@ class AuthSettings(BaseModel):
     oidc_jit_org: str = ""
     # Comma-separated email domains JIT provisioning admits; empty admits any verified email.
     oidc_jit_email_domains: str = ""
+    # Bearer tokens (comma-separated, any one accepted) an identity provider presents to
+    # deactivate and reactivate people over SCIM 2.0 (/scim/v2). Empty = off; needs auth on, oidc.
+    scim_token: str = ""
 
     @property
     def oidc_jit_email_domains_set(self) -> set[str]:
