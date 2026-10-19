@@ -180,6 +180,12 @@ schema. These rules keep that safe. The operator procedure is in
     `last_seen` second (`.000000`). Two values of a single-valued relation starting the
     same day and arriving in the same second, one from each build, then order the N-1
     row first, whichever arrived later; the next write of either fact orders them again.
+17. **N-1 does not know N's retirement intents.** A user erasure N-1 runs deletes no
+    projection failure (N-1 erases them by namespace only), so a point-write retirement
+    intent naming that user in `retired[]` stays until N erases the user again, or the
+    intent is resolved and its TTL ends it. A projection repair on N-1 leaves N's `triples_follow_owed`
+    and `entity_edges_drop_undeclared` rows active as `unsupported_projection`; N's repair
+    replays them once N-1 stops serving.
 
 ## What checks them
 

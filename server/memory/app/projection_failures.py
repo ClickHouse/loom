@@ -533,10 +533,9 @@ def _younger_than(failure: ProjectionFailureRow, seconds: float) -> bool:
 
 
 async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) -> None:
-    """The `memory.auto_supersede` record (the resolver's, or a point write's whose own
-    record failed) of each retirement in the intent that is still in place (the loser
-    retired behind the winner) and has none yet, and the winner's flag against the
-    loser cleared. A failed emit raises, so the intent stays for the next replay."""
+    """Write the missing record of each retirement in the intent still in place, and clear
+    the winner's flag against its loser: the writer stopped before doing so. A failed
+    emit raises, so the intent stays for the next replay."""
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.app.auto_resolution import (
         EVENT_TYPE,
