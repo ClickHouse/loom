@@ -154,9 +154,10 @@ public side on the next run, unless it was the last row the export would carry: 
 bundle then has no concepts, the import refuses it, and the public copies stay. Delete
 them on the public Loom with `memory.delete`, or through erasure when the content must
 go. The export knows a `high` row by its `sensitivity`, which it reads through
-`memory.bulk_get`, or by the `sensitivity:high` tag `memory.set` and `memory.update` add. Against a private Loom whose `memory.bulk_get` does not return
-`sensitivity`, only the tag keeps a row home, and a `high` row without the tag travels.
-A prune is a tombstone: the value stays restorable for 14 days and in the public Loom's
+`memory.bulk_get`, or by the `sensitivity:high` tag `memory.set` and `memory.update` add.
+Against a private Loom whose `memory.bulk_get` does not return `sensitivity`, every row
+stays home (the export counts them under "no known sensitivity"), so the bundle has no
+concepts and `--prune` refuses it. A prune is a tombstone: the value stays restorable for 14 days and in the public Loom's
 version history. Content that must leave the public Loom goes through
 [erasure](../features/memory/retention-and-erasure.md).
 
