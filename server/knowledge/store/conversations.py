@@ -811,14 +811,10 @@ _SHORT_EXCERPT_CHARS = 240
 
 
 # Another agent's live copies of the thread's turns that search indexes (user and
-# assistant turns, and compaction summaries), by msg_id and the text a row would hold
-# for them at either excerpt length; `full` is the text append embeds.
-_PEER_COPIES = """
+# assistant turns, and compaction summaries); `full` is the text append embeds.
+_PEER_TURNS = """
     SELECT msg_id, agent, role, run_id, user_id, ts,
-      substringUTF8(content, 1, {embedded:UInt32}) AS full, arrayJoin([
-      substringUTF8(content, 1, {embedded:UInt32}),
-      substringUTF8(content, 1, {short:UInt32})
-    ]) AS excerpt
+      substringUTF8(content, 1, {embedded:UInt32}) AS full
     FROM loom.conversations
     WHERE org = {org:String} AND namespace = {ns:String}
       AND thread_id = {tid:String} AND agent != {agent:String}
@@ -826,6 +822,13 @@ _PEER_COPIES = """
       AND (role IN ('user', 'assistant')
            OR (role = 'system' AND notEmpty(JSONExtractArrayRaw(metadata, 'compacted_from'))))
 """
+
+
+# Each peer copy with the text a row would hold for it at either excerpt length.
+_PEER_COPIES = (
+    "SELECT msg_id, agent, arrayJoin([full, substringUTF8(full, 1, {short:UInt32})]) AS excerpt"
+    " FROM (" + _PEER_TURNS + ")"
+)
 
 
 _RECONCILE_ROUNDS = 8
@@ -854,9 +857,11 @@ def _reconcile_sql(turns: str) -> str:
 
     The copy must hold the text the row's vector was built from (`embedded`). A row
     holding the 240-character cut of its own agent's message (a tombstoned one keeps
-    its content) was built from that message's longer cut; one holding exactly 240
-    characters with no such message to check could have been built from more, so it
-    passes to nobody (`known = 0`)."""
+    its content) is taken as built from that message's longer cut, as append built it;
+    a re-embed built it from the 240 characters, which the row cannot show, so a peer
+    sharing only those does not take it. One holding exactly 240 characters with no
+    such message to check could have been built from more, so it passes to nobody
+    (`known = 0`)."""
     keep = "p.matched = 1 AND e.known = 1"
     own = "s.found = 1 AND u.content_excerpt = substringUTF8(s.src, 1, {short:UInt32})"
     return (
@@ -875,7 +880,7 @@ def _reconcile_sql(turns: str) -> str:
         " GROUP BY agent, msg_id) AS s ON u.agent = s.agent AND u.msg_id = s.msg_id) AS e"
         " LEFT JOIN (SELECT msg_id, full, 1 AS matched,"
         " argMax((agent, role, run_id, user_id), ts) AS holder"
-        " FROM (" + _PEER_COPIES + ") GROUP BY msg_id, full) AS p"
+        " FROM (" + _PEER_TURNS + ") GROUP BY msg_id, full) AS p"
         " ON e.msg_id = p.msg_id AND e.embedded = p.full"
     )
 
@@ -891,7 +896,9 @@ async def tombstone_embeddings(
     ch: _CHClient | None = None,
 ) -> None:
     """Tombstone the embeddings of `agent`'s turns in one thread: `msg_ids`, or every
-    turn it logged there (`_THREAD_TURNS`).
+    turn it logged there (`_THREAD_TURNS`) plus the rows left under an agent that has
+    tombstoned every copy of the turn (a late hand-off, or a compaction by an earlier
+    build).
 
     The embeddings key has no agent, so a turn several agents logged is one row. It
     stays while another agent holds a live copy with the row's text, and passes to that

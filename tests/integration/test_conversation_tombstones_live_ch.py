@@ -628,14 +628,18 @@ class _LateThenFail(_LateReconcile):
 
 
 @pytest.mark.asyncio
-async def test_a_resent_delete_finishes_an_orphan_row_a_late_handoff_left(ch, scope) -> None:
-    """A's message row is gone. A's reconcile hands the row to B and lands after B's
-    whole delete, then A's call fails before its re-read. The row now matches neither
-    A's agent nor A's turns; the resend still finds it, held by B that deleted its
-    copy, and passes it to C."""
-    for agent in "bc":
-        await _message(ch, scope, agent, "1", "shared", T0 + timedelta(seconds="cb".index(agent)))
-    await _embedding(ch, scope, "a", "1", "shared", T0)
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_a_resent_delete_finishes_a_row_a_late_handoff_left(ch, scope, legacy) -> None:
+    """A's reconcile hands the row to B and lands after B's whole delete, then A's call
+    fails before its re-read. The resend finds the row, held by B that deleted its
+    copy, and passes it to C. Without `legacy`, A's message row is gone, so the row
+    matches neither A's agent nor A's turns. With it, the row holds the first 240
+    characters of a longer turn, matched through B's tombstoned message."""
+    text = "deploy " * 40 if legacy else "shared"
+    agents = "abc" if legacy else "bc"
+    for agent in agents:
+        await _message(ch, scope, agent, "1", text, T0 + timedelta(seconds="cba".index(agent)))
+    await _embedding(ch, scope, "a", "1", text[:240], T0)
     when = datetime.now(UTC).replace(tzinfo=None)
 
     async def b_deletes() -> None:

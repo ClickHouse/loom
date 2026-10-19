@@ -87,7 +87,9 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   logged in the thread keeps its embedding while that agent holds a live copy with the
   same text that search indexes (a user or assistant turn, or a summary), since the
   two copies share one embedding row; the row takes that copy's agent, role, run and
-  user, so the deleting agent's own search drops it (compaction does the same). For a
+  user, so the deleting agent's own search drops it (compaction does the same). A
+  delete also finishes rows of the thread left live under an agent that has tombstoned
+  its copy of the turn, such as turns an earlier build compacted. For a
   person's or a namespace's data everywhere, use
   [`erasure.request`](./memory/retention-and-erasure.md).
 
