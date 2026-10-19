@@ -353,8 +353,21 @@ class RunListInput(BaseModel):
     session_id: str = ""
     # Only runs in this status; "" lists every status.
     status: Literal["", "active", "completed", "failed", "cancelled"] = ""
-    # At most this many runs, newest first; the server caps it at 200.
+    # At most this many runs, in `order_by` order; the server caps it at 200.
     limit: int = Field(default=50, ge=1, le=200)
+    # Runs to skip before the page (0-100,000); default 0, the first page.
+    offset: int = Field(default=0, ge=0, le=100_000)
+    # Sort by start time, duration (0 while active) or memories relied on; default newest first.
+    order_by: Literal[
+        "started_desc",
+        "started_asc",
+        "duration_desc",
+        "duration_asc",
+        "relied_on_desc",
+        "relied_on_asc",
+    ] = "started_desc"
+    # Only runs whose goal, run id or agent holds this text, in any case; "" is no filter.
+    q: str = Field(default="", max_length=200)
     # The Runs page folds runs that neither relied on nor wrote a memory.
     # Folding on the client, after `limit`, can leave a chatty consumer's page
     # empty: its newest runs are all hollow while filled runs sit further
@@ -373,5 +386,8 @@ class RunListInput(BaseModel):
 
 
 class RunListOutput(BaseModel):
-    # Matching runs, newest `started_at` first, projected to `fields` when given.
+    # Matching runs in `order_by` order (newest `started_at` first by default),
+    # projected to `fields` when given.
     runs: list[RunRow]
+    # How many runs match the filters; null on a full page after the first.
+    total: int | None = None

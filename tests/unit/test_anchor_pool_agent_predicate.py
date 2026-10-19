@@ -16,6 +16,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+from server.core.tag_sql import tag_predicate
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.anchor_pool import _enforce_agent_scope, _stamp_row_owner
 from server.memory.app.search.sql import (
@@ -24,7 +25,7 @@ from server.memory.app.search.sql import (
     _key_match_where,
     anchor_pool_sql,
 )
-from server.memory.domain.search_sql import agent_filter, agent_or_shared_predicate, tag_predicate
+from server.memory.domain.search_sql import agent_filter, agent_or_shared_predicate
 
 AGENT = "(e.agent = {agent:String} OR e.scope = 'shared')"
 

@@ -7,6 +7,7 @@ import json
 import logging
 from typing import Any
 
+from server.core.tag_sql import TagFilter
 from server.identity.app.request_scope import request_scope
 from server.memory.app.search_tag_filter import request_hard_tags as _request_hard_tags
 
@@ -42,13 +43,6 @@ def _tier_window(tier_rows: list[Any], hits: list[Any], input: Any) -> list[Any]
     return merged[:top_k] if top_k else merged
 
 
-def _tier_tag_kwargs(input: Any) -> dict[str, Any]:
-    """`tags=` for the tier reads only when the request carries a hard filter, so an untagged
-    request issues an untagged call."""
-    hard_tags = _request_hard_tags(input)
-    return {"tags": hard_tags} if hard_tags else {}
-
-
 # tier -> the order its rows are read in: the anchor is what a task set out to do (its oldest
 # rows), the recent tier what it just did (its newest).
 _TIER_ORDER = {"anchor_first": "created_at_asc", "recent_first": "created_at_desc"}
@@ -74,11 +68,13 @@ async def _prepend_tier(hits: list[Any], input: Any, tier: str) -> list[Any]:
             session_id=str(getattr(input, "session_id", None) or "-"),
         )
         run_id = str(getattr(input, "run_id", "") or "")
+        hard_tags = _request_hard_tags(input)
         rows = await list_by_namespace(
             ident,
             order_by=_TIER_ORDER[tier],
             limit=n * 4 if run_id else n,
-            **_tier_tag_kwargs(input),
+            # The request's hard filter, matched exactly as every memory.search leg does.
+            tag_filter=TagFilter(tuple(hard_tags), "exact_any") if hard_tags else None,
             scope=request_scope(),
         )
     except Exception as e:  # noqa: BLE001 — a tier never fails a search

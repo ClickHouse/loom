@@ -73,7 +73,8 @@ def _chunk_parent_pred(q: SearchQuery, params: dict[str, Any]) -> str:
     row) keeps its session date and stays. Without either filter the leg is
     unchanged. Returns "" when nothing applies; binds its parameters into
     `params` (the chunk statement's, both stages read them)."""
-    from server.memory.domain.search_sql import hard_tag_filter, tag_predicate
+    from server.core.tag_sql import tag_predicate
+    from server.memory.domain.search_sql import hard_tag_filter
     from server.memory.domain.temporal_sql import (
         as_of_predicate,
         status_predicate,

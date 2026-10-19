@@ -705,3 +705,27 @@ async def test_threads_reads_dash_as_every_agent(
             ConversationThreadsInput(org="clickhouse", namespace="finance", agent=sentinel)
         )
     assert seen == [None, None]
+
+
+@pytest.mark.asyncio
+async def test_threads_passes_its_offset_to_the_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationThreadsInput
+    from server.knowledge.app.conversations import handle_conversation_threads
+    from server.knowledge.store import conversations as conversation_repo
+
+    seen: list[int] = []
+
+    async def fake_recent(org, namespace, *, offset=0, **kw):
+        seen.append(offset)
+        return []
+
+    async def fake_titles(*a, **kw):
+        return {}
+
+    monkeypatch.setattr(conversation_repo, "recent_threads", fake_recent)
+    monkeypatch.setattr(conversation_repo, "thread_titles", fake_titles)
+    await handle_conversation_threads(ConversationThreadsInput(org="o", namespace="ns"))
+    await handle_conversation_threads(ConversationThreadsInput(org="o", namespace="ns", offset=50))
+    assert seen == [0, 50]

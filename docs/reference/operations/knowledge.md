@@ -164,7 +164,8 @@ Paginated listing of documents in a namespace, for curation tools.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `tags` | `list[str]` | *(computed)* | ANY-match filter |
+| `tags` | `list[str]` | *(computed)* | Documents carrying any one of these tags, in any case. |
+| `tags_every` | `bool` | `False` | Require every one of `tags` instead of any one; default off. |
 | `uri_prefix` | `list[str]` | *(computed)* | Directory scope: documents whose source_uri starts with one of these prefixes; empty = whole namespace. |
 | `include_superseded` | `bool` | `False` | Also list soft-deleted and superseded documents (their `superseded` is True). |
 | `limit` | `int` | `50` | At most this many rows per page (1-500); `next_cursor` fetches the next page. |

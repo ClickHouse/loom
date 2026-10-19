@@ -5,9 +5,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.core.tag_sql import tag_predicate
 from server.memory.app.search_tag_filter import request_hard_tags as _request_hard_tags
 from server.memory.app.served_superseded import served_flags as _served
-from server.memory.domain.search_sql import agent_filter, agent_or_shared_predicate, tag_predicate
+from server.memory.domain.search_sql import agent_filter, agent_or_shared_predicate
 from server.memory.domain.temporal_sql import as_of_predicate, served_status_sql
 
 
