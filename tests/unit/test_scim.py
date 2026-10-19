@@ -2121,6 +2121,7 @@ async def test_a_delete_clears_the_other_addresses(world) -> None:
     assert scim.emails_of(world.table.newest(row["id"]) or {}) == []
 
 
+_OFF = {"op": "replace", "path": "active", "value": False}
 _MIXED_CASE = [{"Value": "lee@example.com", "TYPE": "work", "Primary": True}]
 
 
@@ -2165,6 +2166,26 @@ def test_an_attribute_named_twice_in_two_cases_is_refused(
 ) -> None:
     r = client.post("/scim/v2/Users", json=body)
     assert r.status_code == 400 and r.json()["scimType"] == "invalidSyntax"
+
+
+@pytest.mark.parametrize(
+    ("method", "body"),
+    [
+        ("put", {"userName": "lee@example.com", "UserName": "x", "active": False}),
+        ("patch", {"Operations": [], "operations": [_OFF]}),
+        ("patch", {"Operations": [{**_OFF, "Value": True}]}),
+        ("patch", {"Operations": [{"op": "replace", "value": {"active": False, "Active": True}}]}),
+    ],
+)
+def test_a_name_sent_twice_is_refused_and_still_deactivates(
+    client: TestClient, world, method: str, body: dict[str, Any]
+) -> None:
+    world.person("lee@example.com", "lee")
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    r = getattr(client, method)(f"/scim/v2/Users/{uid}", json=body)
+    assert r.status_code == 400 and r.json()["scimType"] == "invalidSyntax", r.text
+    assert client.get(f"/scim/v2/Users/{uid}").json()["active"] is False
+    assert world.ours == {"lee": None}
 
 
 def test_attribute_names_match_in_any_case(client: TestClient, world) -> None:

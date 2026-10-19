@@ -163,6 +163,11 @@ def _lowered(attrs: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _every(attrs: dict[str, Any], name: str) -> list[Any]:
+    """The values of `attrs` named `name` in any case, each spelling's."""
+    return [v for k, v in attrs.items() if str(k).lower() == name]
+
+
 def _operations(body: dict[str, Any]) -> Any:
     ops = _lowered(body).get("operations")
     return (
@@ -178,6 +183,12 @@ def _attributes(op: Any) -> list[tuple[str, Any]]:
     if not isinstance(op, dict):
         raise ScimError(400, "each operation must be an object", "invalidSyntax")
     path, value = str(op.get("path") or ""), op.get("value")
+    if not path and isinstance(value, dict):
+        _lowered(value)  # refuses a name sent twice
+    return _pairs(path, value)
+
+
+def _pairs(path: str, value: Any) -> list[tuple[str, Any]]:
     pairs = list(value.items()) if not path and isinstance(value, dict) else [(path, value)]
     return [(_lower_names(str(k)).removeprefix(_USER_URN), v) for k, v in pairs]
 
@@ -214,20 +225,26 @@ def patched_active(body: dict[str, Any]) -> bool | None:
 
 
 def _sets_inactive(body: dict[str, Any]) -> bool:
-    """Whether any operation of a PatchOp sets `active` to false, whatever else fails."""
-    ops = _operations(body)
-    if not isinstance(ops, list):
-        return False
-    for op in ops:
-        if not isinstance(op, dict) or not _replaces(op):
-            continue
-        for attr, value in _attributes(op):
-            try:
-                if attr == "active" and parse_active(value) is False:
-                    return True
-            except ScimError:
+    """Whether any operation of a PatchOp sets `active` to false, whatever else
+    fails: an attribute named twice too, in any of its spellings."""
+    for ops in _every(body, "operations"):
+        for op in ops if isinstance(ops, list) else []:
+            if not isinstance(op, dict):
                 continue
+            if not any(str(kind).lower() in ("add", "replace") for kind in _every(op, "op")):
+                continue
+            for path in [str(p or "") for p in _every(op, "path")] or [""]:
+                for value in _every(op, "value"):
+                    if any(a == "active" and _is_false(v) for a, v in _pairs(path, value)):
+                        return True
     return False
+
+
+def _is_false(value: Any) -> bool:
+    try:
+        return parse_active(value) is False
+    except ScimError:
+        return False
 
 
 def patched_names(
@@ -596,10 +613,13 @@ async def create_user(request: Request) -> JSONResponse:
 
 @router.put("/Users/{uid}")
 async def replace_user(uid: str, request: Request) -> JSONResponse:
-    body = _lowered(await _body(request))
-    if "id" in body and body["id"] != uid:
+    body = await _body(request)
+    if any(named != uid for named in _every(body, "id")):
         raise ScimError(400, "the body names another user", "invalidValue")
-    active = None if body.get("active") is None else parse_active(body["active"])
+    # Read in every spelling: a body refused for an attribute named twice
+    # still deactivates when one of them says false.
+    actives = [parse_active(a) for a in _every(body, "active") if a is not None]
+    active = False if False in actives else (actives[0] if actives else None)
     row = await scim.get(uid)
     if row is None:
         raise _not_found()
