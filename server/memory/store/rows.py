@@ -359,8 +359,9 @@ def build_memory_version_row(
             continue
         val = getattr(existing, col, None)
         if col == "expire_reason":
-            # A blacklist sweep's marker stays on the sweep's tombstone, which passes it as
-            # an override; every other version drops it (write_fence).
+            # A blacklist sweep's marker stays on the sweep's tombstone (the sweep and
+            # namespace.rollback pass it as an override); every other version drops it
+            # (write_fence).
             val = carried_reason(val)
         elif col == "value":
             # The stored bytes verbatim, never the parsed value written back

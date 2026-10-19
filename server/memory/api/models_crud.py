@@ -262,7 +262,6 @@ class MemorySetInput(_Identity):
     # Why the expiry is set (at most 512 chars, not starting with `blacklist.sweep:`); ''
     # keeps the row's current reason.
     expire_reason: str = Field(default="", max_length=512)
-
     # Real-world time the fact became true (distinct from created_at and from
     # temporal_anchor). NULL = unknown; as-of reads fall through to created_at.
     valid_at: datetime | None = None

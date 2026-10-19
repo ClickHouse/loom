@@ -4,7 +4,8 @@ The write fence (server/memory/app/write_fence.py) tells a sweep's tombstone fro
 delete's by it, so it lives only on the sweep's tombstone: a caller may not send it, and
 every other version drops it when it carries a row's reason forward (the row builder
 `server.memory.store.rows.build_memory_version_row`, memory.set's and memory.bulk_set's
-own rows).
+own rows). The sweep and namespace.rollback, which writes a swept version back as it
+was, pass it to the builder as an override.
 """
 
 from __future__ import annotations
