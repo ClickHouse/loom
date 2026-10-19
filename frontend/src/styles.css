@@ -205,8 +205,8 @@
   --click-field-color-placeholder-default: #696e79; /* slate-600, 5.0:1 */
   --click-field-color-stroke-default: #808691; /* slate-500, 3.6:1 */
   --click-field-color-stroke-hover: #696e79;
-  --click-checkbox-color-stroke-default: #808691;
-  --click-checkbox-color-stroke-hover: #696e79;
+  /* Click UI's Checkbox draws its unchecked stroke from its default variation's token. */
+  --click-checkbox-color-variations-default-stroke-default: #808691;
   --click-radio-color-stroke-default: #808691;
   --click-radio-color-stroke-hover: #696e79;
   --click-switch-color-stroke-default: #808691;
@@ -387,6 +387,20 @@ body {
   }
 }
 
+/* A button whose read is in flight stays focusable (components/ui/BusyButton) and shows
+   it is working: dimmed, with a progress cursor. Click UI's own loading button is
+   disabled and keeps its look. */
+@layer components {
+  button[aria-busy="true"]:not(:disabled) {
+    cursor: progress;
+    opacity: 0.7;
+  }
+  /* Click UI dims a loading empty button less (Button.css). */
+  button[aria-busy="true"][data-busy-empty]:not(:disabled) {
+    opacity: 0.9;
+  }
+}
+
 /* A thumb needs 44 × 44 px. Click UI's buttons are 32 px tall and its icon buttons
    26 px wide, so under a coarse pointer every button reaches the hit size; a
    checkbox, radio or switch keeps its box, its label is the larger target. */
@@ -401,9 +415,12 @@ body {
 
 /* Popovers, menus, selects and tooltips: Click UI gives them z-index 1–2 and
    Radix copies that onto the popper wrapper inline; lift them over Loom's
-   dialogs (z-50/60) and toasts (z-[65]). */
-[data-radix-popper-content-wrapper] {
-  z-index: 70 !important;
+   dialogs (z-50/60) and toasts (z-[65]). An !important declaration in a layer still
+   beats that inline one, which is not important. */
+@layer components {
+  [data-radix-popper-content-wrapper] {
+    z-index: 70 !important;
+  }
 }
 
 /* ============================================================
@@ -543,6 +560,11 @@ body {
    Focus rings — Click UI outline blue
    ============================================================ */
 
+/* Unlayered, as every ring rule here: in a layer an override would lose to the unlayered
+   *:focus-visible ring. With the light-theme token corrections above, these are the only
+   Loom rules outside a layer besides the base page styles (page, scrollbars, animations,
+   selection); every component rule sits in `@layer components`. */
+
 /* Click UI's focus ring (outline-default, 2 px, 2 px offset) on every focusable
    element, including the ones Click UI draws none on (checkbox, switch, tabs,
    link, its dialog close). */
@@ -575,11 +597,31 @@ textarea[aria-invalid="true"]:focus-visible {
 [role="tablist"] [role="tab"]:focus-visible {
   outline-offset: -2px;
 }
-/* A memory card's body is one stretched button: the ring goes round the card. */
-[data-memory-open]:focus-visible {
+/* A row that spans a box clipping its overflow draws its ring inset: the Explorer outline
+   tree's items, a task lane's header and rows, and the namespace picker's arrow-key items
+   (options, group buttons, a group's "Show all"). Inbox items stack flush, where an outset
+   ring would cover the next one. A clipping box that holds other controls leaves them 4 px
+   of room instead: a lane's "Show all" (.tq-more), the picker's withdraw and "Find public
+   namespaces" buttons (e2e/focus-rings.spec.ts walks every page for a clipped ring). */
+.explorer-outline [role="treeitem"]:focus-visible,
+.tq-ghead:focus-visible,
+.tq-row:focus-visible,
+.tq-inbox:focus-visible,
+.scroll-fade [data-nav]:focus-visible {
+  outline-offset: -2px;
+}
+/* Click UI's split button clips its halves (overflow: hidden), so its focus ring is drawn
+   inside each half; on any split button, wherever it sits (ui/SplitButton). */
+.split-button button:focus-visible,
+.split-button [data-testid="split-button-dropdown"]:focus-visible {
+  outline-offset: -2px;
+}
+/* A list row's body is one stretched button (`data-row-open`): the ring goes round the
+   row, meta slot included, and the button draws none of its own. */
+.list-row [data-row-open]:focus-visible {
   outline: none;
 }
-[data-card]:has([data-memory-open]:focus-visible) {
+.list-row:has([data-row-open]:focus-visible) {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
   /* At once, as every ring: the card's transition-colors would ease it in. */
@@ -588,16 +630,18 @@ textarea[aria-invalid="true"]:focus-visible {
 
 /* A table whose column header another table above it already shows: the header stays
    for a screen reader, out of sight (Tailwind's sr-only). */
-.table-header-sr-only > thead {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border-width: 0;
+@layer components {
+  .table-header-sr-only > thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border-width: 0;
+  }
 }
 
 /* ============================================================
@@ -751,10 +795,14 @@ textarea[aria-invalid="true"]:focus-visible {
     flex-shrink: 0;
     white-space: nowrap;
   }
-  /* Outline tree rows: one line of name, one of metadata. */
-  .explorer-outline [role="treeitem"]:focus-visible {
-    outline: none;
-    box-shadow: inset 0 0 0 1px var(--color-border-strong);
+  /* Outline tree rows: one line of name, one of metadata. Hover and selection take Click UI's
+     Table row tints. */
+  .explorer-outline [role="treeitem"]:hover {
+    background: var(--click-table-row-color-background-hover);
+  }
+  .explorer-outline [role="treeitem"][aria-selected="true"],
+  .explorer-outline [role="treeitem"][data-edge-selected] {
+    background: var(--click-table-row-color-background-active);
   }
 
   /* ============================================================
@@ -796,158 +844,129 @@ textarea[aria-invalid="true"]:focus-visible {
     }
   }
 
-  /* A library row's actions: the width of its four small icon buttons, kept while they
-     are not rendered; on a phone they take a line of their own under the document. */
-  .doc-acts {
-    display: flex;
-    flex: none;
-    gap: 12px;
-    min-width: 140px;
-  }
-  @media (max-width: 639px) {
-    .doc-acts {
-      flex-basis: 100%;
-      justify-content: flex-end;
-    }
-  }
-
   /* ============================================================
      Tasks page. Attention tiles, an inbox rail,
      five groups by what happens next, a document-shaped detail panel. The
      layout, the row grid and the breakpoints live here because they are
      one component's shape, not a utility; type sizes are the tokens above.
      ============================================================ */
+  /* A 208 px rail and a 440 px panel beside the list: measured hand sizes. */
   .tq-body {
     display: grid;
-    grid-template-columns: 224px minmax(0, 1fr);
-    gap: 16px;
+    grid-template-columns: 208px minmax(0, 1fr);
+    gap: var(--spaces-4);
     align-items: start;
   }
   .tq-body[data-panel="true"] {
-    grid-template-columns: 224px minmax(0, 1fr) 440px;
+    grid-template-columns: 208px minmax(0, 1fr) 440px;
   }
+
+  /* ---- attention tiles: toggle buttons on Click UI's small BigStat (label over value,
+     its stroke and radius); a pressed tile is a checked filter, the selected-row tint and
+     the active stroke so it does not rest on the tint alone. */
   .tq-attn {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 8px;
-    margin: 4px 0 16px;
+    gap: var(--spaces-2);
+    margin: 0 0 var(--spaces-4);
   }
   .tq-tile {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 10px 12px;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: var(--click-bigStat-space-all);
     text-align: left;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-xl);
-    background: var(--color-surface);
+    border: var(--click-bigStat-stroke) solid var(--click-bigStat-color-stroke-default);
+    border-radius: var(--click-bigStat-radii-all);
+    background: var(--click-bigStat-color-background-default);
   }
-  .tq-tile:hover {
-    border-color: var(--color-border-strong);
-  }
-  .tq-tile[aria-pressed="true"] {
-    border-color: var(--color-accent);
-    background: var(--color-accent-soft);
+  .tq-tile .lbl {
+    font: var(--click-bigStat-typography-sm-label-default);
+    color: var(--click-bigStat-color-label-default);
   }
   .tq-tile .n {
-    font-size: var(--text-2xl);
-    line-height: 24px;
-    font-weight: 600;
+    font: var(--click-bigStat-typography-sm-title-default);
+    color: var(--click-bigStat-color-title-default);
   }
-  .tq-tile[data-zero="true"] .n {
+  .tq-tile:hover:not(:disabled) {
+    background: var(--click-card-horizontal-default-color-background-hover);
+  }
+  .tq-tile[aria-pressed="true"] {
+    border-color: var(--click-card-horizontal-default-color-stroke-active);
+    background: var(--click-table-row-color-background-active);
+  }
+  .tq-tile[data-zero="true"] .n,
+  .tq-tile:disabled .n {
     color: var(--color-text-muted);
     font-weight: 500;
   }
-
-  .tq-rail section {
-    margin-bottom: 18px;
-  }
+  /* ---- the inbox rail */
+  /* An inbox in the rail: a sidebar navigation item (Click UI's --click-sidebar-* tokens). */
   .tq-inbox {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     justify-content: space-between;
     width: 100%;
-    gap: 8px;
-    padding: 7px 8px;
-    border-radius: var(--radius-md);
-    color: var(--color-text-muted);
+    gap: var(--click-sidebar-navigation-item-default-space-gap);
+    padding: var(--click-sidebar-navigation-item-default-space-y)
+      var(--click-sidebar-navigation-item-default-space-right) var(--click-sidebar-navigation-item-default-space-y)
+      var(--click-sidebar-navigation-item-default-space-left);
+    border-radius: var(--click-sidebar-navigation-item-radii-all);
+    color: var(--click-sidebar-main-navigation-item-color-text-default);
+    font: var(--click-sidebar-navigation-item-typography-default);
     text-align: left;
   }
   .tq-inbox:hover {
-    background: var(--color-surface-2);
+    background: var(--click-sidebar-main-navigation-item-color-background-hover);
+    color: var(--click-sidebar-main-navigation-item-color-text-hover);
   }
   .tq-inbox[aria-current="true"] {
-    background: var(--color-surface-2);
-    color: var(--color-text);
+    background: var(--click-sidebar-main-navigation-item-color-background-active);
+    color: var(--click-sidebar-main-navigation-item-color-text-active);
+    font: var(--click-sidebar-navigation-item-typography-active);
   }
   .tq-inbox .nm {
-    display: flex;
-    align-items: center;
-    gap: 8px;
     min-width: 0;
-  }
-  .tq-inbox .nm > span:last-child {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .tq-inbox .cnt {
     font-size: var(--text-xs);
+    font-weight: 400;
     color: var(--color-text-muted);
     white-space: nowrap;
+  }
+  /* On the current item's background the muted grey is under 4.5:1: the count takes the item's text. */
+  .tq-inbox[aria-current="true"] .cnt {
+    color: inherit;
   }
   .tq-inbox .cnt b {
     color: var(--color-text);
     font-weight: 500;
   }
 
-  /* ---- avatars: the inbox's own agent round on the accent, another agent square on info, a person by initials */
-  .tq-av {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--color-surface-3);
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    color: var(--color-text);
-    text-transform: lowercase;
-  }
-  .tq-av[data-kind="bot"] {
-    border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--color-info) 15%, transparent);
-    color: var(--color-info);
-  }
-  .tq-av[data-kind="me"] {
-    background: var(--color-accent-soft);
-    color: var(--color-accent);
-    border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
-  }
-
-  /* ---- list */
+  /* ---- list: a lane is a bordered group, its rows split by a rule (the task grid) */
   .tq-group {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-xl);
     background: var(--color-surface);
-    margin-bottom: 12px;
+    margin-bottom: var(--spaces-3);
     overflow: hidden;
   }
+  /* 10 px between the caret, the label and the count: a measured hand size. */
   .tq-ghead {
     display: flex;
     align-items: center;
     gap: 10px;
     width: 100%;
-    padding: 10px 14px;
+    padding: var(--click-table-header-cell-space-sm-y) var(--click-table-header-cell-space-sm-x);
     text-align: left;
+    background: var(--click-table-header-color-background-default);
     border-bottom: 1px solid var(--color-border);
   }
   .tq-ghead:hover {
-    background: var(--color-surface-2);
+    background: var(--click-card-horizontal-default-color-background-hover);
   }
   .tq-ghead .car {
     transition: transform 0.15s;
@@ -959,74 +978,66 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-group[data-collapsed="true"] .tq-ghead .car {
     transform: rotate(-90deg);
   }
+  /* A row: line 1 the priority, the title and the meta (assignee, age,
+     menu); line 2 the kind and the state's one line. */
   .tq-row {
     display: grid;
-    grid-template-columns: 4px minmax(0, 1fr) auto;
-    gap: 0 12px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "pri title meta"
+      ". sub sub";
+    gap: var(--spaces-1) var(--spaces-3);
     align-items: center;
     width: 100%;
-    padding: 9px 14px 9px 10px;
+    padding: var(--click-table-body-cell-space-sm-y) var(--click-table-body-cell-space-sm-x);
     text-align: left;
     border-top: 1px solid var(--color-border);
     cursor: pointer;
     user-select: none;
   }
-  /* A list narrower than a row's title and metadata side by side (beside the open
-     panel, on a phone) stacks the metadata under the title. */
+  .tq-row .tq-pri {
+    grid-area: pri;
+    display: flex;
+  }
+  .tq-row .tq-title {
+    grid-area: title;
+    min-width: 0;
+  }
+  .tq-row .tq-metacell {
+    grid-area: meta;
+  }
+  .tq-row .tq-subcell {
+    grid-area: sub;
+    min-width: 0;
+  }
+  /* A list narrower than a row's title and meta side by side (beside the open panel, on a
+     phone): the meta takes its own line under the title, never the second line's. */
   .tq-rows {
     container-type: inline-size;
   }
   @container (max-width: 560px) {
     .tq-row {
-      grid-template-columns: 4px minmax(0, 1fr);
-    }
-    .tq-row > [role="gridcell"]:last-child {
-      grid-column: 2;
-      margin-top: 4px;
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-areas:
+        "pri title"
+        ". meta"
+        ". sub";
     }
     .tq-row .tq-meta {
       justify-content: flex-start;
       flex-wrap: wrap;
-      gap: 10px;
     }
   }
   .tq-rows .tq-row:first-child {
     border-top: 0;
   }
   .tq-row:hover {
-    background: var(--color-surface-2);
+    background: var(--click-card-horizontal-default-color-background-hover);
   }
+  /* The tint alone is 1.03:1 against the other rows: a bar marks the row whose panel is open. */
   .tq-row[aria-selected="true"] {
-    background: var(--color-surface-2);
-    box-shadow: inset 3px 0 0 var(--color-accent);
-  }
-  .tq-row:focus-visible,
-  .tq-card:focus-visible,
-  .tq-tile:focus-visible,
-  .tq-inbox:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: -2px;
-  }
-  .tq-pri {
-    height: 32px;
-    border-radius: 2px;
-    background: var(--color-surface-3);
-  }
-  .tq-pri[data-p="1"] {
-    background: var(--color-danger);
-  }
-  .tq-pri[data-p="2"] {
-    background: var(--color-warn);
-  }
-  .tq-pri[data-p="4"] {
-    background: transparent;
-    border: 1px dashed var(--color-surface-3);
-  }
-  .tq-row .t {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
+    box-shadow: inset 3px 0 0 var(--color-text);
+    background: var(--click-table-row-color-background-active);
   }
   /* Two lines before it ellipsises, so a long title is read in the row. */
   .tq-row .title {
@@ -1035,19 +1046,18 @@ textarea[aria-invalid="true"]:focus-visible {
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     overflow: hidden;
+    overflow-wrap: anywhere;
   }
   .tq-sub {
     display: flex;
-    gap: 6px;
+    gap: var(--spaces-2);
     align-items: center;
     font-size: var(--text-xs);
     color: var(--color-text-muted);
-    margin-top: 2px;
     min-width: 0;
     flex-wrap: wrap;
   }
   .tq-sub .reason {
-    color: var(--color-text-muted);
     font-style: italic;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1057,20 +1067,26 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-meta {
     display: flex;
     align-items: center;
-    gap: 14px;
+    justify-content: flex-end;
+    gap: var(--spaces-3);
     font-size: var(--text-xs);
     color: var(--color-text-muted);
     white-space: nowrap;
   }
-  .tq-who {
+  .tq-assignee {
     display: inline-flex;
-    align-items: center;
-    gap: 6px;
   }
+  /* A lane's "Show all" row: a task row's cell padding across; down, the empty Button's own
+     height and 4 px for its focus ring, which the lane would clip. */
+  .tq-more {
+    padding: var(--spaces-1) var(--click-table-body-cell-space-sm-x);
+    border-top: 1px solid var(--color-border);
+  }
+  /* A 56 × 4 px bar: a measured hand size. */
   .tq-lease {
-    width: 72px;
+    width: 56px;
     height: 4px;
-    border-radius: 2px;
+    border-radius: var(--radius-xs);
     background: var(--color-surface-3);
     overflow: hidden;
   }
@@ -1081,17 +1097,6 @@ textarea[aria-invalid="true"]:focus-visible {
   }
   .tq-lease[data-low="true"] i {
     background: var(--color-warn);
-  }
-  .tq-acts {
-    display: inline-flex;
-    gap: 6px;
-    opacity: 0;
-    transition: opacity 0.1s;
-  }
-  .tq-row:hover .tq-acts,
-  .tq-row:focus-within .tq-acts,
-  .tq-row[aria-selected="true"] .tq-acts {
-    opacity: 1;
   }
 
   /* ---- board */
@@ -1110,20 +1115,23 @@ textarea[aria-invalid="true"]:focus-visible {
     min-height: 200px;
     display: flex;
     flex-direction: column;
+    min-width: 0;
   }
   .tq-card {
-    background: var(--color-surface-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    padding: 10px 10px 8px;
+    grid-template-columns: minmax(0, 1fr);
+    background: var(--click-card-horizontal-default-color-background-default);
+    border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
+    border-radius: var(--click-card-horizontal-radii-all);
+    padding: var(--click-card-horizontal-space-sm-y) var(--click-card-horizontal-space-sm-x);
     text-align: left;
     width: 100%;
+    min-width: 0;
     display: grid;
-    gap: 6px;
+    gap: var(--click-card-horizontal-space-sm-y);
     cursor: pointer;
   }
   .tq-card:hover {
-    border-color: var(--color-border-strong);
+    background: var(--click-card-horizontal-default-color-background-hover);
   }
   .tq-card[draggable="true"]:active {
     cursor: grabbing;
@@ -1141,22 +1149,6 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-col[data-drop="no"],
   .tq-group[data-drop="no"] {
     opacity: 0.5;
-  }
-  .tq-card[aria-current="true"] {
-    border-color: var(--color-accent);
-  }
-  .tq-pdot {
-    width: 6px;
-    height: 14px;
-    border-radius: 2px;
-    background: var(--color-surface-3);
-    flex: none;
-  }
-  .tq-pdot[data-p="1"] {
-    background: var(--color-danger);
-  }
-  .tq-pdot[data-p="2"] {
-    background: var(--color-warn);
   }
 
   /* ---- detail panel: a sticky column beside the list, a sheet under 1280 px */
@@ -1177,12 +1169,6 @@ textarea[aria-invalid="true"]:focus-visible {
   }
   .tq-sec:last-child {
     border-bottom: 0;
-  }
-  .tq-sec h4 {
-    font-size: var(--text-xs);
-    color: var(--color-text-muted);
-    font-weight: 500;
-    margin: 0 0 6px;
   }
   .tq-kv {
     display: grid;
@@ -1211,40 +1197,27 @@ textarea[aria-invalid="true"]:focus-visible {
     margin: 0;
     padding: 0;
   }
+  /* A 20 px circle round the xs actor icon, 10 px to the text, 5 px rows: measured hand sizes. */
   .tq-tl li {
     display: grid;
-    grid-template-columns: 18px minmax(0, 1fr) auto;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
     gap: 10px;
     padding: 5px 0;
     font-size: var(--text-sm);
     align-items: start;
   }
   .tq-tl .ic {
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
-    background: var(--color-surface-3);
-    margin-top: 2px;
+    background: var(--global-color-background-muted);
+    color: var(--color-text-muted);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: var(--text-xs);
-    font-family: var(--font-mono);
-    color: var(--color-text);
   }
   .tq-tl .ic[data-kind="human"] {
-    background: var(--color-accent-soft);
-    color: var(--color-accent);
-  }
-  .tq-tl .ic[data-kind="sweeper"] {
-    color: var(--color-text-muted);
-  }
-  .tq-empty {
-    border: 1px dashed var(--color-border-strong);
-    border-radius: var(--radius-xl);
-    padding: 28px;
-    text-align: center;
-    color: var(--color-text-muted);
+    color: var(--color-text);
   }
 
   /* The task panel as a sheet (Tasks.tsx decides when, below 1280 px). */
@@ -1257,29 +1230,11 @@ textarea[aria-invalid="true"]:focus-visible {
     max-height: none;
     box-shadow: var(--shadow-2xl);
   }
+  /* Below md the rail is a Select (Tasks.tsx), so the list takes the width. */
   @media (max-width: 767px) {
     .tq-body,
     .tq-body[data-panel="true"] {
       grid-template-columns: minmax(0, 1fr);
-    }
-    .tq-rail {
-      display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      padding-bottom: 4px;
-    }
-    .tq-rail section {
-      min-width: max-content;
-      margin-bottom: 0;
-    }
-    .tq-rail .tq-filters {
-      display: none;
-    }
-    .tq-attn {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .tq-acts {
-      opacity: 1;
     }
     .tq-panel {
       width: 100vw;
@@ -1291,5 +1246,491 @@ textarea[aria-invalid="true"]:focus-visible {
     .tq-tile {
       min-height: var(--spacing-hit);
     }
+  }
+}
+
+/* A list page's sticky toolbar (ui/ListToolbar): Click UI's 1 px separator under it, only
+   once it is stuck over the rows. A shadow, so the bar keeps its 48 px. `main` scrolls
+   a focused row clear of it (WCAG 2.4.11): the bar's height and a little air. */
+@layer components {
+  .list-toolbar[data-stuck] {
+    box-shadow: 0 1px 0 var(--global-color-stroke-default);
+  }
+  #main {
+    scroll-padding-top: 56px;
+  }
+}
+
+/* ui/ListRow: a list page's row on Click UI's CardHorizontal md tokens (CardHorizontal's one
+   body block cannot hold a checkbox, a stretched button and chips side by side). Hover
+   tints the background (the stroke stays, as in Click UI); the open row takes the active
+   stroke; a checked row Click UI's Table row tint, its checkbox carrying the state. The
+   scroll margin leaves room for the row's focus ring (2 px out, 2 px wide) when it is
+   scrolled to an edge. The browser lays out and paints only the rows in view; a row not
+   drawn yet holds its list's measured height: a thread 76 px, a document 101, a memory 129,
+   and under 640 px, where a row's meta takes its own line, 105, 123 and 151 (below). */
+@layer components {
+  .list-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--click-card-horizontal-space-md-gap);
+    padding: var(--click-card-horizontal-space-md-y) var(--click-card-horizontal-space-md-x);
+    border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
+    border-radius: var(--click-card-horizontal-radii-all);
+    background: var(--click-card-horizontal-default-color-background-default);
+    scroll-margin-block: var(--spaces-2);
+    content-visibility: auto;
+    contain-intrinsic-size: auto 76px;
+  }
+
+  /* A row's open button: plain text whose click target stretches over the whole row, under
+     the row's other controls (.list-row-control). useRowNav finds it by data-row-open; the
+     layout around it is the page's. */
+  .list-row-open {
+    text-align: left;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+  .list-row-open::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+  /* A row's own control or tip (its tags, its menu, a time with a tooltip) sits above the
+     open button's stretched target, so it takes its own clicks and hovers. */
+  .list-row-control {
+    position: relative;
+    z-index: 1;
+  }
+  /* A tip with nothing to press (a row's "+N" tags) lifts only where the primary pointer
+     hovers and is fine: a finger never opens the tip, so its tap falls through to the open
+     button, whose drawer lists everything the tip would. */
+  @media (hover: hover) and (pointer: fine) {
+    .list-row-tip {
+      position: relative;
+      z-index: 1;
+    }
+  }
+  .list-row[data-doc-row] {
+    contain-intrinsic-size: auto 101px;
+  }
+  .list-row[data-card] {
+    contain-intrinsic-size: auto 129px;
+  }
+  /* ui/RowSkeleton: the rows' measured heights, so a list's rows land without moving it. */
+  .list-row-skeleton {
+    height: 76px;
+    pointer-events: none;
+  }
+  .list-row-skeleton[data-kind="document"] {
+    height: 101px;
+  }
+  .list-row-skeleton[data-kind="memory"] {
+    height: 129px;
+  }
+  @media (max-width: 639px) {
+    .list-row {
+      contain-intrinsic-size: auto 105px;
+    }
+    .list-row[data-doc-row] {
+      contain-intrinsic-size: auto 123px;
+    }
+    .list-row[data-card] {
+      contain-intrinsic-size: auto 151px;
+    }
+    .list-row-skeleton {
+      height: 105px;
+    }
+    .list-row-skeleton[data-kind="document"] {
+      height: 123px;
+    }
+    .list-row-skeleton[data-kind="memory"] {
+      height: 151px;
+    }
+  }
+  .list-row:hover {
+    background: var(--click-card-horizontal-default-color-background-hover);
+  }
+  .list-row[data-checked] {
+    background: var(--click-table-row-color-background-active);
+  }
+  .list-row[data-active] {
+    border-color: var(--click-card-horizontal-default-color-stroke-active);
+  }
+  .list-row[data-deleted] {
+    border-style: dashed;
+  }
+  /* 1 px down, so the checkbox sits on the row's first line of text: a measured hand size. */
+  .list-row-leading {
+    display: flex;
+    flex-shrink: 0;
+    padding-top: 1px;
+  }
+  /* A row's checkbox under a coarse pointer is a 44 px target (WCAG 2.5.8), so a tap beside
+     it selects the row instead of opening it. It reaches into Click UI's checkbox markup
+     (`[role="checkbox"]`): recheck it when Click UI is upgraded. */
+  @media (pointer: coarse) {
+    .list-row-leading [role="checkbox"] {
+      position: relative;
+    }
+    .list-row-leading [role="checkbox"]::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: var(--spacing-hit);
+      height: var(--spacing-hit);
+      transform: translate(-50%, -50%);
+    }
+  }
+
+  /* A record inside a narrow pane (the Explorer inspector's facts and hits): CardHorizontal sm,
+     whose one body block cannot hold a fact's links, chips and count. A button form hovers. */
+  .pane-card {
+    display: block;
+    padding: var(--click-card-horizontal-space-sm-y) var(--click-card-horizontal-space-sm-x);
+    border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
+    border-radius: var(--click-card-horizontal-radii-all);
+    background: var(--click-card-horizontal-default-color-background-default);
+  }
+  button.pane-card:hover {
+    background: var(--click-card-horizontal-default-color-background-hover);
+  }
+
+  /* Profile's persona picker: a selectable CardHorizontal (a button holding a title, a line and
+     a sample); hover tints the background and keeps the stroke, as Click UI's card does. */
+  .persona-card {
+    text-align: left;
+    padding: var(--click-card-horizontal-space-md-y) var(--click-card-horizontal-space-md-x);
+    border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
+    border-radius: var(--click-card-horizontal-radii-all);
+    background: var(--click-card-horizontal-default-color-background-default);
+  }
+  .persona-card:hover {
+    background: var(--click-card-horizontal-default-color-background-hover);
+  }
+}
+
+/* AgentBadge: a long agent name is cut at 180 px, a measured hand size, with an ellipsis
+   (the whole name is in its tooltip); every box inside Click UI's Badge may shrink to it. */
+@layer components {
+  .agent-badge {
+    max-width: 180px;
+  }
+  .agent-badge * {
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
+/* ui/ListPager: Click UI's Pagination stacks into a column under 768 px (its containers are
+   responsive and it offers no way to say otherwise); a pager stays one row, the range
+   wrapping above the arrows, and keeps the widths it sets (a 50 px page field). Click UI's
+   Container marks itself `data-testid="container"`, the one stable hook its build keeps;
+   e2e/overlap.spec.ts checks the pager is one row at 375 px. */
+@layer components {
+  @media (max-width: 768px) {
+    .list-pager [data-testid="container"] {
+      flex-direction: row;
+      width: var(--container-width);
+      max-width: var(--container-max-width);
+    }
+    .list-pager > [data-testid="container"] {
+      flex-wrap: wrap;
+      row-gap: var(--spaces-2);
+    }
+  }
+}
+
+/* Namespace picker rows (NamespacePicker.tsx): Click UI's card hover, and the current
+   namespace in the tint Click UI's Table gives a selected row. */
+@layer components {
+  .ns-row:hover {
+    background: var(--click-card-horizontal-default-color-background-hover);
+  }
+  .ns-row[data-current] {
+    background: var(--click-table-row-color-background-active);
+  }
+}
+
+/* A scroll area that fades out at an edge it can still scroll past, so the rows below the
+   fold read as more to come (`data-fade` is set from the scroll position). The fade is 24 px,
+   a measured hand size, and the scroll padding matches it, so a row focused with the arrow
+   keys stops clear of it. */
+@layer components {
+  .scroll-fade {
+    scroll-padding-block: 24px;
+  }
+  .scroll-fade[data-fade="top"] {
+    mask-image: linear-gradient(to bottom, transparent, black 24px);
+  }
+  .scroll-fade[data-fade="bottom"] {
+    mask-image: linear-gradient(to top, transparent, black 24px);
+  }
+  .scroll-fade[data-fade="both"] {
+    mask-image: linear-gradient(to bottom, transparent, black 24px, black calc(100% - 24px), transparent);
+  }
+}
+
+/* Inline code in copy (an op name, a setting, a query example): Click UI's CodeInline tokens,
+   at the size of the text around it. 0.13 exports no inline code component. */
+@layer components {
+  .code-inline {
+    padding: 0 var(--click-codeInline-space-x);
+    border: var(--click-codeInline-stroke) solid var(--click-codeInline-color-stroke-default);
+    border-radius: var(--click-codeInline-radii-all);
+    background: var(--click-codeInline-color-background-default);
+    color: var(--click-codeInline-color-text-default);
+    font-family: var(--font-mono);
+  }
+}
+
+/* A native table where Click UI's Table has no form for the layout (a cell spanning rows,
+   a row that opens a detail row): Table size="sm"'s cell spacing and header type. */
+@layer components {
+  .native-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .native-table th {
+    padding: var(--click-table-header-cell-space-sm-y) var(--click-table-header-cell-space-sm-x);
+    font: var(--click-table-header-title-default);
+    color: var(--click-table-header-color-title-default);
+    text-align: left;
+  }
+  .native-table td {
+    padding: var(--click-table-body-cell-space-sm-y) var(--click-table-body-cell-space-sm-x);
+  }
+}
+
+/* ui/Chip: Click UI's opaque badge shape (md), which Chip draws as a button or a static
+   chip, since Click UI has no filter chip and its Badge is neither a button nor a toggle. */
+@layer components {
+  .chip {
+    gap: var(--click-badge-space-md-gap);
+    padding: var(--click-badge-space-md-y) var(--click-badge-space-md-x);
+    border-radius: var(--click-badge-radii-all);
+    font: var(--click-badge-typography-label-md-default);
+  }
+  /* A filter value: Click UI's opaque default Badge. */
+  .chip-filled {
+    background: var(--click-badge-opaque-color-background-default);
+    border-color: var(--click-badge-opaque-color-stroke-default);
+    color: var(--click-badge-opaque-color-text-default);
+  }
+  /* A pressed toggle: the fill Click UI's Checkbox takes when checked. */
+  .chip-selected {
+    background: var(--click-checkbox-color-variations-default-background-active);
+    border-color: var(--click-checkbox-color-variations-default-stroke-active);
+    color: var(--click-checkbox-color-check-active);
+  }
+  /* A chip that takes a press or follows a link (a memory's entity), hovered: Click UI's
+     Checkbox hover stroke and the default text colour. */
+  @media (hover: hover) {
+    button.chip-filled:hover,
+    button.chip-outline:hover,
+    a.chip-outline:hover {
+      border-color: var(--click-checkbox-color-variations-default-stroke-hover);
+      color: var(--click-global-color-text-default);
+    }
+  }
+  /* A tag: the opaque default Badge's stroke and text on the page's background. */
+  .chip-outline {
+    background: var(--click-global-color-background-default);
+    border-color: var(--click-badge-opaque-color-stroke-default);
+    color: var(--click-badge-opaque-color-text-default);
+  }
+  /* Click UI's disabled field colours, not an opacity, natively disabled or aria-disabled
+     (a disabled chip with a tip stays focusable so its reason can be read). */
+  .chip-disabled {
+    background: var(--click-field-color-background-disabled);
+    border-color: var(--click-field-color-stroke-disabled);
+    color: var(--click-field-color-text-disabled);
+  }
+  /* target="overlay": a 44 px target under a coarse pointer that does not change the chip's
+     height, so a row of tags keeps its measured height. The hit area adds height only: the
+     chip is at least 44 px wide (Chip's pointer-coarse:min-w-11), so short tags side by
+     side do not reach over each other. */
+  @media (pointer: coarse) {
+    .chip-hit {
+      position: relative;
+    }
+    .chip-hit::before {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 0;
+      width: 100%;
+      height: max(100%, var(--spacing-hit));
+      transform: translateY(-50%);
+    }
+  }
+}
+
+/* components/Toast: Click UI's toast tokens. Loom draws its own toast because it keys and
+   replaces messages, which Click UI's provider does not. */
+@layer components {
+  .toast {
+    gap: var(--click-toast-space-gap);
+    width: min(var(--click-toast-size-width), calc(100vw - 2rem));
+    padding: var(--click-toast-space-y) var(--click-toast-space-x);
+    border: 1px solid var(--click-toast-color-stroke-default);
+    border-radius: var(--click-toast-radii-all);
+    background: var(--color-bg);
+    box-shadow: var(--click-toast-shadow);
+  }
+  .toast-title {
+    font: var(--click-toast-typography-title-default);
+    color: var(--click-toast-color-title-default);
+  }
+  .toast-detail {
+    color: var(--click-toast-color-description-default);
+  }
+}
+
+/* A table row being acted on (the review queue's current conflict) carries aria-current on
+   its key; Table's active tint alone is 1.03:1, so a bar marks it. */
+@layer components {
+  tbody tr:has([aria-current="true"]) > td:first-child {
+    box-shadow: inset 3px 0 0 var(--color-text);
+  }
+}
+
+/* Kbd (ui/Kbd.tsx): a key or a short chord. It stands in for Click UI's inline code
+   (its stroke, radius and side padding) in the badge's 500 12 px Inter, muted text on the
+   muted surface. Click UI has no key component and no token for a key's 20 px square: a
+   measured hand size. In the components layer, so a utility the caller passes (`hidden`,
+   a position) still wins. */
+@layer components {
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 var(--click-codeInline-space-x);
+    border: var(--click-codeInline-stroke) solid var(--global-color-stroke-default);
+    border-radius: var(--click-codeInline-radii-all);
+    background: var(--global-color-background-muted);
+    font: var(--click-badge-typography-label-md-default);
+    line-height: 1;
+    color: var(--global-color-text-muted);
+    white-space: nowrap;
+  }
+}
+
+/* A field of chips (a tracker source's repositories): Click UI's text field frame around
+   the chips and an input, since Click UI has no multi-value field. */
+@layer components {
+  .chip-field {
+    gap: var(--click-field-space-gap);
+    padding: var(--click-field-space-y) var(--click-field-space-x);
+    border: 1px solid var(--click-field-color-stroke-default);
+    border-radius: var(--click-field-radii-all);
+    background: var(--click-field-color-background-default);
+  }
+  .chip-field:focus-within {
+    border-color: var(--click-field-color-stroke-active);
+  }
+}
+
+/* ui/AnchoredPopover: a summary's width, kept inside a phone's screen. Click UI's Popover
+   has no width token: a 360 px width, a measured hand size. */
+@layer components {
+  .anchored-popover {
+    width: min(360px, calc(100vw - 2rem));
+  }
+}
+
+@layer components {
+  /* ThreadReplayDialog: the turn a search hit points at takes the card's active stroke, as
+     an inspected list row does. */
+  .thread-turn[data-highlighted] {
+    box-shadow: 0 0 0 1px var(--click-card-horizontal-default-color-stroke-active);
+  }
+
+  /* Tasks: the open card on the board takes Click UI's active stroke, as an inspected list row does. */
+  .tq-card[aria-current="true"] {
+    border-color: var(--click-card-horizontal-default-color-stroke-active);
+  }
+
+  /* Graph canvas: a node's relation caption with its direction arrow (Canvas.tsx), centred
+     above the node at the canvas text size, in the muted caption colour. */
+  .graph-svg .graph-relation {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    height: 100%;
+    font-size: calc(var(--canvas-label-min) * var(--canvas-scale, 1.45));
+    line-height: 1.2;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+  }
+  /* Recall Lab: a score cell's bar is Click UI's table bar chart, its width the score
+     against the top ranked hit; it darkens with the row's hover. A 4 px bar 2 px under the
+     score: measured hand sizes. */
+  .recall-bar {
+    display: block;
+    height: 4px;
+    margin-top: 2px;
+    border-radius: var(--radius-xs);
+    overflow: hidden;
+  }
+  .recall-bar > span {
+    display: block;
+    height: 100%;
+    border-radius: var(--radius-xs);
+    background: var(--click-table-row-color-barChart-default);
+  }
+  tr:hover .recall-bar > span {
+    background: var(--click-table-row-color-barChart-hover);
+  }
+
+  /* Runs: a numeric column's header (Relied on, Took) sits right, over its numbers, with
+     Click UI's sort arrow before the label. */
+  .runs-numeric-header > div {
+    justify-content: flex-end;
+  }
+
+  /* The graph caption's arrow at the caption's size, not Click UI's fixed 12 px, which the
+     viewBox shrinks. */
+  .graph-svg .graph-relation svg {
+    width: 1em;
+    height: 1em;
+  }
+}
+
+@layer components {
+  /* Repositories: a row's one action is Click UI's SplitButton. On a phone it takes the row's
+     width under the summary line. */
+  @media (max-width: 639px) {
+    .repo-action {
+      display: block;
+    }
+    .repo-action .split-button > div {
+      display: flex;
+      width: 100%;
+    }
+    .repo-action .split-button > div > button {
+      flex: 1;
+    }
+  }
+  /* Under a coarse pointer the split button's menu half (a div that ui/SplitButton makes a
+     button) is a 44 px target like every other button. */
+  @media (pointer: coarse) {
+    .repo-action [data-testid="split-button-dropdown"] {
+      display: grid;
+      place-items: center;
+      min-width: var(--spacing-hit);
+      min-height: var(--spacing-hit);
+    }
+  }
+  /* The onboarding steps: Click UI's incomplete step title is #c0c0c0 on white (1.8:1); the
+     muted text colour passes. */
+  .repo-onboarding {
+    --click-stepper-vertical-numbered-color-title-incomplete: var(--color-text-muted);
   }
 }

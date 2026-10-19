@@ -1,24 +1,53 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Alert } from "../components/ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
-import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Dropdown } from "@clickhouse/click-ui/Dropdown";
+import type { IconName } from "@clickhouse/click-ui/Icon";
 import { Select } from "@clickhouse/click-ui/Select";
-import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
-import { getRun, listRuns, type RunGetResponse, type RunRow, type RunStatus } from "../api";
+import { Table, type TableColumnConfigProps, type TableRowType } from "@clickhouse/click-ui/Table";
+import {
+  getRun,
+  listRunsPage,
+  RUN_LIST_MAX_OFFSET,
+  type RunGetResponse,
+  type RunOrder,
+  type RunRow,
+  type RunStatus,
+} from "../api";
 import { useStore, useIdentity } from "../lib/state";
-import { SkeletonCard } from "../components/Skeleton";
-import { Chip, PageHeader, Panel, SectionHeading, Tip, TipTarget, useClamped } from "../components/ui";
+import {
+  Chip,
+  ListRow,
+  ListTime,
+  Loading,
+  LoadingSkeleton,
+  PageHeader,
+  Panel,
+  SectionHeading,
+  Tip,
+  TipTarget,
+  useClamped,
+} from "../components/ui";
 import { IconButton } from "../components/IconButton";
-import { EmptyState } from "../components/EmptyState";
+import { MenuChoice, MenuChoiceGroup } from "../components/MenuChoice";
+import { MenuTrigger } from "../components/ui/Menu";
+import { RowSkeleton, TableSkeleton } from "../components/Skeleton";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { displayAgent, humanizeError, relativeTime, truncate } from "../lib/format";
+import { displayAgent, listTime, parseChTime, relativeTime, truncate } from "../lib/format";
+import { useRowNav } from "../lib/useRowNav";
 import { PageContainer } from "../layout/PageContainer";
 import { Modal } from "../components/ui/Modal";
+import { ListPager, usePageSize } from "../components/ui/ListPager";
+import { ListState } from "../components/ui/ListState";
+import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
+import { DraftSearch } from "../components/ui/DraftSearch";
+import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 
-// The nine fields a run row reads of the twenty a run carries; run.get carries the rest
-// for the opened run.
+// The ten fields a run row reads of the twenty a run carries; the replay reads the rest
+// (the request, the expected outcome, the response, the confidence) from run.get.
 export const RUNS_FIELDS = [
   "run_id",
   "agent",
@@ -42,9 +71,16 @@ export const RUNS_FIELDS = [
  * read time by run.get, so this view never disagrees with the planes it
  * summarises.
  *
+ * run.list pages, sorts and searches on the server: the page asks for one page (offset,
+ * limit, order_by, q and the filters) and shows the server's total. A server a release
+ * behind ignores offset, order_by and q and sends no total: the page then reads its newest
+ * 200 runs once and pages, searches and sorts those here (`local`), and when it holds more
+ * it says the list is the newest 200 instead of counting 200 as every run. Only another
+ * namespace reads a page at a time again.
+ *
  * The run is the primary object; a SESSION is not a separate tab but a
  * grouping of the runs that shared one connection (1 session → N runs).
- * "Group by session" clusters the table under session headers. Runs loom
+ * "Group by session" puts the page's runs under a heading per session. Runs loom
  * only inferred from a connection that did no memory work (implicit MCP
  * runs, idle-closed, nothing recalled or written) are "connection-only": hidden by
  * default so empty shells don't masquerade as real agent work, revealable with one
@@ -52,15 +88,22 @@ export const RUNS_FIELDS = [
  *
  * Each row's goal is a `<button>` that opens the replay — reachable by
  * Tab, activated by Enter or Space, with an accent focus ring. Clicking anywhere else on
- * the row still opens it, as a mouse convenience; the row itself is not a control.
+ * the row still opens it, as a mouse convenience; the row itself is not a control. Under
+ * 769 px the runs are list rows (one tab stop, arrow keys between them) instead of Click
+ * UI's stacked table cards. On a phone the sort, the grouping and the hidden runs fold into
+ * one View menu beside the filters, so the first run starts within the chrome budget.
  */
 
 type Filter = "" | RunStatus;
 
 const RUN_FILTERS: readonly Filter[] = ["", "active", "completed", "failed", "cancelled"];
 
-// Every agent filter; "" is not a value the Select can hold.
+// Every agent filter, and every status on a phone; "" is not a value the Select can hold.
 const ALL_AGENTS = "*";
+const ALL_STATUSES = "*";
+
+// The search reaches the server once typing pauses this long.
+const SEARCH_DEBOUNCE_MS = 250;
 
 const STATUS_META: Record<RunStatus, { label: string; state: BadgeState; icon: IconName }> = {
   active: { label: "Active", state: "neutral", icon: "sand-glass" },
@@ -99,7 +142,7 @@ function ReplayFigure({ label, help, children }: { label: string; help?: string;
     <div>
       <dt className="text-xs text-text-muted flex items-center gap-0.5">
         {label}
-        {help && <IconButton icon="info-in-circle" size="xs" label={`About ${label}`} tooltip={help} />}
+        {help && <IconButton icon="info-in-circle" size="sm" label={`About ${label}`} tooltip={help} />}
       </dt>
       <dd className="tabular-nums m-0">{children}</dd>
     </div>
@@ -207,7 +250,8 @@ function bySession(rows: RunRow[]): SessionGroup[] {
     g.written += (r.memories_written ?? []).length;
     if (r.started_at > g.latest) g.latest = r.started_at;
   }
-  return [...map.values()].sort((a, b) => (a.latest < b.latest ? 1 : -1));
+  // In the page's own order (the server's sort): the session of its first run leads.
+  return [...map.values()];
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -218,21 +262,94 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-// Under 769 px Click UI's Table lays each row out as a card of wrapping cells. There the
-// goal takes the whole first line and the rest pair up two to a line, left-aligned; on
-// the table, counts and durations read down a right edge.
-const CARD = "[@media(max-width:768px)]:min-w-0 [@media(max-width:768px)]:basis-1/2";
-const CARD_GOAL = "[@media(max-width:768px)]:basis-full";
-const NUMERIC = "block w-full text-right [@media(max-width:768px)]:text-left tabular-nums";
-const RUN_HEADERS = [
-  { label: "Goal" },
-  { label: "Agent", width: "160px" },
-  { label: "Status", width: "140px" },
-  { label: <span className={NUMERIC}>Relied on</span>, width: "96px" },
-  { label: <span className={NUMERIC}>Wrote</span>, width: "80px" },
-  { label: <span className={NUMERIC}>Took</span>, width: "96px" },
-  { label: "Started", width: "120px" },
-];
+const ABOUT = "One row per agent execution: the goal, how it ended, the memories it relied on and what it wrote.";
+const ABOUT_MORE =
+  "Open a run to replay what it recalled, observed and cost. A session is one connection's worth of runs: group by it to see a whole working sitting.";
+
+// The most runs a server that does not page answers (its run.list cap).
+const LOCAL_LIMIT = 200;
+
+/** A server that does not page: runs whose goal, id or agent holds `q`, any case. */
+function searchRuns(runs: RunRow[], q: string): RunRow[] {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return runs;
+  return runs.filter((r) => [r.goal, r.run_id, r.agent].some((v) => (v || "").toLowerCase().includes(needle)));
+}
+
+/** A server that does not page: the runs in `order`, ties by start then id, as run.list does. */
+function sortRuns(runs: RunRow[], order: RunOrder): RunRow[] {
+  const [key, dir] = splitOrder(order);
+  const started = (r: RunRow) => parseChTime(r.started_at)?.getTime() ?? 0;
+  const value = (r: RunRow) =>
+    key === "duration" ? (r.duration_ms ?? 0) : key === "relied_on" ? (r.memories_used ?? []).length : started(r);
+  const sign = dir === "asc" ? 1 : -1;
+  // run_id compares by code unit, as ClickHouse compares the bytes of an ASCII id.
+  const byId = (a: RunRow, b: RunRow) => (a.run_id < b.run_id ? -1 : a.run_id > b.run_id ? 1 : 0);
+  return [...runs].sort(
+    (a, b) => sign * (value(a) - value(b)) || sign * (started(a) - started(b)) || sign * byId(a, b),
+  );
+}
+
+// The columns run.list sorts by, and each one's order in each direction.
+type SortKey = "started" | "duration" | "relied_on";
+type SortDir = "asc" | "desc";
+
+function splitOrder(order: RunOrder): [SortKey, SortDir] {
+  const dir: SortDir = order.endsWith("_asc") ? "asc" : "desc";
+  return [order.slice(0, order.lastIndexOf("_")) as SortKey, dir];
+}
+
+// A phone has no column headers to sort by: there the order is a select.
+const ORDER_LABELS: Record<RunOrder, string> = {
+  started_desc: "Newest first",
+  started_asc: "Oldest first",
+  duration_desc: "Longest first",
+  duration_asc: "Shortest first",
+  relied_on_desc: "Most relied on",
+  relied_on_asc: "Least relied on",
+};
+
+const NUMERIC = "block w-full text-right tabular-nums";
+
+/**
+ * The columns. Relied on, Took and Started sort on the server, one at a time: Click UI
+ * draws the arrow and calls `onSort` from its header; the label is a button so the sort
+ * is reachable by keyboard (Click UI's header is a clickable `div`), and `aria-sort` on
+ * the header says which column orders the rows. A header kept only for a screen reader
+ * (grouped tables after the first) keeps `aria-sort` but no button, so nothing focusable
+ * hides in it.
+ */
+function runHeaders(order: RunOrder, sortable: boolean): TableColumnConfigProps[] {
+  const [key, dir] = splitOrder(order);
+  const column = (label: string, k: SortKey, width: string, numeric: boolean): TableColumnConfigProps => ({
+    label: sortable ? (
+      <button type="button" className="rounded">
+        {label}
+      </button>
+    ) : (
+      label
+    ),
+    width,
+    isSortable: sortable,
+    sortDir: key === k ? dir : undefined,
+    // The arrow leads a right-aligned header, so the labels line up over their numbers.
+    sortPosition: numeric ? "start" : "end",
+    className: numeric ? "runs-numeric-header" : undefined,
+    "aria-sort": key === k ? (dir === "asc" ? "ascending" : "descending") : "none",
+  });
+  return [
+    { label: "Goal" },
+    { label: "Status", width: "140px" },
+    { label: "Agent", width: "160px" },
+    column("Relied on", "relied_on", "104px", true),
+    { label: <span className={NUMERIC}>Wrote</span>, width: "80px" },
+    column("Took", "duration", "96px", true),
+    column("Started", "started", "120px", false),
+  ];
+}
+
+// Header index → the sort it carries (runHeaders' order).
+const SORT_AT: Record<number, SortKey> = { 3: "relied_on", 5: "duration", 6: "started" };
 
 /** The goal, as the button that opens the replay. A goal the row cuts short shows in
  *  full in a tooltip; the button's name already reads all of it, so the tip is no
@@ -245,6 +362,7 @@ function GoalButton({ goal, dim, onClick }: { goal: string; dim: boolean; onClic
       <button
         ref={setEl}
         type="button"
+        data-row-open=""
         onClick={onClick}
         className={`min-w-0 max-w-full truncate text-left rounded ${dim ? "text-text-muted" : ""}`}
         aria-describedby={undefined}
@@ -264,7 +382,6 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
     className: "cursor-pointer",
     items: [
       {
-        className: CARD_GOAL,
         label: (
           <div className="min-w-0">
             <div className="flex items-center gap-2 min-w-0">
@@ -289,38 +406,52 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
           </div>
         ),
       },
-      { className: CARD, label: displayAgent(r.agent) },
-      { className: CARD, label: <StatusBadge status={r.status} inferred={inferred} /> },
-      { className: CARD, label: <span className={NUMERIC}>{(r.memories_used ?? []).length}</span> },
-      { className: CARD, label: <span className={NUMERIC}>{(r.memories_written ?? []).length}</span> },
-      { className: CARD, label: <span className={NUMERIC}>{fmtDuration(r.duration_ms)}</span> },
-      {
-        className: CARD,
-        label: (
-          <time dateTime={r.started_at}>
-            {relativeTime(r.started_at)}
-            <span className="sr-only"> ({r.started_at})</span>
-          </time>
-        ),
-      },
+      { label: <StatusBadge status={r.status} inferred={inferred} /> },
+      { label: displayAgent(r.agent) },
+      { label: <span className={NUMERIC}>{(r.memories_used ?? []).length}</span> },
+      { label: <span className={NUMERIC}>{(r.memories_written ?? []).length}</span> },
+      { label: <span className={NUMERIC}>{fmtDuration(r.duration_ms)}</span> },
+      { label: <ListTime time={r.started_at} quiet className="text-text-muted" /> },
     ],
   };
 }
 
-// Grouped by session, only the first table draws its header; the rest keep theirs out of
-// sight, since a table without one leaves its cells unlabelled for a screen reader.
-function RunTable({
-  rows,
-  onOpen,
-  hideHeader = false,
-}: {
+interface RunListProps {
+  label: string;
   rows: RunRow[];
   onOpen: (r: RunRow) => void;
+  order: RunOrder;
+  onOrder: (order: RunOrder) => void;
+  /** A refresh: the rows stay, marked busy. */
+  busy?: boolean;
+  /** Grouped by session, only the first table draws its header; the rest keep theirs
+   *  out of sight, since a table without one leaves its cells unlabelled for a screen
+   *  reader. */
   hideHeader?: boolean;
-}) {
+  /** The first read: the header over a skeleton. */
+  loading?: boolean;
+}
+
+function RunTable({ label, rows, onOpen, order, onOrder, busy, hideHeader = false, loading = false }: RunListProps) {
+  // Click UI's sort arrow is named after its icon, so the header would read "Started
+  // arrow-down"; `aria-sort` already says it. Click UI draws a new arrow on every sort.
+  const table = useRef<HTMLTableElement>(null);
+  useLayoutEffect(() => {
+    for (const svg of table.current?.querySelectorAll("thead svg") ?? []) svg.setAttribute("aria-hidden", "true");
+  });
   return (
     <Table
-      headers={RUN_HEADERS}
+      ref={table}
+      aria-label={label}
+      aria-busy={loading || busy || undefined}
+      noDataMessage={loading ? <TableSkeleton label="Loading runs" /> : undefined}
+      headers={runHeaders(order, !hideHeader)}
+      onSort={(dir, _header, index) => {
+        const key = SORT_AT[index];
+        if (!key) return;
+        // A column not sorted yet starts at its largest (newest, longest, most relied on).
+        onOrder(`${key}_${splitOrder(order)[0] === key ? dir : "desc"}` as RunOrder);
+      }}
       rows={rows.map((r) => runRow(r, onOpen))}
       size="sm"
       className={hideHeader ? "table-header-sr-only" : undefined}
@@ -328,17 +459,100 @@ function RunTable({
   );
 }
 
+/** Under 769 px: a list row per run. Line 1 the goal and its status; line 2 agent ·
+ *  started · took. */
+function RunRows({ label, rows, onOpen, busy }: RunListProps) {
+  return (
+    <ul aria-label={label} aria-busy={busy || undefined} className="space-y-2">
+      {rows.map((r) => {
+        const inferred = metaBool(r.metadata, "implicit");
+        return (
+          <li key={r.run_id}>
+            <ListRow>
+              <div className="flex min-w-0 items-center gap-2">
+                <button
+                  type="button"
+                  data-row-open=""
+                  onClick={() => onOpen(r)}
+                  className={`list-row-open min-w-0 flex-1 truncate text-sm font-medium ${
+                    hasNoMemoryActivity(r) ? "text-text-muted" : "text-text"
+                  }`}
+                >
+                  {r.goal || "(no goal)"}
+                </button>
+                <span className="list-row-control shrink-0">
+                  <StatusBadge status={r.status} inferred={inferred} />
+                </span>
+              </div>
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
+                <span className="min-w-0 truncate">{displayAgent(r.agent)}</span>
+                <span aria-hidden="true">·</span>
+                <ListTime time={r.started_at} quiet />
+                <span aria-hidden="true">·</span>
+                <span className="tabular-nums whitespace-nowrap">
+                  <span className="sr-only">took </span>
+                  {fmtDuration(r.duration_ms)}
+                </span>
+              </div>
+            </ListRow>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** The toolbar's count: "1–50 of 1,234", "1–50" without a total, "12
+ *  matches" for a search the first page holds whole; nothing for an empty page. */
+function countText(page: number, pageSize: number, shown: number, total: number | null, searching: boolean): string {
+  if (shown === 0) return "";
+  if (searching && total !== null && page === 0 && shown === total) {
+    return `${total.toLocaleString()} ${total === 1 ? "match" : "matches"}`;
+  }
+  const range = `${(page * pageSize + 1).toLocaleString()}–${(page * pageSize + shown).toLocaleString()}`;
+  return total !== null ? `${range} of ${total.toLocaleString()}` : range;
+}
+
+/** One page of runs, as the server answered it: `page` is the page it is, so the count
+ *  keeps saying what is on screen while the next one loads. */
+interface Shown {
+  runs: RunRow[];
+  total: number | null;
+  page: number;
+  pageSize: number;
+  /** What the rows were read for (filters, search, order, page size): the page above means
+   *  something only while it is still what the list shows. */
+  key: string;
+  /** The filters alone: the total holds across a page-size change. */
+  filterKey: string;
+}
+
 export function Runs() {
   const identity = useIdentity();
-  const [rows, setRows] = useState<RunRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Below Tailwind's sm breakpoint the toolbar holds the search alone; below Click UI's
+  // table breakpoint the runs are list rows.
+  const phone = useMedia(PHONE_QUERY);
+  const narrow = useMedia("(max-width: 768px)");
+  const [shown, setShown] = useState<Shown | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+  const [retry, setRetry] = useState(0);
   const [filter, setFilter] = useState<Filter>("");
-  // Filter by agent; the options come from the last unfiltered read so the select does
-  // not collapse to its own choice.
+  // Filter by agent; the options are every agent the pages read so far showed, so the
+  // select does not collapse to its own choice.
   const [agent, setAgent] = useState("");
   const [agents, setAgents] = useState<string[]>([]);
   const [groupBy, setGroupBy] = useState(false);
   const [hideConn, setHideConn] = useState(true);
+  // The search sent (trimmed, once typing pauses); the box keeps what is typed, so a
+  // keystroke does not render the table. A Clear filters bumps `searchBox` to empty it.
+  const [q, setQ] = useState("");
+  const [searchBox, setSearchBox] = useState(0);
+  const [order, setOrder] = useState<RunOrder>("started_desc");
+  // The server answered without a total: it does not page, search or sort (a release behind).
+  const [local, setLocal] = useState(false);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = usePageSize("runs");
   const openRecallForRun = useStore((s) => s.openRecallForRun);
   const [open, setOpen] = useState<RunRow | null>(null);
   // The goal button (or row) that opened the replay — refocused on close,
@@ -352,34 +566,100 @@ export function Runs() {
   const [detail, setDetail] = useState<RunGetResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  // A response that lands after the filter, agent or namespace moved on is dropped, so
-  // A's rows never render under B's filter. The resets stay synchronous in the effect, so
-  // the old rows never linger (clickable) for a tick after the change.
+  // Every change of what the list holds starts again from its first page.
+  const refilter =
+    <T,>(set: (v: T) => void) =>
+    (v: T) => {
+      set(v);
+      setPage(0);
+    };
+
+  const search = (text: string) => {
+    const next = text.trim();
+    if (next === q) return;
+    setQ(next);
+    setPage(0);
+  };
+
+  const scope = `${identity.org}\n${identity.namespace}`;
+  // Another namespace is another list: its first page, every agent, nothing on screen,
+  // before its first read or paint.
+  const [shownFor, setShownFor] = useState(scope);
+  if (shownFor !== scope) {
+    setShownFor(scope);
+    setShown(null);
+    setAgents([]);
+    setPage(0);
+    setLocal(false); // the next read may reach a build that pages
+    setAgent("");
+  }
+  // What the list holds (a change starts it again from page 1), and what one read asked for.
+  const filterKey = [scope, filter, agent, hideConn, q, order].join("\n");
+  const readKey = `${filterKey}\n${pageSize}\n${local}`;
+  // With `local`, the page, the search and the order are applied here: they read nothing.
+  const readQ = local ? "" : q;
+  const readOrder = local ? "" : order;
+  const readPage = local ? 0 : page;
+  const readSize = local ? 0 : pageSize;
+
+  // A response that lands after the page, a filter or the namespace moved on is dropped,
+  // so A's rows never render under B's filter. Within a namespace the rows on screen stay,
+  // marked busy, until the next page answers.
   useEffect(() => {
     let live = true;
-    setRows(null);
+    setLoading(true);
     setError(null);
     // The no-memory-activity fold is a run.list filter, not a slice of the fetched page.
     // Folding after the server's LIMIT can leave a chatty consumer's page empty — its
-    // newest 100 runs all hollow while hundreds of filled runs sit further back.
-    listRuns(
+    // newest runs all hollow while hundreds of filled runs sit further back.
+    listRunsPage(
       { org: identity.org, namespace: identity.namespace },
-      { status: filter, agent, limit: 100, fields: RUNS_FIELDS, memoryActivity: hideConn ? "with" : "" },
+      local
+        ? { status: filter, agent, limit: LOCAL_LIMIT, fields: RUNS_FIELDS, memoryActivity: hideConn ? "with" : "" }
+        : {
+            status: filter,
+            agent,
+            q,
+            orderBy: order,
+            limit: pageSize,
+            offset: page * pageSize,
+            fields: RUNS_FIELDS,
+            memoryActivity: hideConn ? "with" : "",
+          },
     )
-      .then((rs) => {
+      .then((p) => {
         if (!live) return;
-        setRows(rs);
-        if (!agent) setAgents([...new Set(rs.map((r) => r.agent).filter(Boolean))].sort());
+        // A server that does not page: read its newest runs once and page here, still
+        // loading, with nothing from the page that answered on screen. Only another namespace
+        // leaves `local`: behind one URL a release and the one before it answer in turn, and
+        // flipping back on each answer never settles.
+        if (!p.paged && !local) {
+          setShown(null);
+          setLocal(true);
+          return;
+        }
+        // A full page after the first carries no total: it keeps the one its filters counted.
+        setShown((prev) => ({
+          runs: p.runs,
+          total: p.total ?? (prev?.filterKey === filterKey ? prev.total : null),
+          page,
+          pageSize,
+          key: readKey,
+          filterKey,
+        }));
+        setLoading(false);
+        const seen = p.runs.map((r) => r.agent).filter(Boolean);
+        setAgents((prev) => (seen.every((a) => prev.includes(a)) ? prev : [...new Set([...prev, ...seen])].sort()));
       })
-      .catch((e) => {
+      .catch((e: unknown) => {
         if (!live) return;
-        setError(humanizeError(e));
-        setRows([]);
+        setError(e);
+        setLoading(false);
       });
     return () => {
       live = false;
     };
-  }, [identity.org, identity.namespace, filter, agent, hideConn]);
+  }, [identity.org, identity.namespace, filter, agent, hideConn, readQ, readOrder, readPage, readSize, local, retry]);
 
   // Opening run Y after X drops X's run.get answer instead of showing it in Y's drawer.
   useEffect(() => {
@@ -402,123 +682,290 @@ export function Runs() {
     };
   }, [open, identity.org, identity.namespace]);
 
-  // The server already applied the fold (memory_activity: "with"); hollow rows
-  // only arrive when the reader asked for them, and then they render dimmed.
-  const visible = useMemo(() => rows || [], [rows]);
-  const groups = useMemo(() => (groupBy ? bySession(visible) : []), [groupBy, visible]);
+  // Against a server that does not page: its newest runs, searched, sorted and paged here.
+  const localRows = useMemo(
+    () => (local && shown ? sortRuns(searchRuns(shown.runs, q), order) : null),
+    [local, shown, q, order],
+  );
+  // It answered as many as it sends: the server holds more than these.
+  const capped = local && shown !== null && shown.runs.length >= LOCAL_LIMIT;
+  const rows = localRows ? localRows.slice(page * pageSize, (page + 1) * pageSize) : (shown?.runs ?? []);
+  const busy = loading && shown !== null;
+  // The opened run as run.get answers it: the list row carries only RUNS_FIELDS.
+  // A run.get answer for the run opened before is not this one's.
+  const replayed = detail?.run && detail.run.run_id === open?.run_id ? detail.run : open;
+  // The page the rows on screen are: the pager pages from it while they are what the list
+  // shows, so a second Next during a read asks for the same page; for another filter or
+  // page size it pages from the page asked for.
+  const current = localRows !== null || shown?.key === readKey;
+  const pagerPage = !localRows && shown?.key === readKey ? shown.page : page;
+  const searching = q !== "" || filter !== "" || agent !== "";
+  // The read of what is asked now answered with no rows, on the first page shown.
+  const nothingShown =
+    error === null && shown !== null && !loading && rows.length === 0 && (localRows ? page : shown.page) === 0;
+  // Rows read for another search or filter are not counted as this one's matches.
+  const count =
+    shown && !error && (localRows !== null || shown.filterKey === filterKey)
+      ? countText(
+          localRows ? page : shown.page,
+          localRows ? pageSize : shown.pageSize,
+          rows.length,
+          localRows ? (capped && q === "" ? null : localRows.length) : shown.total,
+          q !== "",
+        ) || undefined
+      : undefined;
+  const groups = groupBy ? bySession(rows) : [];
+  // One tab stop for every run on the page, grouped by session or not (lib/useRowNav).
+  const nav = useRowNav({ enabled: open === null && rows.length > 0 });
+  const clearFilters = () => {
+    setSearchBox((n) => n + 1);
+    setQ("");
+    setFilter("");
+    setAgent("");
+    setPage(0);
+  };
 
-  const counts = { total: visible.length, completed: 0, failed: 0, used: 0, written: 0 };
-  for (const r of visible) {
-    if (r.status === "completed" && !metaBool(r.metadata, "implicit")) counts.completed += 1;
-    if (r.status === "failed") counts.failed += 1;
-    counts.used += (r.memories_used ?? []).length;
-    counts.written += (r.memories_written ?? []).length;
-  }
+  const list = (props: Omit<RunListProps, "order" | "onOrder" | "onOpen">) =>
+    narrow ? (
+      <RunRows {...props} order={order} onOrder={refilter(setOrder)} onOpen={openRun} />
+    ) : (
+      <RunTable {...props} order={order} onOrder={refilter(setOrder)} onOpen={openRun} />
+    );
+
+  // Five statuses are wider than a phone: there the status is a select beside the agent's.
+  const filters = (
+    <>
+      {phone ? (
+        <Select
+          value={filter || ALL_STATUSES}
+          onSelect={(v) => refilter(setFilter)(v === ALL_STATUSES ? "" : (v as Filter))}
+          triggerProps={{ "aria-label": "Filter runs by status" }}
+          className="min-w-0 flex-1"
+        >
+          {RUN_FILTERS.map((f) => (
+            <Select.Item key={f || ALL_STATUSES} value={f || ALL_STATUSES}>
+              {f ? STATUS_META[f].label : "Every status"}
+            </Select.Item>
+          ))}
+        </Select>
+      ) : (
+        <ButtonGroup
+          aria-label="Filter runs by status"
+          selected={filter}
+          onClick={(value) => refilter(setFilter)(value as Filter)}
+          options={RUN_FILTERS.map((f) => ({ value: f, label: f ? STATUS_META[f].label : "All" }))}
+        />
+      )}
+      {(agents.length > 1 || agent) && (
+        <Select
+          value={agent || ALL_AGENTS}
+          onSelect={(v) => refilter(setAgent)(v === ALL_AGENTS ? "" : v)}
+          triggerProps={{ "aria-label": "Agent" }}
+          className={phone ? "min-w-0 flex-1" : "w-44 shrink-0"}
+        >
+          <Select.Item value={ALL_AGENTS}>Every agent</Select.Item>
+          {agents.map((a) => (
+            <Select.Item key={a} value={a}>
+              {displayAgent(a)}
+            </Select.Item>
+          ))}
+        </Select>
+      )}
+    </>
+  );
+
+  // A phone's chrome budget has no room for a row of toggles under the filters (44 px each
+  // under a touch pointer): the sort, the grouping and the hidden runs are one View menu.
+  const viewMenu = (
+    <Dropdown modal={false}>
+      <MenuTrigger>
+        {/* An icon: with a word beside them the two selects cut their values ("Every s…"). */}
+        <IconButton
+          icon="eye"
+          label="View"
+          tooltip="Sort, group by session, show runs with no memory activity"
+          className="shrink-0"
+        />
+      </MenuTrigger>
+      <Dropdown.Content align="end" aria-label="View" aria-labelledby={undefined}>
+        <MenuChoiceGroup label="Sort">
+          {(Object.keys(ORDER_LABELS) as RunOrder[]).map((o) => (
+            <MenuChoice key={o} radio checked={order === o} onSelect={() => refilter(setOrder)(o)}>
+              {ORDER_LABELS[o]}
+            </MenuChoice>
+          ))}
+        </MenuChoiceGroup>
+        <MenuChoiceGroup label="Show">
+          <MenuChoice checked={groupBy} onSelect={() => setGroupBy((v) => !v)}>
+            Group by session
+          </MenuChoice>
+          <MenuChoice checked={!hideConn} onSelect={() => refilter(setHideConn)(!hideConn)}>
+            Show runs with no memory activity
+          </MenuChoice>
+        </MenuChoiceGroup>
+      </Dropdown.Content>
+    </Dropdown>
+  );
 
   return (
     <PageContainer>
-      <PageHeader title="Runs">
-        <ScopeBadge kind="namespace" value={identity.namespace} />
+      <PageHeader
+        title="Runs"
+        actions={
+          // On a phone the description waits behind the info button, so the runs start
+          // higher; the top bar already names the namespace.
+          phone && <IconButton icon="info-in-circle" size="sm" label="About runs" tooltip={`${ABOUT} ${ABOUT_MORE}`} />
+        }
+      >
+        <span className="hidden sm:contents">
+          <ScopeBadge kind="namespace" value={identity.namespace} />
+        </span>
       </PageHeader>
-      <p className="text-sm text-text-muted mb-5 max-w-[70ch]">
-        One row per agent execution: the goal, how it ended, the memories the agent relied on, and what it wrote. Open a
-        run to replay what it recalled, observed and cost. A session is one connection's worth of runs — group by it to
-        see a whole working sitting.
-      </p>
+      {/* The icon sits beside the sentence's box, so a wrapped sentence never strands it. */}
+      {!phone && (
+        <div className="mb-4 flex items-start gap-1">
+          <p className="max-w-[72ch] text-sm text-text-muted">{ABOUT}</p>
+          <IconButton icon="info-in-circle" size="sm" label="About runs" tooltip={ABOUT_MORE} />
+        </div>
+      )}
 
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        {/* Five statuses are wider than a phone: the group scrolls sideways, not the page. */}
-        <div className="max-w-full overflow-x-auto">
-          <ButtonGroup
-            aria-label="Filter runs by status"
-            selected={filter}
-            onClick={(value) => setFilter(value as Filter)}
-            options={RUN_FILTERS.map((f) => ({ value: f, label: f ? STATUS_META[f].label : "All" }))}
+      <ListToolbar label="Search and filters" count={count}>
+        <ListToolbarSearch>
+          <DraftSearch
+            key={searchBox}
+            onSearch={search}
+            settle={{ debounceMs: SEARCH_DEBOUNCE_MS }}
+            placeholder="Search runs by goal, id or agent"
+            aria-label="Search runs"
+          />
+        </ListToolbarSearch>
+        {/* The filters scroll sideways in their own box; its 4 px padding (outside the bar's
+            layout, by the negative margin) is the focus ring's room. */}
+        {!phone && <div className="-m-1 flex min-w-0 items-center gap-2 overflow-x-auto p-1">{filters}</div>}
+      </ListToolbar>
+      {/* A phone's toolbar has room for the search only; the filters and the View menu sit
+          under it. */}
+      {phone && (
+        <div className="mb-3 flex items-center gap-2">
+          {filters}
+          {viewMenu}
+        </div>
+      )}
+
+      {!phone && (
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <Checkbox label="Group by session" checked={groupBy} onCheckedChange={(c) => setGroupBy(c === true)} />
+          {/* No column headers to sort by: the order is a select. */}
+          {narrow && (
+            <Select
+              value={order}
+              onSelect={(v) => refilter(setOrder)(v as RunOrder)}
+              triggerProps={{ "aria-label": "Sort runs" }}
+              className="ml-auto w-40 shrink-0"
+            >
+              {(Object.keys(ORDER_LABELS) as RunOrder[]).map((o) => (
+                <Select.Item key={o} value={o}>
+                  {ORDER_LABELS[o]}
+                </Select.Item>
+              ))}
+            </Select>
+          )}
+          <Checkbox
+            label="Show runs with no memory activity"
+            checked={!hideConn}
+            onCheckedChange={(c) => refilter(setHideConn)(c !== true)}
           />
         </div>
-        <span className="w-px h-4 bg-border mx-1 max-md:hidden" />
-        <Chip label="Group by session" selected={groupBy} onClick={() => setGroupBy((v) => !v)} />
-        {/* One label; pressed means the folded runs are shown. */}
-        <Chip label="Show runs with no memory activity" selected={!hideConn} onClick={() => setHideConn((v) => !v)} />
-        {(agents.length > 1 || agent) && (
-          <Select
-            value={agent || ALL_AGENTS}
-            onSelect={(v) => setAgent(v === ALL_AGENTS ? "" : v)}
-            triggerProps={{ "aria-label": "Agent" }}
-            className="w-48"
-          >
-            <Select.Item value={ALL_AGENTS}>Every agent</Select.Item>
-            {agents.map((a) => (
-              <Select.Item key={a} value={a}>
-                {displayAgent(a)}
-              </Select.Item>
+      )}
+
+      {error !== null && <ListState kind="error" things="runs" error={error} onRetry={() => setRetry((n) => n + 1)} />}
+      {error === null &&
+        shown === null &&
+        (narrow ? (
+          <LoadingSkeleton label="Loading runs">
+            <div className="space-y-2">
+              <RowSkeleton />
+              <RowSkeleton />
+              <RowSkeleton />
+            </div>
+          </LoadingSkeleton>
+        ) : (
+          <RunTable label="Runs" rows={[]} onOpen={openRun} order={order} onOrder={() => {}} loading />
+        ))}
+      {/* Said only of a read of what is asked now: a new filter's read in flight is not it. */}
+      {nothingShown && searching && (
+        <ListState
+          kind="filtered"
+          things={hideConn ? "runs with memory activity" : "runs"}
+          // The typed words alone; with a status or agent picked too, "the filters in force".
+          filter={(!filter && !agent && q) || undefined}
+          onClear={clearFilters}
+        />
+      )}
+      {nothingShown && !searching && (
+        <ListState
+          kind="empty"
+          icon="list-numbered"
+          {...(hideConn
+            ? {
+                title: "No runs with memory activity",
+                description: `Runs that neither relied on nor wrote a memory under their run_id are folded. Use "Show runs with no memory activity"${phone ? " in the View menu" : ""} to see them. A run fills up when the caller passes run_id on memory.set and names what it relied on in run.complete(memories_used).`,
+              }
+            : {
+                title: "No runs yet",
+                description:
+                  "Agents open a run with run.begin (the Claude Code plugin does it on the first prompt of a session) and close it with run.complete, naming the memories they relied on.",
+              })}
+        />
+      )}
+
+      {error === null && capped && (
+        <p className="mb-3 text-xs text-text-muted">
+          Showing the newest {LOCAL_LIMIT} runs: this server sends no more, so the search and the sort cover these.
+        </p>
+      )}
+
+      {/* A new page scrolls here and takes focus. */}
+      <div id="runs-list" ref={nav} tabIndex={-1}>
+        {error === null && rows.length > 0 && !groupBy && list({ label: "Runs", rows, busy })}
+
+        {/* Grouped: a heading per session, its runs under it. */}
+        {error === null && rows.length > 0 && groupBy && (
+          <div className="space-y-5" aria-busy={busy || undefined}>
+            {groups.map((g, i) => (
+              <section key={g.label} aria-labelledby={`runs-session-${i}`}>
+                <SectionHeading
+                  level={2}
+                  id={`runs-session-${i}`}
+                  label={truncate(g.label, 32)}
+                  caption={`${g.runs.length} run${g.runs.length === 1 ? "" : "s"} · ${g.used} relied on · ${g.written} written · ${listTime(g.latest)}`}
+                />
+                {list({ label: `Runs in session ${g.label}`, rows: g.runs, hideHeader: i > 0 })}
+              </section>
             ))}
-          </Select>
-        )}
-        {rows && visible.length > 0 && (
-          <span className="ml-auto text-xs text-text-muted">
-            {counts.total} run{counts.total === 1 ? "" : "s"} · {counts.completed} completed · {counts.failed} failed ·{" "}
-            {counts.used} memories relied on · {counts.written} written
-          </span>
+          </div>
         )}
       </div>
-
-      {rows === null && (
-        <div className="space-y-3">
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
-      )}
-      {rows !== null && error && <div className="text-sm text-danger mb-4">{error}</div>}
-      {rows !== null && !error && rows.length === 0 && !hideConn && (
-        <EmptyState
-          icon="list-numbered"
-          title="No runs yet"
-          description="Agents open a run with run.begin (the Claude Code plugin does it on the first prompt of a session) and close it with run.complete, naming the memories they relied on."
+      {/* Kept on an empty later page (runs finished or left the filter meanwhile), so it steps
+          back to the last page. */}
+      {error === null && shown !== null && (rows.length > 0 || pagerPage > 0) && (
+        <ListPager
+          label="Runs pages"
+          page={pagerPage}
+          resetKey={filterKey}
+          busy={loading}
+          pageSize={pageSize}
+          // Rows read for another filter or page size are not this list's to count or page.
+          // Another filter's total is not either, so the pager waits for the new list's first
+          // page; a new page size keeps the total, and with it the size choice just used.
+          shown={current ? rows.length : 0}
+          total={localRows ? localRows.length : shown.filterKey === filterKey ? (shown.total ?? undefined) : undefined}
+          capped={capped}
+          maxOffset={RUN_LIST_MAX_OFFSET}
+          onPage={setPage}
+          onPageSize={refilter(setPageSize)}
+          topId="runs-list"
         />
-      )}
-      {rows !== null && !error && rows.length === 0 && hideConn && (
-        <EmptyState
-          icon="list-numbered"
-          title="No runs with memory activity"
-          description={
-            'Runs that neither relied on nor wrote a memory under their run_id are folded. Use "Show runs with no memory activity" to see them. A run fills up when the caller passes run_id on memory.set and names what it relied on in run.complete(memories_used).'
-          }
-        />
-      )}
-
-      {/* Flat: run-first table. */}
-      {rows !== null && !groupBy && visible.length > 0 && <RunTable rows={visible} onOpen={openRun} />}
-
-      {/* Grouped: sessions are headers, runs are their timeline. */}
-      {rows !== null && groupBy && visible.length > 0 && (
-        <div className="space-y-4">
-          {groups.map((g, i) => (
-            <section key={g.label} aria-label={`Session ${g.label}`}>
-              <div className="flex items-center justify-between gap-3 px-3 py-2">
-                <div className="min-w-0 flex items-center gap-2 text-xs">
-                  <Icon name="cards" size="xs" aria-hidden="true" className="shrink-0" />
-                  {g.session_id.length > 32 ? (
-                    <TipTarget tip={g.session_id}>
-                      <span className="font-mono">{truncate(g.session_id, 32)}</span>
-                    </TipTarget>
-                  ) : (
-                    <span className="font-mono truncate">{g.session_id || "(no session)"}</span>
-                  )}
-                  <span className="text-text-muted">·</span>
-                  <span className="text-text-muted">
-                    {g.runs.length} run{g.runs.length === 1 ? "" : "s"}
-                  </span>
-                </div>
-                <div className="text-xs text-text-muted whitespace-nowrap">
-                  {g.used} relied on · {g.written} written · {relativeTime(g.latest)}
-                </div>
-              </div>
-              <RunTable rows={g.runs} onOpen={openRun} hideHeader={i > 0} />
-            </section>
-          ))}
-        </div>
       )}
 
       {/* Replay dialog: the stored row plus what run.get derives live. */}
@@ -557,10 +1004,10 @@ export function Runs() {
                 <span>took {fmtDuration(open.duration_ms)}</span>
               </>
             )}
-            {open.confidence > 0 && (
+            {(replayed?.confidence ?? 0) > 0 && (
               <>
                 <span>·</span>
-                <span>confidence {open.confidence.toFixed(2)}</span>
+                <span>confidence {replayed?.confidence.toFixed(2)}</span>
               </>
             )}
           </div>
@@ -584,14 +1031,14 @@ export function Runs() {
               }, naming nothing it relied on, and no write carried its run_id. The fields below say what each one would have needed.`}
             />
           )}
-          {open?.user_request && (
+          {replayed?.user_request && (
             <Section title="User request">
-              <div className="text-sm whitespace-pre-wrap">{open.user_request}</div>
+              <div className="text-sm whitespace-pre-wrap">{replayed.user_request}</div>
             </Section>
           )}
-          {open?.expected_outcome && (
+          {replayed?.expected_outcome && (
             <Section title="Expected outcome">
-              <div className="text-sm whitespace-pre-wrap">{open.expected_outcome}</div>
+              <div className="text-sm whitespace-pre-wrap">{replayed.expected_outcome}</div>
             </Section>
           )}
           <Section title="Memories the agent relied on">
@@ -601,7 +1048,7 @@ export function Runs() {
             <KeyChipButtons keys={detail?.memories_written || open?.memories_written || []} empty={EMPTY_WHY.written} />
           </Section>
           <Section title="Recalled, observed, cost">
-            {detailLoading && <div className="text-xs text-text-muted">Loading…</div>}
+            {detailLoading && <Loading layout="inline" label="Loading the run's figures" />}
             {!detailLoading &&
               detail &&
               open &&
@@ -613,7 +1060,7 @@ export function Runs() {
                 return (
                   <dl className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm m-0">
                     <ReplayFigure
-                      label="recalled"
+                      label="Recalled"
                       help={
                         detail.recalled < 0
                           ? EMPTY_WHY.recalledOff
@@ -624,11 +1071,11 @@ export function Runs() {
                     >
                       {detail.recalled < 0 ? "n/a" : detail.recalled}
                     </ReplayFigure>
-                    <ReplayFigure label="observations" help={EMPTY_WHY.observations}>
+                    <ReplayFigure label="Observations" help={EMPTY_WHY.observations}>
                       {detail.observations}
                     </ReplayFigure>
                     <ReplayFigure
-                      label="turns"
+                      label="Turns"
                       help={
                         !hasSession
                           ? EMPTY_WHY.noSession
@@ -648,7 +1095,7 @@ export function Runs() {
                         <span className="text-text-muted">no session</span>
                       )}
                     </ReplayFigure>
-                    <ReplayFigure label="cost" help={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}>
+                    <ReplayFigure label="Cost" help={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}>
                       {!hasSession ? (
                         <span className="text-text-muted">no session</span>
                       ) : detail.cost_usd > 0 ? (
@@ -657,7 +1104,7 @@ export function Runs() {
                         "—"
                       )}
                     </ReplayFigure>
-                    <ReplayFigure label="budget" help={EMPTY_WHY.budget}>
+                    <ReplayFigure label="Budget" help={EMPTY_WHY.budget}>
                       {budgetText(detail)}
                       {over.length > 0 && <span className="text-danger"> · over {over.join(" and ")}</span>}
                     </ReplayFigure>
@@ -683,9 +1130,9 @@ export function Runs() {
             )}
             {!detailLoading && !detail && <div className="text-xs text-text-muted">Could not load the replay.</div>}
           </Section>
-          {open?.final_response && (
+          {replayed?.final_response && (
             <Section title="Final response">
-              <div className="text-sm whitespace-pre-wrap">{open.final_response}</div>
+              <div className="text-sm whitespace-pre-wrap">{replayed.final_response}</div>
             </Section>
           )}
           {open && Object.keys(open.metadata || {}).length > 0 && (

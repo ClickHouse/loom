@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
+import { Link } from "@clickhouse/click-ui/Link";
 import {
   getTaxonomy,
   pathFacts,
@@ -11,8 +12,10 @@ import {
   type TrackerBinding,
   type TaxonomyResponse,
 } from "../../api";
+import { BackLink } from "../../components/BackLink";
 import { MemoryInspector } from "../../components/MemoryInspector";
 import { toast } from "../../components/Toast";
+import { Loading } from "../../components/ui";
 import { useAbortableEffect } from "../../lib/hooks";
 import { humanizeError } from "../../lib/format";
 import { isRecord } from "../../lib/guards";
@@ -123,7 +126,11 @@ function writePatternsUrl(on: boolean, pq: PatternsQuery | null): void {
     const qs = params.toString();
     const prev = readHistoryState(history.state);
     history.replaceState(
-      { ...(prev ?? { graphSeed: "", graphSelected: null, graphPath: null }), graphPatterns: on },
+      {
+        ...ownState(),
+        ...(prev ?? { graphSeed: "", graphSelected: null, graphPath: null }),
+        graphPatterns: on,
+      },
       "",
       `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`,
     );
@@ -156,6 +163,12 @@ function pushEntry(seed: string, path: [string, string] | null): void {
   }
 }
 
+/** The keys other code keeps in this entry's state (the way back a jump into the Graph
+ *  offers, lib/place.ts): rewriting the walk keeps them. */
+function ownState(): Record<string, unknown> {
+  return isRecord(history.state) ? history.state : {};
+}
+
 function rememberInEntry(seed: string, selected: string | null, path: [string, string] | null): void {
   try {
     const prev = readHistoryState(history.state);
@@ -165,7 +178,7 @@ function rememberInEntry(seed: string, selected: string | null, path: [string, s
       graphPath: path,
       graphPatterns: prev?.graphPatterns === true,
     };
-    history.replaceState(state, "", graphUrl(seed, path));
+    history.replaceState({ ...ownState(), ...state }, "", graphUrl(seed, path));
   } catch {
     /* history unavailable */
   }
@@ -581,6 +594,8 @@ export function Explorer() {
   const entityValues = useMemo(() => new Set((taxonomy?.entities || []).map((e) => e.value)), [taxonomy]);
   const isEntity = useCallback((v: string) => entityValues.has(v.toLowerCase()), [entityValues]);
   const inPatterns = patterns && hasPatterns && binding !== null;
+  // Patterns asked for, binding not read yet: neither layout, so the walk never flashes.
+  const bindingPending = patterns && binding === null;
 
   // Nodes the server reported but did not walk through (the hub policy): the reader
   // should know a branch ends by policy, not by graph.
@@ -600,6 +615,9 @@ export function Explorer() {
 
   return (
     <div className="lg:h-full min-h-0 flex flex-col px-6 py-5 gap-3">
+      {/* A jump in from something being read (an entity on a memory) offers the way back,
+          above the toolbar; a walk taken here is a new entry without one. */}
+      <BackLink />
       <Bar
         identity={identity}
         entities={taxonomy ? taxonomy.entities : null}
@@ -615,6 +633,7 @@ export function Explorer() {
         onPatterns={togglePatterns}
       />
 
+      {bindingPending && <Loading label="Loading patterns" />}
       {needsSource && <SourcePicker org={identity.org} current={identity.namespace} />}
 
       {inPatterns && binding && (
@@ -631,7 +650,7 @@ export function Explorer() {
 
       {/* Fixed footprints: 220 px facets, the canvas column, 300 px inspector;
             the single grid row is bounded by the page so each pane owns its scroll. */}
-      {!inPatterns && !needsSource && (
+      {!inPatterns && !needsSource && !bindingPending && (
         <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)_300px] lg:grid-rows-[minmax(0,1fr)] gap-4">
           <Facets
             taxonomy={taxonomy}
@@ -714,16 +733,18 @@ export function Explorer() {
                   )}
                   {suggestions.length > 0 && (walkedAs || model.nodes.size === 0) && (
                     <span className="shrink-0 inline-flex items-center gap-1">
-                      other matches:
+                      Other matches:
                       {suggestions.map((e) => (
-                        <button
+                        <Link
                           key={e.value}
+                          component="button"
                           type="button"
+                          size="sm"
+                          weight="mono"
                           onClick={() => walkFrom(e.value)}
-                          className="font-mono underline hover:text-text"
                         >
                           {shorten(e.value, 16)}
-                        </button>
+                        </Link>
                       ))}
                     </span>
                   )}
@@ -746,8 +767,8 @@ export function Explorer() {
               loading={loading}
               loadingLabel={
                 mode === "path" && pathQuery
-                  ? `Finding a path from ${pathQuery[0]} to ${pathQuery[1]}`
-                  : `Walking from ${seed}`
+                  ? `Loading the path from ${pathQuery[0]} to ${pathQuery[1]}`
+                  : `Loading the walk from ${seed}`
               }
               error={error}
               seedTyped={seed}
@@ -828,6 +849,13 @@ export function Explorer() {
           onChanged={() => {
             /* the graph is a projection of the rows; a re-walk picks changes up */
           }}
+          // Already on the Graph: an entity's "Open in Graph" walks from it here.
+          onWalkEntity={(entity) => {
+            setInspectKey(null);
+            walkFrom(entity);
+          }}
+          // Another memory opens in this drawer, not in a second one over it.
+          onInspectMemory={setInspectKey}
         />
       )}
     </div>

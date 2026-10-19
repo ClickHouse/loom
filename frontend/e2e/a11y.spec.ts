@@ -211,12 +211,14 @@ test.describe("open overlays", () => {
   });
 
   test("a button that loads in place keeps focus through its loading state", async ({ page }) => {
-    await open(page, "/memories");
+    // The usage audit is on the Memories page's Insights tab.
+    await open(page, "/memories?section=insights");
     // Click UI disables a loading button, which drops its focus; it takes it back after.
     await page.route("**/v1/namespace.audit", async (route) => {
       await new Promise((r) => setTimeout(r, 300));
       await route.fulfill({ status: 503, json: { detail: "audit unavailable", code: "UNAVAILABLE" } });
     });
+    await page.getByRole("button", { name: "Usage audit", exact: true }).click();
     const run = page.getByRole("button", { name: "Run audit" });
     await run.focus();
     await page.keyboard.press("Enter");
@@ -556,6 +558,24 @@ test("the single-key shortcuts turn off from the help dialog", async ({ page }) 
   await page.keyboard.press("?");
   await page.waitForTimeout(300);
   await expect(help).toBeHidden();
+});
+
+// The help dialog scrolls as one: Click UI's dialog body, never a second region inside it.
+test("the help dialog has one scroll region on a short window, and is axe-clean", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 520 });
+  await open(page, "/memories");
+  await page.getByRole("button", { name: "Keyboard shortcuts" }).click();
+  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(help).toBeVisible();
+  const scrollers = await help.evaluate(
+    (dialog) =>
+      [dialog, ...dialog.querySelectorAll("*")].filter((el) => {
+        const y = getComputedStyle(el).overflowY;
+        return (y === "auto" || y === "scroll") && el.scrollHeight > el.clientHeight + 1;
+      }).length,
+  );
+  expect(scrollers).toBe(1);
+  expect(await violations(page)).toEqual([]);
 });
 
 test("reduced motion stops Click UI's dialog animation", async ({ page }) => {

@@ -1,73 +1,46 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Badge } from "@clickhouse/click-ui/Badge";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
-import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
-import { Icon } from "@clickhouse/click-ui/Icon";
-import { Pagination } from "@clickhouse/click-ui/Pagination";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
+import { Select } from "@clickhouse/click-ui/Select";
 import {
   getMemory,
-  listMemories,
-  bulkGetMemories,
   pinMemory,
   deleteMemory,
   restoreMemory,
   conflictKeys as fetchConflictKeys,
-  searchMemory,
   isAuthDisabled,
   type MemoryListEntry,
-  type MemoryDetail,
-  type SearchHit,
 } from "../api";
-import { errorRequestId } from "../lib/format";
-import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { useStore, useIdentity } from "../lib/state";
 import { MemoryCard } from "../components/MemoryCard";
 import { SearchWhy } from "../components/SearchWhy";
-import { Alert, Chip, PageHeader, SectionHeading } from "../components/ui";
-import { SkeletonCard } from "../components/Skeleton";
-import { EmptyState } from "../components/EmptyState";
+import { IconButton } from "../components/IconButton";
+import { Alert, ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../components/ui";
+import { ListPager, usePageSize } from "../components/ui/ListPager";
+import { ListState } from "../components/ui/ListState";
+import { ListTime } from "../components/ui/ListTime";
+import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
+import { RowSkeleton } from "../components/Skeleton";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { dayLabel, displayAgent, humanizeError, searchSummary, SENTINEL_AGENTS } from "../lib/format";
-import { useKeyboard } from "../lib/hooks";
+import { dayLabel, restoreText, displayAgent, SENTINEL_AGENTS } from "../lib/format";
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
 import { PageContainer } from "../layout/PageContainer";
-import { MemoryTabs } from "../components/MemoryTabs";
+import { MemoryTabs, useMemoriesSection } from "../components/MemoryTabs";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { NamespaceAuditPanel } from "../components/NamespaceAuditPanel";
 import { MentorPanel } from "../components/MentorPanel";
 import { Unavailable } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
-import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
+import { parseSearchQuery, type SearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
+import { oneOf } from "../lib/oneOf";
 import { shortcutOff } from "../lib/shortcuts";
-
-// Server caps memory.list at 1000 rows/call (MemoryListInput.limit le=1000).
-// The browse feed pages up to this; past it, search covers the whole namespace.
-// Page size for the paginated browse feed (server caps memory.list at 1000/call).
-const PAGE_SIZE = 100;
-// The fields the page and its cards read, and the preview length a card shows (140
-// characters; the base64 envelope check needs 64). Unprojected, a page of a hundred is
-// 166 kB of JSON — 2 KB previews, entities, timestamps nothing reads. Field names are a
-// quarter of a row, so a field the page does not read costs on every row. `sensitivity`,
-// which marks a high row sent without its value, comes with every entry, so it is not named.
-const MEMORIES_LIST_FIELDS = [
-  "memory_key",
-  "memory_type",
-  "value",
-  "tags",
-  "created_at",
-  "pinned",
-  "agent",
-  "user_id",
-  "session_id",
-  "tombstoned_at",
-  "verified_by",
-  "verification",
-];
-const MEMORIES_PREVIEW_CHARS = 160;
+import { PHONE_QUERY, useMedia } from "../lib/useMedia";
+import { useRowNav } from "../lib/useRowNav";
+import { useRowSelection } from "../lib/useRowSelection";
+import { sameFilter, useMemoryListRead, useMemorySearch, useSameFilter, type TagAgentFilter } from "./memoryListReads";
 
 // The cards the first screen shows. A page of a hundred mounts them all in one task
 // (395–681 ms of long tasks at 4x CPU, LCP 0.9–1.4 s); the first screen is about two
@@ -75,32 +48,53 @@ const MEMORIES_PREVIEW_CHARS = 160;
 // DOM, same scroll, same find-in-page once it settles.
 const FIRST_SCREEN_CARDS = 12; // A screen shows eight or nine
 
-// Shape a memory.get detail as a list entry, so a search hit fetched
-// on-demand (one outside the preloaded window) renders through the same
-// MemoryCard path as preloaded rows.
-function detailToEntry(key: string, d: MemoryDetail): MemoryListEntry {
-  return {
-    memory_key: key,
-    memory_type: d.memory_type || "semantic",
-    confidence: d.confidence ?? 1,
-    version: d.version ?? 0,
-    created_at: d.created_at || "",
-    updated_at: d.updated_at ?? null,
-    expires_at: d.expires_at ?? null,
-    tombstoned_at: null,
-    pinned: d.pinned,
-    tags: d.tags || [],
-    agent: d.agent,
-    user_id: d.user_id,
-    session_id: d.session_id,
-    value: d.value,
-    source_trace: d.source_trace,
-  };
+/** What the Status select shows. Every status but Live and Recently
+ *  deleted reads the newest 1,000 and keeps the matching rows: none has a server filter. */
+type Status = "live" | "pinned" | "conflicted" | "verified" | "deleted";
+const STATUSES: ReadonlyArray<{ value: Status; label: string }> = [
+  { value: "live", label: "Live" },
+  { value: "pinned", label: "Pinned" },
+  { value: "conflicted", label: "Conflicted" },
+  { value: "verified", label: "Verified" },
+  { value: "deleted", label: "Recently deleted" },
+];
+const EVERY_AGENT = "*";
+
+/** The tags and agent a parsed search filters the list by. */
+function filterOf({ tags, agent }: SearchQuery): TagAgentFilter {
+  return { tags, agent: agent ?? "" };
 }
 
-const SHOWN_GROUP = "memories-shown";
-
+/** Memories: the list, or the Insights tab (the usage audit and the mentor). */
 export function Recent() {
+  return useMemoriesSection() === "insights" ? <MemoryInsights /> : <MemoryList />;
+}
+
+/** The Insights tab: what the namespace's usage says, read as a whole. Each panel runs on a
+ *  click, never on mount. */
+function MemoryInsights() {
+  const identity = useIdentity();
+  return (
+    <PageContainer>
+      <PageHeader title="Memories" tab="Insights">
+        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
+        <span className="hidden sm:contents">
+          <ScopeBadge kind="namespace" value={identity.namespace} />
+        </span>
+      </PageHeader>
+      <MemoryTabs active="insights" />
+      <div className="space-y-4">
+        {/* How the namespace is being used. A click, never on mount — the op is ~14 reads. */}
+        <NamespaceAuditPanel identity={identity} />
+        {/* What the store would tell an agent working here — the planes it never touched
+            and whether past hints were followed. */}
+        <MentorPanel identity={identity} />
+      </div>
+    </PageContainer>
+  );
+}
+
+function MemoryList() {
   const identity = useIdentity();
   // Viewers see the page read-only — the write CTAs are disabled with the reason, not
   // offered and then refused by the server.
@@ -114,73 +108,42 @@ export function Recent() {
   // Re-fetch the current page after a local mutation (bump drives the fetch
   // effect below), instead of reloading a fixed slice that ignores pagination.
   const bumpMemoriesVersion = useStore((s) => s.bumpMemoriesVersion);
-  const [entries, setEntries] = useState<MemoryListEntry[] | null>(null);
+  const phone = useMedia(PHONE_QUERY);
+  // A phone's status and agent filters wait behind the toolbar's Filters button, so the
+  // first memory is inside the chrome budget.
+  const [phoneFilters, setPhoneFilters] = useState(false);
   // First paint mounts the first screen; the rest follow in a transition (see
   // FIRST_SCREEN_CARDS).
   const [firstScreenOnly, setFirstScreenOnly] = useState(true);
-  useEffect(() => {
-    if (!firstScreenOnly || entries === null) return;
-    let raf = 0;
-    raf = requestAnimationFrame(() => {
-      startTransition(() => setFirstScreenOnly(false));
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [firstScreenOnly, entries]);
-  // First-page read failure, shown inline with a Retry.
-  const [loadError, setLoadError] = useState<{ text: string; requestId: string } | null>(null);
-  // True namespace-scope total (ignores the page `limit`), from memory.list.
-  const [total, setTotal] = useState(0);
-  // Of `total`, how many were created today (server-computed, not the page).
-  const [todayCount, setTodayCount] = useState(0);
-  const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [pinnedOnly, setPinnedOnly] = useState(false);
+  const [status, setStatus] = useState<Status>("live");
   // Surfaces tombstoned rows + a Restore action in the 14-day grace window.
-  const [showDeleted, setShowDeleted] = useState(false);
-  // The list reloads behind the loading skeleton, which unmounts the toolbar; the chosen
-  // option takes focus back once the rows are in.
-  const refocusShown = useRef(false);
-  useEffect(() => {
-    if (entries === null || !refocusShown.current) return;
-    refocusShown.current = false;
-    document.querySelector<HTMLElement>(`#${SHOWN_GROUP} [aria-pressed="true"]`)?.focus();
-  }, [entries]);
+  const showDeleted = status === "deleted";
   // Tag filter from the global store — set by clicking a tag chip in the
-  // Inspector, shown as a dismissable chip at the top of the list.
+  // Inspector; it joins the search as a `tag:` token.
   const memoryTagFilter = useStore((s) => s.memoryTagFilter);
   const setMemoryTagFilter = useStore((s) => s.setMemoryTagFilter);
-  // Per-agent filter chip — null means "all agents." Derived from the
-  // entries actually present, not a static list.
+  // The Agent select — null means every agent. Its options are the agents seen in this
+  // namespace so far, so picking one does not take the others away.
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
+  const [seenAgents, setSeenAgents] = useState<string[]>([]);
   // Zero-indexed page into the recency-ordered namespace list.
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = usePageSize("memories");
   const [conflictKeys, setConflictKeys] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
   const [query, setQuery] = useState("");
-  // Ordered array (not Set) to preserve the server's relevance ranking.
-  // Null = no active search.
-  const [searchHits, setSearchHits] = useState<string[] | null>(null);
-  // Per-hit ranking evidence: the server's `explanation` and `score_components`, keyed by
-  // memory_key, rendered under each card while a search is active so the list says why a
-  // row is there.
-  const [searchWhy, setSearchWhy] = useState<Map<string, SearchHit>>(new Map());
-  // Full rows for search hits that fell outside the preloaded window,
-  // fetched on-demand so they still render (keyed by memory_key).
-  const [searchExtra, setSearchExtra] = useState<Map<string, MemoryListEntry>>(new Map());
-  const [searchAbstain, setSearchAbstain] = useState<string | null>(null);
-  // The rows whose value or key holds the typed text (newest first, ahead of the ranked
-  // hits) and how many the namespace holds in all — a ranked search returns its top k, so
-  // a word that 150 memories name would otherwise hide the newest of them.
-  const [keywordKeys, setKeywordKeys] = useState<Set<string>>(new Set());
-  const [keywordTotal, setKeywordTotal] = useState(0);
-  const [searching, setSearching] = useState(false);
-  // The keyword rows are on screen and the ranked search is still answering.
-  const [ranking, setRanking] = useState(false);
-  const knownKeysRef = useRef<Set<string>>(new Set());
-  // Latest preloaded entries, read inside the search effect without making
-  // it a dependency (that would re-run search on every 8s poll).
-  const entriesRef = useRef<MemoryListEntry[]>([]);
+  // Another namespace's conflict keys and agents are not this one's: they go during render,
+  // before the new namespace's first read or paint can use them (useMemorySearch drops its
+  // results the same way).
+  const namespaceKey = `${identity.org}/${identity.namespace}`;
+  const [stateFor, setStateFor] = useState(namespaceKey);
+  if (stateFor !== namespaceKey) {
+    setStateFor(namespaceKey);
+    setConflictKeys(new Set());
+    setAgentFilter(null);
+    setSeenAgents([]);
+  }
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   // `/` focuses the inline search anywhere on Memories.
@@ -200,7 +163,8 @@ export function Recent() {
 
   // Inline search: debounced semantic match on the server; the result
   // becomes a key-set filter on the already-loaded entries, so day
-  // grouping, pinned star, conflict badge, and selection state stay intact.
+  // grouping, the pinned star and the conflict badge stay intact (a selected row that is
+  // not a hit leaves the selection).
   //
   // Query language:
   //   `tag:work`              — only memories tagged `work`
@@ -208,139 +172,131 @@ export function Recent() {
   //   `tag:work coffee`       — semantic search for "coffee" within tag work
   //   `agent:foo bar`         — same shape for agent filter
   //
-  // tag/agent filters apply client-side over the semantic-search result
-  // set OR the raw entries list, and intersect with the chip selections.
-  const { rawQuery, queryTags, queryAgent } = useMemo(() => {
-    const parsed = parseSearchQuery(query);
-    return { rawQuery: parsed.text, queryTags: parsed.tags, queryAgent: parsed.agent };
-  }, [query]);
-
+  // A tag or agent filter narrows the read on the server (every tag, in any case); the
+  // list applies the same filters to a search's hits, which the server ranks unfiltered.
+  const parsed = useMemo(() => parseSearchQuery(query), [query]);
+  const rawQuery = parsed.text;
+  // A filter covers the whole namespace, not the page on screen. A tag or agent filter is
+  // asked of the server, which returns the rows carrying every tag, in any case (a server a
+  // release behind matches any one tag exactly, and the list then requires every tag
+  // itself). Pinned, Conflicted and Verified have no server filter: the list reads the
+  // newest 1,000 and keeps the matching ones. What is typed is debounced, so `tag:…` sends
+  // one read, not one per key; a chip applies at once.
+  const typedNow = useSameFilter(filterOf(parsed));
+  const [typed, setTyped] = useState(typedNow);
+  // A tag chosen on a card or elsewhere in the app, or Clear filters, applies at once.
+  const applyQuery = useCallback((next: string) => {
+    setQuery(next);
+    setTyped(filterOf(parseSearchQuery(next)));
+  }, []);
+  // A card's tag adds `tag:<tag>` to the search, or takes it out again, so tags stack the
+  // way typed ones do. One callback for every card: it reads the query through a ref.
+  const queryRef = useRef(query);
+  queryRef.current = query;
+  const toggleTag = useCallback(
+    (tag: string) => applyQuery(toggleQueryToken(queryRef.current, `tag:${tag}`)),
+    [applyQuery],
+  );
+  // A tag picked elsewhere in the app (searchByTag) joins the same way.
   useEffect(() => {
-    // Only the natural-language portion goes to the server; structured
-    // filters are applied locally.
-    // One character is not a query — the box waits for two, and a search a newer
-    // keystroke made stale is aborted rather than raced (two answers would compete for
-    // the same state).
-    if (!rawQuery || rawQuery.trim().length < 2) {
-      setSearchHits(null);
-      setSearchAbstain(null);
-      setSearchExtra(new Map());
-      setSearchWhy(new Map());
-      setKeywordKeys(new Set());
-      setKeywordTotal(0);
-      setRanking(false);
-      return;
-    }
-    let cancelled = false;
-    const ac = new AbortController();
-    const t = setTimeout(async () => {
-      setSearching(true);
-      try {
-        // `explain: true` keeps `explanation` / `score_components` on the
-        // wire above the excerpt k, so the list can say why each hit ranked where it did.
-        // `legs: ["memory"]`: this page renders memory cards and never a session digest,
-        // so the session-summary legs stay out.
-        // The keyword list and the ranked search start together. The keyword rows paint as
-        // soon as they arrive (a few hundred ms) and the ranked hits join them when the
-        // search answers (it embeds the query first); a failed keyword read leaves the
-        // ranked hits standing.
-        const ranked = searchMemory(identity, rawQuery, {
-          top_k: 50,
-          explain: true,
-          legs: ["memory"],
-          signal: ac.signal,
-        });
-        ranked.catch(() => {}); // awaited below; a rejection before then is not unhandled
-        const kw = await listMemories(identity, KEYWORD_PAGE, {
-          contains: rawQuery.trim(),
-          fields: MEMORIES_LIST_FIELDS,
-          previewChars: MEMORIES_PREVIEW_CHARS,
-          signal: ac.signal,
-        }).catch(() => null);
-        if (cancelled) return;
-        const kwEntries = kw?.entries ?? [];
-        const kwKeys = new Set(kwEntries.map((e) => e.memory_key));
-        const have = new Set(entriesRef.current.map((e) => e.memory_key));
-        const kwExtra = kwEntries.filter((e) => !have.has(e.memory_key)).map((e) => [e.memory_key, e] as const);
-        setKeywordKeys(kwKeys);
-        setKeywordTotal(kw?.total ?? 0);
-        if (kwKeys.size > 0) {
-          setSearchHits(kwEntries.map((e) => e.memory_key));
-          setSearchExtra(new Map(kwExtra));
-          setSearchWhy(new Map());
-          setSearching(false);
-          setRanking(true);
-        }
-        // A failed ranked search keeps the keyword rows on screen; with none, the list
-        // empties as before.
-        const r = await (kwKeys.size > 0 ? ranked.catch(() => null) : ranked);
-        if (cancelled) return;
-        setRanking(false);
-        if (r === null) return;
-        const results = r.results || [];
-        const hits = keywordThenRanked(
-          kwEntries.map((e) => e.memory_key),
-          results.map((h) => h.memory_key),
-        );
-        setSearchHits(hits);
-        setSearchWhy(new Map(results.map((h) => [h.memory_key, h] as const)));
-        // The server hedges (abstain) when the top hit is below threshold;
-        // surface it so weak matches aren't read as confident answers.
-        setSearchAbstain(
-          r.abstain && kwKeys.size === 0 ? r.abstain_reason || "No strong match — showing best-effort results." : null,
-        );
-        // Server search spans the whole namespace, but the page only preloads
-        // the top `limit` rows. Hydrate hits outside that window so they still
-        // render, instead of being dropped by the key-set intersection below.
-        // agent="*" resolves the row regardless of which agent wrote it.
-        const missing = hits.filter((k) => !have.has(k) && !kwKeys.has(k));
-        if (missing.length === 0) {
-          setSearchExtra(new Map(kwExtra));
-          return;
-        }
-        // One memory.bulk_get, not one memory.get per hit — the list path below already
-        // reads this way.
-        const bulk = await bulkGetMemories({ ...identity, agent: "*" }, missing, { signal: ac.signal }).catch(() => ({
-          results: {} as Record<string, MemoryDetail>,
-          missing,
-        }));
-        const fetched = missing.map((k) => {
-          const d = bulk.results[k];
-          return d ? detailToEntry(k, d) : null;
-        });
-        if (cancelled) return;
-        setSearchExtra(
-          new Map([
-            ...kwExtra,
-            ...fetched.filter((e): e is MemoryListEntry => e !== null).map((e) => [e.memory_key, e] as const),
-          ]),
-        );
-      } catch {
-        if (!cancelled) {
-          setSearchHits([]);
-          setSearchAbstain(null);
-          setSearchExtra(new Map());
-          setSearchWhy(new Map());
-          setKeywordKeys(new Set());
-          setKeywordTotal(0);
-          setRanking(false);
-        }
-      } finally {
-        if (!cancelled) setSearching(false);
-      }
-    }, 200);
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-      ac.abort();
-    };
-  }, [rawQuery, identity]);
-
-  // Keep entriesRef current for the search effect (which reads it without
-  // subscribing, to avoid re-running on every poll refresh).
+    if (!memoryTagFilter) return;
+    setMemoryTagFilter(null);
+    if (typedNow.tags.some((t) => t.toLowerCase() === memoryTagFilter.toLowerCase())) return;
+    applyQuery(`${query} tag:${memoryTagFilter}`.trim());
+  }, [memoryTagFilter, setMemoryTagFilter, query, typedNow, applyQuery]);
+  // Typing waits for a pause.
   useEffect(() => {
-    entriesRef.current = entries ?? [];
-  }, [entries]);
+    const t = setTimeout(() => setTyped((prev) => (sameFilter(prev, typedNow) ? prev : typedNow)), 250);
+    return () => clearTimeout(t);
+  }, [typedNow]);
+  const filterPending = !sameFilter(typedNow, typed);
+  // The list filters by what the read was asked for, so a half-typed `tag:`/`agent:` keeps
+  // the cards on screen. Built from the tags' text (a tag holds no space), so a keystroke that
+  // leaves the tags as they were hands every memoised card the same set.
+  const activeTagsText = typed.tags.map((t) => t.toLowerCase()).join(" ");
+  const activeTags = useMemo(() => new Set(activeTagsText.split(" ").filter(Boolean)), [activeTagsText]);
+  // memory.list matches an agent exactly: a typed agent the list has seen is sent as it is
+  // written; one it has not (its rows all past the first page) is sent as typed, so its case
+  // must match.
+  const typedAgent = typed.agent
+    ? (seenAgents.find((a) => a.toLowerCase() === typed.agent.toLowerCase()) ?? typed.agent)
+    : "";
+  const listFilter = useSameFilter({
+    tags: typed.tags,
+    agent: typedAgent || agentFilter || "",
+    status: showDeleted ? "live" : status,
+  });
+  const listFiltered = listFilter.tags.length > 0 || listFilter.agent !== "" || listFilter.status !== "live";
+  // The keyword half of a search reads the rows holding the word that also pass the list's
+  // tag and agent filter.
+  const searchFilter = useSameFilter({ tags: listFilter.tags, agent: listFilter.agent });
+
+  // A new namespace, view or filter starts at its first page, set before the read so the
+  // read never asks for a page of the old scope; `scope` counts them, for the pager's reset.
+  const [pagedFor, setPagedFor] = useState({ namespaceKey, showDeleted, listFilter, scope: 0 });
+  if (
+    pagedFor.namespaceKey !== namespaceKey ||
+    pagedFor.showDeleted !== showDeleted ||
+    !sameFilter(pagedFor.listFilter, listFilter)
+  ) {
+    setPagedFor({ namespaceKey, showDeleted, listFilter, scope: pagedFor.scope + 1 });
+    setPage(0);
+  }
+
+  const {
+    entries,
+    loadError,
+    truncated,
+    serverMatches,
+    newKeys,
+    bulkValues,
+    refreshing,
+    entriesAt,
+    browsedTotal,
+    filterRead,
+    retry,
+  } = useMemoryListRead({
+    identity,
+    filter: listFilter,
+    filtered: listFiltered,
+    page,
+    pageSize,
+    showDeleted,
+    memoriesVersion,
+  });
+  const browsedCurrent = entriesAt.size === pageSize;
+  useEffect(() => {
+    if (!firstScreenOnly || entries === null) return;
+    let raf = 0;
+    raf = requestAnimationFrame(() => {
+      startTransition(() => setFirstScreenOnly(false));
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [firstScreenOnly, entries]);
+
+  const {
+    searchHits,
+    searchWhy,
+    searchExtra,
+    searchAbstain,
+    keywordTotal,
+    keywordKeys,
+    keywordFor,
+    searching,
+    ranking,
+  } = useMemorySearch(identity, rawQuery, searchFilter, entries, memoriesVersion);
+  // Each hit's "Why this result", made when the results change rather than in every render:
+  // an element made in render is a new prop each time, and every memoised card would render
+  // again on each keystroke.
+  const searchAsides = useMemo(() => {
+    const asides = new Map<string, ReactNode>();
+    searchHits?.forEach((key, i) => {
+      const hit = searchWhy.get(key);
+      if (keywordKeys.has(key)) asides.set(key, <SearchWhy contains={keywordFor} />);
+      else if (hit) asides.set(key, <SearchWhy hit={hit} rank={i + 1} />);
+    });
+    return asides;
+  }, [searchHits, searchWhy, keywordKeys, keywordFor]);
 
   // Fetch conflicts once per identity change; cards consult this set to
   // flag rows that need review. One namespace-wide read beats N per-card calls.
@@ -350,6 +306,9 @@ export function Recent() {
   const whoami = useStore((s) => s.whoami);
   const conflictsReadable = canCall("conflicts.list", role, whoami);
   useEffect(() => {
+    // A role here that cannot read conflicts, or a failed read, shows no chip (never
+    // another namespace's).
+    setConflictKeys(new Set());
     if (!conflictsReadable) return;
     let cancelled = false;
     // The chips need the keys, not 500 rows with values.
@@ -382,21 +341,19 @@ export function Recent() {
     } else {
       all = all.filter((e) => !e.tombstoned_at);
     }
-    if (pinnedOnly) all = all.filter((e) => e.pinned);
-    // Tag-chip filter; case-insensitive since tags come from humans and agents.
-    if (memoryTagFilter) {
-      const target = memoryTagFilter.toLowerCase();
-      all = all.filter((e) => (e.tags || []).some((x: string) => x.toLowerCase() === target));
-    }
-    // Combine store-driven filter state with the `agent:` / `tag:` query syntax.
-    const effectiveAgent = queryAgent || agentFilter;
-    const effectiveTags = new Set<string>(queryTags);
-    if (effectiveAgent != null) all = all.filter((e) => (e.agent || "") === effectiveAgent);
-    if (effectiveTags.size > 0) {
+    if (status === "pinned") all = all.filter((e) => e.pinned);
+    else if (status === "conflicted") all = all.filter((e) => conflictKeys.has(e.memory_key));
+    else if (status === "verified") all = all.filter((e) => e.verification === "human" || e.verification === "process");
+    // The agent chip and the `agent:` / `tag:` query syntax. What was typed keeps its case,
+    // so a typed tag or agent and the rows' compare lowercased (humans and agents both
+    // write tags).
+    if (typed.agent) all = all.filter((e) => (e.agent || "").toLowerCase() === typed.agent.toLowerCase());
+    else if (agentFilter != null) all = all.filter((e) => (e.agent || "") === agentFilter);
+    if (activeTags.size > 0) {
       // AND-intersection: row must carry EVERY required tag.
       all = all.filter((e) => {
-        const t = new Set(e.tags || []);
-        for (const required of effectiveTags) {
+        const t = new Set((e.tags || []).map((x) => x.toLowerCase()));
+        for (const required of activeTags) {
           if (!t.has(required)) return false;
         }
         return true;
@@ -410,63 +367,17 @@ export function Recent() {
         .sort((a, b) => (rank.get(a.memory_key) ?? Infinity) - (rank.get(b.memory_key) ?? Infinity));
     }
     return all;
-  }, [entries, searchHits, searchExtra, pinnedOnly, showDeleted, agentFilter, queryAgent, queryTags, memoryTagFilter]);
+  }, [entries, searchHits, searchExtra, status, conflictKeys, showDeleted, agentFilter, typed.agent, activeTags]);
 
-  // Agents present in the unfiltered list (powers the chip row).
-  const agentsInList = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const e of entries ?? []) {
-      const a = e.agent || "";
-      // Sentinels (*, -) aren't useful filter targets.
-      if (a && !SENTINEL_AGENTS.has(a)) m.set(a, (m.get(a) || 0) + 1);
-    }
-    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
-  }, [entries]);
-
-  const toggleSelect = useCallback((key: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
+  // The agents the namespace's rows were written by, gathered as pages and filters load
+  // (sentinels "*" and "-" are not writers); a new namespace starts again.
+  useEffect(() => {
+    const here = (entries ?? []).map((e) => e.agent || "").filter((a) => a && !SENTINEL_AGENTS.has(a));
+    setSeenAgents((prev) => {
+      const next = [...new Set([...prev, ...here])].sort();
+      return next.length === prev.length ? prev : next;
     });
-  }, []);
-  // One callback for every card, so the memoised cards skip a render when it is not theirs.
-  const selecting = selected.size > 0;
-  const openCard = useCallback(
-    (e: MemoryListEntry) => (selecting ? toggleSelect(e.memory_key) : inspect(e.memory_key, { agent: e.agent })),
-    [selecting, toggleSelect, inspect],
-  );
-
-  // Keyboard nav, active when no inspector is open and not typing. j / k move the focus
-  // itself from card to card, as on Tasks: Enter opens the focused card (its button), Space
-  // selects it (MemoryCard's onToggle), and the inspector returns focus to it on close.
-  const onList = () => {
-    const el = document.activeElement;
-    return !el || el === document.body || !!el.closest("[data-card]");
-  };
-  const moveFocus = (step: number): true => {
-    const cards = [...document.querySelectorAll<HTMLElement>("[data-memory-open]")];
-    const here = document.activeElement?.closest("[data-card]")?.querySelector<HTMLElement>("[data-memory-open]");
-    const at = here ? cards.indexOf(here) : -1;
-    const next = cards[at < 0 ? 0 : Math.max(0, Math.min(cards.length - 1, at + step))];
-    next?.scrollIntoView?.({ block: "nearest" });
-    next?.focus({ preventScroll: true });
-    return true;
-  };
-  useKeyboard(
-    {
-      j: () => moveFocus(1),
-      k: () => moveFocus(-1),
-      // The arrows move through the list only from a card or the page itself: on any
-      // other control they are that control's (a menu trigger opens its menu), and
-      // elsewhere they scroll.
-      ArrowDown: () => onList() && moveFocus(1),
-      ArrowUp: () => onList() && moveFocus(-1),
-      // Escape clears a selection; with none it is left to whatever else listens for it.
-      ...(selecting ? { Escape: () => setSelected(new Set()) } : {}),
-    },
-    !inspectedKey && flatList.length > 0,
-  );
+  }, [entries]);
 
   // A memory's identity is (org, namespace, agent, user_id, session_id) +
   // memory_key, and this list spans agents (there is an agent filter chip). The
@@ -511,7 +422,7 @@ export function Recent() {
       }
     }
     setBusy(false);
-    setSelected(new Set());
+    selection.clear();
     toast(`Pinned ${ok}${fail ? ` · ${fail} failed` : ""}`, fail ? "error" : "ok");
     bumpMemoriesVersion();
   };
@@ -545,7 +456,7 @@ export function Recent() {
       }
     }
     setBusy(false);
-    setSelected(new Set());
+    selection.clear();
     toast(
       ok === 0 && fail > 0
         ? `Nothing deleted — ${fail} could not be matched`
@@ -555,160 +466,280 @@ export function Recent() {
     bumpMemoriesVersion();
   };
 
-  // Values the list response did not carry (a server predating the preview
-  // field), read back in ONE memory.bulk_get for the page instead of one
-  // memory.get per card.
-  const [bulkValues, setBulkValues] = useState<Map<string, unknown>>(new Map());
-  const fetchOnceRef = useRef<(isFirst: boolean) => Promise<void>>(async () => {});
-
-  useAbortableEffect(
-    (signal, live) => {
-      setEntries(null);
-      setBulkValues(new Map());
-      knownKeysRef.current = new Set();
-      setNewKeys(new Set());
-
-      const fillMissingValues = async (rows: MemoryListEntry[]) => {
-        const missing = rows.filter((e) => e.value === undefined).map((e) => e.memory_key);
-        if (missing.length === 0) return;
-        try {
-          const b = await bulkGetMemories({ ...identity, agent: "*" }, missing, { signal });
-          if (!live()) return;
-          setBulkValues((prev) => {
-            const next = new Map(prev);
-            for (const [k, d] of Object.entries(b.results)) next.set(k, d.value);
-            return next;
-          });
-        } catch {
-          /* cards fall back to their own memory.get */
-        }
-      };
-
-      // The namespace version the last full answer carried. The 8 s refresh sends it and
-      // repaints only when it moved; an unchanged namespace answers in ~200 bytes with no
-      // page, total or today.
-      let knownVersion = "";
-      const fetchOnce = async (isFirst: boolean) => {
-        try {
-          // Recently-deleted is a bounded 14-day grace set; fetch it in one shot
-          // (no live-total pagination, which would be wrong for the deleted view).
-          const lim = showDeleted ? 500 : PAGE_SIZE;
-          const off = showDeleted ? 0 : page * PAGE_SIZE;
-          const r = await listMemories(identity, lim, {
-            include_tombstoned: showDeleted,
-            offset: off,
-            signal,
-            known_version: isFirst ? undefined : knownVersion || undefined,
-            fields: MEMORIES_LIST_FIELDS,
-            previewChars: MEMORIES_PREVIEW_CHARS,
-          });
-          if (!live()) return;
-          if (r.unchanged) return;
-          knownVersion = r.namespace_version ?? "";
-          setTotal(r.total);
-          setTodayCount(r.today);
-          // Fill before painting so a list without values never sends 100 cards to
-          // their per-card fallback while the one bulk read is in flight.
-          await fillMissingValues(r.entries);
-          if (!live()) return;
-          if (isFirst) {
-            knownKeysRef.current = new Set(r.entries.map((e) => e.memory_key));
-            setEntries(r.entries);
-          } else {
-            // Any key we haven't seen before is "new".
-            const fresh = new Set<string>();
-            for (const e of r.entries) {
-              if (!knownKeysRef.current.has(e.memory_key)) {
-                fresh.add(e.memory_key);
-                knownKeysRef.current.add(e.memory_key);
-              }
-            }
-            if (fresh.size > 0) {
-              setEntries(r.entries);
-              setNewKeys((prev) => new Set([...prev, ...fresh]));
-              // Clear the "new" highlight after 4s.
-              setTimeout(() => {
-                setNewKeys((prev) => {
-                  const next = new Set(prev);
-                  fresh.forEach((k) => next.delete(k));
-                  return next;
-                });
-              }, 4000);
-            }
-          }
-        } catch (e) {
-          if (!live()) return;
-          if (isFirst) {
-            // Say so inline — an empty list that is really a failed read looked like "no
-            // memories yet".
-            setLoadError({ text: humanizeError(e), requestId: errorRequestId(e) });
-            setEntries([]);
-          }
-        }
-      };
-
-      fetchOnceRef.current = fetchOnce;
-      return fetchOnce(true);
-    },
-    [identity, page, memoriesVersion, showDeleted],
+  // A filtered list is one read of its newest 1,000 matches, paged here.
+  const searchActive = searchHits != null;
+  const pageList = useMemo(
+    () => (listFiltered && !searchActive ? flatList.slice(page * pageSize, (page + 1) * pageSize) : flatList),
+    [flatList, listFiltered, searchActive, page, pageSize],
   );
-  // The 8 s refresh sleeps while the tab is hidden and catches up once on
-  // return; it always runs the current effect's fetchOnce, so a response
-  // for a superseded namespace/page is dropped by that effect's live().
-  useVisiblePoll(() => {
-    void fetchOnceRef.current(false);
-  }, 8000);
+  const pageKeys = useMemo(() => pageList.map((e) => e.memory_key), [pageList]);
+  // Checkboxes: one row, a Shift-click range, every row on the page; Escape clears them
+  // while the drawer is closed (it owns Escape while open).
+  const selection = useRowSelection(pageKeys, { enabled: !inspectedKey });
+  const { selected, toggle: toggleSelect } = selection;
+  // One callback for every card, so the memoised cards skip a render when it is not theirs.
+  const selecting = selected.size > 0;
+  const openCard = useCallback(
+    (e: MemoryListEntry) => (selecting ? toggleSelect(e.memory_key) : inspect(e.memory_key, { agent: e.agent })),
+    [selecting, toggleSelect, inspect],
+  );
 
-  // Reset to the first page when the scope changes, so we never sit on a page
-  // index that no longer exists under the new filter.
-  useEffect(() => {
-    setPage(0);
-  }, [showDeleted, identity.org, identity.namespace]);
+  // Keyboard nav, active when no inspector is open and not typing: the list is one tab
+  // stop, j / k and the arrows move the focus from card to card, Enter opens the focused
+  // card (its button), Space selects it, and the inspector returns focus to it on close.
+  const listNav = useRowNav({ enabled: !inspectedKey && flatList.length > 0 });
 
-  if (entries === null) {
-    return (
-      <PageContainer className="space-y-3">
-        <PageHeader title="Memories" />
-        <MemoryTabs active="memories" />
-        <SkeletonCard />
-        <SkeletonCard />
-        <SkeletonCard />
-      </PageContainer>
-    );
+  // The namespace is empty only when the read worked and no filter narrowed it; a filter
+  // that matches nothing keeps the toolbar and says so below.
+  const failed = entries !== null && entries.length === 0 && !!loadError;
+  const emptyNamespace =
+    entries !== null && entries.length === 0 && !loadError && !listFiltered && !filterPending && !showDeleted;
+
+  // Group entries by day label, but not while searching — day buckets would hide the
+  // relevance ranking.
+  // A tag or an agent narrows any status; a status but Live is a filter too.
+  // Built from the debounced filter the cards follow, so a half-typed `tag:` changes none of it.
+  const narrowed = typed.tags.length > 0 || !!typed.agent || agentFilter != null;
+  const filtering = narrowed || status !== "live";
+  // The filters in force, as they read in the toolbar ("tag:api, agent:bot, Pinned").
+  const filterNames = [
+    ...typed.tags.map((t) => `tag:${t}`),
+    ...(typed.agent ? [`agent:${typed.agent}`] : agentFilter != null ? [displayAgent(agentFilter)] : []),
+    ...(status !== "live" ? [STATUSES.find((o) => o.value === status)?.label ?? status] : []),
+  ].join(", ");
+  // What the reader typed, for the no-match row. With a select in force too (agent, a
+  // status but Live) the row says "the filters in force", not blame the words alone.
+  const typedWords =
+    agentFilter != null || status !== "live"
+      ? ""
+      : [
+          searchActive ? keywordFor : "",
+          ...typed.tags.map((t) => `tag:${t}`),
+          typed.agent ? `agent:${typed.agent}` : "",
+        ]
+          .filter(Boolean)
+          .join(", ");
+  const clearFilters = () => {
+    // Every Clear leaves with the filters it clears: focus goes to the search.
+    searchInputRef.current?.focus();
+    applyQuery(rawQuery);
+    setStatus("live");
+    setAgentFilter(null);
+  };
+  const mountedList = firstScreenOnly ? pageList.slice(0, FIRST_SCREEN_CARDS) : pageList;
+  const byDay = new Map<string, MemoryListEntry[]>();
+  for (const e of mountedList) {
+    const label = searchActive ? "" : dayLabel(e.created_at);
+    const arr = byDay.get(label) || [];
+    arr.push(e);
+    byDay.set(label, arr);
   }
+  // The deleted view is fetched in one shot: the namespace's live total has nothing to do
+  // with the deleted count. A filtered list counts its matches.
+  const listTotal = showDeleted || listFiltered ? flatList.length : (browsedTotal ?? entries?.length ?? 0);
+  const rangeStart = pageList.length === 0 ? 0 : (showDeleted ? 0 : page * pageSize) + 1;
+  const rangeEnd = (showDeleted ? 0 : page * pageSize) + pageList.length;
+  // One count, at the end of the toolbar: the range while browsing, the
+  // matches for a search or a filter, the last one while a read is in flight, nothing on an
+  // error or before the first read.
+  const matches = (n: number) => `${n.toLocaleString()} match${n === 1 ? "" : "es"}`;
+  const countText =
+    entries === null || failed
+      ? ""
+      : searchActive
+        ? // What a search covers: the newest rows holding the word, when there are more.
+          `${matches(flatList.length)}${keywordTotal > keywordKeys.size ? ` · the newest ${keywordKeys.size.toLocaleString()} of ${keywordTotal.toLocaleString()} holding "${keywordFor}"` : ""}${ranking ? " · finding related…" : ""}`
+        : showDeleted || listFiltered
+          ? // A tag or agent filter is matched on the server, whose total is exact; a status
+            // is kept here among the rows read.
+            matches(
+              // Of the filter it read: not of a typed tag still on its way.
+              !showDeleted && listFilter.status === "live" && serverMatches !== null && filterRead && !filterPending
+                ? serverMatches
+                : flatList.length,
+            )
+          : `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${listTotal.toLocaleString()}`;
+  const lastCount = useRef("");
+  if (countText && !(searching || refreshing)) lastCount.current = countText;
+  const countShown = searching || refreshing ? lastCount.current : countText;
+  const busyList = refreshing || searching || ranking;
 
-  if (entries.length === 0 && loadError) {
-    return (
-      <PageContainer>
-        <PageHeader title="Memories">
+  const statusSelect = (className: string) => (
+    <Select
+      value={status}
+      onSelect={(value) => {
+        const v = oneOf(
+          STATUSES.map((o) => o.value),
+          value,
+        );
+        if (v !== null) setStatus(v);
+      }}
+      triggerProps={{ "aria-label": "Status" }}
+      className={className}
+    >
+      {STATUSES.filter((o) => o.value !== "conflicted" || conflictsReadable).map((o) => (
+        <Select.Item key={o.value} value={o.value}>
+          {o.label}
+        </Select.Item>
+      ))}
+    </Select>
+  );
+  const agentSelect = (className: string) =>
+    (seenAgents.length > 1 || agentFilter != null) && (
+      <Select
+        value={agentFilter ?? EVERY_AGENT}
+        onSelect={(value) => setAgentFilter(value === EVERY_AGENT ? null : value)}
+        triggerProps={{ "aria-label": "Agent" }}
+        className={className}
+      >
+        <Select.Item value={EVERY_AGENT}>Every agent</Select.Item>
+        {seenAgents.map((a) => (
+          <Select.Item key={a} value={a}>
+            {displayAgent(a)}
+          </Select.Item>
+        ))}
+      </Select>
+    );
+
+  return (
+    <PageContainer className="pb-24">
+      <PageHeader
+        title="Memories"
+        actions={
+          // The empty state's own Add is the one primary while it shows.
+          !emptyNamespace && (
+            <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
+              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+                Add memory
+              </Button>
+            </Unavailable>
+          )
+        }
+      >
+        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
+        <span className="hidden sm:contents">
           <ScopeBadge kind="namespace" value={identity.namespace} />
-        </PageHeader>
-        <MemoryTabs active="memories" />
-        <EmptyState
-          icon="warning"
-          title="Couldn't load memories"
-          description={loadError.requestId ? `${loadError.text} (request id ${loadError.requestId})` : loadError.text}
-          action={{
-            label: "Retry",
-            onClick: () => {
-              setLoadError(null);
-              setEntries(null);
-              void fetchOnceRef.current?.(true);
-            },
-          }}
+        </span>
+      </PageHeader>
+      <MemoryTabs active="memories" />
+
+      <AddMemoryDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        identity={identity}
+        onAdded={() => bumpMemoriesVersion()}
+      />
+
+      {/* The search, the filters and where the list stands, in the one bar that stays at
+          the top as the list scrolls, in every state: nothing moves when the rows land. A
+          filter picked from a card further down is seen to apply. While memories are
+          selected, the bar holds their actions instead. */}
+      <ListToolbar
+        label="Search and filters"
+        count={countShown && <span aria-busy={busyList || undefined}>{countShown}</span>}
+        selection={
+          selecting
+            ? {
+                count: selected.size,
+                onClear: selection.clear,
+                all: { total: pageKeys.length, checked: selection.allSelected, onToggle: selection.toggleAll },
+                actions: [
+                  { label: "Pin", icon: "pin", disabled: busy, onClick: bulkPin },
+                  {
+                    label: "Delete",
+                    icon: "trash",
+                    danger: true,
+                    disabled: busy,
+                    onClick: bulkDelete,
+                  },
+                ],
+              }
+            : null
+        }
+      >
+        <ListToolbarSearch>
+          <SearchField
+            ref={searchInputRef}
+            value={query}
+            onChange={(value) => setQuery(value)}
+            // A phone's field holds the short form only.
+            placeholder={
+              phone
+                ? "Search, or tag:work"
+                : "Search memories. Try a keyword, or filter with tag:work, agent:claude-desktop…"
+            }
+            aria-label="Search memories"
+          />
+        </ListToolbarSearch>
+        <span className="sm:hidden">
+          <IconButton
+            icon="filter"
+            // Filled (Click UI's secondary) while a status or an agent is picked.
+            type={status !== "live" || agentFilter != null ? "secondary" : "ghost"}
+            label={status !== "live" || agentFilter != null ? "Filters, some in force" : "Filters"}
+            tooltip="Status and agent"
+            aria-expanded={phoneFilters}
+            onClick={() => setPhoneFilters((v) => !v)}
+          />
+        </span>
+        {statusSelect("hidden w-44 shrink-0 sm:block")}
+        {agentSelect("hidden w-44 shrink-0 sm:block")}
+        {filtering && (
+          <Button type="empty" htmlType="button" className="hidden shrink-0 sm:inline-flex" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        )}
+      </ListToolbar>
+      {/* A phone's toolbar has room for the search only; the filters open under it. */}
+      {phoneFilters && (
+        <div className="-mt-1 mb-3 flex items-center gap-2 sm:hidden">
+          {statusSelect("min-w-0 flex-1")}
+          {agentSelect("min-w-0 flex-1")}
+          {filtering && (
+            <Button type="empty" htmlType="button" onClick={clearFilters} aria-label="Clear filters">
+              Clear
+            </Button>
+          )}
+        </div>
+      )}
+      {!searching && searchAbstain && (
+        <Alert
+          role="status"
+          state="warning"
+          size="small"
+          className="mb-3"
+          text={
+            <>
+              <strong>Low confidence.</strong> No strong match for "{keywordFor}" — these are best-effort results; treat
+              them as weak.
+            </>
+          }
         />
-      </PageContainer>
-    );
-  }
+      )}
 
-  if (entries.length === 0) {
-    return (
-      <PageContainer>
-        <PageHeader title="Memories">
-          <ScopeBadge kind="namespace" value={identity.namespace} />
-        </PageHeader>
-        <MemoryTabs active="memories" />
-        <EmptyState
+      {entries === null && (
+        <LoadingSkeleton label="Loading memories">
+          <div className="space-y-2">
+            <RowSkeleton kind="memory" />
+            <RowSkeleton kind="memory" />
+            <RowSkeleton kind="memory" />
+          </div>
+        </LoadingSkeleton>
+      )}
+
+      {failed && (
+        <ListState
+          kind="error"
+          things="memories"
+          error={loadError.text}
+          requestId={loadError.requestId || undefined}
+          onRetry={retry}
+        />
+      )}
+
+      {emptyNamespace && (
+        <ListState
+          kind="empty"
           icon="clock"
           title="No memories yet"
           description={
@@ -724,369 +755,126 @@ export function Recent() {
           }
           action={readOnly ? undefined : { label: "Add memory", onClick: () => setAddOpen(true) }}
         />
-        <AddMemoryDialog
-          open={addOpen}
-          onOpenChange={setAddOpen}
-          identity={identity}
-          onAdded={() => bumpMemoriesVersion()}
-        />
-      </PageContainer>
-    );
-  }
-
-  // Group entries by day label, but not while searching — day buckets
-  // would hide the relevance ranking. Ranked results go under one heading.
-  const searchActive = searchHits != null;
-  const mountedList = firstScreenOnly ? flatList.slice(0, FIRST_SCREEN_CARDS) : flatList;
-  const byDay = new Map<string, MemoryListEntry[]>();
-  if (!searchActive) {
-    for (const e of mountedList) {
-      const label = dayLabel(e.created_at);
-      const arr = byDay.get(label) || [];
-      arr.push(e);
-      byDay.set(label, arr);
-    }
-  } else {
-    byDay.set("Results", mountedList);
-  }
-  // More rows exist server-side than we've loaded. Prefer the true total;
-  // fall back to the page-cap heuristic if total wasn't returned.
-  // Pagination math off the authoritative total.
-  // No pagination in the deleted view — it's fetched in one shot, and the
-  // namespace's live `total` (6k+) has nothing to do with the deleted count.
-  const pageCount = showDeleted ? 1 : Math.max(1, Math.ceil((total || entries.length) / PAGE_SIZE));
-  const rangeStart = entries.length === 0 ? 0 : page * PAGE_SIZE + 1;
-  const rangeEnd = page * PAGE_SIZE + entries.length;
-
-  return (
-    <PageContainer className="pb-24">
-      <PageHeader
-        title="Memories"
-        actions={
-          <>
-            <span className="text-sm text-text-muted tabular whitespace-nowrap">
-              {searchActive
-                ? `${flatList.length} shown`
-                : showDeleted
-                  ? `${flatList.length.toLocaleString()} recently deleted`
-                  : `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${(total || entries.length).toLocaleString()}`}
-            </span>
-            <span id={SHOWN_GROUP} className="whitespace-nowrap">
-              <ButtonGroup
-                aria-label="Memories shown"
-                selected={showDeleted ? "deleted" : "live"}
-                onClick={(value) => {
-                  if ((value === "deleted") === showDeleted) return;
-                  refocusShown.current = true;
-                  setShowDeleted(value === "deleted");
-                }}
-                options={[
-                  { value: "live", label: "Live" },
-                  { value: "deleted", label: "Recently deleted" },
-                ]}
-              />
-            </span>
-            <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
-              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
-                Add memory
-              </Button>
-            </Unavailable>
-          </>
-        }
-      >
-        <ScopeBadge kind="namespace" value={identity.namespace} />
-      </PageHeader>
-      <MemoryTabs active="memories" />
-
-      {/* Authoritative counts (server-computed, not the truncated page). */}
-      {total > 0 && !searchActive && (
-        <div className="mb-5 flex flex-wrap items-center gap-2 text-sm">
-          <Badge text={`${total.toLocaleString()} total`} state="neutral" />
-          <Badge text={`${todayCount.toLocaleString()} today`} state="neutral" />
-        </div>
       )}
 
-      {/* How the namespace is being used, next to how many
-          rows it has. A click, never on mount — the op is ~14 reads. */}
-      {!searchActive && !showDeleted && <NamespaceAuditPanel identity={identity} />}
-
-      {/* What the store would tell an agent working here —
-          the planes it never touched and whether past hints were followed. */}
-      {!searchActive && !showDeleted && <MentorPanel identity={identity} />}
-
-      <AddMemoryDialog
-        open={addOpen}
-        onOpenChange={setAddOpen}
-        identity={identity}
-        onAdded={() => bumpMemoriesVersion()}
-      />
-
-      {/* Inline semantic search — filters the list in place. Press / to focus. */}
-      <div className="mb-4">
-        <SearchField
-          ref={searchInputRef}
-          value={query}
-          onChange={(value) => setQuery(value)}
-          placeholder="Search memories. Try a keyword, or filter with tag:work, agent:claude-desktop…"
-          aria-label="Search memories"
-        />
-      </div>
-      {/* Mounted before the first search, so a screen reader hears each summary. */}
-      <div role="status" className={searchHits != null ? "-mt-2 mb-3 text-xs text-text-muted tabular" : ""}>
-        {searchHits != null &&
-          (searching
-            ? "Searching…"
-            : `${searchSummary(flatList.length, rawQuery, keywordKeys.size, keywordTotal)}${ranking ? " · finding related…" : ""}`)}
-      </div>
-      {!searching && searchAbstain && (
-        <Alert
-          role="status"
-          state="warning"
-          size="small"
-          className="-mt-1 mb-3"
-          text={
-            <>
-              <strong>Low confidence.</strong> No strong match for "{rawQuery}" — these are best-effort results; treat
-              them as weak.
-            </>
-          }
-        />
-      )}
-      {/* Active query-bar filters as dismissable badges; click removes the token. */}
-      {(queryTags.length > 0 || queryAgent) && (
-        <div className="-mt-2 mb-3 flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="text-text-muted">Filtering:</span>
-          {queryAgent && (
-            <Chip
-              label={`agent:${queryAgent}`}
-              mono
-              onRemove={() =>
-                setQuery((q) =>
-                  q
-                    .replace(new RegExp(`\\bagent:${queryAgent}\\b`, "g"), "")
-                    .replace(/\s+/g, " ")
-                    .trim(),
-                )
-              }
-            />
-          )}
-          {queryTags.map((t) => (
-            <Chip
-              key={t}
-              label={`tag:${t}`}
-              mono
-              onRemove={() =>
-                setQuery((q) =>
-                  q
-                    .replace(new RegExp(`\\btag:${t}\\b`, "g"), "")
-                    .replace(/\s+/g, " ")
-                    .trim(),
-                )
-              }
-            />
-          ))}
-        </div>
-      )}
-
-      {(entries.some((e) => e.pinned) || agentsInList.length > 1 || showDeleted || memoryTagFilter) && (
-        <div className="mb-5 flex flex-wrap items-center gap-1">
-          {memoryTagFilter && (
-            <Chip label={`tag:${memoryTagFilter}`} mono selected onRemove={() => setMemoryTagFilter(null)} />
-          )}
-          {entries.some((e) => e.pinned) && !showDeleted && (
-            <Chip
-              label="Pinned"
-              icon={<Icon name="star" size="xs" aria-hidden="true" />}
-              count={entries.filter((e) => e.pinned).length}
-              selected={pinnedOnly}
-              onClick={() => setPinnedOnly((v) => !v)}
-            />
-          )}
-          {showDeleted && (
-            <Chip label="Recently deleted · 14-day grace" selected onRemove={() => setShowDeleted(false)} />
-          )}
-          {/* Agent filter chips — only when more than one agent exists.
-              Click toggles; clicking the active chip clears the filter. */}
-          {agentsInList.length > 1 &&
-            agentsInList.map(([agent, count]) => {
-              const active = agentFilter === agent;
-              return (
-                <Chip
-                  key={`a-${agent}`}
-                  label={displayAgent(agent)}
-                  count={count}
-                  selected={active}
-                  tip={`Show only memories written by ${displayAgent(agent)}`}
-                  onClick={() => setAgentFilter(active ? null : agent)}
-                />
-              );
-            })}
-        </div>
-      )}
-
-      {selected.size > 0 && (
-        <div className="sticky top-0 z-[2] mb-3 animate-fade-in flex items-center gap-2 p-2.5 rounded-xl border border-accent bg-accent-soft shadow-sm">
-          <span className="text-sm font-medium text-accent tabular">{selected.size} selected</span>
-          <div className="flex-1" />
-          <Button type="secondary" htmlType="button" iconLeft="cross" onClick={() => setSelected(new Set())}>
-            Clear
-          </Button>
-          <Button type="secondary" htmlType="button" iconLeft="pin" disabled={busy} onClick={bulkPin}>
-            Pin all
-          </Button>
-          <Button type="danger" htmlType="button" iconLeft="trash" disabled={busy} onClick={bulkDelete}>
-            Delete all
-          </Button>
-        </div>
-      )}
-
-      {/* Filter-zeroed empty state: entries exist but filters are too
-          tight. Truly-empty namespace is handled by the EmptyState branch above. */}
-      {flatList.length === 0 &&
-        entries.length > 0 &&
-        (showDeleted ? (
-          <div className="py-12 text-center">
-            <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
-              <Icon name="trash" size="md" aria-hidden="true" />
-            </div>
-            <h2>No recently deleted memories</h2>
-            <p className="mt-1 text-sm text-text-muted leading-relaxed">
-              Deleted memories stay here for 14 days so you can restore them — nothing has been deleted recently.
-            </p>
-            <Button type="secondary" htmlType="button" onClick={() => setShowDeleted(false)} className="mt-4">
-              Back to live
-            </Button>
-          </div>
-        ) : (
-          <div className="py-12 text-center">
-            <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
-              <Icon name="clock" size="md" aria-hidden="true" />
-            </div>
-            <h2>Nothing matches your filters</h2>
-            <p className="mt-1 text-sm text-text-muted leading-relaxed">
-              {(total || entries.length).toLocaleString()} memor{(total || entries.length) === 1 ? "y is" : "ies are"}{" "}
-              in this namespace, but none pass the active filters.
-            </p>
-            <Button
-              type="secondary"
-              htmlType="button"
-              className="mt-4"
-              onClick={() => {
-                setQuery("");
-                setPinnedOnly(false);
-                setAgentFilter(null);
-                setMemoryTagFilter(null);
-              }}
-            >
-              Clear filters
-            </Button>
-          </div>
+      {/* Rows exist, or a filter was asked of the server, and none pass: one line and a way
+          out, once the read for the filter in force has landed. */}
+      {entries !== null &&
+        !failed &&
+        !emptyNamespace &&
+        flatList.length === 0 &&
+        !searching &&
+        filterRead &&
+        !filterPending &&
+        (showDeleted && !narrowed ? null : (
+          <ListState
+            kind="filtered"
+            things="memories"
+            filter={typedWords || undefined}
+            onClear={() => {
+              // After clearFilters, which keeps the typed words: this row clears them too.
+              clearFilters();
+              setQuery("");
+            }}
+          />
         ))}
+      {entries !== null && !failed && showDeleted && flatList.length === 0 && !narrowed && filterRead && (
+        <ListState
+          kind="empty"
+          icon="trash"
+          title="No recently deleted memories"
+          description="Deleted memories stay here for 14 days so you can restore them — nothing has been deleted recently."
+          action={{ label: "Show live memories", onClick: () => setStatus("live") }}
+        />
+      )}
 
-      <div className="space-y-6">
+      {truncated && (
+        <p className="mb-3 text-xs text-text-muted">
+          {listFilter.tags.length > 0 || listFilter.agent
+            ? "Showing the newest matches. Add a tag or a search word to narrow them."
+            : `Showing the ${filterNames.toLowerCase()} memories among the newest ones read.`}
+        </p>
+      )}
+      {/* Where a page change takes the reader: a heading a screen reader announces. */}
+      <h2 id="memories-list-top" tabIndex={-1} className="sr-only focus:not-sr-only focus:mb-2 focus:text-sm">
+        Memories, page {page + 1}
+      </h2>
+      <div ref={listNav} className="space-y-6" aria-busy={refreshing || undefined}>
         {Array.from(byDay.entries()).map(([day, items]) => (
-          <section key={day}>
-            <SectionHeading
-              level={2}
-              label={day}
-              count={items.length}
-              className="sticky top-0 z-[1] bg-bg/85 backdrop-blur py-2 -my-1"
-            />
-            <div className="space-y-1.5 mt-2">
+          <section key={day || "results"} aria-label={day ? undefined : "Search results"}>
+            {day && <SectionHeading level={2} label={day} count={items.length} />}
+            <div className={`space-y-2 ${day ? "mt-2" : ""}`}>
               {items.map((e) => {
                 const isNew = newKeys.has(e.memory_key);
                 const isSelected = selected.has(e.memory_key);
                 const isTombstoned = !!e.tombstoned_at;
                 const isActive = inspectedKey === e.memory_key;
-                const why = searchActive ? searchWhy.get(e.memory_key) : undefined;
                 return (
-                  <div
+                  <ListRow
                     key={e.memory_key}
                     data-card=""
-                    className={[
-                      // The browser lays out and paints only the rows in view
-                      "p-3.5 rounded-xl border flex items-start gap-3 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_112px]",
-                      isSelected
-                        ? "border-accent bg-surface ring-1 ring-accent/40"
-                        : isActive
-                          ? "border-accent bg-accent-soft"
-                          : "border-border bg-surface hover:border-border-strong",
-                      isNew ? "animate-fade-in ring-2 ring-accent" : "",
-                      // A deleted memory keeps full-contrast text; the dashed edge and the
-                      // "Deleted" line under it set it apart.
-                      isTombstoned ? "border-dashed" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                  >
-                    <Checkbox
-                      checked={isSelected}
-                      onCheckedChange={() => toggleSelect(e.memory_key)}
-                      onClick={(ev) => ev.stopPropagation()}
-                      aria-label={`Select ${e.memory_key}`}
-                      className="mt-1 shrink-0"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <MemoryCard
-                        embedded
-                        hasConflict={conflictKeys.has(e.memory_key)}
-                        identity={identity}
-                        entry={e}
-                        value={e.value !== undefined ? e.value : bulkValues.get(e.memory_key)}
-                        active={isActive}
-                        onSelect={openCard}
-                        onToggle={toggleSelect}
-                        onTagClick={setMemoryTagFilter}
-                        timeMode="absolute"
+                    // Back to this page focuses the card that had the focus.
+                    data-focus-key={`memory:${e.memory_key}`}
+                    checked={isSelected}
+                    active={isActive}
+                    deleted={isTombstoned}
+                    className={isNew ? "animate-fade-in" : ""}
+                    leading={
+                      <Checkbox
+                        checked={isSelected}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          toggleSelect(e.memory_key, ev.shiftKey);
+                        }}
+                        aria-label={`Select ${e.memory_key}`}
+                        className="list-row-control"
                       />
-                      {searchActive && keywordKeys.has(e.memory_key) ? (
-                        <div className="mt-1 px-2 text-xs text-text-muted" data-testid="search-why">
-                          contains "{rawQuery.trim()}"
-                        </div>
-                      ) : (
-                        why && <SearchWhy hit={why} rank={(searchHits?.indexOf(e.memory_key) ?? 0) + 1} />
-                      )}
-                      {isTombstoned && (
-                        <div className="flex items-center justify-between mt-1 px-2 py-1 text-xs text-text-muted">
-                          <span>
-                            Deleted
-                            {e.tombstoned_at
-                              ? ` ${new Date(e.tombstoned_at).toISOString().slice(0, 16).replace("T", " ")}`
-                              : ""}{" "}
-                            ·{(() => {
-                              if (!e.tombstoned_at) return " in grace window";
-                              const ageMs = Date.now() - new Date(e.tombstoned_at).getTime();
-                              const daysLeft = Math.max(0, 14 - Math.floor(ageMs / (24 * 3600 * 1000)));
-                              return ` ${daysLeft} day${daysLeft === 1 ? "" : "s"} left to restore`;
-                            })()}
-                          </span>
-                          <Button
-                            type="empty"
-                            htmlType="button"
-                            onClick={async (ev) => {
-                              ev.stopPropagation();
-                              // Identity carries only (org, namespace, agent);
-                              // pass user_id/session_id alongside the key.
-                              const r = await restoreMemory({ ...identity, agent: e.agent || "-" }, e.memory_key, {
-                                user_id: e.user_id || "-",
-                                session_id: e.session_id || "-",
-                              });
-                              if (r.restored) {
-                                toast(`Restored ${e.memory_key}`, "ok");
-                                bumpMemoriesVersion();
-                              } else if (r.expired) {
-                                toast("Outside the 14-day grace window — can't restore", "error");
-                              } else {
-                                toast("Nothing to restore", "info");
-                              }
-                            }}
-                          >
-                            Restore
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                    }
+                  >
+                    <MemoryCard
+                      embedded
+                      hasConflict={conflictKeys.has(e.memory_key)}
+                      identity={identity}
+                      entry={e}
+                      value={e.value !== undefined ? e.value : bulkValues.get(e.memory_key)}
+                      active={isActive}
+                      onSelect={openCard}
+                      onTagClick={toggleTag}
+                      activeTags={activeTags}
+                      aside={searchAsides.get(e.memory_key)}
+                    />
+                    {isTombstoned && (
+                      <div className="flex items-center justify-between mt-1 py-1 text-xs text-text-muted">
+                        <span>
+                          Deleted <ListTime time={e.tombstoned_at} quiet /> · {restoreText(e.tombstoned_at)}
+                        </span>
+                        <Button
+                          type="empty"
+                          htmlType="button"
+                          className="list-row-control"
+                          onClick={async (ev) => {
+                            ev.stopPropagation();
+                            // Identity carries only (org, namespace, agent);
+                            // pass user_id/session_id alongside the key.
+                            const r = await restoreMemory({ ...identity, agent: e.agent || "-" }, e.memory_key, {
+                              user_id: e.user_id || "-",
+                              session_id: e.session_id || "-",
+                            });
+                            if (r.restored) {
+                              toast(`Restored ${e.memory_key}`, "ok");
+                              bumpMemoriesVersion();
+                            } else if (r.expired) {
+                              toast("Outside the 14-day grace window — can't restore", "error");
+                            } else {
+                              toast("Nothing to restore", "info");
+                            }
+                          }}
+                        >
+                          Restore
+                        </Button>
+                      </div>
+                    )}
+                  </ListRow>
                 );
               })}
             </div>
@@ -1094,10 +882,27 @@ export function Recent() {
         ))}
       </div>
 
-      {!searchActive && pageCount > 1 && (
-        <nav className="mt-8" aria-label="Pagination">
-          <Pagination totalPages={pageCount} currentPage={page + 1} onChange={(n) => setPage(n - 1)} />
-        </nav>
+      {/* A filtered list is paged here, so its page is the page asked for; a browsed one is
+          read a page at a time, so the pager pages from the rows' page. */}
+      {!searchActive && !showDeleted && !failed && entries !== null && (
+        <ListPager
+          label="Memories pages"
+          page={!listFiltered && browsedCurrent ? entriesAt.page : page}
+          busy={refreshing}
+          resetKey={String(pagedFor.scope)}
+          pageSize={pageSize}
+          shown={(listFiltered && filterRead) || (!listFiltered && browsedCurrent) ? pageList.length : 0}
+          total={listFiltered ? (filterRead ? listTotal : undefined) : browsedTotal}
+          // A tag or agent read the server cut short holds its newest matches, not every one.
+          // A status is kept among the rows read, which the note under the toolbar says.
+          capped={truncated && listFilter.status === "live" && (listFilter.tags.length > 0 || listFilter.agent !== "")}
+          onPage={setPage}
+          onPageSize={(n) => {
+            setPageSize(n);
+            setPage(0);
+          }}
+          topId="memories-list-top"
+        />
       )}
     </PageContainer>
   );

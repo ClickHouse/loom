@@ -9,7 +9,7 @@ import {
   type ModelStatus,
 } from "../api/models";
 import { ModelsForm } from "./ModelsForm";
-import { Alert } from "../components/ui";
+import { Alert, Loading } from "../components/ui";
 
 const PHASES: Record<string, string> = {
   drain: "Pausing agent requests",
@@ -95,7 +95,12 @@ export function ModelsSettings() {
       window.clearInterval(timer);
     };
   }, [reload]);
-  if (!status) return <p role="status">{error || "Loading model settings…"}</p>;
+  if (!status)
+    return error ? (
+      <Alert role="alert" state="danger" size="small" text={error} />
+    ) : (
+      <Loading label="Loading model settings" />
+    );
   return (
     <div className="space-y-5">
       <p className="text-sm text-text-muted">

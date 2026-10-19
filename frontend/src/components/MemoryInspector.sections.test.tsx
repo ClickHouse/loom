@@ -33,7 +33,7 @@ vi.mock("../api", async (importOriginal) => {
       ],
     })),
     memoryRelated: vi.fn(async () => ({
-      rows: [
+      results: [
         { memory_key: "k2", memory_type: "semantic", content_excerpt: "x", overlap_count: 1, shared_entities: ["a"] },
       ],
     })),

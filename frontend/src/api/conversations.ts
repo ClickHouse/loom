@@ -126,12 +126,16 @@ export async function listConversationMessages(
   return post("/v1/conversation.list", body, opts.signal);
 }
 
+// The largest `offset` conversation.threads serves (its `le`); a larger one is a 422.
+export const THREADS_MAX_OFFSET = 100_000;
+
 /** Recent threads on a namespace. Drives the Sessions view's default
  *  landing surface so users with no query have somewhere to click. */
 export async function listConversationThreads(
   id: Pick<Identity, "org" | "namespace">,
-  opts: { agent?: string; window_days?: number; limit?: number; fields?: string[] } & RequestOpts = {},
-): Promise<{ threads: ConversationThreadSummary[] }> {
+  opts: { agent?: string; window_days?: number; limit?: number; offset?: number; fields?: string[] } & RequestOpts = {},
+): Promise<{ threads: ConversationThreadSummary[]; ignored_args?: string[] }> {
+  // A server a release behind ignores `offset` and names it in ignored_args.
   return post(
     "/v1/conversation.threads",
     {
@@ -140,6 +144,7 @@ export async function listConversationThreads(
       agent: opts.agent ?? "*",
       window_days: opts.window_days ?? 30,
       limit: opts.limit ?? 20,
+      ...(opts.offset ? { offset: opts.offset } : {}),
       ...(opts.fields ? { fields: opts.fields } : {}),
     },
     opts.signal,

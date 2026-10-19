@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Table } from "@clickhouse/click-ui/Table";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
@@ -30,12 +31,14 @@ import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
-import { displayAgent, humanizeError, relativeTime } from "../../lib/format";
+import { humanizeError, sentenceCase } from "../../lib/format";
+import { AgentBadge } from "../../components/AgentBadge";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { oneOf } from "../../lib/oneOf";
 import { isRecord } from "../../lib/guards";
-import { Alert, PageHeader, TipTarget } from "../../components/ui";
+import { Alert, ListTime, LoadingSkeleton, PageHeader } from "../../components/ui";
+import { ListState } from "../../components/ui/ListState";
 
 /**
  * Policies — history rules over what an agent may do next.
@@ -78,14 +81,38 @@ function ModeBadge({ mode }: { mode: string }) {
 
 function DecisionChip({ decision }: { decision: string }) {
   const deny = decision === "deny";
-  return <Badge text={decision} state={deny ? "danger" : "success"} iconDir="start" size="sm" />;
+  return <Badge text={sentenceCase(decision)} state={deny ? "danger" : "success"} size="sm" />;
+}
+
+/** A rule's condition as one summary line; the button opens the full JSON under it. */
+function Condition({ condition }: { condition: unknown }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <div className="font-mono text-xs">
+      <button
+        type="button"
+        className="inline-flex items-start gap-1 text-left cursor-pointer"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Icon name="chevron-right" size="sm" aria-hidden="true" className={open ? "rotate-90" : ""} />
+        {summariseCondition(condition)}
+      </button>
+      <pre id={id} hidden={!open} className="mt-1 whitespace-pre-wrap break-words">
+        {JSON.stringify(condition, null, 2)}
+      </pre>
+    </div>
+  );
 }
 
 const DASH = <span className="text-text-muted">—</span>;
 
 function Bool({ v }: { v: boolean | null | undefined }) {
   if (v === null || v === undefined) return DASH;
-  return <span className={v ? "text-success" : "text-text-muted"}>{v ? "yes" : "no"}</span>;
+  // A yes/no is not a status: plain text, the colour left to the decision badges.
+  return <span className={v ? "text-text" : "text-text-muted"}>{v ? "Yes" : "No"}</span>;
 }
 
 const CMP_SYMBOL: Record<string, string> = { gt: ">", gte: "≥", lt: "<", lte: "≤", eq: "=" };
@@ -145,8 +172,6 @@ const GRAMMAR_HELP =
   'count_within adds "cmp": gt|gte|lt|lte|eq and "value": int; not_since adds "anchor": string|string[]. ' +
   'Combinators: {"op":"all"|"any","of":[…]}, {"op":"not","of":{…}}.';
 
-const TH_CLS = "text-left px-3 py-2 font-medium";
-
 function Card({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <Panel
@@ -181,29 +206,49 @@ function parseJsonObject(text: string, what: string): Record<string, unknown> {
 export function Policies() {
   const identity = useIdentity();
   const [rules, setRules] = useState<PolicyRule[] | null>(null);
-  const [mode, setMode] = useState<PolicyMode | string>("off");
-  const [error, setError] = useState<string | null>(null);
+  // The server's mode, unknown until a read answers: none is claimed before then.
+  const [mode, setMode] = useState<PolicyMode | string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [decisionsVersion, setDecisionsVersion] = useState(0);
 
-  const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
+  // A reload after an add or a delete keeps the rules on screen, marked busy.
+  const [refreshing, setRefreshing] = useState(false);
+  // Another namespace's rules are not this one's: start from the skeleton. A reload after
+  // a write runs through this effect too, so an answer for a namespace left is dropped.
+  const [reads, setReads] = useState(0);
+  const scope = `${identity.org}/${identity.namespace}`;
+  // During render, so the old rules (and their Delete buttons) never paint under it.
+  const [rulesFor, setRulesFor] = useState(scope);
+  if (rulesFor !== scope) {
+    setRulesFor(scope);
     setRules(null);
     setError(null);
-    listPolicies({ org: identity.org, namespace: identity.namespace }, { signal })
-      .then((r) => {
-        if (live()) {
-          setRules(r.rules || []);
-          setMode(r.mode || "off");
-        }
-      })
-      .catch((e) => {
-        if (live()) {
-          setError(humanizeError(e));
-          setRules([]);
-        }
-      });
-  };
-  useAbortableEffect(load, [identity.org, identity.namespace]);
+  }
+  useAbortableEffect(
+    (signal, live) => {
+      setError(null);
+      setRefreshing(true);
+      listPolicies({ org: identity.org, namespace: identity.namespace }, { signal })
+        .then((r) => {
+          if (live()) {
+            setRules(r.rules || []);
+            setMode(r.mode || "off");
+          }
+        })
+        .catch((e) => {
+          // Not an empty list: the error says the read failed, with Retry.
+          if (live()) {
+            setError(e);
+            setRules(null);
+          }
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
+        });
+    },
+    [scope, reads],
+  );
 
   const remove = async (r: PolicyRule) => {
     if (
@@ -219,24 +264,24 @@ export function Policies() {
     try {
       await deletePolicy({ org: identity.org, namespace: identity.namespace }, r.policy_id);
       toast("Rule deleted", "ok");
-      load();
+      setReads((n) => n + 1);
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     }
   };
 
-  const meta = modeMeta(mode);
+  const meta = mode === null ? null : modeMeta(mode);
 
   return (
     <PageContainer>
       <PageHeader title="Policies">
         <ScopeBadge kind="namespace" value={identity.namespace} />
-        <ModeBadge mode={mode} />
+        {mode !== null && <ModeBadge mode={mode} />}
       </PageHeader>
       <p className="text-sm text-text-muted mb-5 max-w-[80ch]">
         Rules over an agent's own recent history: forbid or require an action based on what the same caller did in the
-        last minutes or hours. <span className="text-text">{meta.blurb}</span> The mode is the server's{" "}
-        <code className="font-mono text-xs">LOOM_POLICY_MODE</code>; it cannot be changed here.
+        last minutes or hours. {meta && <span className="text-text">{meta.blurb}</span>} The mode is the server's{" "}
+        <code className="code-inline text-xs">LOOM_POLICY_MODE</code>; it cannot be changed here.
       </p>
 
       <div className="space-y-4">
@@ -248,8 +293,16 @@ export function Policies() {
             </Button>
           }
         >
-          {rules === null && <Skeleton className="h-24 w-full" />}
-          {rules !== null && error && <div className="text-sm text-danger">{error}</div>}
+          {/* Mounted before the read answers, so the count is announced when it lands. */}
+          <p className="mb-2 text-xs text-text-muted tabular" aria-live="polite">
+            {rules !== null && !error ? `${rules.length} ${rules.length === 1 ? "rule" : "rules"}` : ""}
+          </p>
+          {rules === null && !error && (
+            <LoadingSkeleton label="Loading rules">
+              <Skeleton className="h-24 w-full" />
+            </LoadingSkeleton>
+          )}
+          {!!error && <ListState kind="error" things="rules" error={error} onRetry={() => setReads((n) => n + 1)} />}
           {rules !== null && !error && rules.length === 0 && (
             <EmptyState
               icon="secure"
@@ -257,63 +310,68 @@ export function Policies() {
               description="Add a rule to forbid or require an action based on the caller's recent history. Rules only take effect once the server mode leaves off."
             />
           )}
-          {rules !== null && rules.length > 0 && (
-            <Table
-              size="sm"
-              headers={[
-                { label: "Policy" },
-                { label: "Effect", width: "96px" },
-                { label: "Actions" },
-                { label: "Condition" },
-                { label: "Enabled", width: "80px" },
-                { label: "Description" },
-                { label: <span className="sr-only">Delete</span>, width: "56px" },
-              ]}
-              rows={rules.map((r) => ({
-                id: r.policy_id,
-                items: [
-                  {
-                    label: (
-                      <div className="font-mono text-xs">
-                        <div>{r.policy_id}</div>
-                        {r.updated_at && (
-                          <div className="text-xs font-sans text-text-muted">updated {relativeTime(r.updated_at)}</div>
-                        )}
-                      </div>
-                    ),
-                  },
-                  { label: <Badge text={r.effect} state={r.effect === "forbid" ? "danger" : "info"} size="sm" /> },
-                  { label: <span className="font-mono text-xs">{r.actions.join(", ")}</span>, overflowMode: "wrap" },
-                  {
-                    label: (
-                      <details className="font-mono text-xs">
-                        <summary className="cursor-pointer">{summariseCondition(r.condition)}</summary>
-                        <pre className="mt-1 whitespace-pre-wrap break-words">
-                          {JSON.stringify(r.condition, null, 2)}
-                        </pre>
-                      </details>
-                    ),
-                    overflowMode: "wrap",
-                  },
-                  { label: <Bool v={r.enabled} /> },
-                  {
-                    label: r.description ? <span className="text-text-muted">{r.description}</span> : DASH,
-                    overflowMode: "wrap",
-                  },
-                  {
-                    label: (
-                      <IconButton
-                        icon="trash"
-                        type="danger"
-                        size="sm"
-                        label={`Delete ${r.policy_id}`}
-                        onClick={() => remove(r)}
-                      />
-                    ),
-                  },
-                ],
-              }))}
-            />
+          {rules !== null && !error && rules.length > 0 && (
+            <div aria-busy={refreshing || undefined}>
+              <Table
+                size="sm"
+                headers={[
+                  { label: "Policy" },
+                  { label: "Effect", width: "96px" },
+                  { label: "Actions" },
+                  { label: "Condition" },
+                  { label: "Enabled", width: "80px" },
+                  { label: "Description" },
+                  { label: <span className="sr-only">Delete</span>, width: "56px" },
+                ]}
+                rows={rules.map((r) => ({
+                  id: r.policy_id,
+                  items: [
+                    {
+                      label: (
+                        <div className="font-mono text-xs">
+                          <div>{r.policy_id}</div>
+                          {r.updated_at && (
+                            <div className="text-xs font-sans text-text-muted">
+                              updated <ListTime time={r.updated_at} quiet />
+                            </div>
+                          )}
+                        </div>
+                      ),
+                    },
+                    {
+                      label: (
+                        <Badge
+                          text={sentenceCase(r.effect)}
+                          state={r.effect === "forbid" ? "danger" : "neutral"}
+                          size="sm"
+                        />
+                      ),
+                    },
+                    { label: <span className="font-mono text-xs">{r.actions.join(", ")}</span>, overflowMode: "wrap" },
+                    {
+                      label: <Condition condition={r.condition} />,
+                      overflowMode: "wrap",
+                    },
+                    { label: <Bool v={r.enabled} /> },
+                    {
+                      label: r.description ? <span className="text-text-muted">{r.description}</span> : DASH,
+                      overflowMode: "wrap",
+                    },
+                    {
+                      label: (
+                        <IconButton
+                          icon="trash"
+                          type="danger"
+                          size="sm"
+                          label={`Delete ${r.policy_id}`}
+                          onClick={() => remove(r)}
+                        />
+                      ),
+                    },
+                  ],
+                }))}
+              />
+            </div>
           )}
         </Card>
 
@@ -327,7 +385,7 @@ export function Policies() {
         onClose={() => setAddOpen(false)}
         onSaved={() => {
           setAddOpen(false);
-          load();
+          setReads((n) => n + 1);
         }}
       />
     </PageContainer>
@@ -610,16 +668,16 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
           {result.rules.length > 0 && (
             // Native: a rule spans one row per leaf (rowSpan), which Click UI's Table has no form for.
             <div className="rounded-lg border border-border overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-surface-2 text-xs text-text-muted">
+              <table className="native-table text-sm">
+                <thead>
                   <tr>
-                    <th className={TH_CLS}>Rule</th>
-                    <th className={TH_CLS}>Effect</th>
-                    <th className={TH_CLS}>Holds</th>
-                    <th className={TH_CLS}>Denies</th>
-                    <th className={TH_CLS}>Leaf op</th>
-                    <th className={TH_CLS}>Leaf holds</th>
-                    <th className={TH_CLS}>Value</th>
+                    <th scope="col">Rule</th>
+                    <th scope="col">Effect</th>
+                    <th scope="col">Holds</th>
+                    <th scope="col">Denies</th>
+                    <th scope="col">Leaf op</th>
+                    <th scope="col">Leaf holds</th>
+                    <th scope="col">Value</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -629,25 +687,22 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
                       <tr key={`${v.policy_id}-${i}`} className="border-t border-border">
                         {i === 0 && (
                           <>
-                            <td
-                              rowSpan={leaves.length}
-                              className="px-3 py-2 font-mono text-xs whitespace-nowrap align-top"
-                            >
+                            <td rowSpan={leaves.length} className="font-mono text-xs whitespace-nowrap align-top">
                               {v.policy_id}
                             </td>
-                            <td rowSpan={leaves.length} className="px-3 py-2 align-top">
+                            <td rowSpan={leaves.length} className="align-top">
                               {v.effect}
                             </td>
-                            <td rowSpan={leaves.length} className="px-3 py-2 align-top">
+                            <td rowSpan={leaves.length} className="align-top">
                               <Bool v={v.holds} />
                             </td>
-                            <td rowSpan={leaves.length} className="px-3 py-2 align-top">
+                            <td rowSpan={leaves.length} className="align-top">
                               <Bool v={v.denies} />
                             </td>
                           </>
                         )}
-                        <td className="px-3 py-2 font-mono text-xs">{lf ? lf.op : DASH}</td>
-                        <td className="px-3 py-2">
+                        <td className="font-mono text-xs">{lf ? lf.op : DASH}</td>
+                        <td>
                           {lf ? (
                             lf.skipped ? (
                               <span className="text-text-muted">skipped</span>
@@ -660,7 +715,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
                             DASH
                           )}
                         </td>
-                        <td className="px-3 py-2 font-mono text-xs max-w-[32ch]">
+                        <td className="font-mono text-xs max-w-[32ch]">
                           {lf ? (
                             <div className="break-words">
                               {lf.error ||
@@ -696,13 +751,25 @@ const FILTER_LABEL: Record<string, string> = { all: "All", deny: "Deny", allow: 
 function DecisionsPanel({ version }: { version: number }) {
   const identity = useIdentity();
   const [rows, setRows] = useState<PolicyDecisionRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  // Retry reads again through the effect.
+  const [reads, setReads] = useState(0);
   const [filter, setFilter] = useState<DecisionFilter>("");
+  // A new rules version keeps the ledger on screen, marked busy; another namespace or
+  // filter is another list, so it starts from the skeleton.
+  const [refreshing, setRefreshing] = useState(false);
+  const rowsKey = `${identity.org}/${identity.namespace}/${filter}`;
+  const [rowsFor, setRowsFor] = useState(rowsKey);
+  if (rowsFor !== rowsKey) {
+    setRowsFor(rowsKey);
+    setRows(null);
+    setError(null);
+  }
 
   useAbortableEffect(
     (signal, live) => {
-      setRows(null);
       setError(null);
+      setRefreshing(true);
       listPolicyDecisions(
         { org: identity.org, namespace: identity.namespace },
         { decision: filter || undefined, limit: 100, signal },
@@ -712,12 +779,15 @@ function DecisionsPanel({ version }: { version: number }) {
         })
         .catch((e) => {
           if (live()) {
-            setError(humanizeError(e));
-            setRows([]);
+            setError(e);
+            setRows(null);
           }
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
         });
     },
-    [identity.org, identity.namespace, filter, version],
+    [identity.org, identity.namespace, filter, version, reads],
   );
 
   return (
@@ -739,63 +809,62 @@ function DecisionsPanel({ version }: { version: number }) {
         The ledger of evaluated calls in shadow and enforce mode, newest first. Nothing is written while the mode is
         off.
       </div>
-      {rows === null && (
-        <div className="space-y-3">
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
+      {rows === null && !error && (
+        <LoadingSkeleton label="Loading decisions">
+          <div className="space-y-3">
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        </LoadingSkeleton>
       )}
-      {rows !== null && error && <div className="text-sm text-danger">{error}</div>}
+      {!!error && <ListState kind="error" things="decisions" error={error} onRetry={() => setReads((n) => n + 1)} />}
       {rows !== null && !error && rows.length === 0 && (
         <div className="text-xs text-text-muted py-4 text-center">
           No decisions{filter ? ` with decision=${filter}` : ""} yet.
         </div>
       )}
-      {rows !== null && rows.length > 0 && (
-        <Table
-          size="sm"
-          headers={[
-            { label: "When", width: "110px" },
-            { label: "Agent" },
-            { label: "Operation" },
-            { label: "Decision", width: "96px" },
-            { label: "Enforced", width: "84px" },
-            { label: "Determining rules" },
-            { label: "Errors" },
-            { label: "Latency", width: "84px" },
-          ]}
-          rows={rows.map((r, i) => ({
-            id: `${r.request_id || r.ts}-${i}`,
-            items: [
-              {
-                label: (
-                  <TipTarget tip={r.ts} underline>
-                    <time dateTime={r.ts} className="text-text-muted">
-                      {relativeTime(r.ts)}
-                    </time>
-                  </TipTarget>
-                ),
-              },
-              { label: displayAgent(r.agent) },
-              { label: <span className="font-mono text-xs">{r.operation}</span> },
-              { label: <DecisionChip decision={r.decision} /> },
-              { label: <Bool v={r.enforced} /> },
-              {
-                label: r.determining_rules.length ? (
-                  <span className="font-mono text-xs">{r.determining_rules.join(", ")}</span>
-                ) : (
-                  DASH
-                ),
-                overflowMode: "wrap",
-              },
-              {
-                label: r.errors.length ? <span className="text-xs text-danger">{r.errors.join("; ")}</span> : DASH,
-                overflowMode: "wrap",
-              },
-              { label: <span className="tabular-nums">{r.latency_ms} ms</span> },
-            ],
-          }))}
-        />
+      {rows !== null && !error && rows.length > 0 && (
+        <div aria-busy={refreshing || undefined}>
+          <Table
+            size="sm"
+            headers={[
+              { label: "When", width: "110px" },
+              { label: "Agent" },
+              { label: "Operation" },
+              { label: "Decision", width: "96px" },
+              { label: "Enforced", width: "84px" },
+              { label: "Determining rules" },
+              { label: "Errors" },
+              { label: "Latency", width: "84px" },
+            ]}
+            rows={rows.map((r, i) => ({
+              id: `${r.request_id || r.ts}-${i}`,
+              items: [
+                {
+                  // ListTime is the time and its UTC tooltip: no second one around it.
+                  label: <ListTime time={r.ts} quiet className="text-text-muted" />,
+                },
+                { label: <AgentBadge agent={r.agent} /> },
+                { label: <span className="font-mono text-xs">{r.operation}</span> },
+                { label: <DecisionChip decision={r.decision} /> },
+                { label: <Bool v={r.enforced} /> },
+                {
+                  label: r.determining_rules.length ? (
+                    <span className="font-mono text-xs">{r.determining_rules.join(", ")}</span>
+                  ) : (
+                    DASH
+                  ),
+                  overflowMode: "wrap",
+                },
+                {
+                  label: r.errors.length ? <span className="text-xs text-danger">{r.errors.join("; ")}</span> : DASH,
+                  overflowMode: "wrap",
+                },
+                { label: <span className="tabular-nums">{r.latency_ms} ms</span> },
+              ],
+            }))}
+          />
+        </div>
       )}
     </Card>
   );

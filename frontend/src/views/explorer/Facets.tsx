@@ -120,8 +120,10 @@ export function Facets({
 }: FacetsProps) {
   const communities = taxonomy?.communities || [];
   const commCopy = communitiesCopy(taxonomy);
+  // The aside scrolls, so it clips its overflow: 4 px each side (the left one drawn into the
+  // gap beside it) is the controls' focus-ring room.
   return (
-    <aside aria-label="Facets" className="text-xs min-h-0 overflow-y-auto overscroll-contain pr-1">
+    <aside aria-label="Facets" className="text-xs min-h-0 overflow-y-auto overscroll-contain -ml-1 px-1">
       {/* No hint on this heading: its (i) would be named "About Walk", and the
           e2e graph spec finds the Walk button by a substring of its name. */}
       <Section label="Walk">

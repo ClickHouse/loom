@@ -1,10 +1,13 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { listFacts, searchMemory, type FactRow, type Identity, type SearchHit, type TaxonomyResponse } from "../../api";
 import { IconButton } from "../../components/IconButton";
-import { Chip, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../components/ui";
+import { Chip, Loading, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../components/ui";
+import { ListState } from "../../components/ui/ListState";
+import { ListTime } from "../../components/ui/ListTime";
 import { useAbortableEffect } from "../../lib/hooks";
 import { colorFor, HOP_COLORS, HOP_EMPHASIS } from "./Canvas";
 import {
@@ -16,6 +19,7 @@ import {
   type WalkModel,
   type XNode,
 } from "./model";
+import { DirectionIcon } from "./Direction";
 import type { ExpandNotice } from "./notices";
 
 /**
@@ -116,6 +120,41 @@ function seedNode(m: WalkModel): XNode {
   };
 }
 
+/** Rows a list shows before "Show all N". */
+const CAP = 20;
+
+/** The rows to draw: the first 20 of a longer list until "Show all N" is pressed. The
+ *  button goes with the cap, so focus moves to the first row it hid (`listRef` on the list). */
+function useCapped<T>(items: T[] | null): { shown: T[]; more: ReactNode; listRef: RefObject<HTMLUListElement> } {
+  const [all, setAll] = useState(false);
+  const listRef = useRef<HTMLUListElement>(null);
+  const focusAdded = useRef(false);
+  useEffect(() => {
+    if (!all || !focusAdded.current) return;
+    focusAdded.current = false;
+    listRef.current?.children[CAP]?.querySelector<HTMLElement>("button, a[href]")?.focus();
+  }, [all]);
+  const list = items ?? [];
+  if (all || list.length <= CAP) return { shown: list, more: null, listRef };
+  return {
+    shown: list.slice(0, CAP),
+    listRef,
+    more: (
+      <Button
+        type="empty"
+        htmlType="button"
+        onClick={() => {
+          focusAdded.current = true;
+          setAll(true);
+        }}
+        className="mt-1"
+      >
+        Show all {list.length}
+      </Button>
+    ),
+  };
+}
+
 /** The memory types `memory.search` filters on server-side; any other facet value is filtered client-side only. */
 function isSearchMemoryType(t: string): t is "semantic" | "procedural" | "preference" {
   return t === "semantic" || t === "procedural" || t === "preference";
@@ -123,89 +162,96 @@ function isSearchMemoryType(t: string): t is "semantic" | "procedural" | "prefer
 
 function FactList({
   facts,
+  error,
+  onRetry,
   about,
   onWalk,
   onOpenMemory,
   emptyText,
 }: {
   facts: FactRow[] | null;
+  /** A failed read, said as such with Retry, never as the empty text. */
+  error: unknown;
+  onRetry: () => void;
   about: string | null;
   onWalk: (e: string) => void;
   onOpenMemory: (k: string) => void;
   emptyText: string;
 }) {
-  if (facts === null) return <div className="text-xs text-text-muted">Reading…</div>;
+  const { shown, more, listRef } = useCapped(facts);
+  if (error !== null) return <ListState kind="error" things="the facts" error={error} onRetry={onRetry} />;
+  if (facts === null) return <Loading layout="inline" label="Loading facts" />;
   if (facts.length === 0) return <div className="text-xs text-text-muted">{emptyText}</div>;
   return (
-    <ul className="space-y-1">
-      {facts.map((f) => {
-        const rel = relationLabel(f.relation);
-        const link = (e: string) => (
-          <Link
-            component="button"
-            type="button"
-            size="sm"
-            weight="mono"
-            className="break-words text-left"
-            onClick={() => onWalk(e)}
-          >
-            {e}
-          </Link>
-        );
-        return (
-          <li
-            key={`${f.subject}|${f.relation}|${f.object}`}
-            className="text-xs rounded-md border border-border bg-surface px-2 py-1.5"
-          >
-            <div className="flex items-start gap-1.5">
-              <span className="flex-1 min-w-0 leading-snug break-words">
-                {about && f.subject === about ? (
-                  <>
-                    <span className="text-text-muted">{rel}</span> {link(f.object)}
-                  </>
-                ) : about && f.object === about ? (
-                  <>
-                    {link(f.subject)} <span className="text-text-muted">{rel}</span>
-                  </>
-                ) : (
-                  <>
-                    {link(f.subject)} <span className="text-text-muted">{rel}</span> {link(f.object)}
-                  </>
-                )}
-              </span>
-              <span className="tabular-nums text-text-muted shrink-0">{f.co_occur}×</span>
-            </div>
-            <div className="mt-0.5 flex items-center gap-1.5 text-xs text-text-muted min-w-0 flex-wrap">
-              {f.provenance && <Badge text={f.provenance} state="neutral" size="sm" />}
-              <span className="tabular-nums">{f.last_seen ? f.last_seen.slice(0, 10) : ""}</span>
-              {f.stale ? (
-                <span className="inline-flex items-center gap-1 text-warn">
-                  <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" /> stale —{" "}
-                  {f.sources.length} source row
-                  {f.sources.length === 1 ? "" : "s"}, none active
+    <>
+      <ul ref={listRef} className="space-y-1">
+        {shown.map((f) => {
+          const rel = relationLabel(f.relation);
+          const link = (e: string) => (
+            <Link
+              component="button"
+              type="button"
+              size="sm"
+              weight="mono"
+              className="break-words text-left"
+              onClick={() => onWalk(e)}
+            >
+              {e}
+            </Link>
+          );
+          return (
+            <li key={`${f.subject}|${f.relation}|${f.object}`} className="pane-card text-xs">
+              <div className="flex items-start gap-1.5">
+                <span className="flex-1 min-w-0 leading-snug break-words">
+                  {about && f.subject === about ? (
+                    <>
+                      <span className="text-text-muted">{rel}</span> {link(f.object)}
+                    </>
+                  ) : about && f.object === about ? (
+                    <>
+                      {link(f.subject)} <span className="text-text-muted">{rel}</span>
+                    </>
+                  ) : (
+                    <>
+                      {link(f.subject)} <span className="text-text-muted">{rel}</span> {link(f.object)}
+                    </>
+                  )}
                 </span>
-              ) : f.sources.length > 0 ? (
-                <span className="flex items-center gap-1 min-w-0">
-                  {f.sources.slice(0, 2).map((sref) => (
-                    <Tip key={sref.memory_key} content={`${sref.memory_key} · ${sref.status || "status unknown"}`}>
-                      <button
-                        type="button"
+                <span className="tabular-nums text-text-muted shrink-0">{f.co_occur}×</span>
+              </div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-xs text-text-muted min-w-0 flex-wrap">
+                {f.provenance && <Badge text={f.provenance} state="neutral" size="sm" />}
+                {f.last_seen && <ListTime time={f.last_seen} quiet />}
+                {f.stale ? (
+                  <span className="inline-flex items-center gap-1 text-warn">
+                    <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" /> stale —{" "}
+                    {f.sources.length} source row
+                    {f.sources.length === 1 ? "" : "s"}, none active
+                  </span>
+                ) : f.sources.length > 0 ? (
+                  <span className="flex items-center gap-1 min-w-0">
+                    {f.sources.slice(0, 2).map((sref) => (
+                      <Chip
+                        key={sref.memory_key}
+                        label={sref.memory_key}
+                        mono
+                        outline
+                        tip={`${sref.memory_key} · ${sref.status || "status unknown"}`}
+                        ariaLabel={`Open ${sref.memory_key} (${sref.status || "status unknown"})`}
                         onClick={() => onOpenMemory(sref.memory_key)}
-                        aria-label={`Open ${sref.memory_key} (${sref.status || "status unknown"})`}
-                        className={`font-mono px-1 rounded border border-border truncate max-w-[110px] hover:text-text ${sref.status === "active" || sref.status === "conflicted" ? "" : "line-through"}`}
-                      >
-                        {sref.memory_key}
-                      </button>
-                    </Tip>
-                  ))}
-                  {f.sources.length > 2 && <span>+{f.sources.length - 2}</span>}
-                </span>
-              ) : null}
-            </div>
-          </li>
-        );
-      })}
-    </ul>
+                        className={`max-w-[110px] ${sref.status === "active" || sref.status === "conflicted" ? "" : "line-through"}`}
+                      />
+                    ))}
+                    {f.sources.length > 2 && <span>+{f.sources.length - 2}</span>}
+                  </span>
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {more}
+    </>
   );
 }
 
@@ -237,6 +283,11 @@ export function Inspector({
 }: InspectorProps) {
   const [facts, setFacts] = useState<FactRow[] | null>(null);
   const [hits, setHits] = useState<SearchHit[] | null>(null);
+  // A failed read stays null and is said as one; Retry reads the selection again.
+  const [factsError, setFactsError] = useState<unknown>(null);
+  const [hitsError, setHitsError] = useState<unknown>(null);
+  const [retries, setRetries] = useState(0);
+  const retry = () => setRetries((n) => n + 1);
   const [copied, setCopied] = useState(false);
   const [showWhy, setShowWhy] = useState(true);
   const keyRef = useRef<string>("");
@@ -262,25 +313,39 @@ export function Inspector({
       if (!model || sel === null) {
         setFacts(null);
         setHits(null);
+        setFactsError(null);
+        setHitsError(null);
         keyRef.current = "";
         return;
       }
-      const key = `${model.seed}|${sel}|${asOf}|${provKey}|${typesKey}|${tagsKey}`;
+      const key = `${identity.org}/${identity.namespace}|${model.seed}|${sel}|${asOf}|${provKey}|${typesKey}|${tagsKey}|${retries}`;
+      // The same selection under a new model (an Expand, a re-walk) keeps what it read,
+      // its failures included.
       if (keyRef.current === key) return;
       setFacts(null);
       setHits(null);
+      setFactsError(null);
+      setHitsError(null);
       const id = { org: identity.org, namespace: identity.namespace };
       const prov = provenance.size ? [...provenance] : undefined;
+      // Reads still out when the selection's effect is aborted (a new model mid-read) leave
+      // the key unclaimed, so the re-run reads again instead of keeping nothing.
+      let unsettled = 0;
+      const settled = () => {
+        unsettled -= 1;
+      };
       const timer = window.setTimeout(() => {
         keyRef.current = key;
+        unsettled = node ? 2 : 1;
         if (node) {
           listFacts(id, { entity: node.entity, limit: 12, as_of: asOfInstant(asOf), provenance: prov, signal })
             .then((r) => {
               if (live()) setFacts(r.rows || []);
             })
-            .catch(() => {
-              if (live()) setFacts([]);
-            });
+            .catch((e) => {
+              if (live()) setFactsError(e);
+            })
+            .finally(settled);
           const both = node.entity === model.seed ? [model.seed] : [model.seed, node.entity];
           // entity_filter is an OR boost, so the list is "memories naming
           // these entities"; the type and tag facets narrow it server-side.
@@ -297,9 +362,10 @@ export function Inspector({
               if (live())
                 setHits((r.results || []).filter((h) => memoryTypes.size === 0 || memoryTypes.has(h.memory_type)));
             })
-            .catch(() => {
-              if (live()) setHits([]);
-            });
+            .catch((e) => {
+              if (live()) setHitsError(e);
+            })
+            .finally(settled);
         } else if (edge) {
           const a = edge.parent;
           const b = edge.child.entity;
@@ -310,14 +376,18 @@ export function Inspector({
             .then(([ab, ba]) => {
               if (live()) setFacts([...(ab.rows || []), ...(ba.rows || [])]);
             })
-            .catch(() => {
-              if (live()) setFacts([]);
-            });
+            .catch((e) => {
+              if (live()) setFactsError(e);
+            })
+            .finally(settled);
         }
       }, 250);
-      signal.addEventListener("abort", () => window.clearTimeout(timer));
+      signal.addEventListener("abort", () => {
+        window.clearTimeout(timer);
+        if (unsettled > 0 && keyRef.current === key) keyRef.current = "";
+      });
     },
-    [model, node, edge, asOf, provKey, typesKey, tagsKey, identity.org, identity.namespace],
+    [model, node, edge, asOf, provKey, typesKey, tagsKey, identity.org, identity.namespace, retries],
   );
 
   const degree = (entity: string, fallback: number): { n: number; what: string } => {
@@ -415,8 +485,12 @@ export function Inspector({
         </div>
         <div className="mt-3">
           <SectionHeading label="Rows behind this edge" count={facts ? facts.length : undefined} />
+          {/* Keyed by the edge: another edge starts capped again. */}
           <FactList
+            key={`e:${edge.parent}>${c.entity}`}
             facts={facts}
+            error={factsError}
+            onRetry={retry}
             about={null}
             onWalk={onWalk}
             onOpenMemory={onOpenMemory}
@@ -478,9 +552,14 @@ export function Inspector({
   const isCollapsed = collapsed.has(n.entity);
   const firstHit = hits && hits.length ? hits[0] : null;
   const reachedBy =
-    typed && n.via_relation
-      ? `${n.via_direction === "in" ? "← " : "→ "}${relationLabel(n.via_relation)} with ${n.parent}`
-      : `co-mentioned ${n.via_co_occur}× with ${n.parent}`;
+    typed && n.via_relation ? (
+      <>
+        <DirectionIcon direction={n.via_direction} />
+        {relationLabel(n.via_relation)} with {n.parent}
+      </>
+    ) : (
+      `co-mentioned ${n.via_co_occur}× with ${n.parent}`
+    );
   return (
     <Panel
       as="aside"
@@ -579,7 +658,7 @@ export function Inspector({
         />
         <IconButton label="Copy entity" onClick={() => copy(n.entity)} icon="copy" size="sm" />
         {copied && <span className="text-xs text-text-muted">copied</span>}
-        {expanding === n.entity && <span className="text-xs text-text-muted">expanding…</span>}
+        {expanding === n.entity && <Loading layout="inline" label="Loading neighbours" />}
       </div>
 
       {!isSeed && (
@@ -642,7 +721,10 @@ export function Inspector({
           hint={`Typed triples with ${n.entity} as subject or object (facts.list), with provenance tier, last seen and the source rows behind each.`}
         />
         <FactList
+          key={`n:${n.entity}`}
           facts={facts}
+          error={factsError}
+          onRetry={retry}
           about={n.entity}
           onWalk={onWalk}
           onOpenMemory={onOpenMemory}
@@ -665,7 +747,8 @@ export function Inspector({
               : "Memories naming the seed or this entity (memory.search with an entity boost — an OR, so a row may name only one of them); click one to open it."
           }
         />
-        {hits === null && <div className="text-xs text-text-muted">Searching…</div>}
+        {hitsError !== null && <ListState kind="error" things="the memories" error={hitsError} onRetry={retry} />}
+        {hits === null && hitsError === null && <Loading layout="inline" label="Loading memories" />}
         {hits && hits.length === 0 && (
           <div className="text-xs text-text-muted">
             {memoryTypes.size || tags.size
@@ -687,12 +770,12 @@ export function Inspector({
                   <button
                     type="button"
                     onClick={() => onOpenMemory(h.memory_key)}
-                    className="w-full text-left text-xs rounded-md border border-border bg-surface px-2 py-1.5 hover:border-border-strong"
+                    className="pane-card w-full text-left text-xs"
                   >
                     <TextClamp text={excerpt} lines={1} max={200} reach="parent" className="leading-snug" />
                     <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-xs text-text-muted">
                       <Badge text={h.memory_type} state="neutral" size="sm" className="shrink-0" />
-                      {h.created_at && <span className="tabular-nums shrink-0">{h.created_at.slice(0, 10)}</span>}
+                      {h.created_at && <ListTime time={h.created_at} quiet className="shrink-0" />}
                       <span className="font-mono truncate flex-1">{h.memory_key}</span>
                       {h.namespace && h.namespace !== identity.namespace && (
                         <Chip label={h.namespace} mono className="shrink-0 min-h-5" />

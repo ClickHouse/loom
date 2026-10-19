@@ -115,6 +115,89 @@ describe("Recent change-driven refresh", () => {
     useStore.setState({ whoami: null, myNamespaces: null, identity: null });
   });
 
+  it("moves the pager's total with the toolbar's when a refresh brings a new count", async () => {
+    const rows = Array.from(
+      { length: 50 },
+      (_, i) => ({ memory_key: `k${i}`, value: `v${i}`, tags: [], agent: "a", memory_type: "fact" }) as never,
+    );
+    vi.mocked(listMemories)
+      .mockResolvedValueOnce({ entries: rows, truncated: false, total: 1234, today: 0, namespace_version: "7" })
+      .mockResolvedValue({ entries: rows, truncated: false, total: 1235, today: 0, namespace_version: "8" });
+    seed({ ...viewer, roles: ["ADMIN"] }, null);
+    render(<Recent />);
+    const pager = await screen.findByRole("navigation", { name: "Memories pages" });
+    expect(pager).toHaveTextContent("of 1,234");
+    expect(screen.getByLabelText("Search and filters")).toHaveTextContent("1–50 of 1,234");
+    await vi.advanceTimersByTimeAsync(8000);
+    await waitFor(() => expect(pager).toHaveTextContent("of 1,235"));
+    expect(screen.getByLabelText("Search and filters")).toHaveTextContent("1–50 of 1,235");
+  });
+
+  it("drops a new row's 4 s highlight timer when the list unmounts", async () => {
+    const entry = (k: string) => ({ memory_key: k, value: k, tags: [], agent: "a", memory_type: "fact" }) as never;
+    vi.mocked(listMemories)
+      .mockResolvedValueOnce({ entries: [entry("k0")], truncated: false, total: 1, today: 0, namespace_version: "1" })
+      .mockResolvedValue({
+        entries: [entry("k1"), entry("k0")],
+        truncated: false,
+        total: 2,
+        today: 0,
+        namespace_version: "2",
+      });
+    seed({ ...viewer, roles: ["ADMIN"] }, null);
+    const { unmount } = render(<Recent />);
+    await screen.findByRole("button", { name: "k0" });
+    await vi.advanceTimersByTimeAsync(8000);
+    await screen.findByRole("button", { name: "k1" });
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a highlight timer that fires takes its abort listener with it", async () => {
+    const entry = (k: string) => ({ memory_key: k, value: k, tags: [], agent: "a", memory_type: "fact" }) as never;
+    const keys = ["k0"];
+    vi.mocked(listMemories).mockImplementation(async () => {
+      const entries = keys.map(entry);
+      return { entries, truncated: false, total: entries.length, today: 0, namespace_version: String(keys.length) };
+    });
+    // The abort listeners on the list's signal that are still attached.
+    const attached = new Set<unknown>();
+    const add = AbortSignal.prototype.addEventListener;
+    const remove = AbortSignal.prototype.removeEventListener;
+    const onAdd = vi.spyOn(AbortSignal.prototype, "addEventListener").mockImplementation(function (
+      this: AbortSignal,
+      ...a
+    ) {
+      if (a[0] === "abort") attached.add(a[1]);
+      return add.apply(this, a);
+    });
+    const onRemove = vi.spyOn(AbortSignal.prototype, "removeEventListener").mockImplementation(function (
+      this: AbortSignal,
+      ...a
+    ) {
+      if (a[0] === "abort") attached.delete(a[1]);
+      return remove.apply(this, a);
+    });
+    // Restored even when an assertion fails, so no later test runs on the spies.
+    try {
+      seed({ ...viewer, roles: ["ADMIN"] }, null);
+      render(<Recent />);
+      await screen.findByRole("button", { name: "k0" });
+      const before = attached.size;
+      // Three refreshes, each with a new row, each row's highlight cleared 4 s later.
+      for (const k of ["k1", "k2", "k3"]) {
+        keys.unshift(k);
+        await vi.advanceTimersByTimeAsync(8000);
+        await screen.findByRole("button", { name: k });
+      }
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(attached.size).toBe(before);
+    } finally {
+      onAdd.mockRestore();
+      onRemove.mockRestore();
+    }
+  });
+
   it("polls with known_version and holds it across an unchanged answer", async () => {
     vi.mocked(listMemories)
       .mockResolvedValueOnce({ entries: [], truncated: false, total: 0, today: 0, namespace_version: "7" })

@@ -1,14 +1,15 @@
-import { useEffect, useState } from "react";
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
-import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
 import {
   browseNamespaces,
   joinNamespace,
   cancelNamespaceRequest,
+  leaveNamespace,
   type BrowseEntry,
   type MyNamespaceEntry,
 } from "../api";
@@ -18,19 +19,26 @@ import { MembersDialog } from "../flows/MembersDialog";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
-import { SkeletonCard } from "../components/Skeleton";
-import { Alert, PageHeader, Panel, Tip } from "../components/ui";
+import { RowSkeleton } from "../components/Skeleton";
+import { Alert, ListRow, LoadingSkeleton, PageHeader, Panel, SectionHeading, Tip } from "../components/ui";
+import { ListState } from "../components/ui/ListState";
+import { ListToolbar } from "../components/ui/ListToolbar";
+import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
+import { useRowNav } from "../lib/useRowNav";
+import { useFold } from "../lib/folds";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { IconButton } from "../components/IconButton";
-import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { relativeTime, humanizeError, displaySubject, isServiceSubject, isSystemKind } from "../lib/format";
+import { humanizeError, isSystemKind, sentenceCase } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { oneOf } from "../lib/oneOf";
+import { PHONE_QUERY, useMedia } from "../lib/useMedia";
+
+const isCodeKind = (kind: string | undefined) => kind === "code";
+const isTrackerKind = (kind: string | undefined) => kind === "qa" || kind === "tracker";
 
 type JoinRole = "viewer" | "writer" | "admin";
 
@@ -71,12 +79,19 @@ const JOIN_ROLES: Array<{
  */
 export function Browse() {
   const identity = useIdentity();
+  const phone = useMedia(PHONE_QUERY);
   const [rows, setRows] = useState<BrowseEntry[] | null>(null);
+  // The browse read failed: its error, in place of the public list; Retry reads again.
+  const [error, setError] = useState<unknown>(null);
+  const [reads, setReads] = useState(0);
+  // A reload after a join or a create keeps the list on screen and marks it busy.
+  const [refreshing, setRefreshing] = useState(false);
   const [mine, setMine] = useState<Set<string>>(new Set());
   // Per-namespace current role so the row can offer "Request upgrade"
   // when the caller is already a member but at a role below admin.
   const [myRole, setMyRole] = useState<Record<string, "viewer" | "writer" | "admin" | "jwt">>({});
   const [pending, setPending] = useState<Set<string>>(new Set());
+  // Namespaces I can invite to (admin, active), memory ones and code / tracker ones apart.
   const [adminNs, setAdminNs] = useState<MyNamespaceEntry[]>([]);
   const [query, setQuery] = useState("");
   const [joining, setJoining] = useState<string | null>(null);
@@ -87,22 +102,28 @@ export function Browse() {
   const [createOpen, setCreateOpen] = useState(false);
   const [repoCount, setRepoCount] = useState(0);
   const setView = useStore((s) => s.setView);
+  const whoami = useStore((s) => s.whoami);
 
   const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
-    setRows(null);
+    setRefreshing(true);
+    let failed: unknown = null;
     Promise.all([
-      browseNamespaces(identity.org, { limit: 200, signal }).catch(() => [] as BrowseEntry[]),
+      browseNamespaces(identity.org, { limit: 200, signal }).catch((e: unknown) => {
+        failed = e;
+        return [] as BrowseEntry[];
+      }),
       // The shared membership read, not a second list_mine
       sharedMine(identity.org).catch(() => [] as MyNamespaceEntry[]),
     ]).then(([browseRows, mineRows]) => {
       if (!live()) return;
+      setRefreshing(false);
+      setError(failed);
       // Code namespaces are surfaced in the Code section, not as joinable memory.
-      setRows(browseRows.filter((r) => r.kind !== "code"));
+      setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
       setRepoCount(browseRows.filter((r) => r.kind === "code").length);
       setMine(new Set(mineRows.map((r) => r.namespace)));
       setMyRole(Object.fromEntries(mineRows.map((r) => [r.namespace, r.role])));
       setPending(new Set(mineRows.filter((r) => r.pending_role || r.status === "pending").map((r) => r.namespace)));
-      // Namespaces I can invite to (i.e. ones I'm admin on, active).
       // Excludes pending-admin requests — until approved I can't act.
       setAdminNs(mineRows.filter((r) => r.role === "admin" && r.status === "active"));
       const map: Record<string, boolean> = {};
@@ -111,7 +132,15 @@ export function Browse() {
     });
   };
 
-  useAbortableEffect(load, [identity.org]);
+  // Another org's list is not this one's: start from the skeleton.
+  useAbortableEffect(
+    (signal, live) => {
+      setRows(null);
+      setError(null);
+      load(signal, live);
+    },
+    [identity.org, reads],
+  );
 
   const onJoin = async (ns: string, role: JoinRole) => {
     setJoining(ns);
@@ -154,234 +183,233 @@ export function Browse() {
     }
   };
 
-  const filtered = (rows || []).filter(
-    (r) =>
-      !query ||
-      r.namespace.toLowerCase().includes(query.toLowerCase()) ||
-      (r.description || "").toLowerCase().includes(query.toLowerCase()),
+  // A code index is kind=code and a tracker record kind=qa or tracker, as the server says.
+  const managedMemory = adminNs.filter((r) => !isCodeKind(r.kind) && !isTrackerKind(r.kind));
+  const managedCode = adminNs.filter((r) => isCodeKind(r.kind));
+  const managedTracker = adminNs.filter((r) => isTrackerKind(r.kind));
+  const repoHint = repoCount > 0 && (
+    <div className="text-xs text-text-muted">
+      Looking for a code index or a tracker source? Both are joined from{" "}
+      <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
+        Repositories
+      </Link>{" "}
+      — {repoCount} repositor{repoCount === 1 ? "y" : "ies"} available, each with its issues & PRs when a record covers
+      it, read-only.
+    </div>
   );
+  const managedProps = {
+    subject: whoami?.subject ?? identity.org,
+    onInvite: setManageNs,
+    onSettings: setSettingsNs,
+    onRepositories: () => setView("code"),
+  };
+
+  // The rows filter by the text a render behind the box, so a keystroke paints the box
+  // first; the memoised rows render again only when what they show changes.
+  const listQuery = useDeferredValue(query).trim();
+  const filtered = useMemo(() => {
+    const q = listQuery.toLowerCase();
+    return (rows || []).filter((r) => matchesSpace(r, q));
+  }, [rows, listQuery]);
+  const managedShown = managedMemory.filter((r) => matchesSpace(r, listQuery.toLowerCase()));
+  const memberCount = (ns: string) => rows?.find((r) => r.namespace === ns)?.member_count;
+  const dialogOpen = !!(joinDialog || manageNs || settingsNs || createOpen);
+  // The rows of both sections are one tab stop; the arrows move through them.
+  const nav = useRowNav({ enabled: !dialogOpen && filtered.length + managedShown.length > 0 });
+
+  const withdraw = async (ns: string) => {
+    if (
+      !(await confirmAction({
+        title: `Withdraw your request on ${ns}?`,
+        message: "You'll keep any current access; the request just leaves the admin queue.",
+        confirmLabel: "Withdraw",
+      }))
+    )
+      return;
+    try {
+      await cancelNamespaceRequest(identity.org, ns);
+      toast(`Withdrew request on ${ns}`, "ok");
+      load();
+    } catch (e) {
+      toast(`Cancel failed: ${humanizeError(e)}`, "error");
+    }
+  };
+  const leave = async (ns: string) => {
+    if (
+      !(await confirmAction({
+        title: `Leave ${ns}?`,
+        message: "You stop reading its memories, and new tokens no longer include it. An admin can add you again.",
+        confirmLabel: "Leave",
+        danger: true,
+      }))
+    )
+      return;
+    try {
+      await leaveNamespace(identity.org, ns);
+      toast(`Left ${ns}`, "ok");
+      load();
+    } catch (e) {
+      toast(`Leave failed: ${humanizeError(e)}`, "error");
+    }
+  };
+  // The rows call the latest render's handlers through one object that keeps its identity,
+  // so a memoised row renders again only when its own fields change.
+  const handlers = useRef({ withdraw, leave });
+  handlers.current = { withdraw, leave };
+  const rowActions = useMemo<SpaceActions>(
+    () => ({
+      withdraw: (ns) => void handlers.current.withdraw(ns),
+      settings: setSettingsNs,
+      join: (row) => setJoinDialog({ ns: row.namespace, row }),
+      invite: setManageNs,
+      leave: (ns) => void handlers.current.leave(ns),
+    }),
+    [],
+  );
+  const standingOf = (ns: string): SpaceStanding => {
+    if (!mine.has(ns)) return "none";
+    if (pending.has(ns)) return "pending";
+    return myRole[ns] === "admin" ? "admin" : "member";
+  };
 
   return (
     <PageContainer>
-      <PageHeader title="Spaces">
-        <ScopeBadge kind="namespace" value={identity.namespace} />
-      </PageHeader>
-      <p className="text-sm text-text-muted mb-6">
-        Connect people and namespaces. Browse public namespaces to join, or invite members into namespaces you manage.
-      </p>
-      {repoCount > 0 && (
-        <div className="mb-6 -mt-3 text-xs text-text-muted">
-          Looking for a code index or a tracker source? Both are joined from{" "}
-          <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
-            Repositories
-          </Link>{" "}
-          — {repoCount} repositor{repoCount === 1 ? "y" : "ies"} available, each with its issues & PRs when a record
-          covers it, read-only.
-        </div>
-      )}
-
-      {/* SECTION 1: namespaces you admin — proactive invitation surface.
-          Hidden when the caller doesn't admin anything. */}
-      {adminNs.length > 0 && (
-        <section className="mb-8">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2 mb-3">
-            <h2 className="inline-flex items-center gap-2">
-              <Icon name="star" size="sm" color="var(--color-warn)" aria-hidden="true" /> Namespaces you manage
-            </h2>
-            <span className="text-xs text-text-muted tabular">
-              {adminNs.length} {adminNs.length === 1 ? "namespace" : "namespaces"}
-            </span>
-          </div>
-          <div className="space-y-2">
-            {adminNs.map((r) => (
-              <div
-                key={r.namespace}
-                className="p-3.5 rounded-xl border border-border bg-surface flex items-center gap-3"
-              >
-                <Icon name="star" size="sm" color="var(--color-warn)" aria-hidden="true" className="shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-mono text-text">{r.namespace}</div>
-                  {r.description && <div className="text-xs text-text-muted mt-0.5 truncate">{r.description}</div>}
-                  <div className="mt-1.5 flex items-center gap-3 text-xs text-text-muted tabular">
-                    <Badge text={r.visibility} state={r.visibility === "public" ? "success" : "neutral"} size="sm" />
-                  </div>
-                </div>
-                <Tip content={`Invite people to ${r.namespace}`}>
-                  <Button
-                    type="secondary"
-                    htmlType="button"
-                    iconLeft="users"
-                    onClick={() => setManageNs(r.namespace)}
-                    className="shrink-0"
-                  >
-                    Invite
-                  </Button>
-                </Tip>
-                <IconButton
-                  icon="gear"
-                  label={`Namespace settings for ${r.namespace}`}
-                  onClick={() => setSettingsNs(r.namespace)}
-                  className="shrink-0"
-                />
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* SECTION 2: public namespaces in the org to join. */}
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2 mb-3">
-        <h2 className="inline-flex flex-wrap items-center gap-x-2">
-          <Icon name="globe" size="sm" aria-hidden="true" /> Public namespaces in{" "}
-          <span className="font-mono">{identity.org}</span>
-        </h2>
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          <span role="status" className="text-text-muted tabular">
-            {rows ? `${filtered.length} ${filtered.length === 1 ? "namespace" : "namespaces"}` : ""}
-          </span>
+      <PageHeader
+        title="Spaces"
+        actions={
           <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setCreateOpen(true)}>
             Create namespace
           </Button>
+        }
+      >
+        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
+        <span className="hidden sm:contents">
+          <ScopeBadge kind="namespace" value={identity.namespace} />
+        </span>
+      </PageHeader>
+      <p className="text-sm text-text-muted mb-3">
+        Join public namespaces in your org, or invite people into the ones you manage.
+      </p>
+      {/* The Repositories hint: under the description, or inside the folded code section when there is one. */}
+      {managedCode.length === 0 && repoHint && <div className="mb-3">{repoHint}</div>}
+
+      <ListToolbar
+        label="Namespaces"
+        count={rows ? `${filtered.length} ${filtered.length === 1 ? "namespace" : "namespaces"}` : undefined}
+      >
+        <div className="min-w-0 flex-1">
+          <SearchField
+            aria-label="Search namespaces"
+            value={query}
+            onChange={setQuery}
+            // A phone's field holds the short form only.
+            placeholder={
+              phone
+                ? "Search namespaces"
+                : "Search namespaces, or type an exact private namespace name to request access…"
+            }
+          />
         </div>
-      </div>
+      </ListToolbar>
 
-      <div className="mb-4">
-        <SearchField
-          aria-label="Search namespaces"
-          value={query}
-          onChange={(value) => setQuery(value)}
-          placeholder="Search public namespaces, or type an exact private namespace name to request access…"
-        />
-      </div>
+      <div ref={nav}>
+        {/* SECTION 1: namespaces you admin — proactive invitation surface.
+            Hidden when the caller doesn't admin anything. */}
+        {managedShown.length > 0 && (
+          <section className="mb-6">
+            <SectionHeading level={2} label="Namespaces you manage" count={managedShown.length} />
+            <div className="mt-2 space-y-2">
+              {managedShown.map((r) => (
+                <SpaceRow
+                  key={r.namespace}
+                  namespace={r.namespace}
+                  visibility={r.visibility}
+                  description={r.description}
+                  members={memberCount(r.namespace)}
+                  standing="admin"
+                  actions={rowActions}
+                />
+              ))}
+            </div>
+          </section>
+        )}
 
-      {rows === null && (
-        <div className="space-y-2">
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
-      )}
+        {/* SECTION 2: public namespaces in the org to join. */}
+        <section aria-labelledby="spaces-public-heading">
+          <SectionHeading
+            level={2}
+            id="spaces-public-heading"
+            label="Public namespaces"
+            caption={`in ${identity.org}`}
+            className="mb-2"
+          />
 
-      {rows !== null && filtered.length === 0 && !query && (
-        <EmptyState
-          icon="globe"
-          title="No public namespaces yet"
-          description="Nobody in your organisation has opened a shared space yet. Until someone does, your own private namespace is the only one you can use."
-          details={
-            <>
-              An admin creates a shared space with <code className="font-mono text-xs">namespace.register</code> and{" "}
-              <code className="font-mono text-xs">visibility=public</code>; it then appears here for everyone in the org
-              to join.
-            </>
-          }
-        />
-      )}
+          {error !== null && (
+            <ListState kind="error" things="namespaces" error={error} onRetry={() => setReads((n) => n + 1)} />
+          )}
 
-      {rows !== null && filtered.length === 0 && query && (
-        <RequestAccessCard
-          org={identity.org}
-          typedName={query.trim()}
-          existingRole={myRole[query.trim()]}
-          onSuccess={() => {
-            setQuery("");
-            load();
-          }}
-        />
-      )}
-
-      {rows !== null && filtered.length > 0 && (
-        <div className="space-y-2">
-          {filtered.map((r) => {
-            const isMember = mine.has(r.namespace);
-            return (
-              <div
-                key={r.namespace}
-                className="p-3.5 rounded-xl border border-border bg-surface flex items-start gap-3"
-              >
-                <Icon name="globe" size="sm" aria-hidden="true" className="shrink-0 mt-1" />
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-mono text-text flex items-center gap-2">
-                    {r.namespace}
-                    {isSystemKind(r.kind) && <Badge text={r.kind} state="neutral" size="sm" />}
-                  </div>
-                  {r.description && <div className="text-xs text-text-muted mt-0.5">{r.description}</div>}
-                  <div className="mt-1.5 flex items-center gap-3 text-xs text-text-muted tabular">
-                    <span className="inline-flex items-center gap-1">
-                      <Icon name="users" size="xs" aria-hidden="true" /> {r.member_count} member
-                      {r.member_count === 1 ? "" : "s"}
-                    </span>
-                    {r.owner_email &&
-                      (isServiceSubject(r.owner_email) ? (
-                        <span>shared by {displaySubject(r.owner_email)}</span>
-                      ) : (
-                        <span>owner {r.owner_email}</span>
-                      ))}
-                    {r.created_at && <span>created {relativeTime(r.created_at)}</span>}
-                  </div>
-                </div>
-                {isMember && pending.has(r.namespace) ? (
-                  <Tip content="Withdraw the pending request">
-                    <Button
-                      type="secondary"
-                      htmlType="button"
-                      iconLeft="clock"
-                      onClick={async () => {
-                        if (
-                          !(await confirmAction({
-                            title: `Withdraw your request on ${r.namespace}?`,
-                            message: "You'll keep any current access; the request just leaves the admin queue.",
-                            confirmLabel: "Withdraw",
-                          }))
-                        )
-                          return;
-                        try {
-                          await cancelNamespaceRequest(identity.org, r.namespace);
-                          toast(`Withdrew request on ${r.namespace}`, "ok");
-                          load();
-                        } catch (e) {
-                          toast(`Cancel failed: ${humanizeError(e)}`, "error");
-                        }
-                      }}
-                    >
-                      Pending
-                    </Button>
-                  </Tip>
-                ) : isMember ? (
-                  (() => {
-                    const role = myRole[r.namespace];
-                    // Already admin: nothing higher to request.
-                    if (role === "admin") {
-                      return <Badge text="Joined · admin" state="neutral" />;
-                    }
-                    // Viewer / writer / jwt: offer to request a higher role.
-                    return (
-                      <Tip content={`You're a ${role} — request writer or admin`}>
-                        <Button
-                          type="secondary"
-                          htmlType="button"
-                          iconLeft="check"
-                          onClick={() => setJoinDialog({ ns: r.namespace, row: r })}
-                        >
-                          Joined · {role} — request upgrade
-                        </Button>
-                      </Tip>
-                    );
-                  })()
-                ) : (
-                  <Button
-                    type="secondary"
-                    htmlType="button"
-                    loading={joining === r.namespace}
-                    onClick={() => setJoinDialog({ ns: r.namespace, row: r })}
-                  >
-                    Join
-                  </Button>
-                )}
+          {rows === null && error === null && (
+            <LoadingSkeleton label="Loading namespaces">
+              <div className="space-y-2">
+                <RowSkeleton />
+                <RowSkeleton />
+                <RowSkeleton />
               </div>
-            );
-          })}
-        </div>
-      )}
+            </LoadingSkeleton>
+          )}
+
+          {rows !== null && filtered.length === 0 && !listQuery && (
+            <ListState
+              kind="empty"
+              icon="globe"
+              title="No public namespaces yet"
+              description="Nobody in your org has opened a shared space yet. Until someone does, your own private namespace is the only one you can use."
+              details={
+                <>
+                  An admin creates a shared space with <code className="code-inline text-xs">namespace.register</code>{" "}
+                  and <code className="code-inline text-xs">visibility=public</code>; it then appears here for everyone
+                  in the org to join.
+                </>
+              }
+            />
+          )}
+
+          {rows !== null && filtered.length === 0 && listQuery && (
+            <RequestAccessCard
+              org={identity.org}
+              typedName={listQuery}
+              existingRole={myRole[listQuery]}
+              onSuccess={() => {
+                setQuery("");
+                load();
+              }}
+            />
+          )}
+
+          {rows !== null && filtered.length > 0 && (
+            <div className="space-y-2" data-testid="browse-list" aria-busy={refreshing || undefined}>
+              {filtered.map((r) => (
+                <SpaceRow
+                  key={r.namespace}
+                  namespace={r.namespace}
+                  visibility={r.visibility ?? "public"}
+                  kind={isSystemKind(r.kind) ? r.kind : undefined}
+                  description={r.description}
+                  members={r.member_count}
+                  standing={standingOf(r.namespace)}
+                  role={myRole[r.namespace]}
+                  entry={r}
+                  joining={joining === r.namespace}
+                  actions={rowActions}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      <ManagedKindSection kind="code" rows={managedCode} hint={repoHint} {...managedProps} />
+      <ManagedKindSection kind="tracker" rows={managedTracker} {...managedProps} />
 
       <JoinDialog
         target={joinDialog}
@@ -412,7 +440,7 @@ export function Browse() {
           }}
           org={identity.org}
           namespace={manageNs}
-          kind={rows?.find((r) => r.namespace === manageNs)?.kind}
+          kind={(rows?.find((r) => r.namespace === manageNs) ?? adminNs.find((r) => r.namespace === manageNs))?.kind}
         />
       )}
       {settingsNs && (
@@ -429,6 +457,225 @@ export function Browse() {
         />
       )}
     </PageContainer>
+  );
+}
+
+const matchesSpace = (r: { namespace: string; description?: string }, q: string) =>
+  !q || r.namespace.toLowerCase().includes(q) || (r.description || "").toLowerCase().includes(q);
+
+/** Where the caller stands in a space: its row's open action, inline button and menu follow. */
+type SpaceStanding = "none" | "pending" | "member" | "admin";
+
+interface SpaceActions {
+  withdraw: (ns: string) => void;
+  settings: (ns: string) => void;
+  /** The join dialog: Join, or Request upgrade for a member. */
+  join: (row: BrowseEntry) => void;
+  invite: (ns: string) => void;
+  leave: (ns: string) => void;
+}
+
+/**
+ * One space: line 1 the namespace in mono and its visibility, line 2 its
+ * description; at the right its member count, the one inline action and the More menu.
+ * The name is the row's open button (`data-row-open`), stretched over the row.
+ * Memoised: two hundred rows of badges, buttons and menus rendered again on every
+ * keystroke in the search.
+ */
+const SpaceRow = memo(function SpaceRow({
+  namespace,
+  visibility,
+  kind,
+  description,
+  members,
+  standing,
+  role,
+  entry,
+  joining = false,
+  actions,
+}: {
+  namespace: string;
+  visibility: string;
+  kind?: string;
+  description?: string;
+  members?: number;
+  standing: SpaceStanding;
+  role?: string;
+  /** The browse row the join dialog opens on; a managed row has none (it is never joined). */
+  entry?: BrowseEntry;
+  joining?: boolean;
+  actions: SpaceActions;
+}) {
+  const join = () => {
+    if (entry) actions.join(entry);
+  };
+  const withdraw = () => actions.withdraw(namespace);
+  const settings = () => actions.settings(namespace);
+  const open = standing === "pending" ? withdraw : standing === "admin" ? settings : join;
+  const member = standing === "member" || standing === "admin";
+  /** The More menu: Settings where you manage it, Copy name, Leave where you belong. */
+  const menu: RowMenuItem[] = [
+    ...(standing === "admin" ? [{ label: "Settings", icon: "gear" as const, onSelect: settings }] : []),
+    {
+      label: "Copy name",
+      icon: "copy",
+      onSelect: () =>
+        void navigator.clipboard
+          ?.writeText(namespace)
+          .then(() => toast(`Copied ${namespace}`, "ok"))
+          .catch(() => toast("Couldn't copy the name", "error")),
+    },
+    ...(member
+      ? [{ label: "Leave", icon: "cross" as const, danger: true, onSelect: () => actions.leave(namespace) }]
+      : []),
+  ];
+  const action =
+    standing === "pending" ? (
+      <Tip content="Your request is waiting for an admin">
+        <Button type="secondary" htmlType="button" iconLeft="clock" onClick={withdraw}>
+          Withdraw request
+        </Button>
+      </Tip>
+    ) : standing === "admin" ? (
+      <Tip content={`Invite people to ${namespace}`}>
+        <Button
+          type="secondary"
+          htmlType="button"
+          iconLeft="users"
+          aria-label={`Invite people to ${namespace}`}
+          onClick={() => actions.invite(namespace)}
+        >
+          Invite
+        </Button>
+      </Tip>
+    ) : standing === "member" ? (
+      <Tip content={`You're a ${role} — request writer or admin`}>
+        <Button type="secondary" htmlType="button" onClick={join}>
+          Request upgrade
+        </Button>
+      </Tip>
+    ) : (
+      <Button type="secondary" htmlType="button" loading={joining} onClick={join}>
+        Join
+      </Button>
+    );
+  return (
+    // Back to this page focuses the space that had the focus.
+    <ListRow data-focus-key={`space:${namespace}`}>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="min-w-0 flex-1 basis-60">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              data-row-open=""
+              onClick={open}
+              className="list-row-open min-w-0 break-all font-mono text-sm text-text"
+            >
+              <code>{namespace}</code>
+            </button>
+            {/* Visibility is not a status: neutral either way. */}
+            <Badge text={sentenceCase(visibility)} state="neutral" size="sm" />
+            {kind && <Badge text={sentenceCase(kind)} state="neutral" size="sm" />}
+          </div>
+          {description && <p className="mt-0.5 truncate text-xs text-text-muted">{description}</p>}
+        </div>
+        <div className="list-row-control ml-auto flex shrink-0 items-center gap-2">
+          {members !== undefined && (
+            <span className="whitespace-nowrap text-xs text-text-muted tabular">
+              {members} member{members === 1 ? "" : "s"}
+            </span>
+          )}
+          {action}
+          <RowMenu name={namespace} items={menu} />
+        </div>
+      </div>
+    </ListRow>
+  );
+});
+
+const MANAGED = {
+  code: { label: "Code indexes you manage", icon: "code", link: "Manage indexing in Repositories" },
+  tracker: { label: "Tracker records you manage", icon: "flag", link: "Manage tracker sources in Repositories" },
+} as const;
+
+/**
+ * The code indexes (or tracker records) someone manages: a section at the bottom of the
+ * page, folded until opened (remembered per person in this browser), drawn only when it
+ * has rows. Each row is the repository first and the namespace in mono under it.
+ */
+function ManagedKindSection({
+  kind,
+  rows,
+  hint,
+  subject,
+  onInvite,
+  onSettings,
+  onRepositories,
+}: {
+  kind: keyof typeof MANAGED;
+  rows: MyNamespaceEntry[];
+  hint?: ReactNode;
+  subject: string;
+  onInvite: (ns: string) => void;
+  onSettings: (ns: string) => void;
+  onRepositories: () => void;
+}) {
+  const meta = MANAGED[kind];
+  const [open, toggle] = useFold(`spaces-${kind}-${subject}`);
+  const bodyId = `managed-${kind}-body`;
+  if (rows.length === 0) return null;
+  return (
+    <section className="mt-8">
+      <SectionHeading
+        level={2}
+        label={meta.label}
+        count={rows.length}
+        fold={{ open, onToggle: toggle, controls: bodyId }}
+      />
+      <div id={bodyId} hidden={!open} className="mt-3 space-y-2">
+        {open && (
+          <>
+            {hint}
+            {rows.map((r) => (
+              <ListRow
+                key={r.namespace}
+                data-focus-key={`space:${r.namespace}`}
+                leading={<Icon name={meta.icon} size="sm" aria-hidden="true" />}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm text-text truncate">{r.description || r.namespace}</div>
+                    {r.description && (
+                      <code className="block text-xs font-mono text-text-muted truncate">{r.namespace}</code>
+                    )}
+                  </div>
+                  <Badge text={sentenceCase(r.visibility)} state="neutral" size="sm" />
+                  <Tip content={`Invite people to ${r.namespace}`}>
+                    <Button
+                      type="secondary"
+                      htmlType="button"
+                      iconLeft="users"
+                      aria-label={`Invite people to ${r.namespace}`}
+                      onClick={() => onInvite(r.namespace)}
+                      className="shrink-0"
+                    >
+                      Invite
+                    </Button>
+                  </Tip>
+                  <RowMenu
+                    name={r.namespace}
+                    items={[{ label: "Settings", icon: "gear", onSelect: () => onSettings(r.namespace) }]}
+                  />
+                </div>
+              </ListRow>
+            ))}
+            <Link component="button" type="button" size="sm" onClick={onRepositories}>
+              {meta.link}
+            </Link>
+          </>
+        )}
+      </div>
+    </section>
   );
 }
 

@@ -4,7 +4,7 @@ import { cleanup, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { previewValue } from "./format";
 import { detectEncodedRecord, detectEncodedValue } from "./encoded";
-import { MemoryCard } from "../components/MemoryCard";
+import { CARD_VALUE_CHARS, MemoryCard } from "../components/MemoryCard";
 import type { MemoryListEntry } from "../api";
 import { must } from "../test/must";
 
@@ -69,10 +69,42 @@ describe("MemoryCard preview", () => {
     const stringify = vi.spyOn(JSON, "stringify");
     const value = { alert: "z".repeat(4000), n: 1 };
     render(<MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value={value} />);
-    const shown = await screen.findByText(/^\{"alert":"zzz/);
-    expect(must(shown.textContent, "preview text").length).toBeLessThanOrEqual(141);
+    // An object reads as its pairs, still cut to two lines' worth.
+    const shown = await screen.findByText(/^alert: zzz/);
+    // two lines' worth, cut before the clamp
+    expect(must(shown.textContent, "preview text").length).toBeLessThanOrEqual(CARD_VALUE_CHARS);
     // no `JSON.stringify(v, null, 2)` anywhere on the card's path
     expect(stringify.mock.calls.some((c) => c.length >= 3 && c[2] === 2)).toBe(false);
+  });
+
+  it("ends a value the list cut in a cut mark, and shows one that fits whole", async () => {
+    // The server cuts a value to the preview_chars the list asks for (a card's worth) and
+    // adds "…": one character past what a card shows.
+    const server = render(
+      <MemoryCard
+        identity={identity}
+        entry={entry}
+        onSelect={() => {}}
+        active={false}
+        value={`${"x".repeat(CARD_VALUE_CHARS)}…`}
+      />,
+    );
+    const marked = must((await screen.findByText(/^xxx/)).textContent, "preview text");
+    expect(marked.endsWith("…")).toBe(true);
+    expect(marked.length).toBeLessThanOrEqual(CARD_VALUE_CHARS);
+    server.unmount();
+    // A value one character longer than a card shows, with no mark, ends in one too.
+    const cut = "word ".repeat(100).slice(0, CARD_VALUE_CHARS + 1);
+    const { unmount } = render(
+      <MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value={cut} />,
+    );
+    const shown = must((await screen.findByText(/^word word/)).textContent, "preview text");
+    expect(shown.endsWith("…")).toBe(true);
+    expect(shown.length).toBeLessThanOrEqual(CARD_VALUE_CHARS);
+    unmount();
+    const whole = "word ".repeat(100).slice(0, CARD_VALUE_CHARS);
+    render(<MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value={whole} />);
+    expect(must((await screen.findByText(/^word word/)).textContent, "preview text")).toBe(whole);
   });
 
   it("flags an agent-encoded envelope from the parsed object", async () => {
@@ -93,6 +125,7 @@ describe("MemoryCard preview", () => {
   it("keeps the layout containment on a standalone card", () => {
     render(<MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value="plain" />);
     const card = screen.getByRole("button", { name: /alerts\/2026-09-19\/1/ }).closest("[data-memory-key]");
-    expect(card?.className).toContain("[content-visibility:auto]");
+    // the row class carries `content-visibility: auto` (styles.css .list-row)
+    expect(card?.className).toContain("list-row");
   });
 });

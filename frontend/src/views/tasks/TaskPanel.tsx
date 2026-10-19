@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
@@ -16,10 +17,10 @@ import {
   type TaskRow,
 } from "../../api/tasks";
 import {
-  ACTION_LABEL,
   EVENT_LABEL,
   actionsFor,
   actorKind,
+  groupOf as groupOfStatus,
   actorName,
   briefSections,
   collapseHeartbeats,
@@ -27,35 +28,42 @@ import {
   inputKind,
   issueHref,
   leaseMinutesLeft,
+  menuLabel,
   posterKind,
   posterName,
   rel,
   resolvePolicy,
   shortId,
   tallyRecord,
+  type Group,
   type PosterRecord,
   type TaskAction,
 } from "../../lib/tasks";
 import { humanizeError } from "../../lib/format";
-import { toast } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
-import { Alert, ExternalLink, Stat, Tip, TipTarget } from "../../components/ui";
-import { KindTag, PriorityBadge, StatusPill } from "./TaskBits";
+import { Alert, ExternalLink, Loading, Stat, Tip } from "../../components/ui";
+import { ListTime } from "../../components/ui/ListTime";
+import { KindTag, PriorityBadge, StatusPill, copyTaskId } from "./TaskBits";
 import { MenuTrigger } from "../../components/ui/Menu";
 
 /**
- * The detail panel: a document, then the verb. Header — status, kind, priority, title,
- * who handed it to which inbox. Body — for a triage task the poster's record and the
- * trust rule, then the brief as sections (Objective, Acceptance criteria, Inputs as
- * key/value with links, Constraints in a warning tone), the outcome, the reason a task
- * waits or ended, and the timeline from `task.history` with people, agents and the
- * sweeper told apart. Footer — only the actions the status allows, primary first; the
- * rest under one menu.
+ * The detail panel: what it is, what to do, then the document. Header — status, priority,
+ * kind, the title, who handed it to which inbox and when (with the owner and lease of a
+ * running task, the resume time of a deferred one). Under it the action bar, in view at
+ * any height: only the moves the status allows, at most one primary and one secondary,
+ * the rest under More. Body — why a task waits or ended, first; for a triage task the
+ * poster's record and the trust rule; then the brief as sections (Objective, Acceptance
+ * criteria, Inputs as key/value with links, Constraints in a warning tone), the outcome,
+ * and the timeline from `task.history` with people, agents and the sweeper told apart.
+ * The side panel and the sheet share this layout.
  *
  * Reads `task.get` + `task.history` once per opened task (and again after
  * an action, via `reloadKey`); a triage task adds one `task.list posted_by`
  * and one `inbox.policy_list`. Actions are the page's: the panel says which.
  */
+// A status whose reason is the first thing to read: it waits on something, or it ended.
+const WAITS_OR_ENDED: ReadonlySet<Group> = new Set(["waiting", "closed"]);
+
 interface Props {
   identity: Caller;
   row: TaskListRow;
@@ -80,6 +88,7 @@ const ACTOR_KIND_LABEL: Record<ReturnType<typeof actorKind>, string> = {
   sweeper: "the lease sweeper",
   bot: "an agent",
 };
+const ACTOR_ICON: Record<ReturnType<typeof actorKind>, IconName> = { human: "user", sweeper: "clock", bot: "cpu" };
 
 const URL_RE = /^https?:\/\/\S+$/i;
 
@@ -124,14 +133,39 @@ function InputValue({ v }: { v: unknown }) {
   }
 }
 
-// Each status allows at most one of these: the footer's primary, last on the right.
-const PRIMARY_ACTIONS: { action: TaskAction; label: string; tip?: string }[] = [
-  { action: "accept", label: "Accept" },
-  { action: "start", label: "Start", tip: "Claim it: to do → in progress" },
-  { action: "complete", label: "Mark done…" },
+// Each status allows at most one of these: the bar's primary, last on the right.
+// A button with a key names it in its tooltip ("Accept · A", after a `tip` that explains
+// more than the label); the help dialog lists them all.
+const PRIMARY_ACTIONS: ActionButton[] = [
+  { action: "accept", label: "Accept", key: "a" },
+  { action: "start", label: "Start", tip: "Claim it: to do → in progress", key: "s" },
+  { action: "complete", label: "Mark done…", key: "c" },
   { action: "unblock", label: "Unblock" },
   { action: "resume", label: "Resume now" },
 ];
+// The one secondary beside it, the first of these the status allows: the other way the
+// task usually goes (fail a run, park a queued task, decline the rest, reopen a closed one).
+const SECONDARY_ACTIONS: ActionButton[] = [
+  { action: "fail", label: "Fail…" },
+  { action: "defer", label: "Defer…", key: "d" },
+  { action: "wont_do", label: "Won't do…", key: "x" },
+  { action: "reopen", label: "Reopen…" },
+];
+// The page's keys do nothing while the panel is a sheet (a dialog holds them off), so a
+// sheet's tooltip names no key.
+export function actionTip(b: ActionButton, sheet: boolean): string {
+  const key = b.key && !sheet ? b.key.toUpperCase() : "";
+  return [b.tip ?? (key ? b.label.replace(/…$/, "") : ""), key].filter(Boolean).join(" · ");
+}
+// Everything else the status allows, under More, in this order.
+const MENU_ACTIONS: TaskAction[] = ["block", "defer", "wont_do", "edit", "reassign", "cancel"];
+
+interface ActionButton {
+  action: TaskAction;
+  label: string;
+  tip?: string;
+  key?: string;
+}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -156,21 +190,21 @@ function Track({
   const ev = policy ? evidenceStatus(policy.require_evidence, task.brief) : null;
   return (
     <Section title="Poster's record in this inbox">
-      {record === undefined && <div className="text-xs text-text-muted">counting…</div>}
-      {record === null && <div className="text-xs text-text-muted">not readable</div>}
+      {record === undefined && <Loading layout="inline" label="Loading the poster's record" />}
+      {record === null && <div className="text-xs text-text-muted">Not readable</div>}
       {record && (
         // biome-ignore lint/a11y/useSemanticElements: a labelled cluster of counts, not form fields
         <div
-          className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+          className="grid grid-cols-2 gap-2 min-[420px]:grid-cols-4"
           role="group"
           aria-label={`${record.total}${record.truncated ? "+" : ""} tasks from this poster: ${record.done} done, ${record.wont_do} won't do, ${record.failed} failed, ${record.open} open`}
         >
           {(
             [
-              ["done", record.done],
-              ["won't do", record.wont_do],
-              ["failed", record.failed],
-              ["open", record.open],
+              ["Done", record.done],
+              ["Won't do", record.wont_do],
+              ["Failed", record.failed],
+              ["Open", record.open],
             ] as Array<[string, number]>
           ).map(([l, n]) => (
             <Stat key={l} label={l} value={n} />
@@ -216,8 +250,8 @@ function Track({
   );
 }
 
-function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) {
-  if (events === null) return <div className="text-xs text-text-muted">Loading…</div>;
+function Timeline({ events }: { events: TaskEvent[] | null }) {
+  if (events === null) return <Loading layout="inline" label="Loading the timeline" />;
   if (events.length === 0) return <div className="text-xs text-text-muted">No events recorded.</div>;
   const asc = [...events].sort((a, b) => a.seq - b.seq);
   const rows = collapseHeartbeats(asc).reverse();
@@ -229,7 +263,7 @@ function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) 
         return (
           <li key={e.seq}>
             <span className="ic" data-kind={kind} role="img" aria-label={ACTOR_KIND_LABEL[kind]}>
-              {kind === "human" ? "h" : kind === "sweeper" ? "s" : "b"}
+              <Icon name={ACTOR_ICON[kind]} size="xs" aria-hidden="true" />
             </span>
             <span className="text-text-muted min-w-0">
               <b className="font-medium text-text">
@@ -252,10 +286,8 @@ function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) 
                 </>
               )}
             </span>
-            <span className="text-xs text-text-muted whitespace-nowrap">
-              <TipTarget tip={e.ts}>
-                <time dateTime={e.ts}>{rel(e.ts, now)}</time>
-              </TipTarget>
+            <span className="text-xs text-text-muted">
+              <ListTime time={e.ts} quiet />
             </span>
           </li>
         );
@@ -264,7 +296,14 @@ function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) 
   );
 }
 
-function Menu({ items }: { items: Array<{ label: string; onClick: () => void; disabled?: boolean }> }) {
+interface MenuItem {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}
+
+function Menu({ items }: { items: MenuItem[] }) {
   return (
     <Dropdown modal={false}>
       <MenuTrigger>
@@ -272,7 +311,12 @@ function Menu({ items }: { items: Array<{ label: string; onClick: () => void; di
       </MenuTrigger>
       <Dropdown.Content align="end">
         {items.map((it) => (
-          <Dropdown.Item key={it.label} disabled={it.disabled} onSelect={it.onClick}>
+          <Dropdown.Item
+            key={it.label}
+            type={it.danger ? "danger" : "default"}
+            disabled={it.disabled}
+            onSelect={it.onClick}
+          >
             {it.label}
           </Dropdown.Item>
         ))}
@@ -364,17 +408,15 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
   const outcome = task?.outcome && Object.keys(task.outcome).length > 0 ? task.outcome : null;
   const act = (a: TaskAction) => onAction(a, a === "edit" && task ? task : current);
   const primary = PRIMARY_ACTIONS.find((p) => allowed.has(p.action));
-  const copyId = () => {
-    navigator.clipboard
-      ?.writeText(current.task_id)
-      .then(() => toast("Task id copied", "ok"))
-      .catch(() => toast(current.task_id, "ok"));
-  };
+  const secondary = SECONDARY_ACTIONS.find((p) => allowed.has(p.action));
+  const copyId = () => copyTaskId(current.task_id);
 
-  const menu: Array<{ label: string; onClick: () => void; disabled?: boolean }> = [];
-  if (allowed.has("edit")) menu.push({ label: ACTION_LABEL.edit, onClick: () => act("edit"), disabled: !task });
-  if (allowed.has("reassign")) menu.push({ label: `${ACTION_LABEL.reassign}…`, onClick: () => act("reassign") });
-  if (allowed.has("cancel")) menu.push({ label: `${ACTION_LABEL.cancel}…`, onClick: () => act("cancel") });
+  const menu: MenuItem[] = MENU_ACTIONS.filter((a) => allowed.has(a) && a !== secondary?.action).map((a) => ({
+    label: menuLabel(a),
+    onClick: () => act(a),
+    disabled: a === "edit" && !task,
+    danger: a === "cancel",
+  }));
   menu.push({ label: "Copy id", onClick: copyId });
 
   const lease = current.status === "in_progress" ? leaseMinutesLeft(current.lease_until, now) : null;
@@ -384,52 +426,100 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
       : current.status === "deferred"
         ? `Deferred${current.resume_at ? ` · resumes ${rel(current.resume_at, now)}` : ""}`
         : "Reason";
+  const showReason = !!current.reason && WAITS_OR_ENDED.has(groupOfStatus(current.status));
   const parentTaskId = current.parent_task_id;
 
   const titleClass = "text-lg font-semibold m-0 mb-1 [text-wrap:balance] break-words";
   const body = (
     <>
-      <div className="px-3.5 pt-3 pb-2.5 border-b border-border">
+      <div className="px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2 flex-wrap mb-2">
           <StatusPill status={current.status} />
-          <KindTag kind={current.kind} />
           <PriorityBadge priority={current.priority} />
+          <KindTag kind={current.kind} />
           <span className="flex-1" />
           <IconButton icon="cross" label="Close" onClick={onClose} />
         </div>
+        {/* tabIndex -1: the page puts focus here when the button pressed went away with the move it made. */}
         {sheet ? (
-          <RadixDialog.Title className={titleClass}>{current.title}</RadixDialog.Title>
+          <RadixDialog.Title className={titleClass} tabIndex={-1} data-panel-title="">
+            {current.title}
+          </RadixDialog.Title>
         ) : (
-          <h2 className={titleClass}>{current.title}</h2>
+          <h2 className={titleClass} tabIndex={-1} data-panel-title="">
+            {current.title}
+          </h2>
         )}
-        <div className="text-xs text-text-muted flex gap-1.5 items-center flex-wrap">
+        <div className="text-xs text-text-muted flex gap-x-1.5 gap-y-0.5 items-center flex-wrap">
           {handed ? (
             <>
-              <b className="font-medium text-text-muted">from {posterName(current)}</b>
-              <span>→ {current.inbox}</span>
+              <span className="font-medium">from {posterName(current)}</span>
+              <span className="inline-flex items-center gap-1">
+                <Icon name="arrow-right" size="xs" aria-hidden="true" />
+                <span className="sr-only">to </span>
+                {current.inbox}
+              </span>
             </>
           ) : (
-            <b className="font-medium text-text-muted">this agent's own task</b>
+            <span className="font-medium">this agent's own task</span>
           )}
-          <span>· posted {rel(current.created_at, now)}</span>
           <span>
-            ·{" "}
-            <TipTarget tip={current.task_id}>
-              <span className="font-mono">{shortId(current.task_id)}</span>
-            </TipTarget>
+            · posted <ListTime time={current.created_at} />
           </span>
+          {current.status === "in_progress" && (
+            <span>
+              · claimed by {current.owner || "—"}
+              {lease !== null && <> · lease ends {rel(current.lease_until, now)}</>}
+            </span>
+          )}
+          {current.status === "deferred" && current.resume_at && <span>· resumes {rel(current.resume_at, now)}</span>}
           {parentTaskId && (
             <Button type="empty" htmlType="button" iconLeft="git-merge" onClick={() => onOpenTask(parentTaskId)}>
               Reassigned from {shortId(parentTaskId)}
             </Button>
           )}
         </div>
+        {!missing && (
+          // biome-ignore lint/a11y/useSemanticElements: a labelled cluster of action buttons, not form fields
+          <div className="mt-3 flex gap-2 items-center justify-end flex-wrap" role="group" aria-label="Actions">
+            <Menu items={menu} />
+            {secondary && (
+              <Tip content={actionTip(secondary, sheet)} disabled={!actionTip(secondary, sheet)}>
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  aria-keyshortcuts={sheet ? undefined : secondary.key}
+                  onClick={() => act(secondary.action)}
+                >
+                  {secondary.label}
+                </Button>
+              </Tip>
+            )}
+            {primary && (
+              <Tip content={actionTip(primary, sheet)} disabled={!actionTip(primary, sheet)}>
+                <Button
+                  type="primary"
+                  htmlType="button"
+                  aria-keyshortcuts={sheet ? undefined : primary.key}
+                  onClick={() => act(primary.action)}
+                >
+                  {primary.label}
+                </Button>
+              </Tip>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="overflow-y-auto px-3.5 pt-1 pb-3.5 flex-1 min-h-0">
+      <div className="overflow-y-auto px-4 pt-1 pb-4 flex-1 min-h-0">
         {error && <Alert role="alert" state="danger" size="small" text={error} className="my-2" />}
         {!missing && (
           <>
+            {showReason && (
+              <Section title={reasonTitle}>
+                <p className="m-0 text-text-muted whitespace-pre-wrap">{current.reason}</p>
+              </Section>
+            )}
             {task?.status === "triage" && <Track record={record} policy={policy} task={task} />}
             <Section title="Objective">
               {task ? (
@@ -437,7 +527,7 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
                   {brief.objective || <span className="text-text-muted">The poster left the objective empty.</span>}
                 </p>
               ) : (
-                <div className="text-xs text-text-muted">Loading…</div>
+                <Loading layout="inline" label="Loading the brief" />
               )}
             </Section>
             {brief.criteria.length > 0 && (
@@ -488,75 +578,12 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
                 </dl>
               </Section>
             )}
-            {current.reason &&
-              (current.status === "blocked" ||
-                current.status === "deferred" ||
-                current.status === "failed" ||
-                current.status === "wont_do" ||
-                current.status === "cancelled") && (
-                <Section title={reasonTitle}>
-                  <p className="m-0 text-text-muted whitespace-pre-wrap">{current.reason}</p>
-                </Section>
-              )}
             <Section title="Timeline">
-              <Timeline events={events} now={now} />
+              <Timeline events={events} />
             </Section>
           </>
         )}
       </div>
-
-      {!missing && (
-        // biome-ignore lint/a11y/useSemanticElements: a labelled cluster of action buttons, not form fields
-        <div
-          className="border-t border-border px-3.5 py-2.5 flex gap-2 items-center justify-end flex-wrap"
-          role="group"
-          aria-label="Actions"
-        >
-          {current.status === "deferred" && current.resume_at && (
-            <span className="text-xs text-text-muted">otherwise resumes {rel(current.resume_at, now)}</span>
-          )}
-          {current.status === "in_progress" && (
-            <span className="text-xs text-text-muted">
-              owned by <b className="font-medium text-text-muted">{current.owner || "—"}</b>
-              {lease !== null && <> · lease ends in {lease} min</>}
-            </span>
-          )}
-          <span className="flex-1" />
-          <Menu items={menu} />
-          {allowed.has("fail") && (
-            <Button type="secondary" htmlType="button" onClick={() => act("fail")}>
-              Fail…
-            </Button>
-          )}
-          {allowed.has("defer") && (
-            <Button type="secondary" htmlType="button" onClick={() => act("defer")}>
-              Defer…
-            </Button>
-          )}
-          {allowed.has("block") && (
-            <Button type="secondary" htmlType="button" onClick={() => act("block")}>
-              Block…
-            </Button>
-          )}
-          {allowed.has("wont_do") && (
-            <Button type="secondary" htmlType="button" onClick={() => act("wont_do")}>
-              Won't do…
-            </Button>
-          )}
-          {allowed.has("reopen") && (
-            <Button type="secondary" htmlType="button" onClick={() => act("reopen")}>
-              Reopen…
-            </Button>
-          )}
-          {primary && (
-            <Tip content={primary.tip} disabled={!primary.tip}>
-              <Button type="primary" htmlType="button" onClick={() => act(primary.action)}>
-                {primary.label}
-              </Button>
-            </Tip>
-          )}
-        </div>
-      )}
     </>
   );
 

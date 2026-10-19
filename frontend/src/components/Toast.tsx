@@ -167,16 +167,12 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numbe
         focused.current = false;
         resume();
       }}
-      className="pointer-events-auto animate-fade-in flex items-start gap-[var(--click-toast-space-gap)] w-[min(var(--click-toast-size-width),calc(100vw-2rem))] px-[var(--click-toast-space-x)] py-[var(--click-toast-space-y)] rounded-[var(--click-toast-radii-all)] border border-[var(--click-toast-color-stroke-default)] bg-[var(--color-bg)] shadow-[var(--click-toast-shadow)]"
+      className="toast pointer-events-auto animate-fade-in flex items-start"
     >
       <Icon name={icon.name} size="sm" color={icon.color} aria-hidden="true" className="shrink-0 mt-0.5" />
       <span className="flex flex-col flex-1 min-w-0">
-        <span className="[font:var(--click-toast-typography-title-default)] text-[var(--click-toast-color-title-default)] break-words">
-          {item.msg}
-        </span>
-        {item.detail && (
-          <span className="text-xs font-mono text-[var(--click-toast-color-description-default)]">{item.detail}</span>
-        )}
+        <span className="toast-title break-words">{item.msg}</span>
+        {item.detail && <span className="toast-detail text-xs font-mono">{item.detail}</span>}
       </span>
       <IconButton icon="cross" size="sm" label="Dismiss notification" onClick={() => onDismiss(item.id)} />
     </div>

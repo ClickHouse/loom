@@ -173,7 +173,7 @@ describe("a stale namespace load is dropped", () => {
     await act(async () => undefined);
     rerender(<NamespaceSettingsDialog open onOpenChange={noop} org="dev" namespace="new-ns" />);
     expect(screen.queryByDisplayValue("old-ns description")).toBeNull();
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(await screen.findByText("Loading namespace settings")).toBeInTheDocument();
 
     await act(async () => newLoad.resolve(nsRow("new-ns")));
     await act(async () => lateLoad.resolve(nsRow("old-ns")));

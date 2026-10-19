@@ -1,22 +1,27 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "../../components/IconButton";
-import { Kbd } from "../../components/ui";
+import { DirectionIcon, directionWord } from "./Direction";
 import { relationLabel, shorten, type Selection, type VisibleTree, type WalkModel, type XNode } from "./model";
 import { shortcutOff } from "../../lib/shortcuts";
 
 /**
  * Outline — the walk as a tree a keyboard can read. One row per drawn node in tree order,
  * the seed as the root; each row is one line of name and one of metadata (hop, the edge
- * that reached it, the community when known). Roving tabindex: `↑`/`↓` move, `→` expands
- * a collapsed row or moves into its children, `←` collapses or moves to the parent, `↵`
+ * that reached it, the community when known). Roving tabindex: Up / Down move, Right expands
+ * a collapsed row or moves into its children, Left collapses or moves to the parent, Enter
  * selects, `w` walks from here, `p` finds a path from the seed to here, `e` expands in
  * place (`facts.related`), `r` selects the edge that reached the row, `x` pins. A click on
  * the row selects its node; the edge that reached it has its own button at the row's end,
  * clear of the name and the metadata. The other actions are drawn on the selected row
- * only, so 200 rows stay 200 rows.
+ * only, so 200 rows stay 200 rows. A tree of more than 20 rows shows the first 20 and
+ * "Show all N", unless the selection sits further down.
  */
+
+/** Rows shown before "Show all N". */
+const CAP = 20;
 
 export interface OutlineProps {
   model: WalkModel;
@@ -77,7 +82,10 @@ export function Outline({
     ...order,
   ];
   const [active, setActive] = useState<string>(model.seed);
+  const [all, setAll] = useState(false);
   const refs = useRef(new Map<string, HTMLDivElement>());
+  // A new walk starts capped again.
+  useEffect(() => setAll(false), [model.seed]);
   // A new picture puts the roving focus back on the seed when the active
   // row is gone.
   useEffect(() => {
@@ -86,13 +94,30 @@ export function Outline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, visible]);
 
+  // A row past the cap is drawn once it is the active one; focus waits for it to be.
+  const pendingFocus = useRef<string | null>(null);
   const focusRow = useCallback((entity: string) => {
     setActive(entity);
-    refs.current.get(entity)?.focus();
+    const row = refs.current.get(entity);
+    if (row) row.focus();
+    else pendingFocus.current = entity;
   }, []);
+  useEffect(() => {
+    const want = pendingFocus.current;
+    if (want === null) return;
+    pendingFocus.current = null;
+    refs.current.get(want)?.focus();
+  });
 
   const selectedEntity = selection?.kind === "node" ? selection.entity : null;
   const selectedEdgeChild = selection?.kind === "edge" ? selection.child : null;
+  const selectedAt = rows.findIndex((r) => r.entity === selectedEntity || r.entity === selectedEdgeChild);
+  // The cap never hides the selected row or the row holding the tree's one tab stop; once
+  // either lands past it, the whole tree stays drawn for this walk.
+  const activeAt = rows.findIndex((r) => r.entity === active);
+  if (!all && (selectedAt >= CAP || activeAt >= CAP)) setAll(true);
+  const capped = !all && rows.length > CAP && selectedAt < CAP && activeAt < CAP;
+  const shown = capped ? rows.slice(0, CAP) : rows;
 
   const onKey = (e: ReactKeyboardEvent<HTMLDivElement>, n: XNode, index: number) => {
     const kids = children.get(n.entity) || [];
@@ -103,19 +128,19 @@ export function Outline({
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
-        if (index + 1 < rows.length) focusRow(rows[index + 1].entity);
+        if (index + 1 < shown.length) focusRow(shown[index + 1].entity);
         break;
       case "ArrowUp":
         e.preventDefault();
-        if (index > 0) focusRow(rows[index - 1].entity);
+        if (index > 0) focusRow(shown[index - 1].entity);
         break;
       case "Home":
         e.preventDefault();
-        focusRow(rows[0].entity);
+        focusRow(shown[0].entity);
         break;
       case "End":
         e.preventDefault();
-        focusRow(rows[rows.length - 1].entity);
+        focusRow(shown[shown.length - 1].entity);
         break;
       case "ArrowRight":
         e.preventDefault();
@@ -167,50 +192,20 @@ export function Outline({
   return (
     <div className="explorer-outline mt-3 lg:flex-1 lg:min-h-0 flex flex-col">
       <p className="text-xs text-text-muted mb-1" id="explorer-outline-summary">
-        {summary}{" "}
-        <span className="text-text-muted inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-          <span>
-            <Kbd>↑</Kbd>
-            <Kbd>↓</Kbd> move
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>←</Kbd>
-            <Kbd>→</Kbd> collapse/expand
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>↵</Kbd> select
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>w</Kbd> walk
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>p</Kbd> path
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>e</Kbd> expand
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>r</Kbd> edge
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>x</Kbd> pin
-          </span>
-        </span>
+        {summary}
+      </p>
+      {/* The keys are listed in the help dialog's Graph group; the tree describes them in one line. */}
+      <p className="sr-only" id="explorer-outline-keys">
+        Arrow keys move and fold, Enter selects; w walks from a row, p finds a path, e expands, r selects the edge, x
+        pins.
       </p>
       <div
         role="tree"
         aria-label="Walk outline"
-        aria-describedby="explorer-outline-summary"
+        aria-describedby="explorer-outline-summary explorer-outline-keys"
         className="lg:flex-1 min-h-[120px] max-h-[320px] lg:max-h-none overflow-auto rounded-lg border border-border bg-surface text-xs"
       >
-        {rows.map((n, i) => {
+        {shown.map((n, i) => {
           const kids = children.get(n.entity) || [];
           const hidden = visible.hiddenUnder.get(n.entity) || 0;
           const hasKids = kids.length > 0 || hidden > 0;
@@ -219,10 +214,10 @@ export function Outline({
           const edgeSelected = selectedEdgeChild === n.entity;
           const parent = n.parent;
           const isSeed = n.entity === model.seed;
-          const relation =
-            typed && n.via_relation
-              ? `${n.via_direction === "in" ? "← " : "→ "}${relationLabel(n.via_relation)}`
-              : `co-mentioned ${n.via_co_occur}×`;
+          const typedEdge = typed && !!n.via_relation;
+          const relation = typedEdge
+            ? `${relationLabel(n.via_relation)} (${directionWord(n.via_direction)})`
+            : `co-mentioned ${n.via_co_occur}×`;
           return (
             <div
               key={n.entity}
@@ -233,8 +228,9 @@ export function Outline({
               role="treeitem"
               aria-level={n.hop + 1}
               aria-selected={isSelected}
+              data-edge-selected={edgeSelected || undefined}
               aria-expanded={hasKids ? !isCollapsed : undefined}
-              aria-label={`${n.entity} · hop ${n.hop}${n.parent ? ` · ${typed && n.via_relation ? relationLabel(n.via_relation) : `co-mentioned ${n.via_co_occur}×`}` : ""}${pinned.has(n.entity) ? " · pinned" : ""}${hidden ? ` · ${hidden} hidden` : ""}`}
+              aria-label={`${n.entity} · hop ${n.hop}${n.parent ? ` · ${relation}` : ""}${pinned.has(n.entity) ? " · pinned" : ""}${hidden ? ` · ${hidden} hidden` : ""}`}
               tabIndex={active === n.entity ? 0 : -1}
               onFocus={() => setActive(n.entity)}
               onKeyDown={(e) => onKey(e, n, i)}
@@ -242,7 +238,7 @@ export function Outline({
                 if (e.target instanceof Element && e.target.closest("button")) return;
                 onSelect(isSelected ? null : { kind: "node", entity: n.entity });
               }}
-              className={`group flex items-start gap-1.5 px-2 py-1 border-b border-border last:border-b-0 cursor-default ${isSelected || edgeSelected ? "bg-surface-2" : "hover:bg-surface-2"}`}
+              className={`group flex items-start gap-1.5 px-2 py-1 border-b border-border last:border-b-0 cursor-default`}
               style={{ paddingLeft: `${8 + n.hop * 14}px` }}
             >
               <button
@@ -256,20 +252,34 @@ export function Outline({
                 <Icon name={isCollapsed ? "chevron-right" : "chevron-down"} size="xs" aria-hidden="true" />
               </button>
               <div className="min-w-0 flex-1">
-                <div className={`font-mono truncate ${isSelected ? "text-text font-semibold" : "text-text"}`}>
-                  {isSeed ? <span className="text-text-muted mr-1">seed</span> : null}
-                  {n.entity}
+                {/* Line 1, the primary: the entity at 14 px. */}
+                <div className="flex items-center gap-1 min-w-0">
+                  {isSeed ? <span className="text-xs text-text-muted shrink-0">seed</span> : null}
+                  <span className={`truncate text-sm text-text ${isSelected ? "font-semibold" : ""}`}>{n.entity}</span>
                   {pinned.has(n.entity) && (
-                    <Icon name="pin" size="xs" aria-hidden="true" className="inline ml-1" color="var(--color-accent)" />
+                    <Icon name="pin" size="xs" aria-hidden="true" className="shrink-0" color="var(--color-accent)" />
                   )}
-                  {hidden > 0 && <Badge text={`+${hidden}`} state="neutral" size="sm" className="inline-flex ml-1.5" />}
+                  {hidden > 0 && (
+                    <Badge text={`+${hidden}`} state="neutral" size="sm" className="inline-flex shrink-0" />
+                  )}
                 </div>
+                {/* Line 2, muted 12 px: "hop 1 · co-mentioned 20× with logical". */}
                 <div className="text-xs text-text-muted flex items-center gap-1.5 min-w-0">
-                  <span className="tabular-nums shrink-0">hop {n.hop}</span>
-                  {parent && (
+                  {parent ? (
                     <span className={`truncate ${edgeSelected ? "text-text" : ""}`}>
-                      {relation} with {shorten(parent, 20)}
+                      hop {n.hop} ·{" "}
+                      {typedEdge ? (
+                        <>
+                          <DirectionIcon direction={n.via_direction} />
+                          {relationLabel(n.via_relation)}
+                        </>
+                      ) : (
+                        relation
+                      )}{" "}
+                      with {shorten(parent, 20)}
                     </span>
+                  ) : (
+                    <span className="tabular-nums shrink-0">hop {n.hop}</span>
                   )}
                   {hasCommunities && n.community_id !== null && (
                     <span className="truncate">· {communityLabel(n.community_id)}</span>
@@ -278,7 +288,7 @@ export function Outline({
                 </div>
               </div>
               {isSelected && (
-                <div className="flex items-center shrink-0 -my-1">
+                <div className="flex items-center shrink-0">
                   <IconButton
                     label={isCollapsed ? "Show hidden children" : `Expand ${shorten(n.entity, 24)} in place`}
                     onClick={() => (isCollapsed ? onCollapse(n.entity, false) : onExpand(n.entity))}
@@ -315,13 +325,29 @@ export function Outline({
                   size="sm"
                   tabIndex={-1}
                   aria-pressed={edgeSelected}
-                  className="shrink-0 -my-1"
+                  className="shrink-0"
                 />
               )}
             </div>
           );
         })}
       </div>
+      {capped && (
+        <div className="mt-1">
+          <Button
+            type="empty"
+            htmlType="button"
+            onClick={() => {
+              // The button goes with the cap: focus moves to the first row it hid.
+              const next = rows[CAP];
+              setAll(true);
+              if (next) focusRow(next.entity);
+            }}
+          >
+            Show all {rows.length}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
