@@ -552,7 +552,7 @@ async def handle_memory_pin(input: MemorySetInput) -> MemorySetOutput:
     """Explicit-save variant. Forces `pinned=True`; otherwise shares the
     `memory.set` write path."""
     input.pinned = True
-    return await handle_memory_set(input, op="memory.pin")
+    return await handle_memory_set(input, op="memory.pin", retry_what="the pin")
 
 
 async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:

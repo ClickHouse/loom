@@ -266,8 +266,10 @@ async def test_a_busy_key_names_what_to_retry(
 ) -> None:
     """memory.pin, or a memory.set with pinned=true: each says to retry itself."""
     from server.core.errors import PreconditionFailedError
+    from server.memory.app.handlers import handle_memory_pin
     from server.memory.store import key_write_lock as kl
 
+    handler = {"memory.pin": handle_memory_pin, "memory.set": write_mod.handle_memory_set}[op]
     _locks(FakeKeeper(), monkeypatch)
 
     async def phases(input: Any) -> str:
@@ -277,4 +279,4 @@ async def test_a_busy_key_names_what_to_retry(
     held = _set_input("x", "", pinned=True)
     async with kl.key_write_locks.hold("org", "ns", "agent", "-", "-", _IDENT[5]):
         with pytest.raises(PreconditionFailedError, match=f"retry {what}"):
-            await write_mod._handle_memory_set(held, op=op)
+            await handler(held)

@@ -139,7 +139,9 @@ def _pinned_dry_run_output(
     )
 
 
-async def handle_memory_set(input: MemorySetInput, *, op: str = "memory.set") -> MemorySetOutput:
+async def handle_memory_set(
+    input: MemorySetInput, *, op: str = "memory.set", retry_what: str = "the write"
+) -> MemorySetOutput:
     """Count the write outcome for every terminal shape, then delegate.
 
     Successful shapes are counted inside `_handle_memory_set` where the conflict
@@ -149,7 +151,7 @@ async def handle_memory_set(input: MemorySetInput, *, op: str = "memory.set") ->
     non-HTTPException failures a ClickHouse outage actually raises — is `error`.
     """
     try:
-        out = await _handle_memory_set(input, op=op)
+        out = await _handle_memory_set(input, op=op, retry_what=retry_what)
     except HTTPException as e:
         code = e.detail.get("code", "") if isinstance(e.detail, dict) else ""
         outcome = _WRITE_OUTCOME_BY_ERROR_CODE.get(str(code))
@@ -599,7 +601,9 @@ def _set_build_memory_row(w: _SetWrite) -> None:
     w.memory_row = memory_row
 
 
-async def _handle_memory_set(input: MemorySetInput, *, op: str = "memory.set") -> MemorySetOutput:
+async def _handle_memory_set(
+    input: MemorySetInput, *, op: str = "memory.set", retry_what: str = "the write"
+) -> MemorySetOutput:
     """memory.set; a conditional write and a pin hold the key's write lock from their read
     to their insert, as a resolver write does, so a retirement never lands between them."""
     if not (input.if_match_sha256 or input.pinned):
@@ -612,7 +616,7 @@ async def _handle_memory_set(input: MemorySetInput, *, op: str = "memory.set") -
             input.user_id,
             input.session_id,
             input.memory_key,
-            what="the pin" if op == "memory.pin" else "the write",
+            what=retry_what,
             operation=op,
         ):
             return await _memory_set_phases(input)

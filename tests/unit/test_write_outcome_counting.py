@@ -64,7 +64,7 @@ async def test_every_refusal_shape_is_counted(
     status: int,
     expected: str,
 ) -> None:
-    async def _raise(_input: MemorySetInput, *, op: str = "memory.set") -> None:
+    async def _raise(_input: MemorySetInput, **_: Any) -> None:
         raise HTTPException(status_code=status, detail={"code": code})
 
     monkeypatch.setattr(_mw, "_handle_memory_set", _raise)
@@ -92,7 +92,7 @@ async def test_unmapped_error_is_counted_but_not_as_a_refusal(
     silence is the failure this guards — just under its own label.
     """
 
-    async def _raise(_input: MemorySetInput, *, op: str = "memory.set") -> None:
+    async def _raise(_input: MemorySetInput, **_: Any) -> None:
         raise HTTPException(status_code=500, detail={"code": "CH_UNAVAILABLE"})
 
     monkeypatch.setattr(_mw, "_handle_memory_set", _raise)
@@ -112,7 +112,7 @@ async def test_non_dict_detail_does_not_break_counting(
 ) -> None:
     """FastAPI allows a bare string detail; the mapping must tolerate it."""
 
-    async def _raise(_input: MemorySetInput, *, op: str = "memory.set") -> None:
+    async def _raise(_input: MemorySetInput, **_: Any) -> None:
         raise HTTPException(status_code=500, detail="boom")
 
     monkeypatch.setattr(_mw, "_handle_memory_set", _raise)
@@ -134,7 +134,7 @@ async def test_success_is_counted_once_by_the_inner_handler_only(
     """
     sentinel = object()
 
-    async def _ok(_input: MemorySetInput, *, op: str = "memory.set") -> Any:
+    async def _ok(_input: MemorySetInput, **_: Any) -> Any:
         return sentinel
 
     monkeypatch.setattr(_mw, "_handle_memory_set", _ok)
@@ -158,7 +158,7 @@ async def test_infrastructure_failure_is_counted_as_error_and_still_raises(
     propagate untouched; this is an accounting hook, not error handling.
     """
 
-    async def _boom(_input: MemorySetInput, *, op: str = "memory.set") -> None:
+    async def _boom(_input: MemorySetInput, **_: Any) -> None:
         raise RuntimeError("clickhouse exploded")
 
     monkeypatch.setattr(_mw, "_handle_memory_set", _boom)
@@ -180,7 +180,7 @@ async def test_unmapped_4xx_is_a_refusal_not_an_infrastructure_error(
     STATUS instead.
     """
 
-    async def _raise(_input: MemorySetInput, *, op: str = "memory.set") -> None:
+    async def _raise(_input: MemorySetInput, **_: Any) -> None:
         raise HTTPException(status_code=403, detail={"code": "SOME_POLICY_GATE"})
 
     monkeypatch.setattr(_mw, "_handle_memory_set", _raise)
