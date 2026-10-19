@@ -96,10 +96,17 @@ def test_an_update_from_another_session_of_an_agent_changes_nothing() -> None:
 
 
 def test_cross_session_is_another_session_of_a_subject_with_no_user() -> None:
-    row = NS(user_id="-", session_id="s1")
-    assert resolver._cross_session(row, {"session_id": "s2"})
-    assert not resolver._cross_session(row, {"session_id": "s1"})
-    assert not resolver._cross_session(NS(user_id="u", session_id="s1"), {"session_id": "s2"})
+    row = NS(user_id="-", agent="a", session_id="s1")
+    assert resolver._cross_session(row, {"agent": "a", "session_id": "s2"})
+    assert not resolver._cross_session(row, {"agent": "a", "session_id": "s1"})
+    other = NS(user_id="u", agent="a", session_id="s1")
+    assert not resolver._cross_session(other, {"agent": "a", "session_id": "s2"})
+
+
+def test_cross_session_is_another_session_of_the_same_agent() -> None:
+    row = NS(user_id="-", agent="a", session_id="s1")
+    assert resolver._cross_session(row, {"agent": "a", "session_id": "s2"})
+    assert not resolver._cross_session(row, {"agent": "b", "session_id": "s2"})
 
 
 def test_each_note_shows_when_it_holds_and_its_session() -> None:
@@ -1112,9 +1119,9 @@ def retire_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         e.records.append(kw)
         return e.record_ok
 
-    async def follow(org, namespace, agent, pairs, *, user_id=""):
+    async def follow(scope, pairs, op):
         e.followed.extend(pairs)
-        return e.follow_ok
+        return [] if e.follow_ok else pairs
 
     async def intent(**kw: Any) -> str:
         e.intent_payload = kw["payload"]
@@ -1137,7 +1144,7 @@ def retire_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     monkeypatch.setattr(queue, "under_erasure", no_erasure)
     monkeypatch.setattr(conflicts, "apply_refines", refines)
     monkeypatch.setattr(auto_resolution, "record_auto_supersessions", record)
-    monkeypatch.setattr(resolver, "_follow", follow)
+    monkeypatch.setattr(auto_resolution, "follow_pairs", follow)
     monkeypatch.setattr(projection_failures, "record_projection_failure", intent)
     monkeypatch.setattr(projection_failures, "mark_projection_failures_resolved", resolved)
     return e
@@ -1371,6 +1378,55 @@ async def test_the_same_refusal_row_after_row_stops_the_pass_and_leaves_the_rest
     out = await pass_env.run()
     assert pass_env.stamped == [], "the request was at fault: every row stays owed"
     assert out["errored"] == 3
+
+
+async def test_a_row_stamped_after_an_attempt_left_it_owed_forgets_the_attempt(
+    pass_env: NS,
+) -> None:
+    """Left owed once, then judged and stamped: its attempt count goes, so the leader's
+    table holds only rows still owed."""
+    from server.memory.workers import conflict_resolver as worker
+
+    row = _q(memory_key="k1")
+    pass_env.owed = [row]
+    pass_env.left_owed = {"k1"}
+    await pass_env.run()
+    assert worker._attempt_key(row) in worker._state.attempts
+    pass_env.left_owed = set()
+    await pass_env.run()
+    assert worker._state.attempts == {}
+
+
+async def test_another_namespaces_answer_breaks_no_refusal_streak(
+    pass_env: NS, monkeypatch
+) -> None:
+    """Rows of two namespaces judged at once: one refused row after row, with a row
+    between that calls no judge, while the other's row is answered. The answer is the
+    other namespace's alone, so the streak runs on and stops the refused namespace,
+    whose rows stay owed instead of being stamped."""
+    order = {k: asyncio.Event() for k in ("answered", "quiet")}
+
+    async def resolve(q: Any, *, policy: str, counts: Any, shown: Any = frozenset()) -> None:
+        key = q["memory_key"]
+        if key == "b-answered":
+            counts.judged += 1
+            order["answered"].set()
+        elif key == "a-quiet":  # no peers: stamped without a call
+            await order["answered"].wait()
+            order["quiet"].set()
+        else:
+            if key == "a-last":
+                await order["quiet"].wait()
+            raise resolver.Unjudgeable("400 Bad Request")
+
+    monkeypatch.setattr(resolver, "resolve_row", resolve)
+    pass_env.owed = [
+        _q(namespace="a", memory_key=k) for k in ("a-first", "a-second", "a-quiet", "a-last")
+    ]
+    pass_env.owed.append(_q(namespace="b", memory_key="b-answered"))
+    out = await pass_env.run()
+    assert out["judged"] == 1 and out["errored"] == 3
+    assert pass_env.stamped == [], "the refusals stopped namespace a: its rows stay owed"
 
 
 async def test_a_row_judged_and_left_owed_is_stamped_on_its_third_attempt(

@@ -332,13 +332,9 @@ async def cluster_peers(
     shown: frozenset[str] = frozenset(),
     ch: _CHClient | None = None,
 ) -> Cluster:
-    """Up to `limit` live peers of the queue row `row`: its memory_type, its subject, its
-    embedding model, each with `similarity`. Its flagged peers are read from its head;
-    the flagged peers that are also in `prefer` take the first places, those not in
-    `shown` (judged before) ahead of the rest. Then the nearest rows of its key in other
-    sessions, at most half the places, both read whatever the cutoff and the floor (a
-    re-check judges its flags; a write owed for its key's other rows is judged against
-    them), then the nearest peers at cosine >= `floor`."""
+    """Up to `limit` live peers of the queue row `row`, each with `similarity`: its flags
+    (`prefer`, those not `shown` before first) and its key's other sessions take places
+    ahead of the nearest rows, so the pairs it is owed for are always judged."""
     ch = ch or _default_client()
     emb = [float(x) for x in (row.get("embedding") or [])]
     if not emb:
@@ -530,10 +526,8 @@ class Asserted(NamedTuple):
 
 
 def _run_start(run: list[tuple[int, bool, bool]], undo_versions: set[int]) -> int | None:
-    """The first version of the current run of versions holding the hash. A served version
-    right after a retirement continues the run only when an Undo wrote it; otherwise the
-    writer stated the value again, and a new run starts. A copy still retired (an attest
-    of the retired row) continues the retirement."""
+    """The first version of the current run of versions holding the hash: a restatement
+    after a retirement starts a new run, an Undo's version does not."""
     start: int | None = None
     after_retirement = False
     for version, held, superseded in run:

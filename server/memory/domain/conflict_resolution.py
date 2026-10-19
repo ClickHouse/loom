@@ -258,8 +258,7 @@ def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
             continue
         if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
             continue
-        # A missing boolean must not read as False: that turns a contradiction into
-        # "different entities", which clears the pair's flag.
+        # A missing boolean is no answer; reading it as False would hide a real conflict.
         if not (
             isinstance(e.get("same_entity"), bool) and isinstance(e.get("same_attribute"), bool)
         ):

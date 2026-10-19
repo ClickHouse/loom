@@ -292,21 +292,28 @@ def follow_beside_response(
         log.warning("%s: scheduling the triples follow failed: %s", op, e)
 
 
+async def follow_pairs(scope: Any, pairs: list[tuple[str, str]], op: str) -> list[tuple[str, str]]:
+    """The triple plane follows the retired (loser, winner) `pairs` as `scope`; the pairs
+    left unfollowed, every one when the follow failed."""
+    from server.core.ch import get_client
+    from server.memory.app.entity_projections import follow_row_supersessions
+
+    try:
+        return (await follow_row_supersessions(scope, pairs, ch=get_client())).unfollowed
+    except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them
+        log.warning("%s: triples follow failed (left for the repair): %s", op, e)
+        return pairs
+
+
 async def _follow(
     scope: Any, pairs: list[tuple[str, str]], op: str, intents: list[str] | None = None
 ) -> None:
     """Follow the pairs as `scope` (org, namespace, agent and the writer's user_id, which
     a failure records); what is left goes to the repair."""
-    from server.core.ch import get_client
-    from server.memory.app.entity_projections import follow_row_supersessions
     from server.memory.app.projection_errors import record_input_projection_failure
     from server.memory.app.projection_failures import FOLLOW_ROWS
 
-    try:
-        left = (await follow_row_supersessions(scope, pairs, ch=get_client())).unfollowed
-    except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them
-        log.warning("%s: triples follow failed (recorded for repair): %s", op, e)
-        left = pairs
+    left = await follow_pairs(scope, pairs, op)
     if left:
         await record_input_projection_failure(
             scope,

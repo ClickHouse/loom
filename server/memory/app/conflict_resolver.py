@@ -82,6 +82,11 @@ class Counts:
     def as_dict(self) -> dict[str, int]:
         return asdict(self)
 
+    def add(self, other: Counts) -> None:
+        """Add `other`'s counts to these: a row's own, into its pass's."""
+        for name, value in asdict(other).items():
+            setattr(self, name, getattr(self, name) + value)
+
 
 def _plain(stored: str) -> str:
     """A stored value as text: a JSON string is shown unquoted."""
@@ -296,7 +301,11 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Retired | No
 async def _after_retire(org: str, namespace: str, done: Retired) -> None:
     """The retirement's record and follow, outside the keys' locks: neither writes a
     memory row."""
-    from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
+    from server.memory.app.auto_resolution import (
+        CONFLICT_RESOLVER,
+        follow_pairs,
+        record_auto_supersessions,
+    )
 
     try:
         erasing = await queue.under_erasure(org)
@@ -313,28 +322,13 @@ async def _after_retire(org: str, namespace: str, done: Retired) -> None:
         request_id=done.intent,
     )
     pairs = [(str(r["memory_id"]), str(r["superseded_by"])) for r in done.retired]
+    # The retired row's user goes on any failure the follow records; what it leaves is
+    # the repair's, which holds the pairs as the follow intent.
     user_id = str(done.retired[0].get("user_id") or "") if done.retired else ""
-    if await _follow(org, namespace, done.agent, pairs, user_id=user_id) and recorded:
+    scope = ProjectionScope(org=org, namespace=namespace, agent=done.agent, user_id=user_id)
+    if not await follow_pairs(scope, pairs, "conflict_resolver") and recorded:
         # No longer owed: resolved in the next batched mark with every other writer's.
         intent_marks.resolve_soon(org, [done.intent])
-
-
-async def _follow(
-    org: str, namespace: str, agent: str, pairs: list[tuple[str, str]], *, user_id: str = ""
-) -> bool:
-    """The triple plane follows the retirement; True when every pair was followed.
-    A failure is left to the repair, which holds the pairs as the follow intent;
-    `user_id` (the retired row's) goes on any failure the follow records."""
-    from server.core.ch import get_client
-    from server.memory.app.entity_projections import follow_row_supersessions
-
-    scope = ProjectionScope(org=org, namespace=namespace, agent=agent, user_id=user_id)
-    try:
-        left = (await follow_row_supersessions(scope, pairs, ch=get_client())).unfollowed
-    except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them later
-        log.warning("conflict_resolver: triples follow failed (left for the repair): %s", e)
-        return False
-    return not left
 
 
 async def _flag(org: str, row: Any, peer: Any) -> bool:
@@ -471,6 +465,7 @@ async def _settle_locked_pair(
     action: str,
     counts: Counts,
 ) -> tuple[dict[str, Any] | None, Retired | None]:
+    """Act on one pair's verdict as both rows stand under their key locks."""
     # Known gap, by design: an unconditional memory.set takes no lock, so one landing on
     # the winner between this re-read and the supersede is not seen here.
     row, head = await asyncio.gather(
@@ -541,10 +536,8 @@ def _dated_note(r: Any, when: Mapping[str, tuple[int, int]]) -> cr.Note:
 def _undone(
     row: Any, head: Any, order: Mapping[str, tuple[int, int]], undos: list[queue.Undo]
 ) -> bool:
-    """Whether a person undid a retirement of either row behind the other (the Undo's
-    record): their decision stands while both rows' current statements began before the
-    Undo's restore. A value restated since (or after a record whose restore failed) is a
-    new statement, judged as one. Rows are `MemoryRow`s or peer dicts."""
+    """Whether a person's Undo of a retirement between the two rows (`MemoryRow`s or peer
+    dicts) still stands: a person's decision outranks the model's."""
     for loser, winner in ((head, row), (row, head)):
         lost, won = str(_field(loser, "memory_id")), str(_field(winner, "memory_id"))
         undone = (lost, won, str(_field(loser, "content_sha256") or ""))
@@ -709,7 +702,11 @@ def _cross_session(row: Any, peer: Mapping[str, Any]) -> bool:
     """A peer from another session of a subject with no real user: the anonymous user is
     one subject per agent (the cluster reads only its agent's rows), and an agent's
     sessions are separate tasks."""
-    return str(row.user_id) == "-" and str(peer["session_id"]) != str(row.session_id)
+    return (
+        str(row.user_id) == "-"
+        and str(peer["agent"]) == str(row.agent)
+        and str(peer["session_id"]) != str(row.session_id)
+    )
 
 
 def notes_for(

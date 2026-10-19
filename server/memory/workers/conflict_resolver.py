@@ -43,26 +43,28 @@ MAX_ATTEMPTS = 3
 # would pay for the same answer, so the worker waits this long first. A namespace whose
 # rows got the same refusal row after row waits as long, alone.
 PAUSE_AFTER_STOP_S = 300.0
+# The same refusal (or outage) this many rows in a row is the request's fault, not the
+# rows': the rest stay owed, instead of being stamped judged unjudged. A namespace with
+# fewer owed rows than this never reaches the stop, so its refused rows are stamped at
+# the pass's end like any row refused for a reason of its own.
+SAME_REFUSAL_STOP = 3
 
 
 @dataclass
 class _State:
-    """What one leader keeps from pass to pass."""
+    """What one leader keeps from pass to pass; the times are time.monotonic()."""
 
-    # time.monotonic() before which the recheck is not read.
+    # When the recheck is read again.
     recheck_after: float = 0.0
-    # Why the model was unavailable at the last pass that knew (None: available): the
-    # warning is logged when this changes, not on every pass.
+    # Why the model was unavailable at the last pass that knew: logged once per change.
     unavailable: str | None = None
     # No key last pass: unlike an outage, its end is known without a call.
     no_key: bool = False
-    # Attempts that left a row owed, per (identity, content hash): how many, and the
-    # peers they judged it against.
+    # Per (identity, content hash): attempts that left the row owed, and the peers judged.
     attempts: dict[tuple[str, ...], tuple[int, frozenset[str]]] = field(default_factory=dict)
-    # time.monotonic() before which no pass runs, after a pass that stopped.
+    # When passes run again after one stopped.
     paused_until: float = 0.0
-    # (org, namespace) -> time.monotonic() before which its rows are not read, after the
-    # same refusal for row after row of it.
+    # (org, namespace) -> when its rows are read again, after a refusal streak.
     paused_namespaces: dict[tuple[str, str], float] = field(default_factory=dict)
 
 
@@ -152,6 +154,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
         if p.unavailable is not None or (org, namespace) in p.stopped:
             return  # the model, the locks or this namespace's requests fail: the row stays owed
         started = time.monotonic()
+        counts = resolver.Counts()
         # Each row's call bills its own namespace, which the cost cap reads. This runs
         # in its own task, so the accumulator is this row's alone.
         cost_accumulator.begin_op()
@@ -160,18 +163,20 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             # The calls finished so far are flushed first, so the spend read sees them.
             await get_emitter().flush_now()
             if await namespace_over_cap(org, namespace, **_cap_share()):
-                p.counts.skipped_budget += 1
+                counts.skipped_budget += 1
                 return
             key = _attempt_key(r)
             shown = _state.attempts.get(key, (0, frozenset()))[1]
-            answered = p.counts.judged
-            judged = await resolver.resolve_row(r, policy=policy, counts=p.counts, shown=shown)
-            if p.counts.judged > answered:
+            judged = await resolver.resolve_row(r, policy=policy, counts=counts, shown=shown)
+            # This row's own counts: the rows judged beside it answer for themselves.
+            if counts.judged:
                 # An answer: the namespace's refusals and the outages are not in a row.
                 p.refusals.pop((org, namespace), None)
                 p.outage = 0
+            if judged is None and not counts.skipped_changed:
+                _state.attempts.pop(key, None)  # stamped: a later write starts over
             if judged is not None and await _out_of_attempts(r, judged):
-                p.counts.errored += 1
+                counts.errored += 1
                 p.errors.append(f"{namespace}/{r.get('memory_key')}: a flagged peer never judged")
         except (resolver.ModelUnavailable, LeaseUnavailable) as e:
             # The same answer for every row: stop before paying for more calls.
@@ -179,7 +184,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
         except (resolver.Unjudgeable, resolver.Unanswered) as e:
             # Asking again gets the same answer: stamped at the pass's end, so it holds no
             # place, unless the same refusal for row after row stops its namespace.
-            p.counts.errored += 1
+            counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {e}")
             p.refused.append(r)
             if _refusal_streak(p, (org, namespace), e):
@@ -193,18 +198,19 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
         except (httpx.HTTPError, TimeoutError) as e:
             # A provider outage (5xx, 429, a timeout, no connection): the row stays owed,
             # no attempt; the same outage row after row stops the pass.
-            p.counts.errored += 1
+            counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {type(e).__name__}: {e}")
             p.outage += 1
             if p.outage >= SAME_REFUSAL_STOP:  # a flapping provider stops the pass too
                 p.unavailable = p.unavailable or e
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the pass
-            p.counts.errored += 1
+            counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {type(e).__name__}: {e}")
             # Counted only once the judge answered: an error before it paid for nothing.
             if isinstance(e, resolver.JudgedThenFailed) and await _out_of_attempts(r):
                 p.errors.append(f"{namespace}/{r.get('memory_key')}: stamped after {MAX_ATTEMPTS}")
         finally:
+            p.counts.add(counts)
             emit_worker_cost_event_for(
                 org=org, namespace=namespace, operation=f"worker.{NAME}", started=started
             )
@@ -233,13 +239,6 @@ async def _out_of_attempts(r: Mapping[str, Any], judged: frozenset[str] = frozen
         return False  # still at the last attempt: the next pass stamps it
     del attempts[key]
     return True
-
-
-# The same refusal (or outage) this many rows in a row is the request's fault, not the
-# rows': the rest stay owed, instead of being stamped judged unjudged. A namespace with
-# fewer owed rows than this never reaches the stop, so its refused rows are stamped at
-# the pass's end like any row refused for a reason of its own.
-SAME_REFUSAL_STOP = 3
 
 
 def _refusal_streak(p: _Pass, namespace: tuple[str, str], e: Exception) -> bool:
