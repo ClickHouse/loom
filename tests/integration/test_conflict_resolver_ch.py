@@ -1619,7 +1619,8 @@ async def test_dead_rows_of_the_key_do_not_take_the_live_rows_place(ch, wired, m
 @pytest.mark.parametrize(
     ("policy", "confidence", "want"),
     [
-        ("auto_reinforce", 0.97, "retired"),
+        ("auto_reinforce", 0.98, "retired"),
+        ("auto_reinforce", 0.97, "flagged"),
         ("auto_reinforce", 0.92, "flagged"),
         ("manual_review", 0.99, "flagged"),
         ("append_only", 0.99, None),
