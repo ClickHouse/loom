@@ -534,7 +534,7 @@ WHAT: Tombstone a memory by key (14-day recovery in the dashboard).
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `memory_key` | `str` | required | The key to delete: tried under this identity, then the same user's row under any agent (only this identity with `if_version`). |
-| `if_version` | `int \| None` | `None` | Delete only if the row under this exact identity still has this version (from memory.get); otherwise nothing is deleted and `reason` is "version_changed". |
+| `if_version` | `int \| str \| None` | `None` | Delete only if the row under this exact identity still has this version (from memory.get); otherwise nothing is deleted and `reason` is "version_changed". |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

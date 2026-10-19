@@ -73,8 +73,11 @@ guard, a path that is not a directory, or a missing `--agent`, token or org.
 - The target server must have `memory.delete`'s `if_version`. Prune reads the target's
   `ops.capabilities` first and deletes nothing when the field is missing. During a
   rolling upgrade a delete can still reach a replica on the older build, which ignores
-  the field and names it in `ignored_args`; prune stops at the first such answer, reports
-  it as failed and the import exits 1.
+  the field and names it in `ignored_args`: that one delete runs without the version
+  check, and when the row is gone under the import's agent it falls back to the same
+  user's row under any agent. Prune stops at the first such answer, reports it as failed
+  and the import exits 1. Suspend the CronJob while the target rolls out a new build
+  (`kubectl patch cronjob okf-sync -p '{"spec":{"suspend":true}}'`, then `false`).
 - The import runs only when the export exited 0 (`sh -e`), and each run writes its bundle
   to a fresh `emptyDir`, so a bundle left by an earlier run is never imported.
 - `--dry-run` lists what would be written and deleted, after the same checks, and writes

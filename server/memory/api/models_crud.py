@@ -366,15 +366,23 @@ class MemoryDeleteInput(_Identity):
     memory_key: str
     # Delete only if the row under this exact identity still has this version
     # (from memory.get); otherwise nothing is deleted and `reason` is
-    # "version_changed". None = no check. Hidden from MCP: import-okf --prune sends it.
-    if_version: int | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
+    # "version_changed". Needs a concrete agent, not "*" (a 422). None = no check.
+    # A decimal string is accepted, as for `known_version`: a nanosecond version is above
+    # 2^53, which a JavaScript number rounds. Hidden from MCP: import-okf --prune sends it.
+    if_version: int | str | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
 
     @model_validator(mode="after")
     def _shape(self) -> MemoryDeleteInput:
+        if self.if_version is None:
+            return self
         # The wildcard read answers any agent's row of the key; a version check is
         # ownership only under one identity.
-        if self.if_version is not None and self.agent == "*":
+        if self.agent == "*":
             raise ValueError("`if_version` needs a concrete agent, not '*'")
+        if isinstance(self.if_version, str):
+            if not self.if_version.isdigit():
+                raise ValueError("`if_version` is a version number")
+            self.if_version = int(self.if_version)
         return self
 
 

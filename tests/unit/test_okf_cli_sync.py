@@ -891,3 +891,24 @@ def test_a_failed_verify_exits_1(
     monkeypatch.setattr(loom, "post", verify_refused)
     assert _run(_bundle(tmp_path / "b", [entry]), "--verify") == 1
     assert "1 failed to re-attest" in capsys.readouterr().out
+
+
+def test_prune_deletes_nothing_when_the_catalogue_cannot_be_read(
+    tmp_path: Path,
+    loom: _FakeLoom,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    post = loom.post
+
+    async def no_catalogue(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == "ops.capabilities":
+            raise RuntimeError("ops.capabilities → HTTP 503")
+        return await post(op, body)
+
+    monkeypatch.setattr(loom, "post", no_catalogue)
+    capsys.readouterr()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 1
+    assert "memory.delete" not in loom.writes()
+    assert "cannot read the target's ops.capabilities" in capsys.readouterr().err

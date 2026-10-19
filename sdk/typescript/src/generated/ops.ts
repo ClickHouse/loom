@@ -4032,7 +4032,7 @@ export interface MemoryDeleteInput {
   session_id?: string;
   run_id?: string;
   memory_key: string;
-  if_version?: number | null;
+  if_version?: number | string | null;
 }
 
 export interface MemoryDeleteOutput {

@@ -278,6 +278,19 @@ def test_a_versioned_delete_needs_a_concrete_agent() -> None:
     assert MemoryDeleteInput(**ident, agent="*").if_version is None
 
 
+def test_a_versioned_delete_takes_the_version_as_a_decimal_string() -> None:
+    # A nanosecond version is above 2^53: a JavaScript caller sends it as a string.
+    import pydantic
+
+    from server.memory.api.models_crud import MemoryDeleteInput
+
+    ident = {"org": "o", "namespace": "n", "agent": "a", "memory_key": "k"}
+    big = 1_760_000_000_000_000_001
+    assert MemoryDeleteInput(**ident, if_version=str(big)).if_version == big
+    with pytest.raises(pydantic.ValidationError, match="version number"):
+        MemoryDeleteInput(**ident, if_version="latest")
+
+
 def test_a_versioned_delete_checks_and_tombstones_under_the_key_lock(world, monkeypatch) -> None:
     async def _get_by_key(identity: Any, key: str, **kw: Any) -> Any:
         return world["row"]

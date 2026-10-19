@@ -57,6 +57,7 @@ from server.core.datetimes import to_naive_utc
 from server.core.hashing import sha256_value
 from server.memory.domain import okf_bundle as okf
 from server.memory.domain import okf_evidence as okf_ev
+from server.memory.domain import okf_lint
 from server.memory.domain.edge_relations import canonical_edge
 from server.memory.domain.graph_quality import canonical_entities
 from server.memory.domain.sensitivity import ATTRIBUTE_TAG_PREFIX, SENSITIVITY_TAG_PREFIX
@@ -186,9 +187,9 @@ async def _list_namespace(
     include_tombstoned: bool,
     limit: int | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """The `memory.list` entries of every row, and whether nothing was written to the
-    namespace between the first and the last page (the same `namespace_version`, which every
-    write, delete and restore moves) and they add up to its total."""
+    """The `memory.list` entries of every row, and whether every page reported the same
+    `namespace_version` (every write, delete and restore moves it) and total, and the rows
+    add up to that total."""
     entries: list[dict[str, Any]] = []
     totals: list[int] = []
     versions: list[str] = []
@@ -225,10 +226,10 @@ async def _list_namespace(
         offset += len(rows)
     if limit is not None and len(entries) >= limit:
         return entries[:limit], False
-    # A row a shifted page served twice counts once. The count also catches a row that
-    # expired mid-listing, which moves no version.
+    # A row a shifted page served twice counts once. Every page must agree, not only the
+    # ends: a page answered by a lagging replica reports its own total and version.
     unique = list({_entry_id(r): r for r in entries}.values())
-    return unique, versions[0] == versions[-1] and totals[0] == totals[-1] == len(unique)
+    return unique, len(set(versions)) == len(set(totals)) == 1 and totals[0] == len(unique)
 
 
 def _entry_id(r: dict[str, Any]) -> tuple[Any, ...]:
@@ -497,18 +498,18 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
 # ------------------------------------------------------------------
 
 
-def _walk_bundle(root: Path) -> list[okf.Concept]:
+def _walk_bundle(files: dict[str, str]) -> list[okf.Concept]:
+    """The concepts among a bundle's files, as `okf_lint.read_bundle` read them."""
     concepts: list[okf.Concept] = []
-    for p in sorted(root.rglob("*.md")):
-        parts = p.relative_to(root).parts
+    for rel in sorted(files):
+        parts = rel.split("/")
         if any(part.startswith(".") or part == "node_modules" for part in parts):
             continue
-        if p.name in okf.RESERVED_FILES:
+        if parts[-1] in okf.RESERVED_FILES:
             continue
-        rel = p.relative_to(root).as_posix()
         if okf_ev.is_evidence_path(rel):
             continue  # raw chunks and digests: `_walk_evidence`, not concepts
-        c = okf.parse_concept(rel, p.read_text(encoding="utf-8"))
+        c = okf.parse_concept(rel, files[rel])
         if not c.type:
             print(f"  skip {rel}: no `type` in frontmatter (not an OKF concept)", file=sys.stderr)
             continue
@@ -606,8 +607,6 @@ def _lint_before_import(root: Path, args: argparse.Namespace) -> int | None:
     printed and the import proceeds. `--no-lint` skips the gate."""
     if getattr(args, "no_lint", False):
         return None
-    from server.memory.domain import okf_lint
-
     rep = okf_lint.lint_bundle(root)
     if rep.criticals or rep.warnings:
         print(rep.render(), file=sys.stderr)
@@ -892,14 +891,11 @@ def _edge_key(e: dict[str, str]) -> tuple[str, str, str]:
     return edge.from_key, edge.to_key, edge.relation
 
 
-def _prune_refusal(root: Path, concepts: list[okf.Concept]) -> str:
+def _prune_refusal(files: dict[str, str], concepts: list[okf.Concept]) -> str:
     """Why this bundle must not be imported with --prune at all, or ''. An empty bundle or
     one whose files no longer hash to `loom.corpus_digest` is not what the export wrote."""
     if not concepts:
         return "the bundle has no concepts"
-    from server.memory.domain import okf_lint
-
-    files = okf_lint.read_bundle(root)
     declared = str(okf_lint.generation_pointer(files).get("corpus_digest") or "")
     if not declared:
         return "index.md carries no loom.corpus_digest, so this is not a complete export"
@@ -911,12 +907,10 @@ def _prune_refusal(root: Path, concepts: list[okf.Concept]) -> str:
     return ""
 
 
-def _prune_skip(root: Path) -> str:
+def _prune_skip(files: dict[str, str]) -> str:
     """Why this intact bundle's writes go ahead without the prune, or '': only an export
     that read every row says which keys have left the source."""
-    from server.memory.domain import okf_lint
-
-    if okf_lint.generation_pointer(okf_lint.read_bundle(root)).get("complete") is True:
+    if okf_lint.generation_pointer(files).get("complete") is True:
         return ""
     reason = (
         "index.md does not mark the export complete (it stopped at --limit, the source "
@@ -936,21 +930,19 @@ async def _prune(
 ) -> Counter[str]:
     """memory.delete each row an earlier import wrote whose key has left the bundle. Only
     rows under the import's identity with its source_trace stamp, whose live version this
-    token wrote, qualify, and the delete names that version, so rows anyone else wrote in
-    the namespace are never touched."""
+    token wrote and nobody locked, qualify, and the delete names that version: a row
+    rewritten before the server's check is kept, and a conditional write waits for the key
+    lock. A plain memory.set landing between the check and the tombstone takes no lock."""
     gone = sorted(
         k
         for k, r in live.items()
         if k not in keep and str(r.get("source_trace") or "").startswith(_TRACE_PREFIX)
     )
     n: Counter[str] = Counter()
-    if gone and not await _deletes_by_version(client, org):
+    refused = await _versioned_delete_refusal(client, org) if gone else ""
+    if refused:
         n["prune_failed"] += len(gone)
-        print(
-            "  ✗ prune: the target's memory.delete does not take if_version, so prune deletes "
-            "nothing. Upgrade it before pruning.",
-            file=sys.stderr,
-        )
+        print(f"  ✗ prune deletes nothing: {refused}", file=sys.stderr)
         return n
     for session_id, key in gone:
         ident = {
@@ -1005,14 +997,17 @@ async def _prune(
     return n
 
 
-async def _deletes_by_version(client: _Client, org: str) -> bool:
-    """Whether the target's memory.delete takes `if_version`; an unreadable answer is no."""
+async def _versioned_delete_refusal(client: _Client, org: str) -> str:
+    """Why prune must not delete on this target, or '' when its memory.delete takes
+    `if_version`. An unreadable catalogue refuses too."""
     try:
         caps = await client.post("ops.capabilities", {"org": org})
-    except RuntimeError:
-        return False
+    except RuntimeError as e:
+        return f"cannot read the target's ops.capabilities ({e})"
     delete = (caps.get("ops") or {}).get("memory.delete") or {}
-    return "if_version" in (delete.get("request_fields") or [])
+    if "if_version" not in (delete.get("request_fields") or []):
+        return "the target's memory.delete does not take if_version; upgrade it before pruning"
+    return ""
 
 
 def _print_import_summary(
@@ -1083,13 +1078,17 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
     refused = _lint_before_import(root, args)
     if refused is not None:
         return refused
-    concepts = _walk_bundle(root)
+
+    # One read of the bundle: the keys prune keeps and the digest it checks come from the
+    # same files, even when the directory changes during the run.
+    files = okf_lint.read_bundle(root)
+    concepts = _walk_bundle(files)
     if args.prune:
-        reason = _prune_refusal(root, concepts)
+        reason = _prune_refusal(files, concepts)
         if reason:
             print(f"refusing to prune: {reason}", file=sys.stderr)
             return 2
-    skip = _prune_skip(root) if args.prune else ""
+    skip = _prune_skip(files) if args.prune else ""
     token = _resolve_token(args)
     org = _resolve_org(args, token)
     ev_chunks, ev_digests = ([], []) if args.no_evidence else _walk_evidence(root)
@@ -1152,8 +1151,6 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
 def _cmd_okf_lint(args: argparse.Namespace) -> int:
     """The compile gate for a bundle directory: no server, no ClickHouse.
     Exit 2 on a critical finding, 1 on warnings (2 under --strict), 0 clean."""
-    from server.memory.domain import okf_lint
-
     rep = okf_lint.lint_bundle(Path(args.path), strict=bool(args.strict))
     print(okf_lint.report_json(rep) if args.json else rep.render())
     return rep.exit_code
@@ -1263,10 +1260,10 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--prune",
         action="store_true",
         help="Delete the rows an earlier import wrote (this --agent and token, an okf: "
-        "source_trace) whose key is no longer in the bundle. Refuses an empty bundle, "
-        "one its export did not mark complete (--limit, or an older release), or one "
-        "that does not match its loom.corpus_digest. With --dry-run, lists the rows it "
-        "would delete.",
+        "source_trace) whose key is no longer in the bundle. Refuses an empty bundle or "
+        "one that does not match its loom.corpus_digest; a bundle its export did not mark "
+        "complete is written but not pruned. With --dry-run, lists the rows it would "
+        "delete.",
     )
     p_imp.set_defaults(func=_cmd_import_okf)
 

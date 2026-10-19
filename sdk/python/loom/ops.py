@@ -10335,7 +10335,7 @@ class MemoryDeleteInput(TypedDict, total=False):
     session_id: NotRequired[str]
     run_id: NotRequired[str]
     memory_key: Required[str]
-    if_version: NotRequired[Optional[int]]
+    if_version: NotRequired[Union[int, str, None]]
 
 
 class MemoryDeleteBody(TypedDict, total=False):
@@ -10346,7 +10346,7 @@ class MemoryDeleteBody(TypedDict, total=False):
     session_id: NotRequired[str]
     run_id: NotRequired[str]
     memory_key: Required[str]
-    if_version: NotRequired[Optional[int]]
+    if_version: NotRequired[Union[int, str, None]]
 
 
 class MemoryDeleteOutput(TypedDict, total=False):

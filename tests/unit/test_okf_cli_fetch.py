@@ -155,7 +155,7 @@ async def test_a_listing_that_skipped_a_row_is_read_again() -> None:
 
 @pytest.mark.asyncio
 async def test_a_namespace_that_keeps_shifting_is_not_called_complete() -> None:
-    # The bundle then carries no completeness marker, and --prune refuses it.
+    # The bundle then carries no completeness marker: it is written, and not pruned.
     client = _ShiftingClient(shifts=99)
     rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
     assert not whole and client.listings == cli_okf._LIST_ATTEMPTS
@@ -168,4 +168,34 @@ async def test_a_delete_and_a_restore_mid_listing_are_not_called_complete() -> N
     client = _ShiftingClient(shifts=99, restore=True)
     rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
     assert [r["memory_key"] for r in rows] == ["a", "c", "r"]
+    assert not whole
+
+
+class _LaggingMiddleClient:
+    """Three pages of one row. The middle page comes from a replica that still holds a row
+    deleted moments ago, so it serves that row and the last page skips a live one; the
+    ends agree on total and version."""
+
+    async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == "memory.bulk_get":
+            return {"results": {k: {"value": k} for k in body["memory_keys"]}}
+        lagging = body["offset"] == 1
+        keys = ["a", "x", "b", "c"] if lagging else ["a", "b", "c"]
+        page = keys[body["offset"] : body["offset"] + 1]
+        return {
+            "entries": [
+                {"memory_key": k, "agent": "x", "user_id": "-", "session_id": "-"} for k in page
+            ],
+            "truncated": body["offset"] + 1 < 3,
+            "total": len(keys),
+            "namespace_version": "1" if lagging else "2",
+        }
+
+
+@pytest.mark.asyncio
+async def test_a_page_from_a_lagging_replica_is_not_called_complete() -> None:
+    rows, whole = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        _LaggingMiddleClient(), "o", "ns", include_tombstoned=False
+    )
+    assert [r["memory_key"] for r in rows] == ["a", "x", "c"]  # "b" was skipped
     assert not whole
