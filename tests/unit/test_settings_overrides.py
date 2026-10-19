@@ -106,11 +106,17 @@ def test_rows_say_where_each_value_came_from(
 ) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text("LOOM_MEMORY_ASK_SYNTH_BUDGET_RATIO=0.5\nLOOM_CH_HOST=from-file\n")
+    yaml_file = tmp_path / "loom.yaml"
+    yaml_file.write_text(
+        "version: 1\nsettings:\n  memory_ask_synth_budget_ratio: 0.4\n  ch_database: x\n"
+    )
     monkeypatch.setenv("LOOM_ENV_FILE", str(env_file))
+    monkeypatch.setenv("LOOM_SETTINGS_FILE", str(yaml_file))
     monkeypatch.setenv("LOOM_CH_HOST", "from-env")
     by_name = {r["name"]: r for r in so.rows()}
     assert by_name["ch_host"]["source"] == "env"  # the environment wins, as at startup
     assert by_name["memory_ask_synth_budget_ratio"]["source"] == "env_file"
+    assert by_name["ch_database"]["source"] == "settings_file"
     assert by_name[LIVE]["source"] == "default" and by_name[LIVE]["live"] is True
     assert by_name["ch_host"]["live"] is False
     assert by_name[LIVE]["description"].startswith("memory.ask only: re-rank")

@@ -68,7 +68,7 @@ Wire it in `server/embedding/embedder.py`: provider inference from `LOOM_EMBEDDI
 
 A new field goes in its area's mixin in `server/settings/` (`_memory_search.py`, `_code.py`, `_tracker.py`, …). The comment above it says what it controls and what its values mean; that comment becomes its row in the generated [configuration reference](../reference/configuration.md). The environment name is `LOOM_<FIELD>`.
 
-Read it as `settings.<field>`, never `getattr(settings, "<field>", default)`. `tests/unit/test_settings_attribute_access.py` fails on the latter: a copied default drifts and hides the reader from whoever deletes the field. Regenerate with `python scripts/codegen/settings_reference.py`.
+Read it as `settings.<field>`, never `getattr(settings, "<field>", default)`. `tests/unit/test_settings_attribute_access.py` fails on the latter: a copied default drifts and hides the reader from whoever deletes the field. Regenerate with `python scripts/codegen/settings_reference.py` and `python scripts/codegen/settings_schema.py`.
 
 To retire a flag, delete the setting, its branch and any per-request field that carried it. A client that still sends the field is served, with the field named in `ignored_args`.
 

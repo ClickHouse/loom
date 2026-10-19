@@ -5,11 +5,28 @@ Every setting is an environment variable `LOOM_<FIELD>` read at startup into
 `.env.example` lists the common ones. `LOOM_ENV_FILE` names a different dotenv file,
 and empty reads none.
 
-A setting marked **live** also takes a deployment-wide override while Loom runs:
-`loom settings set <field> <value>` or `POST /v1/admin/settings.set`. Every process
-applies it within `LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS`, and it outlives a restart
-until `loom settings reset <field>`. `loom settings list` shows each setting's value
-in force and where it came from ([runtime settings](../operations/runtime-settings.md)).
+The same settings, named in lowercase, can go in a YAML settings file: `loom.yaml` in
+the working directory, or the path `LOOM_SETTINGS_FILE` names (empty reads none).
+
+```yaml
+# yaml-language-server: $schema=schemas/loom-settings.schema.json
+version: 1
+settings:
+  memory_search_default_mode: rrf
+```
+
+A value comes from the first of: the environment, the dotenv file, the settings file,
+the default. The file is read strictly: an unknown name, a secret (keep those in the
+environment or a secrets manager) or a `version` this build does not read stops the
+server at startup. `schemas/loom-settings.schema.json` is the file's JSON Schema
+(`python scripts/codegen/settings_schema.py`), and `loom.example.yaml` a template.
+
+A setting marked **live** also takes a deployment-wide override while Loom runs, which
+wins over all of these: `loom settings set <field> <value>` or
+`POST /v1/admin/settings.set`. Every process applies it within
+`LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS`, and it outlives a restart until
+`loom settings reset <field>`. `loom settings list` shows each setting's value in force
+and where it came from ([runtime settings](../operations/runtime-settings.md)).
 
 This page is generated from the comments above each field in `server/settings/`
 by `python scripts/codegen/settings_reference.py`; edit the comment, not this file.

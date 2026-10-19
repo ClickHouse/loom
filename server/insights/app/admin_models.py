@@ -318,8 +318,9 @@ class SettingRow(BaseModel):
     # A secret shows only its length.
     value: Any
     default: Any
-    # override (settings.set), env, env_file (the dotenv file) or default.
-    source: Literal["override", "env", "env_file", "default"]
+    # override (settings.set), env, env_file (the dotenv file), settings_file
+    # (the YAML settings file) or default.
+    source: Literal["override", "env", "env_file", "settings_file", "default"]
     # True: takes an override while Loom runs; False: read once at startup.
     live: bool
     description: str

@@ -4,13 +4,16 @@ One `Settings` object, composed from one mixin per area (`_clickhouse`,
 `_memory_search`, `_code`, …). Every field keeps its flat name and its
 `LOOM_<NAME>` env var: `settings.memory_ask_top_k` is one flat field
 whichever mixin declares it — the split is for the reader, not the caller.
+A value comes from, first match wins: the environment, the dotenv file
+(`LOOM_ENV_FILE`), the YAML settings file (`LOOM_SETTINGS_FILE`, `_file.py`),
+the default.
 """
 
 from __future__ import annotations
 
 import logging
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from server.core.env_file import env_file_path
 from server.settings._auth import AuthSettings
@@ -20,6 +23,7 @@ from server.settings._context import ContextSettings
 from server.settings._env import DEV_JWT_SECRET, is_secret_field, unknown_env_keys
 from server.settings._erasure import ErasureSettings
 from server.settings._extraction import ExtractionSettings
+from server.settings._file import SettingsFileSource
 from server.settings._knowledge import KnowledgeSettings
 from server.settings._mcp import McpSettings
 from server.settings._memory import MemorySettings
@@ -69,6 +73,24 @@ class Settings(
         validate_by_alias=True,
         hide_input_in_errors=True,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # First wins: the environment, then the dotenv file, then the settings file.
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            file_secret_settings,
+            SettingsFileSource(settings_cls),
+        )
 
     def _mask(self, key: str, value: object) -> object:
         # Only the length, so an operator can confirm it is set: even a short

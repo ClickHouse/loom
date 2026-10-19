@@ -82,6 +82,7 @@ jobs:
       - name: docs reference and reach manifest are current
         run: |
           python scripts/codegen/settings_reference.py --check
+          python scripts/codegen/settings_schema.py --check
           python scripts/codegen/docs_reference.py --check
           python scripts/codegen/op_reach_census.py --check
       # The SDK ships py.typed: it is type-checked strictly

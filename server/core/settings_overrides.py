@@ -19,10 +19,11 @@ from typing import Any
 from pydantic import ValidationError as PydanticValidationError
 
 from server.core import runtime_overrides as ro
-from server.core.env_file import env_file_path
+from server.core.env_file import env_file_path, settings_file_path
 from server.core.errors import ValidationError
 from server.core.repo_base import _CHClient
 from server.settings import Settings, settings
+from server.settings._file import read_settings_file
 from server.settings._live import coerce, is_live, to_json
 
 log = logging.getLogger(__name__)
@@ -99,8 +100,8 @@ def _restore(name: str) -> None:
 
 
 def _sources() -> dict[str, str]:
-    """field -> where its value in force came from: override, env, env_file or
-    default. The environment wins over the dotenv file, as at startup."""
+    """field -> where its value in force came from: override, env, env_file,
+    settings_file or default, in the order startup ranks them."""
     environ = {k.upper() for k in os.environ}
     dotenv: set[str] = set()
     path = env_file_path()
@@ -108,6 +109,10 @@ def _sources() -> dict[str, str]:
         from dotenv import dotenv_values
 
         dotenv = {k.upper() for k in dotenv_values(path)}
+    in_file: set[str] = set()
+    file_path, _ = settings_file_path()
+    if file_path and os.path.isfile(file_path):
+        in_file = set(read_settings_file(file_path, set(Settings.model_fields)))
     out = {}
     for name in Settings.model_fields:
         env = f"LOOM_{name.upper()}"
@@ -117,6 +122,8 @@ def _sources() -> dict[str, str]:
             out[name] = "env"
         elif env in dotenv:
             out[name] = "env_file"
+        elif name in in_file:
+            out[name] = "settings_file"
         else:
             out[name] = "default"
     return out

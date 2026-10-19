@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=schemas/loom-settings.schema.json
+#
+# Loom settings file. Copy to `loom.yaml` in the server's working directory, or
+# name another path with LOOM_SETTINGS_FILE (empty reads none).
+#
+# Each key is a setting's LOOM_<NAME> environment variable in lowercase, and
+# docs/reference/configuration.md lists them all. The environment and the dotenv
+# file win over this file. An unknown name, a secret (passwords, keys, tokens) or
+# an unsupported version stops the server at startup: keep secrets in the
+# environment or a secrets manager.
+version: 1
+settings:
+  # Search mode when a caller sets neither search_mode nor a recipe.
+  # memory_search_default_mode: semantic
+  # memory.ask: weight of recency when ranking the synthesis window.
+  # memory_ask_recency_weight: 0.2
+  # Seconds between re-reads of the admin runtime overrides in every process.
+  # runtime_overrides_refresh_seconds: 10.0

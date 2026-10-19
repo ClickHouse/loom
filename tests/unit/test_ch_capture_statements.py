@@ -35,6 +35,8 @@ def test_capture_appends_digest_and_text(tmp_path: Path, monkeypatch: pytest.Mon
 def test_capture_write_failure_does_not_fail_the_statement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(settings, "ch_capture_statements", str(tmp_path / "no-such-dir" / "x.jsonl"))
+    monkeypatch.setattr(
+        settings, "ch_capture_statements", str(tmp_path / "no-such-dir" / "x.jsonl")
+    )
     out = ch_mod.statement_settings("SELECT 1", None, cls="read")
     assert isinstance(out, dict)

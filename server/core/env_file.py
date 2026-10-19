@@ -15,6 +15,19 @@ def env_file_path() -> str | None:
     return os.environ.get("LOOM_ENV_FILE", ".env") or None
 
 
+# The settings file read when LOOM_SETTINGS_FILE is unset, if it exists.
+DEFAULT_SETTINGS_FILE = "loom.yaml"
+
+
+def settings_file_path() -> tuple[str | None, bool]:
+    """The YAML settings file and whether it was named explicitly:
+    LOOM_SETTINGS_FILE, else `loom.yaml` in the working directory; empty reads none."""
+    named = os.environ.get("LOOM_SETTINGS_FILE")
+    if named is None:
+        return DEFAULT_SETTINGS_FILE, False
+    return named or None, True
+
+
 if __name__ == "__main__":
     # `python -m server.core.env_file NAME` prints NAME's value in the env file
     # ("" when the file or the name is missing), for scripts/serve.sh.

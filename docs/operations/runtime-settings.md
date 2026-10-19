@@ -26,6 +26,7 @@ ch_host = "clickhouse"  (env)
 | `override` | set with `loom settings set` or `/v1/admin/settings.set` |
 | `env`      | the process environment                                  |
 | `env_file` | the dotenv file (`LOOM_ENV_FILE`, default `.env`)        |
+| `settings_file` | the YAML settings file (`LOOM_SETTINGS_FILE`, default `loom.yaml`) |
 | `default`  | the built-in default                                     |
 
 A secret shows only its length.

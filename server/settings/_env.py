@@ -92,6 +92,7 @@ NON_SETTINGS_ENV = frozenset(
         "LOOM_EMBEDDING_API_KEY",
         "LOOM_SEARCH_RECIPES",
         "LOOM_SEARCH_TOOL_NAME",
+        "LOOM_SETTINGS_FILE",
         "LOOM_SHUNT_READ_CAP",
         "LOOM_VERSION",
     }
