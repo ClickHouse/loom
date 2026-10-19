@@ -58,6 +58,10 @@ def test_the_file_sets_a_value_and_the_dotenv_file_and_environment_win(
         ("settings: {}\n", "version None is not supported"),
         ("version: 1\nsetings: {}\n", "unknown top-level keys ['setings']"),
         ("version: 1\nsettings: [a]\n", "`settings` must be a mapping"),
+        ("version: 1\nsettings: false\n", "`settings` must be a mapping"),
+        ("version: 1\nsettings: []\n", "`settings` must be a mapping"),
+        ("version: 1\nsettings: 0\n", "`settings` must be a mapping"),
+        ("version: 1\nsettings: ''\n", "`settings` must be a mapping"),
         ("- 1\n", "expected a mapping"),
         ("version: 1\nsettings: {a: [\n", "not readable YAML"),
         ("version: true\nsettings: {}\n", "version True is not supported"),
@@ -74,6 +78,15 @@ def test_a_file_the_build_cannot_use_refuses_to_start(
     with pytest.raises(SettingsFileError) as e:
         _load(monkeypatch, tmp_path, text)
     assert names in str(e.value)
+
+
+@pytest.mark.parametrize(
+    "text", ["version: 1\n", "version: 1\nsettings:\n", "version: 1\nsettings: {}\n"]
+)
+def test_a_file_with_no_settings_sets_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str
+) -> None:
+    assert _load(monkeypatch, tmp_path, text).loaded_from("settings_file") == frozenset()
 
 
 def test_a_wrong_type_names_the_field_never_the_value(

@@ -74,7 +74,9 @@ def read_settings_file(path: str, fields: set[str]) -> dict[str, Any]:
             f"{path}: version {doc.get('version')!r} is not supported; this build reads "
             f"version {', '.join(str(v) for v in VERSIONS)}"
         )
-    values = doc.get("settings") or {}
+    values = doc.get("settings")
+    if values is None:  # `settings:` missing or left empty
+        values = {}
     if not isinstance(values, dict):
         raise SettingsFileError(f"{path}: `settings` must be a mapping of setting names")
     # Logged, not refused: builds N-1 and N read one file during a rolling upgrade,
