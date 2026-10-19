@@ -540,6 +540,76 @@ def test_the_compaction_window(
     assert ch_mod._compaction_window(lines, folded) == expected
 
 
+def test_a_stale_summary_is_replaced_unread() -> None:
+    """A summary whose sources are all still live (its run failed before tombstoning
+    them) is replaced without being read or spending the allowance, so a resend leaves
+    one summary, and the earlier summary beside it still folds in."""
+    lines = ["system: " + "s" * 3_000, "system: " + "t" * 3_000, "user: a"]
+    replaced, transcript = ch_mod._compaction_window(
+        lines, [True, True, False], [False, True, False]
+    )
+    assert replaced == [0, 1, 2]
+    assert transcript == "system: " + "s" * 3_000 + "\nuser: a"
+
+
+def test_a_resent_compaction_replaces_the_summary_its_failed_run_left(monkeypatch) -> None:
+    """S0 compacted earlier turns; a run then wrote S1 over S0 and m1..m3 and failed
+    before tombstoning them. The resend replaces S0, S1 and the turns with one summary,
+    reading S0 and the turns but not S1."""
+    import server.core.ch
+    import server.llm.client
+
+    def row(mid: str, content: str, metadata: str = "{}", role: str = "user") -> dict[str, Any]:
+        return {
+            "msg_id": mid,
+            "role": role,
+            "content": content,
+            "ts": T0,
+            "metadata": metadata,
+            "user_id": "alice",
+            "run_id": "run-1",
+        }
+
+    rows = [
+        row("compact-0", "s" * 3_000, '{"compacted_from": ["m0"]}', "system"),
+        row(
+            "compact-1",
+            "t" * 3_000,
+            '{"compacted_from": ["compact-0", "m1", "m2", "m3"]}',
+            "system",
+        ),
+        *(row(f"m{i}", f"turn {i}") for i in range(1, 5)),
+    ]
+    prompts: list[str] = []
+
+    class _RecordingLLM(_FakeLLM):
+        async def complete(self, **kw: Any) -> LLMResult:
+            prompts.append(kw["user"])
+            return await super().complete(**kw)
+
+    fake = _FakeCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _RecordingLLM())
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=1
+            )
+        )
+    )
+    assert out.compacted is True and out.messages_summarized == 3
+    [prompt] = prompts
+    assert "sss" in prompt and "ttt" not in prompt
+    [summary] = fake.inserted
+    assert json.loads(summary["metadata"])["compacted_from"] == [
+        "compact-0",
+        "compact-1",
+        "m1",
+        "m2",
+        "m3",
+    ]
+
+
 @pytest.mark.parametrize(
     ("role", "metadata", "summary"),
     [

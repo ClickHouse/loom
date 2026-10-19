@@ -687,23 +687,28 @@ def _fitting_prefix(lines: list[str], cap: int) -> int:
     return len(lines)
 
 
-def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[list[int], str]:
+def _compaction_window(
+    lines: list[str], folded: list[bool], stale: list[bool] | None = None
+) -> tuple[list[int], str]:
     """`(replaced, transcript)`: the indices of the leading candidate lines the summary
-    replaces, and the prompt transcript."""
+    replaces, and the prompt transcript. `stale` marks summaries whose sources are all
+    still live (a run that failed before tombstoning them)."""
     # Leading summaries fold in free while each fits what is left of the allowance
     # whole. One that does not stays live and out of the prompt (tombstoning it would
     # drop text the summarizer never read), and the window still reaches the first
-    # new turn.
-    k, allowance, read = 0, _FOLDED_SUMMARY_CHARS, []
+    # new turn. A stale summary is replaced unread: its sources say all it says.
+    k, allowance, read, dropped = 0, _FOLDED_SUMMARY_CHARS, [], []
     while k < len(lines) and folded[k]:
-        if len(lines[k]) <= allowance:
+        if stale and stale[k]:
+            dropped.append(k)
+        elif len(lines[k]) <= allowance:
             allowance -= len(lines[k])
             read.append(k)
         k += 1
     fit = k + _fitting_prefix(lines[k:], _COMPACT_TRANSCRIPT_CHARS)
     turns = "\n".join(lines[k:fit])[:_COMPACT_TRANSCRIPT_CHARS]
     transcript = "\n".join(part for part in (*(lines[i] for i in read), turns) if part)
-    return [*read, *range(k, fit)], transcript
+    return sorted([*read, *dropped, *range(k, fit)]), transcript
 
 
 def _compacted_from(row: Mapping[str, Any]) -> list[str]:
@@ -785,7 +790,8 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         )
 
     lines = [f"{r['role']}: {r['content']}" for r in candidates]
-    replaced, transcript = _compaction_window(lines, folded)
+    stale = [bool(ids) and set(ids) <= live_ids for ids in map(_compacted_from, candidates)]
+    replaced, transcript = _compaction_window(lines, folded, stale)
     candidates = [candidates[i] for i in replaced]
     candidate_ids = {str(r["msg_id"]) for r in candidates}
 
