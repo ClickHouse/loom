@@ -63,7 +63,7 @@ Refusals before a call is admitted:
 - A refusal recorded before the call is classified carries the token's `traffic_class`
   claim, or '' without one.
 - Within one MCP batch, a caller's refusal before a handler runs is recorded once per
-  operation, code and org, and a server fault at most ten times; the rows not written
+  operation, code, org and status class, and a server fault at most ten times; the rows not written
   count in `loom.ledger.batch_repeats` (a caller's) or
   `loom.ledger.dropped{reason="batch_repeat"}` (a server fault's, lost server errors).
   An idempotency refusal (after the rate limiter) and a handler's failure always have

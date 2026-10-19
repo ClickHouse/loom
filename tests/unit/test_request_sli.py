@@ -1706,3 +1706,18 @@ def test_the_ledger_reads_an_absent_org_or_namespace_as_the_gates_do() -> None:
     assert run(eve) == ("eve-org", "-")
     assert run(anyone) == ("-", "-")
     assert run(None) == ("-", "-")
+
+
+def test_each_mcp_call_in_a_batch_starts_with_no_budget_shape() -> None:
+    """A batch runs its entries in one task: a shape one handler noted must
+    not price the next entry's budget (its ledger row's `budget_ms`)."""
+    from server.observability.budget_shape import current_budget_shape, note_budget_shape
+    from server.transport._common import begin_call
+
+    def _two_calls() -> str:
+        begin_call()
+        note_budget_shape("hybrid")
+        begin_call()
+        return current_budget_shape()
+
+    assert contextvars.copy_context().run(_two_calls) == ""

@@ -5,7 +5,7 @@ its org (or the one the screen authorized), subject and consumer, `-` for
 the rest, no arguments (`emit_token_refusal`). Within one JSON-RPC batch, a
 caller's refusal before a handler runs (these, and `mcp_call`'s argument,
 gate, read-scope, policy and rate-limit refusals, through `batch_allows_row`)
-is written once per (op, code, org), and a server fault at most
+is written once per (op, code, org, status class), and a server fault at most
 `_SERVER_FAULT_ROWS` times: they are written before or by the rate limiter
 and a batch has no length cap, so one POST of many refused entries could
 otherwise fill the ledger queue for every tenant. A handler's failure and an

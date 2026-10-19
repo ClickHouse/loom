@@ -583,9 +583,10 @@ _SLI_LAG_SQL = """
 # Ledger request rows of the last day that ClickHouse took before the rollup's
 # mark but the rollup did not count, minute by minute: a ledger insert whose
 # part committed after the mark had passed its rows (the view waits 70 s for
-# that). One refresh writes one part, so the mark and the rows it vouches for
-# are read together; a ledger row that erasure removed makes a minute read short,
-# never long.
+# that). `mark` is read before `rolled`, so a refresh that commits between the
+# two only adds to `rolled`: never a false miss, though that probe can hide a
+# real one in those minutes until the next. A ledger row erasure removed makes
+# a minute read short, never long.
 _SLI_MISSED_SQL = """
         WITH (SELECT max(ingested_hwm) FROM loom_telemetry.sli_minute
               WHERE slo_class = '' AND minute >= toStartOfMinute(now() - toIntervalDay(31))

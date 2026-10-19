@@ -127,8 +127,9 @@ def begin_request() -> RequestWork:
 def begin_call() -> None:
     """`begin_request` for one MCP `tools/call`, and the request-scoped state
     HTTP's `_begin_request` also resets: a batch runs its entries in one task,
-    so the previous entry's hint, traffic class and run would otherwise ride
-    every later row."""
+    so the previous entry's hint, traffic class, run and budget shape would
+    otherwise ride every later row."""
+    from server.observability.budget_shape import note_budget_shape
     from server.observability.ledger import set_hint_context
     from server.observability.run_context import set_ledger_run
     from server.observability.traffic_class import set_current_traffic_class
@@ -137,6 +138,7 @@ def begin_call() -> None:
     set_hint_context("")
     set_current_traffic_class("")
     set_ledger_run("")  # bound again once the call is admitted
+    note_budget_shape("")
 
 
 async def emit_budget_violation(
