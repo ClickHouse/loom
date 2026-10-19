@@ -650,3 +650,53 @@ def test_only_a_system_turn_with_a_compacted_from_list_is_a_summary(
     """The same test `_PEER_COPIES` applies in SQL: a system turn with a non-empty
     `compacted_from` list."""
     assert bool(ch_mod._compacted_from({"role": role, "metadata": metadata})) is summary
+
+
+def test_a_stale_summary_tied_with_its_first_source_still_leads(monkeypatch) -> None:
+    """A failed run's summary shares its first source's ts, and an id like `0001`
+    sorts before `compact-`: the summary is still put first and replaced unread."""
+    import server.core.ch
+    import server.llm.client
+
+    def row(mid: str, content: str, metadata: str = "{}", role: str = "user") -> dict[str, Any]:
+        return {
+            "msg_id": mid,
+            "role": role,
+            "content": content,
+            "ts": T0,
+            "metadata": metadata,
+            "user_id": "alice",
+            "run_id": "run-1",
+        }
+
+    rows = [
+        *(row(f"000{i}", f"turn {i}") for i in range(1, 5)),
+        row("compact-1", "t" * 100, '{"compacted_from": ["0001", "0002", "0003"]}', "system"),
+    ]
+    prompts: list[str] = []
+
+    class _RecordingLLM(_FakeLLM):
+        async def complete(self, **kw: Any) -> LLMResult:
+            prompts.append(kw["user"])
+            return await super().complete(**kw)
+
+    fake = _FakeCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _RecordingLLM())
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=1
+            )
+        )
+    )
+    assert out.compacted is True and out.messages_summarized == 3
+    [prompt] = prompts
+    assert "ttt" not in prompt
+    [summary] = fake.inserted
+    assert json.loads(summary["metadata"])["compacted_from"] == [
+        "0001",
+        "0002",
+        "0003",
+        "compact-1",
+    ]

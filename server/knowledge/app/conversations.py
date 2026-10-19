@@ -691,12 +691,13 @@ def _compaction_window(
     lines: list[str], folded: list[bool], stale: list[bool]
 ) -> tuple[list[int], str]:
     """`(replaced, transcript)`: the indices of the leading candidate lines the summary
-    replaces, and the prompt transcript. `stale` marks summaries whose sources are all
-    still live (a run that failed before tombstoning them)."""
+    replaces, and the prompt transcript. `stale` marks summaries whose sources this
+    window replaces (`_window_of`), so dropping one loses nothing."""
     # Leading summaries fold in free while each fits what is left of the allowance
     # whole. One that does not stays live and out of the prompt (tombstoning it would
     # drop text the summarizer never read), and the window still reaches the first
-    # new turn. A stale summary is replaced unread: its sources say all it says.
+    # new turn. A stale summary is replaced unread: its sources, replaced too, say all
+    # it says.
     k, allowance, read, dropped = 0, _FOLDED_SUMMARY_CHARS, [], []
     while k < len(lines) and folded[k]:
         if stale[k]:
@@ -764,6 +765,9 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     rows = await conversation_repo.live_messages(
         input.org, input.namespace, input.agent, input.thread_id
     )
+    # A summary sits at its first source's ts: ahead of the turns at that ts, it leads
+    # the window it was written over.
+    rows.sort(key=lambda r: (r["ts"], not _compacted_from(r), str(r["msg_id"])))
     # A run that failed after tombstoning its turns leaves their embeddings to a retry,
     # whose window no longer holds those turns: the turns this agent's live summaries
     # name that are not live for it get an embeddings pass first. A replaced turn still live

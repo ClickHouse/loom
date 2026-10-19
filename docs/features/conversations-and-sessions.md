@@ -74,11 +74,10 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   summarised `msg_id`s, and tombstones the originals and their embeddings:
   `conversation.search` then finds the summary in their place. A turn another agent of
   the thread still holds live with the same text, as a turn search indexes, keeps its
-  embedding (see delete below). A window of
-  fewer than `min_to_compact` (default 4) new turns is left alone; earlier summaries
-  fold into the prompt without counting, one too long to fold in whole stays live, and
-  one whose turns are all still live and in the window (its run failed midway) is
-  replaced unread.
+  embedding (see delete below). A window of fewer than `min_to_compact` (default 4) new
+  turns is left alone; earlier summaries fold into the prompt without counting, one too
+  long to fold in whole stays live, and one whose turns are all still live and in the
+  window (its run failed midway) is replaced unread.
   A summary that cannot be embedded compacts nothing (`reason: "embed-failed"`).
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
