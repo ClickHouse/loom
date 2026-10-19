@@ -152,7 +152,7 @@ async def deactivated(email: str) -> bool:
 
 
 async def create(
-    user_name: str, email: str, *, active: bool, email_entry: dict[str, Any] | None = None
+    user_name: str, email: str, *, active: bool, email_entry: dict[str, Any]
 ) -> dict[str, Any]:
     """Record the SCIM user for `email`. Raises Exists when one is live,
     once a retried re-create has waited out its cutoff. A deleted one comes
@@ -410,7 +410,7 @@ async def _write_audited(row: dict[str, Any], new: dict[str, Any]) -> None:
     try:
         if new != row or "version" not in row:  # a change, or a user not yet written
             await _write(new)
-    except Exception:
+    except Exception:  # re-raised: what landed is audited before the error goes on
         try:
             landed = await _row(row["id"])
         except Exception:  # noqa: BLE001 — the write's own error is the one to raise

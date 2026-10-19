@@ -61,7 +61,12 @@ def test_okta_spec_test(scim_server) -> None:
     first = listed["Resources"][0]
     assert first["id"] and first["userName"] and "active" in first and first["emails"][0]["value"]
 
-    assert _scim(base, "GET", f"/Users/{user['id']}").json()["id"] == user["id"]
+    got = _scim(base, "GET", f"/Users/{user['id']}").json()
+    assert got["id"] == user["id"]
+    # Read back from ClickHouse, the times still say they are UTC.
+    assert got["meta"]["created"].endswith("+00:00") and got["meta"]["lastModified"].endswith(
+        "+00:00"
+    )
     nobody = f'userName eq "nobody-{uuid.uuid4().hex}@corp.example"'
     empty = _scim(base, "GET", "/Users", params={"filter": nobody}).json()
     assert empty["totalResults"] == 0 and empty["Resources"] == []

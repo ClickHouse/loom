@@ -16,6 +16,7 @@ import logging
 import re
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from clickhouse_connect.driver.exceptions import ClickHouseError
@@ -386,11 +387,16 @@ def _resource(request: Request, row: dict[str, Any]) -> dict[str, Any]:
         "emails": [_email(row)],
         "meta": {
             "resourceType": "User",
-            "created": row["created_at"].isoformat(),
-            "lastModified": row["updated_at"].isoformat(),
+            "created": _utc(row["created_at"]),
+            "lastModified": _utc(row["updated_at"]),
             "location": f"{public_base_url(request)}/scim/v2/Users/{row['id']}",
         },
     }
+
+
+def _utc(ts: datetime) -> str:
+    # ClickHouse hands DateTime64(3, 'UTC') back without its zone; a fresh row has one.
+    return (ts if ts.tzinfo else ts.replace(tzinfo=UTC)).isoformat()
 
 
 def _email(row: dict[str, Any]) -> dict[str, Any]:

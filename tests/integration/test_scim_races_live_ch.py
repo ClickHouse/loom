@@ -125,8 +125,8 @@ async def test_a_reactivation_racing_a_deactivation_of_a_shared_subject(seeded) 
         await seeded.account(a, shared)
         await seeded.account(a, own)
         await seeded.account(b, shared)
-        ua = await scim.create(a, a, active=False)
-        ub = await scim.create(b, b, active=True)
+        ua = await scim.create(a, a, active=False, email_entry={})
+        ub = await scim.create(b, b, active=True, email_entry={})
         await _sent(
             rng,
             functools.partial(scim.update, ua["id"], active=True),
@@ -176,7 +176,7 @@ async def test_a_first_sign_in_racing_a_deactivation_keeps_no_session(seeded, mo
     signed_in = 0
     for _ in range(16):
         email, subject = seeded.email(), seeded.subject()
-        user = await scim.create(email, email, active=True)
+        user = await scim.create(email, email, active=True, email_entry={})
         sign_in = _SignIn(seeded, email, subject, rng)
         monkeypatch.setattr(scim, "_subjects", sign_in.accounts)
         iat, _ = await asyncio.gather(sign_in(), scim.update(user["id"], active=False))

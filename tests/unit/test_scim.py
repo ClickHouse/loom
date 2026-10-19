@@ -376,7 +376,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
 
 
 async def _create(email: str, *, active: bool = True) -> str:
-    return str((await scim.create(email, email, active=active))["id"])
+    return str((await scim.create(email, email, active=active, email_entry={}))["id"])
 
 
 async def test_deactivating_revokes_the_person_once_however_often_it_is_sent(world) -> None:
@@ -609,7 +609,9 @@ async def test_every_row_written_carries_every_column(world) -> None:
     uid = await _create("lee@example.com")
     await scim.update(uid, active=False)
     await scim.delete(uid)
-    await scim.create("lee@example.com", "lee@example.com", active=True)  # a reactivation
+    await scim.create(
+        "lee@example.com", "lee@example.com", active=True, email_entry={}
+    )  # a reactivation
     assert [sorted(r) for r in world.table.rows] == [sorted(column_names("scim_users"))] * 4
     columns = sorted(column_names("revoked_tokens"))
     assert [sorted(r) for r in world.table.revocations] == [columns] * 2
@@ -918,7 +920,9 @@ async def test_a_reactivation_waits_once_its_leases_are_let_go(world, monkeypatc
 
     await scim.delete(uid)
     events.clear()
-    await scim.create("lee@example.com", "lee@example.com", active=True)  # created again
+    await scim.create(
+        "lee@example.com", "lee@example.com", active=True, email_entry={}
+    )  # created again
     assert events[-3:] == ["let go scim-username", "let go scim-user", "waited"]
 
 
@@ -1089,7 +1093,7 @@ async def test_a_deleted_user_is_gone_but_stays_deactivated(world) -> None:
     assert await scim.update(uid, active=True) is None
     assert await _DEACTIVATED("lee@example.com")
     # Created again by the provider: assigned again, so active again.
-    again = await scim.create("lee@example.com", "lee@example.com", active=True)
+    again = await scim.create("lee@example.com", "lee@example.com", active=True, email_entry={})
     assert again["id"] == uid and again["active"] and world.ours["lee"] is not None
 
 
@@ -2344,7 +2348,7 @@ class _Run:
         if kind == "create":
             before = self.world.table.newest(scim.user_id(email))
             try:
-                await scim.create(email, email, active=on)
+                await scim.create(email, email, active=on, email_entry={})
             except scim.Exists:
                 return before is not None and bool(before["active"]) == on
         elif kind == "patch":

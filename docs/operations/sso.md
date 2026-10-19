@@ -283,8 +283,8 @@ Loom accepts that push: once the provider sends it, the person's sessions and
 the tokens they made are refused at once by the Loom process that took the
 request, and by every other process, on that replica or another, at its next
 revocation refresh (`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`, 30 s by default).
-No process makes them a new token meanwhile: every mint reads revocations from ClickHouse. Set
-a long random token and restart:
+No process makes them a new token meanwhile: every mint reads revocations from
+ClickHouse. Set a long random token and restart:
 
 ```bash
 LOOM_SCIM_TOKEN=$(openssl rand -hex 32)
@@ -293,8 +293,8 @@ LOOM_SCIM_TOKEN=$(openssl rand -hex 32)
 Empty (the default) leaves SCIM off and its routes unmounted. Loom refuses to
 start with a token shorter than 32 characters, or with SCIM set while sign-in
 is not SSO (`LOOM_OAUTH_LOGIN_PROVIDER=oidc`) or auth is off: a deactivation
-would then refuse nobody. `loom doctor` says so too. The token is the only credential `/scim/v2`
-takes; keep it with the client secret.
+would then refuse nobody. `loom doctor` says so too. The token is the only
+credential `/scim/v2` takes; keep it with the client secret.
 
 To rotate it without refusing the provider in between, list both tokens,
 comma-separated, and roll the replicas; set the new one at the provider; then
@@ -386,24 +386,24 @@ What Loom does with each request:
   (each SSO account naming it and each password account linked to it, in any
   org): every session, and every service account and MCP token the person
   made. Their tokens show as revoked by `scim` in the Tokens list and their
-  names are free again; a reactivation does not bring them back. A grant
-  such a token held on a restricted namespace in its own name stays in the
+  names are free again; a reactivation does not bring them back. A grant such
+  a token held on a restricted namespace in its own name stays in the
   namespace's grant list, though it reaches nothing: revoke it there to tidy
   the list. While it lasts, SSO sign-in with the email is refused ("this
-  account is deactivated"), even if it reaches no account yet. The accounts, their
-  grants and their data stay; this is not erasure. A password account that
-  names the email but was never linked to it (not adopted, linked or proven
-  at an SSO sign-in) is not one an SSO sign-in reaches, so it is left alone:
-  revoke it with `loom revoke-token --subject`, or adopt it before offboarding
-  ([Accounts](#accounts)). Likewise a token an operator minted with the
-  email itself as its subject (`loom mint-token --subject <email>`) for an
-  adopted account whose subject is a handle: revoke the email with
+  account is deactivated"), even if it reaches no account yet. The accounts,
+  their grants and their data stay; this is not erasure. A password account
+  that names the email but was never linked to it (not adopted, linked or
+  proven at an SSO sign-in) is not one an SSO sign-in reaches, so it is left
+  alone: revoke it with `loom revoke-token --subject`, or adopt it before
+  offboarding ([Accounts](#accounts)). Likewise a token an operator minted
+  with the email itself as its subject (`loom mint-token --subject <email>`)
+  for an adopted account whose subject is a handle: revoke the email with
   `loom revoke-token --subject <email>`. A subject is a name, not an org's:
   when one also owns an account or holds a grant in an org where the email
-  does not reach that subject (another person's `alice`), it is still
-  revoked, and Loom logs a warning and audits `auth.scim_collateral` naming
-  those orgs. Find it in `loom revoke-token --list` (`scim→<it>`) and, if it
-  is someone else's, give it back with
+  does not reach that subject (another person's `alice`), it is still revoked,
+  and Loom logs a warning and audits `auth.scim_collateral` naming those orgs.
+  Find it in `loom revoke-token --list` (`scim→<it>`) and, if it is someone
+  else's, give it back with
   `loom revoke-token --subject <it> --issued-before <now> --scim`: its new
   tokens work, and its tokens from before the deactivation stay dead (Loom
   refuses an earlier `--issued-before`). The provider repeating the
@@ -417,16 +417,16 @@ What Loom does with each request:
   reaches it (the last is reactivated, or an operator moves the account to
   another address with `loom sso link`), the next `PUT` or `PATCH` for an
   active user whose email reaches it lets it go. Okta sends one on a profile
-  change only with **Update User Attributes** on; Entra sends one when a mapped
-  attribute changes. Otherwise, or at once,
+  change only with **Update User Attributes** on; Entra sends one when a
+  mapped attribute changes. Otherwise, or at once,
   `loom revoke-token --subject <it> --issued-before <now> --scim` gives it
   back as an operator. A reactivation answers after about 6 s (up to 11 s
   when it comes right after the deactivation), once every replica's clock is
-  past its cutoff, so a sign-in after it gets a token that
-  lives (one in that wait would get a token from before the cutoff, already
-  dead); a retry sent meanwhile waits out the rest. Another process, on that replica or
-  another, still refuses the new session until its next revocation refresh,
-  then takes it.
+  past its cutoff, so a sign-in after it gets a token that lives (one in that
+  wait would get a token from before the cutoff, already dead); a retry sent
+  meanwhile waits out the rest. Another process, on that replica or another,
+  still refuses the new session until its next revocation refresh, then takes
+  it.
 - **Deleting** deactivates and the user answers 404 from then on
   (`auth.scim_deleted` is audited). The provider creating them again
   reactivates them, answering after the same wait; a retry of that create
