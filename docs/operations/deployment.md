@@ -100,8 +100,9 @@ that migrates also needs `CREATE DATABASE`, `CREATE TABLE`, `CREATE VIEW`, `INSE
 of the request SLI rollup. Only the replica-version and system-table reads and the
 `loom_telemetry` grants, which only migrations need, relax while nothing is pending or
 when boot migrations are off. A server that does not migrate warns without `SELECT` on
-`loom_telemetry.*`: `/v1/admin/schema.status` then reports the rollup missing and the
-view refresh gauges leave its refresh out.
+`loom_telemetry.*`: `/v1/admin/schema.status` then reports the rollup missing, the view
+refresh gauges leave its refresh out, and `loom.sli.rollup_lag_s` and
+`loom.sli.rollup_missed_rows` are never reported, so alerts on them cannot fire.
 `loom doctor` reports the checks as `clickhouse_preflight`.
 
 ### Local stack from a clone

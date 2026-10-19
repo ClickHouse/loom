@@ -56,8 +56,9 @@ Refusals before a call is admitted:
 
 - MCP writes a row for a call it refuses before dispatch (an org or namespace the token
   may not use, an op kept off MCP, a write on a read-only connection), as HTTP does for
-  its refusals. The caller is not bound yet, so that row carries the token's org,
-  subject and consumer, `-` for the rest and no arguments.
+  its refusals. The caller is not bound yet, so that row carries the token's org (or the
+  org the call named, when the token may act in it), subject and consumer, `-` for the
+  rest and no arguments.
 - On either transport, a refusal naming an org the token may not act in is recorded in
   the token's org, never the named one.
 - A refusal recorded before the call is classified carries the token's `traffic_class`

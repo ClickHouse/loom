@@ -416,7 +416,8 @@ def warnings(server: Server) -> str:
     if server.no_telemetry_read:
         parts.append(
             f"may not SELECT on {TELEMETRY_DATABASE}.*, so /v1/admin/schema.status reports the "
-            "SLI rollup missing and the view refresh gauges leave it out"
+            "SLI rollup missing, the view refresh gauges leave it out, and "
+            "loom.sli.rollup_lag_s and loom.sli.rollup_missed_rows are never reported"
         )
     # Each reason may end in its own SQL advice: " | " keeps them apart.
     line = " | ".join(parts)
