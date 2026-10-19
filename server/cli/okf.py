@@ -469,7 +469,8 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
         if unreadable:
             print(
                 f"  {len(unreadable)} row(s) left out: bulk_get did not answer them (tombstoned, "
-                "or deleted since the list) and the list does not carry their full value: "
+                "deleted since the list, or a high row past its retention window) and the "
+                "list does not carry their full value: "
                 + ", ".join(unreadable[:5])
                 + (" …" if len(unreadable) > 5 else "")
             )
@@ -861,7 +862,8 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         action="store_true",
         help="Also export rows with sensitivity=high, the raw chunks and digests linked to "
         "them, and raw text that reads as a credential; the server audits each released "
-        "item. Off by default: a mirror repository is a wider audience than the "
+        "item. A high row past its retention window is never read, so it is named and left "
+        "out. Off by default: a mirror repository is a wider audience than the "
         "namespace's grants.",
     )
     p_exp.set_defaults(func=_cmd_export_okf)

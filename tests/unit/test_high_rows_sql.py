@@ -688,3 +688,25 @@ def test_a_digests_summary_and_key_facts_are_read_one_by_one() -> None:
         session_id="s", summary_text="a session", key_facts=["the token is ghp_" + "a" * 36]
     )
     assert okf_evidence.evidence_is_high(inside, set())
+
+
+@pytest.mark.asyncio
+async def test_a_high_row_past_its_window_is_never_read_nor_hides_a_live_row() -> None:
+    # Agent b's newer high row of the key is past its retention window; agent a's plain row is
+    # live. An open-axis read answers a's row, as memory.get does, and b's own read finds none.
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import Identity, get_many_by_keys
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version, expires_at) VALUES "
+        f"('o', 'n', 'a', '-', '-', '{_A}', 'k', 'semantic', 'plain', 'active', '', 1, NULL), "
+        f"('o', 'n', 'b', '-', '-', '{_B}', 'k', 'semantic', 'vault', 'active', 'high', 2, "
+        "'2020-01-01 00:00:00')",
+    )
+    ident = Identity(org="o", namespace="n", agent="*", user_id="-", session_id="-")
+    rows = await get_many_by_keys(ident, ["k"], scope=WHOLE_NAMESPACE, ch=ch)
+    assert [(r.agent, r.value) for r in rows] == [("a", "plain")]
+    b = Identity(org="o", namespace="n", agent="b", user_id="-", session_id="-")
+    assert await get_many_by_keys(b, ["k"], scope=WHOLE_NAMESPACE, ch=ch) == []

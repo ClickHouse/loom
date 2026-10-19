@@ -365,7 +365,8 @@ class MemoryBulkGetOutput(BaseModel):
     # Named `results` (not `found`) to avoid colliding with the per-row
     # `found: bool` inside MemoryGetOutput. Every value is a hit; `missing` is misses.
     results: dict[str, MemoryGetOutput] = Field(default_factory=dict)
-    # Asked keys with no live row under this identity.
+    # Asked keys with no live row under this identity. A row past `expires_at` is served
+    # until the expiry sweep, as memory.list serves it, except a high one, which lands here.
     missing: list[str] = Field(default_factory=list)
 
 

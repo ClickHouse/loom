@@ -853,6 +853,14 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
     )
     if row is None:
         return MemoryGetByIdOutput(found=False)
+    # A 'high' row past its retention window is never served, as memory.bulk_get leaves it out.
+    expires_at = row.expires_at
+    if (
+        row.sensitivity == "high"
+        and expires_at
+        and expires_at.replace(tzinfo=None) <= naive_utc_now()
+    ):
+        return MemoryGetByIdOutput(found=False)
     # Addressed by an org-wide id: the transport had no namespace to bind, so
     # the row's own namespace is checked here and a foreign row is hidden, not
     # refused.

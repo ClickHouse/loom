@@ -264,13 +264,13 @@ _TOKEN = "ghp_" + "a" * 36
     ],
     ids=["json-string", "own-line", "in-a-key", "quoted"],
 )
-def test_value_text_lets_the_detector_read_what_the_value_holds(value: object) -> None:
+def test_detector_text_lets_the_detector_read_what_the_value_holds(value: object) -> None:
     from server.memory.domain.sensitivity import detector_text, reads_high
 
     assert reads_high(detector_text(value))
 
 
-def test_value_text_reads_plain_values_as_written_and_never_recurses() -> None:
+def test_detector_text_reads_plain_values_as_written_and_never_recurses() -> None:
     from server.memory.domain.sensitivity import detector_text
 
     assert [detector_text(v) for v in ["null", "123", "plain words", None]] == [

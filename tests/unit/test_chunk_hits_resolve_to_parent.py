@@ -366,39 +366,22 @@ async def test_bulk_get_records_the_served_rows_own_keys_as_exposed(
 
 
 @pytest.mark.asyncio
-async def test_bulk_get_never_serves_a_high_row_past_its_retention_window(
+async def test_get_by_id_never_serves_a_high_row_past_its_retention_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A bulk read serves a row past expires_at until the sweep, as memory.list does; a high
-    # row's window is its retention, so that one is not served.
-    from datetime import datetime
-
     from server.memory import store as memory_repo
-    from server.memory.api.models_bulk import MemoryBulkGetInput
-    from server.memory.app import query as Q
+    from server.memory.api.models_crud import MemoryGetByIdInput
+    from server.memory.app import handlers
 
-    past = datetime(2020, 1, 1)
-
-    async def fake_get_many(identity, keys, **kw):
-        return [
-            _row("old_plain").model_copy(update={"expires_at": past}),
-            _row("old_high").model_copy(
-                update={
-                    "expires_at": past,
-                    "sensitivity": "high",
-                    "memory_id": "00000000-0000-0000-0000-000000000009",
-                }
-            ),
-        ]
-
-    monkeypatch.setattr(memory_repo, "get_many_by_keys", fake_get_many)
-    out = await Q.handle_memory_bulk_get(
-        MemoryBulkGetInput(
-            org="o",
-            namespace="n",
-            agent="clickgap",
-            memory_keys=["old_plain", "old_high"],
-            fields=["value"],
-        )
+    expired = _row("vault").model_copy(
+        update={"sensitivity": "high", "expires_at": datetime(2020, 1, 1)}
     )
-    assert list(out.results) == ["old_plain"] and out.missing == ["old_high"]
+
+    async def fake_get_by_id(*_a: Any, **_k: Any) -> Any:
+        return expired
+
+    monkeypatch.setattr(memory_repo, "get_by_id", fake_get_by_id)
+    out = await handlers.handle_memory_get_by_id(
+        MemoryGetByIdInput(org="o", memory_id=str(expired.memory_id))
+    )
+    assert out.found is False

@@ -117,7 +117,8 @@ class MemoryGetOutput(ProjectedRow):
     created_at: datetime | None = None
     # Last write to this key; distinct from created_at, which is preserved across updates.
     updated_at: datetime | None = None
-    # When the row expires (reads hide it after that); None = no expiry.
+    # When the row expires (memory.get hides it after that; memory.list and memory.bulk_get
+    # serve it until the expiry sweep, except a high one); None = no expiry.
     expires_at: datetime | None = None
     # Post-action on expiry ('' = tombstone) and its reason.
     on_expire: str = ""

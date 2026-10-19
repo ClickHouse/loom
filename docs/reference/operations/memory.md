@@ -770,7 +770,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `version` | `int \| None` | Nanosecond version of the live row; send it back as `if_version` to poll. |
 | `created_at` | `datetime \| None` | When the key was first written; kept across later versions. |
 | `updated_at` | `datetime \| None` | Last write to this key; distinct from created_at, which is preserved across updates. |
-| `expires_at` | `datetime \| None` | When the row expires (reads hide it after that); None = no expiry. |
+| `expires_at` | `datetime \| None` | When the row expires (memory.get hides it after that; memory.list and memory.bulk_get serve it until the expiry sweep, except a high one); None = no expiry. |
 | `on_expire` | `str` | Post-action on expiry ('' = tombstone) and its reason. |
 | `expire_reason` | `str` | Why the expiry was set, as the writer gave it; '' when none. |
 | `valid_at` | `datetime \| None` | Real-world time the fact became true (distinct from created_at = when recorded). |

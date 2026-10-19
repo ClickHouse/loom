@@ -401,6 +401,13 @@ async def get_many_by_keys(
     session_clause += scope_and(scope, params)
     if exclude_high_sensitivity:
         session_clause += " AND sensitivity != 'high'"
+    if not strong:
+        # A 'high' row past its retention window is never read, and left out here, before
+        # one row per key is picked, so it hides no other identity's live row of the key. A
+        # strong read feeds a write (memory.touch may extend that window) and still sees it.
+        session_clause += (
+            " AND NOT (sensitivity = 'high' AND expires_at IS NOT NULL AND expires_at <= now())"
+        )
     # Locate the heads (key columns only) under
     # FINAL, then fetch the rows by their exact (memory_id, version) without
     # FINAL — 19 MB → about 1 MB for twenty keys on a namespace of 5 KB values.
