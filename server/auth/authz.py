@@ -33,7 +33,7 @@ from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
 from server.core.principals import USER, principal_id
 
 # Re-export from operations.base so there's one canonical Role definition.
-from server.operations.base import GRANT_ROLES, Role, grant_rank
+from server.operations.base import GRANT_ROLES, Role, grant_rank, rank_role
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
@@ -46,9 +46,6 @@ log = logging.getLogger(__name__)
 # The roles a namespace grant can hold. Org- and platform-wide roles are never
 # grantable per namespace: an unknown grant role maps to no role at all.
 _ROLE_NAME_TO_ENUM: dict[str, Role] = {name: Role[name.upper()] for name in GRANT_ROLES}
-_ROLE_BY_RANK: dict[int, Role] = {
-    grant_rank(name): role for name, role in _ROLE_NAME_TO_ENUM.items()
-}
 
 
 def grant_role(name: str | None) -> Role | None:
@@ -177,7 +174,7 @@ async def check_authorized(
             auth.can_write(org, namespace) if is_write else auth.can_access(org, namespace)
         )
         if cap is not None:
-            live = _rank_role(cap)
+            live = rank_role(cap)
             ns_covered_by_jwt = ns_covered_by_jwt and live is not None and live >= required_role
     else:
         ns_covered_by_jwt = False
@@ -265,7 +262,7 @@ async def _grant_role(
     and no second read of its own grants may loosen it. A service account with
     none live there still reads through its creator, as the listings do."""
     if cap is not None:
-        role = _rank_role(cap)
+        role = rank_role(cap)
         if role is None:
             from server.auth.service_accounts import inheriting_creator
 
@@ -392,7 +389,7 @@ def _scoped_role(
         return None
     role = auth.effective_role(org, namespace)
     if role is not None and cap is not None:
-        live = _rank_role(cap)
+        live = rank_role(cap)
         role = None if live is None else min(role, live)
     return role
 
@@ -437,10 +434,6 @@ async def claim_cap(auth: AuthInfo, org: str, namespace: str) -> int | None:
     if not names_namespace(auth, org, namespace):
         return None
     return (await grant_map(org, auth.subject)).rank(namespace)
-
-
-def _rank_role(rank: int) -> Role | None:
-    return _ROLE_BY_RANK.get(rank)
 
 
 async def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> list[str]:
@@ -495,7 +488,7 @@ async def _check_restricted(
     if own is None or own.value < required_role.value:
         raise refusal
     if grants is not None:
-        grant = _rank_role(grants.rank(namespace) or 0)
+        grant = rank_role(grants.rank(namespace) or 0)
     else:
         grant = await grant_role_for(org, namespace, auth.subject)
     if grant is None or grant.value < required_role.value:
@@ -643,7 +636,7 @@ class CachedGate:
         if namespace and namespace == self.provisioned:
             known = Role.ADMIN
         elif self.auth.creator:
-            known = _rank_role((await self.grants(self.auth.creator)).rank(namespace) or 0)
+            known = rank_role((await self.grants(self.auth.creator)).rank(namespace) or 0)
         elif self.auth.has_ns_roles() and not _code_namespace_read(
             required_role, self.org, namespace
         ):
@@ -667,14 +660,14 @@ class CachedGate:
         """`_lookup_grant`: the subject's live grant, else the inheriting creator's."""
         from server.auth.service_accounts import inheriting_creator
 
-        role = _rank_role((await self.grants()).rank(namespace) or 0)
+        role = rank_role((await self.grants()).rank(namespace) or 0)
         if role is not None:
             return role
         if self._inherited is _UNKNOWN_GRANT:
             self._inherited = await inheriting_creator(self.org, self.auth.subject)
         if not self._inherited:
             return None
-        return _rank_role((await self.grants(self._inherited)).rank(namespace) or 0)
+        return rank_role((await self.grants(self._inherited)).rank(namespace) or 0)
 
 
 def scope_flags(op: Operation) -> dict[str, bool]:

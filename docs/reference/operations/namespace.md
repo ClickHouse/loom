@@ -268,7 +268,7 @@ Create a shared memory workspace within an org; caller becomes admin.
 | `namespace` | `str` | required | Recommend kebab-case, e.g. eng-tooling |
 | `owner_email` | `str` | required | The namespace's owner; an account with a login (an email, or an agent's claim code) keeps its stored owner exactly, so send that value back to update settings. |
 | `description` | `str \| None` | `None` | Every setting left None (or omitted) keeps the stored value, and a fresh row takes the default named here, so a re-register that sends only what it changes resets nothing. |
-| `kind` | `Literal['memory', 'code', 'bench', 'collection', 'personal'] \| None` | `None` | None = keep the existing row's kind (a fresh row is classified by name: `bench` under a bench prefix, else `memory`), so a settings-only re-register never demotes a code namespace to memory. |
+| `kind` | `Literal['memory', 'code', 'bench'] \| None` | `None` | None = keep the existing row's kind (a fresh row is classified by name: `bench` under a bench prefix, else `memory`), so a settings-only re-register never demotes a code namespace to memory. |
 | `tags` | `list[str]` | *(computed)* | Labels on the namespace; the list is replaced whole, so a register that omits it clears the stored tags. |
 | `traffic_class` | `Literal['production', 'interactive', 'bench'] \| None` | `None` | The class requests into this namespace run as when the token carries no `traffic_class` claim. |
 | `active` | `bool \| None` | `None` | fresh: True; True reactivates a soft-deleted row |

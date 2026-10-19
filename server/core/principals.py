@@ -1,6 +1,6 @@
 """The grant subjects a gateway's end users are known by (server/auth/gateway.py):
-`user:<id>`, `group:<id>` and `agent:<id>`. An id is lowercase, so two spellings
-of one id never name two people, nor one spelling two."""
+`user:<id>`, `group:<id>` and `agent:<id>`. An id is lowercase: each principal
+has exactly one spelling."""
 
 from __future__ import annotations
 

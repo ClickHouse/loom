@@ -39,7 +39,7 @@ class _CH:
         self.spellings: list[str] = []
         self.grant_reads = 0
         self.exact_reads = 0
-        self.acl_versions: list[tuple[str, int]] = []  # loom.acl_versions (org, version)
+        self.acl_versions: list[tuple[str, int]] = []  # loom.acl_versions (org, changes)
 
     def _live(self, ns: str) -> str | None:
         role, status, revoked = self.grants.get(ns, ("", "", True))
@@ -51,8 +51,14 @@ class _CH:
             return [r for k, r in self.revoked.items() if keys is None or k in keys]
         if "loom.acl_versions" in sql:
             orgs = {org for org, _ in self.acl_versions}
+            # Every change these tests make is a grant change.
             return [
-                {"org": org, "n": sum(c for o, c in self.acl_versions if o == org)} for org in orgs
+                {
+                    "org": org,
+                    "kind": "grants",
+                    "n": sum(c for o, c in self.acl_versions if o == org),
+                }
+                for org in orgs
             ]
         return []
 

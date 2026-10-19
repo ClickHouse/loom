@@ -93,9 +93,12 @@ schema. These rules keep that safe. The operator procedure is in
     (`LOOM_SCIM_TOKEN`) after the whole rollout.
 11. **A new access rule** (such as collections, [sharing](sharing.md)): N-1 does not
     know that a `col-` namespace opens only through grants, so an org admin's wildcard
-    token reads one on an N-1 replica. A gateway token reaches nothing there (N-1 sees a
-    token with no claims). Collections are created (`collection.create`, which N-1 does
-    not serve) only once no N-1 replica serves.
+    token reads one on an N-1 replica, and a personal collection is one too. A gateway
+    token reaches nothing there (N-1 sees a token with no claims), but on N its first
+    `@me` write creates a personal collection. N-1 also rewrites a document (a metadata
+    edit, a delete) without the authorship columns, so a user erasure would miss that
+    version. Collections are created (`collection.create`, which N-1 does not serve) and
+    gateway tokens minted (`loom mint-token --gateway`) only once no N-1 replica serves.
 
 ## What checks them
 

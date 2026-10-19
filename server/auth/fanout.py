@@ -69,8 +69,6 @@ async def namespaces_to_search(
     (the memory fan-out's settings by default)."""
     if namespace_scope != "all_mine":
         return Split([namespace], [])
-    if cap is None and kinds is None:
-        return (await resolve_fanout(org)).split(namespace)
     return (await resolve_fanout(org, cap, kinds)).split(namespace)
 
 
@@ -91,12 +89,7 @@ async def resolve_fanout(org: str, cap: int | None = None, kinds: str | None = N
     subject = auth_off_subject() if auth is None else None
     readable = await context.resolve_my_namespaces(org, subject)
     # A scoped or delegated claim may repeat a namespace; it is read once.
-    of_kinds = (
-        directory().fanout_namespaces(org, readable)
-        if kinds is None
-        else directory().fanout_namespaces(org, readable, kinds)
-    )
-    mine = list(dict.fromkeys(await of_kinds))
+    mine = list(dict.fromkeys(await directory().fanout_namespaces(org, readable, kinds)))
     ordered = auth is not None and auth.has_ns_roles()
     public: set[str] = set()
     if len(mine) > cap and not ordered:

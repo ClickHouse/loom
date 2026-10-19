@@ -36,9 +36,7 @@ class IdentityDirectory:
         self, org: str, namespaces: list[str], kinds: str | None = None
     ) -> list[str]:
         """Unknown kinds stay: the kind directory can only narrow, never widen."""
-        keep = (
-            namespace_kinds.fanout_kinds() if kinds is None else namespace_kinds.fanout_kinds(kinds)
-        )
+        keep = namespace_kinds.fanout_kinds(kinds)
         if not namespaces or not keep:
             return namespaces
         return namespace_kinds.keep_kinds(namespaces, await namespace_kinds.kind_map(org), keep)

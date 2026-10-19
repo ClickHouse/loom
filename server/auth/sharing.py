@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.core import grant_cache
 from server.core.principals import PERSONAL_PREFIX, USER, personal_name, principal_id
-from server.operations.base import Role
+from server.operations.base import Role, rank_role
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
@@ -40,8 +40,6 @@ MAX_DEPTH = 8
 COLLECTION_PREFIX = "col-"
 # What a request names its end user's personal collection by.
 PERSONAL_ALIAS = "@me"
-
-_ROLE_BY_RANK = {1: Role.VIEWER, 2: Role.WRITER, 3: Role.ADMIN}
 
 
 def is_collection(namespace: str) -> bool:
@@ -98,7 +96,7 @@ class Tree:
 
 async def tree(org: str) -> Tree:
     """The org's collection tree, cached with its grants."""
-    return await grant_cache.org_value("collections", org, load_tree)
+    return await grant_cache.org_value(grant_cache.COLLECTIONS, org, load_tree)
 
 
 async def load_tree(org: str) -> Tree:
@@ -123,7 +121,7 @@ async def tree_rows(org: str) -> list[dict[str, Any]]:
 
 async def groups_of(org: str, principal: str) -> list[str]:
     """The `group:<id>` principals whose members include `principal`."""
-    members = await grant_cache.org_value("groups", org, _load_groups)
+    members = await grant_cache.org_value(grant_cache.GROUPS, org, _load_groups)
     return members.get(principal, [])
 
 
@@ -164,7 +162,7 @@ async def _best_role(org: str, lineage: list[str], subjects: list[str]) -> Role 
     for subject in subjects:
         grants = await grant_cache.grant_map(org, subject)
         best = max(best, *(grants.rank(ns) or 0 for ns in lineage))
-    return _ROLE_BY_RANK.get(best)
+    return rank_role(best)
 
 
 async def role(auth: AuthInfo, org: str, namespace: str) -> Role | None:
@@ -173,7 +171,7 @@ async def role(auth: AuthInfo, org: str, namespace: str) -> Role | None:
         return Role.ADMIN if owns_personal(auth, org, namespace) else None
     collections = await tree(org)
     if namespace not in collections.parent:
-        return None  # deleted, never created, or a `col-` name from before collections
+        return None  # a `col-` name not in the tree admits only a platform admin
     lineage = collections.lineage(namespace)
     granted = await _best_role(org, lineage, await principals(auth, org))
     if granted is None or not (auth.has_ns_roles() or auth.creator):
@@ -212,7 +210,7 @@ async def roles(auth: AuthInfo, org: str, namespaces: list[str]) -> dict[str, Ro
             out[ns] = None
             continue
         lineage = collections.lineage(ns)
-        out[ns] = _ROLE_BY_RANK.get(max((m.rank(n) or 0 for m in maps for n in lineage), default=0))
+        out[ns] = rank_role(max((m.rank(n) or 0 for m in maps for n in lineage), default=0))
     return out
 
 

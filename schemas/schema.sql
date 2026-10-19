@@ -29,11 +29,12 @@ CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 CREATE TABLE IF NOT EXISTS loom.acl_versions
 (
     `org` LowCardinality(String),
+    `kind` LowCardinality(String),
     `changes` UInt64 DEFAULT 1,
     `updated_at` DateTime64(3) DEFAULT now64(3)
 )
 ENGINE = SummingMergeTree(changes)
-ORDER BY org
+ORDER BY (org, kind)
 SETTINGS allow_dimensions_outside_sorting_key = 1, non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.agent_cost_rollup_daily

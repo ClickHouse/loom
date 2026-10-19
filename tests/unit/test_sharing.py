@@ -420,3 +420,72 @@ def test_an_end_user_does_not_read_an_org_readable_code_namespace(
     asyncio.run(authz.check_authorized(member, Role.VIEWER, ORG, "code-acme"))
     with pytest.raises(PermissionError):
         asyncio.run(authz.check_authorized(_user("alice"), Role.VIEWER, ORG, "code-acme"))
+
+
+@pytest.mark.parametrize("subject", ["Group:Eng", "AGENT:helper", "User:Bob"])
+def test_a_grant_to_a_principal_in_another_case_is_refused(subject: str) -> None:
+    from server.core.errors import ValidationError
+    from server.identity.app.grants import _enforce_principal_target
+
+    with pytest.raises(ValidationError, match="well-formed principal"):
+        _enforce_principal_target("col-hr", subject)
+
+
+@pytest.mark.parametrize(
+    "auth",
+    [
+        None,
+        AuthInfo(
+            subject="root",
+            org="*",
+            namespaces=("*",),
+            roles=(Role.PLATFORM_ADMIN,),
+            is_service_account=False,
+        ),
+    ],
+)
+def test_no_collection_is_hidden_with_auth_off_or_from_a_platform_admin(
+    auth: AuthInfo | None,
+) -> None:
+    from server.auth import context
+
+    async def _clause() -> tuple[str, dict[str, Any]]:
+        context.set_current_auth(auth)
+        return await context.collection_clause(ORG)
+
+    assert asyncio.run(_clause()) == ("", {})
+
+
+def test_a_document_rewrite_keeps_who_wrote_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A metadata edit or a delete writes the next version from the row read."""
+    from datetime import datetime
+
+    from server.knowledge.store import documents
+
+    stored = {
+        "org": ORG,
+        "namespace": "col-hr",
+        "source_uri": "doc/1",
+        "doc_id": "d1",
+        "content": "text",
+        "version": 1,
+        "ingested_at": datetime(2026, 1, 1),
+        "agent": "helper",
+        "user_id": "bob",
+        "actor": "user:bob",
+        "source_class": "asserted",
+    }
+
+    class _CH:
+        async def query_one(self, sql: str, params: Any = None, **_k: Any) -> dict[str, Any]:
+            assert all(c in sql for c in ("agent", "user_id", "actor", "source_class"))
+            return stored
+
+    row = asyncio.run(documents.get_one(ORG, "col-hr", "doc/1", ch=_CH()))  # type: ignore[arg-type]
+    rewritten = documents.build_document_row(row, title="new", version=2)
+    assert {k: rewritten[k] for k in ("agent", "user_id", "actor", "source_class")} == {  # type: ignore[literal-required]
+        "agent": "helper",
+        "user_id": "bob",
+        "actor": "user:bob",
+        "source_class": "asserted",
+    }

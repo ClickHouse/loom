@@ -338,7 +338,7 @@ async def handle_namespace_register(
     caller = resolve_subject()
     from server.auth.sharing import COLLECTION_PREFIX
 
-    if input.kind in ("collection", "personal") or input.namespace.startswith(COLLECTION_PREFIX):
+    if input.namespace.startswith(COLLECTION_PREFIX):
         raise ValidationError("a collection is changed with the collection operations only")
 
     # Create-or-update. Fresh row ⇒ caller becomes admin; existing row ⇒
@@ -439,7 +439,8 @@ async def handle_namespace_register(
 async def handle_namespace_list(input: NamespaceListInput) -> NamespaceListOutput:
     from server.auth.context import collection_clause
 
-    # Collections show only to whom their grants reach, org admins included.
+    # A collection shows only to whom its grants reach, org admins included;
+    # a platform admin sees every one.
     collections_where, params = await collection_clause(input.org)
     where = ["org = {org:String}" + collections_where]
     params.update({"org": input.org, "lim": input.limit})

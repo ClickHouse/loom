@@ -261,10 +261,15 @@ async def hidden_namespaces(org: str) -> list[str]:
 
 async def collection_clause(org: str, column: str = "namespace") -> tuple[str, dict[str, Any]]:
     """A WHERE fragment that leaves out every collection of `org` the current
-    caller cannot read: by prefix, so it names only the readable ones."""
+    caller cannot read: by prefix, so it names only the readable ones. Empty
+    with auth disabled and for a platform admin, who read every collection."""
     from server.auth import sharing
+    from server.operations.base import Role
 
-    readable = await sharing.readable(current_auth(), org)
+    auth = current_auth()
+    if auth is None or auth.has_role(Role.PLATFORM_ADMIN):
+        return "", {}
+    readable = await sharing.readable(auth, org)
     return (
         f" AND (NOT startsWith({column}, {{col_prefix:String}})"
         f" OR {column} IN {{col_readable:Array(String)}})",
@@ -321,11 +326,7 @@ async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeF
         hidden = await hidden_namespaces(org)
         if hidden == ["*"]:
             return OrgScopeFilter(accessible=False, where="", params={})
-        # A platform admin reads every collection (sharing.check); an org admin
-        # only those its grants reach.
-        where, params = (
-            ("", {}) if auth.has_role(Role.PLATFORM_ADMIN) else await collection_clause(org, column)
-        )
+        where, params = await collection_clause(org, column)
         if hidden:
             where += f" AND {column} NOT IN {{ns_hidden:Array(String)}}"
             params["ns_hidden"] = hidden

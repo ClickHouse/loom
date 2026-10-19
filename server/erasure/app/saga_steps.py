@@ -11,7 +11,9 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
+from server.auth.grant_claims import collections_change, group_change
 from server.code.app.index.retire import code_tables_keyed_by_namespace, refresh_code_views
+from server.core import grant_cache
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
@@ -106,8 +108,31 @@ async def _step_tombstone_documents_by_ns(org: str, namespace: _NS) -> int:
 async def _step_revoke_grants_by_user(org: str, user_id: str) -> int:
     """Every grant naming the user as a principal, `user:<user_id>`."""
     from server.identity.app.grants import revoke_subject
+    from server.memory.app.provenance import writer_actor
 
-    return await revoke_subject(org, "user:" + user_id)
+    return await revoke_subject(org, "user:" + user_id, actor=writer_actor("-"))
+
+
+async def _step_remove_from_groups_by_user(org: str, user_id: str) -> int:
+    """Each group under the claim a SCIM change of it holds, so a PATCH that
+    read the group first cannot put the user back."""
+    removed = 0
+    for group_id in await principal_steps.groups_of_user(org, user_id):
+        async with group_change(org, group_id):
+            removed += await principal_steps.remove_from_group(org, group_id, user_id)
+    if removed:
+        await grant_cache.changed(org, kind=grant_cache.GROUPS)
+    return removed
+
+
+async def _step_forget_collection_owner_by_user(org: str, user_id: str) -> int:
+    """Under the tree's claim, so a move that lands meanwhile is not written
+    back to the parent it had."""
+    async with collections_change(org):
+        n = await principal_steps.forget_collection_owner_by_user(org, user_id)
+    if n:
+        await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
+    return n
 
 
 async def _step_tombstone_documents_by_user(org: str, user_id: str) -> int:
@@ -201,9 +226,9 @@ USER_STEPS: tuple[UserStep, ...] = (
     # The user as a principal (`user:<user_id>`): what a grant, a group or the
     # tree still says about them.
     ("grants.revoke", _step_revoke_grants_by_user),
-    ("groups.remove_member", principal_steps.remove_from_groups_by_user),
+    ("groups.remove_member", _step_remove_from_groups_by_user),
     ("personal.retire", principal_steps.retire_personal_collection_by_user),
-    ("collections.forget_owner", principal_steps.forget_collection_owner_by_user),
+    ("collections.forget_owner", _step_forget_collection_owner_by_user),
     *_UNCOUNTED_STEPS_USER,
 )
 

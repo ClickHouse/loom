@@ -75,7 +75,7 @@ async def handle_collection_create(input: CollectionCreateInput) -> CollectionCr
     if parent and not await _may(Role.WRITER, org, parent):
         raise AuthInsufficientError(f"{caller!r} cannot add a collection to {org}/{parent}")
     taken = PreconditionFailedError(f"the name {namespace!r} is taken in {org}")
-    async with collections_change(org), account_change(org, namespace):
+    async with account_change(org, namespace), collections_change(org):
         with own_write_reads():  # a create on another replica a moment ago
             directory_row = await namespaces_repo.fetch_row(org, namespace)
         current = await collections_repo.fetch(org, namespace)
@@ -102,8 +102,7 @@ async def handle_collection_create(input: CollectionCreateInput) -> CollectionCr
         await collections_repo.write(
             collections_repo.collection_row(org, namespace, parent=parent, owner=caller), ch=ch
         )
-        # The grant write moves the org's watermark, so every process reads the
-        # new tree with it.
+        await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
         await insert_admin_grant(ch, org, namespace, caller)
         row = registry_row(
             NamespaceRegisterInput(
@@ -140,7 +139,7 @@ async def handle_collection_move(input: CollectionMoveInput) -> CollectionMoveOu
                 created_at=current["created_at"],
             )
         )
-    await grant_cache.changed(org)
+    await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
     return CollectionMoveOutput(namespace=namespace, parent=parent, moved=True)
 
 
@@ -208,4 +207,4 @@ async def retire(org: str, namespace: str) -> None:
                 deleted=True,
             )
         )
-    await grant_cache.changed(org)
+    await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)

@@ -79,16 +79,10 @@ def _collection(gw: Gateway, owner: str, name: str, parent: str = "") -> str:
     return name
 
 
-def _add(gw: Gateway, user: str, namespace: str, text: str, uri: str = "") -> None:
-    gw.ok(
-        user,
-        "knowledge.add",
-        {
-            "namespace": namespace,
-            "source_uri": uri or f"doc/{uuid.uuid4().hex[:8]}",
-            "content": text,
-        },
-    )
+def _add(gw: Gateway, user: str, namespace: str, text: str, uri: str = "") -> str:
+    uri = uri or f"doc/{uuid.uuid4().hex[:8]}"
+    gw.ok(user, "knowledge.add", {"namespace": namespace, "source_uri": uri, "content": text})
+    return uri
 
 
 def test_a_document_added_to_a_shared_collection_reaches_the_group_at_once(gw: Gateway) -> None:
@@ -135,8 +129,15 @@ def test_a_removed_member_and_a_revoked_grant_read_nothing(gw: Gateway) -> None:
     assert gw.scim("PATCH", "Groups/people", patch).status_code == 200
     gw.ok("alice", "grants.revoke", {"namespace": col, "subject": "user:erin"})
     for user in ("dan", "erin"):
-        assert (
-            gw.call(user, "knowledge.search", {"namespace": col, "query": nonce}).status_code == 403
+        # At once on the process that made the change; on the server's others
+        # at their next watermark poll (1 s).
+        wait_until(
+            lambda u=user: (
+                gw.call(u, "knowledge.search", {"namespace": col, "query": nonce}).status_code
+                == 403
+            ),
+            max_wait=5,
+            description=f"{user} refused",
         )
         assert not any(nonce in h["content"] for h in _search(gw, user, "@me", nonce)), user
     assert any(nonce in h["content"] for h in _search(gw, "bob", col, nonce)), "bob stays"
@@ -257,14 +258,28 @@ def test_a_users_erasure_leaves_no_trace_and_keeps_others_documents(
     gw.ok("alice", "grants.create", {"namespace": col, "subject": "user:bob", "role": "writer"})
     gw.scim("POST", "Groups", {"externalId": "crew", "members": [{"value": "bob"}]})
     mine, theirs = _nonce(), _nonce()
-    _add(gw, "bob", col, f"bob wrote {mine}")
+    bobs = _add(gw, "bob", col, f"bob wrote {mine}")
     _add(gw, "alice", col, f"alice wrote {theirs}")
+    # An edit by someone else keeps the document bob's.
+    gw.ok(
+        "alice", "knowledge.update_metadata", {"namespace": col, "source_uri": bobs, "title": "t"}
+    )
     gw.ok(
         "bob", "knowledge.upsert", {"namespace": "@me", "source_uri": "chat/c1/m1", "content": mine}
     )
     admin = mint_test_token(
         org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="ops"
     )
+    export = httpx.post(
+        f"{control_plane_url}/v1/erasure.export",
+        json={"org": gw.org, "scope_type": "user_id", "scope_value": "bob", "requester": "ops"},
+        headers={"Authorization": f"Bearer {admin}"},
+        timeout=60,
+    )
+    assert export.status_code == 200, export.text
+    exported = {(r["namespace"], r["source_uri"]) for r in export.json()["knowledge"]["rows"]}
+    uris = {uri for _, uri in exported}
+    assert (col, bobs) in exported and uris == {bobs, "chat/c1/m1"}, exported
     r = httpx.post(
         f"{control_plane_url}/v1/erasure.request",
         json={
@@ -293,7 +308,12 @@ def test_a_users_erasure_leaves_no_trace_and_keeps_others_documents(
         "AND has(members, 'user:bob') AND NOT deleted",
         parameters={"o": gw.org},
     ).result_rows[0][0]
-    assert (live, grants, groups) == (0, 0, 0)
+    edited = ch_client.query(
+        "SELECT count() FROM loom.documents FINAL WHERE org = {o:String} AND namespace = {n:String}"
+        " AND source_uri = {u:String} AND superseded_at IS NULL",
+        parameters={"o": gw.org, "n": col, "u": bobs},
+    ).result_rows[0][0]
+    assert (live, edited, grants, groups) == (0, 0, 0, 0)
     assert any(theirs in h["content"] for h in _search(gw, "alice", col, theirs)), "alice's stays"
     wait_until(
         lambda: (

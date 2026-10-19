@@ -120,8 +120,9 @@ forgotten.
   accounts that tie a person's spellings drops the org's.
 - Every other process, on this server or another, drops the org's entries within
   `acl_watermark_poll_seconds` (1 s). The write adds one change for its org to
-  `loom.acl_versions` (a `SummingMergeTree`), and each process reads `sum(changes)` per org
-  with sequential consistency; an entry read before its org's count moved is not served. A
+  `loom.acl_versions` (a `SummingMergeTree`, counted per org and kind of change), and each
+  process reads `sum(changes)` per org and kind with sequential consistency; an entry read
+  before its count moved is not served. A
   sum only grows, so neither a merge nor a writer's clock can hide a change. A process whose last good poll is older than
   `acl_watermark_max_stale_seconds` (10 s) serves no cached grant and reads per request. The
   TTL bounds a change whose watermark row was never written, and a change made by a build

@@ -125,11 +125,9 @@ async def _audit_high_rows(org: str, rows: list[dict[str, object]]) -> None:
 async def _export_knowledge(
     org: str, scope_type: str, scope_value: str, *, limit: int
 ) -> tuple[list[dict[str, object]], int, bool]:
-    """Knowledge is namespace-scoped. For user_id exports this section is empty
-    (we don't track per-user knowledge authorship in chunks)."""
-    if scope_type != "namespace":
-        return [], 0, False
-    return _page(await erasure_exports.export_knowledge(org, scope_value, limit=limit + 1), limit)
+    """The chunks of one namespace, or every chunk one user wrote."""
+    rows = await erasure_exports.export_knowledge(org, scope_type, scope_value, limit=limit + 1)
+    return _page(rows, limit)
 
 
 async def _export_agent_events(
@@ -161,10 +159,10 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
     # namespace export is authorized against the namespace itself (a restricted one needs
     # the two-factor ADMIN check); a subject export spans every namespace of the org and
     # needs the org-wide view, less the restricted namespaces this caller may not read.
+    # It shows what the user wrote in every collection too: the subject's own data,
+    # which this caller may erase.
     auth = auth_context.current_auth()
     hidden: set[str] = set()
-    # The collections a subject export may show; None: no collection is left out.
-    readable_collections: set[str] | None = None
     if auth is not None:
         if input.scope_type == "namespace":
             try:
@@ -183,19 +181,11 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
                 raise AuthInsufficientError(
                     f"cannot export {input.org}: namespace classification unavailable"
                 )
-            readable_collections = set(await sharing.readable(auth, input.org))
-
-    def _shown(namespace: str) -> bool:
-        if namespace in hidden:
-            return False
-        if readable_collections is None or not sharing.is_collection(namespace):
-            return True
-        return namespace in readable_collections
 
     def _visible(rows: list[dict[str, object]], count: int) -> tuple[list[dict[str, object]], int]:
-        kept = [r for r in rows if _shown(str(r.get("namespace") or ""))]
-        if len(kept) == len(rows):
+        if not hidden:
             return rows, count
+        kept = [r for r in rows if str(r.get("namespace") or "") not in hidden]
         return kept, count - (len(rows) - len(kept))
 
     mem_rows, mem_count, mem_trunc = await _export_memory(

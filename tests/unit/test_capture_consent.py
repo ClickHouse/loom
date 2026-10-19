@@ -458,7 +458,7 @@ async def _loom_search_capture_levels_seen(
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
         return {"org": "o", "namespace": "personal-alice", "agent": "cursor"}
 
-    async def _fanout(org: str) -> Fanout:
+    async def _fanout(org: str, *_: object) -> Fanout:
         return Fanout(org=org, namespaces=tuple(accessible), cap=32)
 
     monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Client())

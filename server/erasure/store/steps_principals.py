@@ -5,13 +5,12 @@ revoked through `server.identity.app.grants.revoke_subject`).
 The user is the principal `user:<user_id>` (server/auth/gateway.py). Each step
 rewrites the rows it changes with a newer version, `INSERT ... SELECT *
 REPLACE` from an inner FINAL read, so every column it does not change is
-carried; a grant or a group change moves the org's grant watermark so every
-process drops what it cached.
+carried. The saga holds the claim an online writer of the same rows holds and
+moves the org's grant watermark (server/erasure/app/saga_steps.py).
 """
 
 from __future__ import annotations
 
-from server.core import grant_cache
 from server.core.repo_base import _CHClient, _default_client
 
 # Newer than the row it replaces whatever the server's clock says: the writers
@@ -35,27 +34,37 @@ async def _rewrite(
     return n
 
 
-async def remove_from_groups_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
-    """Take the user out of every group that lists them."""
+async def groups_of_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> list[str]:
+    """The live groups that list the user."""
     ch = ch or _default_client()
-    n = await _rewrite(
+    rows = await ch.query_all(
+        "SELECT group_id FROM loom.principal_groups FINAL"
+        " WHERE org = {org:String} AND has(members, {p:String}) AND NOT deleted",
+        params={"org": org, "p": "user:" + user_id},
+    )
+    return [str(r["group_id"]) for r in rows]
+
+
+async def remove_from_group(
+    org: str, group_id: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    """Take the user out of one group."""
+    return await _rewrite(
         "loom.principal_groups",
-        "org = {org:String} AND has(members, {p:String}) AND NOT deleted",
+        "org = {org:String} AND group_id = {g:String} AND has(members, {p:String}) AND NOT deleted",
         "arrayFilter(m -> m != {p:String}, members) AS members, "
         f"now64(3) AS updated_at, {_NEW_VERSION} AS version",
-        {"org": org, "p": "user:" + user_id},
-        ch,
+        {"org": org, "g": group_id, "p": "user:" + user_id},
+        ch or _default_client(),
     )
-    if n:
-        await grant_cache.changed(org)
-    return n
 
 
 async def retire_personal_collection_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
-    """Take the user's personal collection out of the directory. Its documents
-    were the user's own: the document steps erased them."""
+    """Take the user's personal collection out of the directory, and the
+    user's id off its row. Its documents were the user's own: the document
+    steps erased them."""
     from server.core.principals import personal_name
 
     ch = ch or _default_client()
@@ -63,7 +72,8 @@ async def retire_personal_collection_by_user(
         "loom.namespaces",
         "org = {org:String} AND namespace = {ns:String} AND active",
         # `updated_at` is the directory's version: newer than the row's own.
-        "false AS active, greatest(updated_at + 1, toDateTime(now())) AS updated_at",
+        "false AS active, '' AS owner_email, '' AS description, "
+        "greatest(updated_at + 1, toDateTime(now())) AS updated_at",
         {"org": org, "ns": personal_name(org, "user:" + user_id)},
         ch,
     )

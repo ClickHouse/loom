@@ -45,6 +45,8 @@ class _TraceCH:
             if "is_done = 0" in sql:
                 return []
             return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
+        if sql.startswith("SELECT group_id FROM loom.principal_groups"):
+            return [{"group_id": "g"}]
         if "blob_path" in sql and "loom.documents" in sql:
             return [{"source_uri": "doc://a", "blob_path": "o/a/blob"}]
         return []

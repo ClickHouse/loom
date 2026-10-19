@@ -20,7 +20,7 @@ flowchart LR
 
 - **Collections.** A collection is a namespace with `kind = 'collection'` and a row in
   `loom.collections` naming its parent. `collection.create` makes one (the creator holds
-  `admin`), `collection.move` puts it under another collection or detaches it, and
+  `admin`), `collection.move` puts it under another collection or detaches it,
   `collection.list` lists the ones the caller can read, and `collection.delete` takes one
   out of the directory and the tree (its children become top-level). A document lives in
   one collection and follows its grants from the moment it is written.
@@ -90,10 +90,13 @@ member takes effect within the consistency window below.
 ## Consistency
 
 Every change to a grant, a group or the tree writes a row to `loom.acl_versions` for its
-org (`grant_cache.changed`) before it returns. Each process polls the watermark every
-`LOOM_ACL_WATERMARK_POLL_SECONDS` (1 s), one sequential statement for every org's change
-count (`sum(changes)`; a sum only grows, whatever merges or clocks do), and drops the org's
-cached grant maps, groups and tree when its count moves. So a revoke, a removed member, a
+org and kind (`grants`, `groups`, `collections`; `grant_cache.changed`) before it returns.
+Each process polls the watermark every `LOOM_ACL_WATERMARK_POLL_SECONDS` (1 s), one
+sequential statement for every change count (`sum(changes)` per org and kind; a sum only
+grows, whatever merges or clocks do), and drops what that kind of change makes stale when
+its count moves: the org's cached grant maps, its groups, or its tree. Grant churn in a
+tenant therefore re-reads only grant maps, one statement per subject that asks, never the
+tree or the group table. So a revoke, a removed member, a
 move or a detach is enforced on every replica within about one poll interval, and at once
 on the replica that made it.
 
@@ -128,6 +131,19 @@ chunks per collection, the readable set scattered through the sort order (p50 of
 `namespaces_skipped`. Smaller granules read fewer rows for a handful of collections but
 were 6–8 times slower at 1,000, so the default granule stays.
 
+A watermark move re-reads only what its kind made stale, in each process, once per value
+and on its next use. On the 48,000-collection tenant (5,000 users, 200 groups of 25,
+84,000 grant rows; p50 of 7):
+
+| Change   | Re-read                                        | Rows read | p50   |
+| -------- | ---------------------------------------------- | --------- | ----- |
+| a grant  | one subject's grant map, per subject that asks | 84,000    | 12 ms |
+| a group  | the org's groups                               | 200       | 2 ms  |
+| the tree | the org's tree                                 | 48,000    | 8 ms  |
+
+A grant map read scans the org's grants: `loom.namespace_grants` is ordered by namespace,
+not by subject, and a skip index on the subject prunes nothing at this granule size.
+
 ## Erasure
 
 Every document carries who wrote it (`agent`, `user_id`, `actor`, `source_class`), for
@@ -137,7 +153,9 @@ org, deletes their uploaded originals that no other writer's document shares, re
 every grant naming `user:<id>`, removes them from every group, and retires their personal
 collection's directory row. Deleting a SCIM group revokes the grants that named it, so a
 group made later under the same id starts with none. Collections that hold other writers'
-documents stay: Loom deletes only what its writer asked to delete.
+documents stay: Loom deletes only what its writer asked to delete. A user-scope
+`erasure.export` returns every chunk that user wrote, in any collection, their personal
+collection included: the org admin who runs it may erase each one.
 
 ## Alternatives not taken
 

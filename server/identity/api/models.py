@@ -19,7 +19,7 @@ VisibilityStr = Literal["private", "public"]
 # reference data, surfaced in the dashboard's Repositories page, hidden from memory views);
 # 'bench' is a throwaway harness namespace: memory-shaped in
 # every view, and the namespace_gc worker erases it once idle.
-NamespaceKindStr = Literal["memory", "code", "bench", "collection", "personal"]
+NamespaceKindStr = Literal["memory", "code", "bench"]
 TrafficClassStr = Literal["production", "interactive", "bench"]
 
 

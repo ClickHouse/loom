@@ -51,26 +51,26 @@ async def export_memory(
 
 async def export_knowledge(
     org: str,
-    namespace: str,
+    scope_type: str,
+    scope_value: str,
     *,
     limit: int,
     ch: _CHClient | None = None,
 ) -> list[ChunkExportRow]:
-    """Read loom.chunks rows in one namespace. Knowledge is
-    namespace-scoped; per-user export is empty (chunks don't track
-    authorship)."""
+    """Read loom.chunks rows in one namespace, or the ones one user wrote."""
     ch = ch or _default_client()
+    column = "user_id" if scope_type == "user_id" else "namespace"
     rows = await ch.query_all(
-        """
+        f"""
         SELECT org, namespace, source_uri, chunk_idx, content, tags, doc_metadata,
                chunk_metadata, ingested_at, doc_superseded_at, embedding_model,
                embedding_dim
         FROM loom.chunks
-        WHERE org = {org:String} AND namespace = {ns:String}
-        ORDER BY source_uri, chunk_idx
-        LIMIT {lim:UInt64}
+        WHERE org = {{org:String}} AND {column} = {{scope:String}}
+        ORDER BY namespace, source_uri, chunk_idx
+        LIMIT {{lim:UInt64}}
         """,
-        params={"org": org, "ns": namespace, "lim": int(limit)},
+        params={"org": org, "scope": scope_value, "lim": int(limit)},
     )
     return cast("list[ChunkExportRow]", rows)
 

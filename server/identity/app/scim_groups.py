@@ -144,7 +144,7 @@ async def _write(row: dict[str, Any], *, event: str, actor: str) -> None:
     await get_client().insert(
         "loom.principal_groups", [row], settings={"async_insert": 0, "wait_for_async_insert": 1}
     )
-    await grant_cache.changed(row["org"])
+    await grant_cache.changed(row["org"], kind=grant_cache.GROUPS)
     await audit.emit(
         event,
         org=row["org"],
@@ -359,7 +359,7 @@ async def delete_group(group_id: str, caller: _Caller = _CALLER) -> Response:
             deleted=True,
         )
         # The grants first: a delete cut short is retried, and finds the group still there.
-        await revoke_subject(org, f"group:{group_id}")
+        await revoke_subject(org, f"group:{group_id}", actor=caller.actor)
         await _write(row, event="scim.group_deleted", actor=caller.actor)
     return Response(status_code=204)
 

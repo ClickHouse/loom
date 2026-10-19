@@ -6296,7 +6296,7 @@ export interface NamespaceRegisterInput {
   /** The namespace's owner; an account with a login (an email, or an agent's claim code) keeps its stored owner exactly, so send that value back to update settings. */
   owner_email: string;
   description?: string | null;
-  kind?: "memory" | "code" | "bench" | "collection" | "personal" | null;
+  kind?: "memory" | "code" | "bench" | null;
   tags?: string[];
   traffic_class?: "production" | "interactive" | "bench" | null;
   active?: boolean | null;
