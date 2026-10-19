@@ -3007,6 +3007,11 @@ async def test_memory_statuses_says_which_retirements_still_stand(ch, wired) -> 
     many = [str(uuid.uuid4()) for _ in range(4998)] + [loser, winner]
     out = await handle_memory_statuses(MemoryStatusesInput(org=org, namespace=NS, memory_ids=many))
     assert {r.memory_id for r in out.rows} == {loser, winner}
+    # An id asked twice, in either spelling, is answered once.
+    twice = await handle_memory_statuses(
+        MemoryStatusesInput(org=org, namespace=NS, memory_ids=[loser, loser.upper(), winner])
+    )
+    assert sorted(r.memory_id for r in twice.rows) == sorted([loser, winner])
     assert (await _undo(org, "office_city", winner)).restored
     assert (await statuses())[loser] == ("active", "")
     other = await handle_memory_statuses(

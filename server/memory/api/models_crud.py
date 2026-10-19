@@ -509,8 +509,11 @@ class MemoryStatusesInput(BaseModel):
 
     org: str
     namespace: str
-    # Memory ids in this namespace; an id the namespace does not hold is left out.
-    memory_ids: list[str] = Field(..., min_length=1, max_length=5000)
+    # Memory ids in this namespace; an id the namespace does not hold is left out. A UUID
+    # is 36 characters: 64 leaves room for its braces and urn: forms.
+    memory_ids: list[Annotated[str, Field(max_length=64)]] = Field(
+        ..., min_length=1, max_length=5000
+    )
 
 
 class MemoryStatus(BaseModel):

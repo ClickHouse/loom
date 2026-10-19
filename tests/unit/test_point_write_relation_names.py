@@ -79,3 +79,11 @@ def test_a_refused_subject_names_what_it_was_stored_as():
     assert "'the ?' is stored as ''" in message
     assert "articles, possessives and punctuation" in message
     assert "a subject needs at least 2 characters" in message
+
+
+def test_a_statuses_id_is_at_most_64_characters():
+    from server.memory.api.models_crud import MemoryStatusesInput
+
+    assert MemoryStatusesInput(org="o", namespace="ns", memory_ids=["a" * 64])
+    with pytest.raises(ValidationError):
+        MemoryStatusesInput(org="o", namespace="ns", memory_ids=["a" * 65])

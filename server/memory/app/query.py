@@ -884,12 +884,13 @@ async def handle_memory_statuses(input: MemoryStatusesInput) -> MemoryStatusesOu
     out, as one the caller may not read is."""
     import server.memory.store as memory_repo
 
-    ids = []
+    ids: list[str] = []
     for raw in input.memory_ids:
         try:
             ids.append(str(uuid.UUID(raw)))
         except ValueError:
             continue
+    ids = list(dict.fromkeys(ids))  # an id asked twice is read once
     if not ids:
         return MemoryStatusesOutput()
     rows = await memory_repo.statuses_by_ids(
