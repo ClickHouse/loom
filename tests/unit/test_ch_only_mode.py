@@ -105,7 +105,7 @@ def test_health_events_carries_the_writers_loss_counters(health_client: TestClie
         "queued",
         "dropped_queue_full",
         "dropped_flush_failed",
-        "dropped_batch_repeat",
+        "batch_repeats",
     }
     assert set(body["stream"]) == {"queued", "dropped"}
 

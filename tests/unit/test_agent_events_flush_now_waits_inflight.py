@@ -103,14 +103,14 @@ async def test_lost_events_are_counted(monkeypatch: pytest.MonkeyPatch) -> None:
         "queued": 2,
         "dropped_queue_full": 3,
         "dropped_flush_failed": 0,
-        "dropped_batch_repeat": 0,
+        "batch_repeats": 0,
     }
     await em.flush_now()
     assert em.stats() == {
         "queued": 0,
         "dropped_queue_full": 3,
         "dropped_flush_failed": 2,
-        "dropped_batch_repeat": 0,
+        "batch_repeats": 0,
     }
 
 

@@ -171,11 +171,11 @@ async def _owner_check(org: str, namespace: str) -> tuple[bool, bool]:
     """(on the owner side, refused unverified): the owner-side check without
     marking, for an op that also admits the poster; the op calls
     `_owner_refusal` where that check alone refused."""
-    from server.auth.fail_closed import deciding
+    from server.auth.fail_closed import reset, unreadable
 
-    with deciding() as decision:
-        owner_side = await _in_scope(org, namespace, write=True, hides_answer=False)
-        return owner_side, not owner_side and decision.refused(mark=False)
+    reset()
+    owner_side = await _in_scope(org, namespace, write=True, hides_answer=False)
+    return owner_side, not owner_side and unreadable()
 
 
 def _owner_refusal(unverified: bool) -> None:

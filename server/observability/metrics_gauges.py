@@ -783,7 +783,6 @@ def _register_health_gauges(meter: Any) -> None:
         return [
             Observation(stats["dropped_queue_full"], attributes={"reason": "queue_full"}),
             Observation(stats["dropped_flush_failed"], attributes={"reason": "flush_failed"}),
-            Observation(stats["dropped_batch_repeat"], attributes={"reason": "batch_repeat"}),
         ]
 
     # Rows lost here are missing from loom.agent_events and from every SLI
@@ -792,6 +791,22 @@ def _register_health_gauges(meter: Any) -> None:
         name="loom.ledger.dropped",
         callbacks=[_dropped],
         description="Ledger rows this process lost since it started, by reason",
+        unit="1",
+    )
+
+    def _batch_repeats(_options: Any) -> Any:
+        from opentelemetry.metrics import Observation
+
+        from server.observability.events import get_emitter
+
+        return [Observation(get_emitter().stats()["batch_repeats"])]
+
+    # A caller sets this by sending a batch of refused calls, so it is no loss
+    # and stays out of loom.ledger.dropped.
+    meter.create_observable_counter(
+        name="loom.ledger.batch_repeats",
+        callbacks=[_batch_repeats],
+        description="Refusal rows an MCP batch did not write again, since the process started",
         unit="1",
     )
 

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from server.auth.directory import ClassificationUnavailable, directory
-from server.auth.fail_closed import deciding, note_answered_unverified
+from server.auth.fail_closed import note_answered_unverified, refused_unverified, reset
 from server.core.ch import set_quota_key
 
 if TYPE_CHECKING:
@@ -266,10 +266,10 @@ async def rollup_member_namespaces(org: str) -> list[str]:
     """`resolve_my_namespaces`, sorted, for an org-wide rollup's scope. One that
     comes back empty because a read failed is the request's answer refused, so
     it marks the request the server's, as an admin's `*` scope does."""
-    with deciding() as decision:
-        ns_list = sorted(await resolve_my_namespaces(org))
-        if not ns_list:
-            decision.refused()
+    reset()
+    ns_list = sorted(await resolve_my_namespaces(org))
+    if not ns_list:
+        refused_unverified()
     return ns_list
 
 
