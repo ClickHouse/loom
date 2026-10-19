@@ -161,8 +161,8 @@ operation's role, or a live grant does.
     role there, capped at the live grant.
   - **What is not touched.** A namespace the subject never held a grant on keeps its
     claim; revoke the token to take that away.
-  - **When it applies.** The server that changed the grant applies it at once, every other
-    within `LOOM_GRANT_CACHE_TTL_SECONDS` (default 10 s).
+  - **When it applies.** The process that changed the grant applies it at once, every other
+    within `LOOM_ACL_WATERMARK_POLL_SECONDS` (default 1 s), on this server or another.
 - **Service accounts inherit.** A service account with no grant of its own on a namespace
   uses its creator's grant there, so a token minted from the dashboard follows the person
   who made it, except on a restricted namespace.

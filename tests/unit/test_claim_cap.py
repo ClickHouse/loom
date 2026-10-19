@@ -6,6 +6,7 @@ grant on (an operator's `loom mint-token`) keeps its claim."""
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -38,6 +39,7 @@ class _CH:
         self.spellings: list[str] = []
         self.grant_reads = 0
         self.exact_reads = 0
+        self.acl_versions: list[tuple[str, int]] = []  # loom.acl_versions (org, version)
 
     def _live(self, ns: str) -> str | None:
         role, status, revoked = self.grants.get(ns, ("", "", True))
@@ -47,6 +49,16 @@ class _CH:
         if "revoked_tokens" in sql:
             keys = (params or {}).get("keys")
             return [r for k, r in self.revoked.items() if keys is None or k in keys]
+        if "loom.acl_versions" in sql:
+            orgs = {org for org, _ in self.acl_versions}
+            return [
+                {
+                    "org": org,
+                    "n": sum(1 for o, _ in self.acl_versions if o == org),
+                    "s": sum(v for o, v in self.acl_versions if o == org),
+                }
+                for org in orgs
+            ]
         return []
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> dict | None:
@@ -59,6 +71,9 @@ class _CH:
         return None
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_k: Any) -> None:
+        if table == "loom.acl_versions":
+            self.acl_versions += [(r["org"], r["version"]) for r in rows]
+            return
         for r in rows:
             status = r.get("status") or "active"
             self.grants[r["namespace"]] = (r["role"], status, r["revoked_at"] is not None)
@@ -409,51 +424,59 @@ def test_a_grant_write_drops_only_the_entries_that_read_its_subject(ch: _CH) -> 
     assert ch.grant_reads == reads + 1, "alice's entry covered that spelling"
 
 
-def _unreadable_counts(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-    """Make the write-count files under `tmp_path` unreadable, nothing else."""
-    real = grant_cache.os.stat
-
-    def _stat(path: Any, *a: Any, **k: Any) -> Any:
-        if str(path).startswith(str(tmp_path)):
-            raise PermissionError(path)
-        return real(path, *a, **k)
-
-    monkeypatch.setattr(grant_cache.os, "stat", _stat)
+def _stale_watermark(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The last good poll is older than the stale bound."""
+    monkeypatch.setattr(settings, "acl_watermark_max_stale_seconds", 5.0)
+    monkeypatch.setattr(grant_cache, "_polled_at", time.monotonic() - 6.0)
 
 
-def _sibling_processes(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Any:
-    """Two web processes; returns how the other one counts a write in `org`."""
-    monkeypatch.setattr(settings, "web_workers", 2)
-    monkeypatch.setattr(
-        "server.core.runtime_files.server_file", lambda name: str(tmp_path / f"loom-{name}")
-    )
+def _watching(ch: _CH) -> Any:
+    """This process polls the watermark; returns how another process (on this
+    server or another) records a grant write in `org`."""
     grant_cache.clear()
+    asyncio.run(grant_cache.poll())
 
-    def _sibling_writes(org: str) -> None:
-        path = grant_cache._marker(org)
-        assert path is not None
-        with open(path, "ab") as f:
-            f.write(b".")
+    def _other_writes(org: str) -> None:
+        ch.acl_versions.append((org, len(ch.acl_versions) + 1))
+        asyncio.run(grant_cache.poll())
 
-    return _sibling_writes
+    return _other_writes
 
 
-def test_another_web_process_s_grant_write_is_seen_at_once(
-    ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-) -> None:
-    sibling_writes = _sibling_processes(monkeypatch, tmp_path)
+def test_another_process_s_grant_write_is_seen_at_the_next_poll(ch: _CH) -> None:
+    other_writes = _watching(ch)
     ch.grants["team"] = ("writer", "active", False)
     assert _admits(_flat("team"), "team", Role.WRITER)
     ch.grants["team"] = ("writer", "active", True)  # revoked by the other process
-    assert _admits(_flat("team"), "team", Role.WRITER), "this process has not heard yet"
-    sibling_writes(ORG)
+    assert _admits(_flat("team"), "team", Role.WRITER), "this process has not polled yet"
+    other_writes(ORG)
     assert not _admits(_flat("team"), "team", Role.WRITER)
 
 
+def test_another_org_s_grant_write_keeps_this_org_s_entries(ch: _CH) -> None:
+    other_writes = _watching(ch)
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    reads = ch.grant_reads
+    other_writes("globex")
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    assert ch.grant_reads == reads
+
+
+def test_a_grant_write_here_moves_the_watermark_for_every_other_process(ch: _CH) -> None:
+    _watching(ch)
+
+    async def _write() -> None:
+        grant_cache.invalidate(ORG, ["alice"])
+        await asyncio.gather(*grant_cache._announcing)
+
+    asyncio.run(_write())
+    assert [org for org, _ in ch.acl_versions] == [ORG]
+
+
 def test_a_read_begun_before_another_process_s_write_is_not_joined(
-    ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sibling_writes = _sibling_processes(monkeypatch, tmp_path)
+    _watching(ch)
     ch.grants["team"] = ("admin", "active", False)
     read_done, go = _slow_reads(ch, monkeypatch)
 
@@ -461,7 +484,8 @@ def test_a_read_begun_before_another_process_s_write_is_not_joined(
         early = asyncio.ensure_future(grant_cache.grant_map(ORG, "alice"))
         await read_done.wait()
         ch.grants["team"] = ("admin", "active", True)
-        sibling_writes(ORG)  # the revoke, written by the other process
+        ch.acl_versions.append((ORG, 1))  # the revoke, written by the other process
+        await grant_cache.poll()
         go.set()
         late = await grant_cache.grant_map(ORG, "alice")
         await early
@@ -470,10 +494,8 @@ def test_a_read_begun_before_another_process_s_write_is_not_joined(
     assert asyncio.run(_run()) == 0
 
 
-def test_this_process_s_own_write_keeps_its_other_entries_with_siblings(
-    ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-) -> None:
-    _sibling_processes(monkeypatch, tmp_path)
+def test_this_process_s_own_write_keeps_its_other_entries(ch: _CH) -> None:
+    _watching(ch)
     ch.spellings = ["bob"]
     asyncio.run(grant_cache.grant_map(ORG, "bob"))
     reads = ch.grant_reads
@@ -483,12 +505,12 @@ def test_this_process_s_own_write_keeps_its_other_entries_with_siblings(
 
 
 def test_a_failed_re_read_after_another_process_s_write_does_not_serve_the_old_grant(
-    ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sibling_writes = _sibling_processes(monkeypatch, tmp_path)
+    other_writes = _watching(ch)
     ch.grants["team"] = ("writer", "active", False)
     assert _admits(_flat("team"), "team", Role.WRITER)
-    sibling_writes(ORG)  # the other process revoked it
+    other_writes(ORG)  # the other process revoked it
 
     async def _down(*_a: Any, **_k: Any) -> dict | None:
         raise RuntimeError("replica away")
@@ -498,11 +520,35 @@ def test_a_failed_re_read_after_another_process_s_write_does_not_serve_the_old_g
         asyncio.run(grant_cache.grant_map(ORG, "alice"))
 
 
-def test_an_unreadable_write_count_still_shares_one_read(
-    ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-) -> None:
-    _sibling_processes(monkeypatch, tmp_path)
-    _unreadable_counts(monkeypatch, tmp_path)
+def test_a_stale_watermark_serves_no_cached_grant(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:
+    _watching(ch)
+    ch.grants["team"] = ("writer", "active", False)
+    assert _admits(_flat("team"), "team", Role.WRITER)
+    ch.grants["team"] = ("writer", "active", True)
+    _stale_watermark(monkeypatch)
+    assert not _admits(_flat("team"), "team", Role.WRITER)
+
+
+def test_a_failed_poll_turns_stale_past_the_bound(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:
+    _watching(ch)
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    reads = ch.grant_reads
+
+    async def _down(*_a: Any, **_k: Any) -> list[dict]:
+        raise RuntimeError("replica away")
+
+    monkeypatch.setattr(ch, "query_all", _down)
+    asyncio.run(grant_cache.poll())
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    assert ch.grant_reads == reads, "inside the bound the marks still hold"
+    _stale_watermark(monkeypatch)
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    assert ch.grant_reads == reads + 1
+
+
+def test_a_stale_watermark_still_shares_one_read(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:
+    _watching(ch)
+    _stale_watermark(monkeypatch)
 
     async def _many() -> None:
         await asyncio.gather(*(grant_cache.grant_map(ORG, "alice") for _ in range(5)))
@@ -511,10 +557,10 @@ def test_an_unreadable_write_count_still_shares_one_read(
     assert ch.grant_reads == 1
 
 
-def test_an_unreadable_count_does_not_join_a_read_begun_before_a_sibling_s_write(
-    ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+def test_a_stale_watermark_does_not_join_a_read_begun_before_another_process_s_write(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sibling_writes = _sibling_processes(monkeypatch, tmp_path)
+    _watching(ch)
     ch.grants["team"] = ("writer", "active", False)
     read_done, go = _slow_reads(ch, monkeypatch)
 
@@ -522,8 +568,9 @@ def test_an_unreadable_count_does_not_join_a_read_begun_before_a_sibling_s_write
         early = asyncio.ensure_future(grant_cache.grant_map(ORG, "alice"))
         await read_done.wait()
         ch.grants["team"] = ("writer", "active", True)
-        sibling_writes(ORG)  # the revoke, on the other process
-        _unreadable_counts(monkeypatch, tmp_path)
+        ch.acl_versions.append((ORG, 1))  # the revoke, on the other process
+        await grant_cache.poll()
+        _stale_watermark(monkeypatch)
         late = asyncio.ensure_future(grant_cache.grant_map(ORG, "alice"))
         await asyncio.sleep(0)
         go.set()
@@ -531,3 +578,27 @@ def test_an_unreadable_count_does_not_join_a_read_begun_before_a_sibling_s_write
         return (await late).rank("team")
 
     assert asyncio.run(_run()) == 0
+
+
+def test_the_poll_loop_polls_on_its_period_until_cancelled(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    polls: list[float] = []
+    third = asyncio.Event()
+
+    async def _poll() -> None:
+        polls.append(asyncio.get_running_loop().time())
+        if len(polls) == 3:
+            third.set()
+
+    monkeypatch.setattr(grant_cache, "poll", _poll)
+
+    async def _run() -> None:
+        loop = grant_cache.start_poll_loop(0.01)
+        await asyncio.wait_for(third.wait(), timeout=5)
+        loop.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await loop
+
+    asyncio.run(_run())
+    assert len(polls) >= 3

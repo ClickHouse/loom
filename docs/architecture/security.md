@@ -115,9 +115,14 @@ forgotten.
   statement per (org, subject) into a per-process cache (`server/core/grant_cache.py`) kept
   for `grant_cache_ttl_seconds` (10 s). A grant write in this process drops at once the
   entries whose read covered the spelling it wrote, and any read in flight; a write to the
-  accounts that tie a person's spellings drops the org's. The server's other web processes
-  (`LOOM_WEB_WORKERS`) read again at once: the write marks a file in their runtime directory,
-  and an entry read before the mark is not served. Another server sees either within the TTL.
+  accounts that tie a person's spellings drops the org's.
+- Every other process, on this server or another, drops the org's entries within
+  `acl_watermark_poll_seconds` (1 s). The write inserts a row into `loom.acl_versions`, and
+  each process polls `count()` and `sum(version)` per org; an entry read before its org's
+  pair moved is not served. A process whose last good poll is older than
+  `acl_watermark_max_stale_seconds` (10 s) serves no cached grant and reads per request. The
+  TTL bounds a change whose watermark row was never written, and a change made by a build
+  that predates the table.
 - A failed re-read serves the cached entry while it is younger than
   `jwt_revocation_max_stale_seconds`, the bound a token check already lives with, and
   answers a retryable 503 past it.

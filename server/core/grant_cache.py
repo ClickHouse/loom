@@ -8,23 +8,22 @@ read per (org, subject), every spelling of the person included, is kept for
 
 A grant write in this process drops the entries whose read covered the
 spelling it wrote, at once; a write to the accounts that tie a person's
-spellings drops its org's. This server's other web processes read again at
-once too: the write counts itself in a file they share, and an entry read before
-that count moved is not served (one count per org, so across processes a write
-drops the org's entries). Another server sees either within the TTL. A failed
-re-read serves the old entry while it is younger than
-`jwt_revocation_max_stale_seconds`, the bound a token check already lives with,
-and refuses (503) past it; an entry a sibling's write in its org has since
-superseded is never served so, whoever that write was for.
+spellings drops its org's. Every other process, on this server or another,
+drops the org's entries within `acl_watermark_poll_seconds`: the write moves
+the org's watermark row, which each process polls. An entry read before its
+org's watermark moved is not served, and none is while the last poll is older
+than `acl_watermark_max_stale_seconds`; the TTL bounds a change whose watermark
+row was never written. A failed re-read serves the old entry while it is
+younger than `jwt_revocation_max_stale_seconds`, the bound a token check
+already lives with, and refuses (503) past it; an entry a watermark move has
+since superseded is never served so, whoever that write was for.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import itertools
 import logging
-import os
 import time
 from collections import OrderedDict, defaultdict
 from collections.abc import Iterable
@@ -94,8 +93,8 @@ async def grant_map(org: str, subject: str) -> GrantMap:
 
 def invalidate(org: str, subjects: Iterable[str] | None = None) -> None:
     """Drop the cached grants of `org` whose read covered one of `subjects`
-    (every one with None), and any read of the org in flight; and count the
-    write for this server's other web processes."""
+    (every one with None), and any read of the org in flight; and move the
+    org's watermark for every other process."""
     _generation[org] += 1
     lowered = None if subjects is None else {s.lower() for s in subjects}
     for key, entry in list(_entries.items()):
@@ -104,52 +103,35 @@ def invalidate(org: str, subjects: Iterable[str] | None = None) -> None:
     for key in [k for k in _loading if k[0] == org]:
         del _loading[key]
     before, after = _count_write(org)
-    if before is not None and after == before + 1:
-        # Only this write since: the entries it left are still current.
+    if before is not None:
+        # The entries this write left are still current.
         for key, (at, seen, grants) in list(_entries.items()):
             if key[0] == org and seen == before:
                 _entries[key] = (at, after, grants)
+    _announce(org)
 
 
 def clear() -> None:
-    global _marker_base
+    global _watching, _polled_at
     _entries.clear()
     _loading.clear()
-    _marker_base = _UNRESOLVED
-    _marker_paths.clear()
+    _watching = False
+    _polled_at = None
+    _seen.clear()
+    _marks.clear()
 
 
-# This server's web processes (`LOOM_WEB_WORKERS` > 1) count each org's grant
-# writes in a file of its own they share: one byte per write, its size the count.
-# An entry, or a read in flight, is served only while the count is the one its
-# read began at. A single process needs none.
-_UNRESOLVED = "?"
-_marker_base: str | None = _UNRESOLVED
-_marker_paths: dict[str, str] = {}
+# Every process polls each org's watermark row in `loom.acl_versions` and keeps
+# a mark per org: a count that moves when the watermark it read moved, or when
+# this process changed the org's grants. An entry, or a read in flight, is
+# served only while its org's mark is the one its read began at. A process
+# that never polls (the CLI, a unit test) keeps no marks and lives on the TTL.
+_watching = False
+_polled_at: float | None = None  # monotonic, the last poll that succeeded
+_seen: dict[str, tuple[int, int]] = {}  # org -> (rows, sum of versions) last read
+_marks: defaultdict[str, int] = defaultdict(int)
 _unreadable = itertools.count(-1, -1)
-_warned: set[str] = set()
-
-
-def _marker(org: str) -> str | None:
-    global _marker_base
-    if settings.web_workers <= 1:
-        return None
-    if _marker_base == _UNRESOLVED:
-        from server.core.runtime_files import server_file
-
-        try:
-            _marker_base = server_file("grant-writes")
-        except OSError as e:
-            _marker_base = None
-            _warn_once("dir", "no runtime directory; grant writes reach siblings by TTL: %s", e)
-    if _marker_base is None:
-        return None
-    path = _marker_paths.get(org)
-    if path is None:
-        path = _marker_paths[org] = (
-            f"{_marker_base}.{hashlib.sha256(org.encode()).hexdigest()[:16]}"
-        )
-    return path
+_announcing: set[asyncio.Task[None]] = set()
 
 
 def _unread(writes: int | None) -> bool:
@@ -157,39 +139,96 @@ def _unread(writes: int | None) -> bool:
 
 
 def _writes(org: str) -> int | None:
-    """The org's grant write count on this server; None with one web process.
-    An unreadable count is a fresh negative one each time, so no entry is
-    served on it (a read in flight on one is still shared)."""
-    path = _marker(org)
-    if path is None:
+    """The org's mark in this process; None when it does not poll. A watermark
+    older than `acl_watermark_max_stale_seconds` is a fresh negative mark each
+    time, so no entry is served on it (a read in flight on one is still shared)."""
+    if not _watching:
         return None
-    try:
-        return os.stat(path).st_size
-    except FileNotFoundError:
-        return 0
-    except OSError as e:
-        _warn_once("read", "cannot read %s; grants are read again on every request: %s", path, e)
+    if (
+        _polled_at is None
+        or time.monotonic() - _polled_at > settings.acl_watermark_max_stale_seconds
+    ):
         return next(_unreadable)
+    return _marks[org]
 
 
 def _count_write(org: str) -> tuple[int | None, int | None]:
-    """Add this write to the org's count: (count before, count after)."""
-    path = _marker(org)
-    if path is None:
+    """Move the org's mark for this write: (mark before, mark after)."""
+    if not _watching:
         return None, None
-    from server.core.runtime_files import open_private
+    before = _marks[org]
+    _marks[org] = before + 1
+    return before, before + 1
+
+
+async def poll() -> None:
+    """Read every org's watermark once; move the mark of each org whose
+    watermark moved. A failure keeps the marks, and `_writes` stops trusting
+    them once the last success is older than the stale bound."""
+    global _watching, _polled_at
+    from server.core.ch import get_client, sequential_reads
+
+    _watching = True
+    try:
+        # Sequential: a replica that has not yet seen the watermark row would
+        # also miss the grant row written before it.
+        with sequential_reads():
+            rows = await get_client().query_all(
+                "SELECT org, count() AS n, sum(version) AS s FROM loom.acl_versions GROUP BY org"
+            )
+    except Exception as e:  # noqa: BLE001 — a failed poll keeps the marks; staleness refuses the cache
+        _warn_once("poll", "cannot read the grant watermark; cached grants expire: %s", e)
+        return
+    _warned.discard("poll")
+    for r in rows:
+        org, pair = str(r["org"]), (int(r["n"]), int(r["s"]))
+        if _seen.get(org) != pair:
+            _seen[org] = pair
+            _marks[org] += 1
+    _polled_at = time.monotonic()
+
+
+def start_poll_loop(interval_s: float, *, name: str = "loom-grant-watermark") -> asyncio.Task[None]:
+    """Poll the watermark every `interval_s` seconds until cancelled."""
+
+    async def _run() -> None:
+        from server.core.ch import set_query_tag
+
+        set_query_tag("grant_cache.poll")
+        while True:
+            await asyncio.sleep(interval_s)
+            await poll()
+
+    return asyncio.get_running_loop().create_task(_run(), name=name)
+
+
+def _announce(org: str) -> None:
+    """Move the org's watermark so every other process drops its entries. It
+    runs after the grant write, off the request; if it never lands, the TTL
+    bounds the change on other processes."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(_insert_version(org))
+    _announcing.add(task)
+    task.add_done_callback(_announcing.discard)
+
+
+async def _insert_version(org: str) -> None:
+    from server.core.ch import get_client
 
     try:
-        fd = open_private(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
-        try:
-            before = os.fstat(fd).st_size
-            os.write(fd, b".")
-            return before, os.fstat(fd).st_size
-        finally:
-            os.close(fd)
-    except OSError as e:
-        _warn_once("write", "cannot count a grant write in %s: %s", path, e)
-        return None, None
+        await get_client().insert(
+            "loom.acl_versions",
+            [{"org": org, "version": time.time_ns()}],
+            settings={"async_insert": 0, "wait_for_async_insert": 1},
+        )
+    except Exception as e:  # noqa: BLE001 — the grant write landed; the TTL bounds it elsewhere
+        log.warning("grant cache: watermark for org %s not written: %s", org, e)
+
+
+_warned: set[str] = set()
 
 
 def _warn_once(what: str, message: str, *args: object) -> None:

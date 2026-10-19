@@ -173,10 +173,17 @@ class AuthSettings(BaseModel):
     # A subject's cached grants are trusted as long when a re-read fails.
     jwt_revocation_max_stale_seconds: float = 600.0
     # Seconds a subject's grant rows are cached for the namespace gate, which
-    # caps a token's claim at the grant it holds there: a revoked or lowered
-    # grant takes effect on other processes within this TTL (at once on the
-    # one that wrote it).
+    # caps a token's claim at the grant it holds there. The backstop: a grant
+    # change reaches other processes through the watermark below, and this
+    # bounds one whose watermark row was never written.
     grant_cache_ttl_seconds: float = 10.0
+    # Seconds between each process's reads of the per-org grant watermark
+    # (loom.acl_versions): a revoke on one replica is enforced on every other
+    # within about this long.
+    acl_watermark_poll_seconds: float = Field(default=1.0, gt=0)
+    # Oldest watermark a process still trusts, seconds. Past it (polls keep
+    # failing) cached grants are not served and every request reads its own.
+    acl_watermark_max_stale_seconds: float = Field(default=10.0, gt=0)
 
     # Sign-ins and sign-ups one process checks at once (each costs ClickHouse
     # statements and a password hash); past it a caller waits up to a second,

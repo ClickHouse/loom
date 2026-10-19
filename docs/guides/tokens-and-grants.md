@@ -235,7 +235,7 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
   namespace the token names, of any status, the claim is capped at that grant: a
   `grants.revoke`, a `replace: true` lowering, `namespace.leave`, `loom claim-release` or a
   restore ends every older token's claim there at once on the server that made it and
-  within `LOOM_GRANT_CACHE_TTL_SECONDS` (10 s) on the others, and a pending or rejected
+  within `LOOM_ACL_WATERMARK_POLL_SECONDS` (1 s) on the others, and a pending or rejected
   request caps it at no access. A scoped token keeps its own role there, capped at the
   grant. A namespace an operator named at mint that was never granted to the subject keeps
   its claim; revoke the token for that.

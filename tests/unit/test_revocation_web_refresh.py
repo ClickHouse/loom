@@ -11,6 +11,7 @@ import pytest
 
 from server.auth import revocation
 from server.core.ch import current_query_tag
+from server.settings import settings
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -81,11 +82,12 @@ async def test_load_at_boot_fills_the_snapshot(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
-async def test_token_state_loads_both_at_boot_and_runs_both_loops(
+async def test_token_state_loads_each_at_boot_and_runs_each_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server import boot
     from server.auth import keyring
+    from server.core import grant_cache
 
     loaded: list[tuple[str, str]] = []
 
@@ -103,11 +105,25 @@ async def test_token_state_loads_both_at_boot_and_runs_both_loops(
     monkeypatch.setattr(
         keyring, "start_refresh_loop", lambda: asyncio.create_task(_forever(), name="k")
     )
+    monkeypatch.setattr(grant_cache, "poll", lambda: _load("grants"))
+    periods: list[float] = []
+
+    def _poll_loop(period: float) -> asyncio.Task[None]:
+        periods.append(period)
+        return asyncio.create_task(_forever(), name="g")
+
+    monkeypatch.setattr(grant_cache, "start_poll_loop", _poll_loop)
+    monkeypatch.setattr(settings, "acl_watermark_poll_seconds", 0.5)
     loops = await boot.start_token_state()
     # Each boot load is tagged as its refresh loop is, and only for its call.
-    assert loaded == [("revocation", "revocation.refresh"), ("keyring", "auth.keyring_refresh")]
+    assert loaded == [
+        ("revocation", "revocation.refresh"),
+        ("keyring", "auth.keyring_refresh"),
+        ("grants", "grant_cache.poll"),
+    ]
     assert current_query_tag() == ""
-    assert [t.get_name() for t in loops] == ["r", "k"]
+    assert [t.get_name() for t in loops] == ["r", "k", "g"]
+    assert periods == [0.5]
     for t in loops:
         t.cancel()
 

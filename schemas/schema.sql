@@ -16,14 +16,25 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 158 tables + 18 materialized views.
+-- Counts: 159 tables + 18 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (158)
+-- Tables (159)
 -- ======================================================================
+
+-- loom.acl_versions
+CREATE TABLE IF NOT EXISTS loom.acl_versions
+(
+    `org` LowCardinality(String),
+    `version` UInt64,
+    `updated_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY org
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.agent_cost_rollup_daily
 CREATE TABLE IF NOT EXISTS loom.agent_cost_rollup_daily

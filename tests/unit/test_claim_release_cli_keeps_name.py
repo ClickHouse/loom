@@ -79,7 +79,12 @@ def test_cli_release_writes_version_rows_not_deletes(monkeypatch: pytest.MonkeyP
     assert _cmd_claim_release(_args()) == 0
 
     assert fake.executed == [], "claim-release must not mutate: no ALTER ... DELETE"
-    assert [t for t, _ in fake.inserts] == ["loom.namespace_grants", "loom.namespaces"]
+    tables = [t for t, _ in fake.inserts]
+    assert [t for t in tables if t != "loom.acl_versions"] == [
+        "loom.namespace_grants",
+        "loom.namespaces",
+    ]
+    assert "loom.acl_versions" in tables, "every other process hears of the release"
     grants = fake.inserts[0][1]
     assert {g["subject"] for g in grants} == {"alice@acme.test", "bob@acme.test"}
     assert all(g["revoked_at"] is not None for g in grants)

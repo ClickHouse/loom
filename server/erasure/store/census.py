@@ -451,6 +451,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     ),
     "loom.audit_checkpoints": "hash-chain checkpoints over the audit log; digests only.",
     "loom.blacklist_version": "singleton version counter for the blacklist cache.",
+    "loom.acl_versions": "per-org version counter for the grant cache; an org name and a number.",
     "loom.worker_status": (
         "worker health per pass: worker name, launcher label, status, "
         "counters and a bounded error text; `namespace` is the label of the namespace "
