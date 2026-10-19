@@ -19,8 +19,8 @@ def settings_file_path(from_dotenv: str | None) -> str | None:
     """The YAML settings file LOOM_SETTINGS_FILE names: in the environment, else
     `from_dotenv`, the value the loaded dotenv file gives it (the CLI and compose copy
     that file into the environment, so every process must read it the same way); unset
-    or empty reads none. No default path: a `loom.yaml` in whatever directory the `loom` CLI runs in
-    is not the server's."""
+    or empty reads none. No default path: a `loom.yaml` in whatever directory the
+    `loom` CLI runs in is not the server's."""
     if "LOOM_SETTINGS_FILE" in os.environ:
         return os.environ["LOOM_SETTINGS_FILE"] or None
     return from_dotenv or None

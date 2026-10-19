@@ -573,7 +573,7 @@ Source: `server/settings/_extraction.py`
 | `LOOM_EXTRACTION_DEFER_AGENTS` | `str` | `''` | live | Agents whose set_from_messages runs deferred without the flag: comma-separated agent names, "*" = every service-account caller, "" = nobody. A call that sets `record_schema` is never deferred by this list (it reads `written` back), and an explicit defer=false still wins. |
 | `LOOM_EXTRACTION_QUEUE_INTERVAL_SECONDS` | `int` | `15` |  | Seconds between deferred-extraction queue passes. |
 | `LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS` | `int` | `8` | live | Most queued batches one pass claims. |
-| `LOOM_EXTRACTION_QUEUE_LEASE_SECONDS` | `int` | `600` | live | Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute, so a batch still replaying is not claimed twice. |
+| `LOOM_EXTRACTION_QUEUE_LEASE_SECONDS` | `int` | `600` | live | Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (max_batches_per_pass times one replay), or an overlapping worker may claim a batch still waiting in the pass. |
 | `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `int` | `3` | live | Attempts before a failing batch stops returning to `pending` and is marked failed. |
 | `LOOM_EXTRACTION_QUEUE_NAMESPACE_CONCURRENCY` | `int` | `4` | live | Namespaces replayed concurrently per pass; batches inside one namespace stay serial in session-date order. At least 1: none would hang the pass. |
 

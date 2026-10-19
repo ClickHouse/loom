@@ -2001,7 +2001,7 @@
           "default": 600,
           "minimum": 60,
           "type": "integer",
-          "description": "Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute, so a batch still replaying is not claimed twice."
+          "description": "Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (max_batches_per_pass times one replay), or an overlapping worker may claim a batch still waiting in the pass."
         },
         "extraction_queue_max_attempts": {
           "default": 3,
