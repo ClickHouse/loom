@@ -628,13 +628,15 @@ class _LateThenFail(_LateReconcile):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("legacy", [False, True])
-async def test_a_resent_delete_finishes_a_row_a_late_handoff_left(ch, scope, legacy) -> None:
+@pytest.mark.parametrize("case", ["orphan", "legacy", "expired"])
+async def test_a_resent_delete_finishes_a_row_a_late_handoff_left(ch, scope, case) -> None:
     """A's reconcile hands the row to B and lands after B's whole delete, then A's call
     fails before its re-read. The resend finds the row, held by B that deleted its
-    copy, and passes it to C. Without `legacy`, A's message row is gone, so the row
-    matches neither A's agent nor A's turns. With it, the row holds the first 240
-    characters of a longer turn, matched through B's tombstoned message."""
+    copy, and passes it to C. `orphan`: A's message row is gone, so the row matches
+    neither A's agent nor A's turns. `legacy`: the row holds the first 240 characters
+    of a longer turn, matched through B's tombstoned message. `expired`: as `orphan`,
+    and retention removes B's message row before the resend."""
+    legacy = case == "legacy"
     text = "deploy " * 40 if legacy else "shared"
     agents = "abc" if legacy else "bc"
     for agent in agents:
@@ -650,6 +652,12 @@ async def test_a_resent_delete_finishes_a_row_a_late_handoff_left(ch, scope, leg
             scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=_LateThenFail(ch, b_deletes)
         )
     assert await _holders(ch, scope) == [("b", True)]
+    if case == "expired":
+        await ch.execute(
+            "ALTER TABLE loom.conversations DELETE WHERE org = {org:String}"
+            " AND namespace = {ns:String} AND agent = 'b' SETTINGS mutations_sync = 2",
+            {"org": scope["org"], "ns": scope["ns"]},
+        )
     await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=ch)
     assert await _holders(ch, scope) == [("c", True)]
 

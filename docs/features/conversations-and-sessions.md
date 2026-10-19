@@ -92,16 +92,18 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   of exactly 240 characters (an earlier build's cut, or a turn of that length) is kept
   only for a copy whose first 2,048 characters match its agent's turn, and is
   tombstoned when no message row is left to check that against. A
-  delete also finishes rows of the thread left live under an agent that has tombstoned
-  its copy of the turn, such as turns an earlier build compacted. For a
+  delete also finishes rows of the thread whose own agent no longer holds a live message
+  for the turn: one it deleted or compacted (earlier builds left some), or one the
+  retention TTL expired. For a
   person's or a namespace's data everywhere, use
   [`erasure.request`](./memory/retention-and-erasure.md).
 
 Tombstoned turns are filtered from every read. They are removed from disk only if the
 operator set a table TTL (`LOOM_RETENTION_CONVERSATIONS_DAYS`, 0 = keep forever). That
 TTL covers `loom.conversations` only: a turn's embedding row, which keeps up to 2,048
-characters of its text, has no TTL; an erasure request tombstones it, and removes it
-only on a `namespace_list` erasure with `purge`.
+characters of its text, has no TTL; a whole-thread delete in its thread tombstones
+it once its message has expired, as does an erasure request, which removes it only on
+a `namespace_list` erasure with `purge`.
 
 ### Thread titles
 

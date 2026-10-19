@@ -896,9 +896,9 @@ async def tombstone_embeddings(
     ch: _CHClient | None = None,
 ) -> None:
     """Tombstone the embeddings of `agent`'s turns in one thread: `msg_ids`, or every
-    turn it logged there (`_THREAD_TURNS`) plus the rows left under an agent that has
-    tombstoned every copy of the turn (a late hand-off, or a compaction by an earlier
-    build).
+    turn it logged there (`_THREAD_TURNS`) plus the rows whose own agent holds no live
+    message for the turn (a late hand-off, a compaction by an earlier build, or a
+    message the retention TTL expired).
 
     The embeddings key has no agent, so a turn several agents logged is one row. It
     stays while another agent holds a live copy with the row's text, and passes to that
@@ -921,18 +921,19 @@ async def tombstone_embeddings(
             # The rows `_THREAD_TURNS` selects, by key, read once: a row selected only
             # through `agent` (its message row gone) stops matching once handed to a
             # peer, and the re-read must still see it if that hand-off lands late. Rows
-            # held by an agent that has since deleted its copy are added: a late
-            # hand-off can land one there after this call's snapshot, and the resend
-            # reaches it only this way.
+            # whose own agent holds no live message for the turn (deleted, compacted or
+            # expired) are added: a late hand-off can land one there after this call's
+            # snapshot, and the resend reaches it only this way, even once retention has
+            # removed that agent's message row. A writer stores the message before its
+            # embedding, so no row being written matches.
             rows = await ch.query_all(
                 "SELECT DISTINCT embedding_model, msg_id FROM loom.conversation_embeddings FINAL"
                 " WHERE org = {org:String} AND namespace = {ns:String}"
                 " AND thread_id = {tid:String} AND tombstoned_at IS NULL AND ("
                 + _THREAD_TURNS
-                + " OR (agent, msg_id) IN (SELECT agent, msg_id FROM loom.conversations"
+                + " OR (agent, msg_id) NOT IN (SELECT agent, msg_id FROM loom.conversations"
                 " WHERE org = {org:String} AND namespace = {ns:String}"
-                " AND thread_id = {tid:String} GROUP BY agent, msg_id"
-                " HAVING countIf(tombstoned_at IS NULL) = 0))",
+                " AND thread_id = {tid:String} AND tombstoned_at IS NULL))",
                 params=params,
             )
             turns = "(embedding_model, msg_id) IN {keys:Array(Tuple(String, String))}"
