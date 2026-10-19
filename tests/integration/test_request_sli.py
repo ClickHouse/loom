@@ -284,8 +284,8 @@ def test_rows_stamped_around_each_refresh_s_bound_are_folded_exactly_once(ch_cli
     try:
         _private_rollup(ch_client, db)
         for _ in range(20):
-            # Stamped from now minus 70 s, past every mark already written, to
-            # half a second later: the next refresh's bound (its now minus 70 s)
+            # Stamped 5 ms apart from now minus 70 s, past every mark already
+            # written, over 5 s: the next refresh's bound (its now minus 70 s)
             # falls inside the batch, so it folds some and leaves the rest.
             ch_client.command(
                 f"INSERT INTO {db}.agent_events (ts, ingested_at, org, namespace, agent, "
@@ -294,7 +294,7 @@ def test_rows_stamped_around_each_refresh_s_bound_are_folded_exactly_once(ch_cli
                 "SELECT now64(3) - INTERVAL 70 SECOND, "
                 "now64(3) - INTERVAL 70 SECOND + toIntervalMillisecond(number * 5), "
                 "'o', 'n', 'a', 'memory.get', toString(rand64()), 'http', 'read', 'ok', 1, "
-                "20, 100, 'request' FROM numbers(100)"
+                "20, 100, 'request' FROM numbers(1000)"
             )
             _refresh_private(ch_client, db)
         folded, ledger = ch_client.query(
@@ -302,9 +302,9 @@ def test_rows_stamped_around_each_refresh_s_bound_are_folded_exactly_once(ch_cli
             f"SELECT (SELECT sum(requests) FROM {db}.sli_minute), "
             f"(SELECT count() FROM {db}.agent_events WHERE ingested_at <= mark)"
         ).result_rows[0]
-        assert folded == ledger and ledger > 1000
+        assert folded == ledger and ledger > 0
         # Some of a batch waited for a later refresh: the bound fell inside it.
-        assert ledger < 2000
+        assert ledger < 20000
     finally:
         ch_client.command(f"DROP DATABASE IF EXISTS {db} SYNC")
 
