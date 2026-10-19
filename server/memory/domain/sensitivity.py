@@ -179,7 +179,7 @@ def detect_sensitivity(text: str) -> str:
 _SCALAR_SEP = "\n;\n"
 
 
-def value_text(value: Any) -> str:
+def detector_text(value: Any) -> str:
     """Decoded text of a stored value for the detector: a JSON string is parsed, and each key
     and scalar is its own line, so a token after a newline keeps its word boundary. The lines
     are joined by `_SCALAR_SEP`, which no pattern crosses, so two scalars never read as one
@@ -207,10 +207,10 @@ def value_text(value: Any) -> str:
 
 
 def value_reads_high(value: Any) -> bool:
-    """Whether a stored value holds a credential shape, read decoded (`value_text`), whatever
+    """Whether a stored value holds a credential shape, read decoded (`detector_text`), whatever
     the autodetect setting. For a value; raw stored text (a chunk, a passage) goes through
     `reads_high`, which also undoes JSON escapes."""
-    return detect_sensitivity(value_text(value)) == HIGH
+    return detect_sensitivity(detector_text(value)) == HIGH
 
 
 # A JSON string escape, decoded once and in order (so `\\n`, an escaped backslash then `n`,

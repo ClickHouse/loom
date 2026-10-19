@@ -573,7 +573,7 @@ def _score_entry(r: dict[str, Any]) -> _MemoryListEntry:
 
 def _project_entries(out: MemoryListOutput, keep: frozenset[str] | None) -> MemoryListOutput:
     """Stamp the resolved field whitelist on every entry so
-    the wire carries only those keys (plus `memory_key`). None = untouched."""
+    the wire carries only those keys (plus `memory_key` and `sensitivity`). None = untouched."""
     if keep is not None:
         for e in out.entries:
             e._projection = keep
@@ -765,10 +765,17 @@ async def _canonical_keys_for_rows(org: str, namespace: str, rows: list[Any]) ->
     return {k: by_id.get(cid, "") for k, cid in dups.items()}
 
 
+def _expired(row: MemoryRow, now: Any) -> bool:
+    exp = row.expires_at
+    return exp is not None and exp.replace(tzinfo=None) <= now
+
+
 async def handle_memory_bulk_get(
     input: MemoryBulkGetInput,
 ) -> MemoryBulkGetOutput:
-    """Fetch many memory rows by key, each answered as memory.get answers it.
+    """Fetch many memory rows by key, each answered as memory.get answers it, except that a
+    row past `expires_at` is served until the expiry sweep, as memory.list serves it (a
+    'high' one is not).
 
     Excludes tombstoned rows from `found`. Missing keys land in `missing`."""
     import server.memory.store as memory_repo
@@ -807,6 +814,11 @@ async def handle_memory_bulk_get(
     # answers before the parent (the alias below fills only a real miss).
     wanted = list(dict.fromkeys([*input.memory_keys, *parent_of.values()]))
     rows = await memory_repo.get_many_by_keys(identity, wanted, scope=request_scope())
+    # Like memory.list, a bulk read serves a row past `expires_at` until the expiry sweep
+    # tombstones it (memory.get does not), so the export lists and reads the same rows. A
+    # 'high' row past its retention window is never served: the window is why it has one.
+    now = naive_utc_now()
+    rows = [r for r in rows if not (r.sensitivity == "high" and _expired(r, now))]
     if _wants_usage(keep):
         rows = await memory_repo.overlay_usage_totals_many(rows)
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, rows)

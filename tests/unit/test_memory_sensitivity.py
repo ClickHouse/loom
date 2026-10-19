@@ -265,15 +265,15 @@ _TOKEN = "ghp_" + "a" * 36
     ids=["json-string", "own-line", "in-a-key", "quoted"],
 )
 def test_value_text_lets_the_detector_read_what_the_value_holds(value: object) -> None:
-    from server.memory.domain.sensitivity import reads_high, value_text
+    from server.memory.domain.sensitivity import detector_text, reads_high
 
-    assert reads_high(value_text(value))
+    assert reads_high(detector_text(value))
 
 
 def test_value_text_reads_plain_values_as_written_and_never_recurses() -> None:
-    from server.memory.domain.sensitivity import value_text
+    from server.memory.domain.sensitivity import detector_text
 
-    assert [value_text(v) for v in ["null", "123", "plain words", None]] == [
+    assert [detector_text(v) for v in ["null", "123", "plain words", None]] == [
         "",
         "123",
         "plain words",
@@ -286,7 +286,7 @@ def test_value_text_reads_plain_values_as_written_and_never_recurses() -> None:
         inner.append(nxt)
         inner = nxt
     inner.append("sk-" + "a" * 24)
-    assert value_text(deep) == "sk-" + "a" * 24
+    assert detector_text(deep) == "sk-" + "a" * 24
 
 
 def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -326,9 +326,9 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
 def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
     # Each key and scalar is its own line, joined by a separator no pattern crosses: a config
     # object reads as the stored JSON always did, neither high nor medium.
-    from server.memory.domain.sensitivity import detect_sensitivity, value_text
+    from server.memory.domain.sensitivity import detect_sensitivity, detector_text
 
-    assert detect_sensitivity(value_text(value)) == ""
+    assert detect_sensitivity(detector_text(value)) == ""
 
 
 @pytest.mark.asyncio
@@ -370,9 +370,9 @@ async def test_memory_set_labels_and_tags_the_decoded_value(
     ],
 )
 def test_one_scalar_still_reads_as_what_it_holds(value: object, level: str) -> None:
-    from server.memory.domain.sensitivity import detect_sensitivity, value_text
+    from server.memory.domain.sensitivity import detect_sensitivity, detector_text
 
-    assert detect_sensitivity(value_text(value)) == level
+    assert detect_sensitivity(detector_text(value)) == level
 
 
 def test_a_chunk_of_an_object_value_is_read_with_its_escapes_undone() -> None:
@@ -390,10 +390,10 @@ def test_a_chunk_of_an_object_value_is_read_with_its_escapes_undone() -> None:
 def test_a_protected_attribute_after_a_newline_is_tagged(monkeypatch: pytest.MonkeyPatch) -> None:
     # The write path tags attributes on the decoded value: in the stored JSON `\nmarried` has
     # no word boundary before the word.
-    from server.memory.domain.sensitivity import attribute_tags, value_text
+    from server.memory.domain.sensitivity import attribute_tags, detector_text
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_attribute_tagging", True)
     stored = json.dumps({"note": "status update:\nmarried last spring"})
     assert attribute_tags(stored) == []
-    assert attribute_tags(value_text(stored)) != []
+    assert attribute_tags(detector_text(stored)) != []

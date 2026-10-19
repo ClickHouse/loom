@@ -552,12 +552,13 @@ leg returns it. The other reads that could serve its value follow three rules:
 - Listed without the value: `memory.list` (no value or hash, `value_truncated: true`, and
   `contains` does not search it), `conflicts.list`, `memory.proposals`, and the preview of a
   `memory.move` dry run.
-- Read by key and audited: `memory.get`, `memory.get_by_id`, `memory.bulk_get`,
-  `memory.history` (one row per version it serves of a row with any `high` version, since
-  the version before a sweep labelled the row holds the same value unlabelled; a redacted
-  version, which served no value, is not) and `memory.evidence` each write a
-  `memory.sensitive_read` row. The admin dumps `namespace.snapshot` and `erasure.export`
-  carry `high` rows on purpose and write one per row. `memory.copy_to` and
+- Read by key and audited: `memory.get`, `memory.get_by_id`, `memory.bulk_get` (which, like
+  `memory.list`, serves a row past `expires_at` until the expiry sweep, but never a `high`
+  row past its retention window), `memory.history` (one row per version it serves of a row
+  with any `high` version, since the version before a sweep labelled the row holds the same
+  value unlabelled; a redacted version, which served no value, is not) and `memory.evidence`
+  each write a `memory.sensitive_read` row. The admin dumps `namespace.snapshot` and
+  `erasure.export` carry `high` rows on purpose and write one per row. `memory.copy_to` and
   `memory.cross_promote` read a `high` row by key and copy it to another namespace with its
   label; each writes its own audit row (both are `audit=True` ops), which records the copy.
 
@@ -577,7 +578,7 @@ Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
 
 The detector runs on `memory.set`, `memory.bulk_set`, `memory.update` and extraction when
-`LOOM_MEMORY_SENSITIVITY_AUTODETECT` is on, and reads the decoded value (`value_text`): each
+`LOOM_MEMORY_SENSITIVITY_AUTODETECT` is on, and reads the decoded value (`detector_text`): each
 key and scalar of the stored JSON on its own line, so a token after a newline, or a quoted
 password, keeps the word boundary it matches on, and a secret held in a key is seen. Lines
 are joined by a separator no pattern crosses, so two scalars never read as one: a config

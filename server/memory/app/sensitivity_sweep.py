@@ -38,8 +38,8 @@ from server.memory.domain.sensitivity import (
     HIGH,
     MEDIUM,
     detect_sensitivity,
+    detector_text,
     sensitivity_tags,
-    value_text,
 )
 
 # RE2, for ClickHouse `match()`: a superset of the shapes in
@@ -160,7 +160,7 @@ async def scan(
     for r in rows:
         # Decoded, as the write path reads it: in the stored JSON a token after a newline
         # follows `\\n`, and the detector's word boundary never matches there.
-        text = value_text(r.get("value") or "")
+        text = detector_text(r.get("value") or "")
         level = detect_sensitivity(text)
         if level not in (HIGH, MEDIUM):
             continue
