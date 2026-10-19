@@ -11,7 +11,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.core.datetimes import naive_utc_now
 from server.core.errors import NotFoundError
+from server.identity.app.request_scope import request_scope
 from server.memory.api.models_crud import MemoryGetInput, MemoryListInput, MemorySetInput
 from server.memory.api.models_procedure import (
     ProcedureAddInput,
@@ -63,6 +65,7 @@ def _procedure_status(value: dict[str, Any]) -> ProcedureStatus:
 
 
 _PROCEDURE_KEY_PREFIX = "procedure_"
+_PROCEDURE_TAG = "procedure"
 
 
 def _procedure_memory_key(name: str) -> str:
@@ -116,7 +119,7 @@ async def handle_procedure_add(input: ProcedureAddInput) -> ProcedureAddOutput:
         memory_key=memory_key,
         value=value,
         memory_type="procedural",
-        tags=["procedure", *input.tags],
+        tags=[_PROCEDURE_TAG, *input.tags],
     )
     result = await handle_memory_set(set_in)
     return ProcedureAddOutput(
@@ -192,7 +195,6 @@ async def _procedure_rows(
     A 'high' row is never a candidate: the locate leaves it out, so under the wildcard
     agent the plain row the search matched answers, and no key read is audited."""
     import server.memory.store as memory_repo
-    from server.identity.app.request_scope import request_scope
 
     rows: dict[tuple[str, str], Any] = {}
     for ns, keys in keys_by_ns.items():
@@ -385,22 +387,27 @@ async def handle_procedure_list(input: ProcedureListInput) -> ProcedureListOutpu
         limit=input.limit,
     )
     list_out = await handle_memory_list(list_in)
-    # One read of the listed bodies. A 'high' row's body is never read by a list: the locate
-    # leaves it out, so such a procedure is listed by its key alone.
-    bodies = await _procedure_rows(
-        input, {input.namespace: [row.memory_key for row in list_out.entries]}
-    )
+    # One read of the listed bodies. A list never reads a 'high' body: such a procedure is
+    # listed by its key and the tags on its row.
+    readable = [row.memory_key for row in list_out.entries if row.sensitivity != "high"]
+    bodies = await _procedure_rows(input, {input.namespace: readable})
+    now = naive_utc_now()
     summaries: list[_ProcedureSummary] = []
     for row in list_out.entries:
         body = bodies.get((input.namespace, row.memory_key))
-        value: Any = body.value if body is not None and row.sensitivity != "high" else {}
-        if not isinstance(value, dict):
-            value = {}
+        expired = body is not None and body.expires_at is not None and body.expires_at <= now
+        value: dict[str, Any] = body.value if body is not None and not expired else {}
+        # The caller's tags, without the ones procedure.add and memory.set add themselves.
+        row_tags = [
+            t
+            for t in row.tags
+            if t != _PROCEDURE_TAG and not t.startswith(("sensitivity:", "attribute:"))
+        ]
         summaries.append(
             _ProcedureSummary(
                 name=str(value.get("name", row.memory_key.replace(_PROCEDURE_KEY_PREFIX, ""))),
                 situation=str(value.get("situation", "")),
-                tags=list(value.get("tags", [])),
+                tags=list(value.get("tags", row_tags)),
                 memory_key=row.memory_key,
                 created_at=row.created_at,
             )

@@ -202,7 +202,19 @@ async def test_the_score_list_withholds_a_high_rows_value(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_history_audits_each_high_version_it_serves(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("labels", "high_elsewhere", "audited"),
+    [
+        # a sweep labelled v2: v1 holds the same value unlabelled
+        (["", "high"], set(), [2, 1]),
+        # this page holds only plain versions, a later one is labelled
+        (["", ""], {"k"}, [2, 1]),
+        (["", ""], set(), []),
+    ],
+)
+async def test_history_of_a_high_key_audits_every_version_it_serves(
+    monkeypatch, labels: list[str], high_elsewhere: set[str], audited: list[int]
+) -> None:
     from server.memory.api.models_temporal import MemoryHistoryInput
     from server.memory.app import curation
     from server.memory.store.history import HistoryVersion
@@ -221,7 +233,10 @@ async def test_history_audits_each_high_version_it_serves(monkeypatch) -> None:
         return HistoryVersion.from_row({**base, **over})
 
     async def _history(*_a: Any, **_k: Any) -> list[HistoryVersion]:
-        return [version(3), version(2, sensitivity="high"), version(1, sensitivity="high")]
+        return [version(2, sensitivity=labels[1]), version(1, sensitivity=labels[0])]
+
+    async def _high_keys(_org: str, _ns: str, keys: Any) -> set[str]:
+        return high_elsewhere & set(keys)
 
     audits: list[list[int]] = []
 
@@ -229,8 +244,9 @@ async def test_history_audits_each_high_version_it_serves(monkeypatch) -> None:
         audits.append([s["version"] for s in kw["subjects"]])
 
     monkeypatch.setattr(memory_repo, "list_history", _history)
+    monkeypatch.setattr(memory_repo, "high_keys", _high_keys)
     monkeypatch.setattr(audit, "emit_many", _emit_many)
     out = await curation.handle_memory_history(
         MemoryHistoryInput(org="o", namespace="n", agent="a", memory_key="k")
     )
-    assert len(out.rows) == 3 and audits == [[2, 1]]
+    assert len(out.rows) == 2 and audits == [audited]

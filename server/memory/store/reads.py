@@ -349,10 +349,11 @@ async def get_many_by_keys(
 ) -> list[MemoryRow]:
     """Bulk read: one CH round-trip for N keys under one identity tuple.
 
-    Used by memory.bulk_get. Tombstoned rows are filtered out. Empty
+    Used by memory.bulk_get, and by procedure.match and procedure.list for
+    their candidate bodies. Tombstoned rows are filtered out. Empty
     `memory_keys` → empty result, no CH call. `exclude_high_sensitivity`
-    leaves 'high' rows out of the locate, so under an open axis the newest
-    other row of the key answers instead.
+    (the procedure reads) leaves 'high' rows out of the locate, so under an
+    open axis the newest other row of the key answers instead.
     """
     if not memory_keys:
         return []

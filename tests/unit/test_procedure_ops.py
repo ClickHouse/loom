@@ -37,6 +37,9 @@ def _value(
     }
 
 
+_SCOPE = object()  # the token's read scope, as request_scope() answers it
+
+
 def _stub_search_and_bulk(
     monkeypatch: pytest.MonkeyPatch,
     rows: dict[str, dict[str, Any]],
@@ -51,9 +54,19 @@ def _stub_search_and_bulk(
             ]
         )
 
-    async def _rows(_ident: Any, keys: list[str], *, exclude_high_sensitivity: bool, **_k: Any):
+    async def _rows(
+        _ident: Any, keys: list[str], *, scope: Any, exclude_high_sensitivity: bool
+    ) -> list[Any]:
+        # the token's read scope bounds the candidates, as it bounds memory.bulk_get
+        assert scope is _SCOPE
         hidden = high if exclude_high_sensitivity else frozenset()
-        return [NS(memory_key=k, value=rows[k]) for k in keys if k in rows and k not in hidden]
+        return [
+            NS(memory_key=k, value=rows[k], expires_at=None)
+            for k in keys
+            if k in rows and k not in hidden
+        ]
+
+    monkeypatch.setattr("server.memory.app.procedure.request_scope", lambda: _SCOPE)
 
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
     monkeypatch.setattr("server.memory.store.get_many_by_keys", _rows)
@@ -755,26 +768,31 @@ def test_list_never_reads_a_high_procedures_body(monkeypatch: pytest.MonkeyPatch
     from server.memory.app.procedure import handle_procedure_list
 
     rows = {"procedure_auth": _value("auth"), "procedure_vault": _value("vault")}
-    _stub_search_and_bulk(monkeypatch, rows, [], high=frozenset({"procedure_vault"}))
+    # a fake that would serve the high body if asked for it
+    _stub_search_and_bulk(monkeypatch, rows, [])
+    created = datetime(2026, 9, 1)
 
     async def _list(_inp: Any) -> Any:
         return NS(
             entries=[
-                NS(memory_key="procedure_auth", sensitivity="", created_at=datetime(2026, 9, 1)),
+                NS(memory_key="procedure_auth", sensitivity="", tags=[], created_at=created),
                 NS(
                     memory_key="procedure_vault",
                     sensitivity="high",
-                    created_at=datetime(2026, 9, 1),
+                    tags=["procedure", "prod", "sensitivity:high"],
+                    created_at=created,
                 ),
             ]
         )
 
-    async def _get(_inp: Any) -> Any:
-        raise AssertionError("procedure.list reads its bodies in one filtered read")
-
     monkeypatch.setattr("server.memory.app.query.handle_memory_list", _list)
-    monkeypatch.setattr("server.memory.app.handlers.handle_memory_get", _get)
     out = asyncio.run(handle_procedure_list(ProcedureListInput(org="o", namespace="ns")))
     by_key = {p.memory_key: p for p in out.procedures}
-    assert by_key["procedure_auth"].situation == rows["procedure_auth"]["situation"]
-    assert by_key["procedure_vault"].situation == "" and by_key["procedure_vault"].name == "vault"
+    assert by_key["procedure_auth"].situation == "when auth"
+    vault = by_key["procedure_vault"]
+    assert (vault.name, vault.situation, vault.tags) == ("vault", "", ["prod"])
+    # the caller's tags still filter it, read off the row
+    tagged = asyncio.run(
+        handle_procedure_list(ProcedureListInput(org="o", namespace="ns", tags=["prod"]))
+    )
+    assert [p.memory_key for p in tagged.procedures] == ["procedure_vault"]
