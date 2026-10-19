@@ -286,7 +286,8 @@ export function Audit() {
   const me = whoami?.subject || "";
   // The rows filter by the text a render behind the box, so a keystroke paints the box
   // before the table renders again (memoised, it renders only when its rows change).
-  const q = useDeferredValue(filterQuery).trim().toLowerCase();
+  const listQuery = useDeferredValue(filterQuery).trim();
+  const q = listQuery.toLowerCase();
   // First screen first, the rest in a transition (277 ms of long tasks at 4x for a
   // hundred rows).
   const [firstScreenOnly, setFirstScreenOnly] = useState(true);
@@ -404,7 +405,7 @@ export function Audit() {
               kind="filtered"
               // The filter covers the events loaded so far; older ones may still match.
               things={older ? "loaded events" : "events"}
-              filter={q ? filterQuery.trim() : undefined}
+              filter={listQuery || undefined}
               onClear={() => {
                 setFilterQuery("");
                 setOnlyMe(false);

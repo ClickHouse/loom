@@ -195,7 +195,7 @@ export function Profile() {
   }
 
   const isEmpty = entries !== null && entries.length === 0 && !newOpen && !error;
-  const searching = query.trim() !== "";
+  const searching = listQuery.trim() !== "";
   // One count, at the end of the toolbar; nothing before the read or on an
   // error.
   const shown = filteredEntries?.length ?? 0;
@@ -277,7 +277,12 @@ export function Profile() {
             />
           )}
           {filteredEntries && filteredEntries.length === 0 && searching && (
-            <ListState kind="filtered" things="profile sections" filter={query.trim()} onClear={() => setQuery("")} />
+            <ListState
+              kind="filtered"
+              things="profile sections"
+              filter={listQuery.trim()}
+              onClear={() => setQuery("")}
+            />
           )}
           <div ref={listNav} className="space-y-2">
             {(filteredEntries ?? []).map((b) =>

@@ -460,7 +460,7 @@ export function Documents() {
     return { chunks, bytes, withBlob };
   }, [rows]);
 
-  const filtering = query.trim() !== "";
+  const filtering = listQuery.trim() !== "";
   const failed = !!loadError;
   const docCount = aggregateStats && rows ? `${rows.length.toLocaleString()}${nextCursor ? "+" : ""}` : "";
   // The tags are the server's (they cover the library); the words and a sort but newest
@@ -679,7 +679,7 @@ export function Documents() {
           <ListState
             kind="filtered"
             things="documents"
-            filter={query.trim()}
+            filter={listQuery.trim()}
             among={partial ? `${loaded} loaded` : undefined}
             onClear={() => setQuery("")}
           />
