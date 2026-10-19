@@ -305,9 +305,9 @@ LOOM_SCIM_TOKEN="$OLD_TOKEN,$(openssl rand -hex 32)"
 ```
 
 Loom keys a SCIM user on an email: the request's `emails` entry marked
-primary that has an address, else its first work entry, else its first, or its
-`userName` when it sends none (Loom logs a warning when a user is created or renamed with a `userName`
-other than that address).
+primary that has an address, else its first work entry, else its first, or
+its `userName` when it sends none (Loom logs a warning when a user is created
+or renamed with a `userName` other than that address).
 That address must be the one the provider puts in the ID token's `email`
 claim, since that is what a sign-in carries.
 

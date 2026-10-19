@@ -1935,6 +1935,42 @@ def test_a_primary_moved_to_an_entry_with_no_address_moves_the_key(
     assert [e["primary"] for e in shown] == [True, False]
 
 
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "add", "path": "emails", "value": [{"type": "other", "primary": True}]},
+        {"op": "add", "path": 'emails[type eq "other"].primary', "value": True},
+    ],
+)
+def test_a_primary_flag_moved_to_an_entry_with_no_address_leaves_one_primary(
+    client: TestClient, world, op: dict[str, Any]
+) -> None:
+    uid = _user(client, [{"value": "lee@example.com", "type": "work", "primary": True}])
+    r = _patch(client, uid, op)  # the work entry still keys the user
+    assert r.status_code == 200, r.text
+    shown = client.get(f"/scim/v2/Users/{uid}").json()["emails"]
+    assert [e["primary"] for e in shown] == [False, True]
+
+
+def test_an_add_naming_two_primaries_keeps_the_first_in_the_list(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "lee@example.com", "type": "work", "primary": True}])
+    both = [
+        {"value": "new@example.com", "type": "home", "primary": True},
+        {"value": "lee@example.com", "type": "work", "primary": True},
+    ]
+    r = _patch(client, uid, {"op": "add", "path": "emails", "value": both})
+    assert r.status_code == 200, r.text
+    assert [e["primary"] for e in r.json()["emails"]] == [True, False]
+
+
+def test_a_remove_naming_an_entry_removes_only_that_one(client: TestClient, world) -> None:
+    emails = [{"value": "lee@example.com", "type": "work"}, {"value": "lee@home.example"}]
+    uid = _user(client, emails)
+    gone = {"op": "remove", "path": "emails", "value": [{"value": "Lee@home.example"}]}
+    r = _patch(client, uid, gone)
+    assert [e["value"] for e in r.json()["emails"]] == ["lee@example.com"]
+
+
 def test_a_blank_primary_entry_does_not_take_the_flag(client: TestClient, world) -> None:
     emails = [
         {"value": " ", "primary": True},

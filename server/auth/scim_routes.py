@@ -253,10 +253,12 @@ def _patched_emails(
     if sub not in ("", "value", "type", "primary"):
         return emails  # `emails.display` and the like
     if comparison is None and not sub:
-        if kind == "remove":
-            return []
-        listed = [] if value is None else value if isinstance(value, list) else [value]
-        written = _entries(listed)  # a null is unassigned (RFC 7643 §2.5)
+        if kind == "remove":  # the entries it names (RFC 7644 §3.5.2.2), else every one
+            if value is None:
+                return []
+            named = {scim.normalized(e["value"]) for e in _entries(_listed(value))}
+            return [e for e in emails if scim.normalized(e["value"]) not in named]
+        written = _entries(_listed(value))  # a null is unassigned (RFC 7643 §2.5)
         if kind == "replace":
             return _one_primary(written, range(len(written)))
         return _added(emails, written)
@@ -298,6 +300,10 @@ def _same(a: dict[str, Any], b: dict[str, Any]) -> bool:
     )
 
 
+def _listed(value: Any) -> list[Any]:
+    return [] if value is None else value if isinstance(value, list) else [value]
+
+
 def _emails_path(attr: str) -> tuple[str | None, str]:
     """An `emails…` path as its filter (None for none) and sub-attribute ('' for none)."""
     filt, rest = None, attr.removeprefix("emails")
@@ -313,14 +319,12 @@ def _emails_path(attr: str) -> tuple[str | None, str]:
 
 def _one_primary(entries: list[dict[str, Any]], written: Iterable[int]) -> list[dict[str, Any]]:
     """Only one entry may be primary (RFC 7643 §2.4): of those just written
-    primary, the first with an address, else the first, takes the flag from
-    every other."""
-    primaries = [i for i in written if entries[i]["primary"]]
-    first = next((i for i in primaries if _nonempty(entries[i]["value"])), None)
-    if first is None:
-        first = next(iter(primaries), None)
-    if first is None:
+    primary, the first in the list with an address, else the first, takes the
+    flag from every other, as `keyed_entry` would pick among them."""
+    primaries = sorted(i for i in written if entries[i]["primary"])
+    if not primaries:
         return entries
+    first = next((i for i in primaries if _nonempty(entries[i]["value"])), primaries[0])
     return [{**e, "primary": i == first} for i, e in enumerate(entries)]
 
 
@@ -413,8 +417,7 @@ def user_name_and_email(body: dict[str, Any]) -> tuple[str, str, list[dict[str, 
     name = body.get("userName")
     if not isinstance(name, str) or not name.strip():
         raise ScimError(400, "userName is required", "invalidValue")
-    listed = body.get("emails") or []
-    emails = _entries(listed if isinstance(listed, list) else [listed])
+    emails = _entries(_listed(body.get("emails")))
     emails = _one_primary(emails, range(len(emails)))  # the first primary with an address keys it
     entry = keyed_entry(emails) or {}
     email = scim.normalized(entry.get("value") or name)
