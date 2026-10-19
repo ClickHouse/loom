@@ -3,6 +3,7 @@ import { ApiError } from "./errors";
 import {
   _formatterCacheSize,
   dayLabel,
+  daysLeftToRestore,
   displaySubject,
   errorRequestId,
   formatBytesShort,
@@ -218,5 +219,26 @@ describe("sentenceCase", () => {
     expect(sentenceCase("assistant")).toBe("Assistant");
     expect(sentenceCase("public")).toBe("Public");
     expect(sentenceCase("")).toBe("");
+  });
+});
+
+// The server's tombstoned_at is a ClickHouse time with no zone, in UTC. Read as local time
+// west of UTC, a row deleted 30 hours ago would be 23 hours old and keep all 14 days.
+describe("daysLeftToRestore", () => {
+  const now = Date.parse("2026-10-18T12:00:00Z");
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("reads a zoneless ClickHouse time as UTC, in Los Angeles too", () => {
+    expect(daysLeftToRestore("2026-10-17 06:00:00", now)).toBe(13);
+    vi.stubEnv("TZ", "America/Los_Angeles");
+    expect(daysLeftToRestore("2026-10-17 06:00:00", now)).toBe(13);
+  });
+
+  it("counts whole days down from 14 and stops at 0; no time is null", () => {
+    expect(daysLeftToRestore("2026-10-18 11:00:00", now)).toBe(14);
+    expect(daysLeftToRestore("2026-10-04 12:00:00", now)).toBe(0);
+    expect(daysLeftToRestore("2026-09-01 00:00:00", now)).toBe(0);
+    expect(daysLeftToRestore(null, now)).toBeNull();
+    expect(daysLeftToRestore("not a time", now)).toBeNull();
   });
 });

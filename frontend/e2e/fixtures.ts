@@ -57,6 +57,9 @@ export interface TraverseFixture {
   truncated: boolean;
 }
 
+// A list row the read drew, not the loading placeholder (RowSkeleton is a `.list-row` too).
+export const LOADED_ROW = "main .list-row:not(.list-row-skeleton)";
+
 /** A walk small enough to expand — five hop-1 nodes, no hop 2 — so `facts.related` has
  *  room under the 200-node cap. */
 export const SMALL_SEED = "gamma";

@@ -96,10 +96,8 @@ describe("Recently deleted status", () => {
     expect(await screen.findByText("live/key")).toBeInTheDocument();
   });
 
-  // The server's tombstoned_at is a ClickHouse time with no zone, in UTC. Read as local time
-  // west of UTC, a row deleted 30 hours ago would be 23 hours old and keep all 14 days.
-  it("counts the days left from a zoneless ClickHouse time as UTC", async () => {
-    vi.stubEnv("TZ", "America/Los_Angeles");
+  // The UTC rule itself is daysLeftToRestore's (lib/format.test.ts).
+  it("a deleted row says how many days are left to restore it", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-18T12:00:00Z"));
     try {
@@ -121,7 +119,6 @@ describe("Recently deleted status", () => {
       expect(await screen.findByText(/13 days left to restore/)).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
-      vi.unstubAllEnvs();
     }
   });
 });

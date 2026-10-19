@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Pagination } from "@clickhouse/click-ui/Pagination";
+import { fmtInt } from "../../lib/format";
 import { PHONE_QUERY, useMedia } from "../../lib/useMedia";
 
 const SIZES = [25, 50, 100];
@@ -126,10 +127,10 @@ export function ListPager({
   if (page === 0 && lastKnown && !sizeChoice) return null;
   const start = page * pageSize + 1;
   const end = page * pageSize + shown;
-  const span = shown === 0 ? `${start.toLocaleString()}` : `${start.toLocaleString()}–${end.toLocaleString()}`;
+  const span = shown === 0 ? `${fmtInt(start)}` : `${fmtInt(start)}–${fmtInt(end)}`;
   // No rows of this list on screen yet (a new page size, say): the page is being read.
   const loading = shown === 0 && busy;
-  const totalText = total !== undefined ? `${capped ? "the newest " : ""}${total.toLocaleString()}` : null;
+  const totalText = total !== undefined ? `${capped ? "the newest " : ""}${fmtInt(total)}` : null;
   // Click UI's Pagination writes " rows" after its range text, so only a range of rows goes
   // there; a read in flight and the server's page limit are said on a line of their own.
   const range = loading ? undefined : totalText !== null ? `${span} of ${totalText}` : span;
@@ -141,7 +142,7 @@ export function ListPager({
       ? `Loading… · ${totalText} rows in all`
       : "Loading…"
     : stopped && reachable !== undefined
-      ? `Pages 1–${reachable.toLocaleString()} can be opened.`
+      ? `Pages 1–${fmtInt(reachable)} can be opened.`
       : null;
 
   const go = (typed: number, { focusList }: { focusList: boolean }) => {

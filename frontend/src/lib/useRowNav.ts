@@ -86,13 +86,13 @@ export function useRowNav({ enabled = true }: RowNavOptions = {}): (el: HTMLElem
     list.addEventListener("focusin", onFocusIn);
     list.addEventListener("keydown", onSpace);
     list.addEventListener("keyup", onSpace);
-    const watch = typeof MutationObserver === "undefined" ? null : new MutationObserver(() => roveTo(stop.current));
-    watch?.observe(list, { childList: true, subtree: true });
+    const watch = new MutationObserver(() => roveTo(stop.current));
+    watch.observe(list, { childList: true, subtree: true });
     return () => {
       list.removeEventListener("focusin", onFocusIn);
       list.removeEventListener("keydown", onSpace);
       list.removeEventListener("keyup", onSpace);
-      watch?.disconnect();
+      watch.disconnect();
     };
   }, [list, roveTo]);
 

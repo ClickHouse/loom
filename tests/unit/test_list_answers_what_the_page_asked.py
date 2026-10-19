@@ -118,7 +118,6 @@ def test_the_memories_page_asks_for_the_fields_it_renders() -> None:
     card = (_ROOT / "frontend/src/components/MemoryCard.tsx").read_text()
     # The list asks for as many characters as a card shows (two lines at a 1400 px window);
     # the server ends a value it cut in "…".
-    assert "const MEMORIES_PREVIEW_CHARS = CARD_VALUE_CHARS;" in reads
     assert "export const CARD_VALUE_CHARS = 320;" in card
     fields_src = reads[
         reads.index("MEMORIES_LIST_FIELDS = [") : reads.index(
@@ -130,6 +129,6 @@ def test_the_memories_page_asks_for_the_fields_it_renders() -> None:
     assert len(fields) == 12, "cut 54: the twelve fields the page reads"
     known = set(memory_crud._MemoryListEntry.model_fields)
     assert fields <= known, sorted(fields - known)
-    assert re.search(r"fields: MEMORIES_LIST_FIELDS,\s*previewChars: MEMORIES_PREVIEW_CHARS", reads)
+    assert re.search(r"fields: MEMORIES_LIST_FIELDS,\s*previewChars: CARD_VALUE_CHARS", reads)
     api = (_ROOT / "frontend/src/api.ts").read_text()
     assert "preview_chars: opts.previewChars" in api and "fields: opts.fields" in api

@@ -23,8 +23,7 @@ function describe(v: unknown): { value: string; encoded: boolean; pairs: boolean
   const enc = typeof v === "string" ? detectEncodedValue(v) : detectEncodedRecord(v);
   if (enc) return { value: enc.decoded, encoded: true, pairs: false };
   const pairs = valuePairs(v);
-  // One past CARD_VALUE_CHARS keeps the "…" the server adds to a value it cut, or the
-  // character that tells `truncate` there is more; the default 320 sliced the mark off.
+  // One past a card's worth: keeps the server's "…", or the character that tells truncate there is more.
   return pairs
     ? { value: pairs, encoded: false, pairs: true }
     : { value: previewValue(v, CARD_VALUE_CHARS + 1), encoded: false, pairs: false };

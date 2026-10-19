@@ -80,6 +80,14 @@ export function parseChTime(s: string | null | undefined): Date | null {
   return parseIso(t);
 }
 
+/** The whole days left of the 14-day grace window for a memory deleted at `tombstonedAt`, a
+ *  ClickHouse time and so UTC; null for no time. */
+export function daysLeftToRestore(tombstonedAt: string | null | undefined, now: number = Date.now()): number | null {
+  const deleted = parseChTime(tombstonedAt);
+  if (!deleted) return null;
+  return Math.max(0, 14 - Math.floor((now - deleted.getTime()) / (24 * 3600 * 1000)));
+}
+
 /** A list row's time (one rule for every list): "just now", "12m ago", "3h ago", "3d ago"
  *  within the week, then "Sep 20", or "Sep 20, 2025" in another year. `ui/ListTime`
  *  renders it with the absolute time in a tooltip. */

@@ -224,7 +224,7 @@ test("the Memories search asks for memory legs only and aborts a stale search", 
 });
 
 // The Memories page asks for the twelve fields its cards read and the preview length they
-// show; the list answers nothing else.
+// show (CARD_VALUE_CHARS); the list answers nothing else.
 test("the Memories list asks for the twelve fields the page reads and a 320-character preview", async ({ page }) => {
   const calls = await installApi(page, { memoryRows: 12 });
   await page.goto("/memories", { waitUntil: "domcontentloaded" });

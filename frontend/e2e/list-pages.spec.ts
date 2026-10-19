@@ -1,10 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import * as fs from "node:fs";
 import { violations } from "./axe";
-import { codeReposFixture, installApi, trackerSourcesFixture } from "./fixtures";
-
-// A list row the read drew, not the loading placeholder (RowSkeleton is a `.list-row` too).
-const LOADED_ROW = "main .list-row:not(.list-row-skeleton)";
+import { codeReposFixture, installApi, LOADED_ROW, trackerSourcesFixture } from "./fixtures";
 
 // The list pages against the list rules in `dashboard-design.md`, in the browser.
 
@@ -147,8 +144,8 @@ for (const { width, touch } of [
         await expect(page.locator("main .list-row-skeleton").nth(1)).toBeAttached();
         const [s1, s2] = await boxes("main .list-row-skeleton");
         answer();
-        await expect(page.locator("main .list-row:not(.list-row-skeleton)").nth(1)).toBeVisible();
-        const [r1, r2] = await boxes("main .list-row:not(.list-row-skeleton)");
+        await expect(page.locator(LOADED_ROW).nth(1)).toBeVisible();
+        const [r1, r2] = await boxes(LOADED_ROW);
         expect(Math.abs(r1.height - s1.height), `row ${r1.height}, skeleton ${s1.height}`).toBeLessThanOrEqual(8);
         const pitch = { rows: r2.top - r1.top, skeleton: s2.top - s1.top };
         expect(Math.abs(pitch.rows - pitch.skeleton), JSON.stringify(pitch)).toBeLessThanOrEqual(2);

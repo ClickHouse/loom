@@ -13,12 +13,8 @@ import { errorRequestId, humanizeError } from "../lib/format";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { KEYWORD_PAGE, keywordThenRanked } from "../lib/memoriesSearch";
 
-// The twelve fields the page and its cards read, and the preview length a card shows
-// (CARD_VALUE_CHARS: 320, two lines at a 1400 px window; the base64 envelope check needs
-// 64). Unprojected, a page of a hundred is 166 kB of JSON — 2 KB previews, entities,
-// timestamps nothing reads; twelve fields at 320 characters is ~71 kB, 16 kB of it the
-// second line. Field names are a quarter of a row, so a field the page does not read costs
-// on every row.
+// The fields the page and its cards read. Field names are a quarter of a row, so a field
+// the page does not read costs on every row.
 const MEMORIES_LIST_FIELDS = [
   "memory_key",
   "memory_type",
@@ -33,8 +29,6 @@ const MEMORIES_LIST_FIELDS = [
   "verified_by",
   "verification",
 ];
-// What a card shows; the server ends a value it cut in "…", one character past this.
-const MEMORIES_PREVIEW_CHARS = CARD_VALUE_CHARS;
 
 /** A tag and agent filter: what a search's keyword half reads with. */
 export interface TagAgentFilter {
@@ -207,7 +201,7 @@ export function useMemorySearch(
           tags: filter.tags,
           agent: filter.agent || undefined,
           fields: MEMORIES_LIST_FIELDS,
-          previewChars: MEMORIES_PREVIEW_CHARS,
+          previewChars: CARD_VALUE_CHARS,
           signal: ac.signal,
         }).catch(() => null);
         if (cancelled) return;
@@ -427,7 +421,7 @@ export function useMemoryListRead({
             signal,
             known_version: isFirst ? undefined : knownVersion || undefined,
             fields: MEMORIES_LIST_FIELDS,
-            previewChars: MEMORIES_PREVIEW_CHARS,
+            previewChars: CARD_VALUE_CHARS,
           });
           if (!live()) return;
           if (r.unchanged) return;

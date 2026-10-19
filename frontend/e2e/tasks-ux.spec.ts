@@ -148,8 +148,11 @@ test.describe("a phone with a touch pointer", () => {
     expect(top).toBeLessThanOrEqual(360);
     for (const name of ["Inbox", "Filters"]) {
       const box = await page.getByRole("button", { name, exact: true }).boundingBox();
-      // Rounded: layout can land a 44 px control at 43.99998 px.
-      expect(box && Math.round(box.height) >= 44 && box.x >= 0 && box.x + box.width <= 375).toBe(true);
+      if (!box) throw new Error(`${name} has no box`);
+      // Within 0.01: layout can land a 44 px control at 43.99998 px.
+      expect(box.height, `${name} is 44 px tall`).toBeGreaterThanOrEqual(44 - 0.01);
+      expect(box.x, `${name} starts on the screen`).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width, `${name} ends on the screen`).toBeLessThanOrEqual(375);
     }
   });
 });
