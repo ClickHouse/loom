@@ -630,13 +630,14 @@ async def test_a_pair_that_fails_leaves_the_audit_row_of_the_pairs_done_before_i
 
 
 def test_a_value_its_writer_restated_after_a_retirement_is_asserted_then() -> None:
-    """Versions (version, holds the hash, superseded, retired at): the row held the value
-    at 10, was retired at 20 (retired at 25), and holds it again at 30."""
-    run = [(10, True, False, 0), (20, True, True, 25), (30, True, False, 0)]
-    assert queue._run_start(run, undos=[]) == 30, "restated: a new statement"
-    assert queue._run_start(run, undos=[28]) == 10, "an Undo brought it back: still 10"
-    assert queue._run_start([(10, True, False, 0), (15, True, False, 0)], undos=[]) == 10
-    assert queue._run_start([(10, True, False, 0), (15, False, False, 0)], undos=[]) is None
+    """Versions (version, holds the hash, superseded): the row held the value at 10, was
+    retired at 20, and holds it again at 30, written by an Undo or by its writer."""
+    run = [(10, True, False), (20, True, True), (30, True, False)]
+    assert queue._run_start(run, undos=set()) == 30, "restated: a new statement"
+    assert queue._run_start(run, undos={30}) == 10, "the Undo's restore: still 10"
+    assert queue._run_start(run, undos={25}) == 30, "another Undo's version: restated"
+    assert queue._run_start([(10, True, False), (15, True, False)], undos=set()) == 10
+    assert queue._run_start([(10, True, False), (15, False, False)], undos=set()) is None
 
 
 async def test_a_retirement_a_person_undid_is_not_made_again(row_env: NS) -> None:

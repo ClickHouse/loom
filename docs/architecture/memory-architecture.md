@@ -291,8 +291,12 @@ actions, verdicts and confidences, never the text.
   `append_only` is never judged.
 - A pinned row is never retired, flagged or cleared, and is no peer (no call is paid for a
   pair no verdict may change); a lock that refuses retirement holds.
-- An Undo (`memory.restore`) keeps the restored row's content hash, so it stays the older
-  statement, and leaves both rows unowed: the next pass does not judge the pair again.
+- The resolver dates an undone row from its first assertion: the version an Undo
+  writes, named in its `memory.unsupersede` record, continues the row's statement. A
+  version after a retirement that no Undo wrote is judged afresh, as a restatement.
+- An Undo writes that record under the key's lock before it restores the row, and
+  answers 503 with nothing restored when the record cannot be written. It leaves both
+  rows unowed: the next pass does not judge the pair again.
   Should the winner be judged again anyway (still owed), the pair is left alone, neither
   retired nor flagged from either side, while the Undo's `memory.unsupersede` record names
   that retirement, the restored row still holds the value it had at the Undo, and the

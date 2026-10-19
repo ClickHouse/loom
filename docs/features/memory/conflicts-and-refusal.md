@@ -193,7 +193,8 @@ offers Undo, and undoing a row that is already live shows "Changed since".
 
 The tab's Undo calls `memory.restore` with `if_superseded_by`: the row comes back, and
 `memory.unsupersede` is recorded, only while it is still retired behind the memory the
-record names; a row deleted, revived or retired again since shows "Changed since". It
+record names; a row deleted, revived or retired again since shows "Changed since". When
+the record cannot be written, the Undo fails and nothing is restored. It
 comes back `active`, or `conflicted` when it was under review when it retired: it still
 lists its peers, as they list it. A retired duplicate comes back `duplicate` while its
 original is still served, and `active` once it is not.

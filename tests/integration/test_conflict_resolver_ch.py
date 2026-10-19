@@ -2786,3 +2786,55 @@ async def test_an_undo_whose_record_fails_restores_nothing(ch, wired, monkeypatc
     with pytest.raises(BackendUnavailableError):
         await _undo(org, "office_city", winner)
     assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+
+
+async def test_an_undone_row_keeps_its_first_assertion(ch, wired) -> None:
+    """An Undo writes the row's value back; the value was asserted when first written."""
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 1800)
+    assert (await run_pass())["retired"] == 1
+    rows = await _rows(ch, org)
+    loser, winner = rows["office_city"], rows["office_location"]
+    assert (await _undo(org, "office_city", winner["id"])).restored
+    history = await ch.query_all(
+        "SELECT toString(content_sha256) AS h, version FROM loom.memory_versions"
+        " WHERE org = {o:String} AND memory_id = {m:UUID} ORDER BY version"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"o": org, "m": loser["id"]},
+    )
+    got = await queue.asserted_versions(org, NS, [(loser["id"], history[-1]["h"])], ch=ch)
+    assert got[loser["id"]] == history[0]["version"]
+
+
+async def test_a_newer_statement_retires_an_undone_older_one(ch, wired, monkeypatch) -> None:
+    """Paris retired by Rome, Berlin written, then Paris undone: judged against Berlin,
+    Paris is still the older statement, and Berlin retires it."""
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 1840)
+    assert (await run_pass())["retired"] == 1
+    await _later()
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s3", "office_site", "The office is in Berlin")
+        await after_write.drain()
+    await _place(ch, org, "s3", "office_site", _vec((1840, 0.9), (1842, 0.436)), owed=False)
+    await _later()
+    winner = (await _rows(ch, org))["office_location"]["id"]
+    assert (await _undo(org, "office_city", winner)).restored
+    await _place(ch, org, "s3", "office_site", _vec((1840, 0.9), (1842, 0.436)), owed=True)
+    monkeypatch.setitem(_SCRIPT, "office_site", ("update", 0.98))
+    await run_pass()
+    rows = await _rows(ch, org)
+    assert rows["office_site"]["status"] == "active"
+    assert rows["office_city"]["superseded_by"] == rows["office_site"]["id"]
