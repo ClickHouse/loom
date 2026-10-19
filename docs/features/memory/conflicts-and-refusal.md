@@ -173,13 +173,14 @@ retired memory, the row it retired behind and the reason; it holds ids, keys and
 identity, never value text. On every path listed, a locked or pinned row, or one
 already retired since it was read, is left as it is.
 
-A row is listed once a re-read after the write finds its superseded version at the
-head; one a later write overtook is not. One the re-read could not see is listed with
+A row is listed once a re-read after the write finds its superseded version at the head;
+one a later write overtook is not. One the re-read could not see is listed with
 `unconfirmed`: a write's result never counts it among the rows it retired, recall is
-left as it was, and `loom reconcile-status` finds and mirrors any divergence. A point write (`memory.set`, `memory.update_by_id`) writes its record and
-closes the retired rows' graph facts before it answers, and a record that fails is owed
-to the projection repair, which writes it once; the conflict resolver writes its own
-after the retirement, owed the same way.
+left as it was, and `loom reconcile-status` finds and mirrors any divergence. A point
+write (`memory.set`, `memory.update_by_id`) writes its record and closes the retired
+rows' graph facts before it answers, and a record that fails is owed to the projection
+repair, which writes it once; the conflict resolver writes its own after the retirement,
+owed the same way.
 
 #### The Auto-resolved tab
 
@@ -188,30 +189,30 @@ a time. A row the re-read could not confirm is marked "may not have taken effect
 mark rows already restored, the tab reads up to 2,500 `memory.unsupersede` records (5
 pages of 500) back to the oldest retirement it shows. Past that, an older row still
 offers Undo: undoing a row an Undo already restored shows it restored, and one written
-or retired since shows "Changed since". A row shows
-as restored only while `memory.statuses` reads it no longer retired behind that memory,
-so the record of an Undo whose restore failed still offers Undo, and so does a row whose
-state could not be read: a repeat Undo of a restored row answers restored.
+or retired since shows "Changed since". A row shows as restored only while
+`memory.statuses` reads it no longer retired behind that memory, so the record of an
+Undo whose restore failed still offers Undo, and so does a row whose state could not be
+read: a repeat Undo of a restored row answers restored.
 
 #### Undo
 
 The tab's Undo calls `memory.restore` with `if_superseded_by`: the row comes back, and
 `memory.unsupersede` is recorded, only while it is still retired behind the memory the
 record names; a row deleted, revived or retired again since shows "Changed since". When
-the record cannot be written, the Undo fails and nothing is restored. When the
-restore's answer is lost (503, outcome unknown), retrying the Undo finishes it and
-answers restored. It comes back `active`, or `conflicted` when it was under review when it retired: it still
-lists its peers, as they list it. A retired duplicate comes back `duplicate` while its
-original is still served, and `active` once it is not.
+the record cannot be written, the Undo fails and nothing is restored. When the restore's
+answer is lost (503, outcome unknown), retrying the Undo finishes it and answers
+restored. It comes back `active`, or `conflicted` when it was under review when it
+retired: it still lists its peers, as they list it. A retired duplicate comes back
+`duplicate` while its original is still served, and `active` once it is not.
 
 The Undo holds the key's write lock from its read of the row to its insert, as a
-conditional write (`if_match_sha256`) and every conflict resolver write do: a conditional
-revision or a resolver write made meanwhile lands first and the Undo shows "Changed
-since", or waits for the Undo. An unconditional write takes no lock, and the later of the
-two wins. When another conditional write holds the
-lock past its wait, the Undo answers 409 PRECONDITION_FAILED ("this memory is being
-written right now; retry the Undo"), and while the lease store (Keeper) does not answer,
-503 BACKEND_UNAVAILABLE. Retry either.
+conditional write (`if_match_sha256`) and every conflict resolver write do: a
+conditional revision or a resolver write made meanwhile lands first and the Undo shows
+"Changed since", or waits for the Undo. An unconditional write takes no lock, and the
+later of the two wins. When another conditional write holds the lock past its wait, the
+Undo answers 409 PRECONDITION_FAILED ("this memory is being written right now; retry the
+Undo"), and while the lease store (Keeper) does not answer, 503 BACKEND_UNAVAILABLE.
+Retry either.
 
 An Undo opens again the graph facts the restored row still holds (see the
 [entity graph](../entity-graph.md)). The resolver does not retire the row behind the same
