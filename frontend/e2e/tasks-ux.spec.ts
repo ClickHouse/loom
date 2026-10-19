@@ -111,6 +111,30 @@ test("at 1400 px the open panel's actions are in view without scrolling", async 
   await expect(panel.getByRole("button", { name: "Won't do…" })).toBeInViewport();
 });
 
+/** The outline offset of the focused element, and whether it shows the keyboard ring. */
+async function focusRing(page: Page): Promise<{ visible: boolean; offset: string }> {
+  return page.evaluate(() => {
+    const el = document.activeElement as HTMLElement;
+    return { visible: el.matches(":focus-visible"), offset: getComputedStyle(el).outlineOffset };
+  });
+}
+
+// A lane and the rail clip their overflow, so a row's, a card's and an inbox's ring is drawn
+// inside the box.
+test("a task row, a board card and an inbox take an inset focus ring", async ({ page }) => {
+  await open(page, 1400);
+  await page.getByRole("row", { name: TRIAGE }).focus();
+  expect(await focusRing(page), "a row").toEqual({ visible: true, offset: "-2px" });
+  await page.getByRole("navigation", { name: "Inboxes" }).getByRole("button").first().focus();
+  expect(await focusRing(page), "an inbox").toEqual({ visible: true, offset: "-2px" });
+  await page.getByRole("button", { name: "Board", exact: true }).click();
+  // A key first: after the Board click a scripted focus would not show the keyboard ring.
+  await page.keyboard.press("Tab");
+  const card = page.getByRole("region", { name: /^To do/ }).getByRole("button", { name: new RegExp(TODO) });
+  await card.focus();
+  expect(await focusRing(page), "a card").toEqual({ visible: true, offset: "-2px" });
+});
+
 // On a phone the first task starts within the list pages' chrome budget (y ≤ 360 at
 // 375 × 812): the scope badge and the List/Board switch give way. Under a touch pointer,
 // where every control is 44 px, the tiles and the filters are one Filters menu on the

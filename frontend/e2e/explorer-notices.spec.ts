@@ -105,6 +105,19 @@ test("an outline row selects its node; the button at its end selects the edge", 
   expect(errors).toEqual([]);
 });
 
+// The tree scrolls in its own box, which would clip an outset ring: a row's is inset.
+test("an outline row takes an inset focus ring", async ({ page }) => {
+  await installApi(page);
+  await page.goto(`/graph?seed=${SMALL_SEED}`);
+  const row = page.getByRole("tree", { name: "Walk outline" }).getByRole("treeitem").nth(1);
+  await row.focus();
+  const ring = await row.evaluate((el) => ({
+    visible: el.matches(":focus-visible"),
+    offset: getComputedStyle(el).outlineOffset,
+  }));
+  expect(ring).toEqual({ visible: true, offset: "-2px" });
+});
+
 test("a re-walk drops the expand it started over: the late result lands nowhere", async ({ page }) => {
   const HOLD_MS = 1_500;
   const calls = await installApi(page, { relatedDelayMs: HOLD_MS });

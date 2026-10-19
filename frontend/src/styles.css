@@ -589,9 +589,17 @@ textarea[aria-invalid="true"]:focus-visible {
 [role="tablist"] [role="tab"]:focus-visible {
   outline-offset: -2px;
 }
+/* Unlayered, as the list-row ring below: in the components layer these would lose to the
+   unlayered *:focus-visible ring. Inset: the Explorer outline tree's scroll box, a task lane
+   (.tq-group) and the task rail clip their overflow, which would cut an outset ring. */
+.explorer-outline [role="treeitem"]:focus-visible,
+.tq-row:focus-visible,
+.tq-card:focus-visible,
+.tq-inbox:focus-visible {
+  outline-offset: -2px;
+}
 /* A list row's body is one stretched button (`data-row-open`): the ring goes round the
    row, meta slot included, and the button draws none of its own. */
-/* Unlayered: in the components layer this would lose to the unlayered *:focus-visible ring. */
 .list-row [data-row-open]:focus-visible {
   outline: none;
 }
@@ -767,13 +775,8 @@ textarea[aria-invalid="true"]:focus-visible {
     flex-shrink: 0;
     white-space: nowrap;
   }
-  /* Outline tree rows: one line of name, one of metadata. The ring is inset, as on tabs: the
-     tree's scroll box would clip an outset one. Hover and selection take Click UI's Table row
-     tints. */
-  .explorer-outline [role="treeitem"]:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: -2px;
-  }
+  /* Outline tree rows: one line of name, one of metadata. Hover and selection take Click UI's
+     Table row tints. */
   .explorer-outline [role="treeitem"]:hover {
     background: var(--click-table-row-color-background-hover);
   }
@@ -1014,18 +1017,6 @@ textarea[aria-invalid="true"]:focus-visible {
     box-shadow: inset 3px 0 0 var(--color-text);
     background: var(--click-table-row-color-background-active);
   }
-  /* Inset: a lane (.tq-group) and the rail clip their overflow, which would cut an outset
-     ring. A tile sits in no clipping box and takes the outset ring every list row has. */
-  .tq-row:focus-visible,
-  .tq-card:focus-visible,
-  .tq-inbox:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: -2px;
-  }
-  .tq-tile:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: 2px;
-  }
   /* Two lines before it ellipsises, so a long title is read in the row. */
   .tq-row .title {
     font-weight: 500;
@@ -1148,10 +1139,6 @@ textarea[aria-invalid="true"]:focus-visible {
     display: flex;
     flex-direction: column;
     min-width: 0;
-  }
-  .tq-panel [data-panel-title]:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: 2px;
   }
   .tq-sec {
     padding: 12px 0;
