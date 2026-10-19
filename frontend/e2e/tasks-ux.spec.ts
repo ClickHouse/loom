@@ -124,7 +124,8 @@ test.describe("a phone with a touch pointer", () => {
     expect(top).toBeLessThanOrEqual(360);
     for (const name of ["Inbox", "Filters"]) {
       const box = await page.getByRole("button", { name, exact: true }).boundingBox();
-      expect(box && box.height >= 44 && box.x >= 0 && box.x + box.width <= 375).toBe(true);
+      // Rounded: layout can land a 44 px control at 43.99998 px.
+      expect(box && Math.round(box.height) >= 44 && box.x >= 0 && box.x + box.width <= 375).toBe(true);
     }
   });
 });

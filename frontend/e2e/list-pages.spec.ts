@@ -3,6 +3,9 @@ import * as fs from "node:fs";
 import { violations } from "./axe";
 import { codeReposFixture, installApi, trackerSourcesFixture } from "./fixtures";
 
+// A list row the read drew, not the loading placeholder (RowSkeleton is a `.list-row` too).
+const LOADED_ROW = "main .list-row:not(.list-row-skeleton)";
+
 // The list pages against the list rules in `dashboard-design.md`, in the browser.
 
 const now = new Date().toISOString();
@@ -27,7 +30,7 @@ async function open(page: Page, path: string) {
   });
   await page.route("**/v1/conversation.threads", (route) => route.fulfill({ json: { threads: THREADS } }));
   await page.goto(path);
-  await expect(page.locator("main .list-row").first()).toBeVisible();
+  await expect(page.locator(LOADED_ROW).first()).toBeVisible();
 }
 
 // A phone is measured with a touch pointer, where every control is 44 px.
@@ -44,7 +47,7 @@ for (const { width, height, top, touch } of BUDGET) {
     for (const path of ["/memories", "/library", "/conversations", "/profile", "/spaces", "/repositories"]) {
       test(`${path}: the first row starts at or above y = ${top}`, async ({ page }) => {
         await open(page, path);
-        const box = await page.locator("main .list-row").first().boundingBox();
+        const box = await page.locator(LOADED_ROW).first().boundingBox();
         expect(box?.y ?? Infinity).toBeLessThanOrEqual(top);
       });
     }
@@ -113,7 +116,7 @@ for (const { width, touch } of [
     for (const { path, op } of LISTS) {
       test(`${path}: a row's placeholder size is its drawn height`, async ({ page }) => {
         await open(page, path);
-        const row = page.locator("main .list-row").first();
+        const row = page.locator(LOADED_ROW).first();
         const { drawn, intrinsic } = await row.evaluate((el) => ({
           drawn: el.getBoundingClientRect().height,
           intrinsic: parseFloat(getComputedStyle(el).containIntrinsicHeight.replace("auto", "")),

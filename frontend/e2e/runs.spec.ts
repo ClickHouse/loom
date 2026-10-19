@@ -171,14 +171,19 @@ test.describe("a phone with a touch pointer", () => {
   test("at 375 px the first run starts within the chrome budget", async ({ page }) => {
     await installApi(page, { runRows: 60 });
     await page.goto("/runs");
-    const first = page.locator("main .list-row").first();
+    // A run the read drew, not the loading placeholder (RowSkeleton is a `.list-row` too).
+    const first = page.locator("main .list-row:not(.list-row-skeleton)").first();
     await expect(first).toBeVisible();
     expect(await first.evaluate((el) => el.getBoundingClientRect().top)).toBeLessThanOrEqual(360);
     // Every control on the filters' row is a 44 px target, and fits the width.
     for (const name of ["Filter runs by status", "Agent", "View"]) {
       const control = page.getByRole("button", { name, exact: true });
       const box = await control.boundingBox();
-      expect(box && box.height >= 44 && box.x >= 0 && box.x + box.width <= 375).toBe(true);
+      expect(box, name).not.toBeNull();
+      // Rounded: layout can land a 44 px control at 43.99998 px.
+      expect(Math.round(box?.height ?? 0), name).toBeGreaterThanOrEqual(44);
+      expect(box?.x, name).toBeGreaterThanOrEqual(0);
+      expect((box?.x ?? 0) + (box?.width ?? 0), name).toBeLessThanOrEqual(375);
       // Its value is whole ("Every status"), never cut to "Every s…".
       const cut = await control.evaluate((el) =>
         [el, ...el.querySelectorAll<HTMLElement>("*")].some((n) => n.scrollWidth > n.clientWidth + 1),
