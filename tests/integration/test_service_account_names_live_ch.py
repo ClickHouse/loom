@@ -22,6 +22,7 @@ _AHEAD = 2**62  # written by a host whose clock runs far ahead
 
 
 def _delegated(org: str, *, parents: list[str]) -> Delegated:
+    """What `delegate` hands a mint made down `parents`, the first its root."""
     return Delegated(
         org=org,
         namespaces=["ns"],
@@ -34,7 +35,7 @@ def _delegated(org: str, *, parents: list[str]) -> Delegated:
         parents=[],
         parent_subjects=parents,
         parent_iats=[0] * len(parents),
-        creator="lee",
+        creator=parents[0],
         is_service_account=True,
     )
 

@@ -305,6 +305,9 @@ def test_the_mcp_config_url_ignores_forwarded_host(monkeypatch: pytest.MonkeyPat
     from server.main import app
 
     class _CH:
+        async def query_one(self, sql: str, **kw: object) -> dict[str, int]:
+            return {"v": 1}  # the token row's version
+
         async def insert(self, table: str, rows: list, **kw: object) -> None:
             pass  # the token list's row
 

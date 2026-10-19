@@ -192,7 +192,8 @@ async def save_token(
 ) -> None:
     """List the token in its owner's token list (`loom.service_accounts`).
     `kind` is "mcp" for a Setup-page token, with the MCP client it was made for.
-    Called under the name's claim."""
+    Called under the name's claim, but for a Setup-page token, whose name is
+    new with each mint."""
     from server.core.ch import get_client
     from server.core.versions import next_version
 

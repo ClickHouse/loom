@@ -2153,6 +2153,20 @@ def test_the_work_filter_skips_an_address_that_is_not_a_work_entry(
     assert client.get("/scim/v2/Users", params={"filter": by_work}).json()["totalResults"] == 0
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"userName": "lee@example.com", "UserName": "kim@example.com"},
+        {"userName": "lee@example.com", "emails": [{"value": "a@example.com", "Value": "b@x.io"}]},
+    ],
+)
+def test_an_attribute_named_twice_in_two_cases_is_refused(
+    client: TestClient, world, body: dict[str, Any]
+) -> None:
+    r = client.post("/scim/v2/Users", json=body)
+    assert r.status_code == 400 and r.json()["scimType"] == "invalidSyntax"
+
+
 def test_attribute_names_match_in_any_case(client: TestClient, world) -> None:
     # RFC 7643 §2.1: the names of attributes, sub-attributes and operations.
     body = {"UserName": "lee.upn@corp.example", "Emails": _MIXED_CASE, "ACTIVE": True}
@@ -2163,7 +2177,8 @@ def test_attribute_names_match_in_any_case(client: TestClient, world) -> None:
     assert created.json()["emails"] == [
         {"value": "lee@example.com", "type": "work", "primary": True}
     ]
-    put = client.put(f"/scim/v2/Users/{uid}", json={**body, "Active": False})
+    off = {"UserName": "lee.upn@corp.example", "Emails": _MIXED_CASE, "Active": False}
+    put = client.put(f"/scim/v2/Users/{uid}", json=off)
     assert put.status_code == 200 and put.json()["active"] is False, put.text
     ops = [
         {"OP": "Replace", "Path": "Active", "Value": True},

@@ -106,8 +106,8 @@ def revoked_row(row: dict[str, Any], *, revoked_at: datetime, revoked_by: str) -
         "expires_at": row["expires_at"],
         "revoked_at": revoked_at,
         "revoked_by": revoked_by,
-        # The host's clock, as every writer of this table stamps: the row was read
-        # under the name's claim, so passing its version is enough to replace it.
+        # The host's clock: the row was read under the name's claim, so passing
+        # its version is enough to replace it.
         "version": max(time.time_ns(), int(row["version"]) + 1),
         "kind": row["kind"],
         "client": row["client"],

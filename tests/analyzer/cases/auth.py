@@ -6,8 +6,11 @@ revocation reads. The OAuth exchange and grant change claims are leases
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
+from server.core.ch import get_client
+from server.core.versions import next_version
 from tests.analyzer.cases._common import NS, ORG
 from tests.analyzer.corpus import Case, RecordingCH
 
@@ -36,6 +39,8 @@ async def _scim(ch: RecordingCH, c: dict[str, Any]) -> None:
 
     await scim.find("alice@x.io")
     await scim.page(1, 10)
+    await scim.page(1, 10, email="alice@x.io")  # the emails filters
+    await scim.page(1, 10, email="alice@x.io", work=True)
     await scim.deactivated("alice@x.io")  # every SSO sign-in reads it, SCIM on or off
     await scim._row(scim.user_id("alice@x.io"))
     await scim._subjects("alice@x.io")
@@ -47,10 +52,17 @@ async def _scim(ch: RecordingCH, c: dict[str, Any]) -> None:
     await revocation.has_outright_row("alice")
     await revocation._next_version("alice")
     await service_accounts.revoke_created_by(["alice"], revoked_by="scim")
+    # A new token's version, past every row its name held.
+    await next_version(get_client(), "loom.service_accounts", {"org": ORG, "name": "bot"})
 
 
 def _scim_rows(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-    # The one-row answers a count and `next_version` read; nothing else is found.
+    # The one-row answers a count and `next_version` read, and one live token
+    # the person made, so its name's re-read under the claim runs too.
+    if "AS live FROM loom.service_accounts" in sql and "alice" in params.get("subs", []):
+        made = datetime(2026, 1, 1)
+        token = {"org": ORG, "name": "bot", "sa_subject": "sa:bot-1", "created_by": "alice"}
+        return [{**token, "created_at": made, "lineage": ["alice"], "live": 1}]
     if "count() AS n" in sql:
         return [{"n": 0}]
     if "max(version)" in sql:

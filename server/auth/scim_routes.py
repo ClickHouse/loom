@@ -155,8 +155,12 @@ _USER_URN = USER_SCHEMA.lower() + ":"
 
 
 def _lowered(attrs: dict[str, Any]) -> dict[str, Any]:
-    """`attrs` with its names lower-cased (RFC 7643 §2.1: they match in any case)."""
-    return {str(k).lower(): v for k, v in attrs.items()}
+    """`attrs` with its names lower-cased (RFC 7643 §2.1: they match in any
+    case). Two names that differ only in case are one attribute sent twice."""
+    out = {str(k).lower(): v for k, v in attrs.items()}
+    if len(out) < len(attrs):
+        raise ScimError(400, "an attribute is named twice", "invalidSyntax")
+    return out
 
 
 def _operations(body: dict[str, Any]) -> Any:
