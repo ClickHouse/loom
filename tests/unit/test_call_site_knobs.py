@@ -1,0 +1,171 @@
+"""The timeouts and retry policies a call site used to hard-code come from their settings
+in server/settings/catalog.py: each test changes the setting and sees the call use it."""
+
+from __future__ import annotations
+
+import logging
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from server.settings import settings
+
+
+class _Stop(Exception):
+    """Ends a stubbed call once it has recorded what it was given."""
+
+
+def test_the_llm_and_embedding_retry_policies_follow_their_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.embedding import _provider
+    from server.llm import _retry
+
+    monkeypatch.setattr(settings, "llm_retry_attempts", 2)
+    monkeypatch.setattr(settings, "llm_retry_max_wait_s", 1.5)
+    monkeypatch.setattr(settings, "embedding_retry_attempts", 5)
+    monkeypatch.setattr(settings, "embedding_retry_max_wait_s", 3.0)
+    llm, embed = _retry.retrying(), _provider.retrying()
+    assert (llm.stop.max_attempt_number, llm.wait.max) == (2, 1.5)  # type: ignore[attr-defined]
+    assert (embed.stop.max_attempt_number, embed.wait.max) == (5, 3.0)  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_an_identity_provider_call_waits_its_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.auth import oidc
+
+    seen: list[Any] = []
+
+    class _Client:
+        def __init__(self, *, timeout: float) -> None:
+            seen.append(timeout)
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def post(self, *a: Any, **k: Any) -> Any:
+            raise _Stop
+
+    async def _discover() -> dict[str, str]:
+        return {"token_endpoint": "https://idp.example/token"}
+
+    monkeypatch.setattr(settings, "identity_provider_timeout_s", 2.5)
+    monkeypatch.setattr(oidc, "_discover", _discover)
+    monkeypatch.setattr(oidc.httpx, "AsyncClient", _Client)
+    with pytest.raises(_Stop):
+        await oidc._token_request({"grant_type": "authorization_code"})
+
+    class _Jwk:
+        def __init__(self, uri: str, *, timeout: float) -> None:
+            seen.append(timeout)
+
+        def get_signing_key_from_jwt(self, token: str) -> Any:
+            return SimpleNamespace(key="k")
+
+    monkeypatch.setattr(oidc, "PyJWKClient", _Jwk)
+    monkeypatch.setattr(oidc, "_jwk_clients", {})
+    assert oidc.signing_key("https://idp.example/jwks", "token") == "k"
+    assert seen == [2.5, 2.5]
+
+
+@pytest.mark.asyncio
+async def test_a_machine_issuers_discovery_waits_the_identity_provider_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.clients._http as http_client
+    from server.auth import machines
+
+    seen: list[float] = []
+
+    class _Http:
+        async def get(self, url: str, **kw: Any) -> Any:
+            seen.append(kw["timeout"])
+            raise _Stop
+
+    monkeypatch.setattr(settings, "identity_provider_timeout_s", 4.0)
+    monkeypatch.setattr(http_client, "get_client", lambda: _Http())
+    monkeypatch.setattr(machines, "_discovered", {})
+    with pytest.raises(_Stop):
+        await machines._jwks_uri("https://issuer.example")
+    assert seen == [4.0]
+
+
+@pytest.mark.asyncio
+async def test_the_gateway_token_exchange_waits_its_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.clients._http as http_client
+    from server.llm import gateway
+
+    seen: list[float] = []
+
+    class _Http:
+        async def post(self, url: str, **kw: Any) -> Any:
+            seen.append(kw["timeout"])
+            raise _Stop
+
+    async def _identity_token() -> str:
+        return "jwt"
+
+    monkeypatch.setattr(settings, "inference_token_exchange_timeout_s", 3.0)
+    monkeypatch.setattr(settings, "inference_token_url", "https://gateway.example/token")
+    monkeypatch.setattr(http_client, "get_client", lambda: _Http())
+    monkeypatch.setattr(gateway, "_identity_token", _identity_token)
+    try:
+        await gateway._renew()
+    except _Stop:
+        pass
+    assert seen == [3.0]
+
+
+def test_a_langfuse_score_post_waits_its_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.observability import langfuse_scores
+
+    seen: list[float] = []
+
+    def _urlopen(req: Any, *, timeout: float) -> Any:
+        seen.append(timeout)
+        raise _Stop
+
+    monkeypatch.setattr(settings, "langfuse_timeout_s", 7.0)
+    monkeypatch.setattr(settings, "langfuse_url", "https://langfuse.example")
+    monkeypatch.setattr(langfuse_scores, "_auth_header", lambda: "Basic x")
+    monkeypatch.setattr(langfuse_scores.urllib.request, "urlopen", _urlopen)
+    with pytest.raises(_Stop):
+        langfuse_scores._post_score({"name": "s", "value": 1})
+    assert seen == [7.0]
+
+
+@pytest.mark.asyncio
+async def test_a_hyde_call_slower_than_its_setting_falls_back_to_the_query(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import asyncio
+
+    import server.llm.client as llm_client
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.search import embed
+
+    class _Slow:
+        async def complete(self, **k: Any) -> Any:
+            await asyncio.sleep(5)
+
+    class _Embedder:
+        model_name = "fake"
+
+        async def embed(self, text: str) -> list[float]:
+            return [0.1, 0.2]
+
+    monkeypatch.setattr(settings, "memory_search_hyde_timeout_s", 0.05)
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Slow())
+    work: dict[str, Any] = {"embedding_calls": 0}
+    clock = SimpleNamespace(mark=lambda stage: None)
+    budget = SimpleNamespace(note_llm_call=lambda n: None)
+    inp = MemorySearchInput(org="o", namespace="n", agent="a", query="where", hyde=True)
+    with caplog.at_level(logging.WARNING):
+        vec = await embed._embed_search_query(inp, _Embedder(), "where", "", budget, work, clock)  # type: ignore[arg-type]
+    assert vec and "HyDE generation failed" in caplog.text

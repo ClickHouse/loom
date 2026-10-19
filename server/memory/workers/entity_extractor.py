@@ -25,6 +25,7 @@ from server.memory.domain.graph_quality import canonical_entity_text
 from server.memory.domain.sensitivity import value_reads_high
 from server.observability.budget import namespaces_over_cap
 from server.observability.genai import staged
+from server.settings.budgets import llm_max_tokens
 from server.workers import pass_context
 from server.workers.cost_event import emit_worker_cost_event_for
 from server.workers.status import record_pass
@@ -165,7 +166,7 @@ async def _extract(value_str: str) -> list[str] | None:
     result = await client.complete(
         with_strict_examples_preamble(_EXTRACT_PROMPT),
         value_str[:2000],
-        max_tokens=160,
+        max_tokens=llm_max_tokens("entity_extract"),
     )
     return _parse_entities(result.text)
 

@@ -13,6 +13,7 @@ from server.settings._env import JsonArray, JsonObject, RoutePrior
 _OBJECTS = [
     "ch_settings_by_traffic_class",
     "llm_policy_by_traffic_class",
+    "llm_max_tokens_overrides",
     "ratelimit_class_fractions",
     "rerank_endpoints_json",
     "code_vector_tables",

@@ -37,6 +37,7 @@ from typing import Any
 
 from server.observability.worker_queue import LoopBoundQueue
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
 
@@ -361,7 +362,10 @@ async def _judge_one(item: dict[str, Any]) -> None:
     try:
         with llm_stage("classify"):
             out = await client.complete(
-                _JUDGE_SYSTEM, user, max_tokens=120, response_format={"type": "json_object"}
+                _JUDGE_SYSTEM,
+                user,
+                max_tokens=llm_max_tokens("retrieval_judge"),
+                response_format={"type": "json_object"},
             )
     finally:
         from server.workers.cost_event import emit_worker_cost_event_for

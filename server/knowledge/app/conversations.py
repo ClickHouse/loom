@@ -49,6 +49,7 @@ from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS
 from server.observability.genai import staged
 from server.observability.otel import traced
 from server.operations.read_projection import project_rows
+from server.settings.budgets import llm_max_tokens
 
 if TYPE_CHECKING:
     from server.knowledge.store.conversations import ConversationEmbeddingRow, MessageInsert
@@ -823,7 +824,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     result = await llm.complete(
         system=system_prompt,
         user=f"Conversation excerpt:\n\n{transcript}",
-        max_tokens=600,
+        max_tokens=llm_max_tokens("conversation_compact"),
     )
     summary_text = (result.text or "").strip()
     if not summary_text:

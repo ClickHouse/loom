@@ -92,7 +92,10 @@ async def _renew() -> None:
             form["scope"] = settings.inference_token_scope
         # Never followed: a redirect would carry the identity token elsewhere.
         r = await http().post(
-            settings.inference_token_url, data=form, timeout=10.0, follow_redirects=False
+            settings.inference_token_url,
+            data=form,
+            timeout=settings.inference_token_exchange_timeout_s,
+            follow_redirects=False,
         )
         if r.status_code != 200:
             raise ValueError(f"{r.status_code} {_error_code(r)}".strip())

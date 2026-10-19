@@ -1822,6 +1822,17 @@
           "type": "string",
           "description": "\"\" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin \"openai\", \"gemini\", \"local\", \"fake\". Switching providers changes the embedding space: a full re-embed is required."
         },
+        "embedding_retry_attempts": {
+          "default": 3,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Attempts an embedding call makes on a retryable failure, and the longest backoff between two of them, in seconds."
+        },
+        "embedding_retry_max_wait_s": {
+          "default": 10.0,
+          "minimum": 0,
+          "type": "number"
+        },
         "embedding_send_dimensions": {
           "default": false,
           "type": "boolean",
@@ -2061,10 +2072,22 @@
           "type": "string",
           "description": "Identity mode; decides how callers authenticate. single-user    — no auth, one anonymous identity. trust-network  — self-signup, first-claim-wins. gateway        — an upstream proxy mints short-lived Loom JWTs with the shared HS256 secret; Loom only validates. Empty = inferred from auth_required + self_signup at boot."
         },
+        "identity_provider_timeout_s": {
+          "default": 10.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one call to an identity provider may take: OIDC discovery, the token and revocation endpoints, its signing keys, and a machine issuer's discovery."
+        },
         "inference_token_audience": {
           "default": "",
           "type": "string",
           "description": "With inference_token_url and no workload token: the audience of the identity token Loom signs (issuer <https public_base_url>/v1, newest RS256 key); never jwt_audience."
+        },
+        "inference_token_exchange_timeout_s": {
+          "default": 10.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one token exchange with the inference gateway may take."
         },
         "inference_token_scope": {
           "default": "",
@@ -2180,6 +2203,12 @@
           "type": "string",
           "description": "Span-name prefixes never forwarded: high-volume infrastructure spans with no LLM work (they belong in ClickStack)."
         },
+        "langfuse_timeout_s": {
+          "default": 15.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one Langfuse API call may take: posting a score, and the traces and scores the prompt evaluation reads."
+        },
         "langfuse_url": {
           "default": "",
           "type": "string",
@@ -2216,6 +2245,11 @@
           "type": "integer",
           "description": "Most output tokens a call adds over the caller's cap for a model's hidden reasoning. The reserve per model is learned from the reasoning tokens its replies report (twice the most it has spent) and capped here."
         },
+        "llm_max_tokens_overrides": {
+          "default": "",
+          "type": "string",
+          "description": "JSON {call: tokens} over LLM_MAX_TOKENS (below): the most tokens one kind of LLM call may write, keyed as the cost ledger's stage series name it. A name that is no LLM call, or a count below 1, = the map is logged once and ignored. '' = the table as declared."
+        },
         "llm_model": {
           "default": "",
           "type": "string",
@@ -2251,6 +2285,17 @@
           "default": "loom.llm_response_cache",
           "type": "string",
           "description": "The table the wrapper reads and writes; an isolated server whose boot migrations are off points this at its own scratch mirror."
+        },
+        "llm_retry_attempts": {
+          "default": 4,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Attempts an LLM call makes on a retryable failure (a 429, a 5xx, a dropped connection) before the fallback model takes over, and the longest backoff between two of them, in seconds."
+        },
+        "llm_retry_max_wait_s": {
+          "default": 20.0,
+          "minimum": 0,
+          "type": "number"
         },
         "log_format": {
           "default": "text",
@@ -2422,10 +2467,23 @@
           "type": "string",
           "description": "Org of memory_ask_code_namespace; \"\" = code_org, then the ask's own org."
         },
+        "memory_ask_code_search_token_budget": {
+          "default": 1400,
+          "maximum": 12000,
+          "minimum": 200,
+          "type": "integer"
+        },
         "memory_ask_code_staleness": {
           "default": true,
           "type": "boolean",
           "description": "Check the code locations a retrieved memory asserts against the live index and flag rotted ones (symbol moved or renamed) so synthesis prefers the current site. Read-time, additive, gated by the code binding; ambiguous symbols are skipped (code_anchor), never false-flagged."
+        },
+        "memory_ask_code_symbol_token_budget": {
+          "default": 400,
+          "maximum": 12000,
+          "minimum": 200,
+          "type": "integer",
+          "description": "Token budgets of the code.symbol and code.search reads that ground a code-entity question in the code plane."
         },
         "memory_ask_consistency_check": {
           "default": false,
@@ -2850,6 +2908,12 @@
           "default": 60,
           "type": "integer",
           "description": "Seconds between link passes."
+        },
+        "memory_code_links_max_pass_seconds": {
+          "default": 600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a code-links pass may run before the supervisor abandons it."
         },
         "memory_code_links_pending_days": {
           "default": 14,
@@ -3311,6 +3375,12 @@
           "type": "number",
           "description": "No-probe fallback for the question→fact P25 gate (≈ P25 for text-embedding-3-small): the loom_search precision floor and calibration.get's scalar row read it."
         },
+        "memory_search_hyde_timeout_s": {
+          "default": 6.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the HyDE model call may take before the search embeds the query itself."
+        },
         "memory_search_identifier_grounding": {
           "default": true,
           "type": "boolean",
@@ -3672,6 +3742,12 @@
           "default": 12,
           "type": "integer",
           "description": "Most transition events written per distilled session."
+        },
+        "observe_extract_max_pass_seconds": {
+          "default": 900.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds an observe-extract pass may run before the supervisor abandons it."
         },
         "observe_extract_notes_min_observations": {
           "default": 15,
@@ -4515,6 +4591,12 @@
           "type": "integer",
           "description": "The window for ISSUES, days (3650 = every closed issue the record holds): labelled duplicate targets are often closed long before the draft. PRs keep `tracker_embed_closed_days`."
         },
+        "tracker_embed_max_pass_seconds": {
+          "default": 900.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a tracker-embed pass may run before the supervisor abandons it."
+        },
         "tracker_links_enabled": {
           "default": true,
           "type": "boolean",
@@ -4529,6 +4611,12 @@
           "default": 90,
           "type": "integer",
           "description": "Issues opened within this many days are ranked each pass."
+        },
+        "tracker_links_max_pass_seconds": {
+          "default": 3600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a tracker-links pass may run before the supervisor abandons it."
         },
         "tracker_links_min_score": {
           "default": 1.0,
@@ -4635,6 +4723,12 @@
           "type": "boolean",
           "description": "Whether tracker.similar's vector leg (over loom.qa_item_embeddings, filled by the `tracker_embed` pass) is in the default leg set; a caller naming `vector` in `legs` runs it regardless. The leg only adds candidates, after the ranked legs (the agreement boost below aside)."
         },
+        "tracker_source_check_timeout_s": {
+          "default": 8.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds tracker.source_check waits for a source's contract check."
+        },
         "tracker_sources_json": {
           "default": "",
           "type": "string",
@@ -4674,6 +4768,12 @@
           "default": 6,
           "type": "integer",
           "description": "Days rolled per pass and the pause between remote statements: the shared `play` user is metered at 100 statements of one shape per hour, and the op's live reads share that quota."
+        },
+        "tracker_test_daily_max_pass_seconds": {
+          "default": 900.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a tracker test-daily pass may run before the supervisor abandons it."
         },
         "tracker_test_daily_pace_s": {
           "default": 5.0,

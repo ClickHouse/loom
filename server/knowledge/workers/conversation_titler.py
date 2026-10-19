@@ -27,6 +27,7 @@ from server.knowledge.store.conversations import ThreadInsertRow
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 from server.workers import pass_context
 from server.workers.cost_event import emit_worker_cost_event_for
 from server.workers.status import record_pass
@@ -95,7 +96,9 @@ async def _make_title(
     cost_accumulator.begin_op()
     try:
         with llm_stage("title"):
-            out = await llm.complete(system=_TITLE_SYSTEM, user=snippet, max_tokens=30)
+            out = await llm.complete(
+                system=_TITLE_SYSTEM, user=snippet, max_tokens=llm_max_tokens("title")
+            )
     finally:
         emit_worker_cost_event_for(
             org=str(row["org"]),

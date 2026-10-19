@@ -108,8 +108,7 @@ class _Worker:
     also_requires: str | None = None
     # WorkerSpec.idle_interval_seconds from this settings field.
     idle_interval: str | None = None
-    # WorkerSpec.max_pass_seconds: pinned here, or float() of a settings field.
-    max_pass_seconds: float | None = None
+    # WorkerSpec.max_pass_seconds: float() of a settings field.
     max_pass_setting: str | None = None
     # Seconds added to `max_pass_setting`: a harness timeout leaves the steps
     # around the harness (fetch, submodules, apply) no time of their own.
@@ -129,7 +128,7 @@ def _spec_for(row: _Worker) -> WorkerSpec:
     mod = importlib.import_module(row.module)
     pass_callable = getattr(mod, row.pass_attr)
     interval = getattr(settings, row.interval)
-    max_pass = row.max_pass_seconds
+    max_pass = None
     if row.max_pass_setting is not None:
         max_pass = float(getattr(settings, row.max_pass_setting)) + row.max_pass_headroom
     if row.max_pass_attr is not None:
@@ -272,7 +271,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "memory_code_links_enabled",
         "memory_code_links_interval_seconds",
         # a recheck of a big range writes as it goes and resumes; this bounds one pass
-        max_pass_seconds=600.0,
+        max_pass_setting="memory_code_links_max_pass_seconds",
     ),
     _Worker(
         "memory_expiry_sweep",
@@ -287,7 +286,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "observe_extract_interval_seconds",
         # P99 113 s measured; the default would be 900 anyway
         # at a 300 s interval, pinned so an interval change cannot lower it.
-        max_pass_seconds=900.0,
+        max_pass_setting="observe_extract_max_pass_seconds",
     ),
     _Worker(
         "extraction_queue",
@@ -400,7 +399,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "tracker_test_daily_interval_seconds",
         # Six days × two paced remote statements per pass;
         # A namespace with no rolled day runs at boot
-        max_pass_seconds=900.0,
+        max_pass_setting="tracker_test_daily_max_pass_seconds",
         owned_tables=True,
     ),
     _Worker(
@@ -438,7 +437,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "task_webhook_deliver_enabled",
         "task_webhook_deliver_interval_seconds",
         # up to 200 inboxes × a 10 s ack window is far past four intervals
-        max_pass_seconds=120.0,
+        max_pass_attr="MAX_PASS_SECONDS",
         idle_interval="task_webhook_deliver_idle_interval_seconds",
     ),
     _Worker(
@@ -448,7 +447,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "tracker_links_interval_seconds",
         # one bounded tracker read per issue of the window (~2,300 for 90
         # days), sequential: minutes, not the four-interval default
-        max_pass_seconds=3600.0,
+        max_pass_setting="tracker_links_max_pass_seconds",
         # A namespace with no candidate row runs at boot, not after
         # crc32(name) % 86400 seconds
         owned_tables=True,
@@ -460,7 +459,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "tracker_embed_interval_seconds",
         # the first fill is ~38k rows in batches through the embedder
         # (minutes); the cursor advances per page, so a cut pass resumes
-        max_pass_seconds=900.0,
+        max_pass_setting="tracker_embed_max_pass_seconds",
         owned_tables=True,
     ),
     _Worker(

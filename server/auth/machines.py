@@ -354,12 +354,16 @@ _discovered: dict[str, tuple[str, float]] = {}  # issuer -> (jwks_uri, read at)
 
 async def _jwks_uri(issuer: str) -> str:
     from server.clients._http import get_client as http
+    from server.settings import settings
 
     cached = _discovered.get(issuer)
     if cached and time.monotonic() - cached[1] < _DISCOVERY_TTL_S:
         return cached[0]
     try:
-        r = await http().get(f"{issuer.rstrip('/')}/.well-known/openid-configuration", timeout=10.0)
+        r = await http().get(
+            f"{issuer.rstrip('/')}/.well-known/openid-configuration",
+            timeout=settings.identity_provider_timeout_s,
+        )
         r.raise_for_status()
         doc = r.json()
     except (httpx.HTTPError, ValueError) as e:

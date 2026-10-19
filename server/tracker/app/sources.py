@@ -859,6 +859,7 @@ async def handle_tracker_contract(input: TrackerContractInput) -> TrackerContrac
 
 
 async def handle_tracker_source_check(input: TrackerSourceCheckInput) -> TrackerSourceCheckOutput:
+    from server.settings import settings
     from server.tracker.app import registry_sources
     from server.tracker.domain import sources
 
@@ -876,7 +877,9 @@ async def handle_tracker_source_check(input: TrackerSourceCheckInput) -> Tracker
             code="NOT_A_SOURCE",
         )
     try:
-        rep = await asyncio.wait_for(contract.check(name, ep.database), timeout=8.0)
+        rep = await asyncio.wait_for(
+            contract.check(name, ep.database), timeout=settings.tracker_source_check_timeout_s
+        )
     except Exception as e:  # noqa: BLE001 — the source did not answer
         return TrackerSourceCheckOutput(
             name=name,

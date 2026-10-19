@@ -21,6 +21,7 @@ from server.memory.domain.search_prompts import (
 from server.memory.domain.search_text import canonicalize_verb
 from server.observability.genai import staged
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 
 
 @staged("iterative_judge")
@@ -49,7 +50,7 @@ async def judge_results_iteratively(
             llm.complete(
                 with_strict_examples_preamble(_ITERATIVE_JUDGE_PROMPT),
                 user_msg,
-                max_tokens=128,
+                max_tokens=llm_max_tokens("search_judge"),
             ),
             timeout=timeout_s,
         )
@@ -95,7 +96,7 @@ async def extract_derived_intent_llm(
             llm.complete(
                 with_strict_examples_preamble(_DERIVED_INTENT_PROMPT),
                 f"query: {query}",
-                max_tokens=160,
+                max_tokens=llm_max_tokens("search_derived_intent"),
             ),
             timeout=timeout_s,
         )
@@ -162,7 +163,7 @@ async def extract_query_triples_llm(
             client.complete(
                 with_strict_examples_preamble(_LLM_TRIPLE_PROMPT),
                 query,
-                max_tokens=128,
+                max_tokens=llm_max_tokens("search_query_triples"),
             ),
             timeout=timeout_s,
         )
@@ -235,7 +236,7 @@ async def expand_verb_synonyms(
             client.complete(
                 with_strict_examples_preamble(_VERB_SYNONYM_PROMPT),
                 f'verb: "{canon}"',
-                max_tokens=96,
+                max_tokens=llm_max_tokens("search_verb_synonyms"),
             ),
             timeout=timeout_s,
         )

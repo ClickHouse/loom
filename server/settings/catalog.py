@@ -141,6 +141,9 @@ class AuthSettings(BaseModel):
     oidc_jit_org: str = ""
     # Comma-separated email domains JIT provisioning admits; empty admits any verified email.
     oidc_jit_email_domains: str = ""
+    # Seconds one call to an identity provider may take: OIDC discovery, the token and
+    # revocation endpoints, its signing keys, and a machine issuer's discovery.
+    identity_provider_timeout_s: Annotated[float, LIVE] = Field(default=10.0, gt=0)
     # Bearer tokens (comma-separated, any one accepted) an identity provider presents to
     # deactivate and reactivate people over SCIM 2.0 (/scim/v2). Empty = off; needs auth on, oidc.
     scim_token: str = ""
@@ -1454,6 +1457,8 @@ class ExtractionSettings(BaseModel):
     observe_extract_enabled: bool = False
     # Seconds between observe-extraction worker passes.
     observe_extract_interval_seconds: int = 300
+    # Seconds an observe-extract pass may run before the supervisor abandons it.
+    observe_extract_max_pass_seconds: float = Field(default=900.0, gt=0)
     # Most transition events written per distilled session.
     observe_extract_max_events_per_session: Annotated[int, LIVE] = 12
     # Tool names (case-insensitive globs, comma-separated) whose
@@ -1940,6 +1945,8 @@ class MemorySettings(BaseModel):
     memory_code_links_enabled: bool = True
     # Seconds between link passes.
     memory_code_links_interval_seconds: int = 60
+    # Seconds a code-links pass may run before the supervisor abandons it.
+    memory_code_links_max_pass_seconds: float = Field(default=600.0, gt=0)
     # Memory writes one pass links (at least 1).
     memory_code_links_batch: int = Field(default=500, ge=1)
     # Seconds the pass stays behind the newest queued memory write, so inserts running at
@@ -2130,6 +2137,12 @@ class MemoryAskSettings(BaseModel):
     # code index too, up to this many, one code.symbol definition each, appended after the
     # question's own grounding rows. 0 = off.
     memory_ask_code_hop_symbols: Annotated[int, LIVE] = 4
+    # Token budgets of the code.symbol and code.search reads that ground a code-entity
+    # question in the code plane.
+    memory_ask_code_symbol_token_budget: Annotated[int, LIVE] = Field(default=400, ge=200, le=12000)
+    memory_ask_code_search_token_budget: Annotated[int, LIVE] = Field(
+        default=1400, ge=200, le=12000
+    )
 
     # For each PR the query or grounding references, inject its authoritative
     # code_pr_history record (author, merged_at, title) as a high-trust grounding fact; the
@@ -2365,6 +2378,8 @@ class MemorySearchSettings(BaseModel):
     # text-embedding-3-small): the loom_search precision floor and
     # calibration.get's scalar row read it.
     memory_search_hyde_fallback_threshold: float = Field(default=0.45, gt=0.0, le=1.0)
+    # Seconds the HyDE model call may take before the search embeds the query itself.
+    memory_search_hyde_timeout_s: Annotated[float, LIVE] = Field(default=6.0, gt=0)
     # search_mode used when the caller sets neither search_mode nor a recipe.
     # The wire default stays "rrf"; planner shape rules still apply on top.
     memory_search_default_mode: Annotated[
@@ -2838,6 +2853,9 @@ class ObservabilitySettings(BaseModel):
     langfuse_circuit_failure_threshold: int = 5
     # Seconds the open breaker waits before a trial call (floor 1).
     langfuse_circuit_cooldown_s: float = Field(default=30.0, ge=1.0)
+    # Seconds one Langfuse API call may take: posting a score, and the traces and
+    # scores the prompt evaluation reads.
+    langfuse_timeout_s: Annotated[float, LIVE] = Field(default=15.0, gt=0)
     # How much LLM prompt/completion text is recorded, by what the prompt holds:
     #   "off"   — none (default; consent is given, not withdrawn).
     #   "query" — only legs whose prompt is the user's own search text (hyde,
@@ -2899,6 +2917,10 @@ class ProviderSettings(ModelSettings):
     # Send the optional dimensions request parameter to a compatible endpoint.
     # False uses its native output width; responses must still match embedding_dim.
     embedding_send_dimensions: bool = False
+    # Attempts an embedding call makes on a retryable failure, and the longest
+    # backoff between two of them, in seconds.
+    embedding_retry_attempts: Annotated[int, LIVE] = Field(default=3, ge=1)
+    embedding_retry_max_wait_s: Annotated[float, LIVE] = Field(default=10.0, ge=0)
     # OpenAI's API root, for chat and embeddings: point it at an
     # OpenAI-compatible inference gateway in front of OpenAI (its /v1 root).
     openai_base_url: str = "https://api.openai.com/v1"
@@ -2920,6 +2942,8 @@ class ProviderSettings(ModelSettings):
     inference_token_audience: str = ""
     # The scope sent with that exchange; "" sends none.
     inference_token_scope: str = ""
+    # Seconds one token exchange with the inference gateway may take.
+    inference_token_exchange_timeout_s: float = Field(default=10.0, gt=0)
     # Shared query-embedding cache in loom.embedding_cache behind the
     # per-process LRU, keyed (model, sha1 of normalised text). Only single-text
     # (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use
@@ -3063,6 +3087,16 @@ class ProviderSettings(ModelSettings):
     # output never hits it. Calls that must be fast set their own, shorter
     # deadline (HyDE, search budgets).
     llm_request_timeout_s: float = Field(300.0, gt=0)
+    # Attempts an LLM call makes on a retryable failure (a 429, a 5xx, a dropped
+    # connection) before the fallback model takes over, and the longest backoff
+    # between two of them, in seconds.
+    llm_retry_attempts: Annotated[int, LIVE] = Field(default=4, ge=1)
+    llm_retry_max_wait_s: Annotated[float, LIVE] = Field(default=20.0, ge=0)
+    # JSON {call: tokens} over LLM_MAX_TOKENS (below): the most tokens one kind of
+    # LLM call may write, keyed as the cost ledger's stage series name it. A name
+    # that is no LLM call, or a count below 1, = the map is logged once and ignored.
+    # '' = the table as declared.
+    llm_max_tokens_overrides: Annotated[str, JsonObject, LIVE] = ""
 
     # JSON {class: {"llm_cache": bool, "strong": bool, "mid": bool}}:
     # `llm_cache` overrides the class's cache default (a per-request pin
@@ -3443,6 +3477,8 @@ class TrackerSettings(BaseModel):
     #   "restricted": false}}}. A namespace naming an unknown source does not serve (one
     # error line, never a guess).
     tracker_sources_json: Annotated[str, JsonObject] = ""
+    # Seconds tracker.source_check waits for a source's contract check.
+    tracker_source_check_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
     # The repositories whose numbers name a restricted namespace's escalations and core
     # incidents, as `Org/repo`: {"escalation": "Org/escalations", "incident":
     # "Org/incidents"}. `escalation_context` / `incident_context` read the record
@@ -3500,6 +3536,8 @@ class TrackerSettings(BaseModel):
     tracker_embed_enabled: bool = True
     # Seconds between `tracker_embed` passes.
     tracker_embed_interval_seconds: float = 1800.0
+    # Seconds a tracker-embed pass may run before the supervisor abandons it.
+    tracker_embed_max_pass_seconds: float = Field(default=900.0, gt=0)
     # The embedding window for PRs, days: a PR closed longer ago is not embedded
     # and one that leaves the window is tombstoned.
     tracker_embed_closed_days: int = 365
@@ -3529,6 +3567,8 @@ class TrackerSettings(BaseModel):
     tracker_links_enabled: bool = True
     # Seconds between `tracker_links` passes.
     tracker_links_interval_seconds: float = 86400.0
+    # Seconds a tracker-links pass may run before the supervisor abandons it.
+    tracker_links_max_pass_seconds: float = Field(default=3600.0, gt=0)
     # Issues opened within this many days are ranked each pass.
     tracker_links_issue_days: int = 90
     # Days after an issue opened in which a merged trunk PR is a fix candidate.
@@ -3681,6 +3721,8 @@ class TrackerSettings(BaseModel):
     # every pass as a partial day, so the live tail the op reads is at most one
     # interval plus the current hour.
     tracker_test_daily_interval_seconds: int = 1800
+    # Seconds a tracker test-daily pass may run before the supervisor abandons it.
+    tracker_test_daily_max_pass_seconds: float = Field(default=900.0, gt=0)
     # How far back a cold worker rolls, in days (the op's largest window is 90).
     tracker_test_daily_backfill_days: int = 30
     # Days rolled per pass and the pause between remote statements: the shared
@@ -4134,4 +4176,72 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
     "session.brief_save": {
         "model": 90000,
     },
+}
+
+
+# ===== LLM output budgets ======================================================
+#
+# The most tokens each LLM call may write, keyed by what the call does (its
+# `llm_stage` where it has one, the series the cost ledger reports spend under).
+# Every call reads its cap through `server.settings.budgets.llm_max_tokens`;
+# `llm_max_tokens_overrides` changes one while Loom runs. A test fails on a
+# literal `max_tokens` at a call site and on a key no call uses.
+
+LLM_MAX_TOKENS: dict[str, int] = {
+    # memory.ask: the judge of an answer against its evidence.
+    "ask_consistency": 200,
+    # memory.ask: the split of a question into sub-questions.
+    "ask_decompose": 200,
+    # memory.ask deep mode: the pick of memories to open.
+    "ask_deep_select": 120,
+    # memory.ask: the per-memory check of a question's premise.
+    "ask_premise": 200,
+    # code.ask: the identifiers a question names, proposed for lookup.
+    "code_answer_identifiers": 60,
+    # code.bisect_candidates: the rerank over the fused top candidates.
+    "code_bisect_rerank": 700,
+    # code.ask: the concept leg's expansion of the question into code vocabulary.
+    "code_query_expand": 160,
+    # the code-summary worker: one file's summary.
+    "code_summary": 200,
+    # consolidation: the merge of one cluster of memories.
+    "consolidate_merge": 256,
+    # conversation.compact: the summary of a thread's oldest turns.
+    "conversation_compact": 600,
+    # the entity extractor: one memory's entities.
+    "entity_extract": 160,
+    # memory.search HyDE: the hypothetical answer embedded in place of the query.
+    "hyde": 128,
+    # observe: one transition pair's semantic memory.
+    "observe_extract.event": 300,
+    # observe: one session's procedure and hint.
+    "observe_extract.notes": 900,
+    # the period digest: one period's summary.
+    "period_digest": 420,
+    # profile consolidation: one identity's folded profile.
+    "profile_fold": 320,
+    # the reachability probe a provider configuration change runs.
+    "provider_validation": 128,
+    # the retrieval judge: one result's relevance grade.
+    "retrieval_judge": 120,
+    # memory.search: a derived-answer query's aggregate intent.
+    "search_derived_intent": 160,
+    # memory.search: the judge of whether the excerpts answer the query.
+    "search_judge": 128,
+    # memory.search: the (subject, verb, object) triples of a query.
+    "search_query_triples": 128,
+    # memory.search: a verb's synonym set.
+    "search_verb_synonyms": 96,
+    # session outcomes: the contrast between good and bad sessions.
+    "session_contrast": 400,
+    # session outcomes: one session's outcome label.
+    "session_judge": 160,
+    # the conversation titler: one thread's title.
+    "title": 30,
+    # tracker.duplicate_check: the rerank of the candidate pool.
+    "tracker_dup_rerank": 90,
+    # typed extraction: which schema fields the source supports (and its one retry).
+    "typed_extract_fields": 256,
+    # typed extraction: whether the record is present (and its one retry).
+    "typed_extract_object": 128,
 }

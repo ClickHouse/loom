@@ -100,7 +100,9 @@ def _reads(tree: ast.Module, fields: frozenset[str]) -> list[tuple[str, int, str
 def _all_reads(fields: frozenset[str]) -> dict[str, list[tuple[str, str]]]:
     by_field: dict[str, list[tuple[str, str]]] = {f: [] for f in fields}
     for path in sorted((ROOT / "server").rglob("*.py")):
-        if SETTINGS_DIR in path.parents:
+        # The settings package declares and loads the settings; `budgets.py` is the one
+        # module there that reads them while Loom runs, so it is checked like any other.
+        if SETTINGS_DIR in path.parents and path.name != "budgets.py":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for field, line, where in _reads(tree, fields):

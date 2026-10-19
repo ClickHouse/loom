@@ -50,6 +50,7 @@ from server.code.app.search import CodeSearchResult
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.observability.genai import staged
+from server.settings.budgets import llm_max_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -314,7 +315,7 @@ async def _propose_identifiers(llm: Any, question: str) -> list[str]:
         res = await llm.complete(
             _EXPAND_SYSTEM,
             question,
-            max_tokens=60,
+            max_tokens=llm_max_tokens("code_answer_identifiers"),
         )
         text = str(res.text).strip()
         if text.upper().startswith("NONE"):

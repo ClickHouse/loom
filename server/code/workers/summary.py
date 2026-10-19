@@ -26,6 +26,7 @@ from server.code.domain.index.card_selection import (
 )
 from server.observability.genai import staged
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 from server.workers import pass_context
 from server.workers.status import record_pass, set_worker_identity
 
@@ -55,7 +56,7 @@ async def _summarize(llm: Any, path: str, excerpts: str) -> str:
     res = await llm.complete(
         _SYSTEM,
         f"File: {path}\n\n{excerpts}",
-        max_tokens=200,
+        max_tokens=llm_max_tokens("code_summary"),
     )
     return str(res.text).strip()[:1500]
 

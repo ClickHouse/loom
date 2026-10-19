@@ -16,6 +16,7 @@ from typing import Any
 
 from server.core.background import create_deferred_task
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 from server.tracker.domain import bisect as bi
 from server.tracker.domain import bisect_fusion as fu
 
@@ -293,7 +294,7 @@ async def rerank_stage(
             get_llm_client_for_model(model).complete(
                 system=_RERANK_SYSTEM,
                 user="\n".join(lines),
-                max_tokens=700,
+                max_tokens=llm_max_tokens("code_bisect_rerank"),
                 response_format={"type": "json_object"},
             ),
             timeout=float(

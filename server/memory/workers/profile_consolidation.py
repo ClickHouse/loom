@@ -23,6 +23,7 @@ from server.memory.domain.sensitivity import value_reads_high
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 from server.workers import pass_context
 from server.workers.cost_event import emit_worker_cost_event_for
 from server.workers.status import record_pass
@@ -198,7 +199,7 @@ async def _consolidate_identity(
             out = await client.complete(
                 system=_FOLD_SYSTEM,
                 user=facts,
-                max_tokens=320,
+                max_tokens=llm_max_tokens("profile_fold"),
             )
     finally:
         emit_worker_cost_event_for(

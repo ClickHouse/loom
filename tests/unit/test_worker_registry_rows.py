@@ -111,3 +111,30 @@ def test_the_memory_expiry_sweep_row() -> None:
     assert row.enabled == "memory_expiry_sweep_enabled"
     assert row.interval == "memory_expiry_sweep_interval_seconds"
     assert importlib.util.find_spec(row.module) is not None
+
+
+_DEADLINE_SETTINGS = {
+    "memory_code_links": "memory_code_links_max_pass_seconds",
+    "observe_extract": "observe_extract_max_pass_seconds",
+    "tracker_embed": "tracker_embed_max_pass_seconds",
+    "tracker_links": "tracker_links_max_pass_seconds",
+    "tracker_test_daily": "tracker_test_daily_max_pass_seconds",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_DEADLINE_SETTINGS))
+def test_a_workers_spec_takes_its_pass_deadline_from_its_setting(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    (row,) = [w for w in _ROWS if w.name == name]
+    assert row.max_pass_setting == _DEADLINE_SETTINGS[name]
+    monkeypatch.setattr(settings, row.max_pass_setting, 42.0)
+    assert registry._spec_for(row).max_pass_seconds == 42.0
+
+
+def test_a_pass_deadline_is_a_setting_or_derived_in_its_worker() -> None:
+    """No row pins a number: a deadline is a setting, or a constant its worker derives."""
+    for row in _ROWS:
+        assert not hasattr(row, "max_pass_seconds"), row.name

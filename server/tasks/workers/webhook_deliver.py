@@ -53,6 +53,8 @@ ACK_TIMEOUT_SECONDS = 10.0  # not a setting: with MAX_POSTS_PER_PASS, fills the 
 # past the cap go first next pass (they are ordered by their cursor's
 # next_try_at, and a delivered inbox's moves to now).
 MAX_POSTS_PER_PASS = 10  # not a setting: with ACK_TIMEOUT_SECONDS, fills the pass deadline
+# The pass deadline: every POST waiting its whole ack window, plus room for the reads.
+MAX_PASS_SECONDS = 120.0  # not a setting: ACK_TIMEOUT_SECONDS x MAX_POSTS_PER_PASS + headroom
 # The wait before the next try after the n-th consecutive failure: the next
 # pass, then 5 s, 5 min, and 30 min for every failure after that.
 BACKOFF_SECONDS: tuple[int, ...] = (0, 5, 300, 1800)

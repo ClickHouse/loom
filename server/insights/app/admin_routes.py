@@ -726,7 +726,7 @@ async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluate
         req = urllib.request.Request(list_url, headers={"Authorization": auth})
 
         def _fetch_traces() -> Any:
-            with urllib.request.urlopen(req, timeout=15.0) as r:
+            with urllib.request.urlopen(req, timeout=settings.langfuse_timeout_s) as r:
                 return _json.load(r)
 
         traces_body = await asyncio.to_thread(_fetch_traces)
@@ -790,7 +790,7 @@ async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluate
             req = urllib.request.Request(url, headers={"Authorization": auth})
 
             def _fetch_score(req: urllib.request.Request = req) -> Any:
-                with urllib.request.urlopen(req, timeout=10.0) as r:
+                with urllib.request.urlopen(req, timeout=settings.langfuse_timeout_s) as r:
                     return _json.load(r)
 
             body = await asyncio.to_thread(_fetch_score)
