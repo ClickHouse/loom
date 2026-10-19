@@ -518,24 +518,24 @@ A caller-supplied level wins. Detection is `LOOM_MEMORY_SENSITIVITY_AUTODETECT`.
 row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so no search
 leg returns it. The other reads that could serve its value follow three rules:
 
-- Left out: the `anchor_first` and `recent_first` tiers, `bodies: "unit"`,
-  `memory.related`'s excerpts, `memory.aggregate` (no group key or filter match on a `high`
-  value), `profile.render` and the `memory.stack`, context pack and MCP primer built from
-  it, `memory.ask`'s bridge hop and stale-fact masks, `conflicts.propose_revision`,
-  `namespace.validate`'s checks that quote a value, a search's duplicate substitution (a
-  `high` canonical is not seated in its duplicate's place), the profile fold, the entity
-  graph (a row written as `high` projects only the entities its writer declared, and the
-  entity extractor never reads it), the entities of a `high` row in `memory.list`,
-  `memory.related` and the graph walk's recency seeds, the candidates `procedure.match`
-  reads, the bodies `procedure.list` summarises and the bodies `bodies: "unit"` reads (each
-  read leaves `high` rows out before it picks a row, so another identity's `high` row of a
-  key never hides the plain one), and the existing memories an extraction prompt shows the
-  LLM. A row the sensitivity sweep labels `high` after the extractor ran (one written
-  unlabelled, or arriving that way through `memory.copy_to` or an import) keeps the entities
-  mined from its value on the row, not served by those reads. A row re-set as `high` through
-  `memory.set` carries only its declared entities. Either way the graph edges an earlier
-  version projected remain: `facts.traverse` and `facts.path` still walk them, and
-  `memory.backlinks` still names a `high` key's shared entities and neighbours from them.
+- Left out: the `anchor_first` and `recent_first` tiers, `memory.related`'s excerpts,
+  `memory.aggregate` (no group key or filter match on a `high` value), `profile.render` and
+  the `memory.stack`, context pack and MCP primer built from it, `memory.ask`'s bridge hop
+  and stale-fact masks, `conflicts.propose_revision`, `namespace.validate`'s checks that
+  quote a value, a search's duplicate substitution (a `high` canonical is not seated in its
+  duplicate's place), the profile fold, the entity graph (a row written as `high` projects
+  only the entities its writer declared, and the entity extractor never reads it), the
+  entities of a `high` row in `memory.list`, `memory.related` and the graph walk's recency
+  seeds, the candidates `procedure.match` reads, the bodies `procedure.list` summarises and
+  the bodies `bodies: "unit"` reads (each read leaves `high` rows out before it picks a row,
+  so another identity's `high` row of a key never hides the plain one), and the existing
+  memories an extraction prompt shows the LLM. A row the sensitivity sweep labels `high`
+  after the extractor ran (one written unlabelled, or arriving that way through
+  `memory.copy_to` or an import) keeps the entities mined from its value on the row, not
+  served by those reads. A row re-set as `high` through `memory.set` carries only its
+  declared entities. Either way the graph edges an earlier version projected remain:
+  `facts.traverse` and `facts.path` still walk them, and `memory.backlinks` still names a
+  `high` key's shared entities and neighbours from them.
 - Listed without the value: `memory.list` (no value or hash, `value_truncated: true`, and
   `contains` does not search it), `conflicts.list`, `memory.proposals`, and the preview of a
   `memory.move` dry run.

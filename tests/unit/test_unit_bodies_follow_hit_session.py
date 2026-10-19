@@ -83,10 +83,11 @@ async def test_short_excerpt_without_a_body_is_not_flagged(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_high_row_is_never_a_search_body(monkeypatch):
-    # The wildcard-agent read answers the newest row of the key, which another identity
-    # may have written as 'high'.
-    async def fake_get_many(identity, keys, **_):
-        return [SimpleNamespace(memory_key="k1", value="vault token", sensitivity="high")]
+    # The body read leaves 'high' rows out before it picks one per key: the newest row of
+    # the key may be another identity's 'high' one.
+    async def fake_get_many(identity, keys, *, scope, exclude_high_sensitivity):
+        high = SimpleNamespace(memory_key="k1", value="vault token", sensitivity="high")
+        return [] if exclude_high_sensitivity else [high]
 
     monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
     h = _hit("k1")

@@ -212,16 +212,20 @@ async def test_the_score_list_withholds_a_high_rows_value(monkeypatch) -> None:
         # a wildcard history: m2 (another writer's row of the key) never was high
         ([("m1", 3, ""), ("m2", 2, ""), ("m1", 1, "")], {"m1"}, [3, 1]),
         ([("m1", 2, ""), ("m1", 1, "")], set(), []),
+        # a redacted version served no value
+        ([("m1", 2, "high"), ("m1", 1, "", "2026-09-20 00:00:00")], set(), [2]),
     ],
 )
 async def test_history_audits_every_served_version_of_a_row_with_a_high_version(
-    monkeypatch, served: list[tuple[str, int, str]], high_ids: set[str], audited: list[int]
+    monkeypatch, served: list[tuple[Any, ...]], high_ids: set[str], audited: list[int]
 ) -> None:
     from server.memory.api.models_temporal import MemoryHistoryInput
     from server.memory.app import curation
     from server.memory.store.history import HistoryVersion
 
-    def version(mid: str, n: int, sensitivity: str) -> HistoryVersion:
+    def version(
+        mid: str, n: int, sensitivity: str, redacted_at: str | None = None
+    ) -> HistoryVersion:
         return HistoryVersion.from_row(
             {
                 "memory_id": mid,
@@ -233,6 +237,7 @@ async def test_history_audits_every_served_version_of_a_row_with_a_high_version(
                 "redaction_reason": "",
                 "tags": [],
                 "sensitivity": sensitivity,
+                "redacted_at": redacted_at,
             }
         )
 

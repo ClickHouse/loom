@@ -297,13 +297,12 @@ async def _expand_unit_bodies(
 
     # one read per (namespace, session) the hits span, overlapped
     reads = await asyncio.gather(*(_read(ns, sid, group) for (ns, sid), group in by_scope.items()))
-    # The read leaves 'high' rows out, so the plain row the search matched answers; the
-    # filter here keeps a 'high' body out whatever the read returns.
+    # The read leaves 'high' rows out before it picks one per key, so the plain row the
+    # search matched answers.
     values: dict[tuple[str, str], Any] = {
         (ns, str(r.memory_key)): r.value
         for (ns, _), rows in zip(by_scope, reads, strict=True)
         for r in rows
-        if r.sensitivity != "high"
     }
     returned = elided = tokens = 0
     spent = 0

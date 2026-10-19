@@ -512,13 +512,15 @@ async def high_memory_ids(
     ch: _CHClient | None = None,
 ) -> set[str]:
     """The ids among `memory_ids` of rows of `memory_key` with any version labelled 'high'.
-    The id filter is on the column itself, so the memory_id_skip index applies."""
+    The id filter is on the UUID column itself, so the memory_id_skip index applies; the
+    output is aliased `mid`, since `AS memory_id` would compare the String alias against
+    the UUIDs and match nothing."""
     if not memory_ids:
         return set()
     ch = ch or _default_client()
     rows = await ch.query_all(
         """
-        SELECT DISTINCT toString(memory_id) AS memory_id
+        SELECT DISTINCT toString(memory_id) AS mid
         FROM loom.memory_versions
         WHERE org = {org:String}
           AND namespace = {ns:String}
@@ -528,7 +530,7 @@ async def high_memory_ids(
         """,
         params={"org": org, "ns": namespace, "key": memory_key, "ids": sorted(set(memory_ids))},
     )
-    return {str(r["memory_id"]) for r in rows}
+    return {str(r["mid"]) for r in rows}
 
 
 async def find_related_by_entities(

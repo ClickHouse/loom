@@ -1196,6 +1196,7 @@ async def test_existing_memories_resolve_across_sessions(monkeypatch: pytest.Mon
     async def fake_get_many(identity, keys, **kw):
         seen["identity"] = identity
         seen["keys"] = list(keys)
+        seen["exclude_high"] = kw.get("exclude_high_sensitivity")
         return [
             SimpleNamespace(
                 memory_key="user_journal", value="User keeps a journal.", sensitivity=""
@@ -1212,14 +1213,16 @@ async def test_existing_memories_resolve_across_sessions(monkeypatch: pytest.Mon
     assert [r["memory_key"] for r in rows] == ["user_journal"]
     assert seen["identity"].session_id == "*"
     assert seen["identity"].user_id == "u" and seen["identity"].agent == "a"
+    assert seen["exclude_high"] is True
 
 
 @pytest.mark.asyncio
 async def test_the_extraction_prompt_never_shows_a_high_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The cross-session lookup can answer another session's row of a hit key; a 'high' one
-    stays out of the existing memories the extraction prompt sends the LLM."""
+    """The cross-session lookup leaves 'high' rows out before it picks one per key, so a
+    'high' row never reaches the existing memories the extraction prompt sends the LLM and
+    another session's 'high' row of a key hides no plain one."""
     from types import SimpleNamespace
 
     import server.memory.app.handlers as hm
@@ -1234,13 +1237,17 @@ async def test_the_extraction_prompt_never_shows_a_high_row(
     async def fake_vector_search(q):
         return [SimpleNamespace(memory_key="user_journal"), SimpleNamespace(memory_key="vault")]
 
-    async def fake_get_many(identity, keys, **kw):
-        return [
-            SimpleNamespace(
-                memory_key="user_journal", value="User keeps a journal.", sensitivity=""
-            ),
-            SimpleNamespace(memory_key="vault", value="the door code is 4412", sensitivity="high"),
-        ]
+    rows = {
+        "user_journal": SimpleNamespace(
+            memory_key="user_journal", value="User keeps a journal.", sensitivity=""
+        ),
+        "vault": SimpleNamespace(
+            memory_key="vault", value="the door code is 4412", sensitivity="high"
+        ),
+    }
+
+    async def fake_get_many(identity, keys, *, scope, exclude_high_sensitivity):
+        return [r for k, r in rows.items() if not (exclude_high_sensitivity and r.sensitivity)]
 
     monkeypatch.setattr("server.embedding.get_embedder", lambda: _Emb())
     monkeypatch.setattr("server.memory.app.retrieval.vector_search", fake_vector_search)

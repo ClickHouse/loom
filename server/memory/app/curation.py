@@ -423,7 +423,8 @@ async def handle_memory_history(input: MemoryHistoryInput) -> MemoryHistoryOutpu
         subjects=[
             {"memory_key": input.memory_key, "memory_id": str(r.memory_id), "version": r.version}
             for r in rows
-            if str(r.memory_id) in high_ids
+            # a redacted version served no value
+            if str(r.memory_id) in high_ids and r.redacted_at is None
         ],
     )
     return MemoryHistoryOutput(rows=out_rows)

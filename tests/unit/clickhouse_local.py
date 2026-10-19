@@ -5,7 +5,6 @@ it skip when the `clickhouse` binary is not installed (`CLICKHOUSE` is None)."""
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -35,16 +34,31 @@ def _literal(v: Any) -> str:
     return f"'{text}'"
 
 
-def render(sql: str, params: dict[str, Any]) -> str:
-    """`sql` with each `{name:Type}` parameter written in as a literal."""
-    return re.sub(r"\{(\w+):[^}]+\}", lambda m: _literal(params[m.group(1)]), sql)
+def _param(v: Any) -> str:
+    """`v` as a `--param_<name>` value: a scalar goes in bare (escaped as TSV), a container
+    as a literal, so the server parses it with the statement's declared type."""
+    if v is None:
+        return "\\N"
+    if isinstance(v, list | tuple | bool):
+        return _literal(v)
+    return str(v).replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
 
 
 def run(setup: list[str], sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """The rows `sql` returns after the `setup` statements, in a fresh `loom` database."""
-    script = ";\n".join(["CREATE DATABASE loom", *setup, render(sql, params or {})])
+    """The rows `sql` returns after the `setup` statements, in a fresh `loom` database. Its
+    `{name:Type}` parameters are bound by type, as the server binds them, so a parameter
+    whose type does not fit its column fails or matches what it would in production."""
+    script = ";\n".join(["CREATE DATABASE loom", *setup, sql])
+    binds = [f"--param_{k}={_param(v)}" for k, v in (params or {}).items()]
     out = subprocess.run(
-        [CLICKHOUSE or "clickhouse", "local", "--multiquery", "-q", script + " FORMAT JSONEachRow"],
+        [
+            CLICKHOUSE or "clickhouse",
+            "local",
+            "--multiquery",
+            *binds,
+            "-q",
+            script + " FORMAT JSONEachRow",
+        ],
         capture_output=True,
         text=True,
     )
