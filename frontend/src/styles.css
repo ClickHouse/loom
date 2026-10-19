@@ -590,8 +590,8 @@ textarea[aria-invalid="true"]:focus-visible {
   outline-offset: -2px;
 }
 /* A list row's body is one stretched button (`data-row-open`): the ring goes round the
-   row, meta slot included, and the button draws none of its own. Unlayered, beside the
-   `*:focus-visible` ring it overrides, not in ui/ListRow's layer. */
+   row, meta slot included, and the button draws none of its own. */
+/* Unlayered: in the components layer this would lose to the unlayered *:focus-visible ring. */
 .list-row [data-row-open]:focus-visible {
   outline: none;
 }
@@ -1371,19 +1371,7 @@ textarea[aria-invalid="true"]:focus-visible {
       transform: translate(-50%, -50%);
     }
   }
-}
 
-/* AgentBadge: a long agent name is cut at 180 px with an ellipsis (the whole name is in
-   its tooltip); every box inside Click UI's Badge may shrink to it. */
-.agent-badge {
-  max-width: 180px;
-}
-.agent-badge * {
-  min-width: 0;
-  max-width: 100%;
-}
-
-@layer components {
   /* A record inside a narrow pane (the Explorer inspector's facts and hits): CardHorizontal sm,
      whose one body block cannot hold a fact's links, chips and count. A button form hovers. */
   .pane-card {
@@ -1409,6 +1397,17 @@ textarea[aria-invalid="true"]:focus-visible {
   .persona-card:hover {
     background: var(--click-card-horizontal-default-color-background-hover);
   }
+}
+
+/* AgentBadge: a long agent name is cut at 180 px with an ellipsis (the whole name is in
+   its tooltip); every box inside Click UI's Badge may shrink to it. Unlayered: in the
+   components layer it would lose to the Badge's own unlayered styles. */
+.agent-badge {
+  max-width: 180px;
+}
+.agent-badge * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* ui/ListPager: Click UI's Pagination stacks into a column under 768 px (its containers are
