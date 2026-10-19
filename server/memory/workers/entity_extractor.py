@@ -22,6 +22,7 @@ from typing import Any
 from server.memory.app.drops import record_drop
 from server.memory.domain.entity_sentinels import NONE_SENTINEL, PARSE_FAILED_SENTINEL
 from server.memory.domain.graph_quality import canonical_entity_text
+from server.memory.domain.sensitivity import reads_high, value_text
 from server.observability.budget import namespaces_over_cap
 from server.observability.genai import staged
 from server.workers import pass_context
@@ -317,6 +318,17 @@ async def run_pass(
 
         for r in with_value:
             value_str = r.get("value") or ""
+            if reads_high(value_text(value_str)):
+                # An unlabelled row (copy_to, an import, before the sweep) holding a credential
+                # never goes to the model; the sentinel keeps the next pass from picking it up.
+                updates.append(
+                    {
+                        **{k: r[k] for k in ("org", "namespace", "agent", "user_id", "session_id")},
+                        "memory_key": r["memory_key"],
+                        "entities": [_NONE_SENTINEL],
+                    }
+                )
+                continue
             if over_cap.get((r["org"], r["namespace"]), False):
                 result.skipped_over_budget += 1
                 continue

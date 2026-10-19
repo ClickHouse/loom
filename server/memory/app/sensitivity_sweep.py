@@ -34,7 +34,13 @@ from typing import Any
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.app.high_fence import fence_high, tombstone_chunks_of
-from server.memory.domain.sensitivity import HIGH, MEDIUM, detect_sensitivity, sensitivity_tags
+from server.memory.domain.sensitivity import (
+    HIGH,
+    MEDIUM,
+    detect_sensitivity,
+    sensitivity_tags,
+    value_text,
+)
 
 # RE2, for ClickHouse `match()`: a superset of the shapes in
 # `memory/domain/sensitivity.py`'s high and medium patterns. Anything this misses
@@ -151,7 +157,9 @@ async def scan(
     report = SweepReport(scanned=len(rows), truncated=len(rows) >= int(limit))
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
     for r in rows:
-        text = str(r.get("value") or "")
+        # Decoded, as the write path reads it: in the stored JSON a token after a newline
+        # follows `\\n`, and the detector's word boundary never matches there.
+        text = value_text(r.get("value") or "")
         level = detect_sensitivity(text)
         if level not in (HIGH, MEDIUM):
             continue

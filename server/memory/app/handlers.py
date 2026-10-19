@@ -56,6 +56,7 @@ log = logging.getLogger(__name__)
 # Leaf module (no internal imports) shared with memory.app.retrieval to
 # avoid a circular import.
 from server.memory.domain.memory_types import is_embedded, is_searchable_type  # noqa: E402
+from server.memory.domain.sensitivity import reads_high, value_text  # noqa: E402
 
 
 def existing_context_limit(msgs: list[dict[str, str]], limit: int) -> int:
@@ -152,7 +153,8 @@ async def _fetch_relevant_existing_memories(
     out: list[dict[str, str]] = []
     for h in hits:
         r = by_key.get(h.memory_key)
-        if r is None:
+        # An unlabelled row (copy_to, an import, before the sweep) may still hold a credential.
+        if r is None or reads_high(value_text(r.value)):
             continue
         # sha over canonical JSON so the caller can hash-dedup extractions.
         sha = _content_sha256_of_stored(

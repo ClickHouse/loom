@@ -146,6 +146,19 @@ async def test_a_high_observation_is_never_sent_to_the_model(
     monkeypatch.setattr(memory_repo, "build_memory_version_row", lambda o, **_k: o)
     monkeypatch.setattr(memory_repo, "insert_memory_versions", _insert)
     session = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "s"}
-    await ox._distill_session(session, [plain, high, unlabelled])
+    # a token on its own line, and a quoted password: JSON-escaped, neither reads as one
+    own_line = SimpleNamespace(
+        value={"narrative": "[command_run] tool=Bash\noutput:\nghp_" + "b" * 36},
+        sensitivity="",
+        tags=[],
+        valid_at=None,
+    )
+    quoted = SimpleNamespace(
+        value={"narrative": 'config: password: "hunter2secret"'},
+        sensitivity="",
+        tags=[],
+        valid_at=None,
+    )
+    await ox._distill_session(session, [plain, high, unlabelled, own_line, quoted])
     assert seen["replayed"] == [plain] and seen["summarised"] == [plain]
-    assert seen["done"] == [plain, high, unlabelled]
+    assert seen["done"] == [plain, high, unlabelled, own_line, quoted]

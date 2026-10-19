@@ -524,28 +524,31 @@ leg returns it. The other reads that could serve its value follow three rules:
   and stale-fact masks, `conflicts.propose_revision`, `namespace.validate`'s checks that
   quote a value, a search's duplicate substitution (a `high` canonical is not seated in its
   duplicate's place), the profile fold, the entity graph (a row written as `high` projects
-  only the entities its writer declared, and the entity extractor never reads it; for a fact
+  only the entities its writer declared, and the entity extractor never sends it to its
+  model, nor an unlabelled value that reads as a credential; for a fact
   `memory.set_from_messages` extracts, the declared entities are the extraction model's,
   read from the same turn), the entities of a `high` row in `memory.list`, `memory.related`
   and the graph walk's recency seeds, the candidates `procedure.match` reads, the bodies
   `procedure.list` summarises and the bodies `bodies: "unit"` reads (each read leaves `high`
   rows out before it picks a row, so another identity's `high` row of a key never hides the
-  plain one), the existing memories an extraction prompt shows the LLM, the observations
-  `observe_extract` sends its model (labelled `high` or reading as a credential: capture
-  writes them unlabelled), the entities a period digest copies from its sources and
-  `namespace.taxonomy` counts, and a session digest's key facts that read as a credential
-  (left out when the digest is written, listed by `memory.digests` and sent to the outcome
-  judge, so a digest an earlier build wrote is covered too). A period row an earlier build
-  wrote keeps its `high` sources' entities until it is written again: `loom period-digest
---org <org> --namespace <ns> --rewrite` does that. A row the sensitivity sweep labels
-  `high` after the extractor ran (one written unlabelled, or arriving that way through
-  `memory.copy_to` or an import) keeps the entities mined from its value on the row, not
-  served by those reads. A row re-set as `high` through `memory.set` carries only its
-  declared entities. Either way the graph edges an earlier version projected remain:
-  `facts.traverse` and `facts.path` still walk them, as do `memory.backlinks` (which names a
-  `high` key's shared entities and neighbours from them), `namespace.summary`'s top
-  entities, `memory.outline`, `namespace.taxonomy`'s communities, the graph export and
-  search's graph mode and expansion.
+  plain one), the existing memories an extraction prompt shows the LLM (labelled `high` or
+  reading as a credential), the observations `observe_extract` sends its model (labelled
+  `high` or reading as a credential: capture writes them unlabelled), the entities a period
+  digest copies from its sources and `namespace.taxonomy` counts, and a session digest's key
+  facts that read as a credential (left out when the digest is written, listed by
+  `memory.digests` and sent to the outcome judge, so a digest an earlier build wrote is
+  covered too). A period row an earlier build wrote keeps its `high` sources' entities until
+  it is written again: `loom period-digest --org <org> --namespace <ns> --rewrite --apply`
+  does that (one model call per period, at most `--max-identities` identities and
+  `--max-periods` periods each per run). A row the sensitivity sweep labels `high` after the
+  extractor ran (one written unlabelled, or arriving that way through `memory.copy_to` or an
+  import) keeps the entities mined from its value on the row, not served by those reads. A
+  row re-set as `high` through `memory.set` carries only its declared entities. Either way
+  the graph edges an earlier version projected remain: `facts.traverse` and `facts.path`
+  still walk them, as do `memory.backlinks` (which names a `high` key's shared entities and
+  neighbours from them), `namespace.summary`'s top entities, `memory.outline`,
+  `namespace.taxonomy`'s communities, the graph export and search's graph mode and
+  expansion.
 - Listed without the value: `memory.list` (no value or hash, `value_truncated: true`, and
   `contains` does not search it), `conflicts.list`, `memory.proposals`, and the preview of a
   `memory.move` dry run.

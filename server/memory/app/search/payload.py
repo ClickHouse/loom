@@ -13,7 +13,7 @@ from server.identity.app.request_scope import request_scope
 from server.memory.app.search.request import _apply_explain_default
 from server.memory.app.search.tiers import _reader_user_id
 from server.memory.app.search_tag_filter import read_row_tags as _read_row_tags
-from server.memory.domain.sensitivity import HIGH, detect_sensitivity
+from server.memory.domain.sensitivity import reads_high
 
 log = logging.getLogger(__package__)
 
@@ -448,7 +448,7 @@ async def _expand_source_bodies(
         passages = {
             str(r["eid"]): str(r["body"] or "")
             for r in rows
-            if detect_sensitivity(str(r["body"] or "")) != HIGH
+            if not reads_high(str(r["body"] or ""))
         }
         by_key: dict[tuple[str, str], str] = {}
         spans: dict[tuple[str, str], tuple[int, int]] = {}

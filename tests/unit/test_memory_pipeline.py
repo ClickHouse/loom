@@ -1235,7 +1235,11 @@ async def test_the_extraction_prompt_never_shows_a_high_row(
             return [0.0]
 
     async def fake_vector_search(q):
-        return [SimpleNamespace(memory_key="user_journal"), SimpleNamespace(memory_key="vault")]
+        return [
+            SimpleNamespace(memory_key="user_journal"),
+            SimpleNamespace(memory_key="vault"),
+            SimpleNamespace(memory_key="copied"),
+        ]
 
     rows = {
         "user_journal": SimpleNamespace(
@@ -1243,6 +1247,10 @@ async def test_the_extraction_prompt_never_shows_a_high_row(
         ),
         "vault": SimpleNamespace(
             memory_key="vault", value="the door code is 4412", sensitivity="high"
+        ),
+        # copied in unlabelled (copy_to, an import) before the sweep ran
+        "copied": SimpleNamespace(
+            memory_key="copied", value="deploy token:\nghp_" + "a" * 36, sensitivity=""
         ),
     }
 

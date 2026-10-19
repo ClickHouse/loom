@@ -98,7 +98,7 @@ def test_top_key_facts_never_carry_a_credential(monkeypatch: pytest.MonkeyPatch)
     assert _top_key_facts(facts) == ["user lives in Berlin"]
 
 
-def test_a_stored_digests_credential_key_fact_is_never_served_or_judged() -> None:
+def test_the_judge_prompt_drops_a_stored_credential_key_fact() -> None:
     # Digests an earlier build wrote may hold one; the outcome judge's prompt drops it.
     from server.memory.app.session_outcomes import judge_prompt
 

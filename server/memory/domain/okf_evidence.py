@@ -28,7 +28,7 @@ import yaml
 
 from server.core.hashing import sha256_text
 from server.memory.domain.okf_bundle import slugify, split_frontmatter
-from server.memory.domain.sensitivity import HIGH, detect_sensitivity
+from server.memory.domain.sensitivity import reads_high
 
 EVIDENCE_DIR = "evidence"
 DIGEST_DIR = "digests"
@@ -104,7 +104,7 @@ def evidence_is_high(item: ChunkLike | DigestLike, held_keys: set[str]) -> bool:
         text = "\n".join([item.summary_text, *item.key_facts])
     else:
         text = item.content
-    return bool(set(evidence_keys(item)) & held_keys) or detect_sensitivity(text) == HIGH
+    return bool(set(evidence_keys(item)) & held_keys) or reads_high(text)
 
 
 def without_high(

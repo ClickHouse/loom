@@ -12,7 +12,6 @@ Off by default (`LOOM_OBSERVE_EXTRACT_ENABLED`); requires LLM credentials.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -23,7 +22,7 @@ from server.memory.domain.observation_tags import (
     CRYSTALLIZE_READY_TAG,
     OBSERVATION_TAG,
 )
-from server.memory.domain.sensitivity import reads_high
+from server.memory.domain.sensitivity import reads_high, value_text
 from server.memory.store.rows import next_version
 from server.workers.status import record_pass
 
@@ -316,8 +315,7 @@ async def _load_session_context(session: dict[str, Any], *, ch: Any) -> list[Any
 def _sendable(sensitivity: str, value: Any) -> bool:
     """Whether an observation may go to the model: neither labelled 'high' nor reading as a
     credential."""
-    text = value if isinstance(value, str) else json.dumps(value, default=str)
-    return sensitivity != "high" and not reads_high(text)
+    return sensitivity != "high" and not reads_high(value_text(value))
 
 
 # The most observations a session's notes read: the notes

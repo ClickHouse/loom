@@ -20,9 +20,10 @@ be pulled into a prompt by similarity, which is what embedding it would do.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable
-from typing import Final
+from typing import Any, Final
 
 HIGH: Final = "high"
 MEDIUM: Final = "medium"
@@ -171,6 +172,23 @@ def detect_sensitivity(text: str) -> str:
         if pat.search(text):
             return MEDIUM
     return ""
+
+
+def value_text(value: Any) -> str:
+    """The text a stored value holds, decoded: its string leaves joined by newlines (a JSON
+    string is parsed first). The detector reads line starts and quotes as written; in
+    JSON-escaped text a newline before a token is `\\n` and the word boundary is lost."""
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return value
+        return value if isinstance(parsed, str) else value_text(parsed)
+    if isinstance(value, dict):
+        return "\n".join(value_text(v) for v in value.values())
+    if isinstance(value, list | tuple):
+        return "\n".join(value_text(v) for v in value)
+    return "" if value is None else str(value)
 
 
 def reads_high(text: str) -> bool:
