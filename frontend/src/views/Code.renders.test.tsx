@@ -1,6 +1,8 @@
 import { act, cleanup, fireEvent, render, screen } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { WhoAmI } from "../api";
 import { useStore } from "../lib/state";
+import type { TrackerSource } from "../lib/trackerSources";
 import { invalidateShared } from "../lib/sharedReads";
 import { CodeView } from "./Code";
 import { codeRepoFixture, stubCodeFetch } from "../test/codeRepos";
@@ -27,6 +29,32 @@ const REPOS = ["acme/app", "acme/api", "acme/web"].map((repo, i) => ({
   namespace: `code-${i}`,
 }));
 
+const whoami: WhoAmI = { authenticated: true, subject: "a@example.com", org: "dev", roles: ["USER"], namespaces: [] };
+const source: TrackerSource = {
+  name: "issues",
+  host: "tracker.example.com",
+  port: 8443,
+  database: "tracker",
+  configured: true,
+  origin: "registry",
+  contract: { ok: true, summary: "", checked_at: "", optional_present: [], features: {} },
+  breaker: { state: "CLOSED", consecutive_failures: 0 },
+  freshness: {},
+  namespaces: [
+    {
+      namespace: "tracker-app",
+      kind: "tracker",
+      visibility: "public",
+      repos: ["acme/app"],
+      classification: "standard",
+      join_policy: "open",
+      registered: true,
+      member_role: "viewer",
+      pending_role: "",
+    },
+  ],
+};
+
 describe("Repositories card renders", () => {
   beforeEach(() => {
     renders.count = 0;
@@ -37,11 +65,28 @@ describe("Repositories card renders", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    useStore.setState({ whoami: null });
   });
 
   it("a keystroke whose filter every card still matches renders no card again", async () => {
     render(<CodeView />);
     await screen.findByText("acme/web", {}, { timeout: 2000 });
+    renders.count = 0;
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Filter repositories"), { target: { value: "acme" } });
+    });
+    expect(screen.getByText("acme/web")).toBeInTheDocument();
+    expect(renders.count).toBe(0);
+  });
+
+  it("with a principal and a tracker source, a keystroke renders no card again", async () => {
+    useStore.setState({ whoami });
+    stubCodeFetch(() => REPOS, { "/v1/tracker.source.list": { sources: [source], self_service: true } });
+    render(<CodeView />);
+    await screen.findByText("acme/web", {}, { timeout: 2000 });
+    // The tracker read has landed: self-service offers Add a tracker, the card names the source.
+    await screen.findByRole("button", { name: "Add a tracker" });
+    await screen.findAllByText(/tracker-app/);
     renders.count = 0;
     await act(async () => {
       fireEvent.change(screen.getByLabelText("Filter repositories"), { target: { value: "acme" } });

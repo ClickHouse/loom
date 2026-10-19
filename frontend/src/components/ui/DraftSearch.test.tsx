@@ -1,38 +1,48 @@
-import { cleanup, render, screen, waitFor } from "../../test/rtl";
+import { act, cleanup, render, screen } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DraftSearch } from "./DraftSearch";
 
-afterEach(cleanup);
+// Fake timers: the debounce is stepped through, not waited out.
+beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+});
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("DraftSearch", () => {
   it('settle="enter" hands over the text on Enter and an emptied box at once, never per key', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const onSearch = vi.fn();
     render(<DraftSearch settle="enter" onSearch={onSearch} aria-label="Search" />);
     const box = screen.getByLabelText("Search");
-    await userEvent.type(box, "lane");
+    await user.type(box, "lane");
     expect(onSearch).not.toHaveBeenCalled();
-    await userEvent.keyboard("{Enter}");
+    await user.keyboard("{Enter}");
     expect(onSearch).toHaveBeenLastCalledWith("lane");
-    await userEvent.clear(box);
+    await user.clear(box);
     expect(onSearch).toHaveBeenLastCalledWith("");
     expect(onSearch).toHaveBeenCalledTimes(2);
   });
 
   it("settle={ debounceMs } hands over the text once the keys pause, and ignores Enter", async () => {
+    const user = userEvent.setup({ delay: null, advanceTimers: vi.advanceTimersByTime });
     const onSearch = vi.fn();
     render(<DraftSearch settle={{ debounceMs: 50 }} onSearch={onSearch} aria-label="Search" />);
-    await userEvent.type(screen.getByLabelText("Search"), "lane{Enter}", { delay: null });
+    await user.type(screen.getByLabelText("Search"), "lane{Enter}");
     expect(onSearch).not.toHaveBeenCalled();
-    await waitFor(() => expect(onSearch).toHaveBeenCalledWith("lane"));
-    await new Promise((r) => setTimeout(r, 100));
+    act(() => vi.advanceTimersByTime(50));
+    expect(onSearch).toHaveBeenCalledWith("lane");
+    act(() => vi.advanceTimersByTime(500));
     expect(onSearch).toHaveBeenCalledTimes(1);
   });
 
-  it("settle={ debounceMs } hands over nothing on mount", async () => {
+  it("settle={ debounceMs } hands over nothing on mount", () => {
     const onSearch = vi.fn();
     render(<DraftSearch settle={{ debounceMs: 20 }} onSearch={onSearch} aria-label="Search" />);
-    await new Promise((r) => setTimeout(r, 60));
+    act(() => vi.advanceTimersByTime(500));
     expect(onSearch).not.toHaveBeenCalled();
   });
 });
