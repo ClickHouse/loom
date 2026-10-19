@@ -682,9 +682,7 @@ async def _still_unprotected(
     return fresh, [p for p in peers if str(p["memory_id"]) not in high]
 
 
-def _action(
-    v: cr.PeerVerdict, policy: str, *, cross_session: bool = False, same_written: bool = False
-) -> str:
+def _action(v: cr.PeerVerdict, policy: str, *, cross_session: bool, same_written: bool) -> str:
     return cr.action_for(
         v,
         policy=policy,

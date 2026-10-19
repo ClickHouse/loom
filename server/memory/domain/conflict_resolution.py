@@ -289,16 +289,13 @@ def action_for(
 ) -> str:
     """What the resolver does for one judged pair.
 
-    An update or contradiction about a different entity or attribute contradicts itself:
-    nothing changes. Below `clear_at` nothing changes either, nor does an update or a
-    contradiction below `flag_at`. An update retires the older row under `newest_wins`
-    and `auto_reinforce` at `retire_at` or above; any other update, and a contradiction,
-    goes to the review queue. `cross_session`: the peer is another session's row of a
-    subject with no real user, whose sessions are an agent's separate tasks: an update
-    or a contradiction between them changes nothing. `same_written`: both notes carry a
-    fact date and show the same day (`written_at`), so an update between them goes to
-    review: two facts from one conversation day have no order. Every compatible verdict
-    clears."""
+    A verdict of update or contradiction that names a different entity or attribute is
+    incoherent: nothing changes. Below `clear_at` nothing changes, nor does an update or
+    a contradiction below `flag_at`. An update at `retire_at` or above retires the older
+    row under `newest_wins` and `auto_reinforce`; any other update or contradiction goes
+    to review. `cross_session` (another session of the anonymous user) changes nothing
+    for an update or contradiction; `same_written` (both facts dated the same day) sends
+    an update to review. A compatible verdict clears."""
     verdict = v.verdict
     if verdict in (UPDATE, CONTRADICTION) and not (v.same_entity and v.same_attribute):
         return NOTHING

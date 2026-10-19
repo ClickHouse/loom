@@ -426,7 +426,7 @@ a second live row, and the conflict check skips same-key peers. Under `newest_wi
 newer write retires the older row. Under `auto_reinforce` a shared key alone is not
 evidence of one attribute: extraction reuses generic keys (`assistant_recommended_3`,
 `user_attended`) for different items, and in a labelled sample of 60 same-key pairs from
-chat-history namespaces 52 were different facts, 7 restatements and 1 an update.
+chat-history namespaces 52 were different facts, 7 were restatements and 1 was an update.
 
 Those rows are judged by the conflict resolver like any other peers: under `auto_reinforce`
 and `manual_review`, a point write (`conflicts.same_key_mark`) and a bulk write mark each
