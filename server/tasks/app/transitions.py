@@ -320,13 +320,13 @@ async def _claim_one(
         return None
     # A lease row can be written from a status read nobody holds (a late create retry or
     # reopen): the claim stands only if the task, read after winning, is still the todo
-    # task at the fence it claimed.
+    # task at the fence it claimed. Otherwise it undoes its own bump and nothing else; a
+    # row left for an ended task is the lease sweep's to remove.
     now = await repo.fetch_task(task["org"], task_id)
     if now is None or now["status"] != "todo" or int(now.get("fence") or 0) != fence:
-        if now is None or now["status"] in TERMINAL:
-            await backend.delete(task_id)
-        else:
-            await _release_lease({**now, "fence": result.fence}, status=str(now["status"]))
+        await backend.give_back(
+            task_id, claimant, held_fence=result.fence, fence=fence, status="todo"
+        )
         return None
     return await _record(
         task,

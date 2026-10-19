@@ -62,7 +62,9 @@ class FakeLeases:
             row["fence"] = fence
 
     async def try_claim(self, task_id, claimant, *, expected_fence, lease_until) -> ClaimResult:
-        row = self.rows.setdefault(task_id, {"owner": "", "fence": expected_fence})
+        row = self.rows.get(task_id)
+        if row is None:  # no lease row: nothing to win
+            return ClaimResult(False, expected_fence, "")
         expired = row.get("lease_until") is not None and row["lease_until"] < datetime.now(
             UTC
         ).replace(tzinfo=None)
@@ -70,6 +72,11 @@ class FakeLeases:
             row.update({"owner": claimant, "fence": expected_fence + 1, "lease_until": lease_until})
             return ClaimResult(True, row["fence"], claimant)
         return ClaimResult(False, row["fence"], row["owner"])
+
+    async def give_back(self, task_id, holder, *, held_fence, fence, status) -> None:
+        row = self.rows.get(task_id)
+        if row is not None and row["owner"] == holder and row["fence"] == held_fence:
+            row.update({"owner": "", "fence": fence, "lease_until": None})
 
     async def set_owner(self, task_id, *, fence, owner, lease_until, status) -> bool:
         row = self.rows.get(task_id)
@@ -224,6 +231,9 @@ class FakeRepo:
             ):
                 stale.append({**r, "after_s": after})
         return {"expired": expired, "resume": resume, "stale_triage": stale}
+
+    async def lease_strays(self, *, before, terminal, limit):
+        return [], []
 
     async def inbox_counts(self, org, *, namespace=None, inbox=None):
         out: dict[tuple[str, str, str], int] = {}

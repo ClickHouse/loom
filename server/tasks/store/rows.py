@@ -128,6 +128,26 @@ class StaleTriageRow(TypedDict):
     after_s: int
 
 
+class MissingLeaseRow(TypedDict):
+    """A todo or triage task with no lease row."""
+
+    task_id: str
+    org: str
+    inbox: str
+    fence: int
+
+
+class IdleLeaseRow(TypedDict):
+    """An idle lease row that disagrees with its task: `found` is '' when no task
+    holds the id."""
+
+    task_id: str
+    lease_fence: int
+    found: str
+    status: str
+    fence: int
+
+
 class SweepCandidates(TypedDict):
     """What one sweep acts on."""
 

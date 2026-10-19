@@ -1069,7 +1069,7 @@ async def test_a_claim_won_on_a_stray_lease_row_of_a_cancelled_task_backs_out(
 ) -> None:
     """A create retry writes the lease row back after a reopen, and a cancel lands before
     that write: a stray row for a cancelled task. A claim that read the task todo wins
-    the row, reads the task again, backs out and deletes it: the task stays cancelled."""
+    the row, reads the task again and backs out: the task stays cancelled."""
     org = f"itest-stray-{uuid.uuid4().hex[:8]}"
     tid = await _todo_task(org, idempotency_key="k1")
     prior = await repo.fetch_task(org, tid)  # the retry's read: todo, fence 0
@@ -1102,10 +1102,11 @@ async def test_a_claim_won_on_a_stray_lease_row_of_a_cancelled_task_backs_out(
     )
     assert got is None
     assert (await repo.fetch_task(org, tid))["status"] == "cancelled"
+    # The claim undid only its own bump; the stray row is the lease sweep's to remove.
     leases = await ch.query_all(
-        "SELECT task_id FROM loom.task_leases WHERE task_id = {t:String}", params={"t": tid}
+        "SELECT owner, fence FROM loom.task_leases WHERE task_id = {t:String}", params={"t": tid}
     )
-    assert leases == []
+    assert leases == [{"owner": "", "fence": 0}]
 
 
 @pytest.mark.asyncio
@@ -1141,3 +1142,95 @@ async def test_a_reopen_takes_back_a_lease_row_a_late_write_left_at_an_older_fen
         wire.TaskClaimInput(org=org, namespace="private", agent="bot", task_id=tid)
     )
     assert out.task.status == "in_progress"
+
+
+async def _lease(ch: Any, tid: str) -> Any:
+    return await ch.query_one(
+        "SELECT owner, fence FROM loom.task_leases WHERE task_id = {t:String}", params={"t": tid}
+    )
+
+
+async def _claim(org: str, tid: str) -> Any:
+    return await transitions.handle_task_claim(
+        wire.TaskClaimInput(org=org, namespace="private", agent="bot", task_id=tid)
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_claim_that_backs_out_of_a_deferred_task_leaves_it_claimable(ch: Any) -> None:
+    """A pull reads the task todo; the owner defers it; the claim wins the row, reads it
+    deferred and gives the row back at the fence it found. Resumed, the task is
+    claimable."""
+    org = f"itest-defer-{uuid.uuid4().hex[:8]}"
+    tid = await _todo_task(org)
+    stale = await repo.fetch_task(org, tid)
+    await transitions.handle_task_defer(
+        wire.TaskDeferInput(
+            org=org, namespace="private", agent="bot", task_id=tid, reason="later", fence=0
+        )
+    )
+    got = await transitions._claim_one(stale, claimant="bot", actor="process:bot", lease_seconds=60)
+    assert got is None
+    assert await _lease(ch, tid) == {"owner": "", "fence": 0}
+    await transitions.handle_task_resume(
+        wire.TaskResumeInput(org=org, namespace="private", agent="bot", task_id=tid)
+    )
+    assert (await _claim(org, tid)).task.status == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_a_claim_that_backs_out_never_removes_a_row_a_reopen_wrote(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A claim from a stale todo read wins the row a reopen's first write inserted and
+    reads the task still cancelled; the reopen finishes before the claim backs out. The
+    claim only undoes its own bump, so the reopened task stays claimable."""
+    org = f"itest-reopen-{uuid.uuid4().hex[:8]}"
+    tid = await _todo_task(org)
+    stale = await repo.fetch_task(org, tid)
+    await transitions.handle_task_cancel(_reason(org, tid))
+    backend = await repo.lease_backend()
+    # The reopen's first write lands; the stale claim wins it and reads 'cancelled'.
+    await backend.ensure_row(tid, org, stale["inbox"], int(stale["fence"]), reset_idle=True)
+    real_give_back = backend.give_back
+
+    async def give_back(*a: Any, **k: Any) -> None:
+        monkeypatch.setattr(backend, "give_back", real_give_back)
+        await transitions.handle_task_reopen(_reason(org, tid))  # finishes first
+        await real_give_back(*a, **k)
+
+    monkeypatch.setattr(backend, "give_back", give_back)
+    assert await transitions._claim_one(stale, claimant="bot", actor="p", lease_seconds=60) is None
+    monkeypatch.undo()
+    assert (await repo.fetch_task(org, tid))["status"] == "todo"
+    assert (await _claim(org, tid)).task.status == "in_progress"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stranded", ["no row", "idle row at another fence", "ended task"])
+async def test_one_lease_sweep_puts_a_stranded_lease_row_right(ch: Any, stranded: str) -> None:
+    """Whatever race left a lease row out of step with its task, one sweep past the grace
+    makes it agree: a todo task gets its row, an idle row takes the task's fence, and an
+    ended task's row goes."""
+    from datetime import timedelta
+
+    from server.tasks.app import sweep
+
+    org = f"itest-heal-{uuid.uuid4().hex[:8]}"
+    tid = await _todo_task(org)
+    backend = await repo.lease_backend()
+    if stranded == "no row":
+        await backend.delete(tid)
+    elif stranded == "idle row at another fence":
+        await backend.give_back(tid, "", held_fence=0, fence=5, status="todo")
+        assert await _lease(ch, tid) == {"owner": "", "fence": 5}
+    else:
+        await transitions.handle_task_cancel(_reason(org, tid))
+        task = await repo.fetch_task(org, tid)
+        await backend.ensure_row(tid, org, task["inbox"], int(task["fence"]))
+    later = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=5)
+    assert await sweep.reconcile_leases(later, limit=10_000) >= 1
+    if stranded == "ended task":
+        assert await _lease(ch, tid) is None
+    else:
+        assert (await _claim(org, tid)).task.status == "in_progress"

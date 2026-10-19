@@ -1201,7 +1201,7 @@ Source: `server/settings/_tasks.py`
 
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `LOOM_TASK_LEASE_SWEEP_ENABLED` | `bool` | `True` | Lease sweeper: return expired leases to todo, resume deferred tasks at resume_at, escalate stale triage. One read per pass. |
+| `LOOM_TASK_LEASE_SWEEP_ENABLED` | `bool` | `True` | Lease sweeper: return expired leases to todo, resume deferred tasks at resume_at, escalate stale triage, and put right lease rows a race left out of step with their task. |
 | `LOOM_TASK_LEASE_SWEEP_INTERVAL_SECONDS` | `int` | `60` | Seconds between passes while there is work. |
 | `LOOM_TASK_LEASE_SWEEP_IDLE_INTERVAL_SECONDS` | `int` | `300` | Seconds between passes that found nothing. |
 | `LOOM_TASK_WEBHOOK_DELIVER_ENABLED` | `bool` | `True` | Post one Standard Webhooks-signed notice per new event batch to each inbox's webhook_url; the secret comes from the env var task_inboxes.webhook_secret_ref names (`LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, one of the inbox org's own). |

@@ -183,7 +183,12 @@ async with Agent(org="acme", namespace="private", agent="private-bot", api_key=P
   wakes a waiting pull at once; one on another replica is seen within about 2 s.
 - **Leases and fences.** A claim gets a lease and a `fence` token that every owner write presents. `task.heartbeat`
   extends the lease. When a worker dies, the `task_lease_sweep` worker returns the task to `todo`, and after
-  `max_attempts` expiries blocks it on a person. A stale fence gets 409 `TASK_FENCE_STALE`.
+  `max_attempts` expiries blocks it on a person. A stale fence gets 409 `TASK_FENCE_STALE`. A claim stands only
+  when the task, read again after the claim wins its lease, is still `todo` at that fence; otherwise the claim
+  gives the lease back as it found it. Each sweep also puts right a lease row a race left out of step with its
+  task: a `todo` or triage task with no row gets one, an idle row takes its task's fence, and an ended task's row
+  goes. A cancel that lands between a claim's lease and its status write is overwritten by the claim, which leaves
+  the task `in_progress`; this race predates the reconcile and is not closed by it.
 - **Other moves.** `task.defer` (with `resume_at`), `task.block` (`blocked_on`: `sender`, `human`, `external`),
   `task.wont_do`, and `task.progress` (a note, no state change).
 - **Triage.** `task.pull(status="triage")` returns review items unclaimed; decide with `task.accept` or
@@ -230,10 +235,10 @@ the org (`inbox.principals`, admin).
 
 ### Settings
 
-| Setting                             | Default | Effect                                                                               |
-| ----------------------------------- | ------- | ------------------------------------------------------------------------------------ |
-| `LOOM_TASK_LEASE_SWEEP_ENABLED`     | true    | Runs the sweeper: expired leases, deferred tasks reaching `resume_at`, stale triage. |
-| `LOOM_TASK_WEBHOOK_DELIVER_ENABLED` | true    | Posts one signed notice per new event batch to an inbox's `webhook_url`.             |
+| Setting                             | Default | Effect                                                                                                                       |
+| ----------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_TASK_LEASE_SWEEP_ENABLED`     | true    | Runs the sweeper: expired leases, deferred tasks reaching `resume_at`, stale triage, lease rows out of step with their task. |
+| `LOOM_TASK_WEBHOOK_DELIVER_ENABLED` | true    | Posts one signed notice per new event batch to an inbox's `webhook_url`.                                                     |
 
 See [configuration: task inbox](../reference/configuration.md#task-inbox).
 

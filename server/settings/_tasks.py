@@ -10,7 +10,8 @@ from pydantic import BaseModel
 class TaskSettings(BaseModel):
     # ---- task inbox ----
     # Lease sweeper: return expired leases to todo, resume deferred tasks at
-    # resume_at, escalate stale triage. One read per pass.
+    # resume_at, escalate stale triage, and put right lease rows a race left out of
+    # step with their task.
     task_lease_sweep_enabled: bool = True
     # Seconds between passes while there is work.
     task_lease_sweep_interval_seconds: int = 60

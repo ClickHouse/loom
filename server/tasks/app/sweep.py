@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from server.core.datetimes import utc_now as _now
 from server.tasks.app.common import (
+    TERMINAL,
     _loads,
     _naive,
     _record,
@@ -16,16 +17,20 @@ from server.tasks.store import repo as repo
 from server.tasks.store.rows import InboxRow
 
 SWEEP_ACTOR = "process:task_lease_sweep"
+# A lease row or task written this recently may belong to a transition still in flight
+# (a create between its task row and its lease row, a reopen between its two writes).
+LEASE_RECONCILE_GRACE = timedelta(seconds=60)
 
 
 async def sweep_once(*, now: datetime | None = None, limit: int = 200) -> dict[str, int]:
     """Expired leases back to ``todo`` (or ``blocked`` on a human after the
     inbox's ``max_attempts``), deferred tasks past ``resume_at`` back to
-    ``todo``, stale triage escalated once. Returns counts per action."""
+    ``todo``, stale triage escalated once, and lease rows that disagree with
+    their task put right (`reconcile_leases`). Returns counts per action."""
     at = now or _now()
     naive_now = _naive(at) or at
     found = await repo.sweep_candidates(now=naive_now, limit=limit)
-    counts = {"expired": 0, "blocked": 0, "resumed": 0, "escalated": 0}
+    counts = {"expired": 0, "blocked": 0, "resumed": 0, "escalated": 0, "leases": 0}
     inboxes: dict[tuple[str, str], InboxRow | None] = {}
 
     async def _inbox(org: str, name: str) -> InboxRow | None:
@@ -91,4 +96,32 @@ async def sweep_once(*, now: datetime | None = None, limit: int = 200) -> dict[s
             outcome=json.dumps(outcome, sort_keys=True, default=str),
         )
         counts["escalated"] += 1
+    counts["leases"] = await reconcile_leases(naive_now, limit=limit)
     return counts
+
+
+async def reconcile_leases(now: datetime, *, limit: int) -> int:
+    """The lease is a claim's only arbiter, and its rows are written from status reads
+    nobody holds, so a race can leave one that disagrees with its task. Each pass puts
+    them right: a todo or triage task with no row gets one at its fence; an idle row of a
+    task that is gone or ended goes; an idle row at another fence takes the task's.
+    Every write is guarded (insert if absent, update only the idle row it read), so a
+    pass racing a claim or a second copy of itself changes nothing it should not."""
+    backend = await repo.lease_backend()
+    missing, idle = await repo.lease_strays(
+        before=now - LEASE_RECONCILE_GRACE, terminal=sorted(TERMINAL), limit=limit
+    )
+    for task in missing:
+        await backend.ensure_row(task["task_id"], task["org"], task["inbox"], int(task["fence"]))
+    for row in idle:
+        if not row["found"] or row["status"] in TERMINAL:
+            await backend.delete(row["task_id"])
+        else:
+            await backend.give_back(
+                row["task_id"],
+                "",
+                held_fence=int(row["lease_fence"]),
+                fence=int(row["fence"]),
+                status="todo",
+            )
+    return len(missing) + len(idle)
