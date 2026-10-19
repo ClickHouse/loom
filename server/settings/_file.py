@@ -17,6 +17,7 @@ import logging
 import os
 from typing import Any
 
+from pydantic import ValidationError
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
@@ -112,8 +113,12 @@ class SettingsFileSource(PydanticBaseSettingsSource):
         for name, value in self._values.items():
             try:
                 coerce(settings_cls, name, value)
-            except ValueError:
-                raise SettingsFileError(f"{path}: {name} has a value it cannot take") from None
+            except ValidationError as e:
+                # The rule, never the value: `from None` keeps the input out of the trace.
+                rule = e.errors(include_input=False)[0]["msg"]
+                raise SettingsFileError(
+                    f"{path}: {name} has a value it cannot take ({rule})"
+                ) from None
 
     def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
         return self._values.get(field_name), field_name, False

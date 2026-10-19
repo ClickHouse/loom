@@ -89,16 +89,30 @@ def test_a_file_with_no_settings_sets_none(
     assert _load(monkeypatch, tmp_path, text).loaded_from("settings_file") == frozenset()
 
 
-def test_a_wrong_type_names_the_field_never_the_value(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("shadowed", [False, True])
+def test_a_wrong_type_names_the_field_and_the_rule_never_the_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, shadowed: bool
 ) -> None:
-    with pytest.raises(ValueError) as e:
+    """Also when the environment sets the field: removing the variable later must not
+    be what stops a start."""
+    if shadowed:
+        monkeypatch.setenv("LOOM_MEMORY_ASK_SYNTH_MAX_TOKENS", "900")
+    with pytest.raises(SettingsFileError) as e:
         _load(
             monkeypatch,
             tmp_path,
             "version: 1\nsettings:\n  memory_ask_synth_max_tokens: lots-of-them\n",
         )
     assert "memory_ask_synth_max_tokens" in str(e.value) and "lots-of-them" not in str(e.value)
+    assert "valid integer" in str(e.value)
+
+
+def test_an_unquoted_off_says_what_the_setting_takes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    with pytest.raises(SettingsFileError) as e:
+        _load(monkeypatch, tmp_path, "version: 1\nsettings:\n  memory_search_key_axis: off\n")
+    assert "'auto', 'on' or 'off'" in str(e.value)
 
 
 def test_a_named_file_that_does_not_exist_refuses(
@@ -152,16 +166,3 @@ def test_the_schema_holds_every_setting_but_the_secrets() -> None:
     assert set(props) == {f for f in Settings.model_fields if not is_secret_field(f)}
     assert schema["properties"]["settings"]["additionalProperties"] is False
     assert props["memory_ask_recency_weight"]["description"].startswith("memory.ask only")
-
-
-def test_a_wrong_type_the_environment_shadows_still_refuses(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setenv("LOOM_MEMORY_ASK_SYNTH_MAX_TOKENS", "900")
-    with pytest.raises(SettingsFileError) as e:
-        _load(
-            monkeypatch,
-            tmp_path,
-            "version: 1\nsettings:\n  memory_ask_synth_max_tokens: lots-of-them\n",
-        )
-    assert "memory_ask_synth_max_tokens" in str(e.value) and "lots-of-them" not in str(e.value)

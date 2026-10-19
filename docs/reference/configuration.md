@@ -17,7 +17,8 @@ settings:
 
 A value comes from the first of: the environment, the dotenv file, the settings file,
 the default. A secret (keep those in the environment or a secrets manager), a key
-given twice or a `version` this build does not read stops the server at startup; a name
+given twice, a `version` this build does not read or a value the setting cannot take
+(also one the environment or the dotenv file overrides) stops the server at startup; a name
 no setting has is logged and ignored, since builds N-1 and N share the file during a
 rolling upgrade. `schemas/loom-settings.schema.json` is the file's JSON Schema
 (`python scripts/codegen/settings_schema.py`), and `loom.example.yaml` a template.

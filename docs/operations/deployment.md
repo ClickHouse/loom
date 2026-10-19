@@ -203,8 +203,8 @@ first applies pending migrations ([upgrades](./upgrades.md#how-migrations-run)).
 - Settings that are not secrets can also go in a YAML settings file, the path
   `LOOM_SETTINGS_FILE` names (`loom.example.yaml` is the template,
   `schemas/loom-settings.schema.json` its schema). The environment and `.env` win over
-  it. A secret, a key given twice or an unsupported `version` stops the server at
-  startup; a name no setting has is logged and ignored, so a replica of the previous
+  it. A secret, a key given twice, an unsupported `version` or a value the setting
+  cannot take (also one the environment overrides) stops the server at startup; a name no setting has is logged and ignored, so a replica of the previous
   build starts on a file that names a new setting.
 - The compose file's `environment:` wins over `.env`. `dev/docker-compose.dev.yml` pins
   the ClickHouse connection and `LOOM_SELF_SIGNUP=open`, so those lines in `.env` do

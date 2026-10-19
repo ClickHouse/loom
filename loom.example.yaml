@@ -4,8 +4,9 @@
 #
 # Each key is a setting's LOOM_<NAME> environment variable in lowercase, and
 # docs/reference/configuration.md lists them all. The environment and the dotenv
-# file win over this file. A secret (passwords, keys, tokens), a key given twice
-# or an unsupported version stops the server at startup: keep secrets in the
+# file win over this file. A secret (passwords, keys, tokens), a key given twice,
+# an unsupported version or a value the setting cannot take (also one the
+# environment overrides) stops the server at startup: keep secrets in the
 # environment or a secrets manager. A name no setting has is logged and ignored.
 version: 1
 settings:
