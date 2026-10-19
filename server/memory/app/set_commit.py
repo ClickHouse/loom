@@ -167,6 +167,7 @@ async def _project_set_entities_fail_open(
     wait_visible: bool = False,
     ents: list[str] | None = None,
     content_sha256: str,
+    high: bool = False,
 ) -> None:
     """Deterministic LLM-free entity-graph projection for a committed
     `memory.set`. A point write carries no `entities` column, so without
@@ -188,6 +189,7 @@ async def _project_set_entities_fail_open(
             memory_id=memory_id,
             ents=ents,
             content_sha256=content_sha256,
+            high=high,
         )
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
         log.warning("memory.set entity projection failed (non-fatal): %s", e)
@@ -291,6 +293,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
                 content_sha256=new_sha,
                 revised=had_existing_row,
                 ents=declared,
+                high=high,
             )
         )
     if high and had_existing_row and owes_undeclared_drop(w.existing, declared or []):
@@ -905,6 +908,7 @@ def _entity_projection_tail(
     content_sha256: str,
     revised: bool,
     ents: list[str] | None = None,
+    high: bool = False,
 ) -> list[Awaitable[Any]]:
     """The entity-graph projection of a committed point write, as what its tail awaits.
 
@@ -919,7 +923,12 @@ def _entity_projection_tail(
     if len(ents) < 2:
         return []
     projection = _project_set_entities_fail_open(
-        input, memory_id=memory_id, wait_visible=True, ents=ents, content_sha256=content_sha256
+        input,
+        memory_id=memory_id,
+        wait_visible=True,
+        ents=ents,
+        content_sha256=content_sha256,
+        high=high,
     )
     if revised:
         # Its edges flushed before the close runs and before the write answers, so a walk

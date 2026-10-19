@@ -147,10 +147,34 @@ async def insert_projection_failures(rows: list[dict[str, Any]], *, ch: Any | No
     )
 
 
-async def record_projection_failure(*, ch: Any | None = None, **fields: Any) -> str:
-    """Append one projection failure row (`projection_failure_row`'s fields); returns its
+async def record_projection_failure(
+    *,
+    org: str,
+    namespace: str,
+    agent: str = "",
+    projection: str,
+    source_operation: str = "",
+    source_resource_id: str = "",
+    memory_keys: list[str] | None = None,
+    error: BaseException | str,
+    payload: dict[str, Any] | None = None,
+    ch: Any | None = None,
+    user_id: str = "",
+) -> str:
+    """Append one projection failure row (`projection_failure_row`); returns its
     failure_id. Callers wrap this helper in their own fail-open guard."""
-    row = projection_failure_row(**fields)
+    row = projection_failure_row(
+        org=org,
+        namespace=namespace,
+        agent=agent,
+        projection=projection,
+        source_operation=source_operation,
+        source_resource_id=source_resource_id,
+        memory_keys=memory_keys,
+        error=error,
+        payload=payload,
+        user_id=user_id,
+    )
     await insert_projection_failures([row], ch=ch)
     return str(row["failure_id"])
 
@@ -617,11 +641,11 @@ async def _retry_triples_reopen(failure: ProjectionFailureRow, *, ch: Any) -> st
 async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
     """Run the failed cleanup of a late projection again. A payload no retry can
     read returns the reason that abandons it."""
-    from server.memory.app.entity_projections import close_late_edges
+    from server.memory.app.entity_projections import close_late_edges, close_overtaken_values
 
     memory_id = str(failure.payload.get("memory_id") or "")
     content_sha256 = str(failure.payload.get("content_sha256") or "")
-    if not memory_id or not content_sha256:
+    if not memory_id:
         return "malformed_payload"
     # When the revision ended the value; a payload recorded before it was known has none.
     ended = failure.payload.get("ended_at")
@@ -629,13 +653,20 @@ async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
         ended_at = datetime.fromisoformat(ended) if ended else None
     except (TypeError, ValueError):
         return "malformed_payload"
+    entities = [str(e) for e in failure.payload.get("entities") or []]
+    if not content_sha256:
+        # A high row's close names no value: each one it no longer holds closes.
+        await close_overtaken_values(
+            failure.org, failure.namespace, memory_id, ended_at=ended_at, entities=entities, ch=ch
+        )
+        return ""
     await close_late_edges(
         failure.org,
         failure.namespace,
         memory_id,
         content_sha256,
         ended_at=ended_at,
-        entities=[str(e) for e in failure.payload.get("entities") or []],
+        entities=entities,
         ch=ch,
     )
     return ""

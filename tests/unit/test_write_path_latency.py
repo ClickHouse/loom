@@ -194,7 +194,13 @@ async def test_set_returns_before_its_entity_projection_lands(post_insert) -> No
     ents = set_entities_for_projection(_set_input(), _set_input().value)
     assert seen["scope"] == ("o", "n")
     # With its value's hash, so one landing after a revision of the row leaves no edge.
-    want = {"memory_id": "m1", "wait_visible": True, "ents": ents, "content_sha256": "sha"}
+    want = {
+        "memory_id": "m1",
+        "wait_visible": True,
+        "ents": ents,
+        "content_sha256": "sha",
+        "high": False,
+    }
     assert seen["project_kw"] == want
     assert "entities" not in seen["order"]
     assert {"supersede", "audit"} <= set(seen["order"])

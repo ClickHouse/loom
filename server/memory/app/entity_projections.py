@@ -9,7 +9,7 @@ import logging
 import re
 import unicodedata
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, NamedTuple
@@ -525,6 +525,7 @@ async def project_memory_set_entities(
     memory_id: str,
     ents: list[str] | None = None,
     content_sha256: str,
+    high: bool = False,
 ) -> int:
     """Fail-open entity projection for a single `memory.set`.
 
@@ -585,8 +586,40 @@ async def project_memory_set_entities(
     # Revised or retired while the edges were written: its close may have run before
     # they landed, so end the ones no live row names.
     version = (memory_id, memory_key, content_sha256)
-    await end_overtaken_edges(input, [version], op="memory.set", ch=ch, entities=ents)
+    high_versions = {(memory_id, content_sha256)} if high else set()
+    await end_overtaken_edges(
+        input, [version], op="memory.set", ch=ch, entities=ents, high=high_versions
+    )
     return len(ents)
+
+
+async def close_overtaken_values(
+    org: str,
+    namespace: str,
+    memory_id: str,
+    *,
+    ended_at: datetime | None = None,
+    entities: Sequence[str] = (),
+    ch: Any,
+) -> None:
+    """`close_late_edges` for a close recorded without its value (a 'high' row's): each
+    value of the row that links edges and is not the row's current one."""
+    params = {"org": org, "ns": namespace, "id": memory_id}
+    rows = await ch.query_all(
+        """
+        SELECT DISTINCT toString(content_sha256) AS sha FROM loom.entity_edge_rows
+        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}
+          AND content_sha256 NOT IN (
+              SELECT content_sha256 FROM loom.memory FINAL
+              WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID})
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params=params,
+    )
+    for row in rows:
+        await close_late_edges(
+            org, namespace, memory_id, str(row["sha"]), ended_at=ended_at, entities=entities, ch=ch
+        )
 
 
 async def close_late_edges(
@@ -621,19 +654,24 @@ async def end_overtaken_edges(
     op: str,
     ch: Any,
     entities: Sequence[str] = (),
+    high: Collection[tuple[str, str]] = (),
 ) -> None:
     """After revisions wrote their edges: another write since may have revised or
     retired one of these `versions` (memory_id, memory_key, content_sha256) before
     they landed, so end its edges at the moment the row stopped holding it. One read
     asks which rows still hold theirs (`edge_holder_sql` of the projected `entities`).
-    A failure is recorded for the projection repair."""
+    A failure is recorded for the projection repair; `high`: the (memory_id,
+    content_sha256) versions of 'high' rows, recorded without their content."""
     holder = edge_holder_sql(entities)
     held: set[tuple[str, str]] = set()
     try:
         holding = [(memory_id, sha) for memory_id, _, sha in versions]
         held = await versions_held(input.org, input.namespace, holding, ch=ch, holder=holder)
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
-        closes = [EdgeClose(mid, key, sha, list(entities)) for mid, key, sha in versions]
+        closes = [
+            EdgeClose(mid, key, sha, list(entities), high=(mid, sha) in high)
+            for mid, key, sha in versions
+        ]
         await record_edges_closes(input, closes, e, op=op, ch=ch)
         return
     for memory_id, memory_key, sha in versions:
@@ -646,19 +684,23 @@ async def end_overtaken_edges(
             )
             await _end_edges_of(input.org, input.namespace, memory_id, sha, ended_at, ch=ch)
         except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
-            close = EdgeClose(memory_id, memory_key, sha, list(entities), ended_at)
+            close = EdgeClose(
+                memory_id, memory_key, sha, list(entities), ended_at, (memory_id, sha) in high
+            )
             await record_edges_closes(input, [close], e, op=op, ch=ch)
 
 
 class EdgeClose(NamedTuple):
     """A value's edge close left to the projection repair: the row's version, the
-    entities its edges paired, and when the row stopped holding the value, if read."""
+    entities its edges paired, when the row stopped holding the value (if read), and
+    whether the version is a 'high' row's."""
 
     memory_id: str
     memory_key: str
     sha: str
     entities: list[str]
     ended_at: datetime | None = None
+    high: bool = False
 
 
 async def record_edges_closes(
@@ -666,10 +708,14 @@ async def record_edges_closes(
 ) -> None:
     """Record failed edge closes for the projection repair in one insert, each with the
     value's end when it was read: the repair ends the edges at the same moment.
-    Fail-open, as the write it describes has landed."""
+    Fail-open, as the write it describes has landed. A high row's close is recorded
+    without its content_sha256: no failure payload names a high row's content, and the
+    repair closes whichever of the row's values is no longer current."""
     rows = []
     for close in closes:
-        payload: dict[str, Any] = {"memory_id": close.memory_id, "content_sha256": close.sha}
+        payload: dict[str, Any] = {"memory_id": close.memory_id}
+        if not close.high:
+            payload["content_sha256"] = close.sha
         if close.entities:
             payload["entities"] = close.entities
         if close.ended_at is not None:

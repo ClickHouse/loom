@@ -818,8 +818,12 @@ async def _bulk_run_projections(
     existed = set(state.existing_ids.values())
     revised = [m for m, n in written.items() if m in existed or n > 1]
     if revised:
-        # The high rows: the edges leg sees them, the other legs do not.
-        high = {r.memory_id for r in e_results} - {r.memory_id for r in p_results}
+        # The versions of high rows: their edge closes are recorded without content.
+        high = {
+            (str(r["memory_id"]), str(r["content_sha256"]))
+            for r in state.memory_rows
+            if r.get("sensitivity") == "high"
+        }
         await _close_overtaken_edges(
             e_input, e_results, set(revised), high=high, entity_map=entity_resolution, ch=ch
         )
@@ -831,16 +835,16 @@ async def _close_overtaken_edges(
     results: list[Any],
     revised: set[str],
     *,
-    high: set[str],
+    high: set[tuple[str, str]],
     entity_map: dict[str, str],
     ch: Any,
 ) -> None:
     """The revised rows' edges end with their value if another write revised it
     again while they were written (`end_overtaken_edges`). An entry with fewer than
     two graph nodes wrote no edge. One read for all of them: a row holds its edges
-    while it holds the value, and a 'high' one (`high`: their ids) only while it names
-    every node paired. A failed read is recorded for the projection repair, which ends
-    them, the high rows' left out."""
+    while it holds the value, and a 'high' one only while it names every node paired.
+    A failed read is recorded for the projection repair, which ends them; `high` (the
+    (memory_id, content_sha256) versions of high rows) are recorded without content."""
     paired: dict[tuple[str, str, str], list[str]] = {}
     for entry, res in zip(input.entries, results, strict=True):
         nodes = edge_nodes(entry, entity_map)
@@ -853,11 +857,9 @@ async def _close_overtaken_edges(
             input.org, input.namespace, [(mid, sha) for mid, _, sha in paired], ch=ch
         )
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
-        # A high row is left out: no failure payload names a high row's content.
         closes = [
-            EdgeClose(memory_id, memory_key, sha, nodes)
+            EdgeClose(memory_id, memory_key, sha, nodes, high=(memory_id, sha) in high)
             for (memory_id, memory_key, sha), nodes in paired.items()
-            if memory_id not in high
         ]
         await record_edges_closes(input, closes, e, op="memory.bulk_set", ch=ch)
         return
@@ -872,7 +874,7 @@ async def _close_overtaken_edges(
         if sensitivity == "high" and not set(nodes) <= entities:
             overtaken.append(version)
     if overtaken:
-        await end_overtaken_edges(input, sorted(overtaken), op="memory.bulk_set", ch=ch)
+        await end_overtaken_edges(input, sorted(overtaken), op="memory.bulk_set", ch=ch, high=high)
 
 
 # The most supersession pairs one write follows in the request.

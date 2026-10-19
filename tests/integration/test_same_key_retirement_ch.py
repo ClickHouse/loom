@@ -7653,3 +7653,116 @@ async def test_a_failed_holder_read_records_every_close_in_one_insert_and_no_hig
     )["id"]
     assert len(inserts) == 1 and len(inserts[0]) == 3
     assert not [r for r in inserts[0] if high_id in r["payload"]]
+
+
+async def _recorded_closes(monkeypatch: Any) -> list[dict[str, Any]]:
+    """Capture the edge-close failures written while the test runs (and write them)."""
+    from server.memory.app import entity_projections
+
+    captured: list[dict[str, Any]] = []
+    real_insert = entity_projections.insert_projection_failures
+
+    async def capture(rows: list[dict[str, Any]], **kw: Any) -> None:
+        captured.extend(rows)
+        await real_insert(rows, **kw)
+
+    monkeypatch.setattr(entity_projections, "insert_projection_failures", capture)
+    return captured
+
+
+async def test_a_high_rows_edge_close_record_after_memory_set_names_no_value(
+    ch, org, monkeypatch
+) -> None:
+    """memory.set of a high row, its overtaken-edge read fails: the close is recorded
+    without the row's content_sha256."""
+    from server.memory.app import entity_projections
+
+    await _high_set(
+        org, "s1", "vault", "Orchid one", sensitivity="high", entities=["Billing", "Stripe"]
+    )
+    real_held, calls = entity_projections.versions_held, 0
+
+    async def second_down(*a: Any, **kw: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:  # the fence before the edges are written
+            return await real_held(*a, **kw)
+        raise RuntimeError("read timed out")  # end_overtaken_edges' read
+
+    monkeypatch.setattr(entity_projections, "versions_held", second_down)
+    captured = await _recorded_closes(monkeypatch)
+    await _high_set(
+        org, "s1", "vault", "Orchid two", sensitivity="high", entities=["Billing", "Stripe"]
+    )
+    monkeypatch.undo()
+    closes = [r for r in captured if r["projection"] == "entity_edges_close"]
+    assert closes and not [r for r in closes if "content_sha256" in r["payload"]]
+
+
+async def test_a_high_rows_edge_close_record_after_a_bulk_names_no_value(
+    ch, org, monkeypatch
+) -> None:
+    """A bulk revision of a high row whose overtaken-edge close fails, and one whose
+    batch writes the key plain then high with the holder read failing: neither record
+    names the high version's content_sha256."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write, bulk_set, entity_projections
+
+    def write(*entries: dict[str, Any]) -> MemoryBulkSetInput:
+        return MemoryBulkSetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=list(entries)
+        )
+
+    high = {"memory_key": "vault", "entities": ["Billing", "Stripe"], "sensitivity": "high"}
+    await bulk_set.handle_memory_bulk_set(write({**high, "value": "Orchid one"}))
+    await after_write.drain()
+
+    async def nobody_holds(*a: Any, **kw: Any) -> Any:
+        return {}
+
+    async def down(*a: Any, **kw: Any) -> Any:
+        raise RuntimeError("read timed out")
+
+    monkeypatch.setattr(bulk_set, "edge_holders", nobody_holds)
+    monkeypatch.setattr(entity_projections, "versions_held", down)
+    captured = await _recorded_closes(monkeypatch)
+    await bulk_set.handle_memory_bulk_set(write({**high, "value": "Orchid two"}))
+    await after_write.drain()
+    # The same key plain then high in one batch, the holder read failing.
+    monkeypatch.setattr(bulk_set, "edge_holders", down)
+    plain = {"memory_key": "k", "value": "plain Gina Hank", "entities": ["Gina", "Hank"]}
+    secret = {**plain, "value": "secret Gina Hank", "sensitivity": "high"}
+    await bulk_set.handle_memory_bulk_set(write(plain, secret))
+    monkeypatch.undo()
+    from server.core.hashing import sha256_value
+
+    high_shas = {sha256_value(v) for v in ("Orchid two", "secret Gina Hank")}
+    recorded = [json.loads(r["payload"]).get("content_sha256") for r in captured]
+    assert recorded and not high_shas & set(recorded), recorded
+
+
+async def test_the_repair_of_a_high_rows_close_ends_the_values_it_no_longer_holds(
+    ch, org, monkeypatch
+) -> None:
+    """A close recorded for a high row names no value: the repair ends the edges of each
+    value the row no longer holds, and keeps its current one's."""
+    from server.memory.app import entity_projections as ep
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    await _high_set(org, "s1", "vault", "Alice met Carol", entities=["Alice", "Carol"])
+
+    async def no_drop(*a: Any, **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(ep, "drop_undeclared_links", no_drop)  # its links stay behind
+    out = await _high_set(
+        org, "s1", "vault", "Alice met Bob", sensitivity="high", entities=["Alice", "Bob"]
+    )
+    monkeypatch.undo()
+    assert ("alice", "carol") in await _open_edge_pairs(ch, org)
+    scope = ep.ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    close = ep.EdgeClose(str(out.memory_id), "vault", "-", ["alice", "bob"], high=True)
+    await ep.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
+    results = await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    assert results and all(r.resolved for r in results), results
+    assert await _open_edge_pairs(ch, org) == {("alice", "bob")}
