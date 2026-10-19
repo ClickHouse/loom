@@ -23,10 +23,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.settings import settings
 
 log = logging.getLogger(__name__)
-
-SWEEP_LIMIT = 5000
 
 
 @dataclass(frozen=True)
@@ -60,9 +59,11 @@ async def sweep_pattern(
     pattern: str,
     pattern_type: str,
     scope: str,
-    limit: int = SWEEP_LIMIT,
+    limit: int | None = None,
     ch: Any = None,
 ) -> SweepResult:
+    if limit is None:
+        limit = settings.memory_blacklist_sweep_limit
     import server.memory.store as memory_repo
     from server.core.repo_base import _default_client
     from server.memory.app.drops import record_drop

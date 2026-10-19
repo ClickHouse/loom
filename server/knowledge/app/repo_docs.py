@@ -30,8 +30,6 @@ from server.settings import settings
 
 log = logging.getLogger("loom.repo_docs")
 
-REPO_DOCS_TIMEOUT_S = 1.5
-
 
 def docs_namespace_of(org: str, code_namespace: str) -> str:
     """The docs namespace of the repository `code_namespace` indexes; "" when
@@ -62,10 +60,12 @@ async def readable_docs_namespace(org: str, code_namespace: str) -> str:
 
 
 async def search_repo_docs(
-    org: str, code_namespace: str, query: str, top_k: int, *, timeout_s: float = REPO_DOCS_TIMEOUT_S
+    org: str, code_namespace: str, query: str, top_k: int, *, timeout_s: float | None = None
 ) -> tuple[str, list[_SearchHit]]:
     """(docs namespace, hits) for `query` over the repository's documents;
     ("", []) when there is nothing the caller may read, or on any failure."""
+    if timeout_s is None:
+        timeout_s = settings.knowledge_repo_docs_timeout_s
     ns = await readable_docs_namespace(org, code_namespace)
     if not ns or not query.strip():
         return "", []
@@ -150,11 +150,13 @@ async def list_repo_docs(
     code_namespace: str,
     *,
     limit: int = DOCS_SECTION_MAX_DOCS,
-    timeout_s: float = REPO_DOCS_TIMEOUT_S,
+    timeout_s: float | None = None,
 ) -> tuple[str, list[RepoDoc]]:
     """(docs namespace, [{source_uri, title, description}]) — the
     repository's live documents, newest first as `knowledge.list` orders
     them; ("", []) when there is nothing the caller may read, or on failure."""
+    if timeout_s is None:
+        timeout_s = settings.knowledge_repo_docs_timeout_s
     ns = await readable_docs_namespace(org, code_namespace)
     if not ns:
         return "", []

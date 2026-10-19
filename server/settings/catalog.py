@@ -451,6 +451,11 @@ class ClickHouseSettings(BaseModel):
     # when the reading is older than a few seconds (codes_state.FRESH_READING_S).
     vector_codes_state_probe_seconds: int = 60
 
+    # ---- timeouts, budgets and caches ----
+    # Seconds the schema status (applied against shipped migrations) is cached for the
+    # health probe.
+    schema_status_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+
 
 # ===== Code ===================================================================
 
@@ -1289,6 +1294,33 @@ class CodeSettings(BaseModel):
         return frozenset(a.strip().lower() for a in self.code_bot_authors.split(",") if a.strip())
 
     # ---- timeouts, budgets and caches ----
+    # Seconds a code-table compaction waits for its OPTIMIZE to finish.
+    code_compaction_timeout_s: Annotated[float, LIVE] = Field(default=900.0, gt=0)
+    # Seconds one (org, namespace)'s index status serves every caller before it is
+    # computed again.
+    code_status_ttl_s: Annotated[float, LIVE] = Field(default=30.0, gt=0)
+    # Seconds an entry's symbol statistics are cached for its status.
+    code_status_symbol_stats_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
+    # Seconds code.blame_range keeps a blame text, a window graph or a branch point per
+    # key.
+    code_blame_cache_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
+    # Seconds a repository's known fork upstreams are cached.
+    code_fork_upstream_cache_ttl_s: Annotated[float, LIVE] = Field(default=24 * 3600.0, gt=0)
+    # Seconds the ingest keeps a sibling-text answer (a manifest, a listing, a config, a
+    # barrel).
+    code_ingest_sibling_text_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
+    # Seconds a PR overlay (the PR's changed files over its base) is cached.
+    code_pr_overlay_cache_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # Seconds one PR file's parse is kept, so a push that changes one file re-parses
+    # that file alone; a PR's next review follows its next push.
+    code_pr_overlay_file_ttl_s: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
+    # Seconds code.repos keeps the worker-ledger answer every repository's status
+    # shares.
+    code_status_ledger_passes_ttl_s: Annotated[float, LIVE] = Field(default=15.0, gt=0)
+    # Seconds a repository's recent-commits listing for code.repos is cached.
+    code_status_recent_commits_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # Seconds a repository's error-code table is cached for message search.
+    code_message_grep_error_codes_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
     # Seconds the fix-blame stage of code.bisect_candidates may run.
     code_bisect_fix_blame_budget_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
     # Seconds the commit-graph read of code.blame_range may run.
@@ -1640,6 +1672,8 @@ class KnowledgeSettings(BaseModel):
     knowledge_chunk_stride: Annotated[int, LIVE] = 1230
 
     # ---- timeouts, budgets and caches ----
+    # Seconds the repository-docs read for a brief may take.
+    knowledge_repo_docs_timeout_s: Annotated[float, LIVE] = Field(default=1.5, gt=0)
     # Seconds the BM25 corpus statistics of a knowledge namespace are cached.
     knowledge_bm25_corpus_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
     # Seconds a repository's document list is cached for the docs section of a brief.
@@ -2091,6 +2125,13 @@ class MemorySettings(BaseModel):
     memory_embeddings_patch_parts_probe_seconds: int = 60
 
     # ---- timeouts, budgets and caches ----
+    # Most memories one blacklist sweep checks against the patterns.
+    memory_blacklist_sweep_limit: Annotated[int, LIVE] = Field(default=5000, ge=1)
+    # Most memories one usage-fold pass folds.
+    memory_usage_fold_max_memories_per_pass: int = Field(default=1000, ge=1)
+    # Seconds one usage-fold pass may run before it stops and leaves the rest to the
+    # next.
+    memory_usage_fold_pass_time_budget_s: float = Field(default=120.0, gt=0)
     # Most unresolved conflicts one conflict-sweep pass re-judges.
     memory_conflict_sweep_max_rows_per_pass: Annotated[int, LIVE] = Field(default=50, ge=0)
     # Seconds a namespace's open-conflict count is cached between reads.
@@ -2748,6 +2789,8 @@ class MemorySearchSettings(BaseModel):
     memory_search_fact_leg_max_threads: Annotated[int, LIVE] = 0
 
     # ---- timeouts, budgets and caches ----
+    # Seconds a stored page of search results stays readable by its cursor.
+    memory_search_pages_ttl_s: Annotated[int, LIVE] = Field(default=1800, gt=0)
     # Seconds the BM25 corpus statistics (document count, mean length) of a namespace
     # are cached.
     memory_search_bm25_cache_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
@@ -3984,6 +4027,10 @@ class TrackerSettings(BaseModel):
     tracker_test_signal_smell_chunks: int = 6
 
     # ---- timeouts, budgets and caches ----
+    # Seconds one git call of the patch-history check may run.
+    tracker_patch_line_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
+    # Seconds a tracker source's status snapshot is reused.
+    tracker_snapshot_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # Seconds the tracker source contract check may take when a listing reports it.
     tracker_contract_check_budget_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
     # Seconds a namespace's stored duplicate-check fit is cached.

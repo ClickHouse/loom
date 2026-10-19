@@ -23,7 +23,6 @@ from server.settings import settings
 
 logger = logging.getLogger("loom.code.fork_upstream")
 
-CACHE_TTL_S = 24 * 3600.0
 MAX_CANDIDATES = 3
 
 MAX_CACHE = 4096
@@ -36,7 +35,9 @@ _SLUG = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,38})/(?!\.{1,2}$)[a-z0-9._-]{1,100}
 
 # slug -> upstream slugs; a failed read is kept `code_fork_upstream_miss_ttl_s` as "not a
 # known fork".
-_cache: TtlCache[str, tuple[str, ...]] = TtlCache(CACHE_TTL_S, maxsize=MAX_CACHE)
+_cache: TtlCache[str, tuple[str, ...]] = TtlCache(
+    lambda: settings.code_fork_upstream_cache_ttl_s, maxsize=MAX_CACHE
+)
 
 
 def valid_slug(slug: str) -> bool:

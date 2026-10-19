@@ -68,7 +68,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
@@ -80,10 +80,6 @@ from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
 
-# Bounds the mutation burst of a single batch (mainly the post-restart catch-up).
-MAX_MEMORIES_PER_PASS = 1000
-# A pass keeps taking batches while it is behind, up to this wall-clock budget.
-PASS_TIME_BUDGET_SECONDS = 120.0
 # Rows per UPDATE statement; keeps the transform() arrays and the IN list bounded.
 UPDATE_CHUNK_ROWS = 500
 # ClickHouse error codes that mean "lightweight UPDATE is not available here"
@@ -128,8 +124,12 @@ class _CHClient(Protocol):
 
 @dataclass(frozen=True)
 class UsageFoldConfig:
-    max_memories_per_pass: int = MAX_MEMORIES_PER_PASS
-    pass_time_budget_seconds: float = PASS_TIME_BUDGET_SECONDS
+    max_memories_per_pass: int = field(
+        default_factory=lambda: settings.memory_usage_fold_max_memories_per_pass
+    )
+    pass_time_budget_seconds: float = field(
+        default_factory=lambda: settings.memory_usage_fold_pass_time_budget_s
+    )
     update_chunk_rows: int = UPDATE_CHUNK_ROWS
 
 

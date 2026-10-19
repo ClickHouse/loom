@@ -61,8 +61,10 @@ logger = logging.getLogger(__name__)
 _LEDGER_LIMIT = 200
 _RELEASE_BASIS = "branch-cut tags (v<minor>.1.1-new dates); backport titles"
 # (git_dir, kind, key...) -> value; blame text, window graphs and branch points,
-# each CACHE_TTL_S
-_CACHE: TtlCache[tuple[Any, ...], Any] = TtlCache(br.CACHE_TTL_S, maxsize=512)
+# each `code_blame_cache_ttl_s`
+_CACHE: TtlCache[tuple[Any, ...], Any] = TtlCache(
+    lambda: settings.code_blame_cache_ttl_s, maxsize=512
+)
 
 
 # (git_dir, base sha) -> (tip, the `base..tip` graph): the widest window read so

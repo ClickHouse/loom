@@ -42,11 +42,6 @@ from server.settings import settings
 logger = logging.getLogger(__name__)
 
 
-# The status is caller-independent and costly per repository (a state read plus four git
-# subprocesses; a serial listing of ~20 repositories took over a second), so one answer per
-# (org, namespace) serves every caller for `_STATUS_TTL_S`, and a cold listing computes the
-# misses concurrently under a small semaphore instead of in series.
-_STATUS_TTL_S = 30.0
 _status_cache: dict[tuple[str, str], tuple[float, CodeIndexStatusOutput]] = {}
 _status_sem = asyncio.Semaphore(8)
 
@@ -54,7 +49,7 @@ _status_sem = asyncio.Semaphore(8)
 async def _repo_status_cached(
     cfg: Any,
     *,
-    max_age_s: float = _STATUS_TTL_S,
+    max_age_s: float | None = None,
     state: IndexState | None = None,
     listing: bool = False,
 ) -> CodeIndexStatusOutput:
@@ -62,6 +57,8 @@ async def _repo_status_cached(
     background refresh so the next caller gets a fresh one — a listing is never slower than a
     dict read once the cache is warm (a lapsed 30 s window would otherwise make a page load pay
     a cold `code.repos`). Missing: compute."""
+    if max_age_s is None:
+        max_age_s = settings.code_status_ttl_s
     key = (cfg.org, cfg.namespace)
     hit = _status_cache.get(key)
     now = time.monotonic()
@@ -87,11 +84,13 @@ STATUS_SNAPSHOT_KEY = "status_snapshot"
 
 
 def published_status_snapshot(
-    state: IndexState | None, *, max_age_s: float = _STATUS_TTL_S
+    state: IndexState | None, *, max_age_s: float | None = None
 ) -> CodeIndexStatusOutput | None:
     """The `status_snapshot` state row another
     process published within `max_age_s`, as the status it holds; None for
     no row, a stale one, or one that does not parse (the caller computes)."""
+    if max_age_s is None:
+        max_age_s = settings.code_status_ttl_s
     if not state:
         return None
     row = state.get(STATUS_SNAPSHOT_KEY)
@@ -164,7 +163,7 @@ async def _compute_repo_status(
     key = (cfg.org, cfg.namespace)
     async with _status_sem:
         hit = _status_cache.get(key)
-        if hit is not None and time.monotonic() - hit[0] < _STATUS_TTL_S:
+        if hit is not None and time.monotonic() - hit[0] < settings.code_status_ttl_s:
             return hit[1]
         # a caller without a prefetched state (code.index_status, tests' fakes)
         # keeps the one-argument call
@@ -198,12 +197,11 @@ def reset_repo_status_cache() -> None:
 # state read, a counts read, four git subprocesses and the same 14-day worker-ledger query.
 # The count of first-parent commits between two fixed shas never changes, so it is
 # remembered per (clone, since, until); the ledger answer is one per process per
-# `_LEDGER_PASSES_TTL_S`.
+# `code_status_ledger_passes_ttl_s`.
 _lag_cache: dict[tuple[str, str, str], int] = {}
 _LAG_CACHE_MAX = 4096
-_LEDGER_PASSES_TTL_S = 15.0
 _ledger_passes_cache: TtlCache[str, dict[str, dict[str, Any]]] = TtlCache(
-    _LEDGER_PASSES_TTL_S, maxsize=16
+    lambda: settings.code_status_ledger_passes_ttl_s, maxsize=16
 )
 
 
@@ -505,7 +503,7 @@ async def _worker_passes_from_ledger(days: int = 14) -> dict[str, dict[str, Any]
     """The newest recorded pass per `code_*` worker from `loom.worker_status`, in the registry
     snapshot's shape, so `code.index_status` reads the same facts whichever container answers.
     Empty on any failure (the caller falls back to the process-local registry). One answer per
-    process per `_LEDGER_PASSES_TTL_S`: every repository's status asks this identical
+    process per `code_status_ledger_passes_ttl_s`: every repository's status asks this identical
     question."""
     from server.core.ch import get_client
 
@@ -628,7 +626,6 @@ async def handle_code_index_status(input: CodeIndexStatusInput) -> CodeIndexStat
 
 _SYMBOL_STATS_CACHE: dict[tuple[str, str], tuple[float, int, str]] = {}
 _UNIT_RISK_CACHE: dict[tuple[str, str], tuple[float, int, str]] = {}
-_SYMBOL_STATS_CACHE_MAX_AGE_S = 600.0
 # "the caller never looked for a published row" — distinct from None, "looked, none
 # there": only the latter computes AND publishes.
 _NOT_LOOKED_UP: Any = object()
@@ -663,7 +660,7 @@ async def symbol_stats_summary_cached(
     org: str,
     ns: str,
     *,
-    max_age_s: float = _SYMBOL_STATS_CACHE_MAX_AGE_S,
+    max_age_s: float | None = None,
     published: Any = _NOT_LOOKED_UP,
 ) -> tuple[int, str]:
     """`symbol_stats_rows` / `symbol_stats_at` for
@@ -671,6 +668,8 @@ async def symbol_stats_summary_cached(
     per namespace for ten minutes in the process (the read scans the
     namespace's stats rows); the read failing open to (0, "") keeps status
     whole."""
+    if max_age_s is None:
+        max_age_s = settings.code_status_symbol_stats_ttl_s
     return await _table_summary_cached(
         _SYMBOL_STATS_CACHE,
         org,
@@ -687,12 +686,14 @@ async def unit_risk_summary_cached(
     org: str,
     ns: str,
     *,
-    max_age_s: float = _SYMBOL_STATS_CACHE_MAX_AGE_S,
+    max_age_s: float | None = None,
     published: Any = _NOT_LOOKED_UP,
 ) -> tuple[int, str]:
     """`unit_risk_rows` / `unit_risk_at` for code.index_status
     — the weekly unit-risk leg's progress, held ten minutes per namespace
     like the stats fields; (0, "") when the read fails."""
+    if max_age_s is None:
+        max_age_s = settings.code_status_symbol_stats_ttl_s
     return await _table_summary_cached(
         _UNIT_RISK_CACHE,
         org,
@@ -797,9 +798,8 @@ async def handle_code_index_errors(input: CodeIndexErrorsInput) -> CodeIndexErro
     )
 
 
-_RECENT_COMMITS_TTL_S = 60.0
 _recent_commits_cache: TtlCache[tuple[str, str, int], list[dict[str, Any]]] = TtlCache(
-    _RECENT_COMMITS_TTL_S, maxsize=256
+    lambda: settings.code_status_recent_commits_ttl_s, maxsize=256
 )
 
 

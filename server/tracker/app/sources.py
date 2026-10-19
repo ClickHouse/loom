@@ -112,16 +112,17 @@ async def _caller_grants(org: str, subject: str, names: list[str]) -> dict[str, 
     return out
 
 
-_SNAPSHOT_TTL_S = 60.0
 CONTRACT_SNAPSHOT_KEY = "qa_contract_snapshot"  # storage key
 FRESHNESS_SNAPSHOT_KEY = "qa_freshness_snapshot"
 
 
 async def _published(
-    org: str, ns: str, key: str, max_age_s: float = _SNAPSHOT_TTL_S
+    org: str, ns: str, key: str, max_age_s: float | None = None
 ) -> dict[str, Any] | None:
     """A view another process published within
     `max_age_s`, from `code_index_state`; None for none, stale or unparsable."""
+    if max_age_s is None:
+        max_age_s = settings.tracker_snapshot_ttl_s
     import json
     from datetime import UTC, datetime
 

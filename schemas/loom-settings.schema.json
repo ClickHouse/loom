@@ -444,6 +444,12 @@
           "type": "integer",
           "description": "Merge-time window (days) for a report naming no release."
         },
+        "code_blame_cache_ttl_s": {
+          "default": 600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds code.blame_range keeps a blame text, a window graph or a branch point per key."
+        },
         "code_blame_graph_timeout_s": {
           "default": 5.0,
           "exclusiveMinimum": 0,
@@ -571,6 +577,12 @@
           "exclusiveMinimum": 0.0,
           "type": "number",
           "description": "Copies per key (active rows / distinct keys) at which a code vector table is OPTIMIZE ... FINAL'd."
+        },
+        "code_compaction_timeout_s": {
+          "default": 900.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a code-table compaction waits for its OPTIMIZE to finish."
         },
         "code_context_description_enabled": {
           "default": true,
@@ -821,6 +833,12 @@
           "type": "number",
           "description": "Seconds the lookup of a repository's fork upstream may take."
         },
+        "code_fork_upstream_cache_ttl_s": {
+          "default": 86400.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a repository's known fork upstreams are cached."
+        },
         "code_fork_upstream_miss_ttl_s": {
           "default": 600.0,
           "exclusiveMinimum": 0,
@@ -1053,6 +1071,12 @@
           "type": "number",
           "description": "Prior ingest cost per changed file (seconds), refined by observation. A commit predicted to overrun the pass deadline is not started unless it is the pass's first."
         },
+        "code_ingest_sibling_text_ttl_s": {
+          "default": 600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the ingest keeps a sibling-text answer (a manifest, a listing, a config, a barrel)."
+        },
         "code_ingest_slice_share": {
           "default": 0.5,
           "maximum": 1.0,
@@ -1101,6 +1125,12 @@
           "minimum": 0,
           "type": "integer",
           "description": "Most commits the mirror's git log prints when it searches for merge commits."
+        },
+        "code_message_grep_error_codes_ttl_s": {
+          "default": 600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a repository's error-code table is cached for message search."
         },
         "code_mirror_clone_wait_s": {
           "default": 10.0,
@@ -1204,6 +1234,18 @@
           "default": 900,
           "type": "integer",
           "description": "Seconds between PR-history sync passes."
+        },
+        "code_pr_overlay_cache_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a PR overlay (the PR's changed files over its base) is cached."
+        },
+        "code_pr_overlay_file_ttl_s": {
+          "default": 3600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one PR file's parse is kept, so a push that changes one file re-parses that file alone; a PR's next review follows its next push."
         },
         "code_pr_reviews_enabled": {
           "default": true,
@@ -1839,11 +1881,35 @@
           "type": "number",
           "description": "Seconds an entry's chunk counts are cached while it is still building: they move then without a watermark moving."
         },
+        "code_status_ledger_passes_ttl_s": {
+          "default": 15.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds code.repos keeps the worker-ledger answer every repository's status shares."
+        },
+        "code_status_recent_commits_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a repository's recent-commits listing for code.repos is cached."
+        },
         "code_status_steady_counts_ttl_s": {
           "default": 600.0,
           "exclusiveMinimum": 0,
           "type": "number",
           "description": "Seconds an indexed entry's chunk counts are cached once it is no longer building."
+        },
+        "code_status_symbol_stats_ttl_s": {
+          "default": 600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds an entry's symbol statistics are cached for its status."
+        },
+        "code_status_ttl_s": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one (org, namespace)'s index status serves every caller before it is computed again."
         },
         "code_summary_churn_days": {
           "default": 365,
@@ -2430,6 +2496,12 @@
           "exclusiveMinimum": 0,
           "type": "number",
           "description": "Seconds a repository's document list is cached for the docs section of a brief."
+        },
+        "knowledge_repo_docs_timeout_s": {
+          "default": 1.5,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the repository-docs read for a brief may take."
         },
         "langfuse_capture_io_level": {
           "default": "off",
@@ -3120,6 +3192,12 @@
           "default": true,
           "type": "boolean",
           "description": "Tag rows mentioning a protected attribute or common proxy with `attribute:<class>` at write time (gender, religion, health, age, family, income, ethnicity, sexuality, politics). A label, never a gate; the profile fold leaves such rows out."
+        },
+        "memory_blacklist_sweep_limit": {
+          "default": 5000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most memories one blacklist sweep checks against the patterns."
         },
         "memory_bulk_contextualize_allowed": {
           "default": true,
@@ -3846,6 +3924,12 @@
           "type": "integer",
           "description": "Seconds a parked page (a `paging=true` search's tail) stays fetchable before the TTL merge reclaims it."
         },
+        "memory_search_pages_ttl_s": {
+          "default": 1800,
+          "exclusiveMinimum": 0,
+          "type": "integer",
+          "description": "Seconds a stored page of search results stays readable by its cursor."
+        },
         "memory_search_per_key_cap": {
           "default": 3,
           "type": "integer",
@@ -4005,11 +4089,23 @@
           "type": "integer",
           "description": "Most exposure rows one usage-fold pass reads to credit acted-on memories; the watermark holds until a pass drains below it."
         },
+        "memory_usage_fold_max_memories_per_pass": {
+          "default": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most memories one usage-fold pass folds."
+        },
         "memory_usage_fold_max_pending_mutations": {
           "default": 20,
           "minimum": 0,
           "type": "integer",
           "description": "Backpressure: a pass is skipped — watermark untouched — while the destination table already carries this many unfinished mutations on the connected replica. Every lightweight UPDATE is a patch part plus a Keeper log entry; enough of them pending on a large table can expire replicas' Keeper sessions and leave them read-only."
+        },
+        "memory_usage_fold_pass_time_budget_s": {
+          "default": 120.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one usage-fold pass may run before it stops and leaves the rest to the next."
         },
         "memory_used_cited_reinforcement_weight": {
           "anyOf": [
@@ -4648,6 +4744,12 @@
           "type": "number",
           "description": "Seconds between re-reads of loom.runtime_overrides (the admin rate-limit, latency-budget and live-setting overrides) in every process."
         },
+        "schema_status_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the schema status (applied against shipped migrations) is cached for the health probe."
+        },
         "search_trace_log_enabled": {
           "default": false,
           "type": "boolean",
@@ -5182,6 +5284,12 @@
           "type": "string",
           "description": "The loom org the tracker namespaces belong to; empty (default) = none, so no tracker namespace serves and self-service sources are refused until it is set."
         },
+        "tracker_patch_line_timeout_s": {
+          "default": 3.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one git call of the patch-history check may run."
+        },
         "tracker_restricted_repos_json": {
           "default": "",
           "type": "string",
@@ -5226,6 +5334,12 @@
           "default": true,
           "type": "boolean",
           "description": "Whether tracker.similar's vector leg (over loom.qa_item_embeddings, filled by the `tracker_embed` pass) is in the default leg set; a caller naming `vector` in `legs` runs it regardless. The leg only adds candidates, after the ranked legs (the agreement boost below aside)."
+        },
+        "tracker_snapshot_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a tracker source's status snapshot is reused."
         },
         "tracker_source_check_timeout_s": {
           "default": 8.0,

@@ -35,7 +35,6 @@ UNKNOWN = "unknown"
 # Bounds: one blame per call, at most this many lines, cached this long per key; the git
 # calls are bounded by `code_blame_timeout_s` and `code_blame_graph_timeout_s`.
 MAX_LINES = 400
-CACHE_TTL_S = 600.0
 # The side-branch commits one blamed commit's merge search may visit (off the
 # first-parent chain only). 431 was the most any of 2,613 blamed commits over five
 # ClickHouse files needed.
@@ -707,7 +706,6 @@ def _iso_from_unix(ts: int) -> str:
 
 
 __all__ = [
-    "CACHE_TTL_S",
     "CANDIDATES",
     "MAX_LINES",
     "NOTE",

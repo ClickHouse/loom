@@ -92,13 +92,11 @@ server/code/app/index/commit_coverage.py::PATHS_CAP
 server/code/app/index/commit_coverage.py::_MEMO_MAX
 server/code/app/index/commit_coverage.py::_PATHS_MEMO_MAX
 server/code/app/index/compaction.py::DEFAULT_POLL_S
-server/code/app/index/compaction.py::DEFAULT_TIMEOUT_S
 server/code/app/index/describe.py::_DESCRIBE_MAX_CHARS
 server/code/app/index/egress.py::MAX_TUNNELS
 server/code/app/index/embed_text.py::EMBED_MAX_CHARS
 server/code/app/index/embed_text.py::EMBED_MAX_TOKENS
 server/code/app/index/entry_lock.py::_POLL_S
-server/code/app/index/fork_upstream.py::CACHE_TTL_S
 server/code/app/index/fork_upstream.py::MAX_CACHE
 server/code/app/index/fork_upstream.py::MAX_CANDIDATES
 server/code/app/index/gitrepo.py::_RENAME_LIMIT
@@ -110,7 +108,6 @@ server/code/app/index/ingest_edges.py::_MAX_PY_INIT_TEXTS
 server/code/app/index/ingest_headers.py::_HEADER_CACHE_MAX
 server/code/app/index/ingest_headers.py::_HEADER_CAP
 server/code/app/index/ingest_resolve.py::_MAX_INCLUDE_PROBES
-server/code/app/index/ingest_resolve.py::_PACKAGE_JSON_TTL_S
 server/code/app/index/ingest_stats.py::_ERROR_MAX_CHARS
 server/code/app/index/matrix.py::DEFAULT_MAX_ROWS
 server/code/app/index/merge_shas.py::SINCE_SLACK_S
@@ -123,8 +120,6 @@ server/code/app/index/pr_overlay.py::MAX_FILES
 server/code/app/index/pr_overlay.py::MAX_FILE_BYTES
 server/code/app/index/pr_overlay.py::MAX_NAMES
 server/code/app/index/pr_overlay.py::_CACHE_MAX
-server/code/app/index/pr_overlay.py::_CACHE_TTL_S
-server/code/app/index/pr_overlay.py::_FILE_TTL_S
 server/code/app/index/pr_reviews.py::MAX_PER_PR
 server/code/app/index/pr_reviews.py::MAX_ROWS
 server/code/app/index/repo_registry.py::_NS_MAX
@@ -144,12 +139,7 @@ server/code/app/index/symbol_forms.py::TAIL_READ_LIMIT
 server/code/app/index/task_pack.py::CO_CHANGE_CAP
 server/code/app/index/task_pack.py::TESTS_CAP
 server/code/app/index_status.py::_LAG_CACHE_MAX
-server/code/app/index_status.py::_LEDGER_PASSES_TTL_S
-server/code/app/index_status.py::_RECENT_COMMITS_TTL_S
 server/code/app/index_status.py::_SNAPSHOT_STATE_VALUE_MAX
-server/code/app/index_status.py::_STATUS_TTL_S
-server/code/app/index_status.py::_SYMBOL_STATS_CACHE_MAX_AGE_S
-server/code/app/message_grep.py::ERROR_CODES_TTL_S
 server/code/app/message_grep.py::MAX_NEEDLES
 server/code/app/message_grep.py::WINDOW_LINES
 server/code/app/presence.py::MAX_NAMESPACES
@@ -228,7 +218,6 @@ server/code/domain/extract/tokenize.py::_MAX_TOKENS
 server/code/domain/extract/ts_config.py::_MAX_EXTENDS
 server/code/domain/extract/ts_reexports.py::MAX_DEPTH
 server/code/domain/facets.py::_MAX_FACET_ITEMS
-server/code/domain/index/blame_range.py::CACHE_TTL_S
 server/code/domain/index/blame_range.py::MAX_COMMITS_SHOWN
 server/code/domain/index/blame_range.py::MAX_LINES
 server/code/domain/index/blame_range.py::MAX_MERGE_WALK
@@ -287,7 +276,6 @@ server/core/rmt_carry.py::_POLL_S
 server/core/rmt_carry.py::_RELEASE_MARGIN_S
 server/core/rmt_carry.py::_SKEW_REFRESH_S
 server/core/rmt_carry.py::_TRANSIT_S
-server/core/schema/status.py::TTL_SECONDS
 server/core/vectors/codes_state.py::FRESH_READING_S
 server/core/vectors/codes_state.py::REFRESH_AHEAD_S
 server/core/vectors/codes_state.py::REFUSAL_READING_S
@@ -335,7 +323,6 @@ server/insights/workers/audit_verifier.py::MAX_BREAK_KEYS
 server/knowledge/app/download_routes.py::_BUFFER_MAX_BYTES
 server/knowledge/app/repo_docs.py::DOCS_SECTION_MAX_DOCS
 server/knowledge/app/repo_docs.py::DOCS_SECTION_MAX_TOKENS
-server/knowledge/app/repo_docs.py::REPO_DOCS_TIMEOUT_S
 server/knowledge/workers/blob_gc.py::_BATCH
 server/knowledge/workers/blob_gc.py::_MAX_BATCHES
 server/llm/client.py::_MAX_OVERRIDE_CLIENTS
@@ -365,7 +352,6 @@ server/memory/app/ask_when_evidence.py::_CUE_WINDOW_MAX_DAYS
 server/memory/app/blacklist_guard.py::REGEX_MAX_LENGTH
 server/memory/app/blacklist_guard.py::REGEX_PROBE_BUDGET_MS
 server/memory/app/blacklist_guard.py::_HIT_FLUSH_INTERVAL_S
-server/memory/app/blacklist_sweep.py::SWEEP_LIMIT
 server/memory/app/brief.py::_EXCERPT_CAP
 server/memory/app/bulk_verdicts.py::_FIRST_DATE_MAX_GAP_DAYS
 server/memory/app/chunk_projection.py::_ENUM_MAX_CHARS
@@ -420,7 +406,6 @@ server/memory/app/search/query_spelling.py::_MAX_BACKOFF_S
 server/memory/app/search/query_spelling.py::_MAX_DOUBLINGS
 server/memory/app/search_llm.py::_QUERY_ENTITY_CACHE_MAX
 server/memory/app/search_llm.py::_VERB_SYNONYM_CACHE_MAX
-server/memory/app/search_pages.py::DEFAULT_TTL_S
 server/memory/app/session_brief.py::_MAX_SOURCE_SESSIONS
 server/memory/app/session_summary.py::_SESSION_SUMMARY_MAX_INPUT_CHARS
 server/memory/app/session_summary.py::_SESSION_SUMMARY_MAX_KEY_FACTS
@@ -469,8 +454,6 @@ server/memory/store/usage.py::_USAGE_FLUSH_INTERVAL_S
 server/memory/workers/entity_extractor.py::_PARSE_FAIL_STREAKS_CAP
 server/memory/workers/usage_fold.py::ACTED_EXPOSURE_LOOKBACK_SECONDS
 server/memory/workers/usage_fold.py::ACTED_WRITE_LAG_SECONDS
-server/memory/workers/usage_fold.py::MAX_MEMORIES_PER_PASS
-server/memory/workers/usage_fold.py::PASS_TIME_BUDGET_SECONDS
 server/memory/workers/usage_fold.py::_UINT32_MAX
 server/observability/budget_shape.py::_SHAPE_MAX
 server/observability/capture_consent.py::_MAX_ENTRIES
@@ -535,10 +518,8 @@ server/tracker/app/links.py::MAX_SYMBOLS
 server/tracker/app/links.py::WINDOW_BEFORE_DAYS
 server/tracker/app/onboarding.py::_INSPECT_MAX_TABLES
 server/tracker/app/patch_history.py::ADDED_ABSENT_MAX
-server/tracker/app/patch_history.py::LINE_TIMEOUT_S
 server/tracker/app/patch_history.py::REMOVED_REMNANT_MAX
 server/tracker/app/patch_history.py::_REAP_TIMEOUT_S
-server/tracker/app/sources.py::_SNAPSHOT_TTL_S
 server/tracker/domain/backport.py::_MAX_FILES
 server/tracker/domain/backport.py::_MAX_SYMBOLS
 server/tracker/domain/bisect.py::_MAX_PATTERNS

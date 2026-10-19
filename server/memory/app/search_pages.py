@@ -30,10 +30,10 @@ from datetime import timedelta
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.settings import settings
 
 PAGE_PREFIX = "page/"
 PAGE_VERSION = 1
-DEFAULT_TTL_S = 1800
 
 
 def hit_key(h: Any) -> tuple[str, str]:
@@ -131,7 +131,7 @@ async def store_page(
     session_id: str,
     run_id: str,
     content: str,
-    ttl_s: int = DEFAULT_TTL_S,
+    ttl_s: int | None = None,
 ) -> str:
     """Park the encoded tail; returns the blob key. Content-addressed, so an
     identical tail (a repeated search) is one row under the ReplacingMergeTree.
@@ -144,6 +144,8 @@ async def store_page(
     ClickHouse's, not this replica's, so a Loom restart loses no page; a page
     lost with a ClickHouse node answers `page_expired` and the caller re-runs
     the search."""
+    if ttl_s is None:
+        ttl_s = settings.memory_search_pages_ttl_s
     key = page_blob_key(content)
     now = naive_utc_now()
     await ch.insert(

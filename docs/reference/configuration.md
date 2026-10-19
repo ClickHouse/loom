@@ -136,6 +136,12 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER` | `float` | `3.0` |  | Over-fetch for the codes-first read: stage 1 keeps LIMIT × this by code distance, stage 2 rescores. Only read when the codes setting is sent. |
 | `LOOM_VECTOR_CODES_STATE_PROBE_SECONDS` | `int` | `60` |  | Seconds between re-reads of which vector columns are coded and which coded tables carry patch parts. A write that embeds reads again on its own when the reading is older than a few seconds (codes_state.FRESH_READING_S). |
 
+### Timeouts, budgets and caches
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_SCHEMA_STATUS_TTL_S` | `float` | `60.0` | live | Seconds the schema status (applied against shipped migrations) is cached for the health probe. |
+
 ## Code
 
 The code plane: ingest, indexes, search, ask, review.
@@ -501,6 +507,17 @@ The code plane: ingest, indexes, search, ask, review.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
+| `LOOM_CODE_COMPACTION_TIMEOUT_S` | `float` | `900.0` | live | Seconds a code-table compaction waits for its OPTIMIZE to finish. |
+| `LOOM_CODE_STATUS_TTL_S` | `float` | `30.0` | live | Seconds one (org, namespace)'s index status serves every caller before it is computed again. |
+| `LOOM_CODE_STATUS_SYMBOL_STATS_TTL_S` | `float` | `600.0` | live | Seconds an entry's symbol statistics are cached for its status. |
+| `LOOM_CODE_BLAME_CACHE_TTL_S` | `float` | `600.0` | live | Seconds code.blame_range keeps a blame text, a window graph or a branch point per key. |
+| `LOOM_CODE_FORK_UPSTREAM_CACHE_TTL_S` | `float` | `86400.0` | live | Seconds a repository's known fork upstreams are cached. |
+| `LOOM_CODE_INGEST_SIBLING_TEXT_TTL_S` | `float` | `600.0` | live | Seconds the ingest keeps a sibling-text answer (a manifest, a listing, a config, a barrel). |
+| `LOOM_CODE_PR_OVERLAY_CACHE_TTL_S` | `float` | `60.0` | live | Seconds a PR overlay (the PR's changed files over its base) is cached. |
+| `LOOM_CODE_PR_OVERLAY_FILE_TTL_S` | `float` | `3600.0` | live | Seconds one PR file's parse is kept, so a push that changes one file re-parses that file alone; a PR's next review follows its next push. |
+| `LOOM_CODE_STATUS_LEDGER_PASSES_TTL_S` | `float` | `15.0` | live | Seconds code.repos keeps the worker-ledger answer every repository's status shares. |
+| `LOOM_CODE_STATUS_RECENT_COMMITS_TTL_S` | `float` | `60.0` | live | Seconds a repository's recent-commits listing for code.repos is cached. |
+| `LOOM_CODE_MESSAGE_GREP_ERROR_CODES_TTL_S` | `float` | `600.0` | live | Seconds a repository's error-code table is cached for message search. |
 | `LOOM_CODE_BISECT_FIX_BLAME_BUDGET_S` | `float` | `8.0` | live | Seconds the fix-blame stage of code.bisect_candidates may run. |
 | `LOOM_CODE_BLAME_GRAPH_TIMEOUT_S` | `float` | `5.0` | live | Seconds the commit-graph read of code.blame_range may run. |
 | `LOOM_CODE_BLAME_INTRODUCED_DIFF_TIMEOUT_S` | `float` | `5.0` | live | Seconds one `git diff` of the introduced-by test may run. |
@@ -646,6 +663,7 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_REPO_DOCS_TIMEOUT_S` | `float` | `1.5` | live | Seconds the repository-docs read for a brief may take. |
 | `LOOM_KNOWLEDGE_BM25_CORPUS_TTL_S` | `float` | `300.0` | live | Seconds the BM25 corpus statistics of a knowledge namespace are cached. |
 | `LOOM_KNOWLEDGE_REPO_DOCS_LIST_TTL_S` | `float` | `60.0` | live | Seconds a repository's document list is cached for the docs section of a brief. |
 
@@ -855,6 +873,9 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_BLACKLIST_SWEEP_LIMIT` | `int` | `5000` | live | Most memories one blacklist sweep checks against the patterns. |
+| `LOOM_MEMORY_USAGE_FOLD_MAX_MEMORIES_PER_PASS` | `int` | `1000` |  | Most memories one usage-fold pass folds. |
+| `LOOM_MEMORY_USAGE_FOLD_PASS_TIME_BUDGET_S` | `float` | `120.0` |  | Seconds one usage-fold pass may run before it stops and leaves the rest to the next. |
 | `LOOM_MEMORY_CONFLICT_SWEEP_MAX_ROWS_PER_PASS` | `int` | `50` | live | Most unresolved conflicts one conflict-sweep pass re-judges. |
 | `LOOM_MEMORY_CONFLICTS_COUNT_TTL_S` | `float` | `60.0` | live | Seconds a namespace's open-conflict count is cached between reads. |
 | `LOOM_MEMORY_COVERAGE_SWEEP_GATE_TTL_S` | `float` | `60.0` | live | Seconds a namespace's coverage-sweep override is cached. |
@@ -1044,6 +1065,7 @@ memory.search: legs, fusion, ranking and gates.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_SEARCH_PAGES_TTL_S` | `int` | `1800` | live | Seconds a stored page of search results stays readable by its cursor. |
 | `LOOM_MEMORY_SEARCH_BM25_CACHE_TTL_S` | `float` | `300.0` | live | Seconds the BM25 corpus statistics (document count, mean length) of a namespace are cached. |
 | `LOOM_MEMORY_SEARCH_SPELLING_LOOKUP_TIMEOUT_S` | `float` | `0.4` | live | The lookup reads every row of the namespace it may read: 100-300 ms server-side for 40k rows. On a cache miss it overlaps the embed. |
 
@@ -1514,6 +1536,8 @@ The tracker plane: records, duplicate checks, bisect.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
+| `LOOM_TRACKER_PATCH_LINE_TIMEOUT_S` | `float` | `3.0` | live | Seconds one git call of the patch-history check may run. |
+| `LOOM_TRACKER_SNAPSHOT_TTL_S` | `float` | `60.0` | live | Seconds a tracker source's status snapshot is reused. |
 | `LOOM_TRACKER_CONTRACT_CHECK_BUDGET_S` | `float` | `3.0` | live | Seconds the tracker source contract check may take when a listing reports it. |
 | `LOOM_TRACKER_DUPCHECK_FIT_TTL_S` | `float` | `300.0` | live | Seconds a namespace's stored duplicate-check fit is cached. |
 | `LOOM_TRACKER_DUPCHECK_LINKS_BUDGET_S` | `float` | `1.5` | live | Seconds the duplicate check's links and release reads may take together (measured p50 about 0.3 s). |
