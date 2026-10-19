@@ -228,6 +228,9 @@ const controlId = (kind: "change" | "value", name: string) => `setting-${kind}-$
 function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () => void }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // The value the edit started from: a Save sends it as `expected`, so a change made
+  // elsewhere while the field was open is refused even when a Refresh shows it.
+  const [expected, setExpected] = useState<SettingRow["value"]>(null);
   const [busy, setBusy] = useState(false);
   // The control that takes focus once it renders: the edit field when Change opens it,
   // the row's Change button when Save, Cancel or Reset takes the focused one away. After
@@ -249,7 +252,7 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
   const save = async (row: SettingRow) => {
     setBusy(true);
     try {
-      const after = await adminSettingSet(row.name, parsed(draft, row), row.value);
+      const after = await adminSettingSet(row.name, parsed(draft, row), expected);
       toast(`${row.name} is ${shown(after.value)} on every replica within seconds`, "ok");
       close(row.name, true);
       onChanged();
@@ -341,6 +344,7 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
                   onClick={() => {
                     setEditing(r.name);
                     setDraft(shown(r.value));
+                    setExpected(r.value);
                     setFocusNext({ id: controlId("value", r.name) });
                   }}
                 >

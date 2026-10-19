@@ -109,6 +109,23 @@ describe("DeploymentSettings", () => {
     await waitFor(() => expect(api.adminSettingsList).toHaveBeenCalledTimes(2));
   });
 
+  it("sends the value the edit started from after a Refresh shows a newer one", async () => {
+    render(<DeploymentSettings />);
+    fireEvent.click(await screen.findByRole("button", { name: "Change memory_ask_recency_weight" }));
+    fireEvent.change(screen.getByLabelText("New value for memory_ask_recency_weight"), { target: { value: "0.4" } });
+    // Another admin sets 0.5 while the field is open; Refresh shows it.
+    api.adminSettingsList.mockResolvedValue([row({ value: 0.5 }), ROWS[1]]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    });
+    await waitFor(() => expect(api.adminSettingsList).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    // Save names the value the edit saw, so the server refuses it rather than overwrite 0.5.
+    expect(api.adminSettingSet).toHaveBeenCalledWith("memory_ask_recency_weight", 0.4, 0.35);
+  });
+
   it("returns focus to Change once a save's list read lands", async () => {
     render(<DeploymentSettings />);
     fireEvent.click(await screen.findByRole("button", { name: "Change memory_ask_recency_weight" }));
