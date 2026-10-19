@@ -3,9 +3,10 @@ deactivate and reactivate people (`server/auth/scim.py`).
 
 Mounted only when `LOOM_SCIM_TOKEN` is set, and that bearer token is the only
 credential these routes take. A user resource carries `userName`, the `emails`
-list (Loom keys the user on the entries with an address: the one marked
-primary, else the first work one, else the first; with none, `userName`) and
-`active`; other attributes a provider sends are accepted and not kept.
+list (Loom keys the user on one of the entries with an address: the one
+marked primary, else the first work one, else the first; with none, on
+`userName`) and `active`; other attributes a provider sends are accepted and
+not kept.
 """
 
 from __future__ import annotations
@@ -412,7 +413,7 @@ async def _body(request: Request) -> dict[str, Any]:
 
 
 def _rank(entry: dict[str, Any]) -> int:
-    """Which emails entry Loom keys on: the primary, else the work one, else the first."""
+    """Which emails entry Loom keys on: the primary, else the first work one, else the first."""
     if scim.is_primary(entry.get("primary")):
         return 2
     return 1 if _type(entry) == "work" else 0
