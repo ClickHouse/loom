@@ -326,8 +326,9 @@ In Okta, on the app integration from [Okta setup](#okta-setup):
 3. **Provisioning → To App → Edit:** enable **Create Users**, **Update User
    Attributes** and **Deactivate Users**, and save. Loom keeps no attributes
    but the `userName` (a rename is kept) and the email, which cannot change.
-   With updates on, a changed email shows as a failed task in Okta (see
-   [Changing a person's email](#changing-a-persons-email)). With updates off,
+   With updates on, a changed email shows as a failed task in Okta (Entra
+   logs the same refusal); follow
+   [Changing a person's email](#changing-a-persons-email). With updates off,
    Okta never says the email changed: the person's next sign-in makes a new
    account under the new address, which a later deactivation of the old one
    misses.
@@ -468,10 +469,23 @@ provider first anyone who should keep Loom.
 
 ### Changing a person's email
 
-Loom keys a SCIM user on the address, so a new address is a new user: remove
-the person from the app at the provider (which deactivates the old address
-and revokes the accounts it reaches) and assign them again with the new one.
-Their next sign-in carries the new address. What happens to the old account:
+Loom keys a SCIM user on the address and refuses a change of it (400), so a
+new address must arrive as a new SCIM user. Until it does, a sign-in with the
+new address makes an account no SCIM user reaches, which the old address's
+deactivation misses. Change it before the person signs in with the new one:
+
+1. Remove the person from the app at the provider. That deactivates the old
+   address and revokes the accounts it reaches.
+2. In Entra, also delete the old SCIM user: Entra matches users on
+   `userName` (the UPN), which an email change keeps, so a reassignment would
+   find the old user and send the new address as a change Loom refuses. Find
+   its id with `GET /scim/v2/Users?filter=userName eq "<upn>"`, then
+   `DELETE /scim/v2/Users/<id>`, both with the SCIM token. Okta looks users
+   up by `userName`, which is the email there, so it creates a new one
+   itself.
+3. Assign the person again. The provider creates the new address's SCIM user.
+
+What happens to the old account:
 
 - A password account: point it at the new address with
   `loom sso link --email <new> --org <org> --namespace <ns> --apply`. The old

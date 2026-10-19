@@ -443,3 +443,12 @@ def test_a_scim_give_back_starts_past_the_revocations_second_and_the_skew(
     # Narrowed now, the floor is that cutoff: a later one may follow, an earlier one not.
     assert give_back(floor - timedelta(seconds=1)) == 2
     assert give_back(floor + timedelta(seconds=5)) == 0
+
+
+def test_a_plain_narrowing_says_scim_still_revokes_it(
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str]
+) -> None:
+    asyncio.run(revocation.scim_revoke("alice", reason="scim: deactivated", revoked_by="scim"))
+    when = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert cli.main(["revoke-token", "--subject", "alice", "--issued-before", when]) == 0
+    assert "SCIM also revokes 'alice' outright" in capsys.readouterr().err

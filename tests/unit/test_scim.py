@@ -2096,6 +2096,31 @@ def test_a_disable_beside_a_refused_active_op_still_deactivates(client: TestClie
     assert world.ours == {"lee": None}  # fails closed
 
 
+def test_an_entra_email_change_goes_through_a_delete_and_a_new_user(
+    client: TestClient, world
+) -> None:
+    # Entra matches on the UPN, which an email change keeps.
+    def user(mail: str) -> dict[str, Any]:
+        return {"userName": "lee.upn@tenant.example", "emails": [{"type": "work", "value": mail}]}
+
+    old = client.post("/scim/v2/Users", json=user("lee@corp.example")).json()["id"]
+    change = {
+        "Operations": [
+            {"op": "Replace", "path": 'emails[type eq "work"].value', "value": "lee@new.example"}
+        ]
+    }
+    assert client.patch(f"/scim/v2/Users/{old}", json=change).status_code == 400
+    # The guide's steps: unassigned (deactivated), the old user deleted, then assigned again.
+    off = {"Operations": [{"op": "Replace", "path": "active", "value": "False"}]}
+    assert client.patch(f"/scim/v2/Users/{old}", json=off).status_code == 200
+    assert client.delete(f"/scim/v2/Users/{old}").status_code == 204
+    found = client.get("/scim/v2/Users", params={"filter": 'userName eq "lee.upn@tenant.example"'})
+    assert found.json()["totalResults"] == 0
+    new = client.post("/scim/v2/Users", json=user("lee@new.example"))
+    assert new.status_code == 201 and new.json()["id"] != old
+    assert new.json()["emails"][0]["value"] == "lee@new.example"
+
+
 def test_groups_is_an_empty_list(client: TestClient) -> None:
     # What Okta's and Entra's connection tests read when group push is on.
     r = client.get(

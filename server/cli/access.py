@@ -273,6 +273,24 @@ def _parse_expires_at(value: str | None) -> Any:
     return dt
 
 
+async def _warn_about_a_narrowing(subject: str) -> None:
+    """Say what a cutoff on `subject`'s own row replaces, and what it leaves."""
+    from server.auth import revocation
+
+    if await revocation.has_outright_row(subject):
+        print(
+            f"  ! {subject!r} is revoked outright; this replaces that, and its tokens "
+            "issued after the cutoff work again",
+            file=sys.stderr,
+        )
+    scim_row = (await revocation.scim_revocations([subject])).get(subject)
+    if scim_row is not None and scim_row["issued_before"] is None:
+        print(
+            f"  ! SCIM also revokes {subject!r} outright, which this leaves: --scim gives it back",
+            file=sys.stderr,
+        )
+
+
 async def _scim_give_back(
     subject: str, issued_before: Any, reason: str, by: str
 ) -> tuple[dict[str, Any] | None, int]:
@@ -364,12 +382,8 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
             if row is None:
                 return failed
         else:
-            if issued_before is not None and await revocation.has_outright_row(token_id):
-                print(
-                    f"  ! {token_id!r} is revoked outright; this replaces that, and its tokens "
-                    "issued after the cutoff work again",
-                    file=sys.stderr,
-                )
+            if issued_before is not None:
+                await _warn_about_a_narrowing(token_id)
             row = await revocation.revoke(
                 token_id,
                 expires_at=expires_at,
