@@ -1665,22 +1665,16 @@ def test_a_call_served_on_its_default_namespace_counts_in_that_tenant(monkeypatc
     asyncio.run(mcp_call._call_tool(1, {"name": "loom_code_repos", "arguments": {}}, auth=eve))
     assert [(row["org"], row["namespace"]) for row in rows] == [("eve-org", "-")]
 
-    # HTTP with a token: refused at the gate, naming no org or an empty one.
-    from server.auth.context import set_current_auth
-
-    def _http_refusal(body: dict) -> None:
-        set_current_auth(eve)
-        try:
-            call = http_mod._HttpCall("r", raw_body=body, auth=eve)
-            http_mod._refuse(op, call, 403, error_code="AUTH_INSUFFICIENT")
-        finally:
-            set_current_auth(None)
-
+    # HTTP with a token, through the endpoint: refused while its body is
+    # validated (a null org) and at the gate, naming no org or an empty one.
     rows.clear()
+    monkeypatch.setattr(http_mod, "_extract_auth", lambda request: eve)
+    client = TestClient(app)
+    assert client.post("/v1/code.repos", json={"org": None}).status_code == 422
     for body in ({}, {"org": "", "namespace": ""}, {"org": " "}):
-        contextvars.copy_context().run(_http_refusal, body)
+        assert client.post("/v1/code.repos", json=body).status_code == 403
     got = [(row["org"], row["namespace"]) for row in rows]
-    assert got == [("eve-org", "-")] * 3
+    assert got == [("eve-org", "-")] * 4
 
 
 def test_the_ledger_reads_an_absent_org_or_namespace_as_the_gates_do() -> None:

@@ -654,7 +654,7 @@ def _emit_refused(
     from server.observability.sli import row_status
     from server.transport._common import ledger_identity
 
-    org = str(ledger_identity(arguments).get("org") or "")
+    org = ledger_identity(arguments)["org"]
     status = row_status(False, error_code, error, server_fault=answered_unverified())
     first = batch_allows_row(op_name, error_code, org, status)
     if first:

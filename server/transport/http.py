@@ -424,16 +424,13 @@ def _rate_limit(op: Operation, response: Response, call: _HttpCall, target: gate
 async def _bind_context_and_policy(
     op: Operation, request: Request, call: _HttpCall, target: gates.Target, payload: Any
 ) -> Any:
-    """The verified caller and the ambient run id on the request context,
+    """The verified caller on `request.state` and the ambient run id,
     then the read scope, then the history policy gate (a structured 403 when
     it denies) on the scoped input. Returns the input the handler runs with."""
     request_id, raw_body, auth = call.request_id, call.raw_body, call.auth
     # Make auth visible to handlers via request.state and a ContextVar
     # (so handlers can read the caller's identity without taking Request).
     request.state.auth = auth
-    from server.auth.context import set_current_auth
-
-    set_current_auth(auth)
     # The SDK's ambient run labels reads through a header rather than the
     # body's `run_id` (which would filter the read to the run's own rows).
     # Bound to this request's context; the ledger rows (agent_events,
@@ -710,6 +707,11 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # learns no field errors, and never touches a tenant's rate-limit
         # bucket by naming its namespace.
         call.auth = auth = _extract_auth(request)
+        # Bound before the body is read, as MCP binds it before validation:
+        # a refusal's ledger row reads the token's org and pins from it.
+        from server.auth.context import set_current_auth
+
+        set_current_auth(auth)
         bind_claimed_class(auth)
         call.raw_body = raw_body = await _read_body(op, request, request_id, auth)
 
