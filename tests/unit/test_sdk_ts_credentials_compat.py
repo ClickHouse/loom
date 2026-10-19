@@ -282,9 +282,15 @@ def test_both_sdks_time_the_lock_alike(home, tmp_path) -> None:
         _script(
             tmp_path,
             """
-            const { LOCK_HEARTBEAT_MS, LOCK_SILENT_MS, LOCK_STALE_MS, REFRESH_DEADLINE_MS } = creds;
-            const timings = [LOCK_HEARTBEAT_MS, LOCK_SILENT_MS, LOCK_STALE_MS, REFRESH_DEADLINE_MS];
-            console.log(JSON.stringify(timings));
+            const timings = [
+              creds.LOCK_HEARTBEAT_MS,
+              creds.LOCK_SILENT_MS,
+              creds.LOCK_STALE_MS,
+              creds.REFRESH_DEADLINE_MS,
+              creds.RELEASE_WAIT_MS,
+              creds.RENAME_WAIT_MS,
+            ];
+            console.log(JSON.stringify({ timings, renameTries: creds.RENAME_TRIES }));
             """,
         ),
         home,
@@ -294,5 +300,10 @@ def test_both_sdks_time_the_lock_alike(home, tmp_path) -> None:
         credentials._LOCK_SILENT_S,
         credentials._LOCK_STALE_S,
         credentials._REFRESH_DEADLINE_S,
+        credentials._RELEASE_WAIT_S,
+        credentials._RENAME_WAIT_S,
     ]
-    assert json.loads(out) == [s * 1000 for s in py]
+    assert json.loads(out) == {
+        "timings": [round(s * 1000) for s in py],
+        "renameTries": credentials._RENAME_TRIES,
+    }

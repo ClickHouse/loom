@@ -79,6 +79,7 @@ _RELEASE_WAIT_S = 2.0
 # directory open, as a waiter reading the owner file does for a moment.
 _BUSY = {errno.EACCES, errno.EPERM, errno.EBUSY}
 _RENAME_TRIES = 5
+_RENAME_WAIT_S = 0.02
 
 
 def _path() -> Path:
@@ -182,17 +183,29 @@ def _create(lock: Path, owner: str) -> bool:
     try:
         (tmp / "owner").write_text(owner, encoding="utf-8")
         _touch(tmp)
-        os.rename(tmp, lock)
-        return True
-    except OSError as e:
-        # POSIX allows no rename onto a non-empty directory, and Windows none
-        # onto any directory, refused as access denied: held only while the
-        # lock is there, else denied for good.
-        if e.errno in (errno.EEXIST, errno.ENOTEMPTY):
-            return False
-        if e.errno in (errno.EACCES, errno.EPERM) and lock.exists():
-            return False
-        raise
+        tries = 0
+        while True:
+            try:
+                os.rename(tmp, lock)
+                return True
+            except OSError as e:
+                # POSIX allows no rename onto a non-empty directory, and
+                # Windows none onto any directory, refused as access denied:
+                # held while the lock is there. With no lock, the refusal is
+                # a scanner holding a file in tmp open, or a holder renaming
+                # the lock away meanwhile: tried again, then raised.
+                if e.errno in (errno.EEXIST, errno.ENOTEMPTY):
+                    return False
+                if e.errno not in _BUSY:
+                    raise
+                if lock.exists():
+                    return False
+                tries += 1
+                if tries == _RENAME_TRIES:
+                    raise LoomError(
+                        f"cannot take the credentials lock at {lock} ({e.strerror or e})"
+                    ) from e
+                time.sleep(_RENAME_WAIT_S)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)  # gone already once renamed
 
@@ -306,6 +319,8 @@ def _release(lock: Path, owner: str) -> None:
                 return
             time.sleep(0.02)
     try:
+        with contextlib.suppress(OSError):
+            _touch(claim)  # as a breaker's is, so it never looks old to the next one
         if _owner(lock) == owner:
             _remove(lock)
     finally:
@@ -333,7 +348,7 @@ def _remove(lock: Path) -> None:
         except OSError as e:
             if e.errno not in _BUSY or attempt == _RENAME_TRIES - 1:
                 raise
-            time.sleep(0.02)  # a waiter reading the owner file closes it in a moment
+            time.sleep(_RENAME_WAIT_S)  # a waiter reading the owner file closes it in a moment
     shutil.rmtree(tomb, ignore_errors=True)
 
 

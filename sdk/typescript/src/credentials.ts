@@ -55,11 +55,12 @@ export const LOCK_HEARTBEAT_MS = 10_000;
 export const LOCK_SILENT_MS = 2 * LOCK_HEARTBEAT_MS;
 export const LOCK_STALE_MS = 60_000;
 // How long a release waits for a breaker's claim to go.
-const RELEASE_WAIT_MS = 2_000;
+export const RELEASE_WAIT_MS = 2_000;
 // What Windows refuses a rename with while another process has a file in the
 // directory open, as a waiter reading the owner file does for a moment.
 const BUSY = new Set(["EACCES", "EPERM", "EBUSY"]);
-const RENAME_TRIES = 5;
+export const RENAME_TRIES = 5;
+export const RENAME_WAIT_MS = 20;
 
 type FetchFn = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -226,7 +227,7 @@ function locked<T>(fn: (n: NodeModules) => Promise<T> | T): Promise<T> {
     try {
       return await fn(n);
     } finally {
-      release();
+      await release();
     }
   });
   inProcess = run.catch(() => undefined);
@@ -237,18 +238,18 @@ function locked<T>(fn: (n: NodeModules) => Promise<T> | T): Promise<T> {
  * Take `~/.loom/.credentials.lock.d`, a directory whose owner file names the
  * holder, and touch it every heartbeat while held. Waits while another
  * process holds it, and breaks it once stale. Returns the release, which
- * also runs if the process exits holding it.
+ * also runs, blocking, if the process exits holding it.
  */
-async function takeLockDir(n: NodeModules): Promise<() => void> {
+async function takeLockDir(n: NodeModules): Promise<() => Promise<void>> {
   const dir = loomDir(n);
   n.fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const lock = n.path.join(dir, LOCK_DIR);
   const owner = JSON.stringify({ pid: proc()?.pid, host: n.os.hostname(), time: Date.now() / 1000 });
   sweep(n, lock);
   let wait = 10;
-  while (!createLock(n, lock, owner)) {
+  while (!(await waitAsync(createLock(n, lock, owner)))) {
     const held = ownerOf(n, lock);
-    if (stale(n, lock, held)) breakLock(n, lock, held);
+    if (stale(n, lock, held)) await waitAsync(breakLock(n, lock, held));
     await new Promise((resolve) => setTimeout(resolve, wait));
     wait = Math.min(wait * 2, 200);
   }
@@ -261,17 +262,47 @@ async function takeLockDir(n: NodeModules): Promise<() => void> {
     }
   }, LOCK_HEARTBEAT_MS);
   beat.unref?.();
-  const release = () => {
+  // A release never fails the refresh it ends: a lock it cannot remove is left for the stale age.
+  const unhook = releaseOnExit(() => {
     clearInterval(beat);
     unhook();
     try {
-      releaseLock(n, lock, owner);
+      waitSync(releaseLock(n, lock, owner));
     } catch {
-      /* left for the stale age; a release never fails the refresh it ends */
+      /* left for the stale age */
+    }
+  });
+  return async () => {
+    clearInterval(beat);
+    try {
+      await waitAsync(releaseLock(n, lock, owner));
+    } catch {
+      /* left for the stale age */
+    } finally {
+      unhook(); // after: an exit while this waits still releases
     }
   };
-  const unhook = releaseOnExit(release);
-  return release;
+}
+
+/** A step that may wait: it yields each wait, in milliseconds, before it goes on. */
+type Waiting<T> = Generator<number, T, void>;
+
+/** Run `steps` waiting on a timer, so the event loop goes on meanwhile. */
+async function waitAsync<T>(steps: Waiting<T>): Promise<T> {
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+    await new Promise((resolve) => setTimeout(resolve, step.value));
+  }
+}
+
+/** Run `steps` blocking for each wait: at exit nothing waits on a timer. */
+function waitSync<T>(steps: Waiting<T>): T {
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+    sleepSync(step.value);
+  }
 }
 
 /**
@@ -279,22 +310,32 @@ async function takeLockDir(n: NodeModules): Promise<() => void> {
  * onto it. The rename fails while the lock exists, and a lock never exists
  * without its owner. Answers whether it was taken.
  */
-function createLock(n: NodeModules, lock: string, owner: string): boolean {
+function* createLock(n: NodeModules, lock: string, owner: string): Waiting<boolean> {
   const tmp = `${lock}.${hex(n, 6)}.tmp`;
   n.fs.mkdirSync(tmp, { mode: 0o700 });
   try {
     n.fs.writeFileSync(n.path.join(tmp, "owner"), owner, { mode: 0o600 });
     touch(n, tmp);
-    n.fs.renameSync(tmp, lock);
-    return true;
-  } catch (e) {
-    // POSIX allows no rename onto a non-empty directory, and Windows none
-    // onto any directory, refused as access denied: held only while the
-    // lock is there, else denied for good.
-    const code = errorCode(e);
-    if (code === "EEXIST" || code === "ENOTEMPTY") return false;
-    if ((code === "EACCES" || code === "EPERM") && n.fs.existsSync(lock)) return false;
-    throw e;
+    for (let tries = 1; ; tries++) {
+      try {
+        n.fs.renameSync(tmp, lock);
+        return true;
+      } catch (e) {
+        // POSIX allows no rename onto a non-empty directory, and Windows
+        // none onto any directory, refused as access denied: held while the
+        // lock is there. With no lock, the refusal is a scanner holding a
+        // file in tmp open, or a holder renaming the lock away meanwhile:
+        // tried again, then raised.
+        const code = errorCode(e);
+        if (code === "EEXIST" || code === "ENOTEMPTY") return false;
+        if (!BUSY.has(code ?? "")) throw e;
+        if (n.fs.existsSync(lock)) return false;
+        if (tries === RENAME_TRIES) {
+          throw new LoomError(`cannot take the credentials lock at ${lock} (${code})`, { cause: e });
+        }
+        yield RENAME_WAIT_MS;
+      }
+    }
   } finally {
     removeQuietly(n, tmp); // gone already once renamed
   }
@@ -390,7 +431,7 @@ function running(pid: number): boolean {
  * the owner is read again under the claim, so a lock taken over meanwhile
  * is left alone.
  */
-function breakLock(n: NodeModules, lock: string, held: string): void {
+function* breakLock(n: NodeModules, lock: string, held: string): Waiting<void> {
   const claim = `${lock}.breaking`;
   try {
     n.fs.mkdirSync(claim, { mode: 0o700 });
@@ -416,7 +457,7 @@ function breakLock(n: NodeModules, lock: string, held: string): void {
     } catch {
       /* aged by the file server's clock instead */
     }
-    if (ownerOf(n, lock) === held) removeLock(n, lock);
+    if (ownerOf(n, lock) === held) yield* removeLock(n, lock);
   } catch (e) {
     // Busy on Windows: try again after the wait, until the lock is twice
     // the stale age, so a lock that is never renamable still raises.
@@ -434,7 +475,7 @@ function breakLock(n: NodeModules, lock: string, held: string): void {
  * breaker then renames away. Without the claim in time the lock is left,
  * never renamed, and broken once its heartbeat has stopped.
  */
-function releaseLock(n: NodeModules, lock: string, owner: string): void {
+function* releaseLock(n: NodeModules, lock: string, owner: string): Waiting<void> {
   if (ownerOf(n, lock) !== owner) return; // broken as stale: another process's by now
   const claim = `${lock}.breaking`;
   const deadline = performance.now() + RELEASE_WAIT_MS;
@@ -445,17 +486,22 @@ function releaseLock(n: NodeModules, lock: string, owner: string): void {
     } catch (e) {
       if (errorCode(e) !== "EEXIST") throw e;
       if (performance.now() > deadline) return;
-      sleepSync(20);
+      yield 20;
     }
   }
   try {
-    if (ownerOf(n, lock) === owner) removeLock(n, lock);
+    try {
+      touch(n, claim); // as a breaker's is, so it never looks old to the next one
+    } catch {
+      /* aged by the file server's clock instead */
+    }
+    if (ownerOf(n, lock) === owner) yield* removeLock(n, lock);
   } finally {
     rmdirQuietly(n, claim);
   }
 }
 
-/** Block for `ms`: a release also runs at exit, where nothing waits on a timer. */
+/** Block for `ms`: for a release at exit or on a signal, where no timer fires. */
 function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -479,7 +525,7 @@ function rmdirQuietly(n: NodeModules, path: string): void {
  * Rename `lock` away, then delete it: the lock path is never a half-removed
  * directory, empty, which a rename could replace.
  */
-function removeLock(n: NodeModules, lock: string): void {
+function* removeLock(n: NodeModules, lock: string): Waiting<void> {
   const tomb = `${lock}.${hex(n, 6)}.stale`;
   for (let attempt = 0; ; attempt++) {
     try {
@@ -488,7 +534,7 @@ function removeLock(n: NodeModules, lock: string): void {
     } catch (e) {
       if (errorCode(e) === "ENOENT") return; // released meanwhile
       if (!BUSY.has(errorCode(e) ?? "") || attempt === RENAME_TRIES - 1) throw e;
-      sleepSync(20); // a waiter reading the owner file closes it in a moment
+      yield RENAME_WAIT_MS; // a waiter reading the owner file closes it in a moment
     }
   }
   removeQuietly(n, tomb);

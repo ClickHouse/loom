@@ -800,22 +800,72 @@ def test_a_stale_lock_busy_past_twice_the_stale_age_raises(_home, monkeypatch) -
     assert lock.exists()
 
 
-def test_access_denied_taking_a_lock_that_is_not_there_raises(_home, monkeypatch) -> None:
-    lock = _lock_dir(_home)
+def test_the_lock_waits_as_long_as_the_typescript_sdk_does() -> None:
+    assert credentials._RELEASE_WAIT_S == 2.0
+    assert credentials._RENAME_TRIES == 5
+    assert credentials._RENAME_WAIT_S == 0.02
+
+
+def _refuse_taking(monkeypatch: Any, lock: Any, times: int, code: int) -> list[int]:
+    """Refuse the next `times` renames onto `lock`, as Windows does while a
+    scanner holds a file in the private directory open."""
+    refused: list[int] = []
     real = credentials.os.rename
 
     def rename(src: Any, dst: Any) -> None:
-        if str(dst) == str(lock):
-            raise PermissionError(errno.EACCES, "Permission denied")
+        if str(dst) == str(lock) and len(refused) < times:
+            refused.append(code)
+            raise OSError(code, os.strerror(code))
         real(src, dst)
 
     monkeypatch.setattr(credentials.os, "rename", rename)
-    with pytest.raises(PermissionError):
+    return refused
+
+
+@pytest.mark.parametrize("code", [errno.EACCES, errno.EPERM, errno.EBUSY])
+def test_a_lock_that_is_not_there_is_taken_once_refusals_stop(_home, monkeypatch, code) -> None:
+    lock = _lock_dir(_home)
+    refused = _refuse_taking(monkeypatch, lock, credentials._RENAME_TRIES - 1, code)
+    with credentials._locked():
+        assert json.loads((lock / "owner").read_text())["pid"] == os.getpid()
+    assert len(refused) == credentials._RENAME_TRIES - 1
+    assert not lock.exists() and _leftovers(_home) == []
+
+
+def test_a_lock_that_is_not_there_and_is_refused_every_try_raises(_home, monkeypatch) -> None:
+    lock = _lock_dir(_home)
+    refused = _refuse_taking(monkeypatch, lock, 10**6, errno.EACCES)
+    with pytest.raises(credentials.LoomError, match="cannot take the credentials lock at") as e:
         with credentials._locked():
             pass
+    assert str(lock) in str(e.value) and os.strerror(errno.EACCES) in str(e.value)
+    assert len(refused) == credentials._RENAME_TRIES
+    assert _leftovers(_home) == []
     lock.mkdir()  # there: held, so waited for
     (lock / "owner").write_text("{}")
     assert credentials._create(lock, "{}") is False
+
+
+def test_a_release_s_claim_is_dated_by_this_machine_s_clock(_home, monkeypatch) -> None:
+    # A file server whose clock lags would otherwise make a fresh claim look old to a breaker.
+    claim = _lock_dir(_home).with_name(".credentials.lock.d.breaking")
+    ages: list[float] = []
+    real_mkdir, real_rmdir = credentials.Path.mkdir, credentials.Path.rmdir
+
+    def mkdir(self: Any, *args: Any, **kw: Any) -> None:
+        real_mkdir(self, *args, **kw)
+        if self == claim:
+            _age(claim, 3600)  # dated by a file server an hour behind
+
+    def rmdir(self: Any) -> None:
+        if self == claim:
+            ages.append(time.time() - claim.stat().st_mtime)
+        real_rmdir(self)
+
+    with credentials._locked():
+        monkeypatch.setattr(credentials.Path, "mkdir", mkdir)
+        monkeypatch.setattr(credentials.Path, "rmdir", rmdir)
+    assert len(ages) == 1 and ages[0] < 5
 
 
 def test_taking_the_lock_sweeps_what_a_dead_taker_or_breaker_left(_home) -> None:

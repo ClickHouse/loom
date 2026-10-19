@@ -26,6 +26,9 @@ import {
   type LoginOptions,
   login,
   logout,
+  RELEASE_WAIT_MS,
+  RENAME_TRIES,
+  RENAME_WAIT_MS,
   StoredLogin,
   sameServer,
   type WhoAmI,
@@ -631,20 +634,52 @@ describe("the credentials lock", () => {
     expect(existsSync(lockDir())).toBe(true);
   });
 
-  it("raises on access denied taking a lock that is not there, never waits for it", async () => {
-    const srv = fakeServer();
-    store("default", { expires_at: now() - 1 });
+  it("waits a lock's rename and the release's claim for as long as the Python SDK does", () => {
+    expect([RELEASE_WAIT_MS, RENAME_TRIES, RENAME_WAIT_MS]).toEqual([2000, 5, 20]);
+  });
+
+  /** Refuse the next `times` renames onto the lock with `code`, as Windows does while tmp is open. */
+  function refuseTaking(times: number, code: string): string[] {
+    const refused: string[] = [];
     const real = fs.renameSync;
     vi.spyOn(fs, "renameSync").mockImplementation(((from: string, to: string) => {
-      if (to === lockDir()) throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      if (to === lockDir() && refused.length < times) {
+        refused.push(code);
+        throw Object.assign(new Error(code), { code });
+      }
       real(from, to);
     }) as never);
+    return refused;
+  }
+
+  it.each(["EACCES", "EPERM", "EBUSY"])("takes a lock that is not there once %s refusals stop", async (code) => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    const refused = refuseTaking(RENAME_TRIES - 1, code);
     try {
-      await expect(accessToken(undefined, { fetch: srv.fetch })).rejects.toThrow(/permission denied/);
+      expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
     } finally {
       vi.restoreAllMocks();
     }
+    expect(refused).toHaveLength(RENAME_TRIES - 1);
+    expect(existsSync(lockDir())).toBe(false);
+    expect(leftovers()).toEqual([]);
+  });
+
+  it("raises on a lock that is not there and is refused every try, never waits for it", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    const refused = refuseTaking(Number.POSITIVE_INFINITY, "EACCES");
+    try {
+      const taking = accessToken(undefined, { fetch: srv.fetch });
+      await expect(taking).rejects.toThrow(LoomError);
+      await expect(taking).rejects.toThrow(`cannot take the credentials lock at ${lockDir()} (EACCES)`);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(refused).toHaveLength(RENAME_TRIES);
     expect(srv.sent).toHaveLength(0);
+    expect(leftovers()).toEqual([]);
   });
 
   it("releases under a breaker's claim, waiting for it to go", async () => {
@@ -662,6 +697,60 @@ describe("the credentials lock", () => {
     expect(refused).toHaveLength(3);
     expect(existsSync(lockDir())).toBe(false);
     expect(existsSync(`${lockDir()}.breaking`)).toBe(false);
+  });
+
+  it("waits for a breaker's claim on a timer, so the event loop goes on meanwhile", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    const claim = `${lockDir()}.breaking`;
+    let fired = false;
+    let firedBeforeClaim = false;
+    srv.onRefresh = async () => {
+      let refusals = 0;
+      const real = fs.mkdirSync;
+      vi.spyOn(fs, "mkdirSync").mockImplementation(((p: string, ...rest: unknown[]) => {
+        if (p === claim && refusals < 3) {
+          if (refusals++ === 0) setTimeout(() => (fired = true), 0);
+          throw Object.assign(new Error("EEXIST"), { code: "EEXIST" }); // a waiter breaking it
+        }
+        if (p === claim) firedBeforeClaim = fired;
+        return (real as (...a: unknown[]) => unknown)(p, ...rest);
+      }) as never);
+    };
+    try {
+      expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(firedBeforeClaim).toBe(true);
+    expect(existsSync(lockDir())).toBe(false);
+  });
+
+  it("dates a release's claim by this machine's clock", async () => {
+    // A file server whose clock lags would otherwise make a fresh claim look old to a breaker.
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    const claim = `${lockDir()}.breaking`;
+    let claimAge = Number.NaN;
+    srv.onRefresh = async () => {
+      const mkdir = fs.mkdirSync as (...a: unknown[]) => unknown;
+      const rmdir = fs.rmdirSync as (...a: unknown[]) => unknown;
+      vi.spyOn(fs, "mkdirSync").mockImplementation(((p: string, ...rest: unknown[]) => {
+        const made = mkdir(p, ...rest);
+        if (p === claim) age(claim, 3_600_000); // dated by a file server an hour behind
+        return made;
+      }) as never);
+      vi.spyOn(fs, "rmdirSync").mockImplementation(((p: string, ...rest: unknown[]) => {
+        if (p === claim) claimAge = Date.now() - statSync(claim).mtimeMs;
+        return rmdir(p, ...rest);
+      }) as never);
+    };
+    try {
+      expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(claimAge).toBeLessThan(5000);
   });
 
   it("leaves its lock when a breaker's claim does not go in time", async () => {
@@ -739,8 +828,9 @@ describe("the credentials lock", () => {
     } finally {
       vi.restoreAllMocks();
     }
-    // The private directory, before it is renamed onto the lock (a file server's clock otherwise).
-    expect(touched.map((p) => p.endsWith(".tmp"))).toEqual([true]);
+    // The private directory, before it is renamed onto the lock (a file server's clock otherwise),
+    // then the release's claim.
+    expect(touched.map((p) => p.slice(lockDir().length))).toEqual([expect.stringMatching(/\.tmp$/), ".breaking"]);
   });
 
   it("touches the lock every heartbeat while it holds it", async () => {
