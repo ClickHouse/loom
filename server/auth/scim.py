@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -41,9 +42,7 @@ COLUMNS = (
     "id",
     "user_name",
     "email",
-    "email_type",
-    "email_primary",
-    "email_from_user_name",
+    "emails",
     "active",
     "deleted",
     "subjects",
@@ -133,12 +132,12 @@ async def deactivated(email: str) -> bool:
 
 
 async def create(
-    user_name: str, email: str, *, active: bool, email_entry: dict[str, Any]
+    user_name: str, email: str, *, active: bool, emails: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Record the SCIM user for `email`. Raises Exists when one is live,
     once a retried re-create has waited out its cutoff. A deleted one comes
-    back, still deactivated unless `active`. `email_entry` is the type and
-    primary flag of the entry the email came from."""
+    back, still deactivated unless `active`. `emails` is the provider's list
+    the email was keyed from."""
     uid = user_id(email)
     async with _held(_user_lease(uid)), _held(_name_lease(user_name)):
         row = await _row(uid)
@@ -147,9 +146,7 @@ async def create(
             row = {
                 "id": uid,
                 "email": normalized(email),
-                "email_type": "",
-                "email_primary": 0,
-                "email_from_user_name": 0,
+                "emails": "[]",
                 "active": 1,
                 "deleted": 0,
                 "subjects": [],
@@ -164,7 +161,7 @@ async def create(
         else:
             await _refuse_taken(user_name, uid)
             _note_another_name(uid, user_name, email)
-            changes = {"user_name": user_name.strip(), "deleted": 0, **_entry(email_entry)}
+            changes = {"user_name": user_name.strip(), "deleted": 0, "emails": json.dumps(emails)}
             row, cutoff = await _set_active(row, active, **changes)
     if not row["active"]:  # a retry too: it finishes what a failed try left
         await _revoke_tokens(row)
@@ -179,15 +176,15 @@ async def update(
     *,
     active: bool | None = None,
     user_name: str | None = None,
-    email_entry: dict[str, Any] | None = None,
+    emails: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
-    """Set `active`, rename the userName (it is not the key) and/or note the
-    type and primary flag of the email's entry; None when there is no such user."""
+    """Set `active`, rename the userName (it is not the key) and/or replace
+    the provider's `emails` list; None when there is no such user."""
     async with _held(_user_lease(uid)):
         row = await get(uid)
         if row is None:
             return None
-        changes = _entry(email_entry)
+        changes = {} if emails is None else {"emails": json.dumps(emails)}
         if not user_name or user_name.strip() == row["user_name"]:
             new, cutoff = await _set_active(row, active, **changes)
         else:
@@ -210,19 +207,13 @@ def _note_another_name(uid: str, user_name: str, email: str) -> None:
         )
 
 
-def _entry(email_entry: dict[str, Any] | None) -> dict[str, Any]:
-    """The columns that say where the email came from; `{}` (no entry) is the userName."""
-    if email_entry is None:
-        return {}
-    return {
-        "email_type": str(email_entry.get("type") or "").lower(),
-        "email_primary": int(is_primary(email_entry.get("primary"))),
-        "email_from_user_name": int(not email_entry),
-    }
+def emails_of(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """The provider's `emails` list as last written: value, type, primary."""
+    return list(json.loads(row["emails"]))
 
 
 def is_primary(value: Any) -> bool:
-    """A SCIM `primary` flag as providers send it (true, "True") or Loom stores it (1)."""
+    """A SCIM `primary` flag as providers send it (true, "True")."""
     if isinstance(value, str):
         return value.strip().lower() == "true"
     return value is True or value == 1

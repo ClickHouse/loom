@@ -371,13 +371,12 @@ What Loom does with each request:
   SCIM. A second create of the same email, or of a `userName` another user
   has, answers 409.
 - **Updating** (`PUT`, or `PATCH` of `active`, `userName` or `emails`) keeps
-  a new `userName`, unless another user has it (409), and refuses a new
-  address for the entry the email came from, or for an entry that would take
-  its place (400 `mutability`): the person would sign in to another account,
-  which a later deactivation of the old email would miss. A filtered write
-  (`emails[type eq "work"].value`) is checked only when its filter selects
-  that entry, so an unchanged address passes and other addresses may be
-  added, changed or removed (see
+  a new `userName`, unless another user has it (409), and keeps the `emails`
+  list it is sent. A `PATCH` applies its operations to that list in order,
+  and the request is refused (400 `mutability`) when the list it leaves keys
+  another email by the rule above: the person would sign in to another
+  account, which a later deactivation of the old email would miss. Other
+  addresses may be added, changed or removed (see
   [Changing a person's email](#changing-a-persons-email)). A refused request
   that also sets `active: false` still deactivates: providers send a leaver's
   changes together and do not retry a 400. A `PUT` whose body names another
@@ -452,8 +451,8 @@ they run side by side: only those for people who reach a shared account wait
 on each other (a busy one answers 503 and the provider retries it). The
 filters served are `userName eq "<userName>"` and, on the email,
 `emails[type eq "work"].value eq "<email>"` (or `emails.value eq`), which
-match the one address Loom keys a user on (the `work` one only when that
-address's type is `work`);
+match the address Loom keys a user on when its `emails` list holds it (as a
+`work` entry, for the first);
 `GET /Users`, `GET /Users/{id}` and `GET /ServiceProviderConfig` answer as
 RFC 7644 says, and `GET /Groups` answers an empty list.
 

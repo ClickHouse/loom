@@ -4,6 +4,7 @@ the deactivate / reactivate state machine with its retries."""
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import time
 from collections import Counter
@@ -377,7 +378,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
 
 
 async def _create(email: str, *, active: bool = True) -> str:
-    return str((await scim.create(email, email, active=active, email_entry={}))["id"])
+    return str((await scim.create(email, email, active=active, emails=[]))["id"])
 
 
 async def test_deactivating_revokes_the_person_once_however_often_it_is_sent(world) -> None:
@@ -640,7 +641,7 @@ async def test_every_row_written_carries_every_column(world) -> None:
     await scim.update(uid, active=False)
     await scim.delete(uid)
     await scim.create(
-        "lee@example.com", "lee@example.com", active=True, email_entry={}
+        "lee@example.com", "lee@example.com", active=True, emails=[]
     )  # a reactivation
     assert [sorted(r) for r in world.table.rows] == [sorted(column_names("scim_users"))] * 4
     columns = sorted(column_names("revoked_tokens"))
@@ -950,9 +951,7 @@ async def test_a_reactivation_waits_once_its_leases_are_let_go(world, monkeypatc
 
     await scim.delete(uid)
     events.clear()
-    await scim.create(
-        "lee@example.com", "lee@example.com", active=True, email_entry={}
-    )  # created again
+    await scim.create("lee@example.com", "lee@example.com", active=True, emails=[])  # created again
     assert events[-3:] == ["let go scim-username", "let go scim-user", "waited"]
 
 
@@ -1123,7 +1122,7 @@ async def test_a_deleted_user_is_gone_but_stays_deactivated(world) -> None:
     assert await scim.update(uid, active=True) is None
     assert await _DEACTIVATED("lee@example.com")
     # Created again by the provider: assigned again, so active again.
-    again = await scim.create("lee@example.com", "lee@example.com", active=True, email_entry={})
+    again = await scim.create("lee@example.com", "lee@example.com", active=True, emails=[])
     assert again["id"] == uid and again["active"] and world.ours["lee"] is not None
 
 
@@ -1363,13 +1362,24 @@ def test_a_username_that_is_the_email_cannot_change_by_patch(client: TestClient,
 
 
 _URN = "urn:ietf:params:scim:schemas:core:2.0:User:"
+
+
+def _row(*emails: dict[str, Any], user_name: str = "lee.upn@corp.example") -> dict[str, Any]:
+    return {"user_name": user_name, "emails": json.dumps(scim_routes._entries(list(emails)))}
+
+
+def _keyed_after(row: dict[str, Any], *ops: dict[str, Any]) -> str:
+    """The email a PatchOp leaves `row` keyed on."""
+    name, emails = patched_names({"Operations": list(ops)}, row)
+    after = {
+        "userName": row["user_name"] if name is None else name,
+        "emails": scim.emails_of(row) if emails is None else emails,
+    }
+    return user_name_and_email(after)[1]
+
+
 # A user keyed on the work entry of their emails.
-_WORK_ROW = {
-    "email": "lee@example.com",
-    "email_type": "work",
-    "email_primary": 0,
-    "email_from_user_name": 0,
-}
+_WORK_ROW = _row({"value": "lee@example.com", "type": "work"})
 
 
 @pytest.mark.parametrize(
@@ -1400,17 +1410,11 @@ def test_a_schema_qualified_active_is_active(op: dict[str, Any]) -> None:
     ],
 )
 def test_every_shape_of_an_email_change_is_seen(op: dict[str, Any]) -> None:
-    _, entry = patched_names({"Operations": [op]}, _WORK_ROW)
-    assert entry is not None and entry["value"] == "new@example.com"
+    assert _keyed_after(_WORK_ROW, op) == "new@example.com"
 
 
 # A user created with only a userName: the email came from it.
-_NAME_ROW = {
-    "email": "lee@example.com",
-    "email_type": "",
-    "email_primary": 0,
-    "email_from_user_name": 1,
-}
+_NAME_ROW = _row(user_name="lee@example.com")
 
 
 @pytest.mark.parametrize(
@@ -1421,40 +1425,27 @@ _NAME_ROW = {
     ],
 )
 def test_any_entry_takes_the_place_of_an_email_the_username_gave(op: dict[str, Any]) -> None:
-    _, entry = patched_names({"Operations": [op]}, _NAME_ROW)
-    assert entry is not None and entry["value"] == "new@example.com"
+    assert _keyed_after(_NAME_ROW, op) == "new@example.com"
 
 
-def test_a_primary_flag_moved_by_a_filter_takes_the_emails_place() -> None:
-    primary = {
-        "email": "lee@example.com",
-        "email_type": "home",
-        "email_primary": 1,
-        "email_from_user_name": 0,
-    }
+def test_a_primary_flag_moved_to_an_entry_with_no_address_keeps_the_email() -> None:
+    primary = _row({"value": "lee@example.com", "type": "home", "primary": True})
     op = {"op": "replace", "path": 'emails[type eq "work"].primary', "value": True}
-    with pytest.raises(ScimError) as e:  # an entry would take its place, and says no address
-        patched_names({"Operations": [op]}, primary)
-    assert e.value.scim_type == "mutability"
+    assert _keyed_after(primary, op) == "lee@example.com"  # an entry with no value keys nothing
+    work = {"op": "add", "path": 'emails[type eq "work"].value', "value": "new@example.com"}
+    assert _keyed_after(primary, op, work) == "new@example.com"
 
 
 def test_a_new_primary_entry_replaces_a_primary_one() -> None:
     # Only one entry may be primary (RFC 7643 §2.4): the added one takes its place.
-    primary = {
-        "email": "lee@example.com",
-        "email_type": "work",
-        "email_primary": 1,
-        "email_from_user_name": 0,
-    }
+    primary = _row({"value": "lee@example.com", "type": "work", "primary": True})
     add = {"op": "add", "path": "emails", "value": [{"value": "new@example.com", "primary": True}]}
-    _, entry = patched_names({"Operations": [add]}, primary)
-    assert entry is not None and entry["value"] == "new@example.com"
+    assert _keyed_after(primary, add) == "new@example.com"
 
 
 def test_a_sub_attribute_of_an_email_changes_no_address() -> None:
     op = {"op": "replace", "path": 'emails[type eq "work"].primary', "value": True}
-    _, entry = patched_names({"Operations": [op]}, _WORK_ROW)
-    assert entry is not None and entry["value"] == "lee@example.com"
+    assert _keyed_after(_WORK_ROW, op) == "lee@example.com"
 
 
 def test_where_the_email_came_from_decides_whether_a_rename_may_change_it(
@@ -1649,7 +1640,7 @@ def test_another_address_changing_beside_a_disable_is_fine(
     ops = [{"op": "replace", "path": "active", "value": False}, other]
     r = client.patch(f"/scim/v2/Users/{uid}", json={"Operations": ops})
     assert r.status_code == 200 and r.json()["active"] is False
-    assert [e["value"] for e in r.json()["emails"]] == ["lee@example.com"]
+    assert r.json()["emails"][0]["value"] == "lee@example.com"
     assert world.ours == {"lee": None}
 
 
@@ -1790,6 +1781,79 @@ def test_an_entry_that_ties_with_a_raised_one_takes_no_place(
     assert r.json()["emails"][0]["value"] == "lee@example.com"
 
 
+_LEE, _NEW = {"value": "lee@example.com"}, {"value": "new@example.com", "type": "work"}
+
+
+@pytest.mark.parametrize(
+    ("emails", "ops"),
+    [
+        (  # raised, a tie added, lowered back: the added entry is first of the work ones now
+            [_LEE],
+            [
+                {"op": "replace", "path": "emails.type", "value": "work"},
+                {"op": "add", "path": "emails", "value": [_NEW]},
+                {
+                    "op": "replace",
+                    "path": 'emails[value eq "lee@example.com"].type',
+                    "value": "home",
+                },
+            ],
+        ),
+        (  # a plain entry before the keyed work one becomes work: it is first
+            [{"value": "a@example.com"}, {"value": "lee@example.com", "type": "work"}],
+            [{"op": "replace", "path": 'emails[value eq "a@example.com"].type', "value": "work"}],
+        ),
+        (  # the keyed address blanked: the userName is the email now
+            [{"value": "lee@example.com", "type": "work"}],
+            [{"op": "replace", "path": 'emails[type eq "work"].value', "value": ""}],
+        ),
+        (
+            [{"value": "lee@example.com", "type": "work"}],
+            [{"op": "remove", "path": 'emails[type eq "work"].value'}],
+        ),
+    ],
+)
+def test_a_patch_that_leaves_another_email_keyed_is_refused(
+    client: TestClient, world, emails: list[dict[str, Any]], ops: list[dict[str, Any]]
+) -> None:
+    uid = _user(client, emails)
+    r = _patch(client, uid, *ops)
+    assert r.status_code == 400 and r.json()["scimType"] == "mutability", r.text
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        {"op": "add", "path": 'emails[type eq "work"].value', "value": ""},  # no address
+        {"op": "replace", "path": "emails.type", "value": "work"},  # no entry to write
+    ],
+)
+def test_a_write_with_no_address_leaves_the_email_the_usernames(
+    client: TestClient, world, first: dict[str, Any]
+) -> None:
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    rename = {"op": "replace", "path": "userName", "value": "new@example.com"}
+    r = _patch(client, uid, first, rename)
+    assert r.status_code == 400 and r.json()["scimType"] == "mutability", r.text
+
+
+def test_removing_a_flag_of_the_keyed_entry_is_no_removal(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "lee@example.com", "type": "work"}])
+    r = _patch(client, uid, {"op": "remove", "path": 'emails[type eq "work"].primary'})
+    assert r.status_code == 200, r.text
+
+
+def test_the_emails_list_is_answered_as_written(client: TestClient, world) -> None:
+    emails = [
+        {"value": "Lee@Example.com", "type": "Work", "primary": True},
+        {"value": "lee@home.example", "type": "home", "primary": False},
+    ]
+    uid = _user(client, emails)
+    assert client.get(f"/scim/v2/Users/{uid}").json()["emails"] == emails
+    r = _patch(client, uid, {"op": "remove", "path": 'emails[type eq "home"]'})
+    assert r.json()["emails"] == emails[:1]
+
+
 def test_a_new_work_entry_would_take_a_plain_entrys_place(client: TestClient, world) -> None:
     uid = _user(client, [{"value": "lee@example.com"}])
     work = {"op": "add", "path": 'emails[type eq "work"].value', "value": "new@example.com"}
@@ -1879,35 +1943,24 @@ async def test_a_shared_subject_left_revoked_is_logged_and_nothing_waits(world, 
     assert "another deactivated user" not in caplog.text
 
 
-_PRIMARY_ROW = {
-    "email": "lee@example.com",
-    "email_type": "work",
-    "email_primary": 1,
-    "email_from_user_name": 0,
-}
-
-
 def test_a_stored_primary_entry_ranks_as_primary() -> None:
     # A secondary address of a user keyed on their primary entry may change.
+    primary = _row(
+        {"value": "a@example.com", "type": "work"},
+        {"value": "lee@example.com", "type": "home", "primary": True},
+    )
     other = {"op": "replace", "path": 'emails[type eq "other"].value', "value": "x@example.com"}
-    assert patched_names({"Operations": [other]}, _PRIMARY_ROW) == (None, None)
+    assert _keyed_after(primary, other) == "lee@example.com"
     demoted = {"op": "replace", "path": "emails[primary eq true].primary", "value": False}
-    with pytest.raises(ScimError) as e:
-        patched_names({"Operations": [demoted]}, _PRIMARY_ROW)
-    assert e.value.scim_type == "mutability"
+    assert _keyed_after(primary, demoted) == "a@example.com"  # the work one takes its place
 
 
 @pytest.mark.parametrize("flag", [True, "True", "true", 1])
-def test_every_spelling_of_primary_is_kept_as_primary(world, flag: Any) -> None:
-    async def run() -> dict[str, Any]:
-        entry = {"value": "lee@example.com", "primary": flag}
-        return await scim.create(
-            "lee@example.com", "lee@example.com", active=True, email_entry=entry
-        )
-
-    import asyncio
-
-    assert asyncio.run(run())["email_primary"] == 1
+def test_every_spelling_of_primary_is_kept_as_primary(flag: Any) -> None:
+    body = {"userName": "x@example.com", "emails": [{"value": "lee@example.com", "primary": flag}]}
+    assert user_name_and_email(body)[2] == [
+        {"value": "lee@example.com", "type": "", "primary": True}
+    ]
 
 
 def test_a_malformed_path_is_refused_and_still_deactivates(client: TestClient, world) -> None:
@@ -2476,19 +2529,17 @@ class _Run:
         if kind == "create":
             before = self.world.table.newest(scim.user_id(email))
             try:
-                await scim.create(email, email, active=on, email_entry={})
+                await scim.create(email, email, active=on, emails=[])
             except scim.Exists:
                 return before is not None and bool(before["active"]) == on
         elif kind == "patch":
             return await scim.update(scim.user_id(email), active=on) is not None
         elif kind == "put":
-            entry = {"type": "work", "primary": True}
-            return (
-                await scim.update(scim.user_id(email), active=True, email_entry=entry) is not None
-            )
+            emails = [{"value": email, "type": "work", "primary": True}]
+            return await scim.update(scim.user_id(email), active=True, emails=emails) is not None
         elif kind == "attrs":  # a PATCH or PUT that leaves `active` out
-            entry = {"type": "work", "primary": False}
-            return await scim.update(scim.user_id(email), email_entry=entry) is not None
+            emails = [{"value": email, "type": "work", "primary": False}]
+            return await scim.update(scim.user_id(email), emails=emails) is not None
         elif kind == "delete":
             await scim.delete(scim.user_id(email))
             return self.world.table.newest(scim.user_id(email)) is not None

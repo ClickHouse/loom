@@ -468,8 +468,8 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.machine_identities": "auth plane: registered bots and their public keys; no memory.",
     "loom.sso_links": "auth plane: which password accounts SSO sign-ins reach; no memory.",
     "loom.scim_users": (
-        "auth plane: the people the identity provider provisions (email, userName, "
-        "active) and the subjects a deactivation revoked; no memory."
+        "auth plane: the people the identity provider provisions (email, the emails "
+        "list it sent, userName, active) and the subjects a deactivation revoked; no memory."
     ),
     "loom.oauth_signin_state": "auth plane: sign-in state in Keeper (codes, sessions); no memory.",
     "loom.oauth_state": "auth plane: OAuth client registrations and codes; no memory rows.",

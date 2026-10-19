@@ -14,7 +14,7 @@ import hmac
 import json
 import logging
 import re
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
@@ -205,12 +205,12 @@ def _sets_inactive(body: dict[str, Any]) -> bool:
 
 def patched_names(
     body: dict[str, Any], row: dict[str, Any]
-) -> tuple[str | None, dict[str, Any] | None]:
-    """The userName a PatchOp sets, and the emails entry it leaves `row` keyed
-    on when it touches that one; each None when it does not. Other addresses
-    may be added, changed or removed. Call after `patched_active`, which
-    checks the shape."""
-    user_name, entry = None, None
+) -> tuple[str | None, list[dict[str, Any]] | None]:
+    """The userName a PatchOp sets and the `emails` list it leaves, each None
+    when it does not touch it: its operations applied in order, each to what
+    the ones before it left (RFC 7644 §3.5.2). Call after `patched_active`,
+    which checks the shape."""
+    user_name, emails = None, None
     for op in body["Operations"]:
         pairs = _attributes(op)  # refuses an operation that is not an object
         kind = str(op.get("op") or "").lower()
@@ -229,75 +229,79 @@ def patched_names(
                     raise ScimError(400, "userName must be a non-empty string", "invalidValue")
                 user_name = value
             elif attr.startswith("emails"):
-                entry = _keyed_written(kind, attr, value, row, entry) or entry
-    return user_name, entry
+                before = scim.emails_of(row) if emails is None else emails
+                emails = _patched_emails(kind, attr, value, before)
+    return user_name, emails
 
 
-def _keyed_written(
-    kind: str, attr: str, value: Any, row: dict[str, Any], earlier: dict[str, Any] | None
-) -> dict[str, Any] | None:
-    """The entry an `emails…` operation leaves the user keyed on, when it
-    writes the keyed one or one that takes its place; None when it leaves it
-    alone. `earlier` is the entry an earlier operation of the request left, as
-    each operation sees the ones before it (RFC 7644 §3.5.2). Removing the
-    keyed entry, or not saying what replaces it, is refused."""
-    stored = {"value": row["email"], "type": row["email_type"], "primary": row["email_primary"]}
-    # An email the userName gave is outranked by any entry (`user_name_and_email`).
-    # `floor` is the place the keyed entry may not fall below, the stored one (a
-    # request may raise it and lower it back); `here` is the place another entry
-    # must outrank to take it, the one the earlier operations left.
-    floor = here = -1 if row["email_from_user_name"] else _rank(stored)
-    if earlier is not None:
-        stored = {
-            "value": earlier.get("value") or row["email"],
-            "type": earlier.get("type") or "",
-            "primary": earlier.get("primary") or False,
-        }
-        here = _rank(stored)
-    if attr == "emails":
+def _patched_emails(
+    kind: str, attr: str, value: Any, emails: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """`emails` after one operation: on the list (`emails`), on a sub-attribute
+    of every entry (`emails.type`), or on the entries a filter selects
+    (`emails[type eq "work"]`, `emails[type eq "work"].value`)."""
+    filt, sub = _emails_path(attr)
+    if sub not in ("", "value", "type", "primary"):
+        return emails  # `emails.display` and the like
+    if filt is None and not sub:
         if kind == "remove":
-            raise _no_change("the email cannot be removed")
-        best = keyed_entry(value if isinstance(value, list) else [value])
-        if kind == "add":  # appends (RFC 7644 §3.5.2.1): an entry that outranks counts,
-            # and a primary one always, as only one entry may be primary (RFC 7643 §2.4)
-            if best and (_rank(best) > here or _rank(best) == 2):
-                return best
-            return None
-        if best is None:
-            raise _no_change("the email cannot be removed")
-        return best
-    filt: str | None = None  # no filter: `emails.value` writes every entry (RFC 7644 §3.5.2.3)
-    if "[" not in attr and "]" not in attr:
-        sub = attr.removeprefix("emails")
-    else:
-        opening, closing = attr.find("["), attr.find("]")
-        if attr.count("[") != 1 or attr.count("]") != 1 or closing < opening:
-            raise ScimError(400, "an emails path is malformed", "invalidPath")
-        filt, sub = attr[opening + 1 : closing], attr[closing + 1 :]
-    if sub not in ("", ".value", ".type", ".primary"):
-        return None  # `emails.display` and the like
-    if sub == "":
-        if kind != "remove" and not isinstance(value, dict):
-            raise ScimError(400, "an emails entry must be an object", "invalidValue")
-        written = dict(value) if isinstance(value, dict) else {}
-    else:
-        written = {sub[1:]: value}
-    # Every entry (no filter), the keyed one, or a filter we cannot read.
-    if filt is None or _selected(filt, stored) is not False:
-        if kind == "remove":
-            raise _no_change("the email cannot be removed")
-        entry = {**stored, **written}
-        if _rank(entry) < floor:
-            raise _no_change("the email's entry cannot lose its place")
-        return entry
+            return []
+        written = _entries(value if isinstance(value, list) else [value])
+        if kind == "replace":
+            return _one_primary(written, range(len(written)))
+        return _one_primary([*emails, *written], range(len(emails), len(emails) + len(written)))
+    picked = [i for i, e in enumerate(emails) if filt is None or _matches(filt, e)]
     if kind == "remove":
-        return None
-    entry = {**_criteria(filt), **written}
-    if _rank(entry) <= here and _rank(entry) < 2:  # only one entry may be primary
-        return None  # another address: not the one sign-in carries
-    if not isinstance(entry.get("value"), str):
-        raise _no_change("an entry would take the email's place")
-    return entry
+        if not sub:
+            return [e for i, e in enumerate(emails) if i not in picked]
+        blank = {"value": "", "type": "", "primary": False}[sub]
+        return [{**e, sub: blank} if i in picked else e for i, e in enumerate(emails)]
+    if not sub and not isinstance(value, dict):
+        raise ScimError(400, "an emails entry must be an object", "invalidValue")
+    changes = value if not sub else {sub: value}
+    if not picked and filt is not None:
+        # Entra writes `emails[type eq "work"].value` for an entry not there yet.
+        added = _entries([{**_criteria(filt), **changes}])
+        return _one_primary([*emails, *added], [len(emails)])
+    out = [_entries([{**e, **changes}])[0] if i in picked else e for i, e in enumerate(emails)]
+    return _one_primary(out, picked)
+
+
+def _emails_path(attr: str) -> tuple[str | None, str]:
+    """An `emails…` path as its filter (None for none) and sub-attribute ('' for none)."""
+    filt, rest = None, attr.removeprefix("emails")
+    if "[" in attr or "]" in attr:
+        opening, closing = attr.find("["), attr.find("]")
+        if attr.count("[") != 1 or attr.count("]") != 1 or closing < opening or opening != 6:
+            raise ScimError(400, "an emails path is malformed", "invalidPath")
+        filt, rest = attr[opening + 1 : closing], attr[closing + 1 :]
+    if rest and not rest.startswith("."):
+        raise ScimError(400, "an emails path is malformed", "invalidPath")
+    return filt, rest[1:]
+
+
+def _one_primary(entries: list[dict[str, Any]], written: Iterable[int]) -> list[dict[str, Any]]:
+    """Only one entry may be primary (RFC 7643 §2.4): the first one just
+    written primary takes the flag from every other."""
+    first = next((i for i in written if entries[i]["primary"]), None)
+    if first is None:
+        return entries
+    return [{**e, "primary": i == first} for i, e in enumerate(entries)]
+
+
+def _entries(items: list[Any]) -> list[dict[str, Any]]:
+    """`emails` entries as Loom keeps them: a value, a type and a primary flag."""
+    out = []
+    for e in items:
+        if not isinstance(e, dict):
+            raise ScimError(400, "an emails entry must be an object", "invalidValue")
+        value, kind = e.get("value"), e.get("type")
+        if not isinstance(value, str | None) or not isinstance(kind, str | None):
+            raise ScimError(400, "an email's value and type must be strings", "invalidValue")
+        out.append(
+            {"value": value or "", "type": kind or "", "primary": scim.is_primary(e.get("primary"))}
+        )
+    return out
 
 
 # One `attr eq value` comparison: what a provider puts in an `emails[…]` filter.
@@ -315,26 +319,25 @@ def _comparison(filt: str) -> tuple[str, str | bool] | None:
     return attr, scim.is_primary(want) if attr == "primary" else want
 
 
-def _selected(filt: str, stored: dict[str, Any]) -> bool | None:
-    """Whether an `emails[…]` filter selects the keyed entry; None when it is
-    not one comparison."""
+def _matches(filt: str, entry: dict[str, Any]) -> bool:
+    """Whether an `emails[…]` filter selects `entry`."""
     comparison = _comparison(filt)
     if comparison is None:
-        return None
+        raise ScimError(
+            400,
+            "an emails filter must be one comparison on type, value or primary",
+            "invalidFilter",
+        )
     attr, want = comparison
     if attr == "primary":
-        return want == scim.is_primary(stored["primary"])
-    return scim.normalized(str(want)) == scim.normalized(str(stored[attr]))
+        return bool(want == entry["primary"])
+    return scim.normalized(str(want)) == scim.normalized(entry[attr])
 
 
 def _criteria(filt: str) -> dict[str, Any]:
     """What a filter says of the entry it selects (`{"type": "other"}`)."""
     comparison = _comparison(filt)
     return {} if comparison is None else {comparison[0]: comparison[1]}
-
-
-def _no_change(detail: str) -> ScimError:
-    return ScimError(400, detail, "mutability")
 
 
 def _int_param(request: Request, name: str, default: int) -> int:
@@ -378,17 +381,19 @@ def keyed_entry(emails: Any) -> dict[str, Any] | None:
     return max(entries, key=_rank, default=None)  # the first of the highest rank
 
 
-def user_name_and_email(body: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+def user_name_and_email(body: dict[str, Any]) -> tuple[str, str, list[dict[str, Any]]]:
     """The userName, the email SSO sign-in will carry (the keyed `emails`
-    entry's, else the userName) and that entry ({} for the userName)."""
+    entry's, else the userName) and the `emails` list as Loom keeps it."""
     name = body.get("userName")
     if not isinstance(name, str) or not name.strip():
         raise ScimError(400, "userName is required", "invalidValue")
-    entry = keyed_entry(body.get("emails")) or {}
+    listed = body.get("emails") or []
+    emails = _entries(listed if isinstance(listed, list) else [listed])
+    entry = keyed_entry(emails) or {}
     email = scim.normalized(entry.get("value") or name)
     if "@" not in email:
         raise ScimError(400, "userName or an email must be the person's email", "invalidValue")
-    return name.strip(), email, entry
+    return name.strip(), email, emails
 
 
 # ── resources ─────────────────────────────────────────────────────────────
@@ -400,7 +405,7 @@ def _resource(request: Request, row: dict[str, Any]) -> dict[str, Any]:
         "id": row["id"],
         "userName": row["user_name"],
         "active": bool(row["active"]),
-        "emails": [_email(row)],
+        "emails": [_email(e) for e in scim.emails_of(row)],
         "meta": {
             "resourceType": "User",
             "created": _utc(row["created_at"]),
@@ -415,13 +420,10 @@ def _utc(ts: datetime) -> str:
     return as_aware_utc(ts).isoformat()
 
 
-def _email(row: dict[str, Any]) -> dict[str, Any]:
-    """The keyed entry as stored (address and type lower-cased), with its type
-    and primary flag, so a provider comparing it finds no change."""
-    entry: dict[str, Any] = {"value": row["email"], "primary": bool(row["email_primary"])}
-    if row["email_type"]:
-        entry["type"] = row["email_type"]
-    return entry
+def _email(entry: dict[str, Any]) -> dict[str, Any]:
+    """An `emails` entry as the provider wrote it, so comparing finds no change."""
+    shown = {"value": entry["value"], "primary": entry["primary"]}
+    return {**shown, "type": entry["type"]} if entry["type"] else shown
 
 
 def _not_found() -> ScimError:
@@ -460,7 +462,7 @@ async def list_users(request: Request) -> JSONResponse:
     if text is not None:
         attribute, value = parse_filter(text)
         row = await (scim.find(value) if attribute == "userName" else scim.get(scim.user_id(value)))
-        if row and attribute == "work email" and row["email_type"] != "work":
+        if row and attribute != "userName" and not _lists(row, value, attribute == "work email"):
             row = None
         total, rows = (1, [row]) if row else (0, [])
         rows = rows[start - 1 : start - 1 + count]
@@ -474,6 +476,15 @@ async def list_users(request: Request) -> JSONResponse:
             "itemsPerPage": len(rows),
             "Resources": [_resource(request, r) for r in rows],
         }
+    )
+
+
+def _lists(row: dict[str, Any], email: str, work: bool) -> bool:
+    """Whether the user's `emails` hold `email`, as a work entry when `work`."""
+    return any(
+        scim.normalized(e["value"]) == scim.normalized(email)
+        and (not work or e["type"].lower() == "work")
+        for e in scim.emails_of(row)
     )
 
 
@@ -505,11 +516,11 @@ async def get_user(uid: str, request: Request) -> JSONResponse:
 async def create_user(request: Request) -> JSONResponse:
     """Records the email; the Loom account comes from the person's first sign-in."""
     body = await _body(request)
-    name, email, entry = user_name_and_email(body)
+    name, email, emails = user_name_and_email(body)
     # A null is unassigned (RFC 7643 §2.5): a new user is active.
     active = parse_active(True if body.get("active") is None else body["active"])
     try:
-        row = await scim.create(name, email, active=active, email_entry=entry)
+        row = await scim.create(name, email, active=active, emails=emails)
     except scim.Exists:
         raise ScimError(409, "a user with this email or userName exists", "uniqueness") from None
     resource = _resource(request, row)
@@ -526,9 +537,9 @@ async def replace_user(uid: str, request: Request) -> JSONResponse:
     if row is None:
         raise _not_found()
     async with _deactivating_anyway(uid, active):
-        name, email, entry = user_name_and_email(body)
+        name, email, emails = user_name_and_email(body)
         _refuse_another_email(row, email)
-        new = await _update(uid, active, name, entry)
+        new = await _update(uid, active, name, emails)
         if new is None:  # deleted since it was read
             raise _not_found()
         row = new
@@ -549,14 +560,16 @@ async def patch_user(uid: str, request: Request) -> JSONResponse:
     if row is None:
         raise _not_found()
     async with _deactivating_anyway(uid, active):
-        name, entry = patched_names(body, row)
-        if entry is not None:
-            _refuse_another_email(row, str(entry.get("value") or row["email"]))
-        elif name is not None and row["email_from_user_name"]:
-            _refuse_another_email(row, name)  # the email is the userName
+        name, emails = patched_names(body, row)
+        if name is not None or emails is not None:
+            after = {
+                "userName": row["user_name"] if name is None else name,
+                "emails": scim.emails_of(row) if emails is None else emails,
+            }
+            _refuse_another_email(row, user_name_and_email(after)[1])
         # Every PATCH converges, one of only dropped attributes too: an active
         # user lets go what no deactivated email reaches any more.
-        new = await _update(uid, active, name, entry)
+        new = await _update(uid, active, name, emails)
         if new is None:  # deleted since it was read
             raise _not_found()
         row = new
@@ -579,10 +592,10 @@ async def _deactivating_anyway(uid: str, active: bool | None) -> AsyncIterator[N
 
 
 async def _update(
-    uid: str, active: bool | None, name: str | None, entry: dict[str, Any] | None
+    uid: str, active: bool | None, name: str | None, emails: list[dict[str, Any]] | None
 ) -> dict[str, Any] | None:
     try:
-        return await scim.update(uid, active=active, user_name=name, email_entry=entry)
+        return await scim.update(uid, active=active, user_name=name, emails=emails)
     except scim.Exists:
         raise ScimError(409, "another user has this userName", "uniqueness") from None
 

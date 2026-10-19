@@ -139,8 +139,8 @@ async def test_a_reactivation_racing_a_deactivation_of_a_shared_subject(seeded) 
         await seeded.account(a, shared)
         await seeded.account(a, own)
         await seeded.account(b, shared)
-        ua = await scim.create(a, a, active=False, email_entry={})
-        ub = await scim.create(b, b, active=True, email_entry={})
+        ua = await scim.create(a, a, active=False, emails=[])
+        ub = await scim.create(b, b, active=True, emails=[])
         await _sent(
             rng,
             functools.partial(scim.update, ua["id"], active=True),
@@ -161,15 +161,15 @@ async def test_an_account_an_inactive_email_reaches_since_stays_revoked(
     a, b = seeded.email(), seeded.email()
     await seeded.account(a, own)
     await seeded.account(b, shared)
-    ua = await scim.create(a, a, active=False, email_entry={})
-    ub = await scim.create(b, b, active=False, email_entry={})
+    ua = await scim.create(a, a, active=False, emails=[])
+    ub = await scim.create(b, b, active=False, emails=[])
     await seeded.account(a, shared, password=password)
     await scim.update(ub["id"], active=True)
     assert shared not in (await scim.get(ua["id"]) or {})["subjects"]
     assert await _keeps_out(shared), "a@, still deactivated, reaches it"
     other, c = seeded.subject(), seeded.email()  # one no inactive email reaches is lifted
     await seeded.account(c, other)
-    uc = await scim.create(c, c, active=False, email_entry={})
+    uc = await scim.create(c, c, active=False, emails=[])
     await scim.update(uc["id"], active=True)
     assert not await _keeps_out(other)
 
@@ -212,7 +212,7 @@ async def test_a_first_sign_in_racing_a_deactivation_keeps_no_session(seeded, mo
     signed_in = 0
     for _ in range(16):
         email, subject = seeded.email(), seeded.subject()
-        user = await scim.create(email, email, active=True, email_entry={})
+        user = await scim.create(email, email, active=True, emails=[])
         sign_in = _SignIn(seeded, email, subject, rng)
         monkeypatch.setattr(scim, "_subjects", sign_in.accounts)
         iat, _ = await asyncio.gather(sign_in(), scim.update(user["id"], active=False))
