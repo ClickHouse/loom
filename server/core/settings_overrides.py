@@ -28,6 +28,8 @@ from server.settings._live import coerce, is_live, to_json
 log = logging.getLogger(__name__)
 
 KIND = ro.SETTING
+# `change(expected=...)` not given: no compare-and-set.
+NOT_GIVEN: Any = object()
 
 # field -> the value this process held before its first override of it.
 _started_with: dict[str, Any] = {}
@@ -67,9 +69,6 @@ async def refresh(*, ch: _CHClient | None = None) -> ro.Snapshot:
     snapshot = await ro.load(ch=ch)
     adopt(snapshot)
     return snapshot
-
-
-NOT_GIVEN: Any = object()
 
 
 async def change(
