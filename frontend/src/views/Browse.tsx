@@ -1,9 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { startTransition, useEffect, useState, type ReactNode } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
-import { SearchField } from "@clickhouse/click-ui/SearchField";
+import { DraftSearch } from "../components/ui/DraftSearch";
 import { Select } from "@clickhouse/click-ui/Select";
 import {
   browseNamespaces,
@@ -93,7 +93,10 @@ export function Browse() {
   const [pending, setPending] = useState<Set<string>>(new Set());
   // Namespaces I can invite to (admin, active), memory ones and code / tracker ones apart.
   const [adminNs, setAdminNs] = useState<MyNamespaceEntry[]>([]);
+  // The search the rows are filtered by. The box keeps what is typed and hands it over in a
+  // transition, so a keystroke paints before the 200 rows filter; `searchBox` empties it.
   const [query, setQuery] = useState("");
+  const [searchBox, setSearchBox] = useState(0);
   const [joining, setJoining] = useState<string | null>(null);
   const [requireMap, setRequireMap] = useState<Record<string, boolean>>({});
   const [joinDialog, setJoinDialog] = useState<{ ns: string; row: BrowseEntry } | null>(null);
@@ -304,10 +307,11 @@ export function Browse() {
         count={rows ? `${filtered.length} ${filtered.length === 1 ? "namespace" : "namespaces"}` : undefined}
       >
         <div className="min-w-0 flex-1">
-          <SearchField
+          <DraftSearch
+            key={searchBox}
             aria-label="Search namespaces"
-            value={query}
-            onChange={(value) => setQuery(value)}
+            debounceMs={0}
+            onSearch={(text) => startTransition(() => setQuery(text))}
             // A phone's field holds the short form only.
             placeholder={
               phone
@@ -388,6 +392,7 @@ export function Browse() {
               existingRole={myRole[query.trim()]}
               onSuccess={() => {
                 setQuery("");
+                setSearchBox((n) => n + 1);
                 load();
               }}
             />

@@ -4,7 +4,7 @@
 // — script, boot order, first paint — not the server. The CPU is slowed 4x
 // to stand in for a laptop; the network is the preview server on localhost.
 import { expect, test } from "@playwright/test";
-import { installApi, stringArray } from "./fixtures";
+import { codeReposFixture, installApi, stringArray, TASK_INBOX } from "./fixtures";
 
 const LCP_BUDGET_MS = 1500;
 
@@ -447,6 +447,112 @@ test("Conversations: typing in the search stays under the INP budget at 4x with 
   await worstInteraction(page, "type", () =>
     typeInto(page.getByLabel("Search conversation transcripts"), "exporter backlog"),
   );
+  await cdp.detach();
+});
+
+test("Activity: typing in the filter stays under the INP budget at 4x with 100 events", async ({ page }) => {
+  await installApi(page, { auditRows: 100 });
+  const cdp = await watchInteractions(page);
+  await page.goto("/admin/activity", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("table", { name: "Audit events" }).locator("tbody tr")).toHaveCount(100);
+  await page.waitForTimeout(2000);
+  const box = page.getByRole("textbox", { name: "Filter audit events" });
+  await worstInteraction(page, "type", () => typeInto(box, "alice"));
+  await worstInteraction(page, "clear", () => box.fill(""));
+  await cdp.detach();
+});
+
+test("Spaces: typing in the search stays under the INP budget at 4x with 200 namespaces", async ({ page }) => {
+  await installApi(page, { browseRows: 200 });
+  const cdp = await watchInteractions(page);
+  await page.goto("/spaces", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("main").getByText("team-199", { exact: true })).toBeVisible();
+  await page.waitForTimeout(2000);
+  const box = page.getByLabel("Search namespaces");
+  await worstInteraction(page, "type", () => typeInto(box, "team-1"));
+  await worstInteraction(page, "clear", () => box.fill(""));
+  await cdp.detach();
+});
+
+test("Recall Lab: typing over a table of 100 scores stays under the INP budget at 4x", async ({ page }) => {
+  await installApi(page, { memoryRows: 100 });
+  const cdp = await watchInteractions(page);
+  await page.goto("/recall", { waitUntil: "domcontentloaded" });
+  const box = page.getByLabel("Recall query");
+  await box.fill("alerts");
+  await expect(page.getByRole("table", { name: "Recall scores" }).locator("tbody tr")).toHaveCount(100);
+  await page.waitForTimeout(2000);
+  await worstInteraction(page, "type", () => typeInto(box, " lane"));
+  await cdp.detach();
+});
+
+test("Repositories: typing in the filter stays under the INP budget at 4x with 100 repositories", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("loom_page_size_repositories_v1", "100"));
+  const one = codeReposFixture()[0];
+  await installApi(page, {
+    codeRepos: Array.from({ length: 100 }, (_, i) => ({
+      ...one,
+      namespace: `code-repo-${i}`,
+      repo: `acme/repo-${String(i).padStart(2, "0")}`,
+    })),
+  });
+  const cdp = await watchInteractions(page);
+  await page.goto("/repositories", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("main").getByText("acme/repo-99")).toBeVisible();
+  await page.waitForTimeout(2000);
+  const box = page.getByLabel("Filter repositories");
+  await worstInteraction(page, "type", () => typeInto(box, "acme/repo"));
+  await worstInteraction(page, "clear", () => box.fill(""));
+  await cdp.detach();
+});
+
+test("Tasks: typing in the search stays under the INP budget at 4x with 80 open tasks", async ({ page }) => {
+  await installApi(page);
+  // Twenty in each open lane, all of them shown (a lane draws 20 before its Show all).
+  const statuses = ["triage", "todo", "in_progress", "blocked"];
+  const tasks = Array.from({ length: 80 }, (_, i) => ({
+    task_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    inbox: TASK_INBOX,
+    kind: i % 2 ? "bug_report" : "question",
+    priority: 1 + (i % 3),
+    status: statuses[i % 4],
+    reason: "",
+    blocked_on: i % 4 === 3 ? "human" : "",
+    resume_at: null,
+    deadline: null,
+    not_before: null,
+    defer_count: 0,
+    title: `Task ${i}: lane ${i % 5} exporter stalls`,
+    from_agent: "reporter-public",
+    from_subject: "sa:reporter-public-1a2b3c",
+    owner: i % 4 === 2 ? "alert-bot" : "",
+    lease_until: i % 4 === 2 ? "2099-01-01T00:00:00" : null,
+    parent_task_id: null,
+    disclosure: "internal",
+    created_at: `2026-09-20T01:${String(i % 60).padStart(2, "0")}:00`,
+    updated_at: "2026-09-20T01:00:00",
+    version: 1,
+  }));
+  await page.route("**/v1/task.list", (route) => route.fulfill({ json: { tasks, truncated: false } }));
+  const cdp = await watchInteractions(page);
+  await page.goto("/tasks", { waitUntil: "domcontentloaded" });
+  await expect(page.locator(".tq-row")).toHaveCount(80);
+  await page.waitForTimeout(2000);
+  const box = page.getByLabel("Search tasks");
+  await worstInteraction(page, "type", () => typeInto(box, "exporter"));
+  await worstInteraction(page, "clear", () => box.fill(""));
+  await cdp.detach();
+});
+
+test("Profile: typing and clearing the search stay under the INP budget at 4x with 100 sections", async ({ page }) => {
+  await installApi(page, { profileRows: 100 });
+  const cdp = await watchInteractions(page);
+  await page.goto("/profile", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("checkbox", { name: "Select section role-6", exact: true })).toBeVisible();
+  await page.waitForTimeout(2000);
+  const box = page.getByLabel("Search profile sections");
+  await worstInteraction(page, "type", () => typeInto(box, "team"));
+  await worstInteraction(page, "clear", () => box.fill(""));
   await cdp.detach();
 });
 

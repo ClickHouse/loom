@@ -8,7 +8,7 @@
  * (search/symbol/callers — the same ops agents call), PR packs (precomputed
  * per-PR context), Access (who can read it, how tokens get the claim).
  */
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -35,6 +35,7 @@ import { toast } from "../components/Toast";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
+import { DraftSearch } from "../components/ui/DraftSearch";
 import { BusyButton } from "../components/ui/BusyButton";
 import { stageFlips } from "../lib/codeStage";
 import { confirmAction } from "../components/ConfirmDialog";
@@ -410,7 +411,10 @@ function RepositoriesHome({
   // The add-a-tracker dialog, from a card (that repository) or the page (none)
   const [registering, setRegistering] = useState<{ group: RepoGroup | null } | null>(null);
   const org = useStore((s) => s.identity)?.org ?? repos?.[0]?.org ?? "";
+  // The filter the cards show. The box keeps what is typed and hands it over in a
+  // transition, so a keystroke paints before the cards filter; `searchBox` empties it.
   const [query, setQuery] = useState("");
+  const [searchBox, setSearchBox] = useState(0);
   // Most orgs hold a handful of repositories: the pager draws once there are more than fit
   // the smallest page.
   const [page, setPage] = useState(0);
@@ -643,12 +647,15 @@ function RepositoriesHome({
       {!empty && (
         <ListToolbar label="Search and filters" count={count}>
           <div className="min-w-0 flex-1">
-            <SearchField
-              value={query}
-              onChange={(v) => {
-                setQuery(v);
-                setPage(0);
-              }}
+            <DraftSearch
+              key={searchBox}
+              debounceMs={0}
+              onSearch={(text) =>
+                startTransition(() => {
+                  setQuery(text);
+                  setPage(0);
+                })
+              }
               // A phone's field, beside the count, holds the short form only.
               placeholder={phone ? "Filter by name" : "Filter repositories or branches"}
               aria-label="Filter repositories"
@@ -725,7 +732,15 @@ function RepositoriesHome({
         />
       )}
       {loaded && cards.length > 0 && visible.length === 0 && (
-        <ListState kind="filtered" things="repositories or branches" filter={query} onClear={() => setQuery("")} />
+        <ListState
+          kind="filtered"
+          things="repositories or branches"
+          filter={query}
+          onClear={() => {
+            setQuery("");
+            setSearchBox((n) => n + 1);
+          }}
+        />
       )}
 
       {(tracker.status.kind === "ready" || tracker.status.kind === "loading") && loaded && (

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -106,12 +106,15 @@ export function Profile() {
     }
   }
 
+  // The sections filter by the text a render behind the box: clearing a search that hid
+  // most of them mounts them again after the box has painted, not before.
+  const listQuery = useDeferredValue(query);
   const filteredEntries = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = listQuery.trim().toLowerCase();
     return entries && q
       ? entries.filter((e) => e.label.toLowerCase().includes(q) || e.value.toLowerCase().includes(q))
       : entries;
-  }, [entries, query]);
+  }, [entries, listQuery]);
   // Checkboxes: one row, a Shift-click range, every section shown; Escape clears them while
   // no editor is open (it owns Escape). Arrows and j/k move over the rows, Enter opens one.
   const labels = useMemo(() => (filteredEntries ?? []).map((e) => e.label), [filteredEntries]);

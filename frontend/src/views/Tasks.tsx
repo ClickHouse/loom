@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -384,12 +384,15 @@ export function Tasks() {
   const loaded = rows !== null && !rowsError;
   const attention = useMemo(() => (loaded ? attentionCounts(rows ?? [], now) : null), [loaded, rows, now]);
   const kinds = useMemo(() => kindsOf(rows ?? []), [rows]);
+  // The lanes filter a render behind the toolbar, so a keystroke in the search paints the
+  // box before the memoised lanes render again.
+  const listFilters = useDeferredValue(filters);
   const visible = useMemo(
-    () => (rows ?? []).filter((r) => passesFilters(r, filters, ownerAgentOf, now)),
-    [rows, filters, ownerAgentOf, now],
+    () => (rows ?? []).filter((r) => passesFilters(r, listFilters, ownerAgentOf, now)),
+    [rows, listFilters, ownerAgentOf, now],
   );
   const groups = useMemo(() => groupTasks(visible), [visible]);
-  const filtering = !!(filters.attention || filters.kind || filters.poster || filters.q.trim());
+  const filtering = !!(listFilters.attention || listFilters.kind || listFilters.poster || listFilters.q.trim());
 
   const setModeAndRemember = (m: Mode) => {
     setMode(m);

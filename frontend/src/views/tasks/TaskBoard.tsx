@@ -1,4 +1,4 @@
-import { useRef, useState, type HTMLAttributes, type KeyboardEvent } from "react";
+import { memo, useRef, useState, type HTMLAttributes, type KeyboardEvent } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Title } from "@clickhouse/click-ui/Title";
 import type { TaskListRow } from "../../api/tasks";
@@ -62,7 +62,8 @@ function Card({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: HTMLAtt
   );
 }
 
-export function TaskBoard({
+// Memoised: a keystroke in the toolbar's search renders the page, not every card.
+export const TaskBoard = memo(function TaskBoard({
   groups,
   ctx,
   filtering,
@@ -121,4 +122,4 @@ export function TaskBoard({
       })}
     </section>
   );
-}
+});

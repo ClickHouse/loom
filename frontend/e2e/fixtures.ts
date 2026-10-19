@@ -795,6 +795,10 @@ export interface InstallOptions {
   /** Answer `conversation.threads` with this many threads, cut to the request's `limit`.
    *  Default: none. */
   threadRows?: number;
+  /** Answer `audit.list` with this many events. Default: none. */
+  auditRows?: number;
+  /** Answer `namespace.browse` with this many memory namespaces. Default: none. */
+  browseRows?: number;
   /** Hold every `memory.search` answer this long, so a retype can be seen to abort the
    *  stale search. Default: answer at once. */
   searchDelayMs?: number;
@@ -937,7 +941,10 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
         });
       case "/v1/audit.list":
         calls.audit.push(body);
-        return json({ rows: [], next_cursor: null });
+        return json({ rows: auditRowsFixture(options.auditRows ?? 0), next_cursor: null });
+      case "/v1/namespace.browse":
+        if (!options.browseRows) break;
+        return json({ rows: browseRowsFixture(options.browseRows) });
       case "/v1/ui.vitals":
         return json({ recorded: true, route: body.route ?? "" });
       case "/v1/memory.list":
@@ -1312,6 +1319,36 @@ function knowledgeRowsFixture(n: number): Record<string, unknown>[] {
     blob_content_type: "text/markdown",
     original_filename: `handbook-${i}.md`,
     snippet: "Drain the lane, re-point the consumer group, replay from the last committed offset.",
+  }));
+}
+
+/** `n` audit events, newest first, each with an input behind its Details. */
+function auditRowsFixture(n: number): Record<string, unknown>[] {
+  return Array.from({ length: n }, (_, i) => ({
+    ts: `2026-09-19T${String(23 - (i % 24)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}:00Z`,
+    event_type: ["memory.set", "memory.delete", "memory.pin"][i % 3],
+    actor: i % 2 ? "alice@example.com" : "alert-bot",
+    subject: JSON.stringify({
+      namespace: "team-alerts",
+      memory_key: `alerts/2026-09-19/${String(i).padStart(4, "0")}`,
+    }),
+    request_id: `req-${i}`,
+  }));
+}
+
+/** `n` memory namespaces the way `namespace.browse` lists them; none is the caller's. */
+function browseRowsFixture(n: number): Record<string, unknown>[] {
+  return Array.from({ length: n }, (_, i) => ({
+    namespace: `team-${String(i).padStart(3, "0")}`,
+    kind: "memory",
+    description: `Lane ${i % 5} on-call notes and runbooks`,
+    owner_email: "owner@example.com",
+    member_count: 3 + (i % 7),
+    requires_approval: i % 2 === 0,
+    created_at: "2026-09-01T00:00:00Z",
+    join_policy: i % 2 === 0 ? "approval" : "open",
+    visibility: "public",
+    my_status: "none",
   }));
 }
 

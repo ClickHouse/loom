@@ -1,4 +1,12 @@
-import { useLayoutEffect, useRef, useState, type FocusEvent, type HTMLAttributes, type KeyboardEvent } from "react";
+import {
+  memo,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type HTMLAttributes,
+  type KeyboardEvent,
+} from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import type { TaskListRow } from "../../api/tasks";
@@ -188,7 +196,8 @@ export const NO_MATCH = "None match the filters.";
  *  it: the grid is one tab stop, and Left / Right reach them. */
 const IN_ROW = '[role="row"][data-task-id] :is(a[href], button, [tabindex="0"])';
 
-export function TaskList({ groups, ctx, collapsed, onToggle, forceOpen }: ListProps) {
+// Memoised: a keystroke in the toolbar's search renders the page, not every row of every lane.
+export const TaskList = memo(function TaskList({ groups, ctx, collapsed, onToggle, forceOpen }: ListProps) {
   const [active, setActive] = useState<string | null>(null);
   const [all, setAll] = useState<ReadonlySet<Group>>(new Set());
   const drag = useTaskDrag(ctx.canWrite, ctx.onDrop);
@@ -354,6 +363,6 @@ export function TaskList({ groups, ctx, collapsed, onToggle, forceOpen }: ListPr
       })}
     </div>
   );
-}
+});
 // biome-ignore-end lint/a11y/useFocusableInteractive: the grid ends
 // biome-ignore-end lint/a11y/useSemanticElements: the grid ends

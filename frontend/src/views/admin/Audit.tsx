@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useRef, useState, type Ref } from "react";
+import { memo, startTransition, useDeferredValue, useEffect, useMemo, useRef, useState, type Ref } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -284,7 +284,9 @@ export function Audit() {
   });
 
   const me = whoami?.subject || "";
-  const q = filterQuery.trim().toLowerCase();
+  // The rows filter by the text a render behind the box, so a keystroke paints the box
+  // before the table renders again (memoised, it renders only when its rows change).
+  const q = useDeferredValue(filterQuery).trim().toLowerCase();
   // First screen first, the rest in a transition (277 ms of long tasks at 4x for a
   // hundred rows).
   const [firstScreenOnly, setFirstScreenOnly] = useState(true);
@@ -295,15 +297,23 @@ export function Audit() {
     });
     return () => cancelAnimationFrame(raf);
   }, [firstScreenOnly, rows]);
-  const visibleRows = (rows || []).filter((r) => {
-    if (!showSystem && SYSTEM_EVENT_TYPES.has(r.event_type)) return false;
-    if (onlyMe && r.actor !== me) return false;
-    if (q) {
-      const haystack = `${r.actor} ${r.event_type}`.toLowerCase();
-      if (!haystack.includes(q)) return false;
-    }
-    return true;
-  });
+  const visibleRows = useMemo(
+    () =>
+      (rows || []).filter((r) => {
+        if (!showSystem && SYSTEM_EVENT_TYPES.has(r.event_type)) return false;
+        if (onlyMe && r.actor !== me) return false;
+        if (q) {
+          const haystack = `${r.actor} ${r.event_type}`.toLowerCase();
+          if (!haystack.includes(q)) return false;
+        }
+        return true;
+      }),
+    [rows, showSystem, onlyMe, me, q],
+  );
+  const tableRows = useMemo(
+    () => (firstScreenOnly ? visibleRows.slice(0, FIRST_SCREEN_ROWS) : visibleRows),
+    [firstScreenOnly, visibleRows],
+  );
   const hiddenSystemCount =
     (rows || []).length - (rows || []).filter((r) => showSystem || !SYSTEM_EVENT_TYPES.has(r.event_type)).length;
 
@@ -402,12 +412,7 @@ export function Audit() {
               }}
             />
           )}
-          {rows !== null && visibleRows.length > 0 && (
-            <EventsTable
-              tableRef={eventsTable}
-              rows={firstScreenOnly ? visibleRows.slice(0, FIRST_SCREEN_ROWS) : visibleRows}
-            />
-          )}
+          {rows !== null && visibleRows.length > 0 && <EventsTable tableRef={eventsTable} rows={tableRows} />}
           {rows !== null && older && (
             <div className="mt-4 flex justify-center">
               <BusyButton type="secondary" htmlType="button" busy={loadingOlder} onClick={loadOlder}>
@@ -522,7 +527,7 @@ const EVENT_HEADERS = [{ label: "Event" }, { label: "By", width: "220px" }, { la
 
 /** The events, one row each: what happened, who did it and when. The first read is the
  *  table's header over a skeleton. */
-function EventsTable({
+const EventsTable = memo(function EventsTable({
   rows,
   loading = false,
   tableRef,
@@ -542,7 +547,7 @@ function EventsTable({
       rows={rows.map(eventRow)}
     />
   );
-}
+});
 
 function eventRow(row: AuditEntry, i: number): TableRowType {
   return {
