@@ -589,9 +589,10 @@ def test_the_same_rows_in_another_order_get_the_same_files() -> None:
     assert one == two
 
 
-def test_a_colliding_key_keeps_its_file_when_another_key_arrives_or_leaves() -> None:
+def test_a_suffixed_file_moves_only_when_the_bare_names_holder_changes() -> None:
     # Adding `deploy-step`, which sorts before both, moves only the one that held the bare
-    # name; the suffixed file depends on its own key and row id.
+    # name; the suffixed file depends on its own key and row id. When the holder leaves,
+    # the next in order takes the bare name: that one file moves, once.
     ids = _ids(3)
     a = _entry(memory_key="deploy/step", memory_id=ids[0])
     b = _entry(memory_key="deploy:step", memory_id=ids[1])
@@ -607,6 +608,7 @@ def test_a_colliding_key_keeps_its_file_when_another_key_arrives_or_leaves() -> 
     before, after = paths([a, b]), paths([a, b, new])
     assert after["deploy:step"] == before["deploy:step"]
     assert after["deploy-step"] == "semantic/deploy-step.md"
+    assert paths([b])["deploy:step"] == "semantic/deploy-step.md"
 
 
 def test_names_that_collide_only_in_case_get_two_files(tmp_path: Any) -> None:
@@ -627,12 +629,25 @@ def test_a_type_named_like_a_bundle_file_or_blank_still_travels(
     assert _keys_read_back(tmp_path, entries) == ["k"]
 
 
-def test_a_very_long_key_gets_a_file_name_the_filesystem_takes(tmp_path: Any) -> None:
+def test_a_very_long_key_or_type_gets_a_name_the_filesystem_takes(tmp_path: Any) -> None:
     long_a, long_b = "x" * 400 + "a", "x" * 400 + "b"
     entries = [
         _entry(memory_key=k, memory_id=i) for k, i in zip([long_a, long_b], _ids(2), strict=True)
     ]
-    assert _keys_read_back(tmp_path, entries) == sorted([long_a, long_b])
+    entries.append(_entry(memory_key="k", memory_type="t" * 300, memory_id=_ids(3)[2]))
+    assert _keys_read_back(tmp_path, entries) == sorted([long_a, long_b, "k"])
+
+
+@pytest.mark.parametrize("name", ["nul", "CON", "com1", "lpt9.txt"])
+def test_a_windows_device_name_is_never_a_file_or_directory(name: str) -> None:
+    files = okf.plan_bundle(
+        [_entry(memory_key=name), _entry(memory_key="k", memory_type=name, memory_id=_ids(2)[1])],
+        namespace="ns",
+        exported_at=_NOW,
+    )
+    for path in files:
+        for part in path.split("/"):
+            assert part.split(".", 1)[0].casefold() not in {"nul", "con", "com1", "lpt9"}, path
 
 
 def test_the_reserved_directories_cover_every_name_a_reader_skips() -> None:

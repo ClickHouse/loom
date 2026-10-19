@@ -17,7 +17,7 @@ Mapping, memory → concept:
 
   memory_key                → file name and `loom.memory_key` (the key's slug, capped at
                               160 bytes; `-<hash>` when another key holds it or it is
-                              a bundle file's name)
+                              a bundle file's or a Windows device's name)
   memory_type               → directory (its lowercased slug; `type-<slug>` for a
                               reserved name) and `type` (semantic→Fact,
                               procedural→Procedure, preference→Preference,
@@ -59,6 +59,22 @@ from server.memory.domain.sensitivity import HIGH, SENSITIVITY_TAG_PREFIX
 
 OKF_VERSION = "0.2"
 RESERVED_FILES = frozenset({"index.md", "log.md", "AGENTS.md", "README.md"})
+# Names a concept file or type directory never takes, compared case-insensitively as macOS
+# and Windows filesystems compare them: the bundle's own files, and the device names Windows
+# refuses as a file name with any extension.
+_WINDOWS_DEVICES = frozenset(
+    {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        *(f"com{i}" for i in range(1, 10)),
+        *(f"lpt{i}" for i in range(1, 10)),
+    }
+)
+_RESERVED_NAMES = frozenset(f.casefold() for f in RESERVED_FILES)
+# The longest file or directory name slug: a filesystem refuses a name over 255 bytes.
+_MAX_SLUG_BYTES = 160
 # Directory names a bundle reader skips or treats as something other than concepts: the
 # evidence and digest planes (okf_evidence.EVIDENCE_DIRS), the lint's staging area, and
 # tooling directories. A memory type that slugs to one of them is written under `type-<slug>`.
@@ -703,52 +719,60 @@ def type_directory(memory_type: str) -> str:
     `.notes` or `../x` would otherwise drop its rows from the bundle or escape it)."""
     # Lowercase: `Semantic` and `semantic` would share one directory on a case-insensitive
     # filesystem, and their index files would overwrite each other.
-    slug = slugify(memory_type).lower()
-    if slug in _RESERVED_DIRS or slug in _RESERVED_STEMS:
+    slug = file_slug(memory_type).lower()
+    if slug in _RESERVED_DIRS or slug in _RESERVED_NAMES or _is_device(slug):
         return f"type-{slug}"
     return slug
 
 
-# File names compared case-insensitively, as macOS and Windows filesystems compare them.
-_RESERVED_STEMS = frozenset(f.casefold() for f in RESERVED_FILES)
-# The longest file-name slug: a filesystem refuses a name over 255 bytes.
-_MAX_SLUG_BYTES = 160
-
-
-def file_slug(memory_key: str) -> str:
-    """A key's file name: its slug, cut to `_MAX_SLUG_BYTES` with a hash of the whole key when
-    longer (so two long keys that share a prefix still differ)."""
-    slug = slugify(memory_key)
+def file_slug(text: str) -> str:
+    """A key's (or type's) file name: its slug, cut to `_MAX_SLUG_BYTES` with a hash of the
+    whole text when longer (so two long keys that share a prefix still differ)."""
+    slug = slugify(text)
     if len(slug.encode()) <= _MAX_SLUG_BYTES:
         return slug
     cut = slug.encode()[:_MAX_SLUG_BYTES].decode(errors="ignore").rstrip("-.")
-    return f"{cut}-{_short_hash(memory_key)}"
+    return f"{cut}-{_short_hash(text)}"
 
 
-def _short_hash(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()[:8]
+def _short_hash(text: str, n: int = 8) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:n]
+
+
+def _is_device(name: str) -> bool:
+    return name.split(".", 1)[0].casefold() in _WINDOWS_DEVICES
+
+
+def _suffixed(concept_id: str, suffix: str) -> str:
+    """`concept_id` with `-<suffix>` before the first dot of its name: Windows reads a device
+    name (`lpt9.txt`) by the part before the dot, so a suffix after it would not help."""
+    directory, _, name = concept_id.rpartition("/")
+    stem, dot, rest = name.partition(".")
+    return f"{directory}/{stem}-{suffix}{dot}{rest}" if directory else f"{stem}-{suffix}{dot}{rest}"
 
 
 def _is_reserved(concept_id: str) -> bool:
-    return f"{concept_id.rsplit('/', 1)[-1]}.md".casefold() in _RESERVED_STEMS
+    name = concept_id.rsplit("/", 1)[-1]
+    return f"{name}.md".casefold() in _RESERVED_NAMES or _is_device(name)
 
 
 def _dedupe_slugs(concepts: list[Concept]) -> None:
     """Give each concept an id no other concept has, compared case-insensitively. The first
     concept (in sorted order) with a name keeps it; another that shares it, and a key named
-    like the bundle's own `index` or `log` file, gets `-<hash of its key and row id>`. A lost
-    file would leave a live key out of a bundle that still says complete, and prune would
-    delete its copy; a suffix taken from the concept itself never changes when other keys
-    come and go, so its file (and its copy's trace) stays put."""
+    like the bundle's own `index` or `log` file or a Windows device (`nul`, `con`), gets
+    `-<hash of its key and row id>`. A lost file would leave a live key out of a bundle that
+    still says complete, and prune would delete its copy. A suffix taken from the concept
+    itself does not depend on the other keys, so a suffixed file moves only when the concept
+    holding the bare name changes (a key that sorts before it arrives, or the holder leaves),
+    and then once."""
     used: set[str] = set()
     for c in concepts:
         if c.id.casefold() in used or _is_reserved(c.id):
             identity = f"{c.memory_key}\0{c.loom.get('memory_id') or ''}"
             n = 8
-            renamed = f"{c.id}-{hashlib.sha256(identity.encode()).hexdigest()[:n]}"
-            while renamed.casefold() in used:  # a key literally named like another's suffix
+            # a longer hash when a key is literally named like another's suffixed name
+            while (renamed := _suffixed(c.id, _short_hash(identity, n))).casefold() in used:
                 n += 4
-                renamed = f"{c.id}-{hashlib.sha256(identity.encode()).hexdigest()[:n]}"
             c.id = renamed
         used.add(c.id.casefold())
 
