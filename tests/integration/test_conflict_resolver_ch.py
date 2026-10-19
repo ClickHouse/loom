@@ -3227,3 +3227,32 @@ async def test_a_repeat_undo_writes_no_new_facts_or_search_rows(ch, wired, monke
     for _ in range(2):
         assert (await _undo(org, "office_city", winner)).restored
         assert await counts() == first
+
+
+async def test_a_plain_restore_of_a_live_row_takes_no_lock(ch, wired, monkeypatch) -> None:
+    """A row never retired nor deleted: memory.restore is a no-op, without the key's
+    write lock (nor an Undo's wording when Keeper is down)."""
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore
+
+    org, _ = wired
+    await _set(org, "s1", "plain_key", "A plain row")
+    taken: list[str] = []
+    real = restore._undo_lock
+
+    def spy(input: Any) -> Any:
+        taken.append(input.memory_key)
+        return real(input)
+
+    monkeypatch.setattr(restore, "_undo_lock", spy)
+    out = await restore.handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key="plain_key",
+        )
+    )
+    assert not out.restored and taken == []
