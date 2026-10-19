@@ -7,6 +7,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -193,8 +194,6 @@ async def test_two_reused_names_in_a_chain_listed_before_lineage_keep_its_root(o
 
 def _lost_ancestry_query() -> str:
     """The SSO guide's query for tokens whose chain no longer leads to a person."""
-    from pathlib import Path
-
     guide = (Path(__file__).parents[2] / "docs/operations/sso.md").read_text()
     query = guide.split("```sql\n")
     return next(q.split("```")[0] for q in query[1:] if "arrayConcat([created_by], lineage)" in q)
@@ -227,9 +226,8 @@ async def test_the_guide_lists_a_token_whose_root_was_lost_before_this_build(org
         "lineage": [],
     }
     replaced["version"] = int(replaced["version"]) + 1
-    await get_client().insert(
-        "loom.service_accounts", [replaced]
-    )  # as the previous build reused it
+    # As the previous build reused the name: no hand-down.
+    await get_client().insert("loom.service_accounts", [replaced])
     await _reuse(org, "mid", root)
     assert await _lost(org) == ["leaf"]
 
@@ -253,4 +251,60 @@ async def test_the_guide_lists_no_token_whose_chain_leads_to_a_person(org: str) 
     await _listed_before_lineage(org, "leaf", "sa:leaf-1", "sa:top-old")
     await _save(org, "agent-made", "sa:agent-made-1", "sa:fleet:a1", ["sa:fleet:a1"])
     await _reuse(org, "top", lee)  # handed down: leaf's lineage reaches lee
+    # Listed before 044, and its parent's row still live: it leads to lee.
+    await _listed_before_lineage(org, "p2", "sa:p2-old", lee)
+    await _listed_before_lineage(org, "c2", "sa:c2-1", "sa:p2-old")
+    assert await _lost(org) == []
+
+
+async def _reused_by_the_previous_build(org: str, name: str) -> None:
+    """`name` taken by another person's token, with no hand-down."""
+    held = await get_client().query_one(
+        "SELECT * FROM loom.service_accounts FINAL WHERE org = {org:String} AND name = {n:String}",
+        params={"org": org, "n": name},
+    )
+    row = dict(held or {})
+    new = {**row, "sa_subject": f"sa:{name}-new", "created_by": "kim", "lineage": []}
+    await get_client().insert(
+        "loom.service_accounts", [{**new, "version": int(row["version"]) + 1}]
+    )
+
+
+async def _revoke_by_name(org: str, name: str) -> None:
+    held = await get_client().query_one(
+        "SELECT * FROM loom.service_accounts FINAL WHERE org = {org:String} AND name = {n:String}",
+        params={"org": org, "n": name},
+    )
+    gone = service_accounts.revoked_row(
+        dict(held or {}), revoked_at=datetime(2026, 1, 1), revoked_by="op"
+    )
+    await get_client().insert("loom.service_accounts", [gone])
+
+
+async def test_running_the_guides_query_again_reaches_down_the_chain(org: str) -> None:
+    # root -> top -> mid -> x -> y, all listed before 044: top's name reused
+    # before the upgrade, x's after it. y's lineage reaches mid, which is live.
+    root = f"lee-{uuid.uuid4().hex[:8]}"
+    await _listed_before_lineage(org, "top", "sa:top-old", root)
+    await _listed_before_lineage(org, "mid", "sa:mid-1", "sa:top-old")
+    await _listed_before_lineage(org, "x", "sa:x-old", "sa:mid-1")
+    await _listed_before_lineage(org, "y", "sa:y-1", "sa:x-old")
+    await _reused_by_the_previous_build(org, "top")
+    await _reuse(org, "x", root)
+    assert await _lost(org) == ["mid"]
+    await _revoke_by_name(org, "mid")  # as the guide says, then again
+    assert await _lost(org) == ["y"]
+    await _revoke_by_name(org, "y")
+    assert await _lost(org) == []
+
+
+async def test_the_guide_lists_no_expired_token(org: str) -> None:
+    await _listed_before_lineage(org, "old", "sa:old-1", "sa:gone-1")
+    held = await get_client().query_one(
+        "SELECT * FROM loom.service_accounts FINAL WHERE org = {org:String} AND name = 'old'",
+        params={"org": org},
+    )
+    row = dict(held or {})
+    expired = {**row, "expires_at": datetime(2026, 1, 1), "version": int(row["version"]) + 1}
+    await get_client().insert("loom.service_accounts", [expired])
     assert await _lost(org) == []

@@ -540,27 +540,32 @@ reuses its name. A token made before this build loses the person at the top
 of its chain when a name above it was reused before this build (later names
 reused hand down only what was left): it is still refused (the revocation
 reaches it through its delegation chain), but it stays listed live and keeps
-its name. List the tokens whose every subject above is a token with no row
-left, so that none leads to a person, with
+its name. List the tokens whose every subject above is a token, none of them
+live, so that none leads to a person, with
 
 ```sql
 SELECT org, name, sa_subject, created_by FROM loom.service_accounts FINAL
-WHERE revoked_at IS NULL
+WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())
   AND arrayAll(s -> match(s, '^sa:[^:]+$'), arrayConcat([created_by], lineage))
-  AND NOT hasAny(arrayConcat([created_by], lineage),
-                 (SELECT groupArray(sa_subject) FROM loom.service_accounts FINAL))
+  AND (org, name) NOT IN (
+    SELECT org, name FROM loom.service_accounts FINAL
+    ARRAY JOIN arrayConcat([created_by], lineage) AS above
+    WHERE above IN (
+      SELECT sa_subject FROM loom.service_accounts FINAL
+      WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())))
 ```
 
 A machine trust's agents (`sa:<trust>:<agent>`) count as people here; a token
 made from an operator-minted `sa:` subject (`loom mint-token --subject sa:…`)
-shows up too, and is not one of these. Revoke each
-token it lists as an admin of one of its namespaces, with
-`/v1/me/service_accounts.revoke` and its `name` (its creator is a token, not a
-person, so it is in no one's own list; a namespace admin's Tokens list shows
-it among the newest 200). Then revoke the tokens each one made (those whose
-`created_by` is its `sa_subject`), down the chain. While the previous build
-still serves, a token it lists, revokes or reuses the name of records no
-lineage.
+shows up too, and is not one of these. So does a token made before this build
+by a token since revoked: it is dead already, and revoking it frees its name.
+Revoke each token it lists as an admin
+of one of its namespaces, with `/v1/me/service_accounts.revoke` and its `name`
+(its creator is a token, not a person, so it is in no one's own list; a
+namespace admin's Tokens list shows it among the newest 200). Then run it
+again: a token below one you revoked shows up once that one is revoked. Stop
+when it lists none. While the previous build still serves, a token it lists,
+revokes or reuses the name of records no lineage.
 
 A browser sign-in whose steps land on both builds (a code exchanged, an
 identity provider's callback) fails and is started again. The SDK and `loom
