@@ -176,3 +176,20 @@ async def test_a_swept_version_comes_back_with_the_sweeps_marker(
     await rb.apply_rollback("test", "personal", plan, applied_at=_NOW, ch=object())
     (row,) = calls["memory"]
     assert row["expire_reason"] == "blacklist.sweep:p1" and row["tombstoned_at"] == _NOW
+
+
+async def test_a_live_version_an_older_restore_stamped_comes_back_without_the_marker(
+    calls: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An older build's memory.restore copied the sweep's marker onto the live row it brought
+    # back; the marker belongs only on the sweep's own tombstone.
+    restored = _row("swept", 14, expire_reason="blacklist.sweep:p1")
+
+    async def _fetch(org: str, ns: str, pairs: list[Any], **_: Any) -> list[MemoryRow]:
+        return [restored]
+
+    monkeypatch.setattr(store, "fetch_version_rows", _fetch)
+    plan = RollbackPlan(reinstate=[_action("swept", "reinstate", 14)], remove=[])
+    await rb.apply_rollback("test", "personal", plan, applied_at=_NOW, ch=object())
+    (row,) = calls["memory"]
+    assert row["expire_reason"] == "" and row["tombstoned_at"] is None

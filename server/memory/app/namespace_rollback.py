@@ -12,6 +12,7 @@ from typing import Any
 import server.memory.store as store
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain import rollback as svc
+from server.memory.domain.expire_reasons import carried_reason
 from server.memory.store.inserts import insert_memory_versions
 
 log = logging.getLogger(__name__)
@@ -138,8 +139,11 @@ async def apply_rollback(
                     h,
                     version=new_version,
                     updated_at=applied_at,
-                    # The row as it was at T, a blacklist sweep's marker on its tombstone too.
-                    expire_reason=h.expire_reason,
+                    # The row as it was at T; a sweep's marker only on the sweep's own
+                    # tombstone (a live row an older restore stamped drops it).
+                    expire_reason=h.expire_reason
+                    if h.tombstoned_at
+                    else carried_reason(h.expire_reason),
                 )
             )
             if is_embedded(h.memory_type, h.sensitivity):
