@@ -12,7 +12,6 @@ import logging
 from typing import Any
 
 from server.core.errors import NotFoundError
-from server.memory.api.models_bulk import MemoryBulkGetInput
 from server.memory.api.models_crud import MemoryGetInput, MemoryListInput, MemorySetInput
 from server.memory.api.models_procedure import (
     ProcedureAddInput,
@@ -186,31 +185,33 @@ async def _goal_similarities(
 
 
 async def _procedure_rows(
-    input: ProcedureMatchInput, keys_by_ns: dict[str, list[str]]
+    input: ProcedureMatchInput | ProcedureListInput, keys_by_ns: dict[str, list[str]]
 ) -> dict[tuple[str, str], Any]:
-    """The live rows of the candidate keys whose value is a dict, by (namespace, key)."""
-    from server.memory.app import query as _query
+    """The live rows of the candidate keys whose value is a dict, by (namespace, key).
+
+    A 'high' row is never a candidate: the locate leaves it out, so under the wildcard
+    agent the plain row the search matched answers, and no key read is audited."""
+    import server.memory.store as memory_repo
+    from server.identity.app.request_scope import request_scope
 
     rows: dict[tuple[str, str], Any] = {}
     for ns, keys in keys_by_ns.items():
+        identity = memory_repo.Identity(
+            org=input.org,
+            namespace=ns,
+            agent=input.agent,
+            user_id=input.user_id,
+            session_id=input.session_id,
+        )
         try:
-            bulk = await _query.handle_memory_bulk_get(
-                MemoryBulkGetInput(
-                    org=input.org,
-                    namespace=ns,
-                    agent=input.agent,
-                    user_id=input.user_id,
-                    session_id=input.session_id,
-                    memory_keys=keys,
-                )
+            found = await memory_repo.get_many_by_keys(
+                identity, keys, scope=request_scope(), exclude_high_sensitivity=True
             )
         except Exception:  # noqa: BLE001 — an unreadable namespace drops its candidates, not the match
             continue
-        for key, row in bulk.results.items():
-            # The wildcard read can answer another agent's row of the key; a high one is
-            # never a match, whoever wrote it.
-            if isinstance(row.value, dict) and row.sensitivity != "high":
-                rows[(ns, key)] = row
+        for row in found:
+            if isinstance(row.value, dict):
+                rows[(ns, row.memory_key)] = row
     return rows
 
 
@@ -384,25 +385,15 @@ async def handle_procedure_list(input: ProcedureListInput) -> ProcedureListOutpu
         limit=input.limit,
     )
     list_out = await handle_memory_list(list_in)
+    # One read of the listed bodies. A 'high' row's body is never read by a list: the locate
+    # leaves it out, so such a procedure is listed by its key alone.
+    bodies = await _procedure_rows(
+        input, {input.namespace: [row.memory_key for row in list_out.entries]}
+    )
     summaries: list[_ProcedureSummary] = []
     for row in list_out.entries:
-        from server.memory.api.models_crud import MemoryGetInput
-        from server.memory.app.handlers import handle_memory_get
-
-        try:
-            get_out = await handle_memory_get(
-                MemoryGetInput(
-                    org=input.org,
-                    namespace=input.namespace,
-                    agent=input.agent,
-                    user_id=input.user_id,
-                    session_id=input.session_id,
-                    memory_key=row.memory_key,
-                )
-            )
-            value = get_out.value if isinstance(get_out.value, dict) else {}
-        except Exception:  # noqa: BLE001 — an unreadable body still lists the procedure by key
-            value = {}
+        body = bodies.get((input.namespace, row.memory_key))
+        value: Any = body.value if body is not None and row.sensitivity != "high" else {}
         if not isinstance(value, dict):
             value = {}
         summaries.append(

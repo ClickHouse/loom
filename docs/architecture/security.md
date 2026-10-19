@@ -526,7 +526,7 @@ leg returns it. The other reads that could serve its value follow three rules:
   `high` canonical is not seated in its duplicate's place), the profile fold, the entity graph
   (a row written as `high` projects only the entities its writer declared, and the entity
   extractor never reads it), the entities of a `high` row in `memory.list`, `memory.related`
-  and the graph walk's recency seeds, `procedure.match`'s candidates, and the existing memories
+  and the graph walk's recency seeds, the candidates `procedure.match` reads and the bodies `procedure.list` summarises, and the existing memories
   an extraction prompt shows the LLM. A row the sensitivity sweep labels `high` after the extractor ran (one written
   unlabelled, or arriving that way through `memory.copy_to` or an import) keeps the entities
   mined from its value on the row, not served by those reads. A row re-set as `high` through
@@ -547,7 +547,8 @@ unless asked with `include_high` (each one it then releases is audited). `bodies
 leaves out a passage whose text reads as a credential. Other raw text is served to readers of
 the namespace as it is: a caller-labelled `high` value that shares a passage with a plain
 row, `memory.search`'s `chunk` and `summary` hits (which `memory.ask` also hands its model),
-and `memory.recall`'s raw turns.
+`memory.get` on a `chunk:` key, the session digests `memory.digests` lists, and
+`memory.recall`'s raw turns.
 
 Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).

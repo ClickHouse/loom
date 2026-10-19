@@ -5,6 +5,7 @@ graph logic itself is covered in test_procedure_graph.py."""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace as NS
 from typing import Any
 
@@ -50,17 +51,12 @@ def _stub_search_and_bulk(
             ]
         )
 
-    async def _bulk(inp: Any) -> Any:
-        return NS(
-            results={
-                k: NS(value=rows[k], sensitivity="high" if k in high else "")
-                for k in inp.memory_keys
-                if k in rows
-            }
-        )
+    async def _rows(_ident: Any, keys: list[str], *, exclude_high_sensitivity: bool, **_k: Any):
+        hidden = high if exclude_high_sensitivity else frozenset()
+        return [NS(memory_key=k, value=rows[k]) for k in keys if k in rows and k not in hidden]
 
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
-    monkeypatch.setattr("server.memory.app.query.handle_memory_bulk_get", _bulk)
+    monkeypatch.setattr("server.memory.store.get_many_by_keys", _rows)
 
 
 def test_match_labels_status_and_lists_candidates_last(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -752,3 +748,33 @@ def test_names_without_an_ascii_slug_get_distinct_keys() -> None:
     keys = {_procedure_memory_key(n) for n in ("日本の手順", "中文流程", "!!!")}
     assert len(keys) == 3 and "procedure_" not in keys
     assert _procedure_memory_key("日本の手順") == _procedure_memory_key(" 日本の手順 ")
+
+
+def test_list_never_reads_a_high_procedures_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.memory.api.models_procedure import ProcedureListInput
+    from server.memory.app.procedure import handle_procedure_list
+
+    rows = {"procedure_auth": _value("auth"), "procedure_vault": _value("vault")}
+    _stub_search_and_bulk(monkeypatch, rows, [], high=frozenset({"procedure_vault"}))
+
+    async def _list(_inp: Any) -> Any:
+        return NS(
+            entries=[
+                NS(memory_key="procedure_auth", sensitivity="", created_at=datetime(2026, 9, 1)),
+                NS(
+                    memory_key="procedure_vault",
+                    sensitivity="high",
+                    created_at=datetime(2026, 9, 1),
+                ),
+            ]
+        )
+
+    async def _get(_inp: Any) -> Any:
+        raise AssertionError("procedure.list reads its bodies in one filtered read")
+
+    monkeypatch.setattr("server.memory.app.query.handle_memory_list", _list)
+    monkeypatch.setattr("server.memory.app.handlers.handle_memory_get", _get)
+    out = asyncio.run(handle_procedure_list(ProcedureListInput(org="o", namespace="ns")))
+    by_key = {p.memory_key: p for p in out.procedures}
+    assert by_key["procedure_auth"].situation == rows["procedure_auth"]["situation"]
+    assert by_key["procedure_vault"].situation == "" and by_key["procedure_vault"].name == "vault"

@@ -421,3 +421,27 @@ async def test_related_never_serves_a_high_sources_entities() -> None:
     ident = Identity(org="o", namespace="n", agent="a", user_id="-", session_id="-")
     ents, rows = await find_related_by_entities(ident, "door", scope=WHOLE_NAMESPACE, ch=ch)
     assert ents == [] and rows == []
+
+
+@pytest.mark.asyncio
+async def test_a_wildcard_key_read_without_high_answers_the_plain_row_behind_it() -> None:
+    # procedure.match and procedure.list: another agent's newer high row of the key must
+    # not hide the plain row the search matched.
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import Identity, get_many_by_keys
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version) VALUES "
+        f"('o', 'n', 'a', '-', '-', '{_A}', 'p:deploy', 'procedural', 'plain', 'active', '', 1), "
+        f"('o', 'n', 'b', '-', '-', '{_B}', 'p:deploy', 'procedural', 'vault', 'active', "
+        "'high', 2)",
+    )
+    ident = Identity(org="o", namespace="n", agent="*", user_id="-", session_id="-")
+    every = await get_many_by_keys(ident, ["p:deploy"], scope=WHOLE_NAMESPACE, ch=ch)
+    assert [r.sensitivity for r in every] == ["high"]
+    plain = await get_many_by_keys(
+        ident, ["p:deploy"], scope=WHOLE_NAMESPACE, ch=ch, exclude_high_sensitivity=True
+    )
+    assert [(r.agent, r.value) for r in plain] == [("a", "plain")]

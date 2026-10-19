@@ -345,11 +345,14 @@ async def get_many_by_keys(
     scope: ReadFilters,
     ch: _CHClient | None = None,
     strong: bool = False,
+    exclude_high_sensitivity: bool = False,
 ) -> list[MemoryRow]:
     """Bulk read: one CH round-trip for N keys under one identity tuple.
 
     Used by memory.bulk_get. Tombstoned rows are filtered out. Empty
-    `memory_keys` → empty result, no CH call.
+    `memory_keys` → empty result, no CH call. `exclude_high_sensitivity`
+    leaves 'high' rows out of the locate, so under an open axis the newest
+    other row of the key answers instead.
     """
     if not memory_keys:
         return []
@@ -386,6 +389,8 @@ async def get_many_by_keys(
         session_clause = "AND session_id = {sid:String}"
         params["sid"] = identity.session_id
     session_clause += scope_and(scope, params)
+    if exclude_high_sensitivity:
+        session_clause += " AND sensitivity != 'high'"
     # With any axis open, several identities may hold the same key: the
     # newest row per key answers, the way `get_by_key`'s wildcard read orders
     # (version DESC, created_at DESC) and takes one.
