@@ -1,11 +1,11 @@
 """`hand_down_lineage`: a token its former holder made whose claim cannot be
 taken stops the new token's save with an error that names no token, since that
-token may be another person's."""
+token may be another person's; any other failure is raised as itself; and a
+former holder's many tokens are rewritten at most `_CLAIMS_AT_ONCE` at a time."""
 
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -57,15 +57,11 @@ class _ManyChildren:
 
     def __init__(self) -> None:
         self.written: list[str] = []
-        self.at_once = self.most = 0
 
     async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
         if not sql.startswith("SELECT *"):  # the former holder
             return {"sa_subject": "sa:ci-1", "created_by": "lee", "lineage": ["lee"]}
-        self.at_once += 1
-        self.most = max(self.most, self.at_once)
         await asyncio.sleep(0.01)  # a round trip
-        self.at_once -= 1
         return {"name": params["name"], "lineage": [], "version": 1}
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -79,15 +75,37 @@ async def test_hundreds_of_children_are_handed_down_a_few_at_a_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ch = _ManyChildren()
+    held = most = 0
+
+    @asynccontextmanager
+    async def claimed(org: str, name: str) -> AsyncIterator[None]:
+        nonlocal held, most
+        held += 1
+        most = max(most, held)
+        try:
+            yield
+        finally:
+            held -= 1
+
+    monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
+    monkeypatch.setattr(grant_claims, "service_account_change", claimed)
+    await service_accounts.hand_down_lineage("acme", "ci")
+    assert sorted(ch.written) == sorted(f"job-{i}" for i in range(400))
+    assert 1 < most <= service_accounts._CLAIMS_AT_ONCE  # claims held at once
+
+
+async def test_another_failure_is_raised_as_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Down(_CH):
+        async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any]:
+            if sql.startswith("SELECT *"):
+                raise ConnectionError("ClickHouse is away")
+            return await super().query_one(sql, params)
 
     @asynccontextmanager
     async def claimed(org: str, name: str) -> AsyncIterator[None]:
         yield
 
-    monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _Down())
     monkeypatch.setattr(grant_claims, "service_account_change", claimed)
-    started = time.monotonic()
-    await service_accounts.hand_down_lineage("acme", "ci")
-    assert sorted(ch.written) == sorted(f"job-{i}" for i in range(400))
-    assert 1 < ch.most <= service_accounts._CLAIMS_AT_ONCE
-    assert time.monotonic() - started < 400 * 0.01 / 2  # not one after another
+    with pytest.raises(ConnectionError):
+        await service_accounts.hand_down_lineage("acme", "parent")
