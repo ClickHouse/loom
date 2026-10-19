@@ -14,7 +14,9 @@ def _control_request(scope: Scope) -> bool:
         return True
     if path in ("/v1/health/live", "/v1/health/ready"):
         return True
-    if path.startswith(("/v1/admin/models/", "/oauth/", "/.well-known/")):
+    # The JWKS too: a gateway verifying the identity token of the model calls a
+    # model change makes reads it there.
+    if path.startswith(("/v1/admin/models/", "/oauth/", "/.well-known/", "/v1/.well-known/")):
         return True
     # Dashboard page and asset loads: any GET outside the API and MCP roots.
     return scope.get("method") in ("GET", "HEAD") and not (

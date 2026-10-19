@@ -364,13 +364,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         algorithm = "HS256"
         candidates = [secret]
 
-    # Loom's own issuer plus the federated issuers in the
-    # `jwt_trusted_issuers` CSV.
-    trusted_issuers = {settings.jwt_issuer}
-    for extra in settings.jwt_trusted_issuers.split(","):
-        extra = extra.strip()
-        if extra:
-            trusted_issuers.add(extra)
+    trusted = settings.trusted_issuers()
 
     try:
         decoded = _decode(token, candidates, algorithm)
@@ -386,10 +380,10 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
             raise TokenError(f"claim {claim!r} must be a number")
     if not isinstance(decoded.get("iss"), str):
         raise TokenError("claim 'iss' must be a string")
-    if decoded.get("iss") not in trusted_issuers:
+    if decoded.get("iss") not in trusted:
         # The trusted list is deployment config: logged, not told to the caller.
         logging.getLogger(__name__).warning(
-            "untrusted issuer %r; allowed: %s", decoded.get("iss"), sorted(trusted_issuers)
+            "untrusted issuer %r; allowed: %s", decoded.get("iss"), sorted(trusted)
         )
         raise TokenError(f"untrusted issuer {decoded.get('iss')!r}")
 
