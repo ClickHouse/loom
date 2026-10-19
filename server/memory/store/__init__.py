@@ -152,6 +152,7 @@ from server.memory.store.rows import (
     serialize_value,
     stored_value_text,
     uuid_or_none,
+    version_time,
     written_now,
 )
 from server.memory.store.sql import (
@@ -172,6 +173,7 @@ __all__ = [
     "_hydrate",
     "_MEMORY_FINAL_PROJECTION",
     "next_version",
+    "version_time",
     "reemit_version",
     "_SEQUENTIAL",
     "apply_entities_batch",

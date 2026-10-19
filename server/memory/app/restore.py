@@ -22,7 +22,7 @@ from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.temporal_sql import SERVED_STATUSES
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
-from server.memory.store.rows import next_version
+from server.memory.store.rows import next_version, version_time
 
 if TYPE_CHECKING:
     from server.memory.store import MemoryRow
@@ -227,7 +227,7 @@ async def _reopen_facts(
         hashes={str(existing.memory_id): str(existing.content_sha256)},
         # Versions are time_ns: the restore's version is when it was made, the same on
         # its first write and on every retry that finishes it.
-        restored_at=datetime.fromtimestamp(version / 1e9, UTC).replace(tzinfo=None),
+        restored_at=version_time(version),
         restore_id=uuid.uuid5(uuid.NAMESPACE_OID, restore).hex,
     )
 

@@ -304,3 +304,12 @@ async def test_undoing_a_retired_duplicate_keeps_it_a_duplicate(monkeypatch, kee
     table, rows = ch.inserts[0]
     assert table == "loom.memory" and rows[0]["status"] == status
     assert unsup == [status]
+
+
+def test_a_version_becomes_its_time_to_the_microsecond() -> None:
+    from datetime import datetime
+
+    from server.memory.store.rows import version_time
+
+    # A float of these ns rounds the microsecond up; integer arithmetic does not.
+    assert version_time(1_792_383_601_496_448_999) == datetime(2026, 10, 19, 4, 20, 1, 496448)
