@@ -30,10 +30,10 @@ class KnowledgeSettings(BaseModel):
 
     # ---- chunking ----
     # Sliding-window chunking on knowledge.add/upsert, in characters.
-    # chunk_size 0 = one chunk per doc (hurts long-form retrieval); stride <
-    # chunk_size overlaps. Smaller chunks mean more embed calls; 1500/1230
-    # stays well under the text-embedding-3 context.
-    knowledge_chunk_size: Annotated[int, LIVE] = 1500  # characters per chunk; 0 disables
+    # chunk_size 0 = one chunk per doc (hurts long-form retrieval). Smaller
+    # chunks mean more embed calls; 1500/1230 stays well under the
+    # text-embedding-3 context.
+    knowledge_chunk_size: Annotated[int, LIVE] = 1500
     # Characters between chunk starts: below chunk_size the chunks overlap; above it
     # the step is chunk_size, so no text falls between chunks.
     knowledge_chunk_stride: Annotated[int, LIVE] = 1230

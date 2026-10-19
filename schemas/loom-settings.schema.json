@@ -2130,7 +2130,7 @@
         "knowledge_chunk_size": {
           "default": 1500,
           "type": "integer",
-          "description": "Sliding-window chunking on knowledge.add/upsert, in characters. chunk_size 0 = one chunk per doc (hurts long-form retrieval); stride < chunk_size overlaps. Smaller chunks mean more embed calls; 1500/1230 stays well under the text-embedding-3 context. characters per chunk; 0 disables"
+          "description": "Sliding-window chunking on knowledge.add/upsert, in characters. chunk_size 0 = one chunk per doc (hurts long-form retrieval). Smaller chunks mean more embed calls; 1500/1230 stays well under the text-embedding-3 context."
         },
         "knowledge_chunk_stride": {
           "default": 1230,
