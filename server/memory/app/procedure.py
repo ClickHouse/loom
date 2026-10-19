@@ -207,7 +207,9 @@ async def _procedure_rows(
         except Exception:  # noqa: BLE001 — an unreadable namespace drops its candidates, not the match
             continue
         for key, row in bulk.results.items():
-            if isinstance(row.value, dict):
+            # The wildcard read can answer another agent's row of the key; a high one is
+            # never a match, whoever wrote it.
+            if isinstance(row.value, dict) and row.sensitivity != "high":
                 rows[(ns, key)] = row
     return rows
 

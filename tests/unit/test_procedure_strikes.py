@@ -144,7 +144,7 @@ def test_three_consecutive_failures_quarantine_and_a_success_lifts_it(
         return NS(results=[NS(namespace="ns", memory_key="p:ship", similarity=0.9)])
 
     async def _bulk(inp: Any) -> Any:
-        return NS(results={"p:ship": NS(value=row)})
+        return NS(results={"p:ship": NS(value=row, sensitivity="")})
 
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
     monkeypatch.setattr("server.memory.app.query.handle_memory_bulk_get", _bulk)

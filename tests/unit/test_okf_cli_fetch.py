@@ -116,8 +116,9 @@ async def test_export_keeps_superseded_rows_and_pages_edges() -> None:
 
 
 class _MixedClient:
-    """A namespace with a live row, a live 'high' row and three tombstoned rows, which
-    bulk_get does not answer: one short, one longer than the list preview, one 'high'."""
+    """A namespace with three live rows (plain, one both reads call high, one only the list
+    calls high) and three tombstoned rows, which bulk_get does not answer: one short, one
+    longer than the list preview, one 'high'."""
 
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         def entry(key: str, **over: Any) -> dict[str, Any]:

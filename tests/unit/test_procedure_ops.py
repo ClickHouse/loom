@@ -37,7 +37,10 @@ def _value(
 
 
 def _stub_search_and_bulk(
-    monkeypatch: pytest.MonkeyPatch, rows: dict[str, dict[str, Any]], order: list[str]
+    monkeypatch: pytest.MonkeyPatch,
+    rows: dict[str, dict[str, Any]],
+    order: list[str],
+    high: frozenset[str] = frozenset(),
 ) -> None:
     async def _search(inp: Any) -> Any:
         return NS(
@@ -48,7 +51,13 @@ def _stub_search_and_bulk(
         )
 
     async def _bulk(inp: Any) -> Any:
-        return NS(results={k: NS(value=rows[k]) for k in inp.memory_keys if k in rows})
+        return NS(
+            results={
+                k: NS(value=rows[k], sensitivity="high" if k in high else "")
+                for k in inp.memory_keys
+                if k in rows
+            }
+        )
 
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
     monkeypatch.setattr("server.memory.app.query.handle_memory_bulk_get", _bulk)
@@ -78,6 +87,19 @@ def test_match_labels_status_and_lists_candidates_last(monkeypatch: pytest.Monke
         )
     )
     assert "p:mined" not in {m.memory_key for m in out.matches}
+
+
+def test_match_never_returns_a_high_procedure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The wildcard read can answer another agent's row of a hit key, labelled high.
+    from server.memory.api.models_procedure import ProcedureMatchInput
+    from server.memory.app.procedure import handle_procedure_match
+
+    rows = {"p:auth": _value("auth"), "p:vault": _value("vault")}
+    _stub_search_and_bulk(monkeypatch, rows, ["p:vault", "p:auth"], high=frozenset({"p:vault"}))
+    out = asyncio.run(
+        handle_procedure_match(ProcedureMatchInput(org="o", namespace="ns", situation="x"))
+    )
+    assert [m.memory_key for m in out.matches] == ["p:auth"]
 
 
 def test_match_surfaces_fail_prone_steps_as_pitfalls(monkeypatch: pytest.MonkeyPatch) -> None:
