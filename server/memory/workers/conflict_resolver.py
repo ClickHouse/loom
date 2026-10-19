@@ -180,8 +180,8 @@ def _attempt_key(r: Mapping[str, Any]) -> tuple[str, ...]:
     return (*_identity(r), str(r.get("content_sha256") or ""))
 
 
-async def _out_of_attempts(r: Mapping[str, Any], shown: frozenset[str] = frozenset()) -> bool:
-    """One more attempt that left the row owed (`shown`: the peers it judged, kept with
+async def _out_of_attempts(r: Mapping[str, Any], judged: frozenset[str] = frozenset()) -> bool:
+    """One more attempt that left the row owed (`judged`: the peers it judged, kept with
     those judged before); True, and the row stamped, on the last."""
     key = _attempt_key(r)
     attempts = _state.attempts
@@ -189,7 +189,7 @@ async def _out_of_attempts(r: Mapping[str, Any], shown: frozenset[str] = frozens
         attempts.clear()  # leader-local and bounded: a row seen again starts over
     count, before = attempts.get(key, (0, frozenset()))
     count += 1
-    attempts[key] = (count, before | shown)
+    attempts[key] = (count, before | judged)
     if count < MAX_ATTEMPTS:
         return False
     try:
