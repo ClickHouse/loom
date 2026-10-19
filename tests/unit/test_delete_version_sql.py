@@ -159,14 +159,46 @@ async def test_a_tombstone_older_than_the_write_leaves_its_version(ch: _Stateful
 
 @pytest.mark.asyncio
 async def test_a_conditional_set_in_flight_during_a_delete_is_refused(ch: _StatefulCH) -> None:
-    # Its precondition read the row the delete removed; landing would undo the delete.
-    from server.core.errors import PreconditionFailedError
+    # Its precondition read the row the delete removed; landing would undo the delete. The
+    # refusal is memory.set's own precondition answer, so the write is counted as one.
+    from fastapi import HTTPException
 
     w = await _delete_during_the_set(ch, "memory.delete")
     w.input = w.input.model_copy(update={"if_match_sha256": "a" * 64})
-    with pytest.raises(PreconditionFailedError):
+    with pytest.raises(HTTPException) as refused:
         await set_commit._set_plain_insert(w, ch)
+    assert refused.value.status_code == 409
+    assert refused.value.detail["code"] == "PRECONDITION_FAILED"
     assert await _read_back(ch) is None
+
+
+@pytest.mark.asyncio
+async def test_a_delete_of_a_key_a_sweep_once_caught_is_still_a_delete(ch: _StatefulCH) -> None:
+    # The sweep's reason rides the row after a restore; the delete's tombstone clears it.
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert(
+        "loom.memory", [{**_row("Tuesdays", head), "expire_reason": "blacklist.sweep:p1"}]
+    )
+    w = _in_flight_set(head + 5_000_000)
+    await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    await set_commit._set_plain_insert(w, ch)
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays"
+
+
+@pytest.mark.asyncio
+async def test_a_write_drawn_after_the_delete_keeps_winning(ch: _StatefulCH) -> None:
+    # A set drawn after the delete lands first; the set in flight across the delete then
+    # reaches its fence. The key's newest version is no tombstone, so it is not lifted.
+    w = await _delete_during_the_set(ch, "memory.delete")
+    later = {**_row("Fridays", time.time_ns()), "memory_id": "00000000-0000-0000-0000-00000000000b"}
+    await ch.insert("loom.memory", [later])
+    drawn = w.version
+    await set_commit._set_plain_insert(w, ch)
+    got = await _read_back(ch)
+    assert w.version == drawn and got is not None and got.value == "Fridays"
 
 
 @pytest.mark.asyncio
@@ -186,9 +218,12 @@ async def test_a_blacklist_sweeps_tombstone_keeps_the_write_under_it(ch: _Statef
 
 
 @pytest.mark.asyncio
-async def test_a_second_lifted_write_lands_above_the_first(ch: _StatefulCH) -> None:
-    # Two writes in flight when the delete landed, from a replica whose clock runs behind
-    # it: the first takes the tombstone's version + 1, the second reads it and goes above.
+async def test_of_two_writes_in_flight_across_a_delete_the_first_fenced_wins(
+    ch: _StatefulCH,
+) -> None:
+    # The deleting replica's clock runs ahead: the first write to reach its fence takes the
+    # tombstone's version + 1. The second then finds a live row newest and stays under it,
+    # as two writes in flight together resolve in the order they land.
     from server.memory.app.write_fence import lift_above_deletes
 
     head = time.time_ns() + 60_000_000_000  # the deleting replica runs a minute ahead
@@ -205,7 +240,7 @@ async def test_a_second_lifted_write_lands_above_the_first(ch: _StatefulCH) -> N
     await lift_above_deletes("o", "n", [first], [], ch=ch)
     await ch.insert("loom.memory", [first])
     await lift_above_deletes("o", "n", [second], [], ch=ch)
-    assert head < first["version"] < second["version"]
+    assert first["version"] == head + 1 and second["version"] == head - 1
 
 
 @pytest.mark.asyncio
@@ -216,9 +251,13 @@ async def test_a_fence_that_cannot_read_keeps_the_drawn_version() -> None:
         async def query_all(self, *_a: Any, **_k: Any) -> list[Any]:
             raise RuntimeError("timeout")
 
+    from server.observability import degradations
+
+    degradations.begin()
     row = _row("one", 7)
     assert await lift_above_deletes("o", "n", [row], [], ch=_Down()) == {}
     assert row["version"] == 7
+    assert any("write_fence" in d for d in degradations.current())
 
 
 @pytest.mark.asyncio

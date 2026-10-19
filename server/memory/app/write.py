@@ -648,6 +648,10 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     if input.proposed:
         await _refuse_proposal_over_fact(input)
     await _set_check_if_match(w)
+    if input.if_match_sha256:
+        # The precondition was read under the key lock just now: the version is drawn
+        # after it, so only a delete that lands after the check is above it (write_fence).
+        w.version = next_version()
     _set_build_memory_row(w)
 
     # Non-searchable type, or a 'high' sensitivity row: single insert is the

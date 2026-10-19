@@ -3,10 +3,11 @@
 memory.set and memory.bulk_set draw a row's version (wall-clock nanoseconds) when the
 write begins, then embed. A delete of the key that commits during the embed draws a
 higher version, and its tombstone would hide the write that finished after it. Right
-before the insert, the rows of a key a delete reached since then take new versions
-above every committed version of the key, in their own order, and so do their
-embedding rows. A blacklist sweep's tombstone is not a delete: a write it caught stays
-under it.
+before the insert, when the newest committed version of a key is a delete's tombstone
+above the rows' versions, the rows take new versions above it, in their own order, and
+so do their embedding rows. A write drawn after the delete keeps winning over them, as
+it would without the delete. A blacklist sweep's tombstone is not a delete: a write it
+caught stays under it.
 """
 
 from __future__ import annotations
@@ -14,7 +15,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from server.core.errors import PreconditionFailedError
+from fastapi import HTTPException
+
 from server.memory.store.rows import next_version
 from server.observability import degradations
 
@@ -30,10 +32,10 @@ async def lift_above_deletes(
     conditional: bool = False,
     ch: Any = None,
 ) -> dict[tuple[str, int], int]:
-    """New versions for the rows whose key a delete reached after their version was drawn,
-    above the key's newest committed version and in the rows' own order; their embedding
-    rows follow. (memory_key, old version) → new, for each row lifted. A `conditional`
-    write (its precondition read the row the delete removed) is refused instead."""
+    """New versions for the rows of each key whose newest committed version is a delete's
+    tombstone above them, in the rows' own order; their embedding rows follow.
+    (memory_key, old version) → new, for each row lifted. A `conditional` write (its
+    precondition read the row the delete removed) is refused instead (409)."""
     import server.memory.store as memory_repo
 
     try:
@@ -52,10 +54,16 @@ async def lift_above_deletes(
     for key, rows in by_key.items():
         lowest = min(int(r["version"]) for r in rows)
         above = [(v, deleted) for v, deleted in committed.get(key, []) if v > lowest]
-        if not any(deleted for _, deleted in above):
+        if not above or not above[0][1]:
             continue
         if conditional:
-            raise PreconditionFailedError("the key was deleted after the precondition was read")
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "PRECONDITION_FAILED",
+                    "message": "the key was deleted after the if_match_sha256 check",
+                },
+            )
         base = max(next_version(), above[0][0] + 1)
         for i, row in enumerate(sorted(rows, key=lambda r: int(r["version"]))):
             old, new = int(row["version"]), base + i

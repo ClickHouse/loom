@@ -675,6 +675,9 @@ async def _tombstone(existing: Any, *, version: int, op: str) -> tuple[int, int]
         tombstoned_at=now,
         source_trace="",
         expires_at=None,
+        # A reason carried from an earlier version (a blacklist sweep's, restored since)
+        # must not make this delete read as that sweep (write_fence).
+        expire_reason="",
     )
     with traced("ch.insert.memory.tombstone", table="loom.memory"):
         await insert_memory_versions([tombstone_row], ch=ch)
