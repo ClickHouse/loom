@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import itertools
 import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime
@@ -11,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.repo_base import param_slices, query_all_sliced
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app.edge_repair import end_overtaken_edges
 from server.memory.app.graph_holders import holds_graph_facts, rows_holding
@@ -124,57 +124,55 @@ def owes_undeclared_drop(previous: Any, declared: Sequence[str]) -> bool:
     return not set(declared) >= set(declared_entities(getattr(previous, "entities", None)))
 
 
-# Rows a drop reads at a time, and links or pairs it names in one statement: a query
-# parameter is one HTTP form field, which ClickHouse caps at 128 KiB
-# (`http_max_field_value_size`).
-_DROP_ROWS = 100
-_DROP_LINKS = 1000
-
-
 async def drop_undeclared_links(
     input: Any, rows: Mapping[str, list[str]], versions: Mapping[str, int], *, ch: Any
 ) -> None:
-    """Rows a write left 'high' (`rows`: memory_id -> the entities its writer declared;
-    `versions`: the version that write gave each row) keep only the edges of their
-    declared entities: their links to any other pair go, and those edges end when that
-    write landed unless another row names them. A row written again since is skipped:
-    a later value may name those pairs, and a later write owes its own drop."""
-    for chunk in itertools.batched(sorted(rows), _DROP_ROWS):
-        params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "ids": list(chunk)}
-        current = await ch.query_all(
-            """
-            SELECT toString(memory_id) AS id, version FROM loom.memory FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND memory_id IN {ids:Array(UUID)}
-            SETTINGS select_sequential_consistency = 1
-            """,
-            params=params,
-        )
-        ids = [str(r["id"]) for r in current if int(r["version"]) == int(versions[str(r["id"])])]
-        if ids:
-            await _drop_links_of(input, {i: rows[i] for i in ids}, versions, ch=ch)
+    """Rows a write left 'high' (`rows`, by memory_id; `versions`: the version that write
+    gave each row) keep only the edges of the entities on the row now: their links to
+    any other pair go, and those edges end when that write landed unless another row
+    names them. A row no longer 'high' is skipped: a later plain write's links are its
+    own. One still 'high' is read as it is now, so a later write that kept it high (a
+    pin, a lock, a relabel) neither skips the drop nor brings back what it dropped."""
+    params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "ids": sorted(rows)}
+    current = await query_all_sliced(
+        ch,
+        """
+        SELECT toString(memory_id) AS id, entities FROM loom.memory FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND memory_id IN {ids:Array(UUID)} AND sensitivity = 'high'
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params,
+        "ids",
+    )
+    keep = {str(r["id"]): set(declared_entities(r["entities"])) for r in current}
+    if keep:
+        await _drop_links_of(input, keep, versions, ch=ch)
 
 
 async def _drop_links_of(
-    input: Any, rows: Mapping[str, list[str]], versions: Mapping[str, int], *, ch: Any
+    input: Any, keep: Mapping[str, set[str]], versions: Mapping[str, int], *, ch: Any
 ) -> None:
-    """`drop_undeclared_links` for rows checked to still hold the write that owes it."""
-    params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "ids": list(rows)}
-    links = await ch.query_all(
+    """`drop_undeclared_links` for the rows still 'high' (`keep`: memory_id -> the
+    entities whose edges it keeps)."""
+    params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "ids": sorted(keep)}
+    links = await query_all_sliced(
+        ch,
         """
         SELECT DISTINCT toString(memory_id) AS id, entity_a, entity_b
         FROM loom.entity_edge_rows
         WHERE org = {org:String} AND namespace = {ns:String} AND memory_id IN {ids:Array(UUID)}
         SETTINGS select_sequential_consistency = 1
         """,
-        params=params,
+        params,
+        "ids",
     )
     drop = sorted(
         (str(r["id"]), str(r["entity_a"]), str(r["entity_b"]))
         for r in links
-        if not {str(r["entity_a"]), str(r["entity_b"])} <= set(rows[str(r["id"])])
+        if not {str(r["entity_a"]), str(r["entity_b"])} <= keep[str(r["id"])]
     )
-    for part in itertools.batched(drop, _DROP_LINKS):
+    for part in param_slices(drop):
         await ch.execute(
             """
             DELETE FROM loom.entity_edge_rows
@@ -186,7 +184,7 @@ async def _drop_links_of(
             params={
                 **params,
                 "ids": sorted({memory_id for memory_id, _, _ in part}),
-                "links": list(part),
+                "links": part,
             },
         )
     # Each edge ends when the first write that dropped it landed, a replay included.
@@ -194,14 +192,13 @@ async def _drop_links_of(
     for memory_id, a, b in drop:
         at = version_time(versions[memory_id])
         ends[(a, b)] = min(ends.get((a, b), at), at)
-    for pairs in itertools.batched(sorted(ends), _DROP_LINKS):
-        await end_edges(
-            ch,
-            org=input.org,
-            namespace=input.namespace,
-            ends=[(a, b, ends[(a, b)]) for a, b in pairs],
-            open_only=True,
-        )
+    await end_edges(
+        ch,
+        org=input.org,
+        namespace=input.namespace,
+        ends=[(a, b, at) for (a, b), at in sorted(ends.items())],
+        open_only=True,
+    )
 
 
 def drop_payload(rows: Mapping[str, list[str]], versions: Mapping[str, int]) -> dict[str, Any]:

@@ -612,8 +612,9 @@ mined edges fence on `HOLDS_VALUE_SQL`, which never counts it. A row made `high`
 row re-set naming fewer entities, drops its links to any other pair (a write, after its
 response, with one intent for the whole write), and those edges end, when that write
 landed, unless another row names them; a failed drop is left to `projection_repair`. The
-drop, and its replay, skips a row written again since: that write holds what it names
-and owes its own drop. A close recorded for a high row names no value: its repair ends
+drop, and its replay, reads the row as it is then: a row no longer `high` is skipped (a
+later plain write's links are its own), and one still `high` keeps only the edges of
+the entities on it, whatever later write (a pin, a lock, a relabel) kept it high. A close recorded for a high row names no value: its repair ends
 each of the row's values with an open edge that the row no longer holds, and keeps the
 edges between entities the row names. Its triples close as for a row that holds none.
 

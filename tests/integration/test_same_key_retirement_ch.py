@@ -7960,9 +7960,11 @@ async def test_a_bulk_making_hundreds_of_rows_high_drops_every_mined_link(ch, or
     assert await _drop_intents(ch, org) == ["resolved"]
 
 
-async def _made_high_with_the_drop_lost(org: str, value: str, monkeypatch: Any) -> None:
-    """The row `contact` re-set high (declaring Alice Smith and Bob Jones) with its drop
-    failing: the drop is left to the repair."""
+async def _made_high_with_the_drop_lost(
+    org: str, value: str, monkeypatch: Any, entities: list[str] | None = None
+) -> None:
+    """The row `contact` re-set high (declaring `entities`, Alice Smith and Bob Jones by
+    default) with its drop failing: the drop is left to the repair."""
     from server.memory.app import edge_links
 
     async def down(*a: Any, **kw: Any) -> None:
@@ -7976,7 +7978,7 @@ async def _made_high_with_the_drop_lost(org: str, value: str, monkeypatch: Any) 
             "contact",
             value,
             sensitivity="high",
-            entities=["Alice Smith", "Bob Jones"],
+            entities=entities or ["Alice Smith", "Bob Jones"],
         )
 
 
@@ -8041,3 +8043,82 @@ async def test_a_value_less_close_keeps_the_edges_a_high_row_still_names(ch, org
     results = await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
     assert results and all(r.resolved for r in results), results
     assert await _open_edge_pairs(ch, org) == named
+
+
+@pytest.mark.parametrize("later", ["pin", "unpin", "verify"])
+async def test_a_drop_replayed_after_a_write_that_kept_the_row_high_still_drops(
+    ch, org, monkeypatch, later
+) -> None:
+    """A row made high whose drop failed is written again before the repair runs and
+    stays high (pinned, then maybe unpinned, or attested): the replay still drops its
+    mined links, and only the declared pair's edge stays open."""
+    from server.memory.api.models_crud import MemoryUnpinInput, MemoryVerifyInput
+    from server.memory.app.handlers import handle_memory_unpin
+    from server.memory.app.projection_failures import retry_projection_failures
+    from server.memory.app.verify import handle_memory_verify
+
+    first = "Alice Smith met Bob Lane and Carol King in Berlin"
+    out = await _high_set(org, "s1", "contact", first)
+    assert ("alice smith", "carol king") in await _open_edge_pairs(ch, org)
+    await _made_high_with_the_drop_lost(org, first, monkeypatch, ["Alice Smith", "Bob Lane"])
+    if later in ("pin", "unpin"):
+        await _high_set(
+            org,
+            "s1",
+            "contact",
+            first,
+            sensitivity="high",
+            entities=["Alice Smith", "Bob Lane"],
+            pinned=True,
+        )
+    if later == "unpin":
+        key = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s1"}
+        assert (await handle_memory_unpin(MemoryUnpinInput(**key, memory_key="contact"))).unpinned
+    if later == "verify":
+        verified = await handle_memory_verify(
+            MemoryVerifyInput(org=org, memory_id=str(out.memory_id), actor="human:itest")
+        )
+        assert verified.changed
+    results = await retry_projection_failures(
+        org=org, projection="entity_edges_drop_undeclared", ch=ch
+    )
+    assert results and all(r.resolved for r in results), results
+    assert await _open_edge_pairs(ch, org) == {("alice smith", "bob lane")}
+
+
+def _long_names(count: int, repeat: int) -> list[str]:
+    """Entity names of a few hundred characters, under the 500 an entity may have."""
+    return [f"Committee {i} " + "for the Coordination of Freight " * repeat for i in range(count)]
+
+
+async def test_a_bulk_making_rows_with_long_entity_names_high_drops_every_link(ch, org) -> None:
+    """Ten rows of sixteen long names re-set high: their 1,000 links pass one parameter's
+    size, so the drop cuts them by size, not by count."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write, intent_marks
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    names = _long_names(16, 4)
+
+    def write(high: bool) -> MemoryBulkSetInput:
+        entries = [
+            {
+                "memory_key": f"m{i}",
+                "value": f"Meeting {i}",
+                "memory_type": "semantic",
+                **({"sensitivity": "high"} if high else {"entities": names}),
+            }
+            for i in range(10)
+        ]
+        return MemoryBulkSetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=entries
+        )
+
+    await handle_memory_bulk_set(write(high=False))
+    await after_write.drain()
+    assert await _edge_links(ch, org) == 10 * 100  # a row links at most 100 pairs
+    await handle_memory_bulk_set(write(high=True))
+    await after_write.drain()
+    await intent_marks.drain()
+    assert await _edge_links(ch, org) == 0
+    assert await _open_edge_pairs(ch, org) == set()
