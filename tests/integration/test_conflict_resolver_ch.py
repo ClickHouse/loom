@@ -3273,12 +3273,9 @@ class _Garbage:
         return SimpleNamespace(text="I cannot answer in JSON today.")
 
 
-async def test_rows_refused_pass_after_pass_are_stamped_after_three_attempts(
-    ch, wired, monkeypatch
-) -> None:
-    """Unusable answers stop each pass after three refusals; each refused row counts
-    an attempt, so after three it is stamped, the next rows get their turns, and the
-    passes come to pay nothing."""
+async def test_a_refusal_every_pass_stamps_nothing(ch, wired, monkeypatch) -> None:
+    """Unusable answers for every row, pass after pass: the request is at fault, not the
+    rows, so the streak stops the namespace each pass and no row is stamped judged."""
     import server.llm.client as llm_client
     from server.memory.workers import conflict_resolver as worker
 
@@ -3288,13 +3285,97 @@ async def test_rows_refused_pass_after_pass_are_stamped_after_three_attempts(
     monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: garbage)
     monkeypatch.setattr(worker.settings, "memory_conflict_resolver_concurrency", 1)
     monkeypatch.setattr(worker, "PAUSE_AFTER_STOP_S", 0.0)
-    per_pass = []
-    for _ in range(8):
-        before = garbage.calls
+    for _ in range(5):
         await worker.run_pass()
-        per_pass.append(garbage.calls - before)
-    assert per_pass[0] > 0 and per_pass[-2:] == [0, 0], per_pass
-    assert (await _marks(ch, org))["office_location"] != 1, "stamped"
+    assert garbage.calls > 0
+    marks = await _marks(ch, org)
+    assert marks["office_location"] == 1 and marks["budget_next"] == 1, marks
+
+
+async def test_one_namespaces_refusals_do_not_pause_another(ch, wired, monkeypatch) -> None:
+    """Refusals row after row in one namespace pause that namespace; the other's rows
+    are judged in the same pass and the next."""
+    import server.llm.client as llm_client
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, conflicts
+    from server.memory.app.write import handle_memory_set
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.store.conflict_resolver import OWED_MARK
+    from server.memory.store.embeddings import live_embedding_rows_for_key, reemit_rows
+    from server.memory.workers import conflict_resolver as worker
+
+    org, llm = wired
+    await _seed(ch, org, monkeypatch)
+    other = "resolver-b"
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        for session, key, value in (
+            ("s1", "team_size", "The team has five people"),
+            ("s2", "team_size_now", "The team has six people"),
+        ):
+            await handle_memory_set(
+                MemorySetInput(
+                    org=org,
+                    namespace=other,
+                    agent="bot",
+                    user_id=USER,
+                    session_id=session,
+                    memory_key=key,
+                    value=value,
+                )
+            )
+            if session == "s1":
+                await _later()
+        await after_write.drain()
+    for session, key, vec, owed in (
+        ("s1", "team_size", _vec((40, 1.0)), False),
+        ("s2", "team_size_now", _vec((40, 0.8), (41, 0.6)), True),
+    ):
+        rows = await live_embedding_rows_for_key(
+            ch,
+            org=org,
+            namespace=other,
+            agent="bot",
+            user_id=USER,
+            session_id=session,
+            memory_key=key,
+        )
+        await reemit_rows(
+            rows, {"embedding": vec, "conflict_checked_at": OWED_MARK if owed else None}, ch=ch
+        )
+    refused_keys = {"office_location", "budget_next", "deploy_day_now", "standup_lead", "lead_name"}
+
+    class _Mixed:
+        provider, model = "fake", "mixed"
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def complete(self, system: str, user: str, **kw: Any) -> Any:
+            import re
+            from types import SimpleNamespace
+
+            key = re.search(r"NEW note \(key ([^,)]+)", user).group(1)  # type: ignore[union-attr]
+            self.calls.append(key)
+            if key in refused_keys:
+                return SimpleNamespace(text="I cannot answer in JSON today.")
+            return await llm.complete(system, user, **kw)
+
+    mixed = _Mixed()
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: mixed)
+    monkeypatch.setitem(_SCRIPT, "team_size_now", ("update", 0.98))
+    monkeypatch.setattr(worker.settings, "memory_conflict_resolver_concurrency", 1)
+    out = await worker.run_pass()
+    assert out["retired"] == 1, (out, mixed.calls)
+    assert worker._state.paused_until == 0.0, "nobody else waits"
+    assert (org, NS) in worker._state.paused_namespaces, mixed.calls
+    before = len(mixed.calls)
+    await worker.run_pass()
+    assert not set(mixed.calls[before:]) & refused_keys, "the refusing namespace waits"
 
 
 async def test_a_pass_stopped_by_the_lease_store_pauses_the_worker(ch, wired, monkeypatch) -> None:
@@ -3406,3 +3487,37 @@ async def test_an_undo_retry_whose_record_read_fails_answers_503(ch, wired, monk
     monkeypatch.setattr(queue, "undo_recorded", down)
     with pytest.raises(BackendUnavailableError, match="could not tell"):
         await _undo(org, "office_city", winner)
+
+
+async def test_a_provider_outage_stops_the_pass_and_pauses_the_worker(
+    ch, wired, monkeypatch
+) -> None:
+    """No connection to the provider, row after row: the pass stops after the third,
+    the worker pauses, and no row counts an attempt."""
+    import httpx
+
+    import server.llm.client as llm_client
+    from server.memory.workers import conflict_resolver as worker
+
+    org, _ = wired
+    await _seed(ch, org, monkeypatch)
+
+    class _Down:
+        provider, model = "fake", "down"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, system: str, user: str, **kw: Any) -> Any:
+            self.calls += 1
+            raise httpx.ConnectError("provider unreachable")
+
+    down = _Down()
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: down)
+    monkeypatch.setattr(worker.settings, "memory_conflict_resolver_concurrency", 1)
+    await worker.run_pass()
+    assert 0 < down.calls <= worker.SAME_REFUSAL_STOP
+    assert worker._state.paused_until > 0 and worker._state.attempts == {}
+    before = down.calls
+    await worker.run_pass()
+    assert down.calls == before, "paused"

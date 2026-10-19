@@ -329,7 +329,9 @@ actions, verdicts and confidences, never the text.
   (`worker.conflict_resolver`).
 - A provider that refuses the model or the key (401, 403, 404) stops the pass with no
   further call; the rows stay owed, and the worker warns once per change, not per pass.
-  A transient failure (408, 409, 429, 5xx, a timeout) leaves the row owed. Any other 4xx
+  A transient failure (408, 409, 429, 5xx, a timeout, no connection) leaves the row owed,
+  with no attempt counted; the same one three rows in a row is an outage, which stops the
+  pass. Any other 4xx
   refuses this row's request, and asking again gets the same answer: the row is stamped
   judged and counted `errored`. An answer with nothing usable (cut at the output cap,
   `length` or `max_tokens`, or malformed), or with no verdict for some peer, is asked once
@@ -337,12 +339,13 @@ actions, verdicts and confidences, never the text.
   again, the row is stamped judged and counted `errored`. A row flagged against a peer
   neither answer judged stays owed, so the flag is judged later, three times at most
   before it is stamped `errored`. A refused row is stamped when its pass ends. The same
-  refusal (its kind and HTTP status) three rows in a row with nothing judged between is the
-  request's fault, not the rows': it stops the pass like a refused model, and every row,
-  the refused ones too, stays owed, each refused row counting one of its three attempts.
-  The keys' write locks unavailable (Keeper down) stop the pass after that call; the rows
-  stay owed. A stopped pass pauses the worker for five minutes: the next passes would pay
-  for the same answer.
+  refusal (its kind and HTTP status) three rows of one namespace in a row with no answer
+  between is the request's fault, not the rows': that namespace stops for the pass and waits
+  five minutes, every row of it, the refused ones too, staying owed with no attempt
+  counted; the other namespaces go on. The keys' write locks unavailable (Keeper down) stop
+  the pass after that call; the rows stay owed. A pass stopped by the model, the locks or
+  an outage pauses the whole worker for five minutes: the next passes would pay for the
+  same answer.
 
 **Cost.** About $0.005 per judged row on `gpt-6.1-sol`, judged once per written
 version, and only rows with a peer at cosine 0.60 or more, or a flag, are judged. The
