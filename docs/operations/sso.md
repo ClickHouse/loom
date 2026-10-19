@@ -386,7 +386,10 @@ What Loom does with each request:
   (each SSO account naming it and each password account linked to it, in any
   org): every session, and every service account and MCP token the person
   made. Their tokens show as revoked by `scim` in the Tokens list and their
-  names are free again; a reactivation does not bring them back. While it
+  names are free again; a reactivation does not bring them back. A grant
+  such a token held on a restricted namespace in its own name stays in the
+  namespace's grant list, though it reaches nothing: revoke it there to tidy
+  the list. While it
   lasts, SSO sign-in with the email is refused ("this account is
   deactivated"), even if it reaches no account yet. The accounts, their
   grants and their data stay; this is not erasure. A password account that

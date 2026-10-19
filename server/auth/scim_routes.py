@@ -183,6 +183,20 @@ def patched_active(body: dict[str, Any]) -> bool | None:
     return active
 
 
+def _sets_inactive(body: dict[str, Any]) -> bool:
+    """Whether any operation of a PatchOp sets `active` to false, whatever else fails."""
+    for op in body.get("Operations") or []:
+        if not isinstance(op, dict) or not _replaces(op):
+            continue
+        for attr, value in _attributes(op):
+            try:
+                if attr == "active" and parse_active(value) is False:
+                    return True
+            except ScimError:
+                continue
+    return False
+
+
 def patched_names(
     body: dict[str, Any], row: dict[str, Any]
 ) -> tuple[str | None, dict[str, Any] | None]:
@@ -497,7 +511,13 @@ async def replace_user(uid: str, request: Request) -> JSONResponse:
 @router.patch("/Users/{uid}")
 async def patch_user(uid: str, request: Request) -> JSONResponse:
     body = await _body(request)
-    active = patched_active(body)
+    try:
+        active = patched_active(body)
+    except ScimError:
+        # Refused for another `active` op: one that does set false still deactivates.
+        if _sets_inactive(body) and await scim.get(uid) is not None:
+            await scim.update(uid, active=False)
+        raise
     row = await scim.get(uid)
     if row is None:
         raise _not_found()

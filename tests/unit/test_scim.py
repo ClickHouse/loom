@@ -2073,6 +2073,18 @@ def test_a_patch_with_no_path_needs_a_target_or_an_object(
     assert (e.value.status, e.value.scim_type) == (400, scim_type)
 
 
+def test_a_disable_beside_a_refused_active_op_still_deactivates(client: TestClient, world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    ops = [
+        {"op": "replace", "path": "active", "value": False},
+        {"op": "remove", "path": "active"},
+    ]
+    r = client.patch(f"/scim/v2/Users/{uid}", json={"Operations": ops})
+    assert r.status_code == 400
+    assert world.ours == {"lee": None}  # fails closed
+
+
 def test_groups_is_an_empty_list(client: TestClient) -> None:
     # What Okta's and Entra's connection tests read when group push is on.
     r = client.get(
