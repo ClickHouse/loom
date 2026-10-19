@@ -242,7 +242,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `memory_exposure_breadth_hourly` | `AggregatingMergeTree` | `(org, namespace, actor, agent, hour)` | `toYYYYMM(hour)` | `hour + toIntervalDay(180)` |  |
 | `memory_exposures` | `MergeTree` | `(org, namespace, actor, ts)` | `toYYYYMM(ts)` | `ts + toIntervalDay(180)` |  |
 | `memory_extraction_queue` | `ReplacingMergeTree(version)` | `(org, namespace, agent, user_id, session_id, queue_id)` | `toYYYYMM(enqueued_at)` | `enqueued_at + toIntervalDay(30)` |  |
-| `memory_projection_failures` | `MergeTree` | `(org, namespace, projection, created_at, failure_id)` |  |  |  |
+| `memory_projection_failures` | `MergeTree` | `(org, namespace, projection, created_at, failure_id)` |  | `coalesce(resolved_at, created_at) + toIntervalDay(30) WHERE status != 'active'` |  |
 | `memory_record_conflicts` | `ReplacingMergeTree(version)` | `(org, namespace, schema_name, memory_key, field_name, incoming_record_id)` |  |  |  |
 | `memory_record_fields` | `ReplacingMergeTree(version)` | `(org, namespace, schema_name, field_name, record_id)` |  |  | 1 skip index (bloom_filter) |
 | `memory_record_versions` | `ReplacingMergeTree` | `(org, namespace, schema_name, memory_key, record_id, version)` | `toYYYYMM(created_at)` |  | 1 skip index (bloom_filter) |

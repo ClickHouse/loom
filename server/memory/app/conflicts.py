@@ -17,7 +17,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError
@@ -53,6 +53,9 @@ from server.memory.store.conflict_candidates import (
     vector_params,
 )
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.memory.app.auto_resolution import Follow
 
 log = logging.getLogger(__name__)
 
@@ -719,7 +722,7 @@ async def apply_refines(
     expected_sha256: str = "",
     skip_peer: Callable[[Any], bool] | None = None,
     reason: str = "",
-    follows: list[tuple[str, str]] | None = None,
+    follows: list[Follow] | None = None,
 ) -> int:
     """The `refines` verdict, after the new row is in: every non-pinned peer
     the new row replaces is superseded (status, superseded_by = the new row,

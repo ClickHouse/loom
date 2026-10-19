@@ -232,11 +232,9 @@ async def mark_projection_failures_resolved(
     failure_ids: list[str],
     ch: Any | None = None,
 ) -> int:
-    """Mark failures resolved with an ALTER UPDATE.
-
-    ClickHouse updates are asynchronous on large tables, but this table is a
-    small operator queue and the mutation is narrow by UUID.
-    """
+    """Mark failures resolved with one ALTER UPDATE, narrow by UUID. Callers batch the
+    ids (`MARK_CHUNK`): every point write that retires rows leaves an intent here, so a
+    mutation per id would be one per write. Resolved rows leave by the table's TTL."""
 
     ids = [fid for fid in failure_ids if fid]
     if not ids:

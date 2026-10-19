@@ -33,6 +33,7 @@ TRANSIENT_TABLES = {
     "memory_extraction_queue": "a work queue; the facts it yields live in loom.memory",
     "memory_code_link_queue": "the code link worker's queue of memory writes (keys only)",
     "consolidation_runs": "the consolidation worker's run ledger",
+    "memory_projection_failures": "the repair queue; a resolved or abandoned entry is done",
 }
 
 # Objects that are gone and must not come back.
@@ -106,6 +107,7 @@ def test_the_journal_files() -> None:
         "046_graph_restore_id.sql",
         "047_entity_edge_rows.sql",
         "048_entity_edge_close_id.sql",
+        "049_projection_failure_ttl.sql",
     ]
 
 

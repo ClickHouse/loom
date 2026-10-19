@@ -64,6 +64,7 @@ from server.memory.domain.conflicts import kept_versions
 from server.memory.domain.memory_types import is_embedded
 
 if TYPE_CHECKING:
+    from server.memory.app.auto_resolution import Follow
     from server.memory.app.search.clock import StageClock
 
 log = logging.getLogger(__name__)
@@ -472,7 +473,7 @@ async def _bulk_post_insert_links(
     ch: Any,
     input: MemoryBulkSetInput,
     state: _BulkWriteState,
-    same_key_pairs: list[tuple[str, str]],
+    same_key_pairs: list[Follow],
 ) -> list[Any]:
     """Phase 11, after the insert so the new ids exist: same-key supersession (its pairs
     into `same_key_pairs`), then value-update linking; returns the value-update links
@@ -909,8 +910,10 @@ async def handle_memory_bulk_set(
     _bulk_clock.mark("insert")
     await _record_intra_batch_retirements(input, state, _intra_pairs)
 
-    _same_key_pairs: list[tuple[str, str]] = []
-    _value_links = await _bulk_post_insert_links(ch, input, state, _same_key_pairs)
+    # A bulk write's retirement intents are left to the repair, which resolves them.
+    _same_key_follows: list[Follow] = []
+    _value_links = await _bulk_post_insert_links(ch, input, state, _same_key_follows)
+    _same_key_pairs = [(f.loser, f.winner) for f in _same_key_follows]
 
     _bulk_clock.mark("value_updates")
 

@@ -275,9 +275,12 @@ loser is retired behind its winner. The repair leaves an intent under ten minute
 (`FOLLOW_OWED_GRACE_S`) to its writer, which records and follows the retirement itself, so
 the two never write a record side by side. A point write's retirement (same-key, a
 contradiction, a refine) owes its record and follow the same way: the intent goes before
-the supersede and the record names it; the write leaves it active and the repair, after
-the grace, follows the pairs, writes a record still missing and resolves it in its
-batched mark, so the request path writes no mutation. The acting of a judged row (its pairs, records,
+the supersede and the record names it. Once the record and the follow beside the response
+both landed, the process resolves it in a batched flush (every ten seconds and at
+shutdown, one chunked mark per org), so the request path writes no mutation; an intent it
+did not resolve (a lost answer, a crash, a failed follow) stays for the repair, which
+follows the pairs, writes a record still missing and resolves it after the grace. A
+resolved or abandoned failure row leaves 30 days on (the table's TTL). The acting of a judged row (its pairs, records,
 follows and audit row) is shielded from cancellation, and a cancelled pass ends only once
 it has finished. A flag is
 `mark_peers_conflicted`; a clear removes the pair from each side's `conflict_with`, and a

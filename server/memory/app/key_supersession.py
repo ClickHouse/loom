@@ -21,6 +21,7 @@ from server.identity.domain.read_scope import scope_and
 from server.memory.app import conflicts
 from server.memory.app.auto_resolution import (
     SAME_KEY_NEWEST_WINS,
+    Follow,
     RetirementTracker,
     owe_retirements,
     settle_retirements,
@@ -160,7 +161,7 @@ async def supersede_same_key_rows(
     namespace: str,
     new_rows: list[dict[str, Any]],
     ch: Any,
-    follows: list[tuple[str, str]],
+    follows: list[Follow],
     policy: str | None = None,
     agent: str = "",
 ) -> int:

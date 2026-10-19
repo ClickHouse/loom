@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 
@@ -172,34 +172,41 @@ async def unrecorded(
     return left
 
 
+class Follow(NamedTuple):
+    """A retired pair a point write follows beside its response, and the intent that owes
+    it once its record landed ('' otherwise): resolved when the follow lands too."""
+
+    loser: str
+    winner: str
+    intent: str = ""
+
+
 async def settle_retirements(
     *,
     org: str,
     namespace: str,
     retired: Sequence[Mapping[str, Any]],
     reason: str,
-    follows: list[tuple[str, str]],
+    follows: list[Follow],
     agent: str = "",
     intent: str = "",
 ) -> None:
-    """The record of rows a point write just retired (`record_or_owe`), and their
-    (loser, winner) pairs added to `follows`, which the caller follows once its own
-    relations are projected (a follow before them writes the successor fact they then
-    write again). Never raises."""
-    follows.extend((str(r["memory_id"]), str(r["superseded_by"])) for r in retired)
-    await record_or_owe(
+    """Record the rows a point write just retired and add their pairs to `follows`, which
+    the caller follows once its own relations are projected (a follow before them writes
+    the successor fact they then write again). Never raises."""
+    recorded = await record_or_owe(
         org=org, namespace=namespace, retired=retired, reason=reason, agent=agent, intent=intent
     )
+    owed = intent if recorded else ""
+    follows.extend(Follow(str(r["memory_id"]), str(r["superseded_by"]), owed) for r in retired)
 
 
 async def owe_retirements(
     *, org: str, namespace: str, victims: Sequence[Mapping[str, Any]], reason: str, agent: str
 ) -> str:
-    """A FOLLOW_OWED intent for rows about to be retired, written before the supersede as
-    the conflict resolver writes one, and left for the projection repair, which acts only
-    on a row still retired behind its winner: a lost answer, a stop before the record or
-    before the follow all end in it. Its id, or '' when it could not be written (the
-    record after the supersede is then owed as before)."""
+    """Owe the record and follow of rows about to be retired, before the supersede: a lost
+    answer or a stop before either leaves them to the repair. Its id, or '' when not
+    written (the record is then owed after the supersede, as before)."""
     from server.memory.app.projection_failures import FOLLOW_OWED, record_projection_failure
 
     if not victims:
@@ -234,18 +241,16 @@ async def record_or_owe(
     reason: str,
     agent: str = "",
     intent: str = "",
-) -> None:
-    """`record_auto_supersessions`; the entries whose record failed are owed to the
-    projection repair as a FOLLOW_OWED intent (`agent`: the winner's writer) with their
-    reason, which the repair writes once. `intent`: the one `owe_retirements` wrote
-    before the supersede, which already owes them: the record names it, and the repair
-    follows its pairs, writes a record still missing and resolves it, batched, after its
-    grace, so the request path writes no mutation. Never raises."""
+) -> bool:
+    """Record the retired rows, naming `intent` (the one `owe_retirements` wrote, which
+    already owes them), else owe the failed entries to the repair; True when every record
+    landed. Never raises: an unrecorded retirement is the repair's to record."""
     left = await unrecorded(
         org=org, namespace=namespace, retired=retired, reason=reason, request_id=intent or None
     )
     if left and not intent:
         await _owe(org=org, namespace=namespace, left=left, reason=reason, agent=agent)
+    return not left
 
 
 async def _owe(
@@ -268,24 +273,31 @@ async def _owe(
 
 
 def follow_beside_response(
-    *, org: str, namespace: str, pairs: list[tuple[str, str]], op: str, agent: str = ""
+    *, org: str, namespace: str, pairs: list[Follow], op: str, agent: str = ""
 ) -> None:
     """The triple plane's follow of rows a point write retired, beside the response
     (`after_write.schedule`) once the write's relations are in; what it could not follow
-    is left to the projection repair (FOLLOW_ROWS). Never raises."""
+    is left to the projection repair (FOLLOW_ROWS). Once all are followed, the intents
+    whose record landed are resolved in the next batched mark. Never raises."""
     if not pairs:
         return
     try:
         from server.memory.app import after_write
 
-        follow = _follow(org, namespace, agent, list(pairs), op)
+        intents = sorted({p.intent for p in pairs if p.intent})
+        follow = _follow(org, namespace, agent, [(p.loser, p.winner) for p in pairs], op, intents)
         after_write.schedule(follow, name=f"{op}.follow")
     except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them
         log.warning("%s: scheduling the triples follow failed: %s", op, e)
 
 
 async def _follow(
-    org: str, namespace: str, agent: str, pairs: list[tuple[str, str]], op: str
+    org: str,
+    namespace: str,
+    agent: str,
+    pairs: list[tuple[str, str]],
+    op: str,
+    intents: list[str] | None = None,
 ) -> None:
     from types import SimpleNamespace
 
@@ -309,3 +321,8 @@ async def _follow(
             source_operation=op,
             source_resource_id=f"{op}:{left[0][1]}",
         )
+    elif intents:
+        from server.memory.app import intent_marks
+
+        # Recorded and followed: nothing is left for the intent to owe.
+        intent_marks.resolve_soon(org, intents)

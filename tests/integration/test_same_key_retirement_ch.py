@@ -7116,3 +7116,67 @@ async def test_a_by_id_update_that_makes_a_row_high_drops_its_mined_edges(ch, or
     )
     assert updated.updated and head[0]["sensitivity"] == "high"
     assert await _edge_links(ch, org) == 0
+
+
+async def test_point_write_intents_are_resolved_by_a_batched_flush(ch, org, monkeypatch) -> None:
+    """Forty writes of one key from forty sessions each retire the one before: every
+    intent whose record and follow landed is resolved by one flush, none left for the
+    repair, and resolved rows leave by the table's TTL."""
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, conflicts, intent_marks
+    from server.memory.app.write import handle_memory_set
+    from server.memory.domain.conflicts import ConflictResult
+
+    async def _clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    monkeypatch.setattr(conflicts, "check_on_commit", _clear)
+    now = datetime.now(UTC)
+    await ch.insert(
+        "loom.namespaces",
+        [
+            {
+                "org": org,
+                "namespace": NS,
+                "created_at": now,
+                "updated_at": now,
+                "active": True,
+                "default_conflict_policy": "newest_wins",
+            }
+        ],
+    )
+    for i in range(40):
+        await handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                session_id=f"s{i}",
+                memory_key="home_city",
+                value=f"The user lives in city number {i}",
+            )
+        )
+    await after_write.drain()
+    await intent_marks.drain()
+
+    async def by_status() -> dict[str, int]:
+        rows = await ch.query_all(
+            "SELECT toString(status) AS status, count() AS n FROM loom.memory_projection_failures"
+            " WHERE org = {org:String} AND projection = 'triples_follow_owed'"
+            " GROUP BY status SETTINGS select_sequential_consistency = 1",
+            params={"org": org},
+        )
+        return {r["status"]: int(r["n"]) for r in rows}
+
+    for _ in range(50):
+        counts = await by_status()
+        if counts and "active" not in counts:
+            break
+        await asyncio.sleep(0.2)
+    assert counts == {"resolved": 39}, counts
+    (table,) = await ch.query_all(
+        "SELECT create_table_query AS q FROM system.tables"
+        " WHERE database = 'loom' AND name = 'memory_projection_failures'"
+    )
+    assert "TTL coalesce(resolved_at, created_at)" in table["q"]

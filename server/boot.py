@@ -569,6 +569,10 @@ async def drain_writes() -> None:
     from server.memory.app import after_write as _after_write
 
     await _after_write.drain(timeout_s=10.0)
+    # The point-write intents those follows finished, resolved in one flush.
+    from server.memory.app import intent_marks as _intent_marks
+
+    await _intent_marks.drain()
     # The ends of the graph projections just drained: one left pending holds every
     # walk of its namespace on every process for its full wait.
     from server.memory.app import graph_write_marks as _graph_marks

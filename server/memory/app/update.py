@@ -28,7 +28,7 @@ from server.memory.api.models_crud import (
     MemoryUpdateOutput,
 )
 from server.memory.app import provenance as app_provenance
-from server.memory.app.auto_resolution import follow_beside_response
+from server.memory.app.auto_resolution import Follow, follow_beside_response
 from server.memory.app.conflicts import same_key_mark
 from server.memory.app.entity_projections import (
     declared_entities,
@@ -106,7 +106,7 @@ async def _revision_supersession(
     serialized_value: str,
     ch: Any,
     policy: str | None,
-    follows: list[tuple[str, str]],
+    follows: list[Follow],
 ) -> None:
     """Same-key supersession for a revision; `policy` None reads it."""
     from server.memory.app.key_supersession import supersede_same_key_rows
@@ -541,7 +541,7 @@ async def _update_post_write(
     existing: MemoryRow,
     conflict_result: Any,
     ch: Any,
-    follows: list[tuple[str, str]],
+    follows: list[Follow],
 ) -> Any:
     """Post-write, as memory.set: a conflict flags both sides (the new version
     exists, so the cross-link resolves); a templated substitution supersedes the
@@ -743,7 +743,7 @@ async def _write_revision(
     await memory_repo.index_late_rows(emb_rows, ch=ch)
     cfg = await cfg_task
 
-    follows: list[tuple[str, str]] = []
+    follows: list[Follow] = []
     conflict_result = await _update_post_write(input, existing, conflict_result, ch, follows)
 
     # Same-key supersession, exactly as memory.set runs it after its insert.

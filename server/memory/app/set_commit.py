@@ -33,7 +33,7 @@ from server.memory.api.models_crud import (
     MemorySetInput,
     MemorySetOutput,
 )
-from server.memory.app.auto_resolution import follow_beside_response
+from server.memory.app.auto_resolution import Follow, follow_beside_response
 from server.memory.app.drops import record_drop
 from server.memory.app.entity_projections import (
     declared_entities,
@@ -235,7 +235,7 @@ class _SetWrite:
     key_embedding: list[float] = field(default_factory=list)
     key_text: str = ""
     # The (loser, winner) pairs this write retired, followed once its relations are in.
-    follows: list[tuple[str, str]] = field(default_factory=list)
+    follows: list[Follow] = field(default_factory=list)
 
 
 async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
@@ -835,7 +835,7 @@ async def _set_post_insert(
     verdict: str,
     actor: str,
     revised: bool = False,
-    follows: list[tuple[str, str]] | None = None,
+    follows: list[Follow] | None = None,
 ) -> None:
     """What a committed point write does after its row is in.
 
