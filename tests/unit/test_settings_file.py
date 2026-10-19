@@ -1,6 +1,7 @@
 """The YAML settings file LOOM_SETTINGS_FILE names: below the dotenv file and the
-environment, above the defaults. A secret, a duplicate key or another version refuses;
-a name no setting has is logged and ignored (N-1 and N share the file in a rollout)."""
+environment, above the defaults. A secret, a duplicate key, another version or a value
+of the wrong type or outside its bounds refuses; a name no setting has is logged and
+ignored (N-1 and N share the file in a rollout)."""
 
 from __future__ import annotations
 
@@ -179,3 +180,41 @@ def test_a_yaml_merge_key_reads_as_yaml_does(
         "  memory_ask_recency_weight: 0.5\n",
     )
     assert (s.memory_ask_recency_weight, s.memory_ask_synth_budget_ratio) == (0.5, 0.4)
+
+
+@pytest.mark.parametrize(
+    ("text", "weight"),
+    [
+        # An alias: the mapping's own key overrides the merged one.
+        (
+            "version: 1\nsettings:\n  x_base: &b {memory_ask_recency_weight: 0.3}\n"
+            "  <<: *b\n  memory_ask_recency_weight: 0.5\n",
+            0.5,
+        ),
+        # A list of sources: the first wins, and a key both share is not "given twice".
+        (
+            "version: 1\nsettings:\n  x_a: &a {memory_ask_recency_weight: 0.3}\n"
+            "  x_b: &b {memory_ask_recency_weight: 0.4}\n  <<: [*a, *b]\n",
+            0.3,
+        ),
+        # A merged anchor with its own merge and override.
+        (
+            "version: 1\nsettings:\n  x_base: &b\n    <<: {memory_ask_recency_weight: 0.3}\n"
+            "    memory_ask_recency_weight: 0.4\n  <<: *b\n",
+            0.4,
+        ),
+    ],
+)
+def test_merges_read_as_yaml_reads_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str, weight: float
+) -> None:
+    assert _load(monkeypatch, tmp_path, text).memory_ask_recency_weight == weight
+
+
+def test_a_bare_value_key_is_an_unknown_name_not_unreadable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    assert (
+        _load(monkeypatch, tmp_path, "version: 1\nsettings:\n  =: 1\n").loaded_from("settings_file")
+        == frozenset()
+    )

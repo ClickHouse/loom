@@ -3,8 +3,8 @@ names (the `LOOM_<FIELD>` names, lowercase) to values.
 
 Read only when LOOM_SETTINGS_FILE names it. It ranks below the dotenv file and the
 environment, above the defaults. A secret, a key given twice, an unsupported
-version or a value of the wrong type refuses to start, also when the environment
-or the dotenv file sets that setting too. A name no setting has is
+version or a value of the wrong type or outside its bounds refuses to start, also
+when the environment or the dotenv file sets that setting too. A name no setting has is
 logged and ignored, as an unknown `LOOM_*` variable is: builds N-1 and N share one
 file during a rolling upgrade. Secrets stay in the environment or a secrets
 manager, never in a file that is committed. `schemas/loom-settings.schema.json`
@@ -35,19 +35,31 @@ class SettingsFileError(ValueError):
     """The settings file cannot be used; the message names the file and the key."""
 
 
+# `<<` (a merge) and `=` (the value key) are rewritten by the flatten itself.
+_YAML_SPECIAL_KEYS = frozenset({"tag:yaml.org,2002:merge", "tag:yaml.org,2002:value"})
+
+
 def _load_yaml(f: Any) -> Any:
     """`yaml.safe_load`, refusing a key given twice in one mapping, which the plain
     loader settles silently by keeping the last."""
     import yaml
 
     class _Strict(yaml.SafeLoader):
-        pass
+        # A mapping's own keys are checked the first time it is flattened, before a
+        # `<<:` merge rewrites it in place: merged keys may be overridden, and keys two
+        # merge sources share are YAML's to settle.
+        def flatten_mapping(self, node: yaml.MappingNode) -> None:
+            checked: set[yaml.Node] = self.__dict__.setdefault("_checked", set())
+            if node not in checked:
+                checked.add(node)
+                _own_keys_once(self, node)
+            super().flatten_mapping(node)
 
-    def _mapping(loader: _Strict, node: yaml.MappingNode) -> dict[Any, Any]:
+    def _own_keys_once(loader: _Strict, node: yaml.MappingNode) -> None:
         seen: set[Any] = set()
         for key_node, _ in node.value:
-            if key_node.tag == "tag:yaml.org,2002:merge":
-                continue  # `<<: *base`: its keys may be overridden here
+            if key_node.tag in _YAML_SPECIAL_KEYS:
+                continue
             key = loader.construct_object(key_node)
             if not isinstance(key, Hashable):
                 raise yaml.constructor.ConstructorError(
@@ -58,10 +70,7 @@ def _load_yaml(f: Any) -> Any:
                     None, None, f"{key!r} is given twice", key_node.start_mark
                 )
             seen.add(key)
-        loader.flatten_mapping(node)
-        return loader.construct_mapping(node)
 
-    _Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
     return yaml.load(f, Loader=_Strict)  # a SafeLoader subclass: no arbitrary objects
 
 

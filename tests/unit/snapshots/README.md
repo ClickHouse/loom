@@ -25,4 +25,5 @@ Readers other than the owner: `test_code_compiler_tiers.py` reads the
 card names workers the registry builds.
 
 Run each update command on its own file. `LOOM_UPDATE_SNAPSHOT=1` is shared
-by the two SDK snapshots, so setting it for a whole-suite run rewrites both.
+by the two SDK snapshots, `live_settings.json` and `settings_defaults.json`, so
+setting it for a whole-suite run rewrites all four, the reviewed LIVE set among them.
