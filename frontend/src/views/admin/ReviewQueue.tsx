@@ -1195,6 +1195,8 @@ function PeerSide({ rows, peerId }: { rows: ConflictRow[]; peerId?: string }) {
       version={peer.version}
       pinned={peer.pinned}
       createdAt={peer.created_at ?? undefined}
+      // A high peer's value is read by key in Memories, as side A's is.
+      sensitive={peer.sensitivity === "high"}
     />
   );
 }

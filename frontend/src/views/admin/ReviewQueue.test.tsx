@@ -8,6 +8,7 @@ import { invalidateShared } from "../../lib/sharedReads";
 import { axeViolations } from "../../test/axe";
 import { ReviewQueue } from "./ReviewQueue";
 import { ApiError } from "../../lib/errors";
+import { SENSITIVE_READ_BY_KEY } from "../../lib/format";
 
 // The review queue is keyed to the namespace in the header: a reload after a decision
 // must not paint the previous namespace's rows, and switching namespace must not leave
@@ -800,6 +801,38 @@ describe("ReviewQueue", () => {
     expect(peer.textContent).toContain("lesson_other");
     expect(peer.textContent).not.toContain("lesson_a");
     expect(getMemoryById).toHaveBeenCalledWith(ORG, "id-elsewhere", expect.anything());
+  });
+
+  it("shows a high peer the queue holds as read by key, without reading it by id", async () => {
+    const peer = { ...conflict("vault"), value: null, sensitivity: "high", conflict_with: ["id-lesson_a"] };
+    const a = { ...conflict("lesson_a"), conflict_with: ["id-vault"] };
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [a, peer], next_before_version: null });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    const side = (await screen.findByText("B · conflicting peer", {}, WAIT)).parentElement as HTMLElement;
+    await waitFor(() => expect(side.textContent).toContain(SENSITIVE_READ_BY_KEY), WAIT);
+    expect(getMemoryById).not.toHaveBeenCalled();
+  });
+
+  it("shows a high peer read by its id as read by key, not its value", async () => {
+    const a = { ...conflict("lesson_a"), conflict_with: ["id-elsewhere"] };
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [a], next_before_version: null });
+    vi.mocked(getMemoryById).mockResolvedValue({
+      found: true,
+      memory_id: "id-elsewhere",
+      namespace: "ns-a",
+      memory_key: "vault_code",
+      value: "the code is 4417",
+      version: 3,
+      pinned: false,
+      created_at: "2026-09-21T00:00:00Z",
+      sensitivity: "high",
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    const side = (await screen.findByText("B · conflicting peer", {}, WAIT)).parentElement as HTMLElement;
+    await waitFor(() => expect(side.textContent).toContain(SENSITIVE_READ_BY_KEY), WAIT);
+    expect(side.textContent).not.toContain("4417");
   });
 
   it("names a peer that reads nothing by its id only", async () => {

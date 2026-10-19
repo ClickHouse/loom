@@ -443,6 +443,8 @@ export interface MemoryById {
   version: number | null;
   pinned: boolean;
   created_at: string | null;
+  /** '' | low | medium | high; a high row is read by key in Memories, not shown here. */
+  sensitivity?: string;
 }
 
 export async function getMemoryById(org: string, memoryId: string, opts: RequestOpts = {}): Promise<MemoryById> {
