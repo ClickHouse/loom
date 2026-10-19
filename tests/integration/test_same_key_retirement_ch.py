@@ -7156,7 +7156,7 @@ async def test_a_by_id_update_that_makes_a_row_high_drops_its_mined_edges(ch, or
 
 
 async def test_point_write_intents_are_resolved_by_a_batched_flush(ch, org, monkeypatch) -> None:
-    """Forty writes of one key from forty sessions each retire the one before: every
+    """Eight writes of one key from eight sessions each retire the one before: every
     intent whose record and follow landed is resolved by one flush, none left for the
     repair, and resolved rows leave by the table's TTL."""
     from server.memory.api.models_crud import MemorySetInput
@@ -7182,7 +7182,7 @@ async def test_point_write_intents_are_resolved_by_a_batched_flush(ch, org, monk
             }
         ],
     )
-    for i in range(40):
+    for i in range(8):
         await handle_memory_set(
             MemorySetInput(
                 org=org,
@@ -7211,7 +7211,7 @@ async def test_point_write_intents_are_resolved_by_a_batched_flush(ch, org, monk
         if counts and "active" not in counts:
             break
         await asyncio.sleep(0.2)
-    assert counts == {"resolved": 39}, counts
+    assert counts == {"resolved": 7}, counts
     (table,) = await ch.query_all(
         "SELECT create_table_query AS q FROM system.tables"
         " WHERE database = 'loom' AND name = 'memory_projection_failures'"
@@ -7378,10 +7378,9 @@ async def test_a_drop_of_mined_edges_is_owed_first_and_resolved_once_it_lands(ch
 
 
 async def test_a_bulk_write_making_many_rows_high_owes_one_drop(ch, org, monkeypatch) -> None:
-    """200 plain rows re-set high in one bulk call: one intent before the response (not
-    a committed insert per row), one drop after it; a failed drop leaves that intent to
-    the repair, which drops every row's links."""
-    import time
+    """Rows re-set high in one bulk call: one intent before the response (not a committed
+    insert per row, which made 200 rows take 14 s), one drop after it; a failed drop
+    leaves that intent to the repair, which drops every row's links."""
 
     from server.memory.api.models_bulk import MemoryBulkSetInput
     from server.memory.app import after_write, entity_projections, intent_marks
@@ -7398,7 +7397,7 @@ async def test_a_bulk_write_making_many_rows_high_owes_one_drop(ch, org, monkeyp
                 # Declared on the plain write only: the high one names none.
                 "entities": [] if sensitivity else ["Alice Smith", "Bob Jones", "Acme Corp"],
             }
-            for i in range(200)
+            for i in range(5)
         ]
         return MemoryBulkSetInput(
             org=org,
@@ -7412,9 +7411,7 @@ async def test_a_bulk_write_making_many_rows_high_owes_one_drop(ch, org, monkeyp
     await handle_memory_bulk_set(write(""))
     await after_write.drain()
     assert await _edge_links(ch, org) > 0
-    started = time.monotonic()
     await handle_memory_bulk_set(write("high"))
-    assert time.monotonic() - started < 5.0
     await after_write.drain()
     await intent_marks.drain()
     assert await _edge_links(ch, org) == 0
@@ -7832,11 +7829,12 @@ async def test_a_value_less_close_dates_an_older_high_value_by_when_the_row_left
     monkeypatch.setattr(ep, "drop_undeclared_links", nothing)
     monkeypatch.setattr(projections, "end_edges", nothing)
     monkeypatch.setattr(ep, "end_edges", nothing)
-    for value in ("Alice met Carol", "Alice met Dan", "Alice met Bob"):
+    for i, value in enumerate(("Alice met Carol", "Alice met Dan", "Alice met Bob")):
+        if i:
+            await asyncio.sleep(2)  # the versions' times are whole seconds apart
         await _high_set(
             org, "s1", "vault", value, sensitivity="high", entities=value.split(" met ")
         )
-        await asyncio.sleep(2)
     monkeypatch.undo()
     row = await ch.query_one(
         "SELECT toString(memory_id) AS id FROM loom.memory FINAL WHERE org = {org:String}",

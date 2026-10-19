@@ -1496,9 +1496,12 @@ async def test_a_repair_before_the_supersede_commits_leaves_the_follow_owed(
     assert not await _paris_open(ch, org, want=False)
 
 
-async def test_a_key_held_in_thousands_of_sessions_is_read_within_bounds(ch, wired) -> None:
-    """4,000 other sessions hold the row's key: the same-key read is bounded in SQL, so
-    the peer-rows read stays small and the row is judged."""
+async def test_a_key_held_in_many_sessions_is_read_within_bounds(ch, wired, monkeypatch) -> None:
+    """300 other sessions hold the row's key: the same-key read is bounded in SQL, so
+    the peer-rows read gets a handful of ids (not one per session, which at thousands
+    passes the HTTP form field limit) and the row is judged."""
+    from server.core.ch import get_client
+    from server.memory.store import conflict_resolver as queue
     from server.memory.store.embeddings import (
         _copy_row,
         insert_embedding_rows,
@@ -1522,13 +1525,24 @@ async def test_a_key_held_in_thousands_of_sessions_is_read_within_bounds(ch, wir
             row,
             {"session_id": f"many{i}", "embedding": _vec((97, 1.0)), "conflict_checked_at": None},
         )
-        for i in range(4000)
+        for i in range(300)
     ]
     await insert_embedding_rows(sessions, ch=ch)
+    client = get_client()
+    real_query_all, sent = client.query_all, []
+
+    async def query_all(sql: str, params: Any = None, **kw: Any) -> Any:
+        if sql is queue._PEER_ROWS_SQL:
+            sent.append(len(params["ids"]))
+        return await real_query_all(sql, params, **kw)
+
+    monkeypatch.setattr(client, "query_all", query_all)
     try:
         out = await run_pass()
         assert out["errored"] == 0 and llm.calls == ["office_location"], out
+        assert sent and max(sent) < 50, sent
     finally:
+        monkeypatch.undo()
         await _drop_vectors(ch, org, NS, "office_location")
 
 

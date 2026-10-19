@@ -196,6 +196,15 @@ def _fresh_request_log() -> None:
     _requests.clear()
 
 
+@pytest.fixture(autouse=True)
+def _quick_intent_marks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """In-process writes resolve their intents in a batched mark every 10 s; a test
+    waiting for one would wait that long. The batching itself is what a test drains."""
+    from server.memory.app import intent_marks
+
+    monkeypatch.setattr(intent_marks, "FLUSH_S", 0.2)
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Any:
     report = yield

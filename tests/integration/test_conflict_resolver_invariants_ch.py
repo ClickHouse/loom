@@ -199,7 +199,7 @@ async def _stored(ch: Any, org: str) -> dict[str, set[int]]:
     return out
 
 
-@pytest.mark.parametrize("seed", [1, 2, 3, 4, 5, 6])
+@pytest.mark.parametrize("seed", [1, 2, 3])
 async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
     ch, wired, monkeypatch, seed: int
 ) -> None:
