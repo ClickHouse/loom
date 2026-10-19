@@ -307,13 +307,14 @@ LOOM_SCIM_TOKEN="$OLD_TOKEN,$(openssl rand -hex 32)"
 Loom keys a SCIM user on an email: of the request's `emails` entries with an
 address, the one marked primary, else the first work one, else the first; or
 its `userName` when it sends none (Loom logs a warning when a user is created
-or renamed with a `userName` other than that address).
-That address must be the one the provider puts in the ID token's `email`
-claim, since that is what a sign-in carries.
+or renamed with a `userName` other than that address). That address must be
+the one the provider puts in the ID token's `email` claim, since that is what
+a sign-in carries.
 
 In Okta, on the app integration from [Okta setup](#okta-setup):
 
-1. **General → App Settings → Edit**, set **Provisioning** to **SCIM**, and save.
+1. **General → App Settings → Edit**, set **Provisioning** to **SCIM**, and
+   save.
 2. **Provisioning → Integration → Edit:**
    - **SCIM connector base URL:** `<public Loom URL>/scim/v2`
    - **Unique identifier field for users:** `userName`
@@ -399,9 +400,9 @@ What Loom does with each request:
   names the email but was never linked to it (not adopted, linked or proven at
   an SSO sign-in) is not one an SSO sign-in reaches, so it is left alone:
   revoke it with `loom revoke-token --subject`, or adopt it before offboarding
-  ([Accounts](#accounts)). Likewise a token an operator minted
-  with the email itself as its subject (`loom mint-token --subject <email>`)
-  for an adopted account whose subject is a handle: revoke the email with
+  ([Accounts](#accounts)). Likewise a token an operator minted with the email
+  itself as its subject (`loom mint-token --subject <email>`) for an adopted
+  account whose subject is a handle: revoke the email with
   `loom revoke-token --subject <email>`. A subject is a name, not an org's:
   when one also owns an account or holds a grant in an org where the email
   does not reach that subject (another person's `alice`), it is still revoked,
@@ -449,9 +450,9 @@ Loom keeps each SCIM user's row in `loom.scim_users` (the userName, the email,
 the `emails` list the provider sent, the subjects it revoked and whether it is
 active) for as long as the deployment does, deleted users included: that row
 is what keeps a deactivated person out. A `DELETE` clears the `emails` list;
-the email stays. Requests are idempotent, so the provider's retries are safe, and
-they run side by side: only those for people who reach a shared account wait
-on each other (a busy one answers 503 and the provider retries it). The
+the email stays. Requests are idempotent, so the provider's retries are safe,
+and they run side by side: only those for people who reach a shared account
+wait on each other (a busy one answers 503 and the provider retries it). The
 filters served are `userName eq "<userName>"` and, on the email,
 `emails[type eq "work"].value eq "<email>"` (or `emails.value eq`), which
 match every user with an `emails` entry holding the address, in any case (a
@@ -465,10 +466,9 @@ SSO sign-in with a deactivated email is still refused, and a deactivated
 person's subjects stay revoked, new tokens included, until an operator lifts
 each with `loom revoke-token --subject <it> --issued-before <now> --scim`.
 That lets the subject's new tokens work (its old ones stay revoked), not its
-sign-in: to let a deactivated person
-sign in again once SCIM is off, set `LOOM_SCIM_TOKEN` again and send
-`active: true` for them, from the provider or by hand. Reactivate at the
-provider first anyone who should keep Loom.
+sign-in: to let a deactivated person sign in again once SCIM is off, set
+`LOOM_SCIM_TOKEN` again and send `active: true` for them, from the provider or
+by hand. Reactivate at the provider first anyone who should keep Loom.
 
 ### Changing a person's email
 
