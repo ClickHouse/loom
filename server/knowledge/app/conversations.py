@@ -336,8 +336,6 @@ async def handle_conversation_delete(
     For user/namespace-wide erasure use `erasure.request` with `scope_type`
     `user_id` or `namespace`.
     """
-    from datetime import UTC
-
     from fastapi import HTTPException
 
     from server.knowledge.store import conversations as conversation_repo
@@ -355,7 +353,7 @@ async def handle_conversation_delete(
             },
         )
 
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = naive_utc_now()
     counts = await conversation_repo.tombstone_thread(
         input.org,
         input.namespace,
@@ -760,7 +758,6 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     (`reason="embed-failed"`).
     """
     import uuid as _uuid
-    from datetime import UTC, datetime
 
     from server.knowledge.store import conversations as conversation_repo
     from server.llm.client import get_llm_client
@@ -869,7 +866,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     summary_user_id = users.most_common(1)[0][0] if users else "-"
     runs = {str(r.get("run_id") or "-") for r in candidates}
     summary_run_id = runs.pop() if len(runs) == 1 else "-"
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = naive_utc_now()
     # Place the summary where the originals were so reads see it in order.
     earliest_ts = candidates[0]["ts"]
 
