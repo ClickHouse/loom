@@ -1179,3 +1179,30 @@ async def test_a_bulk_making_rows_with_long_entity_names_high_drops_every_link(c
     await intent_marks.drain()
     assert await _edge_links(ch, org) == 0
     assert await _open_edge_pairs(ch, org) == set()
+
+
+async def test_a_drop_whose_edge_end_fails_leaves_its_links_for_the_replay(
+    ch, org, monkeypatch
+) -> None:
+    """The drop after a re-set to high fails to end its edges: its links are still
+    there, so the repair finds the edges by them, ends them and deletes the links."""
+    from server.memory.app import projections
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    value = "Alice Smith met Bob Lane and Carol King in Berlin"
+    await _high_set(org, "s1", "contact", value)
+
+    async def down(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("edges down")
+
+    with monkeypatch.context() as m:
+        m.setattr(projections, "end_edges", down)
+        await _high_set(
+            org, "s1", "contact", value, sensitivity="high", entities=["Alice Smith", "Bob Lane"]
+        )
+    assert ("alice smith", "carol king") in await _open_edge_pairs(ch, org)
+    results = await retry_projection_failures(
+        org=org, projection="entity_edges_drop_undeclared", ch=ch
+    )
+    assert results and all(r.resolved for r in results), results
+    assert await _open_edge_pairs(ch, org) == {("alice smith", "bob lane")}

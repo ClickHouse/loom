@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -1102,6 +1103,7 @@ _HELD_PAIRS_CTES = f"""
         SELECT memory_id, content_sha256, entity_a, entity_b FROM loom.entity_edge_rows
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
+          AND memory_id NOT IN {{skip_rows:Array(UUID)}}
     ),
     keyed AS (
         SELECT memory_key, entity_a, entity_b, max(seen_at) AS seen_at
@@ -1168,6 +1170,7 @@ async def end_edges(
     namespace: str,
     ends: list[tuple[str, str, datetime]],
     open_only: bool = False,
+    skip_rows: Sequence[str] = (),
 ) -> None:
     """End each edge (entity_a, entity_b, end) still valid after its `end`, or only the
     still-open ones with `open_only`, as a close ends a triple, unless a live row still
@@ -1179,10 +1182,13 @@ async def end_edges(
     when it finds an open edge to end, then a check for a row written meanwhile
     (`reopen_held_edges`), then one for the edges with a stated later end of the pairs no
     row named. The UPDATE stamps the rows it ends with this close's id (`closed_by`), so
-    the reopen opens only those. The edges go a parameter's worth at a time
+    the reopen opens only those. The links of the rows `skip_rows` hold nothing: they
+    are about to be deleted. The edges go a parameter's worth at a time
     (`param_slices`): long entity names make a long list of pairs."""
     for part in param_slices(ends):
-        await _end_edges_slice(ch, org=org, namespace=namespace, ends=part, open_only=open_only)
+        await _end_edges_slice(
+            ch, org=org, namespace=namespace, ends=part, open_only=open_only, skip_rows=skip_rows
+        )
 
 
 async def _end_edges_slice(
@@ -1192,11 +1198,13 @@ async def _end_edges_slice(
     namespace: str,
     ends: list[tuple[str, str, datetime]],
     open_only: bool,
+    skip_rows: Sequence[str],
 ) -> None:
     """`end_edges` for edges whose pairs bind as one parameter."""
     params = {
         "org": org,
         "ns": namespace,
+        "skip_rows": sorted(skip_rows),
         "pairs": [(a, b) for a, b, _end in ends],
         "ends": [end.replace(microsecond=0) for _a, _b, end in ends],
         "edge_links": _EDGE_ROW_LINKS_MIGRATION,

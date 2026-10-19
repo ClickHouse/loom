@@ -171,6 +171,27 @@ async def _drop_links_of(
         for r in links
         if not {str(r["entity_a"]), str(r["entity_b"])} <= keep[str(r["id"])]
     )
+    # A pair another of these rows keeps stays open; it holds through that row's link.
+    kept = {
+        (str(r["entity_a"]), str(r["entity_b"]))
+        for r in links
+        if {str(r["entity_a"]), str(r["entity_b"])} <= keep[str(r["id"])]
+    }
+    # Each edge ends when the first write that dropped it landed, a replay included.
+    ends: dict[tuple[str, str], datetime] = {}
+    for memory_id, a, b in drop:
+        at = version_time(versions[memory_id])
+        ends[(a, b)] = min(ends.get((a, b), at), at)
+    # The edges end before their links go, the links of these rows holding none, so a
+    # failure between leaves the links for the replay to find the edges by.
+    await projections.end_edges(
+        ch,
+        org=input.org,
+        namespace=input.namespace,
+        ends=[(a, b, at) for (a, b), at in sorted(ends.items()) if (a, b) not in kept],
+        open_only=True,
+        skip_rows=sorted(keep),
+    )
     for part in param_slices(drop):
         await ch.execute(
             """
@@ -186,18 +207,6 @@ async def _drop_links_of(
                 "links": part,
             },
         )
-    # Each edge ends when the first write that dropped it landed, a replay included.
-    ends: dict[tuple[str, str], datetime] = {}
-    for memory_id, a, b in drop:
-        at = version_time(versions[memory_id])
-        ends[(a, b)] = min(ends.get((a, b), at), at)
-    await projections.end_edges(
-        ch,
-        org=input.org,
-        namespace=input.namespace,
-        ends=[(a, b, at) for (a, b), at in sorted(ends.items())],
-        open_only=True,
-    )
 
 
 def drop_payload(rows: Mapping[str, list[str]], versions: Mapping[str, int]) -> dict[str, Any]:
