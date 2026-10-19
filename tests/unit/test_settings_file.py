@@ -68,6 +68,11 @@ def test_the_file_sets_a_value_and_the_dotenv_file_and_environment_win(
         ("version: true\nsettings: {}\n", "version True is not supported"),
         ("version: 1\nsettings:\n  ? [a]\n  : 1\n", "a key must be a name"),
         (
+            "version: 1\nsettings:\n"
+            "  <<: {memory_ask_recency_weight: 0.3, memory_ask_recency_weight: 0.4}\n",
+            "'memory_ask_recency_weight' is given twice",
+        ),
+        (
             "version: 1\nsettings:\n  memory_ask_recency_weight: 0.4\n"
             "  memory_ask_recency_weight: 0.5\n",
             "'memory_ask_recency_weight' is given twice",

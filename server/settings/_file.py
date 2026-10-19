@@ -45,13 +45,14 @@ def _load_yaml(f: Any) -> Any:
     import yaml
 
     class _Strict(yaml.SafeLoader):
-        # A mapping's own keys are checked the first time it is flattened, before a
-        # `<<:` merge rewrites it in place: merged keys may be overridden, and keys two
-        # merge sources share are YAML's to settle.
+        def __init__(self, stream: Any) -> None:
+            super().__init__(stream)
+            self._checked: set[yaml.Node] = set()
+
+        # Own keys are checked before a `<<:` merge rewrites the node in place.
         def flatten_mapping(self, node: yaml.MappingNode) -> None:
-            checked: set[yaml.Node] = self.__dict__.setdefault("_checked", set())
-            if node not in checked:
-                checked.add(node)
+            if node not in self._checked:
+                self._checked.add(node)
                 _own_keys_once(self, node)
             super().flatten_mapping(node)
 
