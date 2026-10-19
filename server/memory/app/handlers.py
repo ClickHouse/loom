@@ -586,7 +586,8 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
     if existing is None:
         return MemoryUnpinOutput(unpinned=False, reason="not_found")
     assert_own_row(existing, op="memory.unpin")
-    # Read again and written under the key's lock, as a pin and a resolver write are.
+    # Read again and written under the key's lock, as a pin and a resolver write are: a
+    # retirement landing between the read and the unpinned copy would be written over.
     from server.memory.store.key_write_lock import key_lock_for
 
     async with key_lock_for(

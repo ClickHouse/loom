@@ -608,6 +608,8 @@ async def _handle_memory_set(
     to their insert, as a resolver write does, so a retirement never lands between them."""
     if not (input.if_match_sha256 or input.pinned):
         return await _memory_set_phases(input)
+    # A pin rewrites the row from its read: a retirement landing between the two would be
+    # written over by the pinned copy, active again, so the pin holds the lock across both.
     if not input.if_match_sha256:  # a pin: busy, the answer says what to retry
         async with key_write_lock.key_lock_for(
             input.org,
