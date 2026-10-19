@@ -768,6 +768,9 @@ type UndoOutcome = "restored" | "gone";
 // One retirement record: a memory retired twice shows up once per record.
 const entryKey = (r: AutoResolvedRow) => `${r.memory_id}@${r.ts}>${r.superseded_by}`;
 
+/** The earlier of two audit times; "" is none yet. */
+const earlierTime = (a: string, b: string): string => (a === "" || auditInstant(b) < auditInstant(a) ? b : a);
+
 /** Newest restore per id across two reads. */
 function mergeUndone(a: Map<string, string>, b: Map<string, string>): Map<string, string> {
   const out = new Map(a);
@@ -804,7 +807,7 @@ function AutoResolvedPanel() {
   // page added, else the last one in the list.
   const listBox = useRef<HTMLDivElement>(null);
   const focusAdded = useRef<number | null>(null);
-  const oldest = (rows ?? []).reduce((m, r) => (m === "" || auditInstant(r.ts) < auditInstant(m) ? r.ts : m), "");
+  const oldest = (rows ?? []).map((r) => r.ts).reduce(earlierTime, "");
 
   useEffect(() => {
     mounted.current = true;

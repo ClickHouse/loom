@@ -1,6 +1,6 @@
 // The automatic retirements' wording and the restores read beside them, for the Review
-// queue and Activity. Apart from audit.ts, which the sidebar badge imports into the
-// index chunk.
+// queue and Activity. Kept out of audit.ts, which the sidebar badge pulls into the index
+// chunk.
 import type { Identity, RequestOpts } from "../api";
 import { parseChTime } from "../lib/format";
 import { listAuditLog, parseAuditSubject, type AutoResolveReason } from "./audit";
