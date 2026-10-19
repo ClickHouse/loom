@@ -29,6 +29,8 @@ from server.memory.app.projection_failures import (
     EDGES_DROP_UNDECLARED,
     TRIPLES_RECONCILE,
     TRIPLES_REOPEN,
+    insert_projection_failures,
+    projection_failure_row,
     record_projection_failure,
 )
 from server.memory.app.projections import (
@@ -631,10 +633,8 @@ async def end_overtaken_edges(
         holding = [(memory_id, sha) for memory_id, _, sha in versions]
         held = await versions_held(input.org, input.namespace, holding, ch=ch, holder=holder)
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
-        for memory_id, memory_key, sha in versions:
-            await record_edges_close(
-                input, memory_id, memory_key, sha, e, op=op, ch=ch, entities=entities
-            )
+        closes = [EdgeClose(mid, key, sha, list(entities)) for mid, key, sha in versions]
+        await record_edges_closes(input, closes, e, op=op, ch=ch)
         return
     for memory_id, memory_key, sha in versions:
         if (memory_id, sha) in held:
@@ -646,50 +646,51 @@ async def end_overtaken_edges(
             )
             await _end_edges_of(input.org, input.namespace, memory_id, sha, ended_at, ch=ch)
         except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
-            await record_edges_close(
-                input,
-                memory_id,
-                memory_key,
-                sha,
-                e,
-                ended_at=ended_at,
-                op=op,
-                ch=ch,
-                entities=entities,
-            )
+            close = EdgeClose(memory_id, memory_key, sha, list(entities), ended_at)
+            await record_edges_closes(input, [close], e, op=op, ch=ch)
 
 
-async def record_edges_close(
-    input: Any,
-    memory_id: str,
-    memory_key: str,
-    sha: str,
-    error: Exception,
-    *,
-    ended_at: datetime | None = None,
-    op: str,
-    ch: Any,
-    entities: Sequence[str] = (),
+class EdgeClose(NamedTuple):
+    """A value's edge close left to the projection repair: the row's version, the
+    entities its edges paired, and when the row stopped holding the value, if read."""
+
+    memory_id: str
+    memory_key: str
+    sha: str
+    entities: list[str]
+    ended_at: datetime | None = None
+
+
+async def record_edges_closes(
+    input: Any, closes: list[EdgeClose], error: Exception, *, op: str, ch: Any
 ) -> None:
-    """Record a failed `end_overtaken_edges` close for the projection repair, with
-    the value's end when it was read: the repair ends the edges at the same moment."""
-    payload: dict[str, Any] = {"memory_id": memory_id, "content_sha256": sha}
-    if entities:
-        payload["entities"] = list(entities)
-    if ended_at is not None:
-        payload["ended_at"] = ended_at.isoformat()
-    await record_projection_failure(
-        org=input.org,
-        namespace=input.namespace,
-        agent=input.agent,
-        projection=EDGES_CLOSE,
-        source_operation=op,
-        memory_keys=[memory_key],
-        error=error,
-        payload=payload,
-        ch=ch,
-        user_id=str(getattr(input, "user_id", "") or ""),
-    )
+    """Record failed edge closes for the projection repair in one insert, each with the
+    value's end when it was read: the repair ends the edges at the same moment.
+    Fail-open, as the write it describes has landed."""
+    rows = []
+    for close in closes:
+        payload: dict[str, Any] = {"memory_id": close.memory_id, "content_sha256": close.sha}
+        if close.entities:
+            payload["entities"] = close.entities
+        if close.ended_at is not None:
+            payload["ended_at"] = close.ended_at.isoformat()
+        rows.append(
+            projection_failure_row(
+                org=input.org,
+                namespace=input.namespace,
+                agent=input.agent,
+                projection=EDGES_CLOSE,
+                source_operation=op,
+                memory_keys=[close.memory_key],
+                error=error,
+                payload=payload,
+                user_id=str(getattr(input, "user_id", "") or ""),
+            )
+        )
+    try:
+        await insert_projection_failures(rows, ch=ch)
+    except Exception as e:  # noqa: BLE001 — must not fail the write it describes
+        log.warning("%s: %d edge closes not recorded: %s", op, len(rows), e)
 
 
 async def value_ended_at(

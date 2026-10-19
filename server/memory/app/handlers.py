@@ -945,7 +945,7 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
         source_class=getattr(row, "source_class", "") or "",
         **_lock.lock_state(row),
         verified_at=getattr(row, "verified_at", None),
-        # Derived from the stored hash, which the answer leaves out.
+        # From the stored hash, also when the answer omits it.
         verification=_trust.verification_state(
             getattr(row, "verified_by", ""), getattr(row, "verified_sha256", ""), sha
         ),

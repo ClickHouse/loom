@@ -7574,3 +7574,82 @@ async def test_a_failed_holder_read_after_a_bulk_revision_is_left_to_the_repair(
     await after_write.drain()
     results = await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
     assert results and all(r.resolved for r in results), results
+
+
+async def test_a_bulk_write_answers_when_its_holder_read_and_its_record_both_fail(
+    ch, org, monkeypatch
+) -> None:
+    """ClickHouse fails both the holder read and the edge-close record after a bulk
+    revision committed: the write still answers."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write, bulk_set, entity_projections
+
+    def write(text: str) -> MemoryBulkSetInput:
+        entry = {"memory_key": "k", "value": text, "entities": ["Gina", "Hank"]}
+        return MemoryBulkSetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=[entry]
+        )
+
+    await bulk_set.handle_memory_bulk_set(write("Gina met Hank"))
+    await after_write.drain()
+
+    async def down(*a: Any, **kw: Any) -> Any:
+        raise RuntimeError("clickhouse down")
+
+    monkeypatch.setattr(bulk_set, "edge_holders", down)
+    monkeypatch.setattr(entity_projections, "insert_projection_failures", down)
+    out = await bulk_set.handle_memory_bulk_set(write("Gina left Hank"))
+    assert out.written[0].version
+
+
+async def test_a_failed_holder_read_records_every_close_in_one_insert_and_no_high_row(
+    ch, org, monkeypatch
+) -> None:
+    """The holder read after a bulk revision of plain and high rows fails: one insert
+    records the plain rows' closes, and no record names a high row."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write, bulk_set, entity_projections
+
+    def write(text: str) -> MemoryBulkSetInput:
+        entries = [
+            {"memory_key": f"p{i}", "value": f"{text} {i}", "entities": ["Gina", "Hank"]}
+            for i in range(3)
+        ]
+        entries.append(
+            {
+                "memory_key": "h",
+                "value": f"{text} secret",
+                "entities": ["Gina", "Hank"],
+                "sensitivity": "high",
+            }
+        )
+        return MemoryBulkSetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=entries
+        )
+
+    await bulk_set.handle_memory_bulk_set(write("first"))
+    await after_write.drain()
+
+    async def down(*a: Any, **kw: Any) -> Any:
+        raise RuntimeError("read timed out")
+
+    inserts: list[list[dict[str, Any]]] = []
+    real_insert = entity_projections.insert_projection_failures
+
+    async def counted(rows: list[dict[str, Any]], **kw: Any) -> None:
+        inserts.append(rows)
+        await real_insert(rows, **kw)
+
+    monkeypatch.setattr(bulk_set, "edge_holders", down)
+    monkeypatch.setattr(entity_projections, "insert_projection_failures", counted)
+    await bulk_set.handle_memory_bulk_set(write("second"))
+    monkeypatch.undo()
+    high_id = (
+        await ch.query_one(
+            "SELECT toString(memory_id) AS id FROM loom.memory FINAL"
+            " WHERE org = {org:String} AND memory_key = 'h'",
+            params={"org": org},
+        )
+    )["id"]
+    assert len(inserts) == 1 and len(inserts[0]) == 3
+    assert not [r for r in inserts[0] if high_id in r["payload"]]

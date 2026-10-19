@@ -96,7 +96,7 @@ EDGES_CLOSE = "entity_edges_close"
 EDGES_DROP_UNDECLARED = "entity_edges_drop_undeclared"
 
 
-async def record_projection_failure(
+def projection_failure_row(
     *,
     org: str,
     namespace: str,
@@ -107,46 +107,52 @@ async def record_projection_failure(
     memory_keys: list[str] | None = None,
     error: BaseException | str,
     payload: dict[str, Any] | None = None,
-    ch: Any | None = None,
     user_id: str = "",
-) -> str:
-    """Append one projection failure row; returns its failure_id. `user_id`: the
-    writer's, kept in the payload so a user erasure finds the row. Callers wrap this
-    helper in their own fail-open guard."""
-
-    ch = ch or get_client()
+) -> dict[str, Any]:
+    """One active projection failure row, a fresh failure_id. `user_id`: the writer's,
+    kept in the payload so a user erasure finds the row."""
     payload = dict(payload or {})
     if user_id and not payload.get("user_id"):
         payload["user_id"] = user_id
-    now = naive_utc_now()
     error_type = type(error).__name__ if isinstance(error, BaseException) else "Error"
-    error_message = str(error)
-    failure_id = str(uuid.uuid4())
-    await ch.insert(
+    return {
+        "failure_id": str(uuid.uuid4()),
+        "org": org,
+        "namespace": namespace,
+        "agent": agent,
+        "projection": projection,
+        "source_operation": source_operation,
+        "source_resource_id": source_resource_id,
+        "memory_keys": list(memory_keys or []),
+        "error_type": error_type,
+        "error_message": str(error)[:4000],
+        "payload": json.dumps(payload, sort_keys=True, default=str),
+        "status": "active",
+        "created_at": naive_utc_now(),
+        "resolved_at": None,
+    }
+
+
+async def insert_projection_failures(rows: list[dict[str, Any]], *, ch: Any | None = None) -> None:
+    """Append `projection_failure_row`s in one committed insert. Callers wrap this
+    helper in their own fail-open guard."""
+    if not rows:
+        return
+    await (ch or get_client()).insert(
         "loom.memory_projection_failures",
-        [
-            {
-                "failure_id": failure_id,
-                "org": org,
-                "namespace": namespace,
-                "agent": agent,
-                "projection": projection,
-                "source_operation": source_operation,
-                "source_resource_id": source_resource_id,
-                "memory_keys": list(memory_keys or []),
-                "error_type": error_type,
-                "error_message": error_message[:4000],
-                "payload": json.dumps(payload or {}, sort_keys=True, default=str),
-                "status": "active",
-                "created_at": now,
-                "resolved_at": None,
-            }
-        ],
+        rows,
         # Committed: the row is the only record of the lost projection, and a
         # fire-and-forget buffer dies with the replica that holds it.
         settings={"async_insert": 1, "wait_for_async_insert": 1},
     )
-    return failure_id
+
+
+async def record_projection_failure(*, ch: Any | None = None, **fields: Any) -> str:
+    """Append one projection failure row (`projection_failure_row`'s fields); returns its
+    failure_id. Callers wrap this helper in their own fail-open guard."""
+    row = projection_failure_row(**fields)
+    await insert_projection_failures([row], ch=ch)
+    return str(row["failure_id"])
 
 
 def _decode_payload(raw: object) -> dict[str, Any]:

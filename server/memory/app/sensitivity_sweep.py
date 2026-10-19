@@ -249,7 +249,6 @@ async def _close_mined_facts(c: SweepCandidate, row_entities: list[Any], *, ch: 
     """A row relabelled high: what its text gave the graph closes (its triples, the edges
     of entities not on the row); the edges of the entities on the row stay, its writer's
     or the extractor's when it tagged the row, as the row keeps those entities."""
-
     from server.memory.app.entity_projections import (
         declared_entities,
         drop_undeclared_edges,

@@ -38,6 +38,7 @@ from server.memory.app.bulk_verdicts import (
     apply_bulk_verdicts,
 )
 from server.memory.app.entity_projections import (
+    EdgeClose,
     _write_derived_facts,
     declared_entities,
     drop_undeclared_edges_beside,
@@ -45,7 +46,7 @@ from server.memory.app.entity_projections import (
     end_overtaken_edges,
     owes_undeclared_drop,
     reconcile_row_facts,
-    record_edges_close,
+    record_edges_closes,
 )
 from server.memory.app.high_fence import fence_high
 from server.memory.app.projection_errors import (
@@ -756,18 +757,18 @@ async def _bulk_run_projections(
 
     # Graph/entity projections (entity_vectors / edges / triples / derived).
     # Each leg is fail-open + records a replayable projection_failure.
-    def _projection(name: str, write: Any, inp: MemoryBulkSetInput, res: list[Any]) -> Any:
+    def _projection(name: str, write: Any) -> Any:
         async def _run() -> None:
             try:
                 await write()
             except Exception as e:  # noqa: BLE001 — a projection; the write stands
                 log.warning("%s write failed (non-fatal): %s", name, e)
                 await record_input_projection_failure(
-                    inp,
+                    p_input,
                     projection=failed_projection(name, e),
                     error=e,
-                    memory_keys=[r.memory_key for r in res],
-                    payload=bulk_projection_payload(inp, res, error=e),
+                    memory_keys=[r.memory_key for r in p_results],
+                    payload=bulk_projection_payload(p_input, p_results, error=e),
                     source_operation="memory.bulk_set",
                     source_resource_id=bulk_source_resource_id(input),
                 )
@@ -792,8 +793,6 @@ async def _bulk_run_projections(
                 entity_map=entity_resolution,
                 entity_embeddings=entity_embeddings,
             ),
-            p_input,
-            p_results,
         ),
         # Recorded without the high entries, as memory.set records nothing for a high
         # row's edges: a failure payload never holds a high value, so a failed declared
@@ -801,20 +800,14 @@ async def _bulk_run_projections(
         _projection(
             "entity_edges",
             lambda: write_entity_edges(e_input, e_results, ch=ch, entity_map=entity_resolution),
-            p_input,
-            p_results,
         ),
         _projection(
             "entity_triples",
             lambda: write_entity_triples(p_input, p_results, ch=ch, entity_map=entity_resolution),
-            p_input,
-            p_results,
         ),
         _projection(
             "derived_facts",
             lambda: _write_derived_facts(p_input, p_results, ch=ch, entity_map=entity_resolution),
-            p_input,
-            p_results,
         ),
     ]
     await asyncio.gather(*(leg() for leg in _legs))
@@ -825,8 +818,10 @@ async def _bulk_run_projections(
     existed = set(state.existing_ids.values())
     revised = [m for m, n in written.items() if m in existed or n > 1]
     if revised:
+        # The high rows: the edges leg sees them, the other legs do not.
+        high = {r.memory_id for r in e_results} - {r.memory_id for r in p_results}
         await _close_overtaken_edges(
-            e_input, e_results, set(revised), entity_map=entity_resolution, ch=ch
+            e_input, e_results, set(revised), high=high, entity_map=entity_resolution, ch=ch
         )
         await reconcile_row_facts(p_input, revised, reopen=False, op="memory.bulk_set", ch=ch)
 
@@ -836,14 +831,16 @@ async def _close_overtaken_edges(
     results: list[Any],
     revised: set[str],
     *,
+    high: set[str],
     entity_map: dict[str, str],
     ch: Any,
 ) -> None:
     """The revised rows' edges end with their value if another write revised it
     again while they were written (`end_overtaken_edges`). An entry with fewer than
     two graph nodes wrote no edge. One read for all of them: a row holds its edges
-    while it holds the value, and a 'high' one only while it names every node paired.
-    A failed read is recorded for the projection repair, which ends them."""
+    while it holds the value, and a 'high' one (`high`: their ids) only while it names
+    every node paired. A failed read is recorded for the projection repair, which ends
+    them, the high rows' left out."""
     paired: dict[tuple[str, str, str], list[str]] = {}
     for entry, res in zip(input.entries, results, strict=True):
         nodes = edge_nodes(entry, entity_map)
@@ -856,10 +853,13 @@ async def _close_overtaken_edges(
             input.org, input.namespace, [(mid, sha) for mid, _, sha in paired], ch=ch
         )
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
-        for (memory_id, memory_key, sha), nodes in paired.items():
-            await record_edges_close(
-                input, memory_id, memory_key, sha, e, op="memory.bulk_set", ch=ch, entities=nodes
-            )
+        # A high row is left out: no failure payload names a high row's content.
+        closes = [
+            EdgeClose(memory_id, memory_key, sha, nodes)
+            for (memory_id, memory_key, sha), nodes in paired.items()
+            if memory_id not in high
+        ]
+        await record_edges_closes(input, closes, e, op="memory.bulk_set", ch=ch)
         return
     overtaken = []
     for version, nodes in paired.items():

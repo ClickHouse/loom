@@ -604,14 +604,14 @@ flips the status: it ends none of the row's edges or triples.
 
 A `high` row holds the edges of the entities on the row and nothing else of the graph.
 Its value is never mined: `memory.set` and `memory.bulk_set` project only the edges of
-the entities a `high` row's writer declared, and the edge rules (`edge_holder_sql`) count a high row as an edge's holder
-only while it names every entity of the edge, while mined edges fence on
-`HOLDS_VALUE_SQL`, which never counts it. A row made `high` (by `memory.set`,
-`memory.bulk_set`, a by-id update or `loom sensitivity-sweep`), or a high row re-set
-naming fewer entities, drops its links to any other pair (a write, after its response,
-with one intent for the whole write), and those edges end unless another row names them;
-a failed drop is left to `projection_repair`. Its triples close as for a row that holds
-none.
+the entities a `high` row's writer declared, and the edge rules (`edge_holder_sql`)
+count a high row as an edge's holder only while it names every entity of the edge, while
+mined edges fence on `HOLDS_VALUE_SQL`, which never counts it. A row made `high` (by
+`memory.set`, `memory.bulk_set`, a by-id update or `loom sensitivity-sweep`), or a high
+row re-set naming fewer entities, drops its links to any other pair (a write, after its
+response, with one intent for the whole write), and those edges end unless another row
+names them; a failed drop is left to `projection_repair`. Its triples close as for a row
+that holds none.
 
 A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`) of a row that
 existed before the write closes the facts its row held that no row holds any longer, and

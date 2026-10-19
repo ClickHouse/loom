@@ -884,13 +884,13 @@ async def test_a_failed_late_edges_cleanup_records_when_the_value_ended(monkeypa
     async def end_fails(*a: Any, **k: Any) -> None:
         raise RuntimeError("boom")
 
-    async def record(**k: Any) -> None:
-        recorded.append(k["payload"])
+    async def record(rows: list, **k: Any) -> None:
+        recorded.extend(json.loads(r["payload"]) for r in rows)
 
     monkeypatch.setattr(entity_projections, "versions_held", none_held)
     monkeypatch.setattr(entity_projections, "value_ended_at", value_ended_at)
     monkeypatch.setattr(entity_projections, "_end_edges_of", end_fails)
-    monkeypatch.setattr(entity_projections, "record_projection_failure", record)
+    monkeypatch.setattr(entity_projections, "insert_projection_failures", record)
     scope = SimpleNamespace(org="o", namespace="n", agent="a")
     versions = [(_ROW_ID, "k", "a" * 64)]
     await entity_projections.end_overtaken_edges(scope, versions, op="memory.set", ch=None)
