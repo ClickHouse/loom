@@ -248,6 +248,9 @@ def test_the_settings_file_is_named_by_the_environment_else_the_dotenv_file_load
     monkeypatch.setenv("HOME", str(tmp_path))
     assert Settings(_env_file="~/loaded.env").memory_ask_recency_weight == 0.3  # type: ignore[call-arg]
     assert Settings(_env_file=(str(other), str(env))).memory_ask_recency_weight == 0.3  # type: ignore[call-arg]
+    bare = tmp_path / "bare.env"
+    bare.write_text("LOOM_CH_PORT=9\n")  # names no settings file: the earlier file's name stands
+    assert Settings(_env_file=(str(env), str(bare))).memory_ask_recency_weight == 0.3  # type: ignore[call-arg]
     assert settings_file_path(str(yaml)) == str(yaml)
     monkeypatch.setenv("LOOM_SETTINGS_FILE", "")  # the environment wins, even empty
     assert settings_file_path(str(yaml)) is None

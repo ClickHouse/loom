@@ -48,8 +48,8 @@ from server.settings._tracker import TrackerSettings
 def _named_in(dotenv_settings: PydanticBaseSettingsSource) -> str | None:
     """LOOM_SETTINGS_FILE as the dotenv file this load reads names it: pydantic's own
     merged read (keys lowercased), so `~` and several files resolve as for every value."""
-    if not isinstance(dotenv_settings, DotEnvSettingsSource):
-        return None
+    # pydantic-settings always passes its DotEnvSettingsSource here (2.5 onward).
+    assert isinstance(dotenv_settings, DotEnvSettingsSource)
     return dotenv_settings.env_vars.get("loom_settings_file") or None
 
 

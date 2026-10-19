@@ -227,3 +227,14 @@ async def test_a_live_excerpt_length_reaches_both_cuts(monkeypatch) -> None:
         ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy"), ["ns"], []
     )
     assert out.hits[0].content_excerpt == content[:12]
+
+
+def test_the_excerpt_setting_is_bounded_by_what_a_row_stores() -> None:
+    """server.settings cannot import the knowledge plane, so the bound is a copy."""
+    from annotated_types import Le
+
+    from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS
+    from server.settings import Settings
+
+    field = Settings.model_fields["conversation_search_excerpt_chars"]
+    assert [m.le for m in field.metadata if isinstance(m, Le)] == [EMBEDDED_EXCERPT_CHARS]

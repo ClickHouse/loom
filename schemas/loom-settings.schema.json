@@ -1695,7 +1695,7 @@
           "maximum": 2048,
           "minimum": 1,
           "type": "integer",
-          "description": "Characters of a turn a conversation.search hit shows; the embedding row keeps the whole embedded text, so this changes no stored row. At most 2048, the excerpt the row stores (EMBEDDED_EXCERPT_CHARS), so both search paths agree."
+          "description": "Characters of a turn a conversation.search hit shows; the embedding row keeps the whole embedded text, so this changes no stored row. At most 2048, the most a row stores (EMBEDDED_EXCERPT_CHARS)."
         },
         "conversation_search_min_similarity": {
           "default": 0.3,
