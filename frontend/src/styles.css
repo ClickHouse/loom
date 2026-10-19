@@ -557,6 +557,9 @@ body {
    Focus rings — Click UI outline blue
    ============================================================ */
 
+/* Unlayered, as every ring rule here: in a layer an override would lose to the unlayered
+   *:focus-visible ring. */
+
 /* Click UI's focus ring (outline-default, 2 px, 2 px offset) on every focusable
    element, including the ones Click UI draws none on (checkbox, switch, tabs,
    link, its dialog close). */
@@ -589,14 +592,16 @@ textarea[aria-invalid="true"]:focus-visible {
 [role="tablist"] [role="tab"]:focus-visible {
   outline-offset: -2px;
 }
-/* Unlayered, as the list-row ring below: in the components layer these would lose to the
-   unlayered *:focus-visible ring. Inset: the Explorer outline tree's scroll box and a task
-   lane (.tq-group, its header and rows) clip their overflow, and inbox items stack flush,
-   where an outset ring would cover the next one. */
+/* A row that spans a box clipping its overflow draws its ring inset: the Explorer outline
+   tree, a task lane (.tq-group: its header, rows and "Show all", each a `data-nav` stop)
+   and the namespace picker's list (.scroll-fade: options, group buttons, "Show all"). Inbox
+   items stack flush, where an outset ring would cover the next one. A clipping box that
+   holds other controls leaves them 4 px of room instead (e2e/focus-rings.spec.ts walks
+   every page for a clipped ring). */
 .explorer-outline [role="treeitem"]:focus-visible,
-.tq-ghead:focus-visible,
-.tq-row:focus-visible,
-.tq-inbox:focus-visible {
+.tq-group [data-nav]:focus-visible,
+.tq-inbox:focus-visible,
+.scroll-fade button:focus-visible {
   outline-offset: -2px;
 }
 /* Click UI's split button clips its halves (overflow: hidden), so its focus ring is drawn
@@ -1256,7 +1261,8 @@ textarea[aria-invalid="true"]:focus-visible {
     border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
     border-radius: var(--click-card-horizontal-radii-all);
     background: var(--click-card-horizontal-default-color-background-default);
-    scroll-margin-top: 8px;
+    /* Room for the row's focus ring (2 px out, 2 px wide) when it is scrolled to an edge. */
+    scroll-margin-block: 8px;
     /* The browser lays out and paints only the rows in view; a row not drawn yet holds its
        list's measured height: a thread 76 px, a document 101, a memory 129, and under 640 px,
        where a row's meta takes its own line, 105, 123 and 151 (below). */

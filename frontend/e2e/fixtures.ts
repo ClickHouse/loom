@@ -1302,7 +1302,7 @@ function knowledgeRowsFixture(n: number): Record<string, unknown>[] {
 
 // ---- Tasks: the inbox plane as the board reads it.
 
-const TASK_INBOX = "bench-bot";
+export const TASK_INBOX = "bench-bot";
 
 function taskInboxesFixture(namespace: string): Record<string, unknown>[] {
   return [

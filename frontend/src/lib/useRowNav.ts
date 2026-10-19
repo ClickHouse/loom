@@ -105,8 +105,9 @@ export function useRowNav({ enabled = true }: RowNavOptions = {}): (el: HTMLElem
       const el = document.activeElement;
       return !el || el === document.body || !!(list && list.contains(el));
     };
+    // The row scrolls into view, not its open button: the ring goes round the whole row.
     const focus = (el: HTMLElement | undefined): true => {
-      el?.scrollIntoView?.({ block: "nearest" });
+      if (el) rowOf(el).scrollIntoView?.({ block: "nearest" });
       el?.focus({ preventScroll: true });
       return true;
     };

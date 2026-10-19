@@ -854,7 +854,9 @@ export function Runs() {
             aria-label="Search runs"
           />
         </ListToolbarSearch>
-        {!phone && <div className="flex min-w-0 items-center gap-2 overflow-x-auto">{filters}</div>}
+        {/* The filters scroll sideways in their own box; its 4 px padding (outside the bar's
+            layout, by the negative margin) is the focus ring's room. */}
+        {!phone && <div className="-m-1 flex min-w-0 items-center gap-2 overflow-x-auto p-1">{filters}</div>}
       </ListToolbar>
       {/* A phone's toolbar has room for the search only; the filters and the View menu sit
           under it. */}
