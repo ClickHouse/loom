@@ -218,11 +218,10 @@ async def _embed_turn(
 
 
 async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn) -> None:
-    """Store the embedding row of message `msg` from `_embed_turn`'s result, so the two
-    rows carry one identity, user and `ts` (a tombstone keeps that `ts`, so the row's
-    partition and version follow the message's), and tombstone it at once when `msg`
-    was tombstoned meanwhile. A failed embed is stored too, with the dead-letter
-    columns recording the error."""
+    """Store the embedding row of message `msg` from `_embed_turn`'s result, with the
+    message's identity, user and `ts`, then re-check the message
+    (`tombstone_embedding_if_message_gone`). A failed embed is stored too, with the
+    dead-letter columns recording the error."""
     assert msg.ts is not None, "an embedded message carries its own ts"
     from server.knowledge.store import conversations as conversation_repo
 
@@ -248,8 +247,6 @@ async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn) -> None:
     }
     with traced("ch.insert.conversation_embedding", embedded=embedded.dim > 0):
         await conversation_repo.insert_embedding(embedding_row)
-    # A delete that tombstoned the message after its last embeddings read would leave
-    # this row searchable.
     await conversation_repo.tombstone_embedding_if_message_gone(
         msg.org, msg.namespace, msg.agent, msg.thread_id, msg.msg_id
     )

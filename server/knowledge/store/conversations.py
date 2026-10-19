@@ -344,11 +344,8 @@ async def tombstone_thread(
     )
     counts["loom.conversations"] = int(msg_n["n"]) if msg_n else 0
 
-    # 3. Embeddings again: a turn appended during the delete whose message step 2
-    # tombstoned can have its embedding land after step 1. One that lands after this
-    # read is caught by its writer's re-check (`tombstone_embedding_if_message_gone`).
-    # A message that lands after step 2 began is not tombstoned, so its turn and
-    # embedding both stay live.
+    # 3. Embeddings again, for a turn appended during the delete
+    # (`tombstone_embedding_if_message_gone` says why this closes the race).
     await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
     # One per turn (FINAL, however many embedding models hold it), earlier calls'
     # tombstones included, as the messages count is. Sequential: the tombstones are
@@ -726,11 +723,9 @@ async def tombstone_messages(
 ) -> None:
     """Tombstone the named messages of one thread and their embeddings, so
     conversation.search stops returning them too. The messages mutation is
-    synchronous, so the next read sees a coherent thread. The embeddings go first:
-    a retry after a failure still finds the messages live and repeats both. They go
-    again after the messages: a turn whose embedding lands after the first read is
-    caught there, or by its writer's re-check
-    (`tombstone_embedding_if_message_gone`)."""
+    synchronous, so the next read sees a coherent thread. The embeddings go first, so
+    a retry after a failure still finds the messages live and repeats both, and again
+    after the messages (`tombstone_embedding_if_message_gone`)."""
     ch = ch or _default_client()
     await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
     for part in param_slices(msg_ids):
@@ -767,9 +762,14 @@ async def tombstone_embedding_if_message_gone(
     ch: _CHClient | None = None,
 ) -> None:
     """Tombstone a just-stored embedding whose message a delete or compaction tombstoned
-    meanwhile. Those tombstone the messages before their last embeddings read, so for a
-    message that mutation covered, either that read sees this embedding or this read
-    sees the message's tombstone."""
+    meanwhile.
+
+    A turn written during a delete or compaction lands its message, then its embedding.
+    Those tombstone the messages, then run their last embeddings pass; the writer
+    stores the embedding, then calls this. So for a message the messages mutation
+    covered, either that last pass sees the embedding or this read sees the tombstone.
+    A message that lands after the mutation began is not covered: it stays live, and so
+    does its embedding."""
     ch = ch or _default_client()
     with sequential_reads():
         row = await ch.query_one(
@@ -869,15 +869,10 @@ async def _tombstone_embeddings(
     """Tombstone the embeddings of `agent`'s turns in one thread: `msg_ids`, or every
     turn it logged there (`_THREAD_TURNS`).
 
-    The embeddings key has no agent, so a turn several agents logged is one row; it
-    stays while another agent holds a live copy with the row's text (a msg_id is unique
-    per agent only), and one `agent` wrote last passes to that copy (its agent, run and
-    user), so `agent`'s own search drops it. Both writes are version rows: the live row
-    again, with the same `ts` (so the same partition) and `tombstoned_at` or the
-    holder's identity set. On a `ts` tie the later insert wins. A peer's row written
-    since stays when its `ts` is newer, which holds unless the peer's append started
-    before this agent's and landed after the read (a known gap).
-    Named ids are bound in byte-bounded slices (`param_slices`)."""
+    The embeddings key has no agent, so a turn several agents logged is one row. It
+    stays while another agent holds a live copy with the row's text, and passes to that
+    copy when `agent` wrote it last. Both writes copy the row with its `ts`, so they
+    replace it in its partition (the later insert wins a `ts` tie)."""
     params: dict[str, Any] = {
         "now": when,
         "org": org,
