@@ -411,7 +411,7 @@ test("Memories interactions: typing, clearing, opening and closing a card stay u
 
 // Typing in a list's search box renders the box, not every row under it: the rows render
 // again only when the settled search changes what they show.
-test("Runs: typing in the search stays under the INP budget at 4x with 100 runs", async ({ page }) => {
+test("Runs: typing and clearing the search stay under the INP budget at 4x with 100 runs", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("loom_page_size_runs_v1", "100"));
   await installApi(page, { runRows: 100 });
   const cdp = await watchInteractions(page);
@@ -424,7 +424,7 @@ test("Runs: typing in the search stays under the INP budget at 4x with 100 runs"
   await cdp.detach();
 });
 
-test("Library: typing in the search stays under the INP budget at 4x with 100 documents", async ({ page }) => {
+test("Library: typing and clearing the search stay under the INP budget at 4x with 100 documents", async ({ page }) => {
   await installApi(page, { knowledgeRows: 100 });
   const cdp = await watchInteractions(page);
   await page.goto("/library", { waitUntil: "domcontentloaded" });
@@ -459,7 +459,7 @@ test("Conversations: typing, searching and clearing stay under the INP budget at
   await cdp.detach();
 });
 
-test("Activity: typing in the filter stays under the INP budget at 4x with 100 events", async ({ page }) => {
+test("Activity: typing and clearing the filter stay under the INP budget at 4x with 100 events", async ({ page }) => {
   await installApi(page, { auditRows: 100 });
   const cdp = await watchInteractions(page);
   await page.goto("/admin/activity", { waitUntil: "domcontentloaded" });
@@ -471,7 +471,7 @@ test("Activity: typing in the filter stays under the INP budget at 4x with 100 e
   await cdp.detach();
 });
 
-test("Spaces: typing in the search stays under the INP budget at 4x with 200 namespaces", async ({ page }) => {
+test("Spaces: typing and clearing the search stay under the INP budget at 4x with 200 namespaces", async ({ page }) => {
   await installApi(page, { browseRows: 200 });
   const cdp = await watchInteractions(page);
   await page.goto("/spaces", { waitUntil: "domcontentloaded" });
@@ -498,7 +498,7 @@ test("Recall Lab: typing and clearing over a table of 100 scores stay under the 
   await cdp.detach();
 });
 
-test("Repositories: typing in the filter stays under the INP budget at 4x with 100 repositories", async ({ page }) => {
+test("Repositories: typing and clearing the filter stay under the INP budget at 4x with 100 repositories", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("loom_page_size_repositories_v1", "100"));
   const one = codeReposFixture()[0];
   await installApi(page, {
@@ -518,7 +518,7 @@ test("Repositories: typing in the filter stays under the INP budget at 4x with 1
   await cdp.detach();
 });
 
-test("Tasks: typing in the search stays under the INP budget at 4x with 80 open tasks", async ({ page }) => {
+test("Tasks: typing and clearing the search stay under the INP budget at 4x with 80 open tasks", async ({ page }) => {
   // Twenty in each open lane, all of them shown (a lane draws 20 before its Show all).
   await installApi(page, { taskRows: 80 });
   const cdp = await watchInteractions(page);

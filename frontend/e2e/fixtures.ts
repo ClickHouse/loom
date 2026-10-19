@@ -1453,8 +1453,8 @@ function taskRowsFixture(inbox: string): Record<string, unknown>[] {
   ];
 }
 
-/** `n` open tasks, one lane after another (triage, todo, in progress, blocked), a third
- *  of them leased to an agent. */
+/** `n` open tasks dealt round-robin over triage, todo, in progress and blocked; the
+ *  in-progress ones are leased to an agent. */
 function openTaskRowsFixture(inbox: string, n: number): Record<string, unknown>[] {
   if (inbox !== TASK_INBOX) return [];
   const statuses = ["triage", "todo", "in_progress", "blocked"];

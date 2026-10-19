@@ -48,6 +48,9 @@ export const TRACKER_SOURCES_ABSENT = "Trackers are not available on this deploy
 const PRIVATE_SOURCE_SENTENCE =
   "Private tracker. Request access asks its maintainers; you read nothing until one approves. One approval covers you as a person: every token minted for you, and the service accounts you create, read it without naming it.";
 
+// One empty list, so a page that memoises on `sources` sees the same one each render.
+const NO_SOURCES: TrackerSource[] = [];
+
 type TrackerSourcesStatus =
   | { kind: "idle" }
   | { kind: "loading" }
@@ -62,9 +65,6 @@ type TrackerSourcesStatus =
  * `namespace.list_mine` into the store so the picker and the role chips see the new
  * grant.
  */
-// One empty list, so a page that memoises on `sources` sees the same one each render.
-const NO_SOURCES: TrackerSource[] = [];
-
 export function useTrackerSources(org: string): {
   status: TrackerSourcesStatus;
   sources: TrackerSource[];
