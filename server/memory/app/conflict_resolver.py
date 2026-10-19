@@ -26,7 +26,7 @@ from server.memory.app import intent_marks
 from server.memory.app.projection_errors import ProjectionScope
 from server.memory.domain import conflict_resolution as cr
 from server.memory.domain.conflicts import ConflictPeer
-from server.memory.domain.sensitivity import value_reads_high
+from server.memory.domain.sensitivity import reads_high, value_reads_high
 from server.memory.store import conflict_resolver as queue
 from server.observability.genai import llm_stage
 from server.settings import settings
@@ -690,7 +690,7 @@ async def _still_unprotected(
 
 def _reads_high(value: Any, memory_key: Any) -> bool:
     """A credential shape in the value or the key: the prompt shows both."""
-    return value_reads_high(value) or value_reads_high(str(memory_key))
+    return value_reads_high(value) or reads_high(str(memory_key))
 
 
 def _action(v: cr.PeerVerdict, policy: str, *, cross_session: bool, same_written: bool) -> str:
