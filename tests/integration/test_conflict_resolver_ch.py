@@ -2084,7 +2084,8 @@ async def test_an_update_across_an_agents_sessions_with_no_user_changes_nothing(
     ch, wired, monkeypatch
 ) -> None:
     """With no real user (`-`), the subject is one agent, whose sessions are separate
-    tasks: a confident update from another session neither retires nor flags."""
+    tasks: a verdict across them could only clear a flag, and the pair has none, so no
+    call is paid for and nothing changes."""
     from server.memory.app import after_write, conflicts
     from server.memory.domain.conflicts import ConflictResult
     from server.memory.workers.conflict_resolver import run_pass
@@ -2105,8 +2106,8 @@ async def test_an_update_across_an_agents_sessions_with_no_user_changes_nothing(
         ch, org, "s2", "office_location", _vec((260, 0.8), (261, 0.6)), owed=True, user="-"
     )
     out = await run_pass()
-    assert llm.calls == ["office_location"], "judged, with the session shown"
-    assert out["retired"] == out["flagged"] == 0 and out["skipped_no_action"] == 1, out
+    assert llm.calls == [], "nothing a call could change"
+    assert out["retired"] == out["flagged"] == out["judged"] == 0, out
     rows = await _rows(ch, org)
     assert (rows["office_city"]["status"], rows["office_city"]["conflict_with"]) == ("active", [])
 
