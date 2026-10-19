@@ -90,6 +90,25 @@ describe("useRowNav", () => {
     expect(open("one")).toHaveFocus();
   });
 
+  // The ring goes round the whole row, so the row is what must come into view.
+  it("scrolls the row into view, not its open button", async () => {
+    // jsdom has no scrollIntoView: each element records its own call.
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      render(<List />);
+      const user = userEvent.setup();
+      await user.keyboard("j{ArrowDown}");
+      expect(open("two")).toHaveFocus();
+      expect(scrolled).toEqual([open("one").closest(".list-row"), open("two").closest(".list-row")]);
+    } finally {
+      // biome-ignore lint/performance/noDelete: the property must be gone again, not undefined
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
   it("leaves the arrows to a control outside the list", async () => {
     render(<List />);
     screen.getByRole("button", { name: "Before" }).focus();
