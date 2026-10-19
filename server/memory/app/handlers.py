@@ -21,7 +21,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
-from server.identity.app.request_scope import request_narrowed, request_scope
+from server.identity.app.request_scope import request_scope
 from server.memory.api.models_crud import (
     CodeLink,
     MemoryClearInput,
@@ -41,10 +41,11 @@ from server.memory.api.models_crud import (
     MemoryUnpinOutput,
 )
 from server.memory.app import conflict_deferred as _cd
+from server.memory.app.get_output import duplicate_of_shown, row_output
+from server.memory.app.provenance import writer_actor
 from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
-from server.memory.domain.entity_sentinels import public_entities
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
@@ -56,6 +57,7 @@ log = logging.getLogger(__name__)
 # Leaf module (no internal imports) shared with memory.app.retrieval to
 # avoid a circular import.
 from server.memory.domain.memory_types import is_embedded, is_searchable_type  # noqa: E402
+from server.memory.domain.sensitivity import value_reads_high  # noqa: E402
 
 
 def existing_context_limit(msgs: list[dict[str, str]], limit: int) -> int:
@@ -142,12 +144,18 @@ async def _fetch_relevant_existing_memories(
         user_id=identity.user_id,
         session_id="*",
     )
-    rows = await memory_repo.get_many_by_keys(any_session, hit_keys, scope=request_scope())
+    # A 'high' row never goes into the extraction prompt, which is sent to the LLM provider;
+    # the read leaves them out before it picks one per key, so another session's 'high' row
+    # hides no plain one.
+    rows = await memory_repo.get_many_by_keys(
+        any_session, hit_keys, scope=request_scope(), exclude_high_sensitivity=True
+    )
     by_key = {r.memory_key: r for r in rows}
     out: list[dict[str, str]] = []
     for h in hits:
         r = by_key.get(h.memory_key)
-        if r is None:
+        # An unlabelled row (copy_to, an import, before the sweep) may still hold a credential.
+        if r is None or value_reads_high(r.value):
             continue
         # sha over canonical JSON so the caller can hash-dedup extractions.
         sha = _content_sha256_of_stored(
@@ -403,7 +411,8 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
             "memory.sensitive_read",
             org=input.org,
             namespace=input.namespace,
-            actor=input.agent,
+            # The reader, from the token: a bulk or wildcard read names no agent.
+            actor=writer_actor(input.agent),
             subject={"memory_key": input.memory_key, "memory_id": str(row.memory_id)},
         )
 
@@ -458,7 +467,7 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     from server.memory.app.query import _canonical_keys_for_rows
 
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, [row])
-    duplicate_of = _duplicate_of_shown(row, canonical.get(input.memory_key))
+    duplicate_of = duplicate_of_shown(row, canonical.get(input.memory_key))
     from server.memory.app.code_link_reads import head_of, links_of
     from server.memory.app.served_superseded import shown_successors
 
@@ -470,62 +479,21 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     successors, links, judge_pending = await asyncio.gather(
         shown_successors(input.org, input.namespace, [row]), code(), _cd.row_pending(row)
     )
-    return MemoryGetOutput(
-        found=True,
-        code=links,
+    return row_output(
+        row,
+        sha=sha,
         canonical_key=(
             str(row.memory_key) if resolved_from is not None else canonical.get(input.memory_key)
         ),
-        resolved_from=resolved_from,
-        memory_id=str(row.memory_id),
-        value=row.value,
-        memory_type=row.memory_type,
-        confidence=row.confidence,
-        version=row.version,
-        created_at=row.created_at,
-        updated_at=getattr(row, "updated_at", None) or row.created_at,
-        expires_at=row.expires_at,
-        on_expire=getattr(row, "on_expire", "") or "",
-        expire_reason=getattr(row, "expire_reason", "") or "",
-        valid_at=getattr(row, "valid_at", None),
-        valid_to=getattr(row, "valid_to", None),
-        temporal_anchor=getattr(row, "temporal_anchor", None),
-        temporal_confidence=float(getattr(row, "temporal_confidence", 0.0) or 0.0),
-        char_limit=getattr(row, "char_limit", None),
-        pinned=row.pinned,
-        sensitivity=str(getattr(row, "sensitivity", "") or ""),
-        agent=getattr(row, "agent", "") or "",
-        status=getattr(row, "status", None),
-        superseded_by=successors.get(str(row.memory_id), ""),
         duplicate_of=duplicate_of,
+        superseded_by=successors.get(str(row.memory_id), ""),
+        code=links,
+        resolved_from=resolved_from,
         conflict_verdict=_cd.verdict_from_row(
-            str(row.memory_id), getattr(row, "status", None), duplicate_of, pending=judge_pending
+            str(row.memory_id), row.status, duplicate_of, pending=judge_pending
         ),
-        content_sha256=sha,
-        tags=list(getattr(row, "tags", None) or []),
-        entities=public_entities(getattr(row, "entities", None)),
-        recall_count=getattr(row, "recall_count", 0) or 0,
-        last_recalled_at=getattr(row, "last_recalled_at", None),
         recall_by_agent=recall_by_agent,
-        verified_by=getattr(row, "verified_by", "") or "",
-        actor=getattr(row, "actor", "") or "",
-        source_class=getattr(row, "source_class", "") or "",
-        **_lock.lock_state(row),
-        verified_at=getattr(row, "verified_at", None),
-        verification=_trust.verification_state(
-            getattr(row, "verified_by", ""), getattr(row, "verified_sha256", ""), sha
-        ),
     )
-
-
-def _duplicate_of_shown(row: Any, canonical_key: str | None) -> str:
-    """The row's `duplicate_of` id as memory.get shows it. A read bounded to one
-    user or session sees it only when the canonical resolved inside that scope:
-    otherwise the id may name another user's row, and gone and foreign look alike."""
-    dup_of = str(getattr(row, "duplicate_of", "") or "")
-    if dup_of and not canonical_key and request_narrowed():
-        return ""
-    return dup_of
 
 
 async def handle_memory_pin(input: MemorySetInput) -> MemorySetOutput:
@@ -906,6 +874,14 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
     )
     if row is None:
         return MemoryGetByIdOutput(found=False)
+    # A 'high' row past its retention window is never served, as memory.bulk_get leaves it out.
+    expires_at = row.expires_at
+    if (
+        row.sensitivity == "high"
+        and expires_at
+        and expires_at.replace(tzinfo=None) <= naive_utc_now()
+    ):
+        return MemoryGetByIdOutput(found=False)
     # Addressed by an org-wide id: the transport had no namespace to bind, so
     # the row's own namespace is checked here and a foreign row is hidden, not
     # refused.
@@ -926,9 +902,8 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
             "memory.sensitive_read",
             org=input.org,
             namespace=row.namespace,
-            # get_by_id carries no caller agent; the row's writer is the best
-            # available actor for the ledger.
-            actor=getattr(input, "agent", "") or row.agent or "-",
+            # The reader, from the token; get_by_id names no agent to fall back on.
+            actor=writer_actor("-"),
             subject={"memory_id": str(row.memory_id), "memory_key": row.memory_key},
         )
     return MemoryGetByIdOutput(

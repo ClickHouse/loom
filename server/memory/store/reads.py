@@ -100,6 +100,11 @@ async def get_by_key(
     tomb_clause = "" if include_tombstoned else "AND tombstoned_at IS NULL"
     if not include_expired and as_of is None:
         tomb_clause += " AND (expires_at IS NULL OR expires_at > now())"
+    elif not include_expired:
+        # An as_of replay reads past expiry, but never a 'high' row past its retention window.
+        tomb_clause += (
+            " AND NOT (sensitivity = 'high' AND expires_at IS NOT NULL AND expires_at <= now())"
+        )
     params: dict[str, Any] = {
         "org": identity.org,
         "ns": identity.namespace,
@@ -346,11 +351,16 @@ async def get_many_by_keys(
     scope: ReadFilters,
     ch: _CHClient | None = None,
     strong: bool = False,
+    exclude_high_sensitivity: bool = False,
 ) -> list[MemoryRow]:
     """Bulk read: one CH round-trip for N keys under one identity tuple.
 
-    Used by memory.bulk_get. Tombstoned rows are filtered out. Empty
-    `memory_keys` → empty result, no CH call.
+    Used by memory.bulk_get, and by procedure.match and procedure.list for
+    their candidate bodies. Tombstoned rows are filtered out. Empty
+    `memory_keys` → empty result, no CH call. `exclude_high_sensitivity`
+    (the procedure, search-body and extraction-prompt reads) leaves 'high'
+    rows out of the locate, so under an open axis the newest other row of
+    the key answers instead.
     """
     if not memory_keys:
         return []
@@ -386,7 +396,6 @@ async def get_many_by_keys(
     if identity.session_id != "*" and not (wildcard_agent and identity.session_id == "-"):
         session_clause = "AND session_id = {sid:String}"
         params["sid"] = identity.session_id
-    session_clause += scope_and(scope, params)
     # With any axis open, several identities may hold the same key: the
     # newest row per key answers, the way `get_by_key`'s wildcard read orders
     # (version DESC, created_at DESC) and takes one.
@@ -395,6 +404,17 @@ async def get_many_by_keys(
         if not (agent_clause and user_clause and session_clause)
         else ""
     )
+    session_clause += scope_and(scope, params)
+    if exclude_high_sensitivity:
+        session_clause += " AND sensitivity != 'high'"
+    if not strong:
+        # This read leaves out a 'high' row past its retention window, before one row
+        # per key is picked, so it hides no other identity's live row of the key. A
+        # strong read feeds a write (memory.touch may extend that window) and still sees
+        # it.
+        session_clause += (
+            " AND NOT (sensitivity = 'high' AND expires_at IS NOT NULL AND expires_at <= now())"
+        )
     # Locate the heads (key columns only) under
     # FINAL, then fetch the rows by their exact (memory_id, version) without
     # FINAL — 19 MB → about 1 MB for twenty keys on a namespace of 5 KB values.
@@ -458,15 +478,73 @@ _BULK_FETCH_SQL = """
             memory_id,
             org, namespace, agent, user_id, session_id,
             memory_key, memory_type, value, confidence, version, pinned,
-            created_at, updated_at, expires_at, valid_at, valid_to, status, run_id,
-            source_trace, char_limit, tags, entities, content_sha256, duplicate_of, superseded_by,
-            verified_by, verified_at, verified_sha256, sensitivity, actor, source_class
+            created_at, updated_at, expires_at, on_expire, expire_reason,
+            valid_at, valid_to, temporal_anchor, temporal_confidence,
+            status, run_id, source_trace, char_limit, tags, entities, content_sha256,
+            duplicate_of, superseded_by, recall_count, last_recalled_at,
+            verified_by, verified_at, verified_sha256, sensitivity, actor, source_class,
+            lock_mode, lock_reason, lock_until, locked_by, locked_at
         FROM loom.memory
         WHERE org = {org:String}
           AND namespace = {ns:String}
           AND (memory_id, version) IN {pairs:Array(Tuple(UUID, UInt64))}
         LIMIT 1 BY memory_id, version
     """
+
+
+async def high_keys(
+    org: str, namespace: str, keys: Sequence[str], *, ch: _CHClient | None = None
+) -> set[str]:
+    """The keys among `keys` with any version labelled 'high', live or deleted, under any
+    memory id (a key deleted and written again gets a new one): the raw chunks and digests
+    behind such a row may hold its text. memory_key follows the identity columns in
+    loom.memory_versions' sort key, so this reads the namespace's memory_key and
+    sensitivity columns."""
+    if not keys:
+        return set()
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT DISTINCT memory_key
+        FROM loom.memory_versions
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND memory_key IN {keys:Array(String)}
+          AND sensitivity = 'high'
+        """,
+        params={"org": org, "ns": namespace, "keys": sorted(set(keys))},
+    )
+    return {str(r["memory_key"]) for r in rows}
+
+
+async def high_memory_ids(
+    org: str,
+    namespace: str,
+    memory_key: str,
+    memory_ids: Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> set[str]:
+    """The ids among `memory_ids` of rows of `memory_key` with any version labelled 'high'.
+    The id filter is on the UUID column itself, so the memory_id_skip index applies; the
+    output is aliased `mid`, since `AS memory_id` would compare the String alias against
+    the UUIDs and match nothing."""
+    if not memory_ids:
+        return set()
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT DISTINCT toString(memory_id) AS mid
+        FROM loom.memory_versions
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND memory_key = {key:String}
+          AND memory_id IN {ids:Array(UUID)}
+          AND sensitivity = 'high'
+        """,
+        params={"org": org, "ns": namespace, "key": memory_key, "ids": sorted(set(memory_ids))},
+    )
+    return {str(r["mid"]) for r in rows}
 
 
 async def find_related_by_entities(
@@ -505,7 +583,7 @@ async def find_related_by_entities(
     source_scope = scope_and(scope, source_params)
     source = await ch.query_one(
         f"""
-        SELECT entities
+        SELECT entities, sensitivity
         FROM loom.memory FINAL
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -519,7 +597,8 @@ async def find_related_by_entities(
         """,
         params=source_params,
     )
-    if source is None:
+    # A row labelled high after the extractor ran keeps entities mined from its value.
+    if source is None or source.get("sensitivity") == "high":
         return ([], [])
     source_entities: list[str] = list(source.get("entities") or [])
     if not source_entities:
@@ -552,6 +631,8 @@ async def find_related_by_entities(
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
           AND tombstoned_at IS NULL
+          -- A 'high' row is readable by key only, not as a neighbour's excerpt.
+          AND sensitivity != 'high'
           AND memory_key != {{key:String}}
           AND hasAny(entities, {{ents:Array(String)}})
           AND length(arrayIntersect(entities, {{ents:Array(String)}})) >= {{min_overlap:UInt32}}
@@ -603,9 +684,10 @@ _LIST_ORDER = {
 # The keyword filter of a list: the value or the key holds the text, any case. A scan of
 # the namespace's values (no text index on `value`), so it is offered on the namespace-scoped
 # list only, where the primary key bounds the read to one namespace.
+# The value of a 'high' row is not searched: it is readable by key only.
 CONTAINS_PREDICATE = (
-    "(positionCaseInsensitiveUTF8(value, {contains:String}) > 0"
-    " OR positionCaseInsensitiveUTF8(memory_key, {contains:String}) > 0)"
+    "(positionCaseInsensitiveUTF8(memory_key, {contains:String}) > 0"
+    " OR (sensitivity != 'high' AND positionCaseInsensitiveUTF8(value, {contains:String}) > 0))"
 )
 
 
@@ -654,7 +736,8 @@ async def list_by_namespace(
       - tag_filter:  its tags matched as its `match` says: any one or every one in
                      any case, or any one exactly as memory.search matches
       - contains:    case-insensitive substring of the value or the key — the
-                     keyword filter a browse page's search box applies
+                     keyword filter a browse page's search box applies; a
+                     'high' row matches by its key only
 
     Ordering:
       - "created_at_desc" (default) — recent-first feed shape
@@ -740,6 +823,7 @@ async def list_by_namespace(
             char_limit,
             created_at, updated_at, expires_at, valid_at, tombstoned_at,
             status, run_id, source_trace, tags, entities,
+            evidence_count, recall_count, last_recalled_at, sensitivity,
             content_sha256, verified_by, verified_at, verified_sha256, actor, source_class
         FROM loom.memory FINAL
         WHERE {" AND ".join(where)}
@@ -774,6 +858,7 @@ async def _locate_then_preview(
             confidence, version, pinned, char_limit,
             created_at, updated_at, expires_at, valid_at, tombstoned_at,
             status, run_id, source_trace, tags, entities,
+            evidence_count, recall_count, last_recalled_at, sensitivity,
             content_sha256, verified_by, verified_at, verified_sha256, actor, source_class
         FROM loom.memory FINAL
         WHERE {" AND ".join(where)}
@@ -906,7 +991,8 @@ async def _overlay_usage_totals(row: MemoryRow, ch: _CHClient) -> MemoryRow:
             SELECT
                 sum(evidence_count) AS evidence_count,
                 sum(recall_count) AS recall_count,
-                max(last_recalled_at) AS last_recalled_at
+                -- Events other than recalls carry the epoch here.
+                nullIf(max(last_recalled_at), toDateTime(0)) AS last_recalled_at
             FROM loom.memory_usage_totals
             WHERE org = {org:String}
               AND namespace = {ns:String}
@@ -920,9 +1006,47 @@ async def _overlay_usage_totals(row: MemoryRow, ch: _CHClient) -> MemoryRow:
         )
     except Exception:  # noqa: BLE001 — usage totals are optional; keep the row
         return row
+    return _with_usage(row, totals)
+
+
+async def overlay_usage_totals_many(
+    rows: list[MemoryRow], *, ch: _CHClient | None = None
+) -> list[MemoryRow]:
+    """`_overlay_usage_totals` for rows of one namespace, in one statement."""
+    if not rows:
+        return rows
+    ch = ch or _default_client()
+    try:
+        totals = await ch.query_all(
+            """
+            SELECT
+                memory_id,
+                sum(evidence_count) AS evidence_count,
+                sum(recall_count) AS recall_count,
+                -- Events other than recalls carry the epoch here.
+                nullIf(max(last_recalled_at), toDateTime(0)) AS last_recalled_at
+            FROM loom.memory_usage_totals
+            WHERE org = {org:String}
+              AND namespace = {ns:String}
+              AND memory_id IN {mids:Array(UUID)}
+            GROUP BY memory_id
+            """,
+            params={
+                "org": rows[0].org,
+                "ns": rows[0].namespace,
+                "mids": [str(r.memory_id) for r in rows],
+            },
+        )
+    except Exception:  # noqa: BLE001 — usage totals are optional; keep the rows
+        return rows
+    by_id = {str(t["memory_id"]): t for t in totals}
+    return [_with_usage(r, by_id.get(str(r.memory_id))) for r in rows]
+
+
+def _with_usage(row: MemoryRow, totals: dict[str, Any] | None) -> MemoryRow:
+    """The row with the usage totals' counters where they are non-zero."""
     if not totals:
         return row
-
     updates: dict[str, Any] = {}
     usage_evidence = int(totals.get("evidence_count") or 0)
     usage_recall = int(totals.get("recall_count") or 0)

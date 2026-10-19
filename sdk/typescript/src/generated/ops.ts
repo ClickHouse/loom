@@ -1861,6 +1861,7 @@ export interface ConflictRow {
   created_at: string; // date-time
   conflict_with: string[];
   content_sha256?: string;
+  sensitivity?: string;
 }
 
 export interface ConflictsListOutput {
@@ -4163,6 +4164,7 @@ export interface MemoryExportEvidenceInput {
   session_id?: string;
   limit?: number;
   cursor?: string;
+  include_high?: boolean;
 }
 
 export interface EvidenceChunk {
@@ -4206,6 +4208,7 @@ export interface MemoryExportEvidenceOutput {
   edges?: EvidenceEdge[];
   has_more?: boolean;
   next_cursor?: string;
+  held_high?: number;
 }
 
 export interface MemoryExposureSummaryInput {
@@ -4636,6 +4639,7 @@ export interface MemoryListEntry {
   value_truncated?: boolean;
   content_sha256?: string;
   char_limit?: number | null;
+  sensitivity?: string;
 }
 
 export interface MemoryListOutput {
@@ -4717,6 +4721,7 @@ export interface MemoryMoveOutput {
   dry_run?: boolean;
   memory_type?: string;
   value_preview?: string;
+  sensitivity?: string;
 }
 
 export interface MemoryOutcomeInput {
@@ -4945,6 +4950,7 @@ export interface MemoryProposal {
   agent?: string;
   memory_type?: string;
   value_preview?: string;
+  sensitivity?: string;
   tags?: string[];
   created_at?: string;
   graded_passes?: number;

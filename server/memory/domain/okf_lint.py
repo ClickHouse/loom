@@ -57,6 +57,7 @@ from server.core.hashing import sha256_value
 from server.memory.domain import okf_bundle as okf
 from server.memory.domain import okf_evidence as okf_ev
 from server.memory.domain.edge_relations import CANONICAL_RELATIONS
+from server.memory.domain.sensitivity import is_high
 
 CRITICAL = "critical"
 WARNING = "warning"
@@ -279,7 +280,7 @@ def _check_concept(
             "source_class derived at confidence 1.0: an inference written as a fact",
             WARNING,
         )
-    if okf.is_high(loom.get("sensitivity"), tags):
+    if is_high(loom.get("sensitivity"), tags):
         rep.add(
             "high_sensitivity_present",
             rel,

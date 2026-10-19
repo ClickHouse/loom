@@ -61,7 +61,7 @@ from server.memory.domain import okf_lint
 from server.memory.domain.edge_relations import canonical_edge
 from server.memory.domain.graph_quality import canonical_entities
 from server.memory.domain.provenance import class_from_trace
-from server.memory.domain.sensitivity import ATTRIBUTE_TAG_PREFIX, SENSITIVITY_TAG_PREFIX
+from server.memory.domain.sensitivity import ATTRIBUTE_TAG_PREFIX, SENSITIVITY_TAG_PREFIX, is_high
 from server.memory.domain.trust import actor_for
 
 _PAGE = 1000
@@ -161,11 +161,13 @@ async def _fetch_namespace(
     namespace: str,
     *,
     include_tombstoned: bool,
+    include_high: bool = False,
     limit: int | None = None,
-) -> tuple[list[dict[str, Any]], bool, bool]:
+) -> tuple[list[dict[str, Any]], list[str], bool, bool]:
     """Every live row of `namespace` (all agents, users and sessions), full
-    values, as memory_to_concept dicts; whether the listing is known to hold
-    every row; and whether it stopped at `limit`, which caps the rows for smoke runs."""
+    values, as memory_to_concept dicts; the keys left out because bulk_get did not
+    answer them; whether the listing is known to hold every row; and whether it
+    stopped at `limit`, which caps the rows for smoke runs."""
     entries, whole, capped = await _list_namespace(
         client, org, namespace, include_tombstoned=include_tombstoned, limit=limit
     )
@@ -178,12 +180,17 @@ async def _fetch_namespace(
             client, org, namespace, include_tombstoned=include_tombstoned, limit=limit
         )
         attempts += 1
-    rows, gone = await _with_full_values(
-        client, org, namespace, entries, include_tombstoned=include_tombstoned
+    rows, unreadable = await _with_full_values(
+        client,
+        org,
+        namespace,
+        entries,
+        include_tombstoned=include_tombstoned,
+        include_high=include_high,
     )
     # A row deleted between the listing and its full read is left out, and the bundle is
     # not called complete: its absence says nothing about the rows around it.
-    return rows, whole and not gone, capped
+    return rows, unreadable, whole and not unreadable, capped
 
 
 async def _list_namespace(
@@ -265,11 +272,11 @@ async def _with_full_values(
     entries: list[dict[str, Any]],
     *,
     include_tombstoned: bool,
-) -> tuple[list[dict[str, Any]], int]:
-    """The entries with their full values, and how many `memory.bulk_get` no longer found
-    (deleted since the listing; left out, as the list preview is a cut value). With
-    `include_tombstoned`, a row the list returned as deleted is exported on purpose and keeps
-    its preview."""
+    include_high: bool,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """The entries with their full values, and the keys left out because `memory.bulk_get`
+    did not answer them: deleted since the listing, or, with `include_tombstoned`, a deleted
+    row whose list preview is a cut value. A deleted row the list carries in full keeps it."""
     # Full values (list previews are capped) grouped by the writer identity,
     # since bulk_get resolves keys within one identity tuple.
     by_ident: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
@@ -278,9 +285,15 @@ async def _with_full_values(
         by_ident.setdefault(ident, []).append(r)
 
     out: list[dict[str, Any]] = []
-    gone = 0
+    unreadable: list[str] = []
     for (agent, user_id, session_id), rows in by_ident.items():
-        keys = [r["memory_key"] for r in rows]
+        # A row the list already calls high stays home, so its value is never read.
+        held = {
+            r["memory_key"]
+            for r in rows
+            if not include_high and is_high(r.get("sensitivity"), r.get("tags"))
+        }
+        keys = [r["memory_key"] for r in rows if r["memory_key"] not in held]
         full: dict[str, dict[str, Any]] = {}
         for i in range(0, len(keys), _BULK):
             got = await client.post(
@@ -296,23 +309,65 @@ async def _with_full_values(
             )
             full.update(got.get("results") or {})
         for r in rows:
-            if r["memory_key"] not in full and not (include_tombstoned and r.get("tombstoned_at")):
-                gone += 1
+            g = full.get(r["memory_key"])
+            if g is not None and _answered_by_parent(r["memory_key"], g, r.get("version")):
+                # A key shaped like a chunk id that bulk_get answered with its parent's row
+                # (no row held the key when it read): that is not this row's value.
+                g = None
+            kept_deleted = include_tombstoned and r.get("tombstoned_at")
+            if (
+                g is None
+                and r["memory_key"] not in held
+                and not (kept_deleted and not r.get("value_truncated"))
+            ):
+                # Deleted since the listing, or a deleted row the list does not carry in full
+                # (a cut preview, or none for a high row).
+                unreadable.append(r["memory_key"])
                 continue
-            g = full.get(r["memory_key"]) or {}
-            merged = {**r, **{k: v for k, v in g.items() if v not in (None, "", [], {})}}
+            merged = {**r, **{k: v for k, v in (g or {}).items() if v not in (None, "", [], {})}}
+            if g is not None:
+                # bulk_get's answer, kept even when empty, unless the list says high: during
+                # a rolling upgrade the two reads can reach builds that disagree.
+                high = is_high(r.get("sensitivity"), r.get("tags"))
+                merged["sensitivity"] = "high" if high else g.get("sensitivity")
             merged.setdefault("namespace", namespace)
             merged["agent"] = agent if agent != "*" else (r.get("agent") or "")
             out.append(merged)
-    return out, gone
+    return out, unreadable
+
+
+def _answered_by_parent(
+    memory_key: str, answer: dict[str, Any], listed_version: int | None
+) -> bool:
+    """Whether bulk_get answered `memory_key` with another row: a chunk-id-shaped key
+    (`chunk:memory.set:<parent>:<n>`) that no row holds reads its parent. This build marks
+    that answer with `resolved_from`, and a duplicate row's own answer with `duplicate_of`,
+    which an older build's bulk_get never filled. An older build marks a parent's answer only
+    by `canonical_key` (a duplicate parent's own canonical), so a chunk-shaped key answered
+    with a canonical key and another version than the listed row is taken as another row's
+    too."""
+    if answer.get("resolved_from"):
+        return True
+    if answer.get("duplicate_of"):
+        return False  # the row's own answer: it is a duplicate
+    rest = memory_key.removeprefix("chunk:memory.set:")
+    parent, _, index = rest.rpartition(":")
+    if rest == memory_key or not index.isdigit():
+        return False
+    version = answer.get("version")
+    other_version = listed_version is not None and version not in (None, listed_version)
+    canonical = answer.get("canonical_key")
+    return canonical == parent or (bool(canonical) and other_version)
 
 
 async def _fetch_evidence(
-    client: _Client, org: str, namespace: str, *, page: int = 500
-) -> tuple[list[okf_ev.ChunkRecord], list[okf_ev.DigestRecord]]:
+    client: _Client, org: str, namespace: str, *, include_high: bool, page: int = 500
+) -> tuple[list[okf_ev.ChunkRecord], list[okf_ev.DigestRecord], int]:
     """Every live raw chunk (with its memory_chunk_sources links) and session
-    digest of the namespace, through memory.export_evidence."""
+    digest of the namespace, through memory.export_evidence, and how many the
+    server held back as 'high'."""
     chunks: list[okf_ev.ChunkRecord] = []
+    held = 0
     cursor = ""
     while True:
         resp = await client.post(
@@ -323,8 +378,10 @@ async def _fetch_evidence(
                 "kind": "chunks",
                 "limit": page,
                 "cursor": cursor,
+                "include_high": include_high,
             },
         )
+        held += int(resp.get("held_high") or 0)
         for c in resp.get("chunks") or []:
             chunks.append(
                 okf_ev.ChunkRecord(
@@ -351,8 +408,10 @@ async def _fetch_evidence(
             "namespace": namespace,
             "kind": "digests",
             "limit": 2000,
+            "include_high": include_high,
         },
     )
+    held += int(resp.get("held_high") or 0)
     digests = [
         okf_ev.DigestRecord(
             session_id=str(d.get("session_id") or ""),
@@ -366,7 +425,7 @@ async def _fetch_evidence(
         )
         for d in (resp.get("digests") or [])
     ]
-    return chunks, digests
+    return chunks, digests, held
 
 
 async def _fetch_edges(
@@ -466,18 +525,29 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
         chunks: list[okf_ev.ChunkRecord] = []
         digests: list[okf_ev.DigestRecord] = []
         edges: list[dict[str, Any]] = []
+        held_evidence = 0
         async with _Client(args.server_url, token) as client:
-            entries, whole, capped = await _fetch_namespace(
+            entries, unreadable, whole, capped = await _fetch_namespace(
                 client,
                 org,
                 args.namespace,
                 include_tombstoned=bool(args.include_tombstoned),
+                include_high=bool(args.include_high),
                 limit=args.limit,
             )
             if not args.no_evidence:
-                chunks, digests = await _fetch_evidence(client, org, args.namespace)
+                chunks, digests, held_evidence = await _fetch_evidence(
+                    client, org, args.namespace, include_high=bool(args.include_high)
+                )
             if not args.no_links:
                 edges = await _fetch_edges(client, org, args.namespace)
+        if not args.include_high:
+            # The rows this export held home, which the server's rule may not cover (a level
+            # it does not know, or a server that holds nothing back).
+            held = {e["memory_key"] for e in entries if not okf.is_exportable(e)}
+            held.update(unreadable)  # left out, so their evidence is too
+            chunks, digests, held_here = okf_ev.without_high(chunks, digests, held)
+            held_evidence += held_here
         files, orphans, skipped_high = _plan_export(
             entries,
             edges,
@@ -513,8 +583,22 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             )
         if skipped_high:
             print(
-                f"  {skipped_high} row(s) with sensitivity=high stayed in the database "
-                f"(--include-high exports them)"
+                f"  {skipped_high} row(s) with sensitivity=high, or no known sensitivity, "
+                f"stayed in the database (--include-high exports them)"
+            )
+        if held_evidence:
+            print(
+                f"  {held_evidence} raw chunk(s) or session digest(s) stayed in the database: "
+                "linked to a row kept home, or holding a credential shape "
+                "(--include-high exports them)"
+            )
+        if unreadable:
+            print(
+                f"  {len(unreadable)} row(s) left out: bulk_get did not answer them (deleted "
+                "since the list, a high row past its retention window, or a deleted row whose "
+                "full value the list does not carry): "
+                + ", ".join(unreadable[:5])
+                + (" …" if len(unreadable) > 5 else "")
             )
         if args.include_tombstoned:
             print(
@@ -1252,7 +1336,9 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p_exp.add_argument(
         "--include-tombstoned",
         action="store_true",
-        help="Also export soft-deleted rows (status: deprecated)",
+        help="Also export soft-deleted rows (status: deprecated); one the list does not "
+        "carry in full (a value past the preview, or a high row under --include-high) is "
+        "named and left out.",
     )
     p_exp.add_argument(
         "--limit",
@@ -1276,9 +1362,11 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p_exp.add_argument(
         "--include-high",
         action="store_true",
-        help="Also export rows with sensitivity=high (they stay "
-        "in the database by default — a mirror repository is a wider "
-        "audience than the namespace's grants).",
+        help="Also export rows with sensitivity=high, the raw chunks and digests linked to "
+        "them, and raw text that reads as a credential; the server audits each released "
+        "item. bulk_get does not serve a high row past its retention window, so it is named "
+        "and left out. Off by default: a mirror repository is a wider audience than the "
+        "namespace's grants.",
     )
     p_exp.set_defaults(func=_cmd_export_okf)
 

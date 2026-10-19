@@ -173,9 +173,11 @@ loom import-okf ./support-okf --namespace support-copy
 loom export-actions --format cedar -o loom.cedarschema             # the registry as a policy schema
 ```
 
-`export-okf` leaves rows with `sensitivity=high` out unless you pass
-`--include-high`, because a mirror repository is a wider audience than the
-namespace's grants. See [OKF](../features/integrations/okf.md) and
+`export-okf` leaves rows with `sensitivity=high`, or with no known sensitivity, out
+unless you pass `--include-high`, because a mirror repository is a wider audience
+than the namespace's grants. The raw chunks and digests linked to such a row, and raw
+text that reads as a credential, stay home with it; `--include-high` releases them, and
+the server audits each released item. See [OKF](../features/integrations/okf.md) and
 [Exporting the action schema](./mcp.md#exporting-the-action-schema).
 
 ### Diagnose and repair

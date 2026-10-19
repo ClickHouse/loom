@@ -28,6 +28,9 @@ from server.memory.api.models_evidence_transfer import (
     MemoryImportEvidenceInput,
     MemoryImportEvidenceOutput,
 )
+from server.memory.app.provenance import writer_actor
+from server.memory.domain.okf_evidence import evidence_is_high, evidence_keys
+from server.observability import audit as _audit
 
 log = logging.getLogger(__name__)
 
@@ -160,7 +163,10 @@ async def handle_memory_export_evidence(
             )
             for r in rows[: input.limit]
         ]
-        return MemoryExportEvidenceOutput(digests=digests, has_more=len(rows) > input.limit)
+        kept = await _without_high(input, digests)
+        return MemoryExportEvidenceOutput(
+            digests=kept, has_more=len(rows) > input.limit, held_high=len(digests) - len(kept)
+        )
 
     after = _decode_cursor(input.cursor)
     if after is not None:
@@ -205,7 +211,41 @@ async def handle_memory_export_evidence(
         for r in rows
     ]
     next_cursor = _encode_cursor(chunks[-1].session_id, chunks[-1].chunk_index) if has_more else ""
-    return MemoryExportEvidenceOutput(chunks=chunks, has_more=has_more, next_cursor=next_cursor)
+    kept = await _without_high(input, chunks)
+    return MemoryExportEvidenceOutput(
+        chunks=kept, has_more=has_more, next_cursor=next_cursor, held_high=len(chunks) - len(kept)
+    )
+
+
+async def _without_high(input: MemoryExportEvidenceInput, items: list[Any]) -> list[Any]:
+    """`items` without those `okf_evidence.evidence_is_high` holds home, given which of the
+    keys they are linked to were ever 'high'. With `include_high` they all go, and each one
+    that would have been held is audited as a key read of a 'high' row is."""
+    if not items:
+        return items
+    import server.memory.store as memory_repo
+
+    linked = [k for item in items for k in evidence_keys(item) if k]
+    high = await memory_repo.high_keys(input.org, input.namespace, linked)
+    if not input.include_high:
+        return [item for item in items if not evidence_is_high(item, high)]
+    await _audit.emit_many(
+        "memory.sensitive_read",
+        org=input.org,
+        namespace=input.namespace,
+        actor=writer_actor("-"),
+        subjects=[
+            {
+                "kind": input.kind,
+                "session_id": item.session_id,
+                **({"chunk_index": item.chunk_index} if input.kind == "chunks" else {}),
+                "memory_keys": [k for k in evidence_keys(item) if k],
+            }
+            for item in items
+            if evidence_is_high(item, high)
+        ],
+    )
+    return items
 
 
 def _importer_user(input: MemoryImportEvidenceInput) -> str | None:

@@ -143,11 +143,11 @@ def test_three_consecutive_failures_quarantine_and_a_success_lifts_it(
     async def _search(inp: Any) -> Any:
         return NS(results=[NS(namespace="ns", memory_key="p:ship", similarity=0.9)])
 
-    async def _bulk(inp: Any) -> Any:
-        return NS(results={"p:ship": NS(value=row)})
+    async def _rows(_ident: Any, _keys: list[str], **_k: Any) -> list[Any]:
+        return [NS(memory_key="p:ship", value=row)]
 
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
-    monkeypatch.setattr("server.memory.app.query.handle_memory_bulk_get", _bulk)
+    monkeypatch.setattr("server.memory.store.get_many_by_keys", _rows)
     m = asyncio.run(
         handle_procedure_match(ProcedureMatchInput(org="o", namespace="ns", situation="x"))
     )

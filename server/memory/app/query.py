@@ -29,11 +29,20 @@ from server.memory.api.models_search import (
     MemoryAggregateOutput,
     _AggregateRow,
 )
+from server.memory.app.get_output import duplicate_of_shown, row_output
+from server.memory.app.provenance import writer_actor
 from server.memory.app.served_superseded import ServedFlags, shown_successors
 from server.memory.domain import trust as _trust
 from server.memory.domain.entity_sentinels import public_entities
+from server.memory.store.rows import MemoryRow
+from server.observability import audit as _audit
 
 log = logging.getLogger(__name__)
+
+
+def _wants_usage(keep: frozenset[str] | None) -> bool:
+    """Whether a projection serves a usage counter, which costs one more statement."""
+    return keep is None or bool(keep & {"evidence_count", "recall_count", "last_recalled_at"})
 
 
 def _row_content_sha256(row: Any) -> str:
@@ -70,13 +79,16 @@ def _list_verification(r: dict[str, Any]) -> str:
     )
 
 
-def _preview_for_list(row: Any, max_chars: int) -> tuple[Any, bool]:
+def _preview_for_list(row: MemoryRow, max_chars: int) -> tuple[Any, bool]:
     """`(value, value_truncated)` for one list row —
     the value cut to `max_chars`, and whether the row holds more than was
-    sent (the stored preview was already cut at 2,048, or this cut did it)."""
+    sent (the stored preview was already cut at 2,048, or this cut did it). A 'high'
+    row's value is readable by key only, through an audited read: none is sent."""
+    if row.sensitivity == "high":
+        return None, True
     raw = row.value
     value = _truncate_value_for_list(raw, max_chars)
-    stored_cut = bool(getattr(row, "value_truncated", False))
+    stored_cut = row.value_truncated
     decoded = _decode_value(raw)
     if isinstance(decoded, str):
         text = decoded
@@ -308,6 +320,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         )
     truncated = len(rows) > input.limit
     rows = rows[: input.limit]
+    if _wants_usage(keep):
+        rows = await memory_repo.overlay_usage_totals_many(rows)
     # The two counts under FINAL are remembered per (scope, namespace version, UTC day) — a
     # changed page recomputes them once, not on every poll that saw a change.
     from datetime import UTC, datetime
@@ -388,7 +402,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
                     expires_at=r.expires_at,
                     valid_at=r.valid_at,
                     tombstoned_at=r.tombstoned_at,
-                    status=str(getattr(r, "status", "") or "active"),
+                    status=r.status or "active",
                     pinned=r.pinned,
                     verified_by=r.verified_by,
                     verification=_trust.verification_state(
@@ -396,16 +410,23 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
                         r.verified_sha256,
                         _row_content_sha256(r),
                     ),
+                    evidence_count=r.evidence_count,
+                    recall_count=r.recall_count,
+                    last_recalled_at=r.last_recalled_at,
+                    sensitivity=r.sensitivity,
                     tags=list(r.tags or []),
-                    entities=public_entities(r.entities),
+                    # A row labelled high after the extractor ran keeps entities mined from
+                    # its value.
+                    entities=[] if r.sensitivity == "high" else public_entities(r.entities),
                     agent=r.agent or "",
                     user_id=r.user_id or "",
                     session_id=r.session_id or "",
-                    source_trace=getattr(r, "source_trace", "") or "",
+                    source_trace=r.source_trace,
                     value=pv,
                     value_truncated=pcut,
-                    content_sha256=_row_content_sha256(r),
-                    char_limit=getattr(r, "char_limit", None),
+                    # A short secret's hash can be guessed; a high row's comes with the value.
+                    content_sha256="" if r.sensitivity == "high" else _row_content_sha256(r),
+                    char_limit=r.char_limit,
                 )
                 for r, (pv, pcut) in ((r, _preview_for_list(r, preview_chars)) for r in rows)
             ],
@@ -479,7 +500,7 @@ async def _list_by_score(
             memory_key, memory_type, confidence, version,
             created_at, expires_at, valid_at, pinned, status,
             evidence_count, recall_count, last_recalled_at,
-            tags, entities, source_trace,
+            tags, entities, source_trace, sensitivity,
             verified_by, verified_sha256, content_sha256,
             agent, user_id, session_id,
             value_preview AS value,
@@ -514,40 +535,46 @@ async def _list_by_score(
     score_total = int(_total_row["n"]) if _total_row else 0
     return MemoryListOutput(
         total=score_total,
-        entries=[
-            _MemoryListEntry(
-                memory_key=r["memory_key"],
-                memory_type=r["memory_type"],
-                confidence=float(r.get("confidence") or 0.0),
-                version=int(r.get("version") or 0),
-                created_at=r["created_at"],
-                updated_at=r["created_at"],
-                expires_at=r.get("expires_at"),
-                valid_at=r.get("valid_at"),
-                status=str(r.get("status") or "active"),
-                pinned=bool(r.get("pinned") or False),
-                evidence_count=int(r.get("evidence_count") or 1),
-                recall_count=int(r.get("recall_count") or 0),
-                last_recalled_at=r.get("last_recalled_at"),
-                tags=list(r.get("tags") or []),
-                entities=public_entities(r.get("entities")),
-                agent=r.get("agent") or "",
-                user_id=r.get("user_id") or "",
-                session_id=r.get("session_id") or "",
-                source_trace=r.get("source_trace") or "",
-                value=_decode_value(r.get("value")),
-                verified_by=r.get("verified_by") or "",
-                verification=_list_verification(r),
-            )
-            for r in rows_dict
-        ],
+        entries=[_score_entry(r) for r in rows_dict],
         truncated=truncated,
+    )
+
+
+def _score_entry(r: dict[str, Any]) -> _MemoryListEntry:
+    """One score-ordered list row. A 'high' row's value, hash and entities are readable by
+    key only, through an audited read."""
+    high = r.get("sensitivity") == "high"
+    return _MemoryListEntry(
+        memory_key=r["memory_key"],
+        memory_type=r["memory_type"],
+        confidence=float(r.get("confidence") or 0.0),
+        version=int(r.get("version") or 0),
+        created_at=r["created_at"],
+        updated_at=r["created_at"],
+        expires_at=r.get("expires_at"),
+        valid_at=r.get("valid_at"),
+        status=str(r.get("status") or "active"),
+        pinned=bool(r.get("pinned") or False),
+        evidence_count=int(r.get("evidence_count") or 1),
+        recall_count=int(r.get("recall_count") or 0),
+        last_recalled_at=r.get("last_recalled_at"),
+        tags=list(r.get("tags") or []),
+        entities=[] if high else public_entities(r.get("entities")),
+        agent=r.get("agent") or "",
+        user_id=r.get("user_id") or "",
+        session_id=r.get("session_id") or "",
+        source_trace=r.get("source_trace") or "",
+        value=None if high else _decode_value(r.get("value")),
+        value_truncated=high or bool(r.get("value_truncated")),
+        verified_by=r.get("verified_by") or "",
+        verification=_list_verification(r),
+        sensitivity=r.get("sensitivity") or "",
     )
 
 
 def _project_entries(out: MemoryListOutput, keep: frozenset[str] | None) -> MemoryListOutput:
     """Stamp the resolved field whitelist on every entry so
-    the wire carries only those keys (plus `memory_key`). None = untouched."""
+    the wire carries only those keys (plus `memory_key` and `sensitivity`). None = untouched."""
     if keep is not None:
         for e in out.entries:
             e._projection = keep
@@ -634,6 +661,9 @@ async def handle_memory_aggregate(
         "agent = {agent:String}",
         "user_id = {uid:String}",
         "tombstoned_at IS NULL",
+        # A high value is readable by key only: never a group key, and never a filter that
+        # would let a caller test guesses against it by count.
+        "sensitivity != 'high'",
     ]
     params: dict[str, object] = {
         "org": input.org,
@@ -739,15 +769,9 @@ async def _canonical_keys_for_rows(org: str, namespace: str, rows: list[Any]) ->
 async def handle_memory_bulk_get(
     input: MemoryBulkGetInput,
 ) -> MemoryBulkGetOutput:
-    out = await _handle_memory_bulk_get(input)
-    _record_read_exposure("memory.bulk_get", input, list(out.results.keys()))
-    return out
-
-
-async def _handle_memory_bulk_get(
-    input: MemoryBulkGetInput,
-) -> MemoryBulkGetOutput:
-    """Fetch many memory rows in a single CH query.
+    """Fetch many memory rows by key, each answered as memory.get answers it, except that a
+    row past `expires_at` is served until the expiry sweep, as memory.list serves it (a
+    'high' one is not).
 
     Excludes tombstoned rows from `found`. Missing keys land in `missing`."""
     import server.memory.store as memory_repo
@@ -772,8 +796,9 @@ async def _handle_memory_bulk_get(
     )
     # A `chunk:memory.set:<key>:<n>` id (a memory.search chunk hit) names its parent fact in
     # the id; a bulk reader that got chunk ids back from a search reads the parent rows here
-    # instead of a miss. The parent's row is answered under every id that asked for it, with
-    # `canonical_key` naming the parent, so the caller can fold.
+    # instead of a miss, when no row is stored under the id itself. The parent's row answers
+    # under every id that asked for it, with `canonical_key` naming the parent (so the caller
+    # can fold) and `resolved_from` the id.
     from server.memory.app.handlers import chunk_parent_key
 
     parent_of: dict[str, str] = {}
@@ -781,50 +806,69 @@ async def _handle_memory_bulk_get(
         parent = chunk_parent_key(k)
         if parent:
             parent_of[k] = parent
-    wanted = list(dict.fromkeys([parent_of.get(k, k) for k in input.memory_keys]))
+    # The literal keys too: `memory.set` takes a key shaped like a chunk id, and its own row
+    # answers before the parent (the alias below fills only a real miss).
+    wanted = list(dict.fromkeys([*input.memory_keys, *parent_of.values()]))
     rows = await memory_repo.get_many_by_keys(identity, wanted, scope=request_scope())
+    # Like memory.list, a bulk read serves a row past `expires_at` until the expiry sweep
+    # tombstones it (memory.get does not), so the export lists and reads the same rows. The
+    # read leaves out a 'high' row past its retention window: the window is why it has one.
+    if _wants_usage(keep):
+        rows = await memory_repo.overlay_usage_totals_many(rows)
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, rows)
     successors = await shown_successors(input.org, input.namespace, rows)
-    # Same read shape as memory.get so a bulk reader (the OKF exporter, the
-    # dashboard preload) sees identity, lifecycle and attestation without N gets.
-    results: dict[str, MemoryGetOutput] = {}
+    # Same answer as memory.get, so a bulk reader (the OKF exporter, the dashboard preload)
+    # sees identity, lifecycle, sensitivity and attestation without N gets. The conflict
+    # verdict and code links cost a read per row and are left to memory.get.
+    fetched: dict[str, tuple[MemoryRow, MemoryGetOutput]] = {}
     for r in rows:
-        sha = _row_content_sha256(r)
-        results[r.memory_key] = MemoryGetOutput(
-            found=True,
-            canonical_key=canonical.get(r.memory_key),
-            memory_id=str(r.memory_id),
-            value=r.value,
-            memory_type=r.memory_type,
-            confidence=r.confidence,
-            version=r.version,
-            created_at=r.created_at,
-            updated_at=r.updated_at or r.created_at,
-            expires_at=r.expires_at,
-            valid_at=r.valid_at,
-            pinned=r.pinned,
-            agent=r.agent or "",
-            status=r.status,
+        canonical_key = canonical.get(r.memory_key)
+        out = row_output(
+            r,
+            sha=_row_content_sha256(r),
+            canonical_key=canonical_key,
+            duplicate_of=duplicate_of_shown(r, canonical_key),
             superseded_by=successors.get(str(r.memory_id), ""),
-            sensitivity=str(getattr(r, "sensitivity", "") or ""),
-            source_class=getattr(r, "source_class", "") or "",
-            actor=getattr(r, "actor", "") or "",
-            valid_to=getattr(r, "valid_to", None),
-            tags=list(r.tags or []),
-            entities=public_entities(r.entities),
-            content_sha256=sha,
-            char_limit=r.char_limit,
-            verified_by=r.verified_by,
-            verified_at=r.verified_at,
-            verification=_trust.verification_state(r.verified_by, r.verified_sha256, sha),
         )
-        results[r.memory_key]._projection = keep
-    for chunk_id, parent in parent_of.items():
-        if parent in results and chunk_id not in results:
-            parent_row = results[parent]
-            canonical_key = parent_row.canonical_key or parent
-            row = parent_row.model_copy(update={"canonical_key": canonical_key})
-            row._projection = keep
-            results[chunk_id] = row
+        out._projection = keep
+        fetched[r.memory_key] = (r, out)
+    # Only the keys asked are served (and audited): a parent read to fill a chunk-id alias
+    # answers under that alias, never under its own key unless that was asked too.
+    results: dict[str, MemoryGetOutput] = {}
+    served_rows: dict[str, MemoryRow] = {}
+    for k in input.memory_keys:
+        if k in fetched:
+            row, served = fetched[k]
+            results[k] = served
+        elif parent_of.get(k) in fetched:
+            row, parent_out = fetched[parent_of[k]]
+            # `resolved_from` marks an answer given by another row, as memory.get marks one
+            alias = parent_out.model_copy(
+                update={
+                    "canonical_key": parent_out.canonical_key or parent_of[k],
+                    "resolved_from": k,
+                }
+            )
+            results[k] = alias
+        else:
+            continue
+        served_rows[str(row.memory_id)] = row
+    high = [
+        {"memory_key": r.memory_key, "memory_id": mid}
+        for mid, r in served_rows.items()
+        if r.sensitivity == "high"
+    ]
+    # A key read of a 'high' row is audited, as memory.get audits it.
+    await _audit.emit_many(
+        "memory.sensitive_read",
+        org=input.org,
+        namespace=input.namespace,
+        actor=writer_actor(input.agent),
+        subjects=high,
+    )
+    # the rows served, by their own keys: a chunk id answers with its parent's row
+    _record_read_exposure(
+        "memory.bulk_get", input, list(dict.fromkeys(r.memory_key for r in served_rows.values()))
+    )
     missing = [k for k in input.memory_keys if k not in results]
     return MemoryBulkGetOutput(results=results, missing=missing)

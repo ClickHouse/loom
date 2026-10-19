@@ -274,29 +274,40 @@ def _selected(sql: str) -> set[str]:
 
 
 @pytest.mark.asyncio
-async def test_the_plain_bulk_fetch_returns_the_row_the_strong_one_does() -> None:
-    # Every column off its default: one the plain fetch leaves out reads as its default
-    # (an empty `sensitivity` exports a high row).
+async def test_bulk_get_answers_what_memory_get_answers_for_the_same_row() -> None:
+    # A column the plain fetch leaves out reads as its default: an empty `sensitivity`
+    # let export-okf publish high rows. Every column the answer reads is off its default.
+    from server.memory.app.get_output import row_output
+
     row = {
         **_full(),
         "pinned": True,
         "status": "duplicate",
         "expires_at": "2099-06-01 00:00:00",
+        "on_expire": "tombstone",
+        "expire_reason": "rotated",
         "updated_at": "2026-09-20 00:00:00",
-        "run_id": "run-1",
-        "source_trace": "okf:b/k.md",
+        "valid_at": "2026-09-19 00:00:00",
+        "valid_to": "2027-01-01 00:00:00",
+        "temporal_anchor": "2026-09-18 00:00:00",
+        "temporal_confidence": 0.5,
         "char_limit": 100,
         "tags": ["t"],
         "entities": ["e"],
-        "content_sha256": "c" * 64,
+        "duplicate_of": "k-canon",
+        "superseded_by": "k-new",
+        "recall_count": 3,
+        "last_recalled_at": "2026-09-21 00:00:00",
         "verified_by": "human:x",
         "verified_at": "2026-09-20 00:00:00",
         "verified_sha256": "v" * 64,
-        "valid_at": "2026-09-19 00:00:00",
-        "valid_to": "2027-01-01 00:00:00",
         "sensitivity": "high",
-        "superseded_by": "k-new",
-        "duplicate_of": "k-canon",
+        "source_class": "derived",
+        "lock_mode": "no_delete",
+        "lock_reason": "audit",
+        "lock_until": "2099-01-01 00:00:00",
+        "locked_by": "human:y",
+        "locked_at": "2026-09-20 00:00:00",
     }
 
     class _Columns(_CH):
@@ -306,16 +317,24 @@ async def test_the_plain_bulk_fetch_returns_the_row_the_strong_one_does() -> Non
             rows = super()._answer(sql)
             if rows is self.located:
                 return rows
-            cols = _selected(sql)
-            return [{k: v for k, v in r.items() if k in cols} for r in rows]
+            return [{k: v for k, v in r.items() if k in _selected(sql)} for r in rows]
 
-    got = {}
+    answers = []
     for strong in (False, True):
         ch = _Columns([_located()], [row])
-        rows = await memory_repo.get_many_by_keys(
+        got = await memory_repo.get_many_by_keys(
             _IDENT, ["k"], ch=ch, scope=WHOLE_NAMESPACE, strong=strong
         )
-        got[strong] = rows[0]
-    assert got[False].sensitivity == "high" and got[False].superseded_by == "k-new"
-    assert got[False].duplicate_of == "k-canon" and got[False].valid_to is not None
-    assert got[False] == got[True]
+        r = got[0]
+        out = row_output(
+            r,
+            sha="s",
+            canonical_key=None,
+            duplicate_of=r.duplicate_of,
+            superseded_by=r.superseded_by,
+        )
+        answers.append(out.model_dump())
+    plain, whole = answers
+    assert plain["sensitivity"] == "high" and plain["valid_to"] is not None
+    assert plain["duplicate_of"] == "k-canon" and plain["lock_mode"] == "no_delete"
+    assert plain == whole

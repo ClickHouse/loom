@@ -55,7 +55,7 @@ from typing import Any
 
 import yaml  # stubs: types-PyYAML (dev extra)
 
-from server.memory.domain.sensitivity import HIGH, SENSITIVITY_TAG_PREFIX
+from server.memory.domain.sensitivity import LEVELS, is_high
 
 OKF_VERSION = "0.2"
 RESERVED_FILES = frozenset({"index.md", "log.md", "AGENTS.md", "README.md"})
@@ -612,15 +612,14 @@ def is_exportable(entry: dict[str, Any], *, include_high: bool = False) -> bool:
     """A `sensitivity = high` row has no embedding row
     and does not leave the database as clear text unless the
     exporter asks; a mirror repository has a wider audience than the
-    namespace's grants."""
-    return include_high or not is_high(entry.get("sensitivity"), entry.get("tags"))
-
-
-def is_high(sensitivity: Any, tags: Any) -> bool:
-    """A row is high by its `sensitivity` or by the `sensitivity:high` tag memory.set adds."""
-    if str(sensitivity or "").strip().lower() == HIGH:
+    namespace's grants. A row whose sensitivity the read did not answer, or
+    answered with a level this build does not know, stays home too."""
+    if include_high:
         return True
-    return SENSITIVITY_TAG_PREFIX + HIGH in {str(t).strip().lower() for t in tags or []}
+    level = entry.get("sensitivity")
+    if level is None or str(level).strip().lower() not in LEVELS:
+        return False
+    return not is_high(level, entry.get("tags"))
 
 
 # ------------------------------------------------------------------

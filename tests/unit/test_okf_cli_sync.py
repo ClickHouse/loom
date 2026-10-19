@@ -111,8 +111,9 @@ class _FakeLoom:
                 "namespace_version": "1",
             }
         if op == "memory.bulk_get":
+            # bulk_get always answers a row's sensitivity, empty when it has none.
             got = {
-                k: _project(r, body)
+                k: {"sensitivity": "", **_project(r, body)}
                 for (a, s, k), r in self.rows.items()
                 if k in body["memory_keys"]
                 and body["agent"] in ("*", a)

@@ -499,9 +499,16 @@ def test_provenance_tier_travels_and_only_downgrades_are_declared() -> None:
 def test_high_sensitivity_rows_are_not_exportable_by_default() -> None:
     assert okf.is_exportable(_entry(sensitivity="high")) is False
     assert okf.is_exportable(_entry(sensitivity="high"), include_high=True) is True
-    assert okf.is_exportable(_entry(sensitivity="medium")) and okf.is_exportable(_entry())
-    # A read that leaves the column empty: the tag memory.set adds still keeps it home.
-    assert not okf.is_exportable(_entry(sensitivity="", tags=["sensitivity:high"]))
+    assert okf.is_exportable(_entry(sensitivity="medium"))
+    assert okf.is_exportable(_entry(sensitivity=""))
+    # The tag memory.set adds marks the row high when the column read came back empty.
+    assert okf.is_exportable(_entry(sensitivity="", tags=["sensitivity:high"])) is False
+
+
+def test_a_row_whose_sensitivity_was_not_read_stays_home() -> None:
+    assert okf.is_exportable(_entry()) is False  # no `sensitivity` key: the read did not answer
+    assert okf.is_exportable(_entry(sensitivity=None)) is False
+    assert okf.is_exportable(_entry(sensitivity="secret")) is False  # a level this build lacks
 
 
 def test_corpus_digest_covers_concepts_only_and_moves_with_them() -> None:
@@ -689,3 +696,23 @@ def test_keys_named_like_every_suffix_a_concept_could_take_never_stop_the_export
     assert len(concept_files) == len(entries)
     # the second `a.b` lands on the first attempt nobody holds
     assert f"semantic/a-{okf._short_hash(identity, 6)}.b.md" in files
+
+
+def test_evidence_of_a_row_kept_home_or_holding_a_credential_stays_home() -> None:
+    from server.memory.domain import okf_evidence as okf_ev
+
+    key = "sk-proj-" + "a" * 40
+    chunks = [
+        okf_ev.ChunkRecord(session_id="s", chunk_index=0, content="plain talk", memory_keys=["k"]),
+        okf_ev.ChunkRecord(session_id="s", chunk_index=1, content="plain", memory_keys=["vault"]),
+        okf_ev.ChunkRecord(session_id="s", chunk_index=2, content=f"the key is {key}"),
+    ]
+    digests = [
+        okf_ev.DigestRecord(session_id="s", summary_text="a summary"),
+        okf_ev.DigestRecord(session_id="t", summary_text="ok", key_facts=[f"token {key}"]),
+        okf_ev.DigestRecord(session_id="u", summary_text="ok", derived_from=["vault"]),
+    ]
+    keep_c, keep_d, held = okf_ev.without_high(chunks, digests, {"vault"})
+    assert [c.chunk_index for c in keep_c] == [0]
+    assert [d.session_id for d in keep_d] == ["s"]
+    assert held == 4

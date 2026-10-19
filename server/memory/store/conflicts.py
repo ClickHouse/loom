@@ -63,7 +63,7 @@ async def list_conflicted(
     located = await ch.query_all(
         f"""
         SELECT memory_id, memory_key, memory_type, version,
-               pinned, created_at, conflict_with
+               pinned, created_at, conflict_with, sensitivity
         FROM loom.memory FINAL
         WHERE {" AND ".join(where)}
         ORDER BY version DESC
@@ -82,18 +82,23 @@ async def list_conflicted(
             {**r, "conflict_with": [p for p in r["conflict_with"] if str(p) in visible]}
             for r in located
         ]
-    pairs = [(str(r["memory_id"]), int(r["version"])) for r in located]
-    values = await ch.query_all(
-        """
-        SELECT memory_id, version, value
-        FROM loom.memory
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND (memory_id, version) IN {pairs:Array(Tuple(UUID, UInt64))}
-        LIMIT 1 BY memory_id, version
-        """,
-        params={"org": org, "ns": namespace, "pairs": pairs},
-    )
+    # A high row is listed for review, but its value is read by key only.
+    pairs = [
+        (str(r["memory_id"]), int(r["version"])) for r in located if r["sensitivity"] != "high"
+    ]
+    values: list[dict[str, Any]] = []
+    if pairs:
+        values = await ch.query_all(
+            """
+            SELECT memory_id, version, value
+            FROM loom.memory
+            WHERE org = {org:String}
+              AND namespace = {ns:String}
+              AND (memory_id, version) IN {pairs:Array(Tuple(UUID, UInt64))}
+            LIMIT 1 BY memory_id, version
+            """,
+            params={"org": org, "ns": namespace, "pairs": pairs},
+        )
     by_pair = {(str(v["memory_id"]), int(v["version"])): v["value"] for v in values}
     out: list[dict[str, Any]] = []
     for r in located:
