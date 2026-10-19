@@ -18,16 +18,16 @@ LOOM_API_KEY="$PUBLIC_WRITER" loom import-okf /tmp/bundle --server-url "$PUBLIC_
 
 - **Nothing, when nothing changed.** The import reads the live rows under its identity
   first and skips a concept whose row already holds the same value, type, tags,
-  confidence, `valid_at`, `valid_to`, `source_trace`, and the entities and
-  `source_class` when the bundle carries them. Tags `memory.set` adds itself
-  (`sensitivity:`, `attribute:`) are not a difference. It skips an edge that is already
-  live. When several concepts in the bundle share a key (rows of different writers), the
-  most recently updated one is written. Re-sending an identical row would count as a
-  reinforcement: a version row, an audit row and a higher ranking boost on every run. A
-  concept with `sources:` is the exception: it is written on every run, because the reads
-  the import makes do not return the source it links to. So is a concept the target
-  merges into another key's row: each run sends it again and reinforces that row, and
-  the last line counts it as merged.
+  confidence, `valid_at`, `valid_to`, `source_trace` and `source_class` (the declared
+  class, else `imported`), and the entities when the bundle carries them. Tags
+  `memory.set` adds itself (`sensitivity:`, `attribute:`) are not a difference. It skips
+  an edge that is already live. When several concepts in the bundle share a key (rows of
+  different writers), the most recently updated one is written. Re-sending an identical
+  row would count as a reinforcement: a version row, an audit row and a higher ranking
+  boost on every run. A concept with `sources:` is the exception: it is written on every
+  run, because the reads the import makes do not return the source it links to. So is a
+  concept the target merges into another key's row: each run sends it again and reinforces
+  that row, and the last line counts it as merged.
 - **One `memory.set` per new or changed concept**, through the conflict, blacklist and
   audit checks of any other write, with the token as its actor. A row the source marked
   `derived` or `external` keeps that class; every other row is stored as `imported`,

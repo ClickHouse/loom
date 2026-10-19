@@ -102,15 +102,15 @@ Afterwards it re-creates `relates_to` edges with `memory.link` (`--no-links` ski
 
 Before writing, the import reads the live rows under its identity and skips every concept
 whose row already holds what the write would send: the value (`content_sha256`), type,
-tags, confidence, `valid_at`, `valid_to`, `source_trace`, and the entities and
-`source_class` when the bundle carries them. It skips edges that are already live.
-Concepts that land on the same row (one key exported for several writers) are written
-once: the most recently updated wins. Re-sending an identical row would count as a
-reinforcement, so importing the same bundle twice writes no concept or edge the second
-time, except a concept with `sources:`, which is written on every run because the reads
-the import makes do not return its source, and a concept the target merges into another
-key, which is sent again on every run and reinforces that row (counted as merged). The
-last line counts the target rows written, unchanged, merged and failed.
+tags, confidence, `valid_at`, `valid_to`, `source_trace` and `source_class` (the declared
+class, else `imported`), and the entities when the bundle carries them. It skips edges
+that are already live. Concepts that land on the same row (one key exported for several
+writers) are written once: the most recently updated wins. Re-sending an identical row
+would count as a reinforcement, so importing the same bundle twice writes no concept or
+edge the second time, except a concept with `sources:`, which is written on every run
+because the reads the import makes do not return its source, and a concept the target
+merges into another key, which is sent again on every run and reinforces that row (counted
+as merged). The last line counts the target rows written, unchanged, merged and failed.
 
 `source_trace` is `okf:<path inside the bundle>`, so where the bundle sits on disk does
 not change it: each run can export to a fresh directory.

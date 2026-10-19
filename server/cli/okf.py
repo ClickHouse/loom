@@ -171,9 +171,9 @@ async def _fetch_namespace(
     )
     # Offset pages shift when the namespace changes mid-listing, which can skip a live row;
     # a bundle that says complete without it would let --prune delete its copy. An export
-    # that stopped at --limit is never complete, so it is listed once.
+    # that stopped at --limit, or keeps deleted rows, is never complete, so it is listed once.
     attempts = 1
-    while not whole and not capped and attempts < _LIST_ATTEMPTS:
+    while not whole and not capped and not include_tombstoned and attempts < _LIST_ATTEMPTS:
         entries, whole, capped = await _list_namespace(
             client, org, namespace, include_tombstoned=include_tombstoned, limit=limit
         )
@@ -972,7 +972,8 @@ def _marked_complete(files: dict[str, str]) -> bool:
 
 _PRUNE_SKIPPED = (
     "not pruning this run: index.md does not mark the export complete (it stopped at "
-    "--limit, the source changed while it was read, or an older release wrote it); "
+    "--limit, ran with --include-tombstoned, the source changed while it was read, or an "
+    "older release wrote it); "
     "the writes go ahead"
 )
 

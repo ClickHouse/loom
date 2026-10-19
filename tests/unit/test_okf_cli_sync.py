@@ -1020,3 +1020,8 @@ def test_an_export_says_when_the_source_changed_while_it_was_read(
     pointer = _export(tmp_path / "out")
     assert "complete" not in pointer and pointer["concepts"] == 1
     assert "not marked complete: the source changed while it was read" in capsys.readouterr().out
+
+
+def test_the_prune_skip_notice_names_every_reason_a_bundle_is_unmarked() -> None:
+    for reason in ("--limit", "--include-tombstoned", "changed while it was read", "older release"):
+        assert reason in cli_okf._PRUNE_SKIPPED

@@ -363,3 +363,11 @@ async def test_rows_with_no_version_are_not_called_whole() -> None:
         _Refilled(), "o", "ns", include_tombstoned=False
     )
     assert not whole
+
+
+@pytest.mark.asyncio
+async def test_an_include_tombstoned_export_lists_the_namespace_once() -> None:
+    # It is never marked complete, so a shifting source is not listed again for nothing.
+    client = _ShiftingClient(shifts=99)
+    await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=True)  # type: ignore[arg-type]
+    assert client.listings == 1
