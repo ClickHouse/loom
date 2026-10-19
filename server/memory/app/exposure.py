@@ -46,7 +46,7 @@ async def handle_memory_exposure_summary(input: ExposureSummaryInput) -> Exposur
 
 async def handle_memory_owner_report(input: MemoryOwnerReportInput) -> MemoryOwnerReportOutput:
     from server.auth.authz import row_in_scope
-    from server.auth.context import current_auth, resolve_my_namespaces
+    from server.auth.context import current_auth, rollup_member_namespaces
     from server.identity.domain.read_scope import resolve_read_filters
     from server.memory.app.owner_report import owner_report
     from server.operations.base import Role
@@ -66,7 +66,7 @@ async def handle_memory_owner_report(input: MemoryOwnerReportInput) -> MemoryOwn
     else:
         # The claim plus grants (a scoped token: its claim alone), less the
         # restricted namespaces it may not read. Empty is "none", never "all".
-        readable = await resolve_my_namespaces(input.org)
+        readable = await rollup_member_namespaces(input.org)
         if not readable:
             return MemoryOwnerReportOutput(
                 user_id=uid, since_hours=input.since_hours, live_rows=0, rows=[], reads=[], usage=[]

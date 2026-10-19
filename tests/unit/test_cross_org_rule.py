@@ -98,7 +98,7 @@ def clients(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr("server.auth.jwt.verify_token", _verify)
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", [op])
     monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)
-    monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, TOOL, op)
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, TOOL, op)
     monkeypatch.setattr(mcp_call, "_caller_defaults", _no_defaults)
     monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
     monkeypatch.setattr(mcp_outcome, "_emit_mcp_event", lambda *a, **k: None)

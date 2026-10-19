@@ -436,7 +436,7 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setattr(repos, "configured_repos", lambda: [_Cfg(NS, "master")])
     monkeypatch.setattr(h.settings, "code_git_branch", "master")
 
-    async def _unbound(org, code_ns):
+    async def _unbound(org, code_ns, *, hides_answer=True):
         return ""
 
     monkeypatch.setattr(binding, "authorized_tracker_namespace", _unbound)

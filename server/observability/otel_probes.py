@@ -561,10 +561,51 @@ _STORAGE_PARTS_SQL = """
         GROUP BY table
 """
 
+# A view outside `loom` is named with its database (loom_telemetry.sli_minute_refresh).
 _VIEW_REFRESH_SQL = """
-        SELECT view, status, last_success_time, exception
+        SELECT if(database = 'loom', view, concat(database, '.', view)) AS view,
+               status, last_success_time, exception
         FROM system.view_refreshes
-        WHERE database = 'loom'
+        WHERE database IN ('loom', 'loom_telemetry')
+"""
+
+
+# How far the SLI rollup's mark trails now, from its sentinel rows (a range
+# read on the sort key). A refresh that runs but lags reads as healthy to the
+# refresh gauges while burn-rate windows read nothing; this one shows it.
+_SLI_LAG_SQL = """
+        SELECT dateDiff('millisecond', max(ingested_hwm), now64(3)) / 1000
+        FROM loom_telemetry.sli_minute
+        WHERE slo_class = '' AND minute >= toStartOfMinute(now() - toIntervalDay(31))
+        HAVING count() > 0
+"""
+
+# Ledger request rows of the last day that ClickHouse took before the rollup's
+# mark but the rollup did not count, minute by minute: a ledger insert whose
+# part committed after the mark had passed its rows (the view waits 70 s for
+# that). `mark` is read before `rolled`, so a refresh that commits between the
+# two only adds to `rolled`: never a false miss, though that probe can hide a
+# real one in those minutes until the next. A ledger row erasure removed makes
+# a minute read short, never long.
+_SLI_MISSED_SQL = """
+        WITH (SELECT max(ingested_hwm) FROM loom_telemetry.sli_minute
+              WHERE slo_class = '' AND minute >= toStartOfMinute(now() - toIntervalDay(31))
+             ) AS mark,
+             toStartOfMinute(now() - toIntervalDay(1)) AS since
+        SELECT sum(greatest(toInt64(ledger.n) - toInt64(rolled.n), 0))
+        FROM (
+            SELECT toStartOfMinute(ts) AS minute, count() AS n
+            FROM loom.agent_events
+            WHERE kind = 'request' AND slo_class != '' AND ts >= since
+              AND ingested_at > mark - toIntervalDay(1) AND ingested_at <= mark
+            GROUP BY minute
+        ) AS ledger
+        LEFT JOIN (
+            SELECT minute, sum(requests) AS n
+            FROM loom_telemetry.sli_minute
+            WHERE slo_class != '' AND minute >= since
+            GROUP BY minute
+        ) AS rolled USING (minute)
 """
 
 
@@ -611,7 +652,21 @@ def _probe_storage() -> dict[str, list[tuple[float, dict[str, str]]]]:
     except Exception as e:  # noqa: BLE001 — half a reading beats none
         log.debug("view_refreshes probe failed: %s", e)
         refreshes = []
-    return _storage_series_from_rows(parts, refreshes, now=_dt.datetime.now(_dt.UTC))
+    series = _storage_series_from_rows(parts, refreshes, now=_dt.datetime.now(_dt.UTC))
+    try:
+        lag = list(client.query(_SLI_LAG_SQL).result_rows)
+    except Exception as e:  # noqa: BLE001 — a login without SELECT on loom_telemetry
+        log.debug("sli rollup lag probe failed: %s", e)
+        lag = []
+    if lag:
+        series["sli_rollup_lag_s"] = [(float(lag[0][0]), {})]
+        try:
+            missed = client.query(_SLI_MISSED_SQL).result_rows
+        except Exception as e:  # noqa: BLE001 — a login without SELECT on loom.agent_events
+            log.debug("sli rollup missed-rows probe failed: %s", e)
+        else:
+            series["sli_rollup_missed_rows"] = [(float(missed[0][0] or 0), {})]
+    return series
 
 
 def _state_gauge_probes() -> dict[str, Any]:

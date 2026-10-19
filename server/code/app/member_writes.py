@@ -20,6 +20,8 @@ from __future__ import annotations
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
+from server.auth.fail_closed import marks_unverified
+
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
 
@@ -68,6 +70,7 @@ async def code_member_may_write(
     return True
 
 
+@marks_unverified
 async def authorize_op(
     auth: AuthInfo | None, op: Any, *, org: str | None, namespace: str | None, **flags: Any
 ) -> None:

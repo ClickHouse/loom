@@ -66,7 +66,7 @@ def org_level_tool(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         required_role=Role.VIEWER,
         skip_namespace_authz=True,
     )
-    monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, TOOL, op)
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, TOOL, op)
 
     async def _no_defaults(auth: Any, client_name: str | None = None) -> None:
         return None

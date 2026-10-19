@@ -348,7 +348,7 @@ async def test_the_lesson_scope_is_the_callers_own_the_teams_and_the_readable_ex
     from server.auth.jwt import AuthInfo
     from server.operations.base import Role
 
-    async def readable(org, ns, role):
+    async def readable(org, ns, role, *, hides_answer=True):
         return ns not in ("secret", "code-a")
 
     monkeypatch.setattr(authz, "row_in_scope", readable)
@@ -381,7 +381,7 @@ async def test_lessons_keep_the_named_order_and_read_nothing_when_none_is_readab
 
     hidden = {"secret"}
 
-    async def readable(org, ns, role):
+    async def readable(org, ns, role, *, hides_answer=True):
         return ns not in hidden
 
     monkeypatch.setattr(authz, "row_in_scope", readable)

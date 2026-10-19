@@ -46,7 +46,7 @@ def gate(monkeypatch):
     allowed: set[str] = set()
     seen: list[tuple[str, str, str]] = []
 
-    async def _scope(org, ns, role):
+    async def _scope(org, ns, role, *, hides_answer=True):
         seen.append((org, ns, role.name))
         return ns in allowed
 
@@ -115,7 +115,7 @@ async def test_a_refused_binding_is_indistinguishable_from_an_unbound_one(gate) 
 
 @pytest.mark.asyncio
 async def test_a_failing_gate_is_closed_and_still_names_nothing(monkeypatch) -> None:
-    async def _boom(org, ns, role):
+    async def _boom(org, ns, role, *, hides_answer=True):
         raise RuntimeError(f"gate down for {ns}")
 
     monkeypatch.setattr(authz, "row_in_scope", _boom)

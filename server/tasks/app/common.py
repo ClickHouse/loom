@@ -167,11 +167,34 @@ def _caller_is_human() -> bool:
     return not auth.is_service_account
 
 
-async def _in_scope(org: str, namespace: str, *, write: bool) -> bool:
+async def _owner_check(org: str, namespace: str) -> tuple[bool, bool]:
+    """(on the owner side, refused unverified): the owner-side check without
+    marking, for an op that also admits the poster; the op calls
+    `_owner_refusal` where that check alone refused."""
+    from server.auth.fail_closed import reset, unreadable
+
+    reset()
+    owner_side = await _in_scope(org, namespace, write=True, hides_answer=False)
+    return owner_side, not owner_side and unreadable()
+
+
+def _owner_refusal(unverified: bool) -> None:
+    """The owner check alone refused: when it could not read what it needed,
+    the refusal is the server's."""
+    if unverified:
+        from server.auth.fail_closed import note_answered_unverified
+
+        note_answered_unverified()
+
+
+async def _in_scope(org: str, namespace: str, *, write: bool, hides_answer: bool = True) -> bool:
+    """`row_in_scope` at the role a side needs (`hides_answer`: see there)."""
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
 
-    return await row_in_scope(org, namespace, Role.WRITER if write else Role.VIEWER)
+    return await row_in_scope(
+        org, namespace, Role.WRITER if write else Role.VIEWER, hides_answer=hides_answer
+    )
 
 
 async def _require_owner_side(org: str, namespace: str) -> None:
@@ -453,6 +476,7 @@ async def _drop_lease(task: TaskRow) -> None:
 
 
 async def _readable(task: TaskRow) -> bool:
-    if await _in_scope(task["org"], task["namespace"], write=False):
+    # The poster's way in needs no read, so the owner check, last, decides alone.
+    if _is_poster(task, _caller_subject()):
         return True
-    return _is_poster(task, _caller_subject())
+    return await _in_scope(task["org"], task["namespace"], write=False)

@@ -66,7 +66,7 @@ def plane(monkeypatch: pytest.MonkeyPatch) -> None:
         return False
 
     monkeypatch.setattr(authz, "_lookup_grant", _no_grant)
-    monkeypatch.setattr(authz, "_is_restricted", _not_restricted)
+    monkeypatch.setattr(authz, "may_be_restricted", _not_restricted)
 
     def _no_ch():
         raise AssertionError("authz refusal must not read ClickHouse")

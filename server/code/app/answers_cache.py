@@ -232,7 +232,7 @@ async def reuse_allowed(org: str, branch: str, trunk: str) -> bool:
         vis = await visibility_map(org, [branch, trunk])
         if not vis.get(branch) or vis.get(branch) != vis.get(trunk):
             return False
-        return bool(await row_in_scope(org, trunk, Role.VIEWER))
+        return bool(await row_in_scope(org, trunk, Role.VIEWER, hides_answer=False))
     except Exception as e:  # noqa: BLE001 — fail closed
         logger.debug("code.ask cross-branch reuse refused: %s", e)
         return False

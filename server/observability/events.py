@@ -86,6 +86,14 @@ class AgentEvent:
     # subject's class, so neither could answer "when was this token last
     # used".
     subject: str = ""
+    # The SLI columns (server/observability/sli.py): `http` | `mcp` | '' for
+    # rows no transport wrote, the op's class, `ok` | `client` | `server`, and
+    # the latency budget the request was held to (0 is a real budget, which
+    # every success exceeds; a row with no registered op has 0 and no class).
+    transport: str = ""
+    slo_class: str = ""
+    status_class: str = ""
+    budget_ms: int = 0
 
     def to_row(self) -> dict[str, Any]:
         row: dict[str, Any] = {
@@ -114,6 +122,10 @@ class AgentEvent:
             "args": dict(self.args),
             "model": self.model,
             "llm_calls": self.llm_calls,
+            "transport": self.transport,
+            "slo_class": self.slo_class,
+            "status_class": self.status_class,
+            "budget_ms": self.budget_ms,
             "response_tokens": self.response_tokens,
             "consumer": self.consumer,
             "traffic_class": self.traffic_class,
@@ -141,6 +153,11 @@ class EventEmitter:
     # failed. Process totals, served by `/v1/health?include=events`.
     dropped_queue_full: int = 0
     dropped_flush_failed: int = 0
+    # Refusal rows an MCP batch did not write because it already wrote them.
+    # A server fault past its cap is lost from the SLIs like the two above; a
+    # caller's repeated refusal is the caller's doing, so it is counted apart.
+    dropped_batch_repeat: int = 0
+    batch_repeats: int = 0
     # Batches whose insert failed; paces the flush-failure log.
     flush_failures: int = 0
 
@@ -189,6 +206,8 @@ class EventEmitter:
             "queued": self.queue.qsize(),
             "dropped_queue_full": self.dropped_queue_full,
             "dropped_flush_failed": self.dropped_flush_failed,
+            "dropped_batch_repeat": self.dropped_batch_repeat,
+            "batch_repeats": self.batch_repeats,
         }
 
     async def _drain_loop(self) -> None:

@@ -31,14 +31,16 @@ async def test_list_loom_tables_filters_inner_bookkeeping() -> None:
     ch = StubCH()
     ch.query_all_returns.append(
         [
-            {"name": "memory"},
-            {"name": ".inner_id.some-mv"},
-            {"name": "audit_log"},
+            {"database": "loom", "name": "memory"},
+            {"database": "loom", "name": ".inner_id.some-mv"},
+            {"database": "loom", "name": "audit_log"},
+            {"database": "loom_telemetry", "name": "sli_minute"},
         ]
     )
     out = await admin_repo.list_loom_tables(ch=ch)
     assert "memory" in out
     assert "audit_log" in out
+    assert "loom_telemetry.sli_minute" in out
     # CH MV inner_id bookkeeping is excluded.
     assert all(not n.startswith(".inner") for n in out)
 

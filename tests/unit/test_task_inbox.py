@@ -422,7 +422,7 @@ async def test_disclosure_gate_and_deny_policy_refuse_at_create(
     # an unregistered inbox gets (a 403 would confirm it exists)
     fake.inboxes[(ORG, "private-bot")]["posters"] = []
 
-    async def _no_scope(org, ns, *, write):
+    async def _no_scope(org, ns, *, write, hides_answer=True):
         return False
 
     patch_handlers(monkeypatch, "_in_scope", _no_scope)
@@ -810,7 +810,7 @@ async def test_reads_answer_found_false_out_of_scope_and_the_cursor_advances(
     assert again.events == [] and again.next_seq == upd.next_seq
     # out of scope: found=false, never a 403 that confirms the id
 
-    async def _no_scope(org, ns, *, write):
+    async def _no_scope(org, ns, *, write, hides_answer=True):
         return False
 
     patch_handlers(monkeypatch, "_in_scope", _no_scope)
@@ -945,7 +945,7 @@ async def test_principals_need_the_admin_side(
 ) -> None:
     await _register(fake)
 
-    async def _refuse(org, ns, role):
+    async def _refuse(org, ns, role, *, hides_answer=True):
         return False
 
     from server.auth import authz
@@ -1116,7 +1116,7 @@ async def test_a_foreign_inbox_reads_exactly_like_an_unknown_one(
     there would confirm the inbox exists."""
     await _register(fake)
 
-    async def _no_scope(org, ns, *, write):
+    async def _no_scope(org, ns, *, write, hides_answer=True):
         return False
 
     patch_handlers(monkeypatch, "_in_scope", _no_scope)
@@ -1154,10 +1154,10 @@ async def test_an_inbox_the_caller_cannot_read_answers_as_unregistered(
     inbox exists."""
     await _register(fake)
 
-    async def _foreign(org, ns, *, write):
+    async def _foreign(org, ns, *, write, hides_answer=True):
         return ns != "private"
 
-    async def _admin_elsewhere(org, ns, role):
+    async def _admin_elsewhere(org, ns, role, *, hides_answer=True):
         return ns != "private"
 
     from server.auth import authz
@@ -1191,7 +1191,7 @@ async def test_a_stranger_posting_to_an_inbox_is_told_it_does_not_exist(
     answer an unregistered name gets; one who can read it but not post gets the 403."""
     await _register(fake)
 
-    async def _no_scope(org, ns, *, write):
+    async def _no_scope(org, ns, *, write, hides_answer=True):
         return False
 
     patch_handlers(monkeypatch, "_in_scope", _no_scope)

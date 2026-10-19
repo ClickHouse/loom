@@ -119,7 +119,7 @@ async def handle_inbox_list(input: InboxListInput) -> InboxListOutput:
                 r["owner_namespace"] == input.namespace
                 or (subject and subject in posters)
                 or (label and label in posters)
-                or await _in_scope(input.org, r["owner_namespace"], write=False)
+                or await _in_scope(input.org, r["owner_namespace"], write=False, hides_answer=False)
             ):
                 keep.append(r)
         rows = keep

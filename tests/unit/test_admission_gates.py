@@ -161,7 +161,7 @@ def probe(monkeypatch: pytest.MonkeyPatch, plane: None) -> dict[str, Any]:
     seen["http"] = TestClient(app)
     seen["tokens"] = tokens
     # MCP
-    monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, TOOL, op)
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, TOOL, op)
 
     async def _no_defaults(auth: Any, client_name: str | None = None) -> None:
         return None
