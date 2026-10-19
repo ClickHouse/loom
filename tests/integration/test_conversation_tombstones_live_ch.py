@@ -419,6 +419,30 @@ async def test_a_retried_compaction_finishes_a_failed_last_pass(ch, scope) -> No
     assert await _rows(ch, scope) == [("1", "retry me", False)]
 
 
+@pytest.mark.asyncio
+async def test_a_compaction_that_failed_before_the_mutation_keeps_live_turns_searchable(
+    ch, scope
+) -> None:
+    """A compaction appended its summary and failed before tombstoning anything: the
+    turns it names are still live, and the next call, compacting nothing, leaves their
+    embeddings live."""
+    from server.knowledge.api.models_conversations import ConversationCompactInput
+    from server.knowledge.app.conversations import handle_conversation_compact
+
+    await _message(ch, scope, "a", "1", "still here", T0)
+    await _embedding(ch, scope, "a", "1", "still here", T0)
+    await _message(
+        ch, scope, "a", "s", "summary", T0, role="system", metadata='{"compacted_from": ["1"]}'
+    )
+    out = await handle_conversation_compact(
+        ConversationCompactInput(
+            org=scope["org"], namespace=scope["ns"], agent="a", thread_id=scope["tid"]
+        )
+    )
+    assert out.compacted is False
+    assert await _rows(ch, scope) == [("1", "still here", True)]
+
+
 class _LateReconcile(_PassThrough):
     """Runs the first embeddings reconcile as a read, then `meanwhile`, then the write
     of what it read: a reconcile whose rows land after another agent's whole delete."""

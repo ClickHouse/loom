@@ -545,5 +545,5 @@ def test_the_compaction_window(
     [('{"compacted_from": ["m1"]}', True), ('{"compacted_from": "m1"}', False), ("{}", False)],
 )
 def test_only_a_compacted_from_list_marks_a_summary(metadata: str, summary: bool) -> None:
-    """The rule search's peer copies apply in SQL: a non-empty list, nothing else."""
+    """The same test `_PEER_COPIES` applies in SQL: a non-empty `compacted_from` list."""
     assert ch_mod._is_compaction_summary({"role": "system", "metadata": metadata}) is summary

@@ -720,8 +720,8 @@ def _compacted_from(row: Mapping[str, Any]) -> list[str]:
 
 
 def _is_compaction_summary(row: Mapping[str, Any]) -> bool:
-    """A system turn conversation.compact wrote: its metadata names what it replaced
-    (the rule search's peer copies apply too)."""
+    """A system turn conversation.compact wrote: its metadata names what it replaced,
+    the same test `_PEER_COPIES` applies in SQL (a non-empty `compacted_from` list)."""
     return bool(_compacted_from(row))
 
 
@@ -746,9 +746,11 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         input.org, input.namespace, input.agent, input.thread_id
     )
     # A run that failed after tombstoning its turns leaves their embeddings to a retry,
-    # whose window no longer holds those turns: the turns every live summary replaced
-    # get an embeddings pass first.
-    replaced_earlier = sorted({mid for r in rows for mid in _compacted_from(r)})
+    # whose window no longer holds those turns: the turns a live summary replaced and
+    # that are tombstoned get an embeddings pass first. A replaced turn still live (a
+    # run that failed before the messages mutation) keeps its embedding.
+    live_ids = {str(r["msg_id"]) for r in rows}
+    replaced_earlier = sorted({mid for r in rows for mid in _compacted_from(r)} - live_ids)
     if replaced_earlier:
         await conversation_repo.tombstone_compacted_embeddings(
             input.org,
