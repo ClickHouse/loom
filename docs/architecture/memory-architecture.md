@@ -316,7 +316,8 @@ actions, verdicts and confidences, never the text.
   that retirement, the restored row still holds the value it had at the Undo, and both
   rows' values were stated before it. A later write of either row carries its own mark
   and is judged afresh; a writer restating a retired value makes a new statement, dated
-  when it was restated.
+  when it was restated. The Undo holds while its audit record does: past
+  `LOOM_RETENTION_AUDIT_LOG_DAYS` the pair may be judged and retired again.
 - A row is stamped judged only after its actions. A pass cut short judges it again, and
   acting twice changes nothing: a retired row is no longer live, an existing flag is left
   as it is, and a cleared flag has nothing left to clear.
@@ -614,9 +615,10 @@ response, with one intent for the whole write), and those edges end, when that w
 landed, unless another row names them; a failed drop is left to `projection_repair`. The
 drop, and its replay, reads the row as it is then: a row no longer `high` is skipped (a
 later plain write's links are its own), and one still `high` keeps only the edges of
-the entities on it, whatever later write (a pin, a lock, a relabel) kept it high. A close recorded for a high row names no value: its repair ends
-each of the row's values with an open edge that the row no longer holds, and keeps the
-edges between entities the row names. Its triples close as for a row that holds none.
+the entities on it, whatever later write (a pin, a lock, a relabel) kept it high. A
+close recorded for a high row names no value: its repair ends each of the row's values
+with an open edge that the row no longer holds, and keeps the edges between entities
+the row names. Its triples close as for a row that holds none.
 
 A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`) of a row that
 existed before the write closes the facts its row held that no row holds any longer, and
