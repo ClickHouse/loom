@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./errors";
 import {
   _formatterCacheSize,
+  absoluteTime,
   dayLabel,
   daysLeftToRestore,
   displaySubject,
@@ -213,7 +214,28 @@ describe("dayLabel", () => {
     expect(dayLabel(new Date(2026, 9, 15, 9).toISOString())).toBe("Oct 15");
     expect(dayLabel(new Date(2025, 11, 31, 9).toISOString())).toBe("Dec 31, 2025");
     // A ClickHouse time: no zone (UTC), a space, nine fraction digits.
-    expect(dayLabel("2026-10-16 12:00:00.123456789")).toBe("Yesterday · Oct 16");
+    expect(dayLabel("2026-10-16 12:00:00.123456789")).toBe(dayLabel("2026-10-16T12:00:00.123Z"));
+  });
+});
+
+// Some ops answer a ClickHouse time as it prints ("2026-10-16 12:00:00.123456789": UTC, no
+// zone); each formatter reads it as the same instant as its ISO spelling.
+describe("ClickHouse times", () => {
+  const ch = "2026-10-16 12:00:00.123456789";
+  const iso = "2026-10-16T12:00:00.123Z";
+  afterEach(() => vi.useRealTimers());
+  it("relativeTime", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-16T14:00:00Z"));
+    expect(relativeTime(ch)).toBe("1h ago");
+  });
+  it("timeOfDay", () => {
+    expect(timeOfDay(ch)).toBe(timeOfDay(iso));
+    expect(timeOfDay(ch)).not.toBe("");
+  });
+  it("absoluteTime", () => {
+    expect(absoluteTime(ch)).toBe(absoluteTime(iso));
+    expect(absoluteTime(ch)).not.toBe(ch);
   });
 });
 

@@ -175,10 +175,7 @@ function MemoryList() {
   //
   // A tag or agent filter narrows the read on the server (every tag, in any case); the
   // list applies the same filters to a search's hits, which the server ranks unfiltered.
-  const { rawQuery, queryTags } = useMemo(() => {
-    const parsed = parseSearchQuery(query);
-    return { rawQuery: parsed.text, queryTags: parsed.tags };
-  }, [query]);
+  const rawQuery = useMemo(() => parseSearchQuery(query).text, [query]);
   // A filter covers the whole namespace, not the page on screen. A tag or agent filter is
   // asked of the server, which returns the rows carrying every tag, in any case (a server a
   // release behind matches any one tag exactly, and the list then requires every tag
@@ -204,9 +201,9 @@ function MemoryList() {
   useEffect(() => {
     if (!memoryTagFilter) return;
     setMemoryTagFilter(null);
-    if (queryTags.some((t) => t.toLowerCase() === memoryTagFilter.toLowerCase())) return;
+    if (typedNow.tags.some((t) => t.toLowerCase() === memoryTagFilter.toLowerCase())) return;
     applyQuery(`${query} tag:${memoryTagFilter}`.trim());
-  }, [memoryTagFilter, setMemoryTagFilter, query, queryTags, applyQuery]);
+  }, [memoryTagFilter, setMemoryTagFilter, query, typedNow, applyQuery]);
   // Typing waits for a pause.
   useEffect(() => {
     const t = setTimeout(() => setTyped((prev) => (sameFilter(prev, typedNow) ? prev : typedNow)), 250);
@@ -713,7 +710,7 @@ function MemoryList() {
           className="mb-3"
           text={
             <>
-              <strong>Low confidence.</strong> No strong match for "{rawQuery}" — these are best-effort results; treat
+              <strong>Low confidence.</strong> No strong match for "{keywordFor}" — these are best-effort results; treat
               them as weak.
             </>
           }

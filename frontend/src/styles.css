@@ -866,7 +866,7 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-attn {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 8px;
+    gap: var(--spaces-2);
     margin: 0 0 var(--spaces-4);
   }
   .tq-tile {
@@ -950,13 +950,13 @@ textarea[aria-invalid="true"]:focus-visible {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-xl);
     background: var(--color-surface);
-    margin-bottom: 12px;
+    margin-bottom: var(--spaces-3);
     overflow: hidden;
   }
   .tq-ghead {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--spaces-2);
     width: 100%;
     padding: var(--click-table-header-cell-space-sm-y) var(--click-table-header-cell-space-sm-x);
     text-align: left;
@@ -1359,6 +1359,7 @@ textarea[aria-invalid="true"]:focus-visible {
   .list-row[data-deleted] {
     border-style: dashed;
   }
+  /* 1 px down, so the checkbox sits on the row's first line of text: a measured hand size. */
   .list-row-leading {
     display: flex;
     flex-shrink: 0;
@@ -1668,7 +1669,7 @@ textarea[aria-invalid="true"]:focus-visible {
   .recall-bar {
     display: block;
     height: 4px;
-    margin-top: 2px;
+    margin-top: var(--spaces-1);
     border-radius: var(--radius-xs);
     overflow: hidden;
   }

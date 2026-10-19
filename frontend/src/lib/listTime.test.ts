@@ -19,8 +19,9 @@ describe("listTime", () => {
   });
 
   it("is the day from a week back, with the year when it is another one", () => {
-    expect(listTime("2026-09-20T14:32:00Z")).toBe("Sep 20");
-    expect(listTime("2025-09-20T14:32:00Z")).toBe("Sep 20, 2025");
+    // Local times: the day is the viewer's.
+    expect(listTime(new Date(2026, 8, 20, 14, 32).toISOString())).toBe("Sep 20");
+    expect(listTime(new Date(2025, 8, 20, 14, 32).toISOString())).toBe("Sep 20, 2025");
   });
 
   it("reads ClickHouse's own format as UTC", () => {

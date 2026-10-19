@@ -354,6 +354,29 @@ describe("Recent search after a local write", () => {
     expect(await screen.findByText(noMatch("zzq"), {}, { timeout: 3000 })).toBeInTheDocument();
   });
 
+  it("names the searched words in the low-confidence note until the retyped search answers", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? { entries: [], total: 0, today: 0, truncated: false }
+        : { entries: [entry("milk_note")], total: 1, today: 0, truncated: false },
+    );
+    vi.mocked(searchMemory).mockResolvedValue({
+      results: [{ memory_key: "milk_note", memory_type: "semantic", similarity: 0.1, rank_score: 0.1 }],
+      abstain: true,
+      embedding_model: "m",
+    } as never);
+    render(<Recent />);
+    await screen.findByText("milk_note");
+    const box = screen.getByLabelText("Search memories");
+    await userEvent.type(box, "zebra");
+    const note = (words: string) => (_: string, el: Element | null) =>
+      el?.tagName !== "STRONG" && (el?.textContent ?? "").startsWith(`Low confidence. No strong match for "${words}"`);
+    expect((await screen.findAllByText(note("zebra"), {}, { timeout: 3000 })).length).toBeGreaterThan(0);
+    fireEvent.change(box, { target: { value: "zzq" } });
+    expect(screen.getAllByText(note("zebra")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(note("zzq"), {}, { timeout: 3000 })).length).toBeGreaterThan(0);
+  });
+
   it("a search that failed outright brings none of its earlier ranked hits back on the next run", async () => {
     let phase = 0;
     vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>

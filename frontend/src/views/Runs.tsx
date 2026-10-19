@@ -581,11 +581,11 @@ export function Runs() {
     setPage(0);
   };
 
-  // Another namespace is another list: its first page, from nothing on screen.
   const scope = `${identity.org}\n${identity.namespace}`;
-  // The old namespace's rows and agents go during render, before the new one's first read or
-  // paint can use them. Another namespace may be another server's answer: it is asked for a
-  // page first, and its agents are not this one's, so the agent filter goes too.
+  // Another namespace is another list, from its first page with nothing on screen: the old
+  // one's rows and agents go during render, before the new one's first read or paint can use
+  // them. It may be another server's answer, so it is asked for a page first, and its agents
+  // are not this one's, so the agent filter goes too.
   const [shownFor, setShownFor] = useState(scope);
   if (shownFor !== scope) {
     setShownFor(scope);
@@ -661,20 +661,7 @@ export function Runs() {
     return () => {
       live = false;
     };
-  }, [
-    scope,
-    identity.org,
-    identity.namespace,
-    filter,
-    agent,
-    hideConn,
-    readQ,
-    readOrder,
-    readPage,
-    readSize,
-    local,
-    retry,
-  ]);
+  }, [identity.org, identity.namespace, filter, agent, hideConn, readQ, readOrder, readPage, readSize, local, retry]);
 
   // Opening run Y after X drops X's run.get answer instead of showing it in Y's drawer.
   useEffect(() => {

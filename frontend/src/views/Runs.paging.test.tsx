@@ -194,6 +194,34 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(lastOpts()).toMatchObject({ limit: 50, offset: 0, orderBy: "started_desc" });
   });
 
+  // The reset happens during render, so not even the new namespace's first read carries the
+  // old page or agent.
+  it("asks another namespace for its first page, for every agent, in its first read", async () => {
+    server(120);
+    // Two agents, so the page offers the agent filter; the server ignores it.
+    const answer = listRunsPage.getMockImplementation()!;
+    listRunsPage.mockImplementation(async (id, opts) => {
+      const p = await answer(id, opts);
+      return { ...p, runs: p.runs.map((r, i) => (i === 0 ? { ...r, agent: "reporter" } : r)) };
+    });
+    render(<Runs />);
+    await screen.findByRole("button", { name: "goal 1" });
+    await userEvent.click(await screen.findByRole("button", { name: "Agent" }));
+    // Click UI's Select items carry no option role; they are addressed by value.
+    await userEvent.click(document.querySelector<HTMLElement>('[cui-select-item][data-value="claude-code"]')!);
+    await waitFor(() => expect(lastOpts()).toMatchObject({ agent: "claude-code", offset: 0 }));
+    await screen.findByRole("button", { name: "goal 1" });
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByRole("button", { name: "goal 51" });
+    expect(lastOpts()).toMatchObject({ agent: "claude-code", offset: 50 });
+    act(() => useStore.setState({ identity: { org: "dev", namespace: "ns2", agent: "loom-ui" } }));
+    await waitFor(() =>
+      expect(listRunsPage.mock.calls.some(([id]) => (id as { namespace: string }).namespace === "ns2")).toBe(true),
+    );
+    const first = listRunsPage.mock.calls.find(([id]) => (id as { namespace: string }).namespace === "ns2");
+    expect(first?.[1]).toMatchObject({ offset: 0, agent: "" });
+  });
+
   it("stays local when a later read carries a total, until the namespace changes", async () => {
     let upgraded = false;
     listRunsPage.mockImplementation(async () =>

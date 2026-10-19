@@ -20,8 +20,7 @@ export function _formatterCacheSize(): number {
 }
 
 export function relativeTime(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const d = parseIso(iso);
+  const d = parseChTime(iso);
   if (!d) return "";
   const s = Math.floor((Date.now() - d.getTime()) / 1000);
   // Future timestamps: render "in Xh / in Xd". Used for expires_at, which
@@ -256,7 +255,7 @@ export function errorRequestId(err: unknown): string {
 }
 
 export function timeOfDay(iso: string): string {
-  const d = parseIso(iso);
+  const d = parseChTime(iso);
   if (!d) return "";
   return fmt("time", { hour: "2-digit", minute: "2-digit" }).format(d);
 }
@@ -319,7 +318,7 @@ export function fmtInt(n: number | null | undefined): string {
 /** A full local date and time for tooltips: the cached formatter, not a
  *  `Date.toLocaleString()` that builds one per row. */
 export function absoluteTime(iso: string | null | undefined): string {
-  const d = iso ? parseIso(iso) : null;
+  const d = parseChTime(iso);
   return d ? fmt("abs", { dateStyle: "medium", timeStyle: "short" }).format(d) : (iso ?? "");
 }
 
