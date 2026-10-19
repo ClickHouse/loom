@@ -267,12 +267,15 @@ def test_delete_does_not_tombstone_another_users_row(world) -> None:
     assert world["ch"].inserts == []
 
 
-def test_a_versioned_delete_needs_a_concrete_agent(world) -> None:
-    from server.core.errors import ValidationError
+def test_a_versioned_delete_needs_a_concrete_agent() -> None:
+    import pydantic
 
-    with pytest.raises(ValidationError):
-        _delete_at(world["row"].version, agent="*")
-    assert world["lookups"] == [] and world["ch"].inserts == []
+    from server.memory.api.models_crud import MemoryDeleteInput
+
+    ident = {"org": "o", "namespace": "n", "memory_key": "k"}
+    with pytest.raises(pydantic.ValidationError, match="concrete agent"):
+        MemoryDeleteInput(**ident, agent="*", if_version=1)
+    assert MemoryDeleteInput(**ident, agent="*").if_version is None
 
 
 def test_a_versioned_delete_checks_and_tombstones_under_the_key_lock(world, monkeypatch) -> None:

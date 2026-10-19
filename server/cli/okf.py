@@ -167,8 +167,8 @@ async def _fetch_namespace(
     entries, whole = await _list_namespace(
         client, org, namespace, include_tombstoned=include_tombstoned, limit=limit
     )
-    # Offset pages shift when a row leaves the namespace mid-listing, skipping a live
-    # row; a bundle that says complete without it would let --prune delete its copy.
+    # Offset pages shift when the namespace changes mid-listing, which can skip a live row;
+    # a bundle that says complete without it would let --prune delete its copy.
     for _ in range(_LIST_ATTEMPTS - 1):
         if whole or limit is not None:
             break
@@ -186,10 +186,12 @@ async def _list_namespace(
     include_tombstoned: bool,
     limit: int | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """The `memory.list` entries of every row, and whether they add up to the total
-    the first and the last page reported."""
+    """The `memory.list` entries of every row, and whether nothing was written to the
+    namespace between the first and the last page (the same `namespace_version`, which every
+    write, delete and restore moves) and they add up to its total."""
     entries: list[dict[str, Any]] = []
     totals: list[int] = []
+    versions: list[str] = []
     offset = 0
     while True:
         page_size = _PAGE if limit is None else max(1, min(_PAGE, limit - len(entries)))
@@ -217,14 +219,16 @@ async def _list_namespace(
         rows = page.get("entries") or []
         entries.extend(rows)
         totals.append(int(page.get("total") or 0))
+        versions.append(str(page.get("namespace_version") or ""))
         if not page.get("truncated") or not rows or (limit is not None and len(entries) >= limit):
             break
         offset += len(rows)
     if limit is not None and len(entries) >= limit:
         return entries[:limit], False
-    # A row a shifted page served twice counts once.
+    # A row a shifted page served twice counts once. The count also catches a row that
+    # expired mid-listing, which moves no version.
     unique = list({_entry_id(r): r for r in entries}.values())
-    return unique, totals[0] == totals[-1] == len(unique)
+    return unique, versions[0] == versions[-1] and totals[0] == totals[-1] == len(unique)
 
 
 def _entry_id(r: dict[str, Any]) -> tuple[Any, ...]:
@@ -889,28 +893,37 @@ def _edge_key(e: dict[str, str]) -> tuple[str, str, str]:
 
 
 def _prune_refusal(root: Path, concepts: list[okf.Concept]) -> str:
-    """Why this bundle must not drive deletes, or '' when index.md marks it a complete
-    export and its concept files still hash to `loom.corpus_digest`."""
+    """Why this bundle must not be imported with --prune at all, or ''. An empty bundle or
+    one whose files no longer hash to `loom.corpus_digest` is not what the export wrote."""
     if not concepts:
         return "the bundle has no concepts"
     from server.memory.domain import okf_lint
 
     files = okf_lint.read_bundle(root)
-    pointer = okf_lint.generation_pointer(files)
-    declared = str(pointer.get("corpus_digest") or "")
+    declared = str(okf_lint.generation_pointer(files).get("corpus_digest") or "")
     if not declared:
         return "index.md carries no loom.corpus_digest, so this is not a complete export"
-    if pointer.get("complete") is not True:
-        return (
-            "index.md does not mark the export complete: it stopped at --limit, or an "
-            "older release wrote it; export again"
-        )
     if declared != okf_lint.bundle_digest(files):
         return (
             "the concept files do not match index.md's loom.corpus_digest: a partial or "
             "edited export, or one written into a directory that held an older bundle"
         )
     return ""
+
+
+def _prune_skip(root: Path) -> str:
+    """Why this intact bundle's writes go ahead without the prune, or '': only an export
+    that read every row says which keys have left the source."""
+    from server.memory.domain import okf_lint
+
+    if okf_lint.generation_pointer(okf_lint.read_bundle(root)).get("complete") is True:
+        return ""
+    reason = (
+        "index.md does not mark the export complete (it stopped at --limit, the source "
+        "changed while it was listed, or an older release wrote it)"
+    )
+    print(f"not pruning this run: {reason}; the writes go ahead", file=sys.stderr)
+    return reason
 
 
 async def _prune(
@@ -1028,6 +1041,8 @@ def _print_import_summary(
             f" ({n['conflict']} flagged conflicted, {n['pending']} awaiting a conflict verdict, "
             f"{n['verified']} re-attested as caller"
         )
+        if n["verify_missed"]:
+            head += f", {n['verify_missed']} not found to re-attest"
         if n["verify_failed"]:
             head += f", {n['verify_failed']} failed to re-attest"
         head += ")"
@@ -1039,12 +1054,14 @@ def _print_import_summary(
         if n["links_failed"]:
             notes.append(f"{n['links_failed']} failed")
         parts.append(f"{n['links']} typed edges{would} linked ({', '.join(notes)})")
-    if args.prune:
+    if args.prune and n["prune_skipped"]:
+        parts.append("prune skipped: the export is not complete")
+    elif args.prune:
         notes = []
         if n["prune_kept"]:
             notes.append(
                 f"{n['prune_kept']} kept: written by another token under this --agent, "
-                "or changed during the run"
+                "locked, or changed during the run"
             )
         if n["prune_failed"]:
             notes.append(f"{n['prune_failed']} failed")
@@ -1072,6 +1089,7 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
         if reason:
             print(f"refusing to prune: {reason}", file=sys.stderr)
             return 2
+    skip = _prune_skip(root) if args.prune else ""
     token = _resolve_token(args)
     org = _resolve_org(args, token)
     ev_chunks, ev_digests = ([], []) if args.no_evidence else _walk_evidence(root)
@@ -1093,7 +1111,9 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
             except RuntimeError as e:
                 print(f"cannot read {org}/{args.namespace}: {e}", file=sys.stderr)
                 return 1
-            if args.prune:
+            if args.prune and skip:
+                n["prune_skipped"] = 1
+            elif args.prune:
                 # Before the writes: a key renamed in the source would otherwise merge into
                 # its stale row, which prune then deletes.
                 keep = {(p["session_id"], p["memory_key"]) for _, p in planned}

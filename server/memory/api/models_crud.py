@@ -369,6 +369,14 @@ class MemoryDeleteInput(_Identity):
     # "version_changed". None = no check. Hidden from MCP: import-okf --prune sends it.
     if_version: int | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
 
+    @model_validator(mode="after")
+    def _shape(self) -> MemoryDeleteInput:
+        # The wildcard read answers any agent's row of the key; a version check is
+        # ownership only under one identity.
+        if self.if_version is not None and self.agent == "*":
+            raise ValueError("`if_version` needs a concrete agent, not '*'")
+        return self
+
 
 class MemoryUnpinInput(_Identity):
     """Remove the write-time pin from one live memory.

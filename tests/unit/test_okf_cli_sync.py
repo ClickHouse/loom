@@ -105,6 +105,7 @@ class _FakeLoom:
                 "entries": [_project(r, body) for r in page],
                 "truncated": body["offset"] + len(page) < len(mine),
                 "total": len(mine),
+                "namespace_version": "1",
             }
         if op == "memory.bulk_get":
             got = {
@@ -412,12 +413,22 @@ def test_entities_the_target_extracted_are_not_a_change(tmp_path: Path, loom: _F
     assert loom.writes() == []
 
 
-def test_prune_refuses_a_bundle_not_marked_complete(tmp_path: Path, loom: _FakeLoom) -> None:
-    # A --limit export, or one an older release wrote: its digest matches, yet it may hold
-    # only part of the namespace.
-    root = _bundle(tmp_path / "b", [_entry("a")], complete=False)
-    assert _run(root, "--prune", "--no-lint") == 2
-    assert loom.calls == []
+def test_a_bundle_not_marked_complete_is_written_and_not_pruned(
+    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A --limit export, one taken while the source changed, or one an older release wrote:
+    # its digest matches, yet it may hold only part of the namespace.
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    capsys.readouterr()
+    loom.calls.clear()
+    root = _bundle(
+        tmp_path / "2" / "b", [_entry("a", value="changed"), _entry("new")], complete=False
+    )
+    assert _run(root, "--prune", "--no-lint") == 0
+    assert loom.writes() == ["memory.set", "memory.set"]
+    assert ("okf-sync", "-", "gone") in loom.rows
+    out = capsys.readouterr()
+    assert "not pruning this run" in out.err and "prune skipped" in out.out
 
 
 def test_prune_never_reaches_another_writers_row_through_the_delete_fallback(

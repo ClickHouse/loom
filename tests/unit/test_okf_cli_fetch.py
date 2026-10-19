@@ -37,6 +37,7 @@ class _FakeClient:
                 ],
                 "truncated": False,
                 "total": 2,
+                "namespace_version": "7",
             }
         if op == "memory.bulk_get":
             return {
@@ -113,10 +114,12 @@ async def test_export_keeps_superseded_rows_and_pages_edges() -> None:
 
 class _ShiftingClient:
     """Pages of one row. The first page's row leaves the namespace before the second
-    page is read on the first `shifts` listings, so that listing skips a live row."""
+    page is read on the first `shifts` listings, so that listing skips a live row. With
+    `restore`, a row restored below the offset keeps the total the same."""
 
-    def __init__(self, shifts: int) -> None:
+    def __init__(self, shifts: int, *, restore: bool = False) -> None:
         self.shifts = shifts
+        self.restore = restore
         self.listings = 0
 
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -125,9 +128,12 @@ class _ShiftingClient:
         assert op == "memory.list"
         if body["offset"] == 0:
             self.listings += 1
-        keys = ["a", "b", "c"]
+        keys, version = ["a", "b", "c"], "1"
         if body["offset"] > 0 and self.listings <= self.shifts:
-            keys = ["b", "c"]  # "a" was deleted: "b" moved up to offset 0 and is skipped
+            # "a" was deleted: "b" moved up to offset 0 and is skipped
+            keys, version = ["b", "c"], "2"
+            if self.restore:
+                keys, version = ["b", "c", "r"], "3"  # "r" restored at its old place
         page = keys[body["offset"] : body["offset"] + 1]
         return {
             "entries": [
@@ -135,6 +141,7 @@ class _ShiftingClient:
             ],
             "truncated": body["offset"] + 1 < len(keys),
             "total": len(keys),
+            "namespace_version": version,
         }
 
 
@@ -153,3 +160,12 @@ async def test_a_namespace_that_keeps_shifting_is_not_called_complete() -> None:
     rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
     assert not whole and client.listings == cli_okf._LIST_ATTEMPTS
     assert [r["memory_key"] for r in rows] == ["a", "c"]
+
+
+@pytest.mark.asyncio
+async def test_a_delete_and_a_restore_mid_listing_are_not_called_complete() -> None:
+    # The skipped row and the restored one cancel out in the count; the version does not.
+    client = _ShiftingClient(shifts=99, restore=True)
+    rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    assert [r["memory_key"] for r in rows] == ["a", "c", "r"]
+    assert not whole

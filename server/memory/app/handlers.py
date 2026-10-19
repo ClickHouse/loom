@@ -19,7 +19,6 @@ from server.auth.context import current_auth
 from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
-from server.core.errors import ValidationError
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_narrowed, request_scope
@@ -591,10 +590,6 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
 async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     if input.if_version is None:
         return await _memory_delete(input)
-    if input.agent == "*":
-        # The wildcard read answers any agent's row of the key; a version check is
-        # ownership only under one identity.
-        raise ValidationError("memory.delete: if_version needs a concrete agent, not '*'")
     # The check and the tombstone are one step, as memory.set's if_match_sha256 is: a
     # conditional write to the key waits for the lease instead of landing between them.
     async with key_write_lock.key_write_locks.hold(

@@ -42,33 +42,34 @@ LOOM_API_KEY="$PUBLIC_WRITER" loom import-okf /tmp/bundle --server-url "$PUBLIC_
 The last line reports the counts:
 `500 rows from the bundle into acme/shared-lessons: 0 written, 500 unchanged, 0 failed …,
 0 pruned`.
-Exit 1 means the target could not be read or a write, link, delete or evidence batch
-failed; exit 2 means the import refused before any request: a lint finding, a prune
+Exit 1 means the target could not be read or a write, link, delete, evidence batch or
+`--verify` failed; exit 2 means the import refused before any request: a lint finding, a prune
 guard, a path that is not a directory, or a missing `--agent`, token or org.
 
 ## Guards
 
-- `--prune` refuses a bundle with no concepts, a bundle whose `index.md` does not carry
-  `loom.complete: true` (export writes it only when it read every row: not after
-  `--limit`, not from an older release, and not when the source kept changing while it
-  paged), and one whose concept files do not hash to
-  the `loom.corpus_digest` the export wrote into `index.md`. A partial or edited bundle
-  never drives deletes, and neither does one exported into a directory that held an
-  older bundle.
+- `--prune` refuses a bundle with no concepts, and one whose concept files do not hash to
+  the `loom.corpus_digest` the export wrote into `index.md`: an edited bundle, or one
+  exported into a directory that held an older bundle, never drives deletes. A bundle
+  whose `index.md` does not carry `loom.complete: true` (export writes it only when it
+  read every row: not after `--limit`, not from an older release, and not when the source
+  kept changing while it paged) is written but not pruned, and the last line says so.
 - The export carries the source's superseded and duplicate rows as `status: deprecated`,
   so a key the source folds into another stays in the copy instead of being pruned.
-- Export pages the source by offset, so a row leaving the source mid-listing shifts the
-  pages and skips a live row. Export checks that the rows it read add up to the total the
-  first and the last page reported, lists again up to three times when they do not, and
-  otherwise leaves `loom.complete` off: that run's import with `--prune` refuses and the
-  next run tries again.
+- Export pages the source by offset, so a write to the source mid-listing can shift the
+  pages and skip a live row. Export calls a listing whole only when the first and the last
+  page carry the same `namespace_version` (every write, delete and restore moves it) and
+  the rows it read add up to their total; it lists again up to three times, and otherwise
+  leaves `loom.complete` off, so that run copies without pruning and a later, quieter run
+  prunes.
 - Before each delete it reads the row under its own identity again, and goes on only if
   that row is under its `--agent`, was written by its own token (the agent name alone is
-  the caller's choice) and carries no `memory.lock`: a locked copy is counted as kept.
-  The delete passes `memory.delete`'s `if_version`, which the server checks against a
-  strong read under that exact identity while it holds the key's write lock, the lock a
-  conditional `memory.set` takes: a row rewritten since prune's read is kept, and the
-  delete does not fall back to another agent's row.
+  the caller's choice) and carries no `memory.lock`: a locked copy is counted as kept. The
+  delete passes `memory.delete`'s `if_version`, which the server checks against a strong
+  read under that exact identity: a row rewritten before that check is kept, and the
+  delete does not fall back to another agent's row. The server holds the key's write lock
+  across the check and the tombstone, the lock a conditional `memory.set` takes, so a
+  conditional write cannot land between them; a plain `memory.set` takes no lock.
 - The target server must have `memory.delete`'s `if_version`. Prune reads the target's
   `ops.capabilities` first and deletes nothing when the field is missing. During a
   rolling upgrade a delete can still reach a replica on the older build, which ignores
