@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
-import { installApi, LOADED_ROW } from "./fixtures";
+import { installApi, LOADED_ROW, MIN_TARGET_PX } from "./fixtures";
 
 // The Runs ledger: grouped by session every table keeps its column header, and a run's
 // replay opens clean.
@@ -179,8 +179,7 @@ test.describe("a phone with a touch pointer", () => {
       const control = page.getByRole("button", { name, exact: true });
       const box = await control.boundingBox();
       expect(box, name).not.toBeNull();
-      // Within 0.01: layout can land a 44 px control at 43.99998 px.
-      expect(box?.height ?? 0, name).toBeGreaterThanOrEqual(44 - 0.01);
+      expect(box?.height ?? 0, name).toBeGreaterThanOrEqual(MIN_TARGET_PX);
       expect(box?.x, name).toBeGreaterThanOrEqual(0);
       expect((box?.x ?? 0) + (box?.width ?? 0), name).toBeLessThanOrEqual(375);
       // Its value is whole ("Every status"), never cut to "Every s…".

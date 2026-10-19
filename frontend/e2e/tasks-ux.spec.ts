@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { installApi } from "./fixtures";
+import { installApi, MIN_TARGET_PX } from "./fixtures";
 import { violations } from "./axe";
 
 // The Tasks page as a person works it, at desktop and phone width: the inbox is a rail or
@@ -119,20 +119,14 @@ async function focusRing(page: Page): Promise<{ visible: boolean; offset: string
   });
 }
 
-// A lane and the rail clip their overflow, so a row's, a card's and an inbox's ring is drawn
-// inside the box.
-test("a task row, a board card and an inbox take an inset focus ring", async ({ page }) => {
+// A lane clips its overflow and inbox items stack flush, so a row's and an inbox's ring is
+// drawn inside the box.
+test("a task row and an inbox take an inset focus ring", async ({ page }) => {
   await open(page, 1400);
   await page.getByRole("row", { name: TRIAGE }).focus();
   expect(await focusRing(page), "a row").toEqual({ visible: true, offset: "-2px" });
   await page.getByRole("navigation", { name: "Inboxes" }).getByRole("button").first().focus();
   expect(await focusRing(page), "an inbox").toEqual({ visible: true, offset: "-2px" });
-  await page.getByRole("button", { name: "Board", exact: true }).click();
-  // A key first: after the Board click a scripted focus would not show the keyboard ring.
-  await page.keyboard.press("Tab");
-  const card = page.getByRole("region", { name: /^To do/ }).getByRole("button", { name: new RegExp(TODO) });
-  await card.focus();
-  expect(await focusRing(page), "a card").toEqual({ visible: true, offset: "-2px" });
 });
 
 // On a phone the first task starts within the list pages' chrome budget (y ≤ 360 at
@@ -149,8 +143,7 @@ test.describe("a phone with a touch pointer", () => {
     for (const name of ["Inbox", "Filters"]) {
       const box = await page.getByRole("button", { name, exact: true }).boundingBox();
       if (!box) throw new Error(`${name} has no box`);
-      // Within 0.01: layout can land a 44 px control at 43.99998 px.
-      expect(box.height, `${name} is 44 px tall`).toBeGreaterThanOrEqual(44 - 0.01);
+      expect(box.height, `${name} is 44 px tall`).toBeGreaterThanOrEqual(MIN_TARGET_PX);
       expect(box.x, `${name} starts on the screen`).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width, `${name} ends on the screen`).toBeLessThanOrEqual(375);
     }

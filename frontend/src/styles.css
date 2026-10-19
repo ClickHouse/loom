@@ -590,11 +590,11 @@ textarea[aria-invalid="true"]:focus-visible {
   outline-offset: -2px;
 }
 /* Unlayered, as the list-row ring below: in the components layer these would lose to the
-   unlayered *:focus-visible ring. Inset: the Explorer outline tree's scroll box, a task lane
-   (.tq-group) and the task rail clip their overflow, which would cut an outset ring. */
+   unlayered *:focus-visible ring. Inset: the Explorer outline tree's scroll box and a task
+   lane (.tq-group) clip their overflow, and inbox items stack flush, where an outset ring
+   would cover the next one. */
 .explorer-outline [role="treeitem"]:focus-visible,
 .tq-row:focus-visible,
-.tq-card:focus-visible,
 .tq-inbox:focus-visible {
   outline-offset: -2px;
 }

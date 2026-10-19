@@ -81,11 +81,20 @@ export function parseChTime(s: string | null | undefined): Date | null {
 }
 
 /** The whole days left of the 14-day grace window for a memory deleted at `tombstonedAt`, a
- *  ClickHouse time and so UTC; null for no time. */
-export function daysLeftToRestore(tombstonedAt: string | null | undefined, now: number = Date.now()): number | null {
+ *  ClickHouse time and so UTC; null for no time or one that does not parse. */
+export function daysLeftToRestore(tombstonedAt: string | null | undefined, now = Date.now()): number | null {
   const deleted = parseChTime(tombstonedAt);
   if (!deleted) return null;
-  return Math.max(0, 14 - Math.floor((now - deleted.getTime()) / (24 * 3600 * 1000)));
+  // A deletion stamped a moment ahead of this browser's clock is still day one.
+  const age = Math.max(0, now - deleted.getTime());
+  return Math.max(0, 14 - Math.floor(age / (24 * 3600 * 1000)));
+}
+
+/** "13 days left to restore", or "in grace window" when the time is unknown. */
+export function restoreText(tombstonedAt: string | null | undefined): string {
+  const daysLeft = daysLeftToRestore(tombstonedAt);
+  if (daysLeft === null) return "in grace window";
+  return `${daysLeft} day${daysLeft === 1 ? "" : "s"} left to restore`;
 }
 
 /** A list row's time (one rule for every list): "just now", "12m ago", "3h ago", "3d ago"

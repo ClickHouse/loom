@@ -10,6 +10,7 @@ import {
   trackerSourcesFixture,
   TRACKER_PRIVATE_NS,
   TRACKER_PUBLIC_NS,
+  MIN_TARGET_PX,
 } from "./fixtures";
 
 // A repository is one list row with two facets: `code.repos` and `tracker.source.list`
@@ -290,8 +291,7 @@ test.describe("phone 400, coarse pointer", () => {
     // Folded, the row is short, and the disclosure itself is a 44 px target.
     expect(row.height).toBeLessThan(200);
     const toggle = c.getByRole("button", { name: CODE_REPO, exact: true });
-    // Within 0.01 here and below: layout can land a 44 px control at 43.99998 px.
-    expect((await boxOf(toggle)).height).toBeGreaterThanOrEqual(44 - 0.01);
+    expect((await boxOf(toggle)).height).toBeGreaterThanOrEqual(MIN_TARGET_PX);
     await shot(page, "17-repositories-phone-folded");
     await unfold(c, CODE_REPO);
     await noOverflow(c);
@@ -308,8 +308,8 @@ test.describe("phone 400, coarse pointer", () => {
       if (!(await b.isVisible())) continue;
       const box = await boxOf(b);
       const name = (await b.getAttribute("aria-label")) ?? (await b.innerText());
-      expect(box.height, `${name} height`).toBeGreaterThanOrEqual(44 - 0.01);
-      expect(box.width, `${name} width`).toBeGreaterThanOrEqual(44 - 0.01);
+      expect(box.height, `${name} height`).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+      expect(box.width, `${name} width`).toBeGreaterThanOrEqual(MIN_TARGET_PX);
     }
     await expect(c.getByText("Up to date", { exact: true }).first()).toBeVisible();
     await shot(page, "17-repositories-phone");

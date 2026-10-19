@@ -24,7 +24,7 @@ import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowSkeleton } from "../components/Skeleton";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { dayLabel, daysLeftToRestore, displayAgent, SENTINEL_AGENTS } from "../lib/format";
+import { dayLabel, restoreText, displayAgent, SENTINEL_AGENTS } from "../lib/format";
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
 import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs, useMemoriesSection } from "../components/MemoryTabs";
@@ -823,11 +823,7 @@ function MemoryList() {
                     {isTombstoned && (
                       <div className="flex items-center justify-between mt-1 py-1 text-xs text-text-muted">
                         <span>
-                          Deleted <ListTime iso={e.tombstoned_at} quiet /> ·{(() => {
-                            const daysLeft = daysLeftToRestore(e.tombstoned_at);
-                            if (daysLeft === null) return " in grace window";
-                            return ` ${daysLeft} day${daysLeft === 1 ? "" : "s"} left to restore`;
-                          })()}
+                          Deleted <ListTime iso={e.tombstoned_at} quiet /> · {restoreText(e.tombstoned_at)}
                         </span>
                         <Button
                           type="empty"

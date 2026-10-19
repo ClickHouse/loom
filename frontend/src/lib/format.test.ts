@@ -240,5 +240,7 @@ describe("daysLeftToRestore", () => {
     expect(daysLeftToRestore("2026-09-01 00:00:00", now)).toBe(0);
     expect(daysLeftToRestore(null, now)).toBeNull();
     expect(daysLeftToRestore("not a time", now)).toBeNull();
+    // A deletion stamped a second ahead of this clock is still day one, never 15.
+    expect(daysLeftToRestore("2026-10-18 12:00:01", Date.parse("2026-10-18T12:00:00Z"))).toBe(14);
   });
 });

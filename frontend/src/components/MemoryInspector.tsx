@@ -1836,13 +1836,7 @@ function EntitySummary({
   // This memory mentions it too.
   const total = mentions && mentions !== "failed" ? mentions.keys.length + 1 : 0;
   return (
-    <div
-      ref={rootRef}
-      tabIndex={-1}
-      className="space-y-3 text-sm"
-      data-entity-summary=""
-      data-testid="entity-popover"
-    >
+    <div ref={rootRef} tabIndex={-1} className="space-y-3 text-sm" data-entity-summary="" data-testid="entity-popover">
       <div>
         <div className="font-medium text-text break-words">{entity}</div>
         <div className="text-xs text-text-muted">Entity</div>

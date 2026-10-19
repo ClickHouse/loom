@@ -60,6 +60,9 @@ export interface TraverseFixture {
 // A list row the read drew, not the loading placeholder (RowSkeleton is a `.list-row` too).
 export const LOADED_ROW = "main .list-row:not(.list-row-skeleton)";
 
+/** A 44 px target's least measured size: layout can land a 44 px control at 43.99998 px. */
+export const MIN_TARGET_PX = 44 - 0.01;
+
 /** A walk small enough to expand — five hop-1 nodes, no hop 2 — so `facts.related` has
  *  room under the 200-node cap. */
 export const SMALL_SEED = "gamma";
