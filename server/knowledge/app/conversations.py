@@ -708,7 +708,8 @@ def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[list[int],
 
 def _compacted_from(row: Mapping[str, Any]) -> list[str]:
     """The msg_ids a compaction summary replaced, from its metadata.compacted_from
-    list; empty for any other turn."""
+    list; empty for any other turn. A summary is a system turn with a non-empty list,
+    the same test `_PEER_COPIES` applies in SQL."""
     if row.get("role") != "system":
         return []
     try:
@@ -717,12 +718,6 @@ def _compacted_from(row: Mapping[str, Any]) -> list[str]:
         return []
     ids = meta.get("compacted_from") if isinstance(meta, dict) else None
     return [str(i) for i in ids] if isinstance(ids, list) else []
-
-
-def _is_compaction_summary(row: Mapping[str, Any]) -> bool:
-    """A system turn conversation.compact wrote: its metadata names what it replaced,
-    the same test `_PEER_COPIES` applies in SQL (a non-empty `compacted_from` list)."""
-    return bool(_compacted_from(row))
 
 
 @staged("compact")
@@ -746,18 +741,19 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         input.org, input.namespace, input.agent, input.thread_id
     )
     # A run that failed after tombstoning its turns leaves their embeddings to a retry,
-    # whose window no longer holds those turns: the turns a live summary replaced and
-    # that are tombstoned get an embeddings pass first. A replaced turn still live (a
-    # run that failed before the messages mutation) keeps its embedding.
+    # whose window no longer holds those turns: the turns live summaries name that are
+    # not live for this agent get an embeddings pass first. A replaced turn still live
+    # (a run that failed before the messages mutation) keeps its embedding, and a row a
+    # peer still holds survives.
     live_ids = {str(r["msg_id"]) for r in rows}
     replaced_earlier = sorted({mid for r in rows for mid in _compacted_from(r)} - live_ids)
     if replaced_earlier:
-        await conversation_repo.tombstone_compacted_embeddings(
+        await conversation_repo.tombstone_embeddings(
             input.org,
             input.namespace,
             input.agent,
             input.thread_id,
-            replaced_earlier,
+            msg_ids=replaced_earlier,
             when=datetime.now(UTC).replace(tzinfo=None),
         )
 
@@ -770,7 +766,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
 
     candidates = rows[: -input.keep_recent]
     # An earlier summary in the window is folded in, not compacted.
-    folded = [_is_compaction_summary(r) for r in candidates]
+    folded = [bool(_compacted_from(r)) for r in candidates]
     # A re-run: an earlier summary sits where the turns it replaced began, so it is
     # the oldest live row and falls among the candidates. A window of nothing but
     # earlier summaries has no new turn to compact.

@@ -546,4 +546,4 @@ def test_the_compaction_window(
 )
 def test_only_a_compacted_from_list_marks_a_summary(metadata: str, summary: bool) -> None:
     """The same test `_PEER_COPIES` applies in SQL: a non-empty `compacted_from` list."""
-    assert ch_mod._is_compaction_summary({"role": "system", "metadata": metadata}) is summary
+    assert bool(ch_mod._compacted_from({"role": "system", "metadata": metadata})) is summary

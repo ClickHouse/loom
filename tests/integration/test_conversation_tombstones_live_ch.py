@@ -522,7 +522,7 @@ async def test_a_late_handoff_after_the_peer_hands_the_row_back_still_ends_tombs
     when = datetime.now(UTC).replace(tzinfo=None)
 
     async def b_first_pass() -> None:
-        await repo._tombstone_embeddings(
+        await repo.tombstone_embeddings(
             scope["org"], scope["ns"], "b", scope["tid"], msg_ids=None, when=when, ch=ch
         )
 
@@ -571,7 +571,7 @@ async def test_a_late_reconcile_to_a_removed_peer_passes_to_the_one_left(
             scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=late
         )
     else:
-        await repo._tombstone_embeddings(
+        await repo.tombstone_embeddings(
             scope["org"], scope["ns"], "a", scope["tid"], msg_ids=None, when=when, ch=late
         )
     assert await _holders(ch, scope) == [("c", True)]

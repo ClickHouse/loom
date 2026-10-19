@@ -274,7 +274,7 @@ async def test_named_turns_are_tombstoned_in_byte_bounded_slices() -> None:
         async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
             executed.append((sql, params or {}))
 
-    await repo._tombstone_embeddings(
+    await repo.tombstone_embeddings(
         "o", "n", "a", "t", msg_ids=ids, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
     )
     slices = [p["ids"] for sql, p in executed if "AS tombstoned_at" in sql]
@@ -303,7 +303,7 @@ async def test_the_tombstone_reads_with_sequential_consistency() -> None:
             seen.append(query_settings().get("select_sequential_consistency") == 1)
 
     for msg_ids in (None, ["m1"]):
-        await repo._tombstone_embeddings(
+        await repo.tombstone_embeddings(
             "o", "n", "a", "t", msg_ids=msg_ids, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
         )
     assert seen and all(seen)
@@ -326,7 +326,7 @@ async def test_a_reconcile_that_never_settles_fails_instead_of_looping() -> None
             _CH.rounds += 1
 
     with pytest.raises(OverloadedError, match="kept changing"):
-        await repo._tombstone_embeddings(
+        await repo.tombstone_embeddings(
             "o", "n", "a", "t", msg_ids=None, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
         )
     assert _CH.rounds == repo._RECONCILE_ROUNDS

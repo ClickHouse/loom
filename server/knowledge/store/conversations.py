@@ -301,7 +301,7 @@ async def tombstone_thread(
     ch: _CHClient | None = None,
 ) -> dict[str, int]:
     """Soft-delete one thread: messages + thread row + the embeddings no other agent
-    holds (see `_tombstone_embeddings`).
+    holds (see `tombstone_embeddings`).
 
     Sets `tombstoned_at = when`; read paths here filter
     `tombstoned_at IS NULL`, so rows vanish from subsequent fetch / list
@@ -320,7 +320,7 @@ async def tombstone_thread(
     counts: dict[str, int] = {}
 
     # 1. Embeddings: every turn the agent logged in the thread, a compacted one too.
-    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
+    await tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
 
     # 2. Messages.
     await ch.execute(
@@ -347,7 +347,7 @@ async def tombstone_thread(
 
     # 3. Embeddings again, for a turn appended during the delete
     # (`tombstone_embedding_if_message_gone` says why this closes the race).
-    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
+    await tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
     # One per turn (FINAL, however many embedding models hold it), earlier calls'
     # tombstones included, as the messages count is. Sequential: the tombstones are
     # inserts, which another replica may not have yet.
@@ -728,7 +728,7 @@ async def tombstone_messages(
     a retry after a failure still finds the messages live and repeats both, and again
     after the messages (`tombstone_embedding_if_message_gone`)."""
     ch = ch or _default_client()
-    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
+    await tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
     for part in param_slices(msg_ids):
         await ch.execute(
             """
@@ -750,24 +750,7 @@ async def tombstone_messages(
                 "ids": part,
             },
         )
-    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
-
-
-async def tombstone_compacted_embeddings(
-    org: str,
-    namespace: str,
-    agent: str,
-    thread_id: str,
-    msg_ids: list[str],
-    *,
-    when: datetime,
-    ch: _CHClient | None = None,
-) -> None:
-    """One embeddings pass over the turns live summaries name that are not live for
-    `agent`: it finishes an earlier compaction's last pass if it failed, and a row a
-    peer still holds survives."""
-    ch = ch or _default_client()
-    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
+    await tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
 
 
 async def tombstone_embedding_if_message_gone(
@@ -801,7 +784,7 @@ async def tombstone_embedding_if_message_gone(
             params={"org": org, "ns": namespace, "agent": agent, "tid": thread_id, "mid": msg_id},
         )
     if row and row["gone"] is not None:
-        await _tombstone_embeddings(
+        await tombstone_embeddings(
             org, namespace, agent, thread_id, msg_ids=[msg_id], when=row["gone"], ch=ch
         )
 
@@ -876,7 +859,7 @@ def _reconcile_sql(turns: str) -> str:
     )
 
 
-async def _tombstone_embeddings(
+async def tombstone_embeddings(
     org: str,
     namespace: str,
     agent: str,
@@ -884,7 +867,7 @@ async def _tombstone_embeddings(
     *,
     msg_ids: list[str] | None,
     when: datetime,
-    ch: _CHClient,
+    ch: _CHClient | None = None,
 ) -> None:
     """Tombstone the embeddings of `agent`'s turns in one thread: `msg_ids`, or every
     turn it logged there (`_THREAD_TURNS`).
@@ -893,6 +876,7 @@ async def _tombstone_embeddings(
     stays while another agent holds a live copy with the row's text, and passes to that
     copy when its own agent holds none. The reconcile copies the row with its `ts`, so
     the copy replaces it in its partition (the later insert wins a `ts` tie)."""
+    ch = ch or _default_client()
     params: dict[str, Any] = {
         "now": when,
         "org": org,
