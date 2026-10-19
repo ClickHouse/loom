@@ -73,11 +73,12 @@ _LOCK_DIR = ".credentials.lock.d"
 _LOCK_HEARTBEAT_S = 10.0
 _LOCK_SILENT_S = 2 * _LOCK_HEARTBEAT_S
 _LOCK_STALE_S = 60.0
-# What renaming a directory onto a lock that exists fails with: POSIX allows
-# no rename onto a non-empty directory, and Windows none onto any directory.
-_HELD = {errno.EEXIST, errno.ENOTEMPTY} | (
-    {errno.EPERM, errno.EACCES} if sys.platform == "win32" else set()
-)
+# How long a release waits for a breaker's claim to go.
+_RELEASE_WAIT_S = 2.0
+# What Windows refuses a rename with while another process has a file in the
+# directory open, as a waiter reading the owner file does for a moment.
+_BUSY = {errno.EACCES, errno.EPERM, errno.EBUSY}
+_RENAME_TRIES = 5
 
 
 def _path() -> Path:
@@ -150,25 +151,26 @@ def _lock_dir(lock: Path) -> Iterator[None]:
     another process holds it, and break it once stale."""
     owner = json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "time": time.time()})
     _sweep(lock)
-    wait = 0.01
-    while not _create(lock, owner):
-        held = _owner(lock)
-        if _stale(lock, held):
-            _break(lock, held)
-        time.sleep(wait)
-        wait = min(wait * 2, 0.2)
     stop = threading.Event()
     beat = threading.Thread(target=_heartbeat, args=(lock, owner, stop), daemon=True)
-    beat.start()
+    # From the first try: an interrupt just after the rename that took the
+    # lock, or a heartbeat that cannot start, still releases it.
     try:
+        wait = 0.01
+        while not _create(lock, owner):
+            held = _owner(lock)
+            if _stale(lock, held):
+                _break(lock, held)
+            time.sleep(wait)
+            wait = min(wait * 2, 0.2)
+        beat.start()
         yield
     finally:
         stop.set()
-        beat.join()
-        # Only our own: a lock broken as stale may be another process's by now.
-        if _owner(lock) == owner:
-            with contextlib.suppress(OSError):
-                _remove(lock)
+        if beat.ident is not None:  # started
+            beat.join()
+        with contextlib.suppress(OSError):
+            _release(lock, owner)
 
 
 def _create(lock: Path, owner: str) -> bool:
@@ -183,9 +185,14 @@ def _create(lock: Path, owner: str) -> bool:
         os.rename(tmp, lock)
         return True
     except OSError as e:
-        if e.errno not in _HELD:
-            raise
-        return False
+        # POSIX allows no rename onto a non-empty directory, and Windows none
+        # onto any directory, refused as access denied: held only while the
+        # lock is there, else denied for good.
+        if e.errno in (errno.EEXIST, errno.ENOTEMPTY):
+            return False
+        if e.errno in (errno.EACCES, errno.EPERM) and lock.exists():
+            return False
+        raise
     finally:
         shutil.rmtree(tmp, ignore_errors=True)  # gone already once renamed
 
@@ -247,16 +254,18 @@ def _running(pid: int) -> bool:
 
 def _break(lock: Path, held: str) -> None:
     """Remove the stale lock whose owner file read `held`. A claim directory
-    beside it lets one waiter at a time do it, and the owner is read again
-    under the claim, so a lock taken over meanwhile is left alone."""
+    beside it lets one waiter at a time do it, or the holder release it, and
+    the owner is read again under the claim, so a lock taken over meanwhile
+    is left alone."""
     claim = lock.with_name(f"{lock.name}.breaking")
     try:
         claim.mkdir(mode=0o700)
     except FileExistsError:
-        # Left by a waiter that died mid-break: cleared once as old as a stale lock.
+        # Left by a process that died holding it: once as old as a stale
+        # lock, renamed away for the sweep to delete.
         if _age_s(claim) > _LOCK_STALE_S:
             with contextlib.suppress(OSError):
-                claim.rmdir()
+                os.rename(claim, claim.with_name(f"{claim.name}.{secrets.token_hex(6)}.stale"))
         return
     except FileNotFoundError:
         return  # the directory holding it is gone: try again
@@ -268,7 +277,37 @@ def _break(lock: Path, held: str) -> None:
         if _owner(lock) == held:
             _remove(lock)
     except OSError as e:
+        # Busy on Windows: try again after the wait, until the lock is twice
+        # the stale age, so a lock that is never renamable still raises.
+        if e.errno in _BUSY and _age_s(lock) <= 2 * _LOCK_STALE_S:
+            return
         raise _unbreakable(lock, e) from e
+    finally:
+        with contextlib.suppress(OSError):
+            claim.rmdir()
+
+
+def _release(lock: Path, owner: str) -> None:
+    """Remove our own lock, holding the claim a breaker takes: a breaker that
+    judged the lock stale renames it under the claim, and a release between
+    its check and its rename would let a third process take the path that
+    breaker then renames away. Without the claim in time the lock is left,
+    never renamed, and broken once its heartbeat has stopped."""
+    if _owner(lock) != owner:
+        return  # broken as stale: another process's by now
+    claim = lock.with_name(f"{lock.name}.breaking")
+    deadline = time.monotonic() + _RELEASE_WAIT_S
+    while True:
+        try:
+            claim.mkdir(mode=0o700)
+            break
+        except FileExistsError:
+            if time.monotonic() > deadline:
+                return
+            time.sleep(0.02)
+    try:
+        if _owner(lock) == owner:
+            _remove(lock)
     finally:
         with contextlib.suppress(OSError):
             claim.rmdir()
@@ -285,16 +324,22 @@ def _remove(lock: Path) -> None:
     """Rename `lock` away, then delete it: the lock path is never a
     half-removed directory, empty, which a rename could replace."""
     tomb = lock.with_name(f"{lock.name}.{secrets.token_hex(6)}.stale")
-    try:
-        os.rename(lock, tomb)
-    except FileNotFoundError:
-        return  # released meanwhile
+    for attempt in range(_RENAME_TRIES):
+        try:
+            os.rename(lock, tomb)
+            break
+        except FileNotFoundError:
+            return  # released meanwhile
+        except OSError as e:
+            if e.errno not in _BUSY or attempt == _RENAME_TRIES - 1:
+                raise
+            time.sleep(0.02)  # a waiter reading the owner file closes it in a moment
     shutil.rmtree(tomb, ignore_errors=True)
 
 
 def _sweep(lock: Path) -> None:
     """Delete what a process that died taking or breaking the lock left
-    beside it: its private directory, or the lock it renamed away."""
+    beside it: its private directory, or the lock or claim it renamed away."""
     for left in lock.parent.glob(f"{lock.name}.*"):
         if left.suffix in (".tmp", ".stale") and _age_s(left) > _LOCK_STALE_S:
             shutil.rmtree(left, ignore_errors=True)

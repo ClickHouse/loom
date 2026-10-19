@@ -537,7 +537,144 @@ describe("the credentials lock", () => {
     mkdirSync(`${lockDir()}.breaking`);
     age(`${lockDir()}.breaking`, LOCK_STALE_MS + 1000);
     expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
+    // Renamed away, never removed by its path, and deleted by the next sweep.
+    expect(leftovers()).toEqual([expect.stringMatching(/^\.credentials\.lock\.d\.breaking\.[0-9a-f]{12}\.stale$/)]);
+    store("default", { expires_at: now() - 1 });
+    expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a2");
     expect(leftovers()).toEqual([]);
+  });
+
+  it("leaves a fresh claim made right after it cleared an old one", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    heldBy(1, "another-machine", LOCK_STALE_MS + 1000);
+    const claim = `${lockDir()}.breaking`;
+    mkdirSync(claim);
+    age(claim, LOCK_STALE_MS + 1000);
+    const real = fs.renameSync;
+    vi.spyOn(fs, "renameSync").mockImplementation(((from: string, to: string) => {
+      real(from, to);
+      if (from === claim) mkdirSync(claim); // another waiter's, made right after
+    }) as never);
+    try {
+      const done = accessToken(undefined, { fetch: srv.fetch });
+      await new Promise((r) => setTimeout(r, 150));
+      expect(existsSync(claim)).toBe(true);
+      expect(srv.sent).toHaveLength(0);
+      await rm(claim, { recursive: true }); // that waiter gave up
+      expect(await done).toBe("a1");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  /** Refuse `path`'s next `times` calls to `fs[call]` with `code`; answers the refusals made. */
+  function refuse(call: "renameSync" | "mkdirSync", path: () => string, times: number, code: string): string[] {
+    const refused: string[] = [];
+    const real = fs[call] as (...a: unknown[]) => unknown;
+    vi.spyOn(fs, call).mockImplementation(((p: string, ...rest: unknown[]) => {
+      if (p === path() && refused.length < times) {
+        refused.push(code);
+        throw Object.assign(new Error(code), { code });
+      }
+      return real(p, ...rest);
+    }) as never);
+    return refused;
+  }
+
+  it.each(["EACCES", "EPERM", "EBUSY"])(
+    "retries a release's rename refused with %s while a waiter reads the owner file",
+    async (code) => {
+      const srv = fakeServer();
+      store("default", { expires_at: now() - 1 });
+      let refused: string[] = [];
+      srv.onRefresh = async () => {
+        refused = refuse("renameSync", lockDir, 2, code);
+      };
+      try {
+        expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
+      } finally {
+        vi.restoreAllMocks();
+      }
+      expect(refused).toEqual([code, code]);
+      expect(existsSync(lockDir())).toBe(false);
+      expect(leftovers()).toEqual([]);
+    },
+  );
+
+  it("breaks a stale lock that is busy on a later try", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    heldBy(1, "another-machine", LOCK_STALE_MS + 1000);
+    const refused = refuse("renameSync", lockDir, 7, "EBUSY"); // more than one break retries
+    try {
+      expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(refused).toHaveLength(7);
+    expect(leftovers()).toEqual([]);
+  });
+
+  it("raises on a stale lock still busy past twice the stale age", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    heldBy(1, "another-machine", 2 * LOCK_STALE_MS + 1000);
+    refuse("renameSync", lockDir, Number.POSITIVE_INFINITY, "EBUSY");
+    try {
+      await expect(accessToken(undefined, { fetch: srv.fetch })).rejects.toThrow(
+        /is stale but cannot be broken \(EBUSY\)/,
+      );
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(existsSync(lockDir())).toBe(true);
+  });
+
+  it("raises on access denied taking a lock that is not there, never waits for it", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    const real = fs.renameSync;
+    vi.spyOn(fs, "renameSync").mockImplementation(((from: string, to: string) => {
+      if (to === lockDir()) throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      real(from, to);
+    }) as never);
+    try {
+      await expect(accessToken(undefined, { fetch: srv.fetch })).rejects.toThrow(/permission denied/);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(srv.sent).toHaveLength(0);
+  });
+
+  it("releases under a breaker's claim, waiting for it to go", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    let refused: string[] = [];
+    srv.onRefresh = async () => {
+      refused = refuse("mkdirSync", () => `${lockDir()}.breaking`, 3, "EEXIST"); // a waiter breaking it
+    };
+    try {
+      expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(refused).toHaveLength(3);
+    expect(existsSync(lockDir())).toBe(false);
+    expect(existsSync(`${lockDir()}.breaking`)).toBe(false);
+  });
+
+  it("leaves its lock when a breaker's claim does not go in time", async () => {
+    // Renaming it then could rename away a lock a third process takes after it.
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    let owner = "";
+    srv.onRefresh = async () => {
+      owner = readFileSync(join(lockDir(), "owner"), "utf8");
+      mkdirSync(`${lockDir()}.breaking`);
+    };
+    expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
+    expect(readFileSync(join(lockDir(), "owner"), "utf8")).toBe(owner);
   });
 
   it("sweeps what a process that died taking or breaking the lock left beside it", async () => {
@@ -557,18 +694,15 @@ describe("the credentials lock", () => {
   it.each([
     ["claiming it", "mkdirSync", () => `${lockDir()}.breaking`],
     ["renaming it away", "renameSync", lockDir],
-  ] as const)("raises, never spins, on a stale lock it cannot break: %s fails", async (_, call, target) => {
+  ] as const)("raises, never spins, on a stale lock it cannot break: %s fails", async (what, call, target) => {
     const srv = fakeServer();
     store("default", { expires_at: now() - 1 });
     heldBy(1, "another-machine", LOCK_STALE_MS + 1000);
-    const real = fs[call] as (...a: unknown[]) => unknown;
-    vi.spyOn(fs, call).mockImplementation(((path: string, ...rest: unknown[]) => {
-      if (path === target()) throw Object.assign(new Error("permission denied"), { code: "EACCES" });
-      return real(path, ...rest);
-    }) as never);
+    const code = what === "claiming it" ? "EACCES" : "EROFS";
+    refuse(call, target, Number.POSITIVE_INFINITY, code);
     try {
       await expect(accessToken(undefined, { fetch: srv.fetch })).rejects.toThrow(
-        /credentials lock at .* is stale but cannot be broken \(EACCES\)/,
+        new RegExp(`credentials lock at .* is stale but cannot be broken \\(${code}\\)`),
       );
     } finally {
       vi.restoreAllMocks();

@@ -54,6 +54,12 @@ const LOCK_DIR = ".credentials.lock.d";
 export const LOCK_HEARTBEAT_MS = 10_000;
 export const LOCK_SILENT_MS = 2 * LOCK_HEARTBEAT_MS;
 export const LOCK_STALE_MS = 60_000;
+// How long a release waits for a breaker's claim to go.
+const RELEASE_WAIT_MS = 2_000;
+// What Windows refuses a rename with while another process has a file in the
+// directory open, as a waiter reading the owner file does for a moment.
+const BUSY = new Set(["EACCES", "EPERM", "EBUSY"]);
+const RENAME_TRIES = 5;
 
 type FetchFn = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -258,10 +264,8 @@ async function takeLockDir(n: NodeModules): Promise<() => void> {
   const release = () => {
     clearInterval(beat);
     unhook();
-    // Only our own: a lock broken as stale may be another process's by now.
-    if (ownerOf(n, lock) !== owner) return;
     try {
-      removeLock(n, lock);
+      releaseLock(n, lock, owner);
     } catch {
       /* left for the stale age; a release never fails the refresh it ends */
     }
@@ -284,21 +288,16 @@ function createLock(n: NodeModules, lock: string, owner: string): boolean {
     n.fs.renameSync(tmp, lock);
     return true;
   } catch (e) {
-    if (!heldError(e)) throw e;
-    return false;
+    // POSIX allows no rename onto a non-empty directory, and Windows none
+    // onto any directory, refused as access denied: held only while the
+    // lock is there, else denied for good.
+    const code = errorCode(e);
+    if (code === "EEXIST" || code === "ENOTEMPTY") return false;
+    if ((code === "EACCES" || code === "EPERM") && n.fs.existsSync(lock)) return false;
+    throw e;
   } finally {
     removeQuietly(n, tmp); // gone already once renamed
   }
-}
-
-/**
- * What renaming a directory onto a lock that exists fails with: POSIX allows
- * no rename onto a non-empty directory, and Windows none onto any directory.
- */
-function heldError(e: unknown): boolean {
-  const code = errorCode(e);
-  if (code === "EEXIST" || code === "ENOTEMPTY") return true;
-  return proc()?.platform === "win32" && (code === "EPERM" || code === "EACCES");
 }
 
 function errorCode(e: unknown): string | undefined {
@@ -387,8 +386,9 @@ function running(pid: number): boolean {
 
 /**
  * Remove the stale lock whose owner file read `held`. A claim directory
- * beside it lets one waiter at a time do it, and the owner is read again
- * under the claim, so a lock taken over meanwhile is left alone.
+ * beside it lets one waiter at a time do it, or the holder release it, and
+ * the owner is read again under the claim, so a lock taken over meanwhile
+ * is left alone.
  */
 function breakLock(n: NodeModules, lock: string, held: string): void {
   const claim = `${lock}.breaking`;
@@ -396,8 +396,15 @@ function breakLock(n: NodeModules, lock: string, held: string): void {
     n.fs.mkdirSync(claim, { mode: 0o700 });
   } catch (e) {
     if (errorCode(e) === "EEXIST") {
-      // Left by a waiter that died mid-break: cleared once as old as a stale lock.
-      if (ageMs(n, claim) > LOCK_STALE_MS) rmdirQuietly(n, claim);
+      // Left by a process that died holding it: once as old as a stale
+      // lock, renamed away for the sweep to delete.
+      if (ageMs(n, claim) > LOCK_STALE_MS) {
+        try {
+          n.fs.renameSync(claim, `${claim}.${hex(n, 6)}.stale`);
+        } catch {
+          /* cleared by another waiter */
+        }
+      }
       return;
     }
     if (errorCode(e) === "ENOENT") return; // the directory holding it is gone: try again
@@ -411,10 +418,46 @@ function breakLock(n: NodeModules, lock: string, held: string): void {
     }
     if (ownerOf(n, lock) === held) removeLock(n, lock);
   } catch (e) {
+    // Busy on Windows: try again after the wait, until the lock is twice
+    // the stale age, so a lock that is never renamable still raises.
+    if (BUSY.has(errorCode(e) ?? "") && ageMs(n, lock) <= 2 * LOCK_STALE_MS) return;
     throw unbreakable(lock, e);
   } finally {
     rmdirQuietly(n, claim);
   }
+}
+
+/**
+ * Remove our own lock, holding the claim a breaker takes: a breaker that
+ * judged the lock stale renames it under the claim, and a release between
+ * its check and its rename would let a third process take the path that
+ * breaker then renames away. Without the claim in time the lock is left,
+ * never renamed, and broken once its heartbeat has stopped.
+ */
+function releaseLock(n: NodeModules, lock: string, owner: string): void {
+  if (ownerOf(n, lock) !== owner) return; // broken as stale: another process's by now
+  const claim = `${lock}.breaking`;
+  const deadline = performance.now() + RELEASE_WAIT_MS;
+  for (;;) {
+    try {
+      n.fs.mkdirSync(claim, { mode: 0o700 });
+      break;
+    } catch (e) {
+      if (errorCode(e) !== "EEXIST") throw e;
+      if (performance.now() > deadline) return;
+      sleepSync(20);
+    }
+  }
+  try {
+    if (ownerOf(n, lock) === owner) removeLock(n, lock);
+  } finally {
+    rmdirQuietly(n, claim);
+  }
+}
+
+/** Block for `ms`: a release also runs at exit, where nothing waits on a timer. */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 function unbreakable(lock: string, e: unknown): LoomError {
@@ -438,18 +481,22 @@ function rmdirQuietly(n: NodeModules, path: string): void {
  */
 function removeLock(n: NodeModules, lock: string): void {
   const tomb = `${lock}.${hex(n, 6)}.stale`;
-  try {
-    n.fs.renameSync(lock, tomb);
-  } catch (e) {
-    if (errorCode(e) === "ENOENT") return; // released meanwhile
-    throw e;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      n.fs.renameSync(lock, tomb);
+      break;
+    } catch (e) {
+      if (errorCode(e) === "ENOENT") return; // released meanwhile
+      if (!BUSY.has(errorCode(e) ?? "") || attempt === RENAME_TRIES - 1) throw e;
+      sleepSync(20); // a waiter reading the owner file closes it in a moment
+    }
   }
   removeQuietly(n, tomb);
 }
 
 /**
  * Delete what a process that died taking or breaking the lock left beside
- * it: its private directory, or the lock it renamed away.
+ * it: its private directory, or the lock or claim it renamed away.
  */
 function sweep(n: NodeModules, lock: string): void {
   const prefix = `${n.path.basename(lock)}.`;
