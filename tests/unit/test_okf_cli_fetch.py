@@ -302,26 +302,29 @@ async def test_a_limit_the_namespace_never_reached_is_listed_again_like_a_whole_
 
 @pytest.mark.asyncio
 async def test_a_repeated_row_never_counts_toward_the_limit() -> None:
-    # Three rows under --limit 3. After the first page a new row lands above "b", so the next
-    # offsets serve "b" twice before "c": the repeat must not make the listing look cut.
+    # Three rows under --limit 4, paged two at a time. After the first page a new row "n"
+    # lands at the top, so the next offset serves "b" again: the repeat must not make the
+    # listing look cut, and the moved total keeps it from being called complete.
     class _Repeating:
         async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
             if op == "memory.bulk_get":
                 return {"results": {k: {"value": k} for k in body["memory_keys"]}}
             if "known_version" in body:
                 return {"entries": [], "unchanged": False}
-            rows = ["a", "b", "c"] if body["offset"] == 0 else ["a", "b", "b", "c"]
+            first = body["offset"] == 0
+            rows = ["a", "b", "c"] if first else ["n", "a", "b", "c"]
             page = rows[body["offset"] : body["offset"] + min(2, body["limit"])]
             return {
                 "entries": [
                     {"memory_key": k, "agent": "x", "user_id": "-", "session_id": "-"} for k in page
                 ],
                 "truncated": body["offset"] + len(page) < len(rows),
-                "total": 3,
-                "namespace_version": "1",
+                "total": len(rows),
+                "namespace_version": "1" if first else "2",
             }
 
-    rows, _whole, capped = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
-        _Repeating(), "o", "ns", include_tombstoned=False, limit=3
+    rows, whole, capped = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        _Repeating(), "o", "ns", include_tombstoned=False, limit=4
     )
-    assert not capped and sorted(r["memory_key"] for r in rows) == ["a", "b", "c"]
+    assert not capped and not whole
+    assert sorted(r["memory_key"] for r in rows) == ["a", "b", "c"]
