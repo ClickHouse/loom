@@ -891,17 +891,17 @@ async def _locate_then_preview(
     return out
 
 
-async def tombstones_above(
+async def versions_above(
     org: str,
     namespace: str,
     rows: list[dict[str, Any]],
     *,
     ch: _CHClient | None = None,
-) -> dict[tuple[str, str, str, str], int]:
-    """For each row about to be inserted, the newest tombstone of its key (agent, user_id,
-    session_id, memory_key) above the row's version, when one has committed: a delete that
-    landed while the write was in flight. Read with sequential consistency, since the
-    answer feeds the write."""
+) -> dict[tuple[str, str, str, str], list[tuple[int, bool]]]:
+    """Every committed version of each row's key (agent, user_id, session_id, memory_key)
+    above the lowest version among `rows`, newest first, with whether it is a delete's
+    tombstone (a blacklist sweep's is not one). Read with sequential consistency, since
+    the answer feeds the write."""
     if not rows:
         return {}
     ch = ch or _default_client()
@@ -914,20 +914,28 @@ async def tombstones_above(
     }
     found = await ch.query_all(
         f"""
-        SELECT agent, user_id, session_id, memory_key, max(version) AS v
-        FROM loom.memory
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND (agent, user_id, session_id, memory_key)
-              IN {{keys:Array(Tuple(String, String, String, String))}}
-          AND version > {{v:UInt64}}
-          AND tombstoned_at IS NOT NULL
+        SELECT agent, user_id, session_id, memory_key,
+               arrayReverseSort(groupArray((version, deleted))) AS versions
+        FROM (
+            SELECT agent, user_id, session_id, memory_key, version,
+                   tombstoned_at IS NOT NULL
+                       AND NOT startsWith(expire_reason, 'blacklist.sweep:') AS deleted
+            FROM loom.memory
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND (agent, user_id, session_id, memory_key)
+                  IN {{keys:Array(Tuple(String, String, String, String))}}
+              AND version > {{v:UInt64}}
+        )
         GROUP BY agent, user_id, session_id, memory_key
         {_SEQUENTIAL if read_your_writes_enabled() else ""}
         """,
         params=params,
     )
     return {
-        (f["agent"], f["user_id"], f["session_id"], f["memory_key"]): int(f["v"]) for f in found
+        (f["agent"], f["user_id"], f["session_id"], f["memory_key"]): [
+            (int(v), bool(d)) for v, d in f["versions"]
+        ]
+        for f in found
     }
 
 

@@ -23,12 +23,12 @@ from tests.unit.memory_rows import projection_row
 
 @pytest.fixture(autouse=True)
 def _no_delete_in_flight(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No delete races these writes: the fence before the insert finds no tombstone."""
+    """No delete races these writes: the fence before the insert finds no later version."""
 
     async def _none(*_a: Any, **_k: Any) -> dict[Any, int]:
         return {}
 
-    monkeypatch.setattr("server.memory.store.tombstones_above", _none)
+    monkeypatch.setattr("server.memory.store.versions_above", _none)
 
 
 _NOW = datetime.now(UTC).replace(tzinfo=None)

@@ -3,45 +3,66 @@
 memory.set and memory.bulk_set draw a row's version (wall-clock nanoseconds) when the
 write begins, then embed. A delete of the key that commits during the embed draws a
 higher version, and its tombstone would hide the write that finished after it. Right
-before the insert, each row whose key has a tombstone above its version takes a new
-version, and so do its embedding rows.
+before the insert, the rows of a key a delete reached since then take new versions
+above every committed version of the key, in their own order, and so do their
+embedding rows. A blacklist sweep's tombstone is not a delete: a write it caught stays
+under it.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+from server.core.errors import PreconditionFailedError
 from server.memory.store.rows import next_version
+from server.observability import degradations
+
+log = logging.getLogger(__name__)
 
 
-async def lift_above_tombstones(
+async def lift_above_deletes(
     org: str,
     namespace: str,
     memory_rows: list[dict[str, Any]],
     embedding_rows: list[dict[str, Any]],
     *,
+    conditional: bool = False,
     ch: Any = None,
-) -> dict[int, int]:
-    """Give each memory row a version above any tombstone of its key that committed since
-    the row's version was drawn, and its embedding rows the same. Old version → new, for
-    each row lifted."""
+) -> dict[tuple[str, int], int]:
+    """New versions for the rows whose key a delete reached after their version was drawn,
+    above the key's newest committed version and in the rows' own order; their embedding
+    rows follow. (memory_key, old version) → new, for each row lifted. A `conditional`
+    write (its precondition read the row the delete removed) is refused instead."""
     import server.memory.store as memory_repo
 
-    above = await memory_repo.tombstones_above(org, namespace, memory_rows, ch=ch)
-    lifted: dict[int, int] = {}
-    if not above:
+    try:
+        committed = await memory_repo.versions_above(org, namespace, memory_rows, ch=ch)
+    except Exception as e:  # noqa: BLE001 — the fence must not fail the write it guards
+        degradations.note("write_fence", "versions_kept", e)
+        log.warning("write fence: committed versions unread, rows keep their versions: %s", e)
+        return {}
+    lifted: dict[tuple[str, int], int] = {}
+    if not committed:
         return lifted
+    by_key: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
     for row in memory_rows:
         key = (row["agent"], row["user_id"], row["session_id"], row["memory_key"])
-        tombstone = above.get(key, 0)
-        old = int(row["version"])
-        if tombstone <= old:
+        by_key.setdefault(key, []).append(row)
+    for key, rows in by_key.items():
+        lowest = min(int(r["version"]) for r in rows)
+        above = [(v, deleted) for v, deleted in committed.get(key, []) if v > lowest]
+        if not any(deleted for _, deleted in above):
             continue
-        new = max(next_version(), tombstone + 1)
-        row["version"] = new
-        for e in embedding_rows:
-            same_key = (e["agent"], e["user_id"], e["session_id"], e["memory_key"]) == key
-            if same_key and int(e["version"]) == old:
-                e["version"] = new
-        lifted[old] = new
+        if conditional:
+            raise PreconditionFailedError("the key was deleted after the precondition was read")
+        base = max(next_version(), above[0][0] + 1)
+        for i, row in enumerate(sorted(rows, key=lambda r: int(r["version"]))):
+            old, new = int(row["version"]), base + i
+            row["version"] = new
+            for vec in embedding_rows:
+                same = (vec["agent"], vec["user_id"], vec["session_id"], vec["memory_key"]) == key
+                if same and int(vec["version"]) == old:
+                    vec["version"] = new
+            lifted[(key[3], old)] = new
     return lifted

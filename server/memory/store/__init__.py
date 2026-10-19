@@ -126,7 +126,7 @@ from server.memory.store.reads import (
     memory_rows_by_identity_keys,
     namespace_version,
     overlay_usage_totals_many,
-    tombstones_above,
+    versions_above,
 )
 from server.memory.store.redaction import (
     delete_ask_precedents_by_key,
@@ -253,7 +253,7 @@ __all__ = [
     "MemoryRow",
     "mirror_status_to_embeddings",
     "live_keys",
-    "tombstones_above",
+    "versions_above",
     "namespace_version",
     "normalize_key_prefix",
     "parse_memory_value",

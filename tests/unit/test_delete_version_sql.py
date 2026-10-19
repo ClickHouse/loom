@@ -158,15 +158,145 @@ async def test_a_tombstone_older_than_the_write_leaves_its_version(ch: _Stateful
 
 
 @pytest.mark.asyncio
-async def test_a_bulk_write_in_flight_during_a_delete_is_lifted_with_its_vectors(
-    ch: _StatefulCH,
-) -> None:
-    from server.memory.app.write_fence import lift_above_tombstones
+async def test_a_conditional_set_in_flight_during_a_delete_is_refused(ch: _StatefulCH) -> None:
+    # Its precondition read the row the delete removed; landing would undo the delete.
+    from server.core.errors import PreconditionFailedError
 
-    w = await _delete_during_the_set(ch, "memory.delete_version")
+    w = await _delete_during_the_set(ch, "memory.delete")
+    w.input = w.input.model_copy(update={"if_match_sha256": "a" * 64})
+    with pytest.raises(PreconditionFailedError):
+        await set_commit._set_plain_insert(w, ch)
+    assert await _read_back(ch) is None
+
+
+@pytest.mark.asyncio
+async def test_a_blacklist_sweeps_tombstone_keeps_the_write_under_it(ch: _StatefulCH) -> None:
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    w = _in_flight_set(head + 5_000_000)
+    swept = {
+        **_row("Tuesdays", time.time_ns()),
+        "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+        "expire_reason": "blacklist.sweep:p1",
+    }
+    await ch.insert("loom.memory", [swept])
     drawn = w.version
-    other = {**_row("other key", drawn + 1), "memory_key": "unrelated"}
-    vector = {**_ID, "memory_key": _KEY, "version": drawn}
-    lifted = await lift_above_tombstones("o", "n", [w.memory_row, other], [vector], ch=ch)
-    assert list(lifted) == [drawn] and w.memory_row["version"] == lifted[drawn]
-    assert vector["version"] == lifted[drawn] and other["version"] == drawn + 1
+    await set_commit._set_plain_insert(w, ch)
+    assert w.version == drawn and await _read_back(ch) is None
+
+
+@pytest.mark.asyncio
+async def test_a_second_lifted_write_lands_above_the_first(ch: _StatefulCH) -> None:
+    # Two writes in flight when the delete landed, from a replica whose clock runs behind
+    # it: the first takes the tombstone's version + 1, the second reads it and goes above.
+    from server.memory.app.write_fence import lift_above_deletes
+
+    head = time.time_ns() + 60_000_000_000  # the deleting replica runs a minute ahead
+    await ch.insert(
+        "loom.memory",
+        [
+            {
+                **_row("Tuesdays", head),
+                "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+            }
+        ],
+    )
+    first, second = _row("one", head - 2), _row("two", head - 1)
+    await lift_above_deletes("o", "n", [first], [], ch=ch)
+    await ch.insert("loom.memory", [first])
+    await lift_above_deletes("o", "n", [second], [], ch=ch)
+    assert head < first["version"] < second["version"]
+
+
+@pytest.mark.asyncio
+async def test_a_fence_that_cannot_read_keeps_the_drawn_version() -> None:
+    from server.memory.app.write_fence import lift_above_deletes
+
+    class _Down:
+        async def query_all(self, *_a: Any, **_k: Any) -> list[Any]:
+            raise RuntimeError("timeout")
+
+    row = _row("one", 7)
+    assert await lift_above_deletes("o", "n", [row], [], ch=_Down()) == {}
+    assert row["version"] == 7
+
+
+@pytest.mark.asyncio
+async def test_a_bulk_write_in_flight_during_a_delete_lands_with_its_vectors(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.api.models_bulk import _BulkSetResult
+    from server.memory.app import bulk_set
+    from server.memory.app.bulk_rows import _BulkWriteState
+
+    async def _noop(*_a: Any, **_k: Any) -> int:
+        return 0
+
+    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_embeddings")]
+    for name in ("index_late_rows", "retire_vectors_for_keys"):
+        monkeypatch.setattr(memory_repo, name, _noop)
+    monkeypatch.setattr(bulk_set, "fence_high", _noop)
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
+
+    # Two entries of the key in one batch, drawn before the delete, in this order.
+    state = _BulkWriteState()
+    for i, value in enumerate(("Wednesdays", "Thursdays")):
+        v = head + 1_000 + i
+        state.memory_rows.append({**_row(value, v), "memory_type": "semantic"})
+        state.embedding_rows.append(
+            memory_repo.build_embedding_row(
+                **_ID,
+                memory_key=_KEY,
+                memory_type="semantic",
+                content_excerpt=value,
+                version=v,
+                embedding=[0.0] * 3072,
+                embedding_dim=3072,
+                memory_key_embedding=[0.0] * 3072,
+            )
+        )
+        state.results.append(_BulkSetResult(memory_key=_KEY, version=v))
+    await bulk_set._bulk_insert(ch, state)
+
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays"
+    assert [r.version for r in state.results] == sorted(r.version for r in state.results)
+    assert state.results[1].version == got.version
+    vectors = await ch.query_all(
+        "SELECT content_excerpt, version FROM loom.memory_embeddings FINAL WHERE tombstoned_at IS NULL"
+    )
+    assert [(v["content_excerpt"], int(v["version"])) for v in vectors] == [
+        ("Thursdays", got.version)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_embedded_set_in_flight_during_a_delete_lands_with_its_vector(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # memory.set's embedded path builds its vector from the lifted version.
+    from types import SimpleNamespace
+
+    async def _noop(*_a: Any, **_k: Any) -> int:
+        return 0
+
+    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_embeddings")]
+    monkeypatch.setattr(memory_repo, "index_late_rows", _noop)
+    monkeypatch.setattr(set_commit._cd, "schedule_settle", lambda *_a, **_k: None)
+    w = await _delete_during_the_set(ch, "memory.delete")
+    w.input = w.input.model_copy(update={"memory_type": "semantic"})
+    w.memory_row["memory_type"] = "semantic"
+    w.embedder = SimpleNamespace(dim=3072, model_name="m")
+    w.excerpt, w.embedding = "Thursdays", [0.0] * 3072
+    w.key_embedding, w.key_text = [0.0] * 3072, "deploy window"
+    verdict = SimpleNamespace(verdict="", peers=[], refined_peers=[])
+    await set_commit._set_dual_write(w, ch, None, verdict)
+
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays" and got.version == w.version
+    vectors = await ch.query_all(
+        "SELECT version FROM loom.memory_embeddings FINAL WHERE tombstoned_at IS NULL"
+    )
+    assert [int(v["version"]) for v in vectors] == [w.version]

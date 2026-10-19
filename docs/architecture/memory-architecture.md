@@ -325,11 +325,16 @@ is the one op that edits a stored version. Status flips over many rows (the usag
 A version is a wall-clock nanosecond, and `memory.set` and `memory.bulk_set` draw it
 before their slow work (the embed). A delete of the key that commits in that window draws
 a higher version, and its tombstone would hide the write that finished after it. Right
-before the insert, a row whose key has a tombstone above its version takes a new version
-above it, and so do its embedding rows (`memory/app/write_fence.py`): a write never lands
-beneath a delete that committed before it. A delete that commits after the insert wins,
-as before. `memory.delete_version` removes one version a caller read and nothing when the
-row has moved on; the key lock orders it against `if_match_sha256` writes.
+before the insert, the rows of a key a delete reached in that window take new versions
+above every committed version of the key, in their own order, and so do their embedding
+rows (`memory/app/write_fence.py`). A delete that commits after the insert wins, as
+before. A `memory.set` with `if_match_sha256` checked the row the delete removed, so it
+is refused (409) instead. A blacklist sweep's tombstone is not a delete: a write it caught
+stays under it. `memory.update` and `memory.update_by_id` revise a row and are not lifted:
+a revision that races a delete stays deleted. If the fence's read fails, the write keeps
+its version and the answer names the degradation. `memory.delete_version` removes one
+version a caller read and nothing when the row has moved on; the key lock orders it
+against `if_match_sha256` writes.
 
 Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace's
 `retention_days`, or `LOOM_MEMORY_SENSITIVE_RETENTION_DAYS` set `expires_at` and

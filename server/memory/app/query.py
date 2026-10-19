@@ -886,5 +886,5 @@ async def handle_memory_keys(input: MemoryKeysInput) -> MemoryKeysOutput:
         input.org, input.namespace, scope=request_scope(), limit=input.limit
     )
     keys = [MemoryKeyRef(**r) for r in rows[: input.limit]]
-    _record_read_exposure("memory.keys", input, [k.memory_key for k in keys])
+    _record_read_exposure("memory.keys", input, list(dict.fromkeys(k.memory_key for k in keys)))
     return MemoryKeysOutput(keys=keys, truncated=len(rows) > input.limit)
