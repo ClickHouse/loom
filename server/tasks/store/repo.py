@@ -523,7 +523,7 @@ async def lease_strays(
         params={"before": before},
     )
     tasks = await ch.query_all(
-        "SELECT toString(task_id) AS task_id, org, inbox, toString(status) AS status, fence, "
+        "SELECT toString(task_id) AS task_id, org, inbox, toString(status) AS task_status, fence, "
         "updated_at < {before:DateTime} AS settled FROM loom.tasks FINAL "
         "WHERE is_deleted = 0 AND (status IN ('todo', 'triage') "
         "OR toString(task_id) IN (SELECT task_id FROM loom.task_leases)) "
@@ -540,12 +540,14 @@ async def lease_strays(
             fence=int(t["fence"]),
         )
         for t in tasks
-        if t["settled"] and t["status"] in ("todo", "triage") and str(t["task_id"]) not in leased
+        if t["settled"]
+        and t["task_status"] in ("todo", "triage")
+        and str(t["task_id"]) not in leased
     ][: int(limit)]
     stray: list[StrayLeaseRow] = []
     for row in sorted((r for r in leases if r["settled"]), key=lambda r: str(r["task_id"])):
         task = by_id.get(str(row["task_id"]))
-        if task and task["status"] not in terminal and int(task["fence"]) == int(row["fence"]):
+        if task and task["task_status"] not in terminal and int(task["fence"]) == int(row["fence"]):
             continue
         stray.append(
             StrayLeaseRow(
@@ -553,7 +555,7 @@ async def lease_strays(
                 owner=str(row["owner"]),
                 lease_fence=int(row["fence"]),
                 found=str(task["task_id"]) if task else "",
-                status=str(task["status"]) if task else "",
+                status=str(task["task_status"]) if task else "",
                 fence=int(task["fence"]) if task else 0,
             )
         )

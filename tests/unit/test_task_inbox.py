@@ -1400,15 +1400,22 @@ async def test_the_lease_reconcile_reads_twice_whatever_the_number_of_leases() -
             "task_id": f"t{i}",
             "org": "o",
             "inbox": "q",
-            "status": "todo",
+            "task_status": "todo",
             "fence": 0,
             "settled": True,
         }
         for i in range(2500)
     ]
-    tasks[7]["status"] = "cancelled"
+    tasks[7]["task_status"] = "cancelled"
     tasks.append(
-        {"task_id": "bare", "org": "o", "inbox": "q", "status": "todo", "fence": 0, "settled": True}
+        {
+            "task_id": "bare",
+            "org": "o",
+            "inbox": "q",
+            "task_status": "todo",
+            "fence": 0,
+            "settled": True,
+        }
     )
 
     class _CH:
