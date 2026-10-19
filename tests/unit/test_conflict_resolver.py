@@ -2056,3 +2056,13 @@ async def test_a_pass_tags_its_queries_as_the_resolver(pass_env: NS, monkeypatch
     monkeypatch.setattr(worker, "set_query_tag", tags.append)
     await pass_env.run()
     assert tags == ["worker.conflict_resolver"]
+
+
+def test_the_resolver_interval_is_at_least_a_second() -> None:
+    from pydantic import ValidationError
+
+    from server.settings._memory import MemorySettings
+
+    with pytest.raises(ValidationError, match="memory_conflict_resolver_interval_seconds"):
+        MemorySettings(memory_conflict_resolver_interval_seconds=0.5)
+    assert MemorySettings().memory_conflict_resolver_interval_seconds == 10.0

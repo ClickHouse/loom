@@ -115,8 +115,8 @@ class MemorySettings(BaseModel):
     # Rows of a pass judged at once (LLM calls in flight). 1 judges them one at a time;
     # doubling it roughly doubles the rows judged a minute, up to the provider's rate limit.
     memory_conflict_resolver_concurrency: int = Field(default=8, ge=1)
-    # Seconds the resolver waits after a pass before the next one.
-    memory_conflict_resolver_interval_seconds: float = 10.0
+    # Seconds the resolver waits after a pass before the next one; at least 1.
+    memory_conflict_resolver_interval_seconds: float = Field(default=10.0, ge=1.0)
     # Entries per bulk call that get the conflict check; later entries are written unchecked
     # and counted. 0 = none are checked.
     bulk_conflict_check_max_entries: int = 200

@@ -637,7 +637,7 @@ Source: `server/settings/_memory.py`
 | `LOOM_MEMORY_CONFLICT_RESOLVER_CAP_SHARE` | `float` | `0.25` | The share of a namespace's daily LLM cost cap the conflict resolver may spend, counted over its own calls; the rest stays for the requests. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_OWED_AGE_DAYS` | `int` | `30` | Days a write stays owed a judgement: an owed row older than this is no longer judged, and stays as it was written. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY` | `int` | `8` | Rows of a pass judged at once (LLM calls in flight). 1 judges them one at a time; doubling it roughly doubles the rows judged a minute, up to the provider's rate limit. |
-| `LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS` | `float` | `10.0` | Seconds the resolver waits after a pass before the next one. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS` | `float` | `10.0` | Seconds the resolver waits after a pass before the next one; at least 1. |
 | `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` | `int` | `200` | Entries per bulk call that get the conflict check; later entries are written unchecked and counted. 0 = none are checked. |
 | `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` | `int` | `8` | Bulk-path conflict checks run at once (at least 1). |
 | `LOOM_MEMORY_WRITE_CANDIDATE_BATCH` | `int` | `6` | Facts per batched candidate lookup (conflict and value-update peers) on the write path; matches the per-fact concurrency so wall time stays flat. 0 = one statement per fact. |
