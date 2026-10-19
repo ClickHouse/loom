@@ -34,4 +34,6 @@ class KnowledgeSettings(BaseModel):
     # chunk_size overlaps. Smaller chunks mean more embed calls; 1500/1230
     # stays well under the text-embedding-3 context.
     knowledge_chunk_size: Annotated[int, LIVE] = 1500  # characters per chunk; 0 disables
-    knowledge_chunk_stride: Annotated[int, LIVE] = 1230  # stride < chunk_size produces overlap
+    # Characters between chunk starts: below chunk_size the chunks overlap; above it
+    # the step is chunk_size, so no text falls between chunks.
+    knowledge_chunk_stride: Annotated[int, LIVE] = 1230

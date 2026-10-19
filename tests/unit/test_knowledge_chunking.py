@@ -145,3 +145,4 @@ def test_a_stride_past_the_size_steps_one_window_so_no_text_is_skipped(monkeypat
     monkeypatch.setattr(settings, "knowledge_chunk_size", 40)
     monkeypatch.setattr(settings, "knowledge_chunk_stride", 55)
     assert h._chunk_text(DOC) == chunk_document(DOC, size=40, stride=40)
+    assert h._chunk_text(DOC) != chunk_document(DOC, size=40, stride=55)

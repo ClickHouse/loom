@@ -2135,7 +2135,7 @@
         "knowledge_chunk_stride": {
           "default": 1230,
           "type": "integer",
-          "description": "stride < chunk_size produces overlap"
+          "description": "Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks."
         },
         "langfuse_capture_io_level": {
           "default": "off",

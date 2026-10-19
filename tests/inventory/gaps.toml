@@ -165,7 +165,6 @@
 "setting:memory_extract_verify_timeout_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_rrf_code_shape_hi" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_rrf_code_shape_lo" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_rrf_lexical_weight_floor" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_run_complete_expire_days" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_asserted_boost_scale" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_digest_descent_k" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }

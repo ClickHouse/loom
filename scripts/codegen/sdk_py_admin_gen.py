@@ -1,5 +1,6 @@
 """Generate `sdk/python/loom/admin_routes.py` — one Python method per `/v1/admin/*`
-route — and the route table of docs/reference/http-api.md, from the routes themselves.
+route — from the routes themselves, and render the operator-route table that
+`docs_reference.py` writes into docs/reference/http-api.md.
 
 The operator routes sit outside the op registry, so `sdk_py_client_gen.py` does not
 reach them. Here each route's method, path, docstring and gate come from its router:

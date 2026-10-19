@@ -121,10 +121,9 @@ def _chunk_text(content: str) -> list[Chunk]:
     """Chunk a document at the configured size and stride. Empty content is one empty chunk."""
     from server.settings import settings
 
-    size, stride = settings.knowledge_chunk_size, settings.knowledge_chunk_stride
+    size = settings.knowledge_chunk_size
     # The two are set one at a time: a step past the window would skip text unindexed.
-    if size > 0:
-        stride = min(stride, size)
+    stride = min(settings.knowledge_chunk_stride, size)
     return chunk_document(content, size=size, stride=stride)
 
 
