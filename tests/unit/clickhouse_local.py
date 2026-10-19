@@ -10,6 +10,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from clickhouse_connect.driver.binding import format_bind_value
+
 ROOT = Path(__file__).resolve().parents[2]
 CLICKHOUSE = shutil.which("clickhouse")
 
@@ -21,35 +23,13 @@ def ddl(table: str) -> str:
     return f"CREATE TABLE loom.{table}\n" + body.split(";", 1)[0]
 
 
-def _literal(v: Any) -> str:
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, int | float):
-        return str(v)
-    if isinstance(v, list):
-        return "[" + ",".join(_literal(x) for x in v) + "]"
-    if isinstance(v, tuple):
-        return "(" + ",".join(_literal(x) for x in v) + ")"
-    text = str(v).replace("\\", "\\\\").replace("'", "\\'")
-    return f"'{text}'"
-
-
-def _param(v: Any) -> str:
-    """`v` as a `--param_<name>` value: a scalar goes in bare (escaped as TSV), a container
-    as a literal, so the server parses it with the statement's declared type."""
-    if v is None:
-        return "\\N"
-    if isinstance(v, list | tuple | bool):
-        return _literal(v)
-    return str(v).replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
-
-
 def run(setup: list[str], sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """The rows `sql` returns after the `setup` statements, in a fresh `loom` database. Its
     `{name:Type}` parameters are bound by type, as the server binds them, so a parameter
     whose type does not fit its column fails or matches what it would in production."""
     script = ";\n".join(["CREATE DATABASE loom", *setup, sql])
-    binds = [f"--param_{k}={_param(v)}" for k, v in (params or {}).items()]
+    # The server's own formatter: the server binds each value through it.
+    binds = [f"--param_{k}={format_bind_value(v)}" for k, v in (params or {}).items()]
     out = subprocess.run(
         [
             CLICKHOUSE or "clickhouse",

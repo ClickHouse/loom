@@ -85,7 +85,9 @@ async def test_short_excerpt_without_a_body_is_not_flagged(monkeypatch):
 async def test_a_high_row_is_never_a_search_body(monkeypatch):
     # The body read leaves 'high' rows out before it picks one per key: the newest row of
     # the key may be another identity's 'high' one.
-    async def fake_get_many(identity, keys, *, scope, exclude_high_sensitivity):
+    # Without the flag the fake answers the high row, so the test fails if the read stops
+    # asking (a TypeError would be swallowed by the body read's own except).
+    async def fake_get_many(identity, keys, *, scope, exclude_high_sensitivity=False):
         high = SimpleNamespace(memory_key="k1", value="vault token", sensitivity="high")
         return [] if exclude_high_sensitivity else [high]
 

@@ -34,7 +34,7 @@ async def export_memory(
     tomb_clause = "" if include_tombstoned else " AND tombstoned_at IS NULL"
     rows = await ch.query_all(
         f"""
-        SELECT org, namespace, agent, user_id, session_id, toString(memory_id) AS memory_id,
+        SELECT org, namespace, agent, user_id, session_id, memory_id,
                memory_key, memory_type,
                value, confidence, source_trace, version, tombstoned_at, created_at,
                expires_at, sensitivity
@@ -45,7 +45,9 @@ async def export_memory(
         """,
         params={"org": org, "scope": scope_value, "lim": int(limit)},
     )
-    return cast("list[MemoryExportRow]", rows)
+    # memory_id is read bare, not aliased over its own name: a later filter on it would
+    # compare a String alias against UUIDs.
+    return cast("list[MemoryExportRow]", [{**r, "memory_id": str(r["memory_id"])} for r in rows])
 
 
 async def export_knowledge(

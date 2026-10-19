@@ -541,10 +541,10 @@ leg returns it. The other reads that could serve its value follow three rules:
   `memory.move` dry run.
 - Read by key and audited: `memory.get`, `memory.get_by_id`, `memory.bulk_get`,
   `memory.history` (one row per version it serves of a row with any `high` version, since
-  the version before a sweep labelled the row holds the same value unlabelled) and
-  `memory.evidence` each write a `memory.sensitive_read` row. The admin dumps
-  `namespace.snapshot` and `erasure.export` carry `high` rows on purpose and write one per
-  row.
+  the version before a sweep labelled the row holds the same value unlabelled; a redacted
+  version, which served no value, is not) and `memory.evidence` each write a
+  `memory.sensitive_read` row. The admin dumps `namespace.snapshot` and `erasure.export`
+  carry `high` rows on purpose and write one per row.
 
 Raw evidence (conversation chunks, session digests, the passages `bodies: "source"` serves)
 has no sensitivity column. `memory.export_evidence` leaves out the chunks and digests linked

@@ -1247,7 +1247,9 @@ async def test_the_extraction_prompt_never_shows_a_high_row(
     }
 
     async def fake_get_many(identity, keys, *, scope, exclude_high_sensitivity):
-        return [r for k, r in rows.items() if not (exclude_high_sensitivity and r.sensitivity)]
+        return [
+            r for r in rows.values() if not (exclude_high_sensitivity and r.sensitivity == "high")
+        ]
 
     monkeypatch.setattr("server.embedding.get_embedder", lambda: _Emb())
     monkeypatch.setattr("server.memory.app.retrieval.vector_search", fake_vector_search)
