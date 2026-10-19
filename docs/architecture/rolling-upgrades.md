@@ -212,6 +212,6 @@ more (N+1). It checks:
   higher schema version (rule 6).
 
 It does not check new enum values (rule 3), wire formats (rule 4), signing keys other
-than `default` (rule 5), new revocation keys (rule 10), or a process killed
+than `default` (rule 5), new revocation keys (rule 18), or a process killed
 mid-migration. It skips with exit 0 where docker is unreachable; CI passes `--require`,
 which fails there instead.

@@ -296,8 +296,8 @@ async def delete_consolidation_runs_by_user(
 async def delete_projection_failures_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
-    """A failed projection keeps its payload (the row it could not write)
-    and the keys; no TTL, no soft-delete."""
+    """A failed projection keeps its payload (the row it could not write) and the keys.
+    Resolved rows leave by the table's TTL; active and abandoned ones stay until erased."""
     return await delete_scoped(
         "loom.memory_projection_failures",
         org=org,

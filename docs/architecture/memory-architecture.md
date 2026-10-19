@@ -162,7 +162,7 @@ memory.set, memory.pin, memory.delete, Undo and erasure requests):
   and its row and vector are both served. Like an Undo, a pin answers 409 while another
   write holds the key and 503 while the lease store (Keeper) does not answer; retry it.
 - Every retirement has a `memory.auto_supersede` record and can be undone.
-- Nothing changes below confidence 0.90.
+- Nothing is retired below 0.98, flagged below 0.95, or cleared below 0.90.
 - No other user's or tenant's text reaches a prompt. A row's peers are its subject: the
   same org, namespace and `user_id`, whichever agent or session wrote them; for the
   anonymous user `-`, the same agent too.
@@ -244,17 +244,17 @@ down.
 
 The three thresholds are `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` (0.98),
 `LOOM_MEMORY_CONFLICT_RESOLVER_FLAG_CONFIDENCE` (0.95) and
-`LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` (0.90), in that order (the settings refuse
-any other): an update retires only at the first, an update or a contradiction between the
-second and the first goes to review and below the second changes nothing, and a compatible
-verdict clears at the third. On a drained chat-memory run, flags between 0.90 and 0.95
-were right 11 times in 26. An update between two rows whose writers both dated the fact (`valid_at`) on the
-same day goes to review too: the prompt shows both as that day, and two facts from one
-conversation day have no order. A peer the answer leaves out, or an answer that cannot be
-parsed, changes nothing. The default
-`auto_reinforce` retires as `newest_wins` does: in agent use nobody works the Review
-queue, so a flagged update would leave search serving the stale value, while a
-retirement is recorded, undoable, and its history stays readable with
+`LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` (0.90), in that order (the settings
+refuse any other): an update retires only at the first; a contradiction at the second or
+above, and an update between the second and the first, go to review; below the second
+neither changes anything; and a compatible verdict clears at the third. On a drained
+chat-memory run, flags between 0.90 and 0.95 were right 11 times in 26. An update
+between two rows whose writers both dated the fact (`valid_at`) on the same day goes to
+review too: the prompt shows both as that day, and two facts from one conversation day
+have no order. A peer the answer leaves out, or an answer that cannot be parsed, changes
+nothing. The default `auto_reinforce` retires as `newest_wins` does: in agent use nobody
+works the Review queue, so a flagged update would leave search serving the stale value,
+while a retirement is recorded, undoable, and its history stays readable with
 `include_superseded` and `as_of`. Under `manual_review` an update only flags, and an
 `append_only` row is never judged.
 
@@ -603,12 +603,14 @@ flips the status: it ends none of the row's edges or triples.
 
 A `high` row holds the edges of the entities on the row and nothing else of the graph.
 Its value is never mined: a `memory.set` as `high` projects only the entities its writer
-declared, and the edge rules (`EDGE_HOLDER_SQL`, `EDGE_HOLDS_VALUE_SQL`) count it as
-their holder, while mined edges fence on `HOLDS_VALUE_SQL`, which does not. A row made
-`high` (by `memory.set`, `memory.bulk_set`, a by-id update or `loom sensitivity-sweep`)
-drops its links to any other pair (a write, after its response), and those edges end
-unless another row names them; a failed drop is left to `projection_repair`. Its triples
-close as for a row that holds none.
+declared, and the edge rules (`edge_holder_sql`) count a high row as an edge's holder
+only while it names every entity of the edge, while mined edges fence on
+`HOLDS_VALUE_SQL`, which never counts it. A row made `high` (by `memory.set`,
+`memory.bulk_set`, a by-id update or `loom sensitivity-sweep`), or a high row re-set
+naming fewer entities, drops its links to any other pair (a write, after its response,
+with one intent for the whole write), and those edges end unless another row names them;
+a failed drop is left to `projection_repair`. Its triples close as for a row that holds
+none.
 
 A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`) of a row that
 existed before the write closes the facts its row held that no row holds any longer, and

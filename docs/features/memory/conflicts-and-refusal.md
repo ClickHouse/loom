@@ -133,11 +133,12 @@ leader-only worker judges each write that has a live peer of its type at cosine
   when the older row's value was asserted first (to the nanosecond) and the two facts are
   not dated the same day; otherwise the pair is flagged. Under `manual_review` it is
   flagged;
-- any other update, and a contradiction, at 0.95 or more flags both rows for review;
+- a contradiction at 0.95 or more, and an update between 0.95 and 0.98, flag both rows
+  for review;
 - a compatible pair (elaboration, restatement, related, unrelated) at 0.90 or more has its
   flag cleared;
-- anything less sure changes nothing, and so does an update or a contradiction between two sessions of the
-  anonymous user `-` (an agent's sessions are separate tasks).
+- anything less sure changes nothing, and so does an update or a contradiction between
+  two sessions of the anonymous user `-` (an agent's sessions are separate tasks).
 
 The judge sees when each note's statement holds and which session it comes from.
 
