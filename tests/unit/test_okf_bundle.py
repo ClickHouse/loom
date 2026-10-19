@@ -638,7 +638,7 @@ def test_a_very_long_key_or_type_gets_a_name_the_filesystem_takes(tmp_path: Any)
     assert _keys_read_back(tmp_path, entries) == sorted([long_a, long_b, "k"])
 
 
-@pytest.mark.parametrize("name", ["nul", "CON", "com1", "lpt9.txt"])
+@pytest.mark.parametrize("name", ["nul", "CON", "com1", "com0", "lpt9.txt"])
 def test_a_windows_device_name_is_never_a_file_or_directory(name: str) -> None:
     files = okf.plan_bundle(
         [_entry(memory_key=name), _entry(memory_key="k", memory_type=name, memory_id=_ids(2)[1])],
@@ -647,7 +647,9 @@ def test_a_windows_device_name_is_never_a_file_or_directory(name: str) -> None:
     )
     for path in files:
         for part in path.split("/"):
-            assert part.split(".", 1)[0].casefold() not in {"nul", "con", "com1", "lpt9"}, path
+            assert part.split(".", 1)[0].casefold() not in {"nul", "con", "com1", "com0", "lpt9"}, (
+                path
+            )
 
 
 def test_the_reserved_directories_cover_every_name_a_reader_skips() -> None:
@@ -668,3 +670,24 @@ def test_lint_never_warns_on_the_directory_export_chose(tmp_path: Any, memory_ty
     cli_okf._write_bundle(tmp_path, files)
     found = [f.id for f in okf_lint.lint_bundle(tmp_path).warnings]
     assert "type_directory_mismatch" not in found
+
+
+def test_keys_named_like_every_suffix_a_concept_could_take_never_stop_the_export() -> None:
+    # Someone who knows a row's id can write keys named like each of its suffixed names; each
+    # rename attempt is a fresh hash, so planning always ends and every key keeps a file.
+    import hashlib
+
+    mid = _ids(2)[1]
+    identity = f"a.b\0{mid}"
+    taken = [hashlib.sha256(identity.encode()).hexdigest()[:8]] + [
+        hashlib.sha256(f"{identity}\0{n}".encode()).hexdigest()[:8] for n in range(1, 6)
+    ]
+    entries = [_entry(memory_key="a.b", memory_id=_ids(1)[0])]
+    entries.append(_entry(memory_key="a.b", memory_id=mid, agent="other"))
+    entries += [
+        _entry(memory_key=f"a-{h}.b", memory_id=f"{n + 10:08d}-0000-0000-0000-000000000000")
+        for n, h in enumerate(taken)
+    ]
+    files = okf.plan_bundle(entries, namespace="ns", exported_at=_NOW)
+    concept_files = [p for p in files if p.startswith("semantic/") and not p.endswith("index.md")]
+    assert len(concept_files) == len(entries)

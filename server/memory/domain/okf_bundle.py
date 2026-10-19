@@ -68,8 +68,8 @@ _WINDOWS_DEVICES = frozenset(
         "prn",
         "aux",
         "nul",
-        *(f"com{i}" for i in range(1, 10)),
-        *(f"lpt{i}" for i in range(1, 10)),
+        *(f"com{i}" for i in range(10)),
+        *(f"lpt{i}" for i in range(10)),
     }
 )
 _RESERVED_NAMES = frozenset(f.casefold() for f in RESERVED_FILES)
@@ -735,8 +735,9 @@ def file_slug(text: str) -> str:
     return f"{cut}-{_short_hash(text)}"
 
 
-def _short_hash(text: str, n: int = 8) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()[:n]
+def _short_hash(text: str, attempt: int = 0) -> str:
+    salted = f"{text}\0{attempt}" if attempt else text
+    return hashlib.sha256(salted.encode()).hexdigest()[:8]
 
 
 def _is_device(name: str) -> bool:
@@ -769,10 +770,11 @@ def _dedupe_slugs(concepts: list[Concept]) -> None:
     for c in concepts:
         if c.id.casefold() in used or _is_reserved(c.id):
             identity = f"{c.memory_key}\0{c.loom.get('memory_id') or ''}"
-            n = 8
-            # a longer hash when a key is literally named like another's suffixed name
-            while (renamed := _suffixed(c.id, _short_hash(identity, n))).casefold() in used:
-                n += 4
+            # A key literally named like this one's suffixed name takes it first: hash again
+            # with a counter, so each attempt is a new name and the loop always ends.
+            attempt = 0
+            while (renamed := _suffixed(c.id, _short_hash(identity, attempt))).casefold() in used:
+                attempt += 1
             c.id = renamed
         used.add(c.id.casefold())
 
