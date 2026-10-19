@@ -119,6 +119,10 @@ async def _prior_task(prior: TaskRow, *, backfill: bool = True) -> TaskCreateOut
         await backend.ensure_row(
             str(prior["task_id"]), prior["org"], prior["inbox"], int(prior["fence"])
         )
+        # An end that dropped the lease after the read above must not get it back.
+        now = await repo.fetch_task(prior["org"], str(prior["task_id"]))
+        if now is None or now["status"] not in ("todo", "triage"):
+            await backend.delete(str(prior["task_id"]))
     return TaskCreateOutput(task=_payload(prior), created=False, seq=int(prior["version"]))
 
 

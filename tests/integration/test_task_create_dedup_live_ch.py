@@ -797,3 +797,52 @@ async def test_a_create_retry_racing_an_end_leaves_no_lease_row(
         params={"t": first.task.task_id},
     )
     assert rows == [], rows
+
+
+@pytest.mark.asyncio
+async def test_a_create_retry_landing_after_an_end_takes_its_lease_row_back(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A create retry read the task todo, then the cancel ran whole (its drops and its
+    row), then the retry wrote the lease row: its re-read sees the end and drops it."""
+    org = f"itest-late-{uuid.uuid4().hex[:8]}"
+    await inboxes.handle_inbox_register(
+        wire.InboxRegisterInput(
+            org=org,
+            namespace="private",
+            agent="admin",
+            inbox="bot",
+            owner_agent="bot",
+            accept_disclosure=["internal"],
+        )
+    )
+    body = {
+        "org": org,
+        "namespace": "public",
+        "agent": "poster",
+        "inbox": "bot",
+        "kind": "chore",
+        "title": "t",
+        "disclosure": "internal",
+        "idempotency_key": "k1",
+    }
+    first = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    backend = await repo.lease_backend()
+    real_ensure = type(backend).ensure_row
+
+    async def cancel_then_ensure(self: Any, *a: Any, **kw: Any) -> Any:
+        monkeypatch.setattr(type(backend), "ensure_row", real_ensure)
+        await transitions.handle_task_cancel(
+            wire.TaskReasonInput(
+                org=org, namespace="public", agent="poster", task_id=first.task.task_id, reason="x"
+            )
+        )
+        return await real_ensure(self, *a, **kw)
+
+    monkeypatch.setattr(type(backend), "ensure_row", cancel_then_ensure)
+    await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    rows = await ch.query_all(
+        "SELECT task_id FROM loom.task_leases WHERE task_id = {t:String}",
+        params={"t": first.task.task_id},
+    )
+    assert rows == [], rows
