@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 
+import httpx
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -13,8 +15,20 @@ sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
 
 
+async def _admin_post(mint, agent, control_plane_url: str, op: str, body: dict) -> dict:
+    """POST `op` with an admin token for the agent's org (`mint` is the
+    `mint_test_token` fixture): namespace settings and conversation.delete need one,
+    and the `agent` fixture is writer-scoped on purpose."""
+
+    tok = mint(org=agent.org, roles=["admin"], subject="test-suite-admin")
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=30.0) as c:
+        r = await c.post(f"/v1/{op}", json=body, headers={"Authorization": f"Bearer {tok}"})
+        r.raise_for_status()
+        return r.json()
+
+
 @pytest.fixture(autouse=True)
-async def _recording_on(agent, control_plane_url: str):
+async def _recording_on(agent, control_plane_url: str, mint_test_token):
     """Opt the test namespace into transcript recording.
 
     Conversation recording is opt-in per namespace and the
@@ -30,24 +44,13 @@ async def _recording_on(agent, control_plane_url: str):
     Needs its own ADMIN token — `conversation.set_logging` is a namespace
     setting, and `agent` is writer-scoped on purpose.
     """
-    import httpx
-
-    from server.auth.jwt import mint_token
-
-    tok = mint_token(
-        subject="test-suite-admin",
-        org=agent.org,
-        namespaces=["*"],
-        roles=["admin"],
-        ttl_seconds=600,
+    await _admin_post(
+        mint_test_token,
+        agent,
+        control_plane_url,
+        "conversation.set_logging",
+        {"org": agent.org, "namespace": agent.namespace, "enabled": True},
     )
-    async with httpx.AsyncClient(base_url=control_plane_url, timeout=30.0) as c:
-        r = await c.post(
-            "/v1/conversation.set_logging",
-            json={"org": agent.org, "namespace": agent.namespace, "enabled": True},
-            headers={"Authorization": f"Bearer {tok}"},
-        )
-        r.raise_for_status()
 
 
 @pytest.mark.asyncio
@@ -199,6 +202,479 @@ async def test_thread_scope_isolation(agent) -> None:
     rows_b = (await agent.conversations.list(b, limit=10))["rows"]
     assert [r["content"] for r in rows_a] == ["in thread A"]
     assert [r["content"] for r in rows_b] == ["in thread B"]
+
+
+@pytest.mark.asyncio
+async def test_a_compacted_turn_leaves_search(agent, ch_client) -> None:
+    """conversation.compact tombstones the summarised turns' embeddings with the turns,
+    so search returns only what conversation.list still shows."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    old = [uuid.uuid4().hex for _ in range(4)]
+    for i, mid in enumerate(old):
+        role = "user" if i % 2 == 0 else "assistant"
+        await agent.conversations.append(tid, mid, role, f"zebra migration {nonce} turn {i}")
+    await agent.conversations.append(tid, uuid.uuid4().hex, "user", f"zebra migration {nonce} last")
+
+    before = await agent.conversations.search(f"zebra migration {nonce}", thread_id=tid)
+    assert set(old) <= {h["msg_id"] for h in before["hits"]}
+
+    out = await agent.call(
+        "conversation.compact", {"thread_id": tid, "keep_recent": 1, "min_to_compact": 2}
+    )
+    assert out["compacted"] is True, out
+
+    after = await agent.conversations.search(f"zebra migration {nonce}", thread_id=tid)
+    rows = (await agent.conversations.list(tid, limit=50))["rows"]
+    listed = {r["msg_id"] for r in rows}
+    hit_ids = {h["msg_id"] for h in after["hits"]}
+    assert not hit_ids & set(old), after["hits"]
+    assert hit_ids <= listed
+    # The summary is embedded: the compacted content is still found through it.
+    assert out["summary_msg_id"] in hit_ids, after["hits"]
+    [summary] = [r for r in rows if r["msg_id"] == out["summary_msg_id"]]
+    stored = ch_client.query(
+        "SELECT agent, thread_id, role, content_excerpt, embedding_dim > 0, tombstoned_at, "
+        "user_id, run_id, embed_attempts, embed_last_error, embed_failed_at, "
+        "embedding_model != '', org, namespace, toDateTime(ts) "
+        "FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND msg_id = {mid:String}",
+        parameters={"org": agent.org, "ns": agent.namespace, "mid": out["summary_msg_id"]},
+    ).result_rows
+    [row] = [tuple(r) for r in stored]
+    assert row[:14] == (
+        agent.agent,
+        tid,
+        "system",
+        summary["content"][:2048],
+        True,
+        None,
+        "-",
+        "-",
+        1,
+        "",
+        None,
+        True,
+        agent.org,
+        agent.namespace,
+    )
+    # Placed where the turns it replaces began, as the summary message is.
+    assert row[14].replace(tzinfo=None) == datetime.fromisoformat(
+        rows[0]["ts"].replace("Z", "+00:00")
+    ).replace(tzinfo=None, microsecond=0)
+
+    # A re-run finds only the summary before the kept turn: nothing new to compact.
+    again = await agent.call(
+        "conversation.compact", {"thread_id": tid, "keep_recent": 1, "min_to_compact": 1}
+    )
+    assert (again["compacted"], again["reason"]) == (False, "already-compacted"), again
+
+
+@pytest.mark.asyncio
+async def test_a_turn_another_agent_logged_survives_compaction(agent) -> None:
+    """Two agents logging one turn share its embedding row: one agent's compaction
+    leaves the turn searchable while the other's copy is still live, and the row passes
+    to that agent, so the compacting agent's own search drops it."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    other = f"{agent.agent}-peer"
+    shared = uuid.uuid4().hex
+    old = [shared, *(uuid.uuid4().hex for _ in range(3))]
+    # The peer logs the turn first, so this agent's copy is the newer one, the row a
+    # FINAL read keeps. Its own idempotency key: the SDK's is derived from the thread
+    # and msg id alone.
+    await agent.call(
+        "conversation.append",
+        {
+            "thread_id": tid,
+            "msg_id": shared,
+            "role": "user",
+            "content": f"okapi rollout {nonce} turn 0",
+        },
+        agent_id=other,
+        idempotency_key=uuid.uuid4().hex,
+    )
+    for i, mid in enumerate(old):
+        role = "user" if i % 2 == 0 else "assistant"
+        await agent.conversations.append(tid, mid, role, f"okapi rollout {nonce} turn {i}")
+    await agent.conversations.append(tid, uuid.uuid4().hex, "user", f"okapi rollout {nonce} last")
+
+    out = await agent.call(
+        "conversation.compact", {"thread_id": tid, "keep_recent": 1, "min_to_compact": 2}
+    )
+    assert out["compacted"] is True, out
+
+    mine = await agent.conversations.search(f"okapi rollout {nonce}", thread_id=tid)
+    assert not {h["msg_id"] for h in mine["hits"]} & set(old), mine["hits"]
+    theirs = await agent.conversations.search(
+        f"okapi rollout {nonce}", thread_id=tid, agent_id=other
+    )
+    assert shared in {h["msg_id"] for h in theirs["hits"]}, theirs["hits"]
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_thread_leaves_search_but_another_agents_turn_stays(
+    agent, control_plane_url: str, ch_client, mint_test_token
+) -> None:
+    """conversation.delete tombstones the embeddings of every turn the agent logged in
+    the thread, one compacted earlier included, and keeps the row of a turn another
+    agent still holds."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    ids = [uuid.uuid4().hex for _ in range(4)]
+    compacted, shared = ids[0], ids[1]
+    # The peer logs the shared turn first, so this agent's copy is the row FINAL keeps.
+    await agent.call(
+        "conversation.append",
+        {"thread_id": tid, "msg_id": shared, "role": "user", "content": f"ibex {nonce} 1"},
+        agent_id=f"{agent.agent}-peer",
+        idempotency_key=uuid.uuid4().hex,
+    )
+    for i, mid in enumerate(ids):
+        role = "user" if i % 2 == 0 else "assistant"
+        await agent.conversations.append(tid, mid, role, f"ibex {nonce} {i}")
+    # A turn tombstoned while its embedding stays live.
+    ch_client.command(
+        "ALTER TABLE loom.conversations UPDATE tombstoned_at = now() "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "AND msg_id = {mid:String} SETTINGS mutations_sync = 2",
+        parameters={"org": agent.org, "ns": agent.namespace, "tid": tid, "mid": compacted},
+    )
+
+    out = await _admin_post(
+        mint_test_token,
+        agent,
+        control_plane_url,
+        "conversation.delete",
+        {
+            "org": agent.org,
+            "namespace": agent.namespace,
+            "agent": agent.agent,
+            "thread_id": tid,
+            "confirm_thread_id": tid,
+        },
+    )
+    assert out["rows_affected"]["loom.conversations"] == 4
+    assert out["rows_affected"]["loom.conversation_embeddings"] == 3  # all but the shared
+    # Every row this delete tombstoned carries the time it answered with.
+    stamped = ch_client.query(
+        "SELECT DISTINCT toDateTime(tombstoned_at) FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "AND msg_id IN {ids:Array(String)} "
+        "UNION DISTINCT SELECT DISTINCT toDateTime(tombstoned_at) FROM loom.conversations "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "AND agent = {agent:String} AND msg_id != {compacted:String}",
+        parameters={
+            "org": agent.org,
+            "ns": agent.namespace,
+            "tid": tid,
+            "agent": agent.agent,
+            "ids": [i for i in ids if i not in (shared, compacted)],
+            "compacted": compacted,
+        },
+    ).result_rows
+    when = datetime.fromisoformat(out["tombstoned_at"].replace("Z", "+00:00"))
+    assert [r[0].replace(tzinfo=None) for r in stamped] == [
+        when.replace(tzinfo=None, microsecond=0)
+    ]
+
+    hits = await agent.conversations.search(f"ibex {nonce}", thread_id=tid, agent_id="*")
+    assert {h["msg_id"] for h in hits["hits"]} == {shared}, hits["hits"]
+    # The shared row passed to the peer: this agent's own search drops it.
+    mine = await agent.conversations.search(f"ibex {nonce}", thread_id=tid)
+    assert mine["hits"] == [], mine["hits"]
+    theirs = await agent.conversations.search(
+        f"ibex {nonce}", thread_id=tid, agent_id=f"{agent.agent}-peer"
+    )
+    assert {h["msg_id"] for h in theirs["hits"]} == {shared}, theirs["hits"]
+
+
+@pytest.mark.asyncio
+async def test_the_embedding_row_keeps_the_embedded_text_and_a_hit_shows_its_start(
+    agent, ch_client
+) -> None:
+    """A long turn's embedding row keeps the 2,048 characters its vector was built
+    from, which a re-embed reads; a search hit shows the first 240."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    content = f"gazelle {nonce} " * 200  # about 3,800 characters, all on topic
+    mid = uuid.uuid4().hex
+    appended = await agent.conversations.append(tid, mid, "user", content)
+
+    stored = ch_client.query(
+        "SELECT msg_id, agent, thread_id, role, content_excerpt, embedding_dim > 0, "
+        "tombstoned_at, user_id, run_id, embed_attempts, embed_last_error, embed_failed_at, "
+        "embedding_model, toDateTime(ts) "
+        "FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND msg_id = {mid:String}",
+        parameters={"org": agent.org, "ns": agent.namespace, "mid": mid},
+    ).result_rows
+    [row] = [tuple(r) for r in stored]
+    assert row[:12] == (
+        mid,
+        agent.agent,
+        tid,
+        "user",
+        content[:2048],
+        True,
+        None,
+        "-",
+        "-",
+        1,
+        "",
+        None,
+    )
+    # The model is the live embedder's: vector_search reads only rows of that model,
+    # and the search below finds this one.
+    assert row[12]
+    # The row's time is the turn's, as append returned it.
+    assert row[13].replace(tzinfo=None) == datetime.fromisoformat(
+        appended["ts"].replace("Z", "+00:00")
+    ).replace(tzinfo=None, microsecond=0)
+
+    hits = await agent.conversations.search(f"gazelle {nonce}", thread_id=tid)
+    [hit] = [h for h in hits["hits"] if h["msg_id"] == mid]
+    assert hit["content_excerpt"] == content[:240]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_another_agent_relogged_after_compaction_is_not_counted_on_delete(
+    agent, control_plane_url: str, ch_client, mint_test_token
+) -> None:
+    """This agent's copy of a turn was compacted (message and embedding tombstoned);
+    a peer then logs the turn again, a newer live row before any merge. Deleting the
+    thread keeps that row and counts only the agent's turns whose embedding is
+    tombstoned, not the peer's live row."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    shared, own = uuid.uuid4().hex, uuid.uuid4().hex
+    await agent.conversations.append(tid, shared, "user", f"tapir {nonce} 0")
+    await agent.conversations.append(tid, own, "assistant", f"tapir {nonce} 1")
+    for table in ("loom.conversations", "loom.conversation_embeddings"):
+        ch_client.command(
+            f"ALTER TABLE {table} UPDATE tombstoned_at = now() "
+            "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+            "AND msg_id = {mid:String} SETTINGS mutations_sync = 2",
+            parameters={"org": agent.org, "ns": agent.namespace, "tid": tid, "mid": shared},
+        )
+    await agent.call(
+        "conversation.append",
+        {"thread_id": tid, "msg_id": shared, "role": "user", "content": f"tapir {nonce} 0"},
+        agent_id=f"{agent.agent}-peer",
+        idempotency_key=uuid.uuid4().hex,
+    )
+
+    out = await _admin_post(
+        mint_test_token,
+        agent,
+        control_plane_url,
+        "conversation.delete",
+        {
+            "org": agent.org,
+            "namespace": agent.namespace,
+            "agent": agent.agent,
+            "thread_id": tid,
+            "confirm_thread_id": tid,
+        },
+    )
+    assert out["rows_affected"]["loom.conversation_embeddings"] == 1  # `own` only
+
+    hits = await agent.conversations.search(f"tapir {nonce}", thread_id=tid, agent_id="*")
+    assert {h["msg_id"] for h in hits["hits"]} == {shared}, hits["hits"]
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_thread_takes_an_embedding_no_message_backs(
+    agent, control_plane_url: str, ch_client, mint_test_token
+) -> None:
+    """A turn whose message row is gone (the conversation retention TTL expires message
+    rows only) leaves its embedding row; deleting the thread tombstones it too."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    orphan = uuid.uuid4().hex
+    await agent.conversations.append(tid, uuid.uuid4().hex, "user", f"quokka {nonce} 0")
+    await agent.conversations.append(tid, orphan, "assistant", f"quokka {nonce} 1")
+    ch_client.command(
+        "ALTER TABLE loom.conversations DELETE "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "AND msg_id = {mid:String} SETTINGS mutations_sync = 2",
+        parameters={"org": agent.org, "ns": agent.namespace, "tid": tid, "mid": orphan},
+    )
+
+    out = await _admin_post(
+        mint_test_token,
+        agent,
+        control_plane_url,
+        "conversation.delete",
+        {
+            "org": agent.org,
+            "namespace": agent.namespace,
+            "agent": agent.agent,
+            "thread_id": tid,
+            "confirm_thread_id": tid,
+        },
+    )
+    assert out["rows_affected"]["loom.conversation_embeddings"] == 2
+
+    hits = await agent.conversations.search(f"quokka {nonce}", thread_id=tid, agent_id="*")
+    assert hits["hits"] == [], hits["hits"]
+
+
+@pytest.mark.asyncio
+async def test_a_delete_counts_a_turn_once_however_many_models_embed_it(
+    agent, control_plane_url: str, ch_client, mint_test_token
+) -> None:
+    """A re-embed to a new model leaves a turn with one row per model until the old
+    rows are dropped: a delete tombstones every model's row and counts the turn once."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    mids = [uuid.uuid4().hex for _ in range(2)]
+    for i, mid in enumerate(mids):
+        await agent.conversations.append(tid, mid, "user", f"okapi {nonce} {i}")
+    ch_client.command(
+        "INSERT INTO loom.conversation_embeddings "
+        "SELECT * REPLACE ('next-model' AS embedding_model) "
+        "FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String}",
+        parameters={"org": agent.org, "ns": agent.namespace, "tid": tid},
+    )
+    copies = ch_client.query(
+        "SELECT count() FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "AND embedding_model = 'next-model'",
+        parameters={"org": agent.org, "ns": agent.namespace, "tid": tid},
+    ).result_rows[0][0]
+    assert copies == 2  # the setup wrote the second model's rows
+
+    out = await _admin_post(
+        mint_test_token,
+        agent,
+        control_plane_url,
+        "conversation.delete",
+        {
+            "org": agent.org,
+            "namespace": agent.namespace,
+            "agent": agent.agent,
+            "thread_id": tid,
+            "confirm_thread_id": tid,
+        },
+    )
+    assert out["rows_affected"]["loom.conversation_embeddings"] == 2
+
+    live = ch_client.query(
+        "SELECT count() FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "AND tombstoned_at IS NULL",
+        parameters={"org": agent.org, "ns": agent.namespace, "tid": tid},
+    ).result_rows[0][0]
+    assert live == 0
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_turn_leaves_search_when_a_peer_reused_its_msg_id(
+    agent, control_plane_url: str, ch_client, mint_test_token
+) -> None:
+    """A msg_id is unique per agent only: a peer's different turn under the same id
+    shares the embedding row, which holds this agent's text when it wrote last. The
+    peer's live turn does not keep that text searchable after this agent's delete."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    mid = "1"  # a client numbering its own turns
+    await agent.call(
+        "conversation.append",
+        {"thread_id": tid, "msg_id": mid, "role": "user", "content": f"heron peer {nonce}"},
+        agent_id=f"{agent.agent}-peer",
+        idempotency_key=uuid.uuid4().hex,
+    )
+    # Its own key too: the SDK derives one from the msg_id, here a fixed "1".
+    await agent.call(
+        "conversation.append",
+        {"thread_id": tid, "msg_id": mid, "role": "user", "content": f"walrus mine {nonce}"},
+        idempotency_key=uuid.uuid4().hex,
+    )
+    # The shared row holds this agent's text, live, before the delete.
+    row = (
+        "SELECT content_excerpt, tombstoned_at IS NULL FROM loom.conversation_embeddings "
+        "FINAL WHERE org = {org:String} AND namespace = {ns:String} "
+        "AND thread_id = {tid:String} AND msg_id = {mid:String}"
+    )
+    params = {"org": agent.org, "ns": agent.namespace, "tid": tid, "mid": mid}
+    before = [tuple(r) for r in ch_client.query(row, parameters=params).result_rows]
+    assert before == [(f"walrus mine {nonce}", True)]
+
+    await _admin_post(
+        mint_test_token,
+        agent,
+        control_plane_url,
+        "conversation.delete",
+        {
+            "org": agent.org,
+            "namespace": agent.namespace,
+            "agent": agent.agent,
+            "thread_id": tid,
+            "confirm_thread_id": tid,
+        },
+    )
+    hits = await agent.conversations.search(f"walrus mine {nonce}", thread_id=tid, agent_id="*")
+    assert not [h for h in hits["hits"] if "walrus" in h["content_excerpt"]], hits["hits"]
+    after = [tuple(r) for r in ch_client.query(row, parameters=params).result_rows]
+    assert after == [(f"walrus mine {nonce}", False)]
+
+
+@pytest.mark.asyncio
+async def test_a_delete_keeps_another_models_row_a_peer_holds(
+    agent, control_plane_url: str, ch_client, mint_test_token
+) -> None:
+    """During a re-embed a turn has a row per model, and each row's text decides on its
+    own: this agent's text left under the old model goes with its delete, while the
+    current model's row, which now holds a peer's turn under the same msg_id, stays."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    mid = "1"
+    await agent.call(
+        "conversation.append",
+        {"thread_id": tid, "msg_id": mid, "role": "user", "content": f"lynx mine {nonce}"},
+        idempotency_key=uuid.uuid4().hex,
+    )
+    params = {"org": agent.org, "ns": agent.namespace, "tid": tid}
+    ch_client.command(
+        "INSERT INTO loom.conversation_embeddings "
+        "SELECT * REPLACE ('old-model' AS embedding_model) "
+        "FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String}",
+        parameters=params,
+    )
+    await agent.call(
+        "conversation.append",
+        {"thread_id": tid, "msg_id": mid, "role": "user", "content": f"marten peer {nonce}"},
+        agent_id=f"{agent.agent}-peer",
+        idempotency_key=uuid.uuid4().hex,
+    )
+
+    await _admin_post(
+        mint_test_token,
+        agent,
+        control_plane_url,
+        "conversation.delete",
+        {
+            "org": agent.org,
+            "namespace": agent.namespace,
+            "agent": agent.agent,
+            "thread_id": tid,
+            "confirm_thread_id": tid,
+        },
+    )
+    rows = ch_client.query(
+        "SELECT embedding_model = 'old-model', content_excerpt, tombstoned_at IS NULL "
+        "FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "ORDER BY embedding_model = 'old-model'",
+        parameters=params,
+    ).result_rows
+    assert [tuple(r) for r in rows] == [
+        (False, f"marten peer {nonce}", True),  # the peer's turn, current model: live
+        (True, f"lynx mine {nonce}", False),  # this agent's text, old model: tombstoned
+    ]
 
 
 @pytest.mark.asyncio

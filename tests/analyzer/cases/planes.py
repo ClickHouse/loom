@@ -466,6 +466,18 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
     await R.message_exists(ORG, NS, AGENT, "t1", "m1", ch=ch)
     await R.namespace_logging_enabled(ORG, NS, ch=ch)
     await R.tombstone_thread(ORG, NS, AGENT, "t1", when=_DT, ch=ch)
+    await R.tombstone_messages(ORG, NS, AGENT, "t1", ["m1"], when=_DT, ch=ch)
+    await R.tombstone_embedding_if_message_gone(ORG, NS, AGENT, "t1", "m1", ch=ch)
+
+
+# A tombstoned message, so the writer's re-check tombstones its embedding, and one row
+# key for the delete's embeddings pass to reconcile.
+_CONVERSATION_ROWS = rows_by_substring(
+    {
+        "max(tombstoned_at) AS gone": [{"gone": _DT}],
+        "SELECT DISTINCT embedding_model, msg_id": [{"embedding_model": "m", "msg_id": "m1"}],
+    }
+)
 
 
 async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -706,6 +718,7 @@ def cases() -> list[Case]:
             "server.knowledge.store.conversations",
             _conversations,
             {"filters": (False, True)},
+            rows=_CONVERSATION_ROWS,
         ),
         Case(
             "knowledge_repos",

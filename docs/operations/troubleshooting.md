@@ -96,7 +96,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 - **Cause:** a ClickHouse statement ran past its class deadline (504
   `BACKEND_TIMEOUT`), or every pooled ClickHouse connection of the process stayed busy
-  (503 `OVERLOADED`).
+  (503 `OVERLOADED`). From `conversation.delete` or `conversation.compact`, `OVERLOADED`
+  can also mean writes to the thread's embeddings kept landing for 8 reconcile rounds;
+  resend once the thread's writes settle.
 - **Check:** the slowest sources in `system.query_log` by `log_comment`
   ([monitoring](./monitoring.md#logs-traces-and-query-attribution)); `ops.health` for part
   pressure.

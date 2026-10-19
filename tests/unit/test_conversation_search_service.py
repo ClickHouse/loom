@@ -42,7 +42,7 @@ def _row() -> dict[str, Any]:
         "thread_id": "t-1",
         "msg_id": "m-7",
         "role": "user",
-        "content_excerpt": "deploy soon?",
+        "excerpt": "deploy soon?",
         "ts": datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
         "distance": 0.18,
     }
@@ -65,6 +65,10 @@ async def test_vector_search_default_filters_and_order() -> None:
     assert "cosineDistance(embedding, {q:Array(Float32)}) <= {maxd:Float64}" in sql
     assert params["model"] == "text-embedding-3-small"
     assert len(out) == 1 and isinstance(out[0], ConversationHit)
+    # The row stores the embedded text; a hit shows its first 240 characters.
+    assert "substringUTF8(content_excerpt, 1, {excerpt:UInt32}) AS excerpt" in sql
+    assert params["excerpt"] == 240
+    assert out[0].content_excerpt == "deploy soon?"
 
 
 @pytest.mark.asyncio
@@ -154,3 +158,34 @@ async def test_tolerates_non_datetime_ts_in_tie_break() -> None:
     )
     out = await vector_search(_q(), ch=ch)
     assert {h.msg_id for h in out} == {"a", "b"}
+
+
+@pytest.mark.asyncio
+async def test_the_substring_fallback_cuts_a_hit_as_the_vector_path_does(monkeypatch) -> None:
+    """With the embedder down, a hit is the turn's first 240 characters, no ellipsis."""
+    from server.knowledge.api.models_conversations import ConversationSearchInput
+    from server.knowledge.app import conversations as h
+    from server.knowledge.store import conversations as conversation_repo
+
+    content = "deploy " * 100  # 700 characters
+
+    async def fake_search_substring(*a, **k):
+        return [
+            conversation_repo.MessageRow(
+                org="o",
+                namespace="ns",
+                agent="a",
+                thread_id="t",
+                msg_id="m1",
+                role="user",
+                content=content,
+                ts=datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
+            )
+        ]
+
+    monkeypatch.setattr(conversation_repo, "search_substring", fake_search_substring)
+    out = await h._search_substring_fallback(
+        ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy"), ["ns"], []
+    )
+    [hit] = out.hits
+    assert hit.content_excerpt == content[:240]
