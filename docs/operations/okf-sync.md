@@ -51,10 +51,10 @@ guard, a path that is not a directory, or a missing `--agent`, token or org.
 - `--prune` refuses a bundle with no concepts, and one whose concept files do not hash to
   the `loom.corpus_digest` the export wrote into `index.md`: an edited bundle, or one
   exported into a directory that held an older bundle, never drives deletes. A bundle
-  whose `index.md` does not carry `loom.complete: true` (export writes it only when it
-  read every row: not after `--limit`, not from an older release, and not when the source
-  changed while it was read: a write while it paged, or a row deleted before its full
-  read; the export says so) is written but not pruned, and the last line says so.
+  whose `index.md` does not carry `loom.complete: true` is written but not pruned, and the
+  last line says so. Export leaves the marker off when it stopped at `--limit`, when an
+  older release wrote the bundle, and when the source changed while it was read (a write
+  while it paged, or a row deleted before its full read), and prints which.
 - The export carries the source's superseded and duplicate rows as `status: deprecated`,
   so a key the source folds into another stays in the copy instead of being pruned.
 - Export pages the source by offset, so a write to the source mid-listing can shift the
@@ -62,7 +62,7 @@ guard, a path that is not a directory, or a missing `--agent`, token or org.
   same `namespace_version` (every write, delete and restore moves it) and `total` (a page
   from a lagging replica reports its own), the unique rows it read equal that total, and a
   `memory.list` with `known_version` after the last page still answers `unchanged` (a page
-  reads the version before its rows). It lists again up to three times, and otherwise
+  reads the version before its rows). It lists up to three times in all, and otherwise
   leaves `loom.complete` off, so that run copies without pruning and a later, quieter run
   prunes.
 - Before each delete it reads the row under its own identity again, and goes on only if
@@ -108,8 +108,8 @@ A run that finds nothing to change sends only reads. For a namespace of N rows:
 
 A 501-row namespace with one writer took 14 requests in all (7 `memory.list` calls, 2
 `memory.bulk_get` and 1 edge page on the export side; 1, 2 and 1 on the import side). At
-50,000 rows it is about 750, under one a second over a 15-minute schedule; the export lists
-the source again, up to three times, when it changed while it was paged.
+50,000 rows it is about 750, under one a second over a 15-minute schedule; the export
+lists the source up to three times in all when it changed while it was paged.
 
 ## Tokens
 

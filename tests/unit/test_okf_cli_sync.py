@@ -681,13 +681,18 @@ def test_prune_never_deletes_without_a_version_to_check(tmp_path: Path, loom: _F
 
 
 def test_only_an_export_that_read_every_row_is_marked_complete(
-    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    loom: _FakeLoom,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(cli_okf, "_server_build", lambda _url: "")
     assert _run(_bundle(tmp_path / "b", [_entry("a"), _entry("c")])) == 0
     assert _export(tmp_path / "all")["complete"] is True
     assert _export(tmp_path / "under", "--limit", "10")["complete"] is True
     assert "complete" not in _export(tmp_path / "part", "--limit", "1")
+    # a complete export, and one that stopped at --limit, print no "source changed" notice
+    assert "not marked complete" not in capsys.readouterr().out
 
 
 def test_a_complete_export_carries_rows_the_source_marked_duplicate(

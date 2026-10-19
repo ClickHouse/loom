@@ -169,12 +169,12 @@ async def _fetch_namespace(
         client, org, namespace, include_tombstoned=include_tombstoned, limit=limit
     )
     # Offset pages shift when the namespace changes mid-listing, which can skip a live row;
-    # a bundle that says complete without it would let --prune delete its copy. A --limit
-    # export that stops at its limit is never complete, so it is listed once.
+    # a bundle that says complete without it would let --prune delete its copy. An export
+    # that stopped at --limit is never complete, so it is listed once.
     attempts = 1
-    while not whole and limit is None and attempts < _LIST_ATTEMPTS:
+    while not whole and not _capped(entries, limit) and attempts < _LIST_ATTEMPTS:
         entries, whole = await _list_namespace(
-            client, org, namespace, include_tombstoned=include_tombstoned
+            client, org, namespace, include_tombstoned=include_tombstoned, limit=limit
         )
         attempts += 1
     rows, gone = await _with_full_values(
@@ -183,6 +183,11 @@ async def _fetch_namespace(
     # A row deleted between the listing and its full read is left out, and the bundle is
     # not called complete: its absence says nothing about the rows around it.
     return rows, whole and not gone
+
+
+def _capped(entries: list[dict[str, Any]], limit: int | None) -> bool:
+    """Whether the listing stopped at --limit, rather than reading the whole namespace."""
+    return limit is not None and len(entries) >= limit
 
 
 async def _list_namespace(
@@ -504,7 +509,7 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
                 f"  {skipped_high} row(s) with sensitivity=high stayed in the database "
                 f"(--include-high exports them)"
             )
-        if not whole and args.limit is None:
+        if not whole and not _capped(entries, args.limit):
             print(
                 "  not marked complete: the source changed while it was read (a write while "
                 "it was listed, or a row deleted before its full read); an import with "

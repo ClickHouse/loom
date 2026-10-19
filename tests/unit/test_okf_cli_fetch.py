@@ -287,3 +287,14 @@ async def test_include_tombstoned_keeps_a_deleted_row_but_not_one_deleted_mid_ex
         _DeletedBeforeTheFullRead(), "o", "ns", include_tombstoned=True
     )
     assert sorted(r["memory_key"] for r in rows) == ["kept", "old"] and not whole
+
+
+@pytest.mark.asyncio
+async def test_a_limit_the_namespace_never_reached_is_listed_again_like_a_whole_export() -> None:
+    # --limit 100 on a three-row namespace read every row: a shifted listing is retried.
+    client = _ShiftingClient(shifts=1)
+    rows, whole = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        client, "o", "ns", include_tombstoned=False, limit=100
+    )
+    assert whole and client.listings == 2
+    assert [r["memory_key"] for r in rows] == ["a", "b", "c"]
