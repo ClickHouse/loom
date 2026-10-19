@@ -7,8 +7,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Mapping
-from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from server.auth.fanout import namespaces_to_search
 from server.core.cursors import decode_cursor as _decode_cursor
@@ -41,18 +40,21 @@ from server.knowledge.api.models_conversations import (
     _ConversationEntry,
     _ConversationHit,
 )
+from server.knowledge.app.conversation_search import (
+    HIT_EXCERPT_CHARS,
+    ConversationHit,
+    ConversationVectorQuery,
+    vector_search,
+)
+from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS
 from server.observability.genai import staged
 from server.observability.otel import traced
 from server.operations.read_projection import project_rows
 
 if TYPE_CHECKING:
-    from server.knowledge.app.conversation_search import ConversationHit
-    from server.knowledge.store.conversations import ConversationEmbeddingRow
+    from server.knowledge.store.conversations import ConversationEmbeddingRow, MessageInsert
 
 log = logging.getLogger(__name__)
-
-_EXCERPT_LIMIT = 240
-_EMBED_EXCERPT_LIMIT = 2048
 
 
 async def namespace_recording_enabled(org: str, namespace: str) -> bool:
@@ -92,11 +94,9 @@ async def handle_conversation_create(
 async def handle_conversation_append(
     input: ConversationAppendInput,
 ) -> ConversationAppendOutput:
-    """Insert one message row + one embedding row.
+    """Insert one message row, then its embedding row once the message landed.
 
-    Embedding failure does not block the append — the message still lands
-    with `embed_attempts=0` and the dead-letter columns populated, so a
-    follow-up worker can retry without losing data.
+    A failed embed still stores the turn; its embedding row records the error.
     """
     from server.knowledge.store import conversations as conversation_repo
 
@@ -157,64 +157,98 @@ async def handle_conversation_append(
             await conversation_repo.append(msg_row)
         return ConversationAppendOutput(msg_id=msg_id, ts=now)
 
-    embedder = get_embedder()
-    excerpt = input.content[:_EMBED_EXCERPT_LIMIT]
-
     async def _insert_message() -> None:
         with traced("ch.insert.conversation", role=input.role):
             await conversation_repo.append(msg_row)
 
-    async def _compute_embedding() -> tuple[list[float], int, str]:
-        """Fail-open: a failed embed still stores the turn, with the dead-letter
-        columns set so the embedding worker can retry it."""
-        try:
-            with traced(
-                "embed.compute.conversation",
-                model=embedder.model_name,
-                excerpt_len=len(excerpt),
-            ):
-                vec = await embedder.embed(excerpt)
-            return vec, embedder.dim, ""
-        except Exception as e:  # noqa: BLE001 — embed failure still stores the turn for retry
-            log.warning(
-                "conversation embed failed (org=%s ns=%s thread=%s msg=%s): %s",
-                input.org,
-                input.namespace,
-                input.thread_id,
-                msg_id,
-                e,
-            )
-            return [], 0, f"{type(e).__name__}: {e}"
-
-    # Concurrent because they are independent: neither the transcript row nor the vector
-    # depends on the other, and run sequentially the ~66 ms insert would sit in front of a
-    # ~210 ms embed. Both still complete before the response, so conversation.search keeps
+    # The message insert and the embed are independent, so they run concurrently: run
+    # sequentially the ~66 ms insert would sit in front of a ~210 ms embed. The embedding
+    # row is written only once the message row landed, so a failed insert leaves no
+    # searchable turn; both complete before the response, so conversation.search keeps
     # its read-your-write guarantee.
-    _, (embedding, embedding_dim, embed_err) = await asyncio.gather(
-        _insert_message(), _compute_embedding()
+    _, embedded = await asyncio.gather(
+        _insert_message(),
+        _embed_turn(
+            input.content,
+            org=input.org,
+            namespace=input.namespace,
+            thread_id=input.thread_id,
+            msg_id=msg_id,
+        ),
     )
+    await _store_embedding(msg_row, embedded)
+    return ConversationAppendOutput(msg_id=msg_id, ts=now)
+
+
+class EmbeddedTurn(NamedTuple):
+    """One turn's embed: the text embedded, its vector, the model that built it, and
+    the error when it failed (no vector, `dim` 0)."""
+
+    excerpt: str
+    vector: list[float]
+    dim: int
+    model: str
+    error: str
+
+
+async def _embed_turn(
+    content: str, *, org: str, namespace: str, thread_id: str, msg_id: str
+) -> EmbeddedTurn:
+    """Embed a turn's first `EMBEDDED_EXCERPT_CHARS` characters. Fail-open: a failed
+    embed returns no vector and the error."""
+    embedder = get_embedder()
+    excerpt = content[:EMBEDDED_EXCERPT_CHARS]
+    try:
+        with traced(
+            "embed.compute.conversation", model=embedder.model_name, excerpt_len=len(excerpt)
+        ):
+            vector = await embedder.embed(excerpt)
+        return EmbeddedTurn(excerpt, vector, embedder.dim, embedder.model_name, "")
+    except Exception as e:  # noqa: BLE001 — a failed embed is returned to the caller, not raised
+        log.warning(
+            "conversation embed failed (org=%s ns=%s thread=%s msg=%s): %s",
+            org,
+            namespace,
+            thread_id,
+            msg_id,
+            e,
+        )
+        return EmbeddedTurn(excerpt, [], 0, embedder.model_name, f"{type(e).__name__}: {e}")
+
+
+async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn) -> None:
+    """Store the embedding row of message `msg` from `_embed_turn`'s result, with the
+    message's identity, user and `ts`, then re-check the message
+    (`tombstone_embedding_if_message_gone`). A failed embed is stored too, with the
+    dead-letter columns recording the error."""
+    assert msg.ts is not None, "an embedded message carries its own ts"
+    from server.knowledge.store import conversations as conversation_repo
 
     embedding_row: ConversationEmbeddingRow = {
-        "org": input.org,
-        "namespace": input.namespace,
-        "agent": input.agent,
-        "thread_id": input.thread_id,
-        "msg_id": msg_id,
-        "role": input.role,
-        "content_excerpt": input.content[:_EXCERPT_LIMIT],
-        "embedding_model": embedder.model_name,
-        "embedding_dim": embedding_dim,
-        "embedding": embedding,
-        "user_id": input.user_id,
-        "run_id": input.run_id,
-        "embed_attempts": 1 if embedding_dim > 0 else 0,
-        "embed_last_error": embed_err,
-        "embed_failed_at": now if embed_err else None,
-        "ts": now,
+        "org": msg.org,
+        "namespace": msg.namespace,
+        "agent": msg.agent,
+        "thread_id": msg.thread_id,
+        "msg_id": msg.msg_id,
+        "role": msg.role,
+        # The text the vector was built from, which a re-embed starts from again;
+        # search hits show its first HIT_EXCERPT_CHARS characters.
+        "content_excerpt": embedded.excerpt,
+        "embedding_model": embedded.model,
+        "embedding_dim": embedded.dim,
+        "embedding": embedded.vector,
+        "user_id": msg.user_id,
+        "run_id": msg.run_id,
+        "embed_attempts": 1 if embedded.dim > 0 else 0,
+        "embed_last_error": embedded.error,
+        "embed_failed_at": naive_utc_now() if embedded.error else None,
+        "ts": msg.ts,
     }
-    with traced("ch.insert.conversation_embedding", embedded=embedding_dim > 0):
+    with traced("ch.insert.conversation_embedding", embedded=embedded.dim > 0):
         await conversation_repo.insert_embedding(embedding_row)
-    return ConversationAppendOutput(msg_id=msg_id, ts=now)
+    await conversation_repo.tombstone_embedding_if_message_gone(
+        msg.org, msg.namespace, msg.agent, msg.thread_id, msg.msg_id
+    )
 
 
 async def handle_conversation_set_logging(
@@ -293,15 +327,14 @@ async def handle_conversation_update(
 async def handle_conversation_delete(
     input: ConversationDeleteInput,
 ) -> ConversationDeleteOutput:
-    """Soft-delete one thread (messages + thread row + embeddings).
+    """Soft-delete one thread (messages, thread row, and embeddings no other agent holds).
 
     Tombstone, not hard-delete: rows disappear from reader queries
-    immediately because the read paths filter `tombstoned_at IS NULL`;
-    the retention TTL hard-deletes them later. For user/namespace-wide
-    erasure use `erasure.request_user_id` / `erasure.request_namespace`.
+    immediately because the read paths filter `tombstoned_at IS NULL`; the
+    retention TTL on `loom.conversations`, when set, hard-deletes the messages.
+    For user/namespace-wide erasure use `erasure.request` with `scope_type`
+    `user_id` or `namespace`.
     """
-    from datetime import UTC
-
     from fastapi import HTTPException
 
     from server.knowledge.store import conversations as conversation_repo
@@ -319,7 +352,7 @@ async def handle_conversation_delete(
             },
         )
 
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = naive_utc_now()
     counts = await conversation_repo.tombstone_thread(
         input.org,
         input.namespace,
@@ -493,17 +526,13 @@ async def handle_conversation_search(
     """
     import asyncio
 
-    from server.knowledge.app.conversation_search import (
-        ConversationVectorQuery,
-        vector_search,
-    )
     from server.settings import settings
 
     embedder = get_embedder()
     max_distance = 1.0 - settings.conversation_search_min_similarity
     query_vec: list[float] | None
     try:
-        query_vec = await embedder.embed(input.query[:_EMBED_EXCERPT_LIMIT])
+        query_vec = await embedder.embed(input.query[:EMBEDDED_EXCERPT_CHARS])
     except Exception as e:  # noqa: BLE001 — embed failure falls back to substring search
         log.warning("conversation embed query failed; falling back to substring: %s", e)
         query_vec = None
@@ -578,9 +607,7 @@ async def _search_substring_fallback(
             thread_id=r.thread_id,
             msg_id=r.msg_id,
             role=r.role,
-            content_excerpt=(
-                r.content[:_EXCERPT_LIMIT] + "…" if len(r.content) > _EXCERPT_LIMIT else r.content
-            ),
+            content_excerpt=r.content[:HIT_EXCERPT_CHARS],
             ts=r.ts,
             namespace=r.namespace,
         )
@@ -641,6 +668,9 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
 
 # The summarizer's prompt budget, in characters of `role: content` lines.
 _COMPACT_TRANSCRIPT_CHARS = 16000
+# What folded earlier summaries may add to it, all of them together: a summary is at
+# most 600 tokens, and normally only the one the last run wrote is in the window.
+_FOLDED_SUMMARY_CHARS = 4000
 
 
 def _fitting_prefix(lines: list[str], cap: int) -> int:
@@ -654,17 +684,79 @@ def _fitting_prefix(lines: list[str], cap: int) -> int:
     return len(lines)
 
 
+def _compaction_window(
+    lines: list[str], is_summary: list[bool], stale: list[bool]
+) -> tuple[list[int], str]:
+    """`(replaced, transcript)`: the indices of the leading candidate lines the summary
+    replaces, and the prompt transcript. `stale` marks summaries to replace unread;
+    `_window_of` keeps that true only while every source is replaced."""
+    # Leading summaries fold in free while each fits what is left of the allowance
+    # whole. One that does not stays live and out of the prompt (tombstoning it would
+    # drop text the summarizer never read), and the window still reaches the first
+    # new turn. A stale summary is replaced unread: its sources, replaced too, say all
+    # it says.
+    k, allowance, read, dropped = 0, _FOLDED_SUMMARY_CHARS, [], []
+    while k < len(lines) and is_summary[k]:
+        if stale[k]:
+            dropped.append(k)
+        elif len(lines[k]) <= allowance:
+            allowance -= len(lines[k])
+            read.append(k)
+        k += 1
+    fit = k + _fitting_prefix(lines[k:], _COMPACT_TRANSCRIPT_CHARS)
+    turns = "\n".join(lines[k:fit])[:_COMPACT_TRANSCRIPT_CHARS]
+    transcript = "\n".join(part for part in (*(lines[i] for i in read), turns) if part)
+    return sorted([*read, *dropped, *range(k, fit)]), transcript
+
+
+def _window_of(candidates: list[dict[str, Any]], is_summary: list[bool]) -> tuple[list[int], str]:
+    """`_compaction_window` over the candidate rows. A summary is stale when a failed run
+    could have left it: its sources are all among the candidates (so all live), and its
+    `ts` is the earliest of theirs. It stays stale only while this window replaces every
+    source; otherwise it is read like any other summary, so no source loses its cover."""
+    lines = [f"{r['role']}: {r['content']}" for r in candidates]
+    sources = [set(_compacted_from(r)) for r in candidates]
+    ts_of = {str(r["msg_id"]): r["ts"] for r in candidates}
+    stale = [
+        bool(s) and s <= ts_of.keys() and r["ts"] == min(ts_of[i] for i in s)
+        for r, s in zip(candidates, sources, strict=True)
+    ]
+    while True:
+        replaced, transcript = _compaction_window(lines, is_summary, stale)
+        covered = {str(candidates[i]["msg_id"]) for i in replaced}
+        uncovered = [i for i in replaced if stale[i] and not sources[i] <= covered]
+        if not uncovered:
+            return replaced, transcript
+        for i in uncovered:
+            stale[i] = False
+
+
+def _compacted_from(row: Mapping[str, Any]) -> list[str]:
+    """The msg_ids a compaction summary replaced, from its metadata.compacted_from
+    list; empty for any other turn. A summary is a system turn with a non-empty list,
+    the same test `_PEER_COPIES` applies in SQL."""
+    if row.get("role") != "system":
+        return []
+    try:
+        meta = json.loads(row.get("metadata") or "{}")
+    except (ValueError, TypeError):
+        return []
+    ids = meta.get("compacted_from") if isinstance(meta, dict) else None
+    return [str(i) for i in ids] if isinstance(ids, list) else []
+
+
 @staged("compact")
 async def handle_conversation_compact(input: ConversationCompactInput) -> ConversationCompactOutput:
-    """LLM-summarize messages older than `keep_recent`, tombstone the
-    originals, write the summary as one synthetic system message.
+    """LLM-summarize the oldest turns before the last `keep_recent` that fit the prompt
+    (`_compaction_window`), write the summary as one embedded system message, then
+    tombstone the originals and their embeddings.
 
-    The new summary row carries metadata.compacted_from = [msg_ids]
-    so reruns can detect the candidate window is already covered.
+    The summary row's metadata.compacted_from = [msg_ids] marks it as a summary: a
+    later run folds it into its window, and a window of nothing but summaries is
+    already compacted. A summary that cannot be embedded compacts nothing
+    (`reason="embed-failed"`).
     """
-    import json as _json
     import uuid as _uuid
-    from datetime import UTC, datetime
 
     from server.knowledge.store import conversations as conversation_repo
     from server.llm.client import get_llm_client
@@ -672,6 +764,22 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     rows = await conversation_repo.live_messages(
         input.org, input.namespace, input.agent, input.thread_id
     )
+    # A run that failed after tombstoning its turns leaves their embeddings to a retry,
+    # whose window no longer holds those turns: the turns this agent's live summaries
+    # name that are not live for it get an embeddings pass first. This pass leaves a
+    # replaced turn that is still live alone (a run failed at or before the messages
+    # mutation; the resent window replaces it), and a row a peer still holds survives.
+    live_ids = {str(r["msg_id"]) for r in rows}
+    replaced_earlier = sorted({mid for r in rows for mid in _compacted_from(r)} - live_ids)
+    if replaced_earlier:
+        await conversation_repo.tombstone_embeddings(
+            input.org,
+            input.namespace,
+            input.agent,
+            input.thread_id,
+            msg_ids=replaced_earlier,
+            when=naive_utc_now(),
+        )
 
     if len(rows) <= input.keep_recent:
         return ConversationCompactOutput(
@@ -681,41 +789,28 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         )
 
     candidates = rows[: -input.keep_recent]
-    if len(candidates) < input.min_to_compact:
+    # An earlier summary in the window is not a new turn: it counts toward neither
+    # min_to_compact nor messages_summarized.
+    is_summary = [bool(_compacted_from(r)) for r in candidates]
+    # A re-run: an earlier summary sits where the turns it replaced began, so it is
+    # the oldest live row and falls among the candidates. A window of nothing but
+    # earlier summaries has no new turn to compact.
+    if all(is_summary):
+        return ConversationCompactOutput(
+            compacted=False,
+            messages_summarized=0,
+            reason="already-compacted",
+        )
+    if is_summary.count(False) < input.min_to_compact:
         return ConversationCompactOutput(
             compacted=False,
             messages_summarized=0,
             reason="below-min-to-compact",
         )
 
-    # Idempotency guard: bail if a kept system message already covers
-    # every candidate msg_id via compacted_from (this is a re-run).
-    kept = rows[-input.keep_recent :]
+    replaced, transcript = _window_of(candidates, is_summary)
+    candidates = [candidates[i] for i in replaced]
     candidate_ids = {str(r["msg_id"]) for r in candidates}
-    for k in kept:
-        if k.get("role") != "system":
-            continue
-        try:
-            meta = _json.loads(k.get("metadata") or "{}")
-        except (ValueError, TypeError):
-            meta = {}
-        prev = set(meta.get("compacted_from") or [])
-        if prev and candidate_ids.issubset(prev):
-            return ConversationCompactOutput(
-                compacted=False,
-                messages_summarized=0,
-                reason="already-compacted",
-            )
-
-    # The summary replaces exactly the messages the summarizer read: the window
-    # is cut to the oldest messages whose lines fit the prompt, and the rest stay
-    # verbatim for the next run (a message past the cap was never summarized, so
-    # tombstoning it would drop it).
-    lines = [f"{r['role']}: {r['content']}" for r in candidates]
-    fit = _fitting_prefix(lines, _COMPACT_TRANSCRIPT_CHARS)
-    candidates = candidates[:fit]
-    candidate_ids = {str(r["msg_id"]) for r in candidates}
-    transcript = "\n".join(lines[:fit])[:_COMPACT_TRANSCRIPT_CHARS]
 
     llm = get_llm_client()
     system_prompt = (
@@ -741,6 +836,24 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         )
 
     summary_msg_id = f"compact-{_uuid.uuid4().hex[:12]}"
+    # The summary is what search finds once the turns it replaces are tombstoned, so
+    # it is embedded before the summary or any turn's tombstone is written; without a
+    # vector there is no summary and no turn is tombstoned.
+    embedded = await _embed_turn(
+        summary_text,
+        org=input.org,
+        namespace=input.namespace,
+        thread_id=input.thread_id,
+        msg_id=summary_msg_id,
+    )
+    if embedded.error:
+        return ConversationCompactOutput(
+            compacted=False,
+            messages_summarized=0,
+            reason="embed-failed",
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+        )
     # The summary restates these messages, so it carries their user_id:
     # erasure-by-user tombstones on user_id alone, and a '-' summary would
     # outlive the erased user's messages. A mixed-user window takes the most
@@ -752,33 +865,33 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     summary_user_id = users.most_common(1)[0][0] if users else "-"
     runs = {str(r.get("run_id") or "-") for r in candidates}
     summary_run_id = runs.pop() if len(runs) == 1 else "-"
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = naive_utc_now()
     # Place the summary where the originals were so reads see it in order.
     earliest_ts = candidates[0]["ts"]
 
-    await conversation_repo.append(
-        conversation_repo.MessageInsert(
-            org=input.org,
-            namespace=input.namespace,
-            agent=input.agent,
-            thread_id=input.thread_id,
-            msg_id=summary_msg_id,
-            role="system",
-            content=summary_text,
-            user_id=summary_user_id,
-            run_id=summary_run_id,
-            metadata=_json.dumps(
-                {
-                    "compacted_from": sorted(candidate_ids),
-                    "compacted_at": now.isoformat(),
-                    "llm_provider": llm.provider,
-                    "llm_model": llm.model,
-                }
-            ),
-            tokens=result.tokens_out,
-            ts=earliest_ts,
-        )
+    summary = conversation_repo.MessageInsert(
+        org=input.org,
+        namespace=input.namespace,
+        agent=input.agent,
+        thread_id=input.thread_id,
+        msg_id=summary_msg_id,
+        role="system",
+        content=summary_text,
+        user_id=summary_user_id,
+        run_id=summary_run_id,
+        metadata=json.dumps(
+            {
+                "compacted_from": sorted(candidate_ids),
+                "compacted_at": now.isoformat(),
+                "llm_provider": llm.provider,
+                "llm_model": llm.model,
+            }
+        ),
+        tokens=result.tokens_out,
+        ts=earliest_ts,
     )
+    await conversation_repo.append(summary)
+    await _store_embedding(summary, embedded)
     await conversation_repo.tombstone_messages(
         input.org,
         input.namespace,
@@ -790,7 +903,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
 
     return ConversationCompactOutput(
         compacted=True,
-        messages_summarized=len(candidates),
+        messages_summarized=sum(not is_summary[i] for i in replaced),
         summary_msg_id=summary_msg_id,
         tokens_in=result.tokens_in,
         tokens_out=result.tokens_out,

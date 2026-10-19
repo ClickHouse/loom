@@ -50,7 +50,8 @@ class ConversationAppendInput(BaseModel):
     msg_id: str = ""  # optional; server derives a content hash when omitted
     # Who spoke: `user`, `assistant`, `system` or `tool`.
     role: ConversationRole
-    # The message text, stored verbatim and embedded for `conversation.search`.
+    # The message text, stored verbatim; a user or assistant turn is also embedded for
+    # `conversation.search`.
     content: str
     # The model's reasoning for this turn, stored beside `content`; empty = none.
     reasoning: str = ""
@@ -134,8 +135,12 @@ class ConversationUpdateOutput(BaseModel):
 
 
 class ConversationDeleteInput(BaseModel):
-    """Soft-delete one thread: sets `tombstoned_at` on messages + thread row +
-    embeddings; read paths filter tombstoned rows, retention TTL hard-deletes.
+    """Soft-delete one thread: its messages, thread row and embeddings no other agent holds.
+
+    Sets `tombstoned_at`: read paths filter tombstoned rows, and the retention TTL
+    on `loom.conversations`, when set, hard-deletes the messages. A turn another
+    agent of the thread holds live with the same text, as a turn search indexes (user,
+    assistant or a summary), keeps its embedding, which the two copies share.
 
     `confirm_thread_id` must equal `thread_id` — guards against UI-dropdown
     accidents. Single-thread scope; for user/namespace-wide erasure use
@@ -156,7 +161,9 @@ class ConversationDeleteOutput(BaseModel):
     tombstoned_at: datetime
     # Echo of the input `thread_id`.
     thread_id: str
-    rows_affected: dict[str, int]  # {table_name: rows_tombstoned}
+    # {table_name: rows tombstoned}; for loom.conversation_embeddings, turns (one per
+    # turn however many embedding models hold it).
+    rows_affected: dict[str, int]
     # Sum of `rows_affected` across tables.
     total: int
 
@@ -238,7 +245,12 @@ class ConversationListOutput(BaseModel):
 
 
 class ConversationSearchInput(BaseModel):
-    """Text search across a namespace's conversation history (ILIKE over message content)."""
+    """Rank conversation messages by embedding similarity to `query`.
+
+    `thread_id`, `run_id` and `role` each narrow the hits, and they combine. User and
+    assistant turns and compaction summaries are embedded; when the embedder is
+    unavailable a substring match stands in, newest first, and it also matches the
+    other system turns and tool turns."""
 
     org: str
     namespace: str
@@ -249,7 +261,9 @@ class ConversationSearchInput(BaseModel):
     query: str
     thread_id: str | None = None  # optional: scope to one thread
     run_id: str | None = None  # optional: filter by run_id
-    role: ConversationRole | None = None  # optional: filter by speaker
+    # Filter by speaker; system turns other than compaction summaries, and tool turns,
+    # are not embedded, so they match only on the substring fallback.
+    role: ConversationRole | None = None
     # At most this many hits (1-200). Across agents ("*" or "-") a turn several agents
     # logged is one hit: the embeddings hold one row per turn, and the substring path
     # collapses its copies before the limit.
@@ -269,7 +283,8 @@ class _ConversationHit(BaseModel):
 
 
 class ConversationSearchOutput(BaseModel):
-    # Matching messages, most similar first; empty when none clears the similarity floor.
+    # Matching messages, most similar first and empty when none clears the similarity
+    # floor; newest first, with no floor, on the substring fallback.
     hits: list[_ConversationHit]
     # Namespaces of the caller an all_mine search did not read because it stops
     # at `memory_search_fanout_max_namespaces`; address one by name to search it.
@@ -311,9 +326,14 @@ class ConversationThreadsOutput(BaseModel):
 
 
 class ConversationCompactInput(BaseModel):
-    """Summarize messages older than `keep_recent` (from the tail) via an LLM,
-    write the summary as a synthetic role='system' message with
-    metadata.compacted_from=[msg_ids], then tombstone the originals.
+    """Summarize old turns into one embedded system turn and tombstone the originals.
+
+    The turns are the oldest ones before the last `keep_recent` that fit the
+    summarizer's prompt; their embeddings are tombstoned too, except a turn another
+    agent of the thread still holds live with the same text, as a turn search indexes
+    (user, assistant or a summary).
+    The summary carries metadata.compacted_from=[msg_ids]; when its embed fails,
+    no summary is written and no turn is tombstoned (`reason="embed-failed"`).
 
     Idempotent: re-running on an already-summarized window is a no-op.
     """
@@ -323,16 +343,19 @@ class ConversationCompactInput(BaseModel):
     agent: str
     # The thread to compact.
     thread_id: str
-    # The newest this many messages stay verbatim; everything older is summarized.
+    # The newest this many messages stay verbatim; older ones are summarized, as many
+    # as fit the summarizer's prompt.
     keep_recent: int = Field(default=10, ge=1, le=200)
-    # Skip when the candidate window is smaller than this — nothing to compact.
+    # Skip when fewer new turns than this precede the last keep_recent; an earlier
+    # summary does not count.
     min_to_compact: int = Field(default=4, ge=1, le=50)
 
 
 class ConversationCompactOutput(BaseModel):
     # True when a summary was written and the originals tombstoned; `reason` says why not.
     compacted: bool
-    # How many older messages the summary replaced; 0 when not compacted.
+    # How many older messages the summary replaced, not counting an earlier summary; 0
+    # when not compacted.
     messages_summarized: int
     # Id of the synthetic `system` summary message; empty when not compacted.
     summary_msg_id: str = ""
@@ -340,4 +363,6 @@ class ConversationCompactOutput(BaseModel):
     tokens_in: int = 0
     # Completion tokens of the summary; 0 when no call was made.
     tokens_out: int = 0
-    reason: str = ""  # populated when compacted=False
+    # Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted,
+    # summarizer-empty, or embed-failed (retry once the embedder answers).
+    reason: str = ""

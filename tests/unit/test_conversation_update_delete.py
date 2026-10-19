@@ -255,3 +255,110 @@ async def test_delete_op_registered_with_admin_role_and_audit() -> None:
     op = next(o for o in OPERATIONS if o.name == "conversation.delete")
     assert op.required_role == Role.ADMIN
     assert op.audit is True
+
+
+@pytest.mark.asyncio
+async def test_named_turns_are_tombstoned_in_byte_bounded_slices() -> None:
+    """Compaction binds its msg_ids a byte-bounded slice at a time (`param_slices`), so
+    long ids cannot push one statement past the server's form-field cap, and every id
+    is still named."""
+    from server.knowledge.store import conversations as repo
+
+    ids = [f"{i:04d}" + "x" * 508 for i in range(300)]  # 512-character ids
+    executed: list[tuple[str, dict[str, Any]]] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            return []
+
+        async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
+            executed.append((sql, params or {}))
+
+    await repo.tombstone_embeddings(
+        "o", "n", "a", "t", msg_ids=ids, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
+    )
+    slices = [p["ids"] for sql, p in executed if "AS tombstoned_at" in sql]
+    assert len(slices) > 1
+    assert sum(slices, []) == ids
+    # Each one binds well under the server's 128 KiB form-field cap.
+    assert all(len(str(part).encode()) < 128 << 10 for part in slices)
+
+
+@pytest.mark.asyncio
+async def test_the_tombstone_reads_with_sequential_consistency() -> None:
+    """The rows a tombstone copies and its re-read come from sequential reads: a lagging
+    replica must not miss a turn appended just before the delete."""
+    from server.core.ch import query_settings
+    from server.knowledge.store import conversations as repo
+
+    seen: list[bool] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            seen.append(query_settings().get("select_sequential_consistency") == 1)
+            if sql.startswith("SELECT DISTINCT embedding_model, msg_id"):
+                return [{"embedding_model": "m", "msg_id": "m1"}]  # the delete's key read
+            return []
+
+        async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
+            # The settings the client attaches to the statement it sends.
+            seen.append(query_settings().get("select_sequential_consistency") == 1)
+
+    for msg_ids in (None, ["m1"]):
+        seen.clear()
+        await repo.tombstone_embeddings(
+            "o", "n", "a", "t", msg_ids=msg_ids, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
+        )
+        # The key read (delete only), the reconcile and its re-read.
+        assert len(seen) == (3 if msg_ids is None else 2) and all(seen)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("msg_ids", [None, ["m1"]])
+async def test_a_reconcile_that_never_settles_fails_instead_of_looping(msg_ids) -> None:
+    """A re-read that keeps finding unheld rows stops after a fixed number of rounds and
+    answers OVERLOADED, which the client retries."""
+    from server.core.errors import OverloadedError
+    from server.knowledge.store import conversations as repo
+
+    class _CH:
+        rounds = 0
+
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            if sql.startswith("SELECT DISTINCT embedding_model, msg_id"):
+                return [{"embedding_model": "m", "msg_id": "m1"}]  # the delete's key read
+            return [{"1": 1}]
+
+        async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
+            _CH.rounds += 1
+
+    with pytest.raises(OverloadedError, match="kept changing"):
+        await repo.tombstone_embeddings(
+            "o", "n", "a", "t", msg_ids=msg_ids, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
+        )
+    assert _CH.rounds == repo._RECONCILE_ROUNDS
+
+
+@pytest.mark.asyncio
+async def test_the_delete_counts_embeddings_with_sequential_consistency() -> None:
+    """The embeddings tombstones are inserts, not a synchronous mutation, so the count
+    after them reads sequentially or a lagging replica undercounts."""
+    from server.core.ch import query_settings
+    from server.knowledge.store import conversations as repo
+
+    seen: dict[str, bool] = {}
+
+    class _CH:
+        async def query_one(self, sql: str, params: dict[str, Any] | None = None):
+            table = "embeddings" if "conversation_embeddings" in sql else "messages"
+            seen[table] = query_settings().get("select_sequential_consistency") == 1
+            return {"n": 1}
+
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            return []
+
+        async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
+            return None
+
+    await repo.tombstone_thread("o", "n", "a", "t", when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH())
+    assert seen["embeddings"] is True
