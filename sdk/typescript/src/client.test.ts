@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Agent, Datapack, SENTINEL } from "./agent.js";
 import { LoomClient } from "./client.js";
 import { GENERATED_OP_COUNT, OP_BY_NAME, OPS } from "./generated/ops.js";
@@ -50,8 +50,13 @@ describe("LoomClient", () => {
     }
   });
 
-  it("requires a base URL", () => {
-    expect(() => new LoomClient({ baseUrl: "" })).toThrow(/baseUrl/);
+  it("defaults the base URL to LOOM_BASE_URL, else localhost", () => {
+    vi.stubEnv("LOOM_BASE_URL", "");
+    expect(new LoomClient({ baseUrl: "" }).transport.baseUrl).toBe("http://localhost:7777");
+    expect(new LoomClient().transport.baseUrl).toBe("http://localhost:7777");
+    vi.stubEnv("LOOM_BASE_URL", " http://env.test/ ");
+    expect(new LoomClient({}).transport.baseUrl).toBe("http://env.test");
+    vi.unstubAllEnvs();
   });
 });
 
