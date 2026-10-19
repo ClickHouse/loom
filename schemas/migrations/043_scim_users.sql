@@ -2,10 +2,11 @@
 --
 -- id is the SCIM resource id, derived from email (lower-cased), so every
 -- replica and every retry names a person the same. email is the address an
--- SSO sign-in carries: the emails entry marked primary that has an address,
--- else the first work one, else the first with an address, else the userName. emails is the provider's emails list as
--- last written (JSON: value, type, primary), so a PATCH is applied to it and
--- refused when the email it leaves keyed differs.
+-- SSO sign-in carries: of the emails entries with an address, the one
+-- marked primary, else the first work one, else the first; with none, the
+-- userName. emails is the provider's emails list as last written (JSON:
+-- value, type, primary), so a PATCH is applied to it and refused when the
+-- email it leaves keyed differs.
 -- active = 0 is a deactivation: subjects lists what an SSO sign-in with the
 -- email could reach when it was deactivated, or since. Each one the email
 -- still reaches is revoked unless an operator gave it back
