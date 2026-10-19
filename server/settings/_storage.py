@@ -27,6 +27,9 @@ class StorageSettings(BaseModel):
     #   - tiering_*_warm_days: move rows older than W days to
     #     tiering_warm_volume_name. 0 = no tiering.
     # With both set, W must be < N or the move is a no-op (logged WARN).
+    # Days `loom.audit_log` rows are kept; 0 = forever. A person's Undo of a
+    # retirement holds by its record there: one aged out stops holding, and the
+    # conflict resolver may judge and retire that pair again.
     retention_audit_log_days: int = 0
     # Days `loom.agent_events` rows are kept; 0 = forever.
     retention_agent_events_days: int = 0

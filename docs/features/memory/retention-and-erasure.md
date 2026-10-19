@@ -76,6 +76,10 @@ wins.
 
 - **A table TTL deletes physically** at the part's next merge. There is no restore
   window, and tombstones age out with the rows they hide.
+- **An Undo holds while its record does.** The conflict resolver honours a person's Undo
+  of a retirement by its `memory.unsupersede` row in `audit_log`. With an `audit_log` TTL
+  shorter than a pair's life, an aged-out Undo stops holding, and the resolver may judge
+  and retire that pair again.
 - **Tiering needs a volume.** `LOOM_TIERING_WARM_VOLUME_NAME` must name a volume in the
   storage policy, and the warm age must be below the retention age.
 

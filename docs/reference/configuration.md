@@ -1165,7 +1165,7 @@ Source: `server/settings/_storage.py`
 
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `LOOM_RETENTION_AUDIT_LOG_DAYS` | `int` | `0` | Opt-in retention/tiering, applied as idempotent ALTER TABLE MODIFY TTL by server/storage/retention_overrides.py: - retention_*_days: delete rows older than N days. 0 = keep forever. - tiering_*_warm_days: move rows older than W days to tiering_warm_volume_name. 0 = no tiering. With both set, W must be < N or the move is a no-op (logged WARN). |
+| `LOOM_RETENTION_AUDIT_LOG_DAYS` | `int` | `0` | Opt-in retention/tiering, applied as idempotent ALTER TABLE MODIFY TTL by server/storage/retention_overrides.py: - retention_*_days: delete rows older than N days. 0 = keep forever. - tiering_*_warm_days: move rows older than W days to tiering_warm_volume_name. 0 = no tiering. With both set, W must be < N or the move is a no-op (logged WARN). Days `loom.audit_log` rows are kept; 0 = forever. A person's Undo of a retirement holds by its record there: one aged out stops holding, and the conflict resolver may judge and retire that pair again. |
 | `LOOM_RETENTION_AGENT_EVENTS_DAYS` | `int` | `0` | Days `loom.agent_events` rows are kept; 0 = forever. |
 | `LOOM_RETENTION_MEMORY_DAYS` | `int` | `0` | Days `loom.memory` rows are kept; 0 = forever. |
 | `LOOM_RETENTION_MEMORY_EMBEDDINGS_DAYS` | `int` | `0` | Days `loom.memory_embeddings` rows are kept; 0 = forever. |
