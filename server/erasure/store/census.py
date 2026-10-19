@@ -451,7 +451,8 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     ),
     "loom.task_leases": (
         "The live lease per task in ClickHouse Keeper (task id, owner "
-        "label, fence, lease_until) — identifiers only, deleted on the terminal transition."
+        "label, fence, lease_until) — identifiers only, deleted on the terminal transition "
+        "and by the lease sweep's reconcile for a task that is gone or ended."
     ),
     "loom.task_claims": (
         "A task claim arbitration log that no code path writes (task id, fence, "

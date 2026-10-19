@@ -73,7 +73,7 @@ class FakeLeases:
             return ClaimResult(True, row["fence"], claimant)
         return ClaimResult(False, row["fence"], row["owner"])
 
-    async def give_back(self, task_id, holder, *, held_fence, fence, status) -> None:
+    async def give_back(self, task_id, holder, *, held_fence, fence) -> None:
         row = self.rows.get(task_id)
         if row is not None and row["owner"] == holder and row["fence"] == held_fence:
             row.update({"owner": "", "fence": fence, "lease_until": None})

@@ -1222,7 +1222,7 @@ async def test_one_lease_sweep_puts_a_stranded_lease_row_right(ch: Any, stranded
     if stranded == "no row":
         await backend.delete(tid)
     elif stranded == "idle row at another fence":
-        await backend.give_back(tid, "", held_fence=0, fence=5, status="todo")
+        await backend.give_back(tid, "", held_fence=0, fence=5)
         assert await _lease(ch, tid) == {"owner": "", "fence": 5}
     else:
         await transitions.handle_task_cancel(_reason(org, tid))
@@ -1234,3 +1234,101 @@ async def test_one_lease_sweep_puts_a_stranded_lease_row_right(ch: Any, stranded
         assert await _lease(ch, tid) is None
     else:
         assert (await _claim(org, tid)).task.status == "in_progress"
+
+
+def _later() -> datetime:
+    from datetime import timedelta
+
+    return datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=5)
+
+
+@pytest.mark.asyncio
+async def test_the_lease_reconcile_never_deletes_a_row_a_claim_took_since_its_read(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stray idle row of a cancelled task; between the reconcile's read and its delete
+    the task is reopened and claimed. The delete is guarded on the idle row it read, so
+    the claimant keeps its lease and its heartbeat passes."""
+    from server.tasks.app import sweep
+
+    org = f"itest-recdel-{uuid.uuid4().hex[:8]}"
+    tid = await _todo_task(org)
+    await transitions.handle_task_cancel(_reason(org, tid))
+    task = await repo.fetch_task(org, tid)
+    backend = await repo.lease_backend()
+    await backend.ensure_row(tid, org, task["inbox"], int(task["fence"]))  # the stray row
+    real_delete = backend.delete_held
+    claimed: dict[str, Any] = {}
+
+    async def delete_held(*a: Any, **k: Any) -> None:
+        monkeypatch.setattr(backend, "delete_held", real_delete)
+        await transitions.handle_task_reopen(_reason(org, tid))
+        claimed["task"] = (await _claim(org, tid)).task
+        await real_delete(*a, **k)
+
+    monkeypatch.setattr(backend, "delete_held", delete_held)
+    await sweep.reconcile_leases(_later(), limit=10_000)
+    monkeypatch.undo()
+    fence = claimed["task"].fence
+    assert await _lease(ch, tid) == {"owner": "bot", "fence": fence}
+    await transitions.handle_task_heartbeat(
+        wire.TaskHeartbeatInput(org=org, namespace="private", agent="bot", task_id=tid, fence=fence)
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_lease_reconcile_gives_back_a_row_a_claim_cut_off_after_winning_holds(
+    ch: Any,
+) -> None:
+    """A claim wins the row (fence 1) and its process dies before the status write: the
+    task stays todo at fence 0 under an expired row at 1. One sweep gives the row back
+    idle at 0, and the task is claimable."""
+    from datetime import timedelta
+
+    from server.tasks.app import sweep
+
+    org = f"itest-cutoff-{uuid.uuid4().hex[:8]}"
+    tid = await _todo_task(org)
+    backend = await repo.lease_backend()
+    past = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=10)
+    assert (await backend.try_claim(tid, "dead-bot", expected_fence=0, lease_until=past)).won
+    await sweep.sweep_once(now=_later(), limit=10_000)
+    assert await _lease(ch, tid) == {"owner": "", "fence": 0}
+    assert (await _claim(org, tid)).task.status == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_the_lease_reconcile_leaves_a_task_with_a_fresh_event_alone(ch: Any) -> None:
+    """A todo task with no lease row whose last event is younger than the grace may be
+    mid-transition (a cancel drops the row before its status row): the reconcile leaves
+    it, and heals it once the event is older."""
+    from datetime import timedelta
+
+    from server.tasks.app import sweep
+
+    org = f"itest-fresh-{uuid.uuid4().hex[:8]}"
+    tid = await _todo_task(org)
+    backend = await repo.lease_backend()
+    await backend.delete(tid)
+    task = await repo.fetch_task(org, tid)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    # An event a minute ahead stands for one written within the grace of the pass.
+    await ch.insert(
+        "loom.task_events",
+        [
+            {
+                "org": org,
+                "inbox": task["inbox"],
+                "namespace": task["namespace"],
+                "task_id": uuid.UUID(tid),
+                "seq": int(task["version"]) + 1,
+                "event": "progress",
+                "ts": now + timedelta(minutes=1),
+            }
+        ],
+    )
+    grace = sweep.LEASE_RECONCILE_GRACE
+    await sweep.reconcile_leases(now + timedelta(seconds=30) + grace, limit=10_000)
+    assert await _lease(ch, tid) is None
+    await sweep.reconcile_leases(now + timedelta(minutes=5) + grace, limit=10_000)
+    assert await _lease(ch, tid) == {"owner": "", "fence": 0}

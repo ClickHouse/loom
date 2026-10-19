@@ -102,26 +102,29 @@ async def sweep_once(*, now: datetime | None = None, limit: int = 200) -> dict[s
 
 async def reconcile_leases(now: datetime, *, limit: int) -> int:
     """The lease is a claim's only arbiter, and its rows are written from status reads
-    nobody holds, so a race can leave one that disagrees with its task. Each pass puts
-    them right: a todo or triage task with no row gets one at its fence; an idle row of a
-    task that is gone or ended goes; an idle row at another fence takes the task's.
-    Every write is guarded (insert if absent, update only the idle row it read), so a
-    pass racing a claim or a second copy of itself changes nothing it should not."""
+    nobody holds, so a race can leave one that disagrees with its task. Each pass makes
+    three repairs, past the grace:
+
+    - a todo or triage task with no lease row gets one at its fence;
+    - an idle or expired row of a task that is gone or ended is deleted;
+    - an idle or expired row at another fence than its task's (a claim cut off after
+      winning holds one a fence ahead) is given back idle at the task's fence.
+
+    Every write is guarded (insert if absent; update or delete only while the row is
+    still held as read), so a pass racing a claim or a second copy of itself changes
+    nothing it should not."""
     backend = await repo.lease_backend()
-    missing, idle = await repo.lease_strays(
+    missing, stray = await repo.lease_strays(
         before=now - LEASE_RECONCILE_GRACE, terminal=sorted(TERMINAL), limit=limit
     )
     for task in missing:
         await backend.ensure_row(task["task_id"], task["org"], task["inbox"], int(task["fence"]))
-    for row in idle:
+    for row in stray:
+        held = int(row["lease_fence"])
         if not row["found"] or row["status"] in TERMINAL:
-            await backend.delete(row["task_id"])
+            await backend.delete_held(row["task_id"], row["owner"], fence=held)
         else:
             await backend.give_back(
-                row["task_id"],
-                "",
-                held_fence=int(row["lease_fence"]),
-                fence=int(row["fence"]),
-                status="todo",
+                row["task_id"], row["owner"], held_fence=held, fence=int(row["fence"])
             )
-    return len(missing) + len(idle)
+    return len(missing) + len(stray)

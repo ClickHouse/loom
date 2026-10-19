@@ -137,11 +137,12 @@ class MissingLeaseRow(TypedDict):
     fence: int
 
 
-class IdleLeaseRow(TypedDict):
-    """An idle lease row that disagrees with its task: `found` is '' when no task
-    holds the id."""
+class StrayLeaseRow(TypedDict):
+    """An idle or expired lease row that disagrees with its task: `found` is '' when no
+    task holds the id."""
 
     task_id: str
+    owner: str
     lease_fence: int
     found: str
     status: str

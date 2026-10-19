@@ -32,13 +32,13 @@ from server.core.repo_base import _CHClient, _default_client
 from server.tasks.domain.cursors import BACKFILLED
 from server.tasks.store.rows import (
     GrantSubjectRow,
-    IdleLeaseRow,
     InboxCountRow,
     InboxRow,
     MissingLeaseRow,
     PolicyRow,
     ServiceAccountRow,
     StaleTriageRow,
+    StrayLeaseRow,
     SweepCandidates,
     TaskEventRow,
     TaskRow,
@@ -508,11 +508,13 @@ async def sweep_candidates(
 
 async def lease_strays(
     *, before: datetime, terminal: list[str], limit: int, ch: _CHClient | None = None
-) -> tuple[list[MissingLeaseRow], list[IdleLeaseRow]]:
+) -> tuple[list[MissingLeaseRow], list[StrayLeaseRow]]:
     """What the lease reconcile acts on, org-wide, among rows last written before
     `before` (a transition still in flight keeps its own rows): todo and triage tasks
-    with no lease row, and idle lease rows whose task is gone, ended (`terminal`) or at
-    another fence."""
+    with no lease row and no event since `before` (a cancel in flight drops the row
+    before its status row), and lease rows idle or expired whose task is gone, ended
+    (`terminal`) or at another fence (a claim cut off after winning holds an expired row
+    one fence ahead of its todo task)."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"before": before, "terminal": terminal, "limit": int(limit)}
     missing = cast(
@@ -522,27 +524,32 @@ async def lease_strays(
             "WHERE is_deleted = 0 AND status IN ('todo', 'triage') "
             "AND updated_at < {before:DateTime} "
             "AND toString(task_id) NOT IN (SELECT task_id FROM loom.task_leases) "
+            "AND task_id NOT IN (SELECT task_id FROM loom.task_events "
+            "                    WHERE ts >= {before:DateTime}) "
             "LIMIT {limit:UInt32} SETTINGS select_sequential_consistency = 1",
             params=params,
         ),
     )
-    idle = cast(
-        "list[IdleLeaseRow]",
+    stray = cast(
+        "list[StrayLeaseRow]",
         await ch.query_all(
-            "SELECT l.task_id AS task_id, l.fence AS lease_fence, t.id AS found, "
-            "t.status AS status, t.fence AS fence "
-            "FROM (SELECT task_id, fence FROM loom.task_leases "
-            "      WHERE owner = '' AND updated_at < {before:DateTime}) AS l "
+            "SELECT l.task_id AS task_id, l.owner AS owner, l.fence AS lease_fence, "
+            "t.id AS found, t.status AS status, t.fence AS fence "
+            "FROM (SELECT task_id, owner, fence FROM loom.task_leases "
+            "      WHERE (owner = '' OR lease_until < {before:DateTime}) "
+            "        AND updated_at < {before:DateTime}) AS l "
             "LEFT JOIN (SELECT toString(task_id) AS id, toString(status) AS status, fence "
             "           FROM loom.tasks FINAL WHERE is_deleted = 0 AND toString(task_id) IN "
-            "           (SELECT task_id FROM loom.task_leases WHERE owner = '')) AS t "
+            "           (SELECT task_id FROM loom.task_leases)) AS t "
             "ON t.id = l.task_id "
             "WHERE t.id = '' OR t.status IN {terminal:Array(String)} OR t.fence != l.fence "
-            "LIMIT {limit:UInt32} SETTINGS select_sequential_consistency = 1",
+            # A row with no task joins as '' (join_use_nulls = 0): `t.id = ''` finds it.
+            "LIMIT {limit:UInt32} "
+            "SETTINGS select_sequential_consistency = 1, join_use_nulls = 0",
             params=params,
         ),
     )
-    return missing, idle
+    return missing, stray
 
 
 async def inbox_counts(
@@ -751,8 +758,9 @@ class ClaimResult:
 
 
 def _lost_race(e: Exception) -> bool:
-    """A strict-mode write that lost to a concurrent one (the version check failed)."""
-    return "KEEPER_EXCEPTION" in str(e) or "Bad version" in str(e)
+    """A strict-mode write that lost to a concurrent one (Keeper's version check
+    failed). Any other Keeper error (a lost connection) is not a lost race."""
+    return "Bad version" in str(e)
 
 
 class KeeperLeases:
@@ -763,7 +771,7 @@ class KeeperLeases:
     version check, so of two concurrent claimers exactly one row change
     lands: the loser either raises ``KEEPER_EXCEPTION`` ("Bad version") or
     matches zero rows because the winner landed first. Either way the caller
-    reads the row back and owns the task only if it says so. The five
+    reads the row back and owns the task only if it says so. The six
     statements below are the only mutations in this module; they address a
     Keeper znode, not a MergeTree part (mutation inventory: task_leases).
     """
@@ -814,16 +822,14 @@ class KeeperLeases:
             if not _lost_race(e):
                 raise
 
-    async def give_back(
-        self, task_id: str, holder: str, *, held_fence: int, fence: int, status: str
-    ) -> None:
-        """Put the row `holder` holds at `held_fence` back idle at `fence`: a claim that
-        backs out undoes its own bump, and the lease reconcile (holder '') moves an idle
-        row to its task's fence. Changes nothing when the row has moved on since."""
+    async def give_back(self, task_id: str, holder: str, *, held_fence: int, fence: int) -> None:
+        """Put the row `holder` holds at `held_fence` back idle (todo) at `fence`: a claim
+        that backs out undoes its own bump, and the lease reconcile moves an idle or
+        dead-owner row to its task's fence. Changes nothing when the row has moved on."""
         try:
             await self.ch.execute(
                 "ALTER TABLE loom.task_leases UPDATE owner = '', lease_until = toDateTime(0), "
-                "fence = {fence:UInt32}, status = {status:String}, updated_at = now() "
+                "fence = {fence:UInt32}, status = 'todo', updated_at = now() "
                 "WHERE task_id = {tid:String} AND owner = {who:String} "
                 "AND fence = {held:UInt32} SETTINGS keeper_map_strict_mode = 1",
                 params={
@@ -831,8 +837,21 @@ class KeeperLeases:
                     "who": holder,
                     "held": int(held_fence),
                     "fence": int(fence),
-                    "status": status,
                 },
+            )
+        except Exception as e:
+            if not _lost_race(e):
+                raise
+
+    async def delete_held(self, task_id: str, holder: str, *, fence: int) -> None:
+        """Drop the row only while `holder` ('' for an idle row) still holds it at
+        `fence`: the lease reconcile never removes a row a claim took since its read."""
+        try:
+            await self.ch.execute(
+                "ALTER TABLE loom.task_leases DELETE WHERE task_id = {tid:String} "
+                "AND owner = {who:String} AND fence = {fence:UInt32} "
+                "SETTINGS keeper_map_strict_mode = 1",
+                params={"tid": task_id, "who": holder, "fence": int(fence)},
             )
         except Exception as e:
             if not _lost_race(e):

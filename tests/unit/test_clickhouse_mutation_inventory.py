@@ -40,9 +40,10 @@ _EXPECTED_MUTATIONS = Counter(
         # these address a Keeper znode (a compare-and-swap under strict mode
         # and the terminal-state key drop), not a MergeTree part; the third UPDATE moves
         # an idle row at an older fence to a reopen's fence, and the fourth gives a
-        # row back idle (a claim that backs out, the lease reconcile).
+        # row back idle (a claim that backs out, the lease reconcile); the second DELETE
+        # is the reconcile's, guarded on the holder and fence it read.
         ("server/tasks/store/repo.py", "task_leases", "UPDATE"): 4,
-        ("server/tasks/store/repo.py", "task_leases", "DELETE"): 1,
+        ("server/tasks/store/repo.py", "task_leases", "DELETE"): 2,
         # run.complete drops a run id claim, also a KeeperMap key (the erasure saga's
         # drop goes through erasure.store.mutations.run_keeper_delete).
         ("server/tasks/store/runs.py", "agent_run_claims", "DELETE"): 1,

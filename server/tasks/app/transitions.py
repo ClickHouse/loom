@@ -324,9 +324,7 @@ async def _claim_one(
     # row left for an ended task is the lease sweep's to remove.
     now = await repo.fetch_task(task["org"], task_id)
     if now is None or now["status"] != "todo" or int(now.get("fence") or 0) != fence:
-        await backend.give_back(
-            task_id, claimant, held_fence=result.fence, fence=fence, status="todo"
-        )
+        await backend.give_back(task_id, claimant, held_fence=result.fence, fence=fence)
         return None
     return await _record(
         task,
