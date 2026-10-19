@@ -245,10 +245,13 @@ async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
     return len(out)
 
 
-async def _close_mined_facts(c: SweepCandidate, row_entities: list[Any], *, ch: _CHClient) -> None:
+async def _close_mined_facts(
+    c: SweepCandidate, row_entities: list[Any], version: int, *, ch: _CHClient
+) -> None:
     """A row relabelled high: what its text gave the graph closes (its triples, the edges
     of entities not on the row); the edges of the entities on the row stay, its writer's
-    or the extractor's when it tagged the row, as the row keeps those entities."""
+    or the extractor's when it tagged the row, as the row keeps those entities. `version`:
+    the relabel's, which dates the dropped edges' end."""
     from server.memory.app.entity_projections import (
         declared_entities,
         drop_undeclared_edges,
@@ -258,7 +261,9 @@ async def _close_mined_facts(c: SweepCandidate, row_entities: list[Any], *, ch: 
 
     scope = ProjectionScope(org=c.org, namespace=c.namespace, agent=c.agent, user_id=c.user_id)
     keep = declared_entities(row_entities)
-    await drop_undeclared_edges(scope, {c.memory_id: keep}, ch=ch, op="sensitivity_sweep")
+    await drop_undeclared_edges(
+        scope, {c.memory_id: keep}, {c.memory_id: version}, ch=ch, op="sensitivity_sweep"
+    )
     await reconcile_row_facts(scope, [c.memory_id], reopen=False, op="sensitivity_sweep", ch=ch)
 
 
@@ -318,7 +323,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                     await memory_repo.retire_vectors_for_keys(
                         [(key, memory_repo.next_version())], ch=ch
                     )
-                await _close_mined_facts(c, row_entities, ch=ch)
+                await _close_mined_facts(c, row_entities, version, ch=ch)
             else:
                 result.medium += 1
                 result.embeddings_tagged += await _tag_embeddings(c, ch=ch)

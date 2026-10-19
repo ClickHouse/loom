@@ -89,10 +89,13 @@ TRIPLES_REOPEN = "triples_reopen"
 TRIPLES_RECONCILE = "triples_reconcile"
 # The edges a revision or a late projection (memory.set, memory.bulk_set, the by-id
 # updates) wrote for a value the row no longer holds, whose cleanup failed: payload
-# memory_id, content_sha256 and, when it was read, ended_at.
+# memory_id, the entities the edges paired and, for a row that is not 'high',
+# content_sha256 and (when it was read) ended_at. A 'high' row's names no value: the
+# repair closes each of the row's values it no longer holds.
 EDGES_CLOSE = "entity_edges_close"
-# A row made 'high' whose links to undeclared pairs were not dropped: payload memory_id
-# and declared (the entities whose edges it keeps).
+# Rows a write made 'high' (or whose declared entities it narrowed) whose links to
+# undeclared pairs are not dropped yet: payload rows (memory_id -> the entities whose
+# edges it keeps) and versions (memory_id -> the version of that write).
 EDGES_DROP_UNDECLARED = "entity_edges_drop_undeclared"
 
 
@@ -647,6 +650,10 @@ async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
     content_sha256 = str(failure.payload.get("content_sha256") or "")
     if not memory_id:
         return "malformed_payload"
+    if not content_sha256:
+        # A high row's close names no value: each one it no longer holds closes.
+        await close_overtaken_values(failure.org, failure.namespace, memory_id, ch=ch)
+        return ""
     # When the revision ended the value; a payload recorded before it was known has none.
     ended = failure.payload.get("ended_at")
     try:
@@ -654,12 +661,6 @@ async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
     except (TypeError, ValueError):
         return "malformed_payload"
     entities = [str(e) for e in failure.payload.get("entities") or []]
-    if not content_sha256:
-        # A high row's close names no value: each one it no longer holds closes.
-        await close_overtaken_values(
-            failure.org, failure.namespace, memory_id, ended_at=ended_at, ch=ch
-        )
-        return ""
     await close_late_edges(
         failure.org,
         failure.namespace,
@@ -689,17 +690,18 @@ async def _retry_edges_drop(failure: ProjectionFailureRow, *, ch: Any) -> str:
     from server.memory.app.entity_projections import drop_undeclared_links
 
     rows = failure.payload.get("rows")
+    versions = failure.payload.get("versions")
     if not isinstance(rows, dict) or not all(isinstance(d, list) for d in rows.values()):
         return "malformed_payload"
-    made = failure.payload.get("made_high_at")
-    try:
-        made_high_at = datetime.fromisoformat(made) if made else None
-    except (TypeError, ValueError):
+    # The version of the write that owes the drop: a row written since is skipped, and
+    # the edges end when that write landed.
+    if not isinstance(versions, dict) or not all(
+        isinstance(versions.get(memory_id), int) for memory_id in rows
+    ):
         return "malformed_payload"
     scope = _failure_scope(failure)
     declared = {str(memory_id): [str(d) for d in ents] for memory_id, ents in rows.items()}
-    # The edges end when the row was made high, not at the replay's clock.
-    await drop_undeclared_links(scope, declared, ch=ch, made_high_at=made_high_at)
+    await drop_undeclared_links(scope, declared, versions, ch=ch)
     return ""
 
 

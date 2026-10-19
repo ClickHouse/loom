@@ -431,15 +431,17 @@ async def _drop_undeclared_of_rows_made_high(
     """Each key the batch wrote 'high' over a row it already held: what its text gave the
     graph goes, after the response; the edges of the entities its row names stay."""
     rows: dict[str, list[str]] = {}
+    versions: dict[str, int] = {}
     for key, row in kept_versions(state.memory_rows).items():
         if str(row.get("sensitivity") or "") != "high" or key not in state.existing_rows:
             continue
         declared = declared_entities(row.get("entities"))
         if owes_undeclared_drop(state.existing_rows[key], declared):
             rows[str(row["memory_id"])] = declared
+            versions[str(row["memory_id"])] = int(row["version"])
     # One intent and one drop for the whole batch: a row each would cost a committed
     # insert per row before the response.
-    await drop_undeclared_edges_beside(input, rows, op="memory.bulk_set")
+    await drop_undeclared_edges_beside(input, rows, versions, op="memory.bulk_set")
 
 
 def _high_winners(state: _BulkWriteState) -> list[tuple[Any, int]]:

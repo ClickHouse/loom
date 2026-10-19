@@ -609,9 +609,12 @@ count a high row as an edge's holder only while it names every entity of the edg
 mined edges fence on `HOLDS_VALUE_SQL`, which never counts it. A row made `high` (by
 `memory.set`, `memory.bulk_set`, a by-id update or `loom sensitivity-sweep`), or a high
 row re-set naming fewer entities, drops its links to any other pair (a write, after its
-response, with one intent for the whole write), and those edges end unless another row
-names them; a failed drop is left to `projection_repair`. Its triples close as for a row
-that holds none.
+response, with one intent for the whole write), and those edges end, when that write
+landed, unless another row names them; a failed drop is left to `projection_repair`. The
+drop, and its replay, skips a row written again since: that write holds what it names
+and owes its own drop. A close recorded for a high row names no value: its repair ends
+each of the row's values with an open edge that the row no longer holds, and keeps the
+edges between entities the row names. Its triples close as for a row that holds none.
 
 A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`) of a row that
 existed before the write closes the facts its row held that no row holds any longer, and

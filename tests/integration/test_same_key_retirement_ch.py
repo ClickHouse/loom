@@ -7330,8 +7330,9 @@ async def test_a_user_erasure_deletes_every_kind_of_projection_failure_of_that_u
         scope = SimpleNamespace(org=org, namespace=NS, agent="bot", user_id=user)
         with monkeypatch.context() as m:
             m.setattr(ep, "drop_undeclared_links", boom)
+            memory_id = str(uuid.uuid4())
             await ep.drop_undeclared_edges(
-                scope, {str(uuid.uuid4()): ["acme"]}, ch=ch, op="memory.set"
+                scope, {memory_id: ["acme"]}, {memory_id: 1}, ch=ch, op="memory.set"
             )
         for kind in (TRIPLES_REOPEN, TRIPLES_RECONCILE, EDGES_CLOSE, FOLLOW_ROWS):
             await record_input_projection_failure(
@@ -7787,38 +7788,13 @@ async def test_the_repair_of_a_high_rows_close_ends_the_values_it_no_longer_hold
     assert await _open_edge_pairs(ch, org) == want
 
 
-async def test_a_value_less_close_dates_each_of_several_values_by_its_own_end(
-    ch, org, monkeypatch
-) -> None:
-    """The recorded end belongs to one value: a sha-less close over a row with several
-    values asks each value's own end instead of stamping that one on all of them."""
-    from server.memory.app import entity_projections as ep
-
-    for value in ("Alice met Carol", "Alice met Dan", "Alice met Bob"):
-        await _high_set(org, "s1", "vault", value, entities=value.split(" met "))
-    row = await ch.query_one(
-        "SELECT toString(memory_id) AS id FROM loom.memory FINAL WHERE org = {org:String}",
-        params={"org": org},
-    )
-    ends: list[Any] = []
-    real = ep.close_late_edges
-
-    async def seen(*a: Any, ended_at: Any = None, **kw: Any) -> None:
-        ends.append(ended_at)
-        await real(*a, ended_at=ended_at, **kw)
-
-    monkeypatch.setattr(ep, "close_late_edges", seen)
-    await ep.close_overtaken_values(org, NS, row["id"], ended_at=datetime(2020, 1, 1), ch=ch)
-    assert len(ends) == 3 and ends == [None, None, None]
-
-
-async def test_a_value_less_close_dates_an_older_high_value_by_when_the_row_left_it(
+async def test_a_value_less_close_dates_each_high_value_by_when_the_row_left_it(
     ch, org, monkeypatch
 ) -> None:
     """A high row revised twice while every drop and close was lost: the repair of its
-    value-less closes ends the first value's edge when the second was written, asking
-    that value with its own entities (not the close's), so its end is not the repair's
-    clock."""
+    value-less closes ends each older value's edge when the next value was written,
+    asking each value with its own entities (not the close's), so no end is the
+    repair's clock, and keeps the current value's edge open."""
     from server.memory.app import entity_projections as ep
     from server.memory.app import projections
     from server.memory.app.projection_failures import retry_projection_failures
@@ -7831,7 +7807,8 @@ async def test_a_value_less_close_dates_an_older_high_value_by_when_the_row_left
     monkeypatch.setattr(ep, "end_edges", nothing)
     for i, value in enumerate(("Alice met Carol", "Alice met Dan", "Alice met Bob")):
         if i:
-            await asyncio.sleep(2)  # the versions' times are whole seconds apart
+            # Each value's end is read from the next version's write time, in seconds.
+            await asyncio.sleep(1.1)
         await _high_set(
             org, "s1", "vault", value, sensitivity="high", entities=value.split(" met ")
         )
@@ -7853,16 +7830,15 @@ async def test_a_value_less_close_dates_an_older_high_value_by_when_the_row_left
     assert results and all(r.resolved for r in results), results
     await _mutations_done(ch, org)
     edges = await ch.query_all(
-        "SELECT entity_a, entity_b, valid_to FROM loom.entity_edges WHERE org = {org:String}"
+        "SELECT entity_b, valid_to FROM loom.entity_edges WHERE org = {org:String}"
         " SETTINGS select_sequential_consistency = 1",
         params={"org": org},
     )
-    carol = [e for e in edges if {e["entity_a"], e["entity_b"]} == {"alice", "carol"}]
-    dan_written = versions[1]["updated_at"]
-    assert carol and all(
-        e["valid_to"] is not None and abs((e["valid_to"] - dan_written).total_seconds()) < 1.5
-        for e in carol
-    ), (carol, dan_written)
+    ends = {str(e["entity_b"]): e["valid_to"] for e in edges}
+    assert set(ends) == {"carol", "dan", "bob"} and ends["bob"] is None, ends
+    for name, left in (("carol", versions[1]), ("dan", versions[2])):
+        gap = (ends[name] - left["updated_at"]).total_seconds()
+        assert abs(gap) < 1, (name, ends, versions)
 
 
 async def test_a_replayed_drop_ends_the_edges_when_the_row_was_made_high(
@@ -7875,7 +7851,6 @@ async def test_a_replayed_drop_ends_the_edges_when_the_row_was_made_high(
 
     value = "Alice Smith met Bob Jones at Acme Corp in Berlin"
     await _high_set(org, "s1", "contact", value)
-    real = entity_projections.drop_undeclared_links
 
     async def down(*a: Any, **kw: Any) -> None:
         raise RuntimeError("DELETE refused")
@@ -7885,7 +7860,6 @@ async def test_a_replayed_drop_ends_the_edges_when_the_row_was_made_high(
         m.setattr(entity_projections, "drop_undeclared_links", down)
         await _high_set(org, "s1", "contact", value, sensitivity="high")
     await asyncio.sleep(3)
-    monkeypatch.setattr(entity_projections, "drop_undeclared_links", real)
     results = await retry_projection_failures(
         org=org, projection="entity_edges_drop_undeclared", ch=ch
     )
@@ -7900,3 +7874,126 @@ async def test_a_replayed_drop_ends_the_edges_when_the_row_was_made_high(
         ends,
         made_high,
     )
+
+
+async def test_a_bulk_making_hundreds_of_rows_high_drops_every_mined_link(ch, org) -> None:
+    """300 rows of ten entities each re-set high in one bulk write: the drop's links
+    exceed what one query parameter carries, so it reads, deletes and ends them in
+    chunks, and resolves its intent."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write, intent_marks
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    names = [f"{first} Vance" for first in ("Arlo", "Bryn", "Cato", "Dara", "Eris")]
+    names += [f"{first} Calder" for first in ("Fenn", "Gale", "Hale", "Ivo", "Juno")]
+
+    def write(high: bool) -> MemoryBulkSetInput:
+        entries = [
+            {
+                "memory_key": f"m{i}",
+                "value": f"Meeting {i}: " + ", ".join(names),
+                "memory_type": "semantic",
+                **({"sensitivity": "high"} if high else {"entities": names}),
+            }
+            for i in range(300)
+        ]
+        return MemoryBulkSetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=entries
+        )
+
+    await handle_memory_bulk_set(write(high=False))
+    await after_write.drain()
+    assert await _edge_links(ch, org) == 300 * 45
+    await handle_memory_bulk_set(write(high=True))
+    await after_write.drain()
+    await intent_marks.drain()
+    assert await _edge_links(ch, org) == 0
+    assert await _open_edge_pairs(ch, org) == set()
+    for _ in range(50):  # the mark is a mutation
+        if await _drop_intents(ch, org) == ["resolved"]:
+            break
+        await asyncio.sleep(0.2)
+    assert await _drop_intents(ch, org) == ["resolved"]
+
+
+async def _made_high_with_the_drop_lost(org: str, value: str, monkeypatch: Any) -> None:
+    """The row `contact` re-set high (declaring Alice Smith and Bob Jones) with its drop
+    failing: the drop is left to the repair."""
+    from server.memory.app import entity_projections
+
+    async def down(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("DELETE refused")
+
+    with monkeypatch.context() as m:
+        m.setattr(entity_projections, "drop_undeclared_links", down)
+        await _high_set(
+            org,
+            "s1",
+            "contact",
+            value,
+            sensitivity="high",
+            entities=["Alice Smith", "Bob Jones"],
+        )
+
+
+@pytest.mark.parametrize(
+    "later",
+    ["Alice Smith met Carol King", "Alice Smith met Bob Jones and Carol King in Berlin"],
+)
+async def test_a_drop_replayed_after_a_later_plain_write_changes_nothing(
+    ch, org, monkeypatch, later
+) -> None:
+    """A row made high whose drop failed is written plain again before the repair runs,
+    with a new value or with the value it held before: the replay leaves the links and
+    open edges of that later write as they are."""
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    first = "Alice Smith met Bob Jones and Carol King in Berlin"
+    await _high_set(org, "s1", "contact", first)
+    await _made_high_with_the_drop_lost(org, first, monkeypatch)
+    await _high_set(org, "s1", "contact", later, sensitivity="low")
+    open_before = await _open_edge_pairs(ch, org)
+    links_before = await _edge_links(ch, org)
+    assert ("alice smith", "carol king") in open_before, open_before
+    results = await retry_projection_failures(
+        org=org, projection="entity_edges_drop_undeclared", ch=ch
+    )
+    assert results and all(r.resolved for r in results), results
+    assert await _open_edge_pairs(ch, org) == open_before
+    assert await _edge_links(ch, org) == links_before
+
+
+async def test_a_value_less_close_keeps_the_edges_a_high_row_still_names(ch, org) -> None:
+    """A row revised by id into a 'high' value keeps the entities it named, whose edges
+    only its earlier value links: the repair of a value-less close for it ends none of
+    them."""
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+    from server.memory.app import after_write
+    from server.memory.app import entity_projections as ep
+    from server.memory.app.projection_failures import retry_projection_failures
+    from server.memory.app.update import handle_memory_update_by_id
+
+    out = await _high_set(
+        org,
+        "s1",
+        "contact",
+        "Alice Smith met Bob Lane and Carol King",
+        entities=["Alice Smith", "Bob Lane", "Carol King"],
+    )
+    named = {("alice smith", "bob lane"), ("alice smith", "carol king"), ("bob lane", "carol king")}
+    assert await _open_edge_pairs(ch, org) == named
+    await handle_memory_update_by_id(
+        MemoryUpdateByIdInput(
+            org=org,
+            memory_id=out.memory_id,
+            # A credential shape with a nonce body (never a real secret).
+            value=f"Alice Smith keeps sk-proj-{uuid.uuid4().hex} for Bob Lane and Carol King",
+        )
+    )
+    await after_write.drain()
+    scope = ep.ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    close = ep.EdgeClose(str(out.memory_id), "contact", "-", [], high=True)
+    await ep.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
+    results = await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    assert results and all(r.resolved for r in results), results
+    assert await _open_edge_pairs(ch, org) == named

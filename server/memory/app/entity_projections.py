@@ -5,6 +5,7 @@ in server.memory.app.projections.
 
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 import unicodedata
@@ -55,6 +56,7 @@ from server.memory.domain.temporal_sql import (
     LIVE_STATUSES,
     edge_holder_sql,
 )
+from server.memory.store.rows import version_time
 
 log = logging.getLogger(__name__)
 
@@ -593,40 +595,59 @@ async def project_memory_set_entities(
     return len(ents)
 
 
-async def close_overtaken_values(
-    org: str,
-    namespace: str,
-    memory_id: str,
-    *,
-    ended_at: datetime | None = None,
-    ch: Any,
-) -> None:
+# Values of one row a value-less close repair ends at most: more is a row revised that
+# many times with every close lost.
+_OVERTAKEN_VALUES_CAP = 100
+
+
+async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch: Any) -> None:
     """`close_late_edges` for a close recorded without its value (a 'high' row's): each
-    value of the row that links edges, its current one included (a retired or deleted
-    row keeps its hash); close_late_edges keeps those the row still holds. Each value is
-    asked with the entities its own edges pair, so an older high value naming others is
-    dated by when the row stopped holding it. The recorded `ended_at` belongs to one
-    value: with several, each value's own end is read."""
-    rows = await ch.query_all(
+    value of the row linked to an open edge, its current one included (a retired or
+    deleted row keeps its hash); close_late_edges keeps those the row still holds. Each
+    value is asked with the entities its own edges pair and dated by its own end. The
+    pairs of the entities the row names now stay, whichever value linked them: a 'high'
+    row keeps the edges of the entities on it."""
+    params = {"org": org, "ns": namespace, "id": memory_id, "cap": _OVERTAKEN_VALUES_CAP}
+    values = await ch.query_all(
         """
         SELECT toString(content_sha256) AS sha,
                arrayDistinct(arrayConcat(groupArray(entity_a), groupArray(entity_b))) AS entities
         FROM loom.entity_edge_rows
         WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}
+          AND (entity_a, entity_b) IN (
+              SELECT entity_a, entity_b FROM loom.entity_edges
+              WHERE org = {org:String} AND namespace = {ns:String} AND valid_to IS NULL
+                AND (entity_a, entity_b) IN (
+                    SELECT entity_a, entity_b FROM loom.entity_edge_rows
+                    WHERE org = {org:String} AND namespace = {ns:String}
+                      AND memory_id = {id:UUID}))
         GROUP BY content_sha256
+        ORDER BY sha
+        LIMIT {cap:UInt32}
         SETTINGS select_sequential_consistency = 1
         """,
-        params={"org": org, "ns": namespace, "id": memory_id},
+        params=params,
     )
-    end = ended_at if len(rows) == 1 else None
-    for row in rows:
+    if len(values) == _OVERTAKEN_VALUES_CAP:
+        log.warning("edge close of row %s: only %d of its values closed", memory_id, len(values))
+    named = await ch.query_all(
+        f"""
+        SELECT entities FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND memory_id = {{id:UUID}}
+          AND {EDGE_HOLDS_VALUE_SQL} AND sensitivity = 'high'
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params=params,
+    )
+    keep = {str(e) for row in named for e in row["entities"]}
+    for value in values:
         await close_late_edges(
             org,
             namespace,
             memory_id,
-            str(row["sha"]),
-            ended_at=end,
-            entities=[str(e) for e in row["entities"]],
+            str(value["sha"]),
+            entities=[str(e) for e in value["entities"]],
+            keep=keep,
             ch=ch,
         )
 
@@ -639,12 +660,13 @@ async def close_late_edges(
     *,
     ended_at: datetime | None = None,
     entities: Sequence[str] = (),
+    keep: Collection[str] = (),
     ch: Any,
 ) -> None:
     """The projection repair of a late projection whose cleanup failed: end the
     edges of that value at `ended_at` (when the row stopped holding it; read again
     when not given) unless the row holds it again (`edge_holder_sql` of the projected
-    `entities`). Safe to run twice."""
+    `entities`). The edges between two of the entities `keep` stay. Safe to run twice."""
     holder = edge_holder_sql(entities)
     version = [(memory_id, content_sha256)]
     if await rows_holding(org, namespace, version, ch=ch, holder=holder):
@@ -653,7 +675,7 @@ async def close_late_edges(
         ended_at = await value_ended_at(
             org, namespace, memory_id, content_sha256, ch=ch, holder=holder
         )
-    await _end_edges_of(org, namespace, memory_id, content_sha256, ended_at, ch=ch)
+    await _end_edges_of(org, namespace, memory_id, content_sha256, ended_at, keep=keep, ch=ch)
 
 
 async def end_overtaken_edges(
@@ -718,8 +740,9 @@ async def record_edges_closes(
     """Record failed edge closes for the projection repair in one insert, each with the
     value's end when it was read: the repair ends the edges at the same moment.
     Fail-open, as the write it describes has landed. A high row's close is recorded
-    without its content_sha256: no failure payload names a high row's content, and the
-    repair closes whichever of the row's values is no longer current."""
+    without its content_sha256 or end: no failure payload names a high row's content,
+    and the repair closes whichever of the row's values is no longer current, each at
+    its own end."""
     rows = []
     for close in closes:
         payload: dict[str, Any] = {"memory_id": close.memory_id}
@@ -727,7 +750,7 @@ async def record_edges_closes(
             payload["content_sha256"] = close.sha
         if close.entities:
             payload["entities"] = close.entities
-        if close.ended_at is not None:
+        if close.ended_at is not None and not close.high:
             payload["ended_at"] = close.ended_at.isoformat()
         rows.append(
             projection_failure_row(
@@ -793,11 +816,18 @@ async def value_ended_at(
 
 
 async def _end_edges_of(
-    org: str, namespace: str, memory_id: str, content_sha256: str, ended_at: datetime, *, ch: Any
+    org: str,
+    namespace: str,
+    memory_id: str,
+    content_sha256: str,
+    ended_at: datetime,
+    *,
+    keep: Collection[str] = (),
+    ch: Any,
 ) -> None:
     """End at `ended_at` the open edges linked to the row's value `content_sha256` that
-    no live row names (`end_edges` keeps those). An edge row another row closed since
-    keeps its end."""
+    no live row names (`end_edges` keeps those), but for the edges between two of the
+    entities `keep`. An edge row another row closed since keeps its end."""
     pairs = await ch.query_all(
         """
         SELECT DISTINCT entity_a, entity_b FROM loom.entity_edge_rows
@@ -807,7 +837,12 @@ async def _end_edges_of(
         """,
         params={"org": org, "ns": namespace, "id": memory_id, "sha": content_sha256},
     )
-    ends = [(str(p["entity_a"]), str(p["entity_b"]), ended_at) for p in pairs]
+    kept = set(keep)
+    ends = [
+        (str(p["entity_a"]), str(p["entity_b"]), ended_at)
+        for p in pairs
+        if not {str(p["entity_a"]), str(p["entity_b"])} <= kept
+    ]
     await end_edges(ch, org=org, namespace=namespace, ends=ends, open_only=True)
 
 
@@ -820,14 +855,41 @@ def owes_undeclared_drop(previous: Any, declared: Sequence[str]) -> bool:
     return not set(declared) >= set(declared_entities(getattr(previous, "entities", None)))
 
 
+# Rows a drop reads at a time, and links or pairs it names in one statement: a query
+# parameter is one HTTP form field, which ClickHouse caps at 128 KiB
+# (`http_max_field_value_size`).
+_DROP_ROWS = 100
+_DROP_LINKS = 1000
+
+
 async def drop_undeclared_links(
-    input: Any, rows: Mapping[str, list[str]], *, ch: Any, made_high_at: datetime | None = None
+    input: Any, rows: Mapping[str, list[str]], versions: Mapping[str, int], *, ch: Any
 ) -> None:
-    """Rows now 'high' (`rows`: memory_id -> the entities its writer declared) keep only
-    the edges of their declared entities: their links to any other pair go, and those
-    edges end unless another row names them. One read, one DELETE and one close for all."""
-    if not rows:
-        return
+    """Rows a write left 'high' (`rows`: memory_id -> the entities its writer declared;
+    `versions`: the version that write gave each row) keep only the edges of their
+    declared entities: their links to any other pair go, and those edges end when that
+    write landed unless another row names them. A row written again since is skipped:
+    a later value may name those pairs, and a later write owes its own drop."""
+    for chunk in itertools.batched(sorted(rows), _DROP_ROWS):
+        params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "ids": list(chunk)}
+        current = await ch.query_all(
+            """
+            SELECT toString(memory_id) AS id, version FROM loom.memory FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND memory_id IN {ids:Array(UUID)}
+            SETTINGS select_sequential_consistency = 1
+            """,
+            params=params,
+        )
+        ids = [str(r["id"]) for r in current if int(r["version"]) == int(versions[str(r["id"])])]
+        if ids:
+            await _drop_links_of(input, {i: rows[i] for i in ids}, versions, ch=ch)
+
+
+async def _drop_links_of(
+    input: Any, rows: Mapping[str, list[str]], versions: Mapping[str, int], *, ch: Any
+) -> None:
+    """`drop_undeclared_links` for rows checked to still hold the write that owes it."""
     params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "ids": list(rows)}
     links = await ch.query_all(
         """
@@ -843,36 +905,52 @@ async def drop_undeclared_links(
         for r in links
         if not {str(r["entity_a"]), str(r["entity_b"])} <= set(rows[str(r["id"])])
     )
-    if not drop:
-        return
-    await ch.execute(
-        """
-        DELETE FROM loom.entity_edge_rows
-        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id IN {ids:Array(UUID)}
-          AND (toString(memory_id), entity_a, entity_b)
-              IN {links:Array(Tuple(String, String, String))}
-        """,
-        params={**params, "links": drop},
-    )
-    # The edges end when the row was made high (`made_high_at`), a replay included.
-    end = made_high_at or naive_utc_now()
-    ends = [(a, b, end) for a, b in sorted({(a, b) for _, a, b in drop})]
-    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, open_only=True)
+    for part in itertools.batched(drop, _DROP_LINKS):
+        await ch.execute(
+            """
+            DELETE FROM loom.entity_edge_rows
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND memory_id IN {ids:Array(UUID)}
+              AND (toString(memory_id), entity_a, entity_b)
+                  IN {links:Array(Tuple(String, String, String))}
+            """,
+            params={
+                **params,
+                "ids": sorted({memory_id for memory_id, _, _ in part}),
+                "links": list(part),
+            },
+        )
+    # Each edge ends when the first write that dropped it landed, a replay included.
+    ends: dict[tuple[str, str], datetime] = {}
+    for memory_id, a, b in drop:
+        at = version_time(versions[memory_id])
+        ends[(a, b)] = min(ends.get((a, b), at), at)
+    for pairs in itertools.batched(sorted(ends), _DROP_LINKS):
+        await end_edges(
+            ch,
+            org=input.org,
+            namespace=input.namespace,
+            ends=[(a, b, ends[(a, b)]) for a, b in pairs],
+            open_only=True,
+        )
+
+
+def drop_payload(rows: Mapping[str, list[str]], versions: Mapping[str, int]) -> dict[str, Any]:
+    """An EDGES_DROP_UNDECLARED payload: each row's declared entities and the version of
+    the write that owes the drop, which dates the edges' end."""
+    return {
+        "rows": {memory_id: list(declared) for memory_id, declared in rows.items()},
+        "versions": {memory_id: int(versions[memory_id]) for memory_id in rows},
+    }
 
 
 async def drop_undeclared_edges(
-    input: Any,
-    rows: Mapping[str, list[str]],
-    *,
-    ch: Any,
-    op: str,
-    made_high_at: datetime | None = None,
+    input: Any, rows: Mapping[str, list[str]], versions: Mapping[str, int], *, ch: Any, op: str
 ) -> None:
     """`drop_undeclared_links`, fail-open: a failure is recorded for the projection repair
     (`EDGES_DROP_UNDECLARED`), which drops them again."""
-    made_high_at = made_high_at or naive_utc_now()
     try:
-        await drop_undeclared_links(input, rows, ch=ch, made_high_at=made_high_at)
+        await drop_undeclared_links(input, rows, versions, ch=ch)
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair drops them
         log.warning("%s: undeclared edges of %d rows not dropped (recorded): %s", op, len(rows), e)
         await record_projection_failure(
@@ -882,17 +960,18 @@ async def drop_undeclared_edges(
             projection=EDGES_DROP_UNDECLARED,
             source_operation=op,
             error=e,
-            payload={"rows": dict(rows), "made_high_at": made_high_at.isoformat()},
+            payload=drop_payload(rows, versions),
             ch=ch,
             user_id=str(getattr(input, "user_id", "") or ""),
         )
 
 
 async def drop_undeclared_edges_beside(
-    input: Any, rows: Mapping[str, list[str]], *, op: str
+    input: Any, rows: Mapping[str, list[str]], versions: Mapping[str, int], *, op: str
 ) -> None:
-    """`drop_undeclared_links` after the response, for the rows a write made 'high'
-    (`rows`: memory_id -> its declared entities; callers pick them by
+    """`drop_undeclared_links` after the response, for the rows a write made 'high' or
+    whose declared entities it narrowed (`rows`: memory_id -> its declared entities;
+    `versions`: the version the write gave each; callers pick them by
     `owes_undeclared_drop`). Owed first, as a retirement is: one EDGES_DROP_UNDECLARED
     intent for the whole write goes in before the drop is scheduled and is resolved in
     the next batched mark once the drop lands, so a stop between them leaves it to the
@@ -902,8 +981,7 @@ async def drop_undeclared_edges_beside(
 
     if not rows:
         return
-    payload_rows = {memory_id: list(declared) for memory_id, declared in rows.items()}
-    made_high_at = naive_utc_now()
+    payload = drop_payload(rows, versions)
     try:
         intent = await record_projection_failure(
             org=input.org,
@@ -912,27 +990,21 @@ async def drop_undeclared_edges_beside(
             projection=EDGES_DROP_UNDECLARED,
             source_operation=op,
             error="rows made high: undeclared edges to drop",
-            payload={"rows": payload_rows, "made_high_at": made_high_at.isoformat()},
+            payload=payload,
             user_id=str(getattr(input, "user_id", "") or ""),
         )
     except Exception as e:  # noqa: BLE001 — the drop still runs; a failure is recorded then
-        log.warning("%s: drop intent not written for %d rows: %s", op, len(payload_rows), e)
+        log.warning("%s: drop intent not written for %d rows: %s", op, len(rows), e)
         intent = ""
 
     async def drop() -> None:
         if not intent:
-            await drop_undeclared_edges(
-                input, payload_rows, ch=get_client(), op=op, made_high_at=made_high_at
-            )
+            await drop_undeclared_edges(input, rows, versions, ch=get_client(), op=op)
             return
         try:
-            await drop_undeclared_links(
-                input, payload_rows, ch=get_client(), made_high_at=made_high_at
-            )
+            await drop_undeclared_links(input, rows, versions, ch=get_client())
         except Exception as e:  # noqa: BLE001 — the intent stays; the repair drops them
-            log.warning(
-                "%s: undeclared edges of %d rows not dropped (owed): %s", op, len(payload_rows), e
-            )
+            log.warning("%s: undeclared edges of %d rows not dropped (owed): %s", op, len(rows), e)
             return
         intent_marks.resolve_soon(input.org, [intent])
 
