@@ -81,6 +81,15 @@ SYSTEM_PROMPT = (
     "names the finding and states its new status.\n"
     'A later version of a list of advice or rules is an "update" only if it keeps every '
     'item of EXISTING; if it drops items, EXISTING stays current ("related").\n'
+    "A tip, substitution, addition or estimate about an item (use X instead of Y in a "
+    'recipe, a price for a shopping list) is "related" to that item, not an update: the '
+    "item itself stays true.\n"
+    "Two items of one kind (two rides, two trips, two phrases, two routines) are different "
+    'entities. Successive events (moves in a game, steps in a story) are "related", never '
+    'an "update": only a new value of a state that replaces the old one is.\n'
+    'A completed action is later than a plan or need to do it: "needs to do X" never '
+    'supersedes "did X". When the times do not order two notes, judge the order from the '
+    'text; if the text does not show it either, answer "contradiction".\n'
     "confidence: your probability (0 to 1) that the verdict is correct.\n"
     "Return JSON matching the schema, one entry per existing note id, reason first (one "
     "short sentence naming both entities)."
