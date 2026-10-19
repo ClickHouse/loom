@@ -226,7 +226,7 @@ async def _list_namespace(
     # A row a shifted page served twice counts once. Every page must agree, not only the
     # ends: a page answered by a lagging replica reports its own total and version.
     unique = list({_entry_id(r): r for r in entries}.values())
-    whole = len(set(versions)) == len(set(totals)) == 1 and totals[0] == len(unique)
+    whole = len(set(versions)) == 1 and len(set(totals)) == 1 and totals[0] == len(unique)
     if whole:
         # A page reads the version before its rows, so a write during the last page's read
         # shows only now: the version must still be the one every page reported.
@@ -912,18 +912,17 @@ def _prune_refusal(files: dict[str, str], concepts: list[okf.Concept]) -> str:
     return ""
 
 
-def _skips_prune(files: dict[str, str]) -> bool:
-    """Whether this intact bundle's writes go ahead without the prune, said on stderr: only
-    an export that read every row says which keys have left the source."""
-    if okf_lint.generation_pointer(files).get("complete") is True:
-        return False
-    print(
-        "not pruning this run: index.md does not mark the export complete (it stopped at "
-        "--limit, the source changed while it was listed, or an older release wrote it); "
-        "the writes go ahead",
-        file=sys.stderr,
-    )
-    return True
+def _marked_complete(files: dict[str, str]) -> bool:
+    """Whether the export read every row: only then does the bundle say which keys have
+    left the source."""
+    return okf_lint.generation_pointer(files).get("complete") is True
+
+
+_PRUNE_SKIPPED = (
+    "not pruning this run: index.md does not mark the export complete (it stopped at "
+    "--limit, the source changed while it was listed, or an older release wrote it); "
+    "the writes go ahead"
+)
 
 
 async def _prune(
@@ -947,7 +946,7 @@ async def _prune(
     n: Counter[str] = Counter()
     refused = await _versioned_delete_refusal(client, org) if gone else ""
     if refused:
-        n["prune_failed"] += len(gone)
+        n["prune_failed"] += 1  # the refusal; none of the candidates was read
         print(f"  ✗ prune deletes nothing: {refused}", file=sys.stderr)
         return n
     for session_id, key in gone:
@@ -1098,7 +1097,9 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
         if reason:
             print(f"refusing to prune: {reason}", file=sys.stderr)
             return 2
-    prune_skipped = bool(args.prune) and _skips_prune(files)
+    prune_skipped = bool(args.prune) and not _marked_complete(files)
+    if prune_skipped:
+        print(_PRUNE_SKIPPED, file=sys.stderr)
     token = _resolve_token(args)
     org = _resolve_org(args, token)
     ev_chunks, ev_digests = ([], []) if args.no_evidence else _walk_evidence(root)

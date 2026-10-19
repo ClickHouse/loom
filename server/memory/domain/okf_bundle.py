@@ -690,14 +690,18 @@ def concept_paths_by_key(concepts: list[Concept]) -> dict[str, str]:
 
 
 def _dedupe_slugs(concepts: list[Concept]) -> None:
-    seen: dict[str, int] = {}
+    """Give each concept an id no other concept has: a later one whose slug is taken gets the
+    first free `-<n>` suffix, so no file overwrites another (a lost file would leave a live
+    key out of a bundle that still says complete, and prune would delete its copy)."""
+    taken = {c.id for c in concepts}
+    used: set[str] = set()
     for c in concepts:
-        base = c.id
-        if base in seen:
-            seen[base] += 1
-            c.id = f"{base}-{seen[base]}"
-        else:
-            seen[base] = 0
+        if c.id in used:
+            n = 1
+            while f"{c.id}-{n}" in taken or f"{c.id}-{n}" in used:
+                n += 1
+            c.id = f"{c.id}-{n}"
+        used.add(c.id)
 
 
 def related_links(

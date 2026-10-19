@@ -522,3 +522,20 @@ def test_corpus_digest_covers_concepts_only_and_moves_with_them() -> None:
     b = okf.plan_bundle([_entry(), _entry(memory_key="other")], namespace="ns", exported_at=_NOW)
     assert okf.corpus_digest(b) != okf.corpus_digest(a)
     assert _root_pointer('---\nokf_version: "0.2"\n---\n# old bundle\n') == {}
+
+
+def test_a_slug_suffix_never_lands_on_another_concepts_id() -> None:
+    # `deploy/step` and `deploy:step` share a slug; the suffix the second gets must not be
+    # `deploy-step-1`'s own, or one file overwrites the other and a complete bundle loses a key.
+    keys = ["deploy/step", "deploy:step", "deploy-step-1"]
+    entries = [
+        _entry(memory_key=k, memory_id=f"{i:08d}-0000-0000-0000-000000000000")
+        for i, k in enumerate(keys)
+    ]
+    files = okf.plan_bundle(entries, namespace="ns", exported_at=_NOW, complete=True)
+    concept_files = [
+        p
+        for p in files
+        if p.startswith("semantic/") and p.rsplit("/", 1)[-1] not in okf.RESERVED_FILES
+    ]
+    assert len(concept_files) == 3, concept_files
