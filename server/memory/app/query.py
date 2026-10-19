@@ -768,15 +768,6 @@ async def _canonical_keys_for_rows(org: str, namespace: str, rows: list[Any]) ->
 async def handle_memory_bulk_get(
     input: MemoryBulkGetInput,
 ) -> MemoryBulkGetOutput:
-    out = await _handle_memory_bulk_get(input)
-    # the rows served, by their own keys: a chunk id answers with its parent's row
-    _record_read_exposure("memory.bulk_get", input, out._served_keys)
-    return out
-
-
-async def _handle_memory_bulk_get(
-    input: MemoryBulkGetInput,
-) -> MemoryBulkGetOutput:
     """Fetch many memory rows by key, each answered as memory.get answers it.
 
     Excludes tombstoned rows from `found`. Missing keys land in `missing`."""
@@ -844,8 +835,12 @@ async def _handle_memory_bulk_get(
             results[k] = served
         elif parent_of.get(k) in fetched:
             row, parent_out = fetched[parent_of[k]]
+            # `resolved_from` marks an answer given by another row, as memory.get marks one
             alias = parent_out.model_copy(
-                update={"canonical_key": parent_out.canonical_key or parent_of[k]}
+                update={
+                    "canonical_key": parent_out.canonical_key or parent_of[k],
+                    "resolved_from": k,
+                }
             )
             alias._projection = keep
             results[k] = alias
@@ -865,7 +860,9 @@ async def _handle_memory_bulk_get(
         actor=writer_actor(input.agent),
         subjects=high,
     )
+    # the rows served, by their own keys: a chunk id answers with its parent's row
+    _record_read_exposure(
+        "memory.bulk_get", input, list(dict.fromkeys(r.memory_key for r in served_rows.values()))
+    )
     missing = [k for k in input.memory_keys if k not in results]
-    answer = MemoryBulkGetOutput(results=results, missing=missing)
-    answer._served_keys = list(dict.fromkeys(r.memory_key for r in served_rows.values()))
-    return answer
+    return MemoryBulkGetOutput(results=results, missing=missing)

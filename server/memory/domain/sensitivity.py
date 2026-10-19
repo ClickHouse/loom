@@ -206,6 +206,12 @@ def value_text(value: Any) -> str:
     return _SCALAR_SEP.join(lines)
 
 
+# A JSON string escape, decoded once and in order (so `\\n`, an escaped backslash then `n`,
+# stays a backslash and an `n`).
+_JSON_ESCAPE = re.compile(r'\\(["\\/bfnrt])')
+_JSON_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f"}
+
+
 def reads_high(text: str) -> bool:
     """Whether `text` holds a credential shape, whatever the autodetect setting: the rule for
     text copied from a row (a digest's key facts, an observation sent to a model, a raw
@@ -216,12 +222,6 @@ def reads_high(text: str) -> bool:
         return True
     unescaped = _JSON_ESCAPE.sub(lambda m: _JSON_ESCAPES.get(m.group(1), m.group(1)), text)
     return unescaped != text and detect_sensitivity(unescaped) == HIGH
-
-
-# A JSON string escape, decoded once and in order (so `\\\\n`, an escaped backslash then
-# `n`, stays a backslash and an `n`).
-_JSON_ESCAPE = re.compile(r'\\(["\\/bfnrt])')
-_JSON_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f"}
 
 
 def resolve_sensitivity(requested: str | None, text: str) -> str:

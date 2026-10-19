@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, PrivateAttr, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
 from server.memory.api.models_crud import MemoryGetOutput
@@ -367,9 +367,6 @@ class MemoryBulkGetOutput(BaseModel):
     results: dict[str, MemoryGetOutput] = Field(default_factory=dict)
     # Asked keys with no live row under this identity.
     missing: list[str] = Field(default_factory=list)
-    # The keys of the rows served (a chunk id answers with its parent's row), for the
-    # exposure ledger; never on the wire.
-    _served_keys: list[str] = PrivateAttr(default_factory=list)
 
 
 # memory.import_curated — turn a curated doc (e.g. AGENTS.md / CLAUDE.md) into

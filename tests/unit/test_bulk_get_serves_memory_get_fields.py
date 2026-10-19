@@ -82,7 +82,7 @@ def served(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_bulk_get_serves_sensitivity_and_usage_and_audits_high_rows(served) -> None:
-    out = await query._handle_memory_bulk_get(
+    out = await query.handle_memory_bulk_get(
         MemoryBulkGetInput(org="o", namespace="n", agent="a", memory_keys=["plain", "secret"])
     )
     assert out.results["secret"].sensitivity == "high"
@@ -94,7 +94,7 @@ async def test_bulk_get_serves_sensitivity_and_usage_and_audits_high_rows(served
 
 @pytest.mark.asyncio
 async def test_bulk_get_reads_usage_only_when_the_projection_serves_it(served) -> None:
-    await query._handle_memory_bulk_get(
+    await query.handle_memory_bulk_get(
         MemoryBulkGetInput(
             org="o", namespace="n", agent="a", memory_keys=["plain"], fields=["sensitivity"]
         )
@@ -160,7 +160,7 @@ async def test_bulk_get_audits_the_reader_named_by_the_token(served) -> None:
         AuthInfo(subject="ci-mirror", org="o", namespaces=("n",), roles=(), is_service_account=True)
     )
     try:
-        await query._handle_memory_bulk_get(
+        await query.handle_memory_bulk_get(
             MemoryBulkGetInput(org="o", namespace="n", agent="*", memory_keys=["secret"])
         )
     finally:

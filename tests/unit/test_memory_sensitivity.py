@@ -382,8 +382,8 @@ def test_a_chunk_of_an_object_value_is_read_with_its_escapes_undone() -> None:
 
     assert reads_high(human_text({"notes": "deploy steps:\n" + _TOKEN}))
     assert reads_high(human_text({"notes": "line\r" + _TOKEN}))  # a lone carriage return
-    # an escaped backslash before `n` (a Windows path) stays a backslash and an `n`
-    assert not reads_high(human_text({"path": "C:\\npm\\tools"}))
+    # an escaped backslash before `n` stays a backslash and an `n`: no line starts there
+    assert not reads_high(human_text({"note": "x\\n" + _TOKEN}))
     assert not reads_high(human_text({"label": "Password:", "placeholder": "Enter one"}))
 
 

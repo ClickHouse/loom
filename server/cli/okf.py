@@ -213,9 +213,14 @@ async def _fetch_namespace(
 
 def _answered_by_parent(memory_key: str, answer: dict[str, Any]) -> bool:
     """Whether bulk_get answered `memory_key` with another row: a chunk-id-shaped key
-    (`chunk:memory.set:<parent>:<n>`) that no row holds reads its parent, and names it as
-    `canonical_key`."""
-    return memory_key.startswith("chunk:memory.set:") and bool(answer.get("canonical_key"))
+    (`chunk:memory.set:<parent>:<n>`) that no row holds reads its parent. This build marks
+    that answer with `resolved_from`; an older one only names the parent as `canonical_key`
+    (a duplicate row's own answer names its canonical, a different key)."""
+    if answer.get("resolved_from"):
+        return True
+    rest = memory_key.removeprefix("chunk:memory.set:")
+    parent, _, index = rest.rpartition(":")
+    return rest != memory_key and index.isdigit() and answer.get("canonical_key") == parent
 
 
 async def _fetch_evidence(

@@ -298,3 +298,13 @@ async def test_export_never_writes_a_parents_value_under_a_chunk_shaped_key() ->
         _AliasClient(), "o", "ns", include_tombstoned=False
     )
     assert rows == [] and unreadable == ["chunk:memory.set:x:0"]
+
+
+def test_a_chunk_shaped_duplicate_rows_own_answer_is_kept() -> None:
+    # A duplicate row's answer names its canonical (another key); only the parent named in
+    # the id, or `resolved_from`, marks an answer given by another row.
+    own = {"value": "v", "canonical_key": "notes-v2"}
+    assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", own)
+    assert cli_okf._answered_by_parent("chunk:memory.set:notes:0", {"canonical_key": "notes"})
+    assert cli_okf._answered_by_parent("chunk:memory.set:notes:0", {"resolved_from": "x"})
+    assert not cli_okf._answered_by_parent("chunk:memory.set:notes", {"canonical_key": "notes"})

@@ -587,11 +587,12 @@ one a later sweep may not have set yet, is checked whatever the setting (`reads_
 also reads text holding JSON, such as a chunk of an object value, with its string escapes
 undone): `memory.export_evidence` (chunks, and digests with their key facts decoded),
 `bodies: "source"`, the observations `observe_extract` sends its model, the entity
-extractor's input, the existing memories an extraction prompt shows, and a session digest's
-key facts when written, listed by `memory.digests` or read by the outcome judge. The
-`sensitivity_sweep` worker (on, daily) labels rows from paths that skip it, every high shape
-counting as `credential` for its default shape filter: a new version per row and, for
-`high`, tombstoned embedding rows and entity vectors.
+extractor's input, the existing memories an extraction prompt shows, the rows
+`memory.consolidate` sends its merge model, and a session digest's key facts when written,
+listed by `memory.digests` or read by the outcome judge. The `sensitivity_sweep` worker (on,
+daily) labels rows from paths that skip it, every high shape counting as `credential` for
+its default shape filter: a new version per row and, for `high`, tombstoned embedding rows
+and entity vectors.
 
 ## Audit log
 

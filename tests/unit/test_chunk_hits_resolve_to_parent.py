@@ -290,7 +290,9 @@ async def test_bulk_get_answers_a_stored_key_shaped_like_a_chunk_id_with_its_own
     monkeypatch.setattr(memory_repo, "get_many_by_keys", fake_get_many)
     key = "chunk:memory.set:a:0"
     out = await Q.handle_memory_bulk_get(
-        MemoryBulkGetInput(org="o", namespace="n", agent="clickgap", memory_keys=[key])
+        MemoryBulkGetInput(
+            org="o", namespace="n", agent="clickgap", memory_keys=[key], fields=["value"]
+        )
     )
     assert out.results[key].value == {"v": key} and out.results[key].canonical_key is None
 
@@ -319,7 +321,9 @@ async def test_bulk_get_never_serves_or_audits_a_parent_nobody_asked_for(
     monkeypatch.setattr(audit, "emit_many", _emit_many)
     key = "chunk:memory.set:x:0"
     out = await Q.handle_memory_bulk_get(
-        MemoryBulkGetInput(org="o", namespace="n", agent="clickgap", memory_keys=[key])
+        MemoryBulkGetInput(
+            org="o", namespace="n", agent="clickgap", memory_keys=[key], fields=["value"]
+        )
     )
     assert list(out.results) == [key] and audited == []
 
@@ -350,6 +354,7 @@ async def test_bulk_get_records_the_served_rows_own_keys_as_exposed(
             namespace="n",
             agent="clickgap",
             memory_keys=["chunk:memory.set:x:0", "chunk:memory.set:x:1", "y"],
+            fields=["value"],  # no usage counters: no read past the fake
         )
     )
     assert exposed == [["x", "y"]]
