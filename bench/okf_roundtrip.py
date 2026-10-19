@@ -355,9 +355,7 @@ async def run(args: argparse.Namespace) -> int:
         ev_totals: dict[str, int] = {}
         if not args.no_evidence and not args.skip_import:
             ev_chunks, ev_digests = _walk_evidence(bundle_dir)
-            ev_args = argparse.Namespace(
-                namespace=target, agent=args.import_agent, user_id="-", path=str(bundle_dir)
-            )
+            ev_args = argparse.Namespace(namespace=target, agent=args.import_agent, user_id="-")
             ev_totals = await _import_evidence(client, args.org, ev_args, ev_chunks, ev_digests)
         t_import = (datetime.now(UTC) - t1).total_seconds()
         imported, _ = await _fetch_namespace(client, args.org, target, include_tombstoned=False)

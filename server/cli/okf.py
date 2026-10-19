@@ -169,13 +169,14 @@ async def _fetch_namespace(
         client, org, namespace, include_tombstoned=include_tombstoned, limit=limit
     )
     # Offset pages shift when the namespace changes mid-listing, which can skip a live row;
-    # a bundle that says complete without it would let --prune delete its copy.
-    for _ in range(_LIST_ATTEMPTS - 1):
-        if whole or limit is not None:
-            break
+    # a bundle that says complete without it would let --prune delete its copy. A --limit
+    # export is never complete, so it is listed once.
+    attempts = 1
+    while not whole and limit is None and attempts < _LIST_ATTEMPTS:
         entries, whole = await _list_namespace(
             client, org, namespace, include_tombstoned=include_tombstoned
         )
+        attempts += 1
     return await _with_full_values(client, org, namespace, entries), whole
 
 
@@ -968,14 +969,14 @@ async def _prune(
             if got.get("actor") != actor or got.get("lock_mode"):
                 n["prune_kept"] += 1
                 continue
+            if got.get("version") is None:  # without it the delete would run unchecked
+                n["prune_failed"] += 1
+                print(f"  ✗ prune {key}: memory.get answered without a version", file=sys.stderr)
+                continue
             if args.dry_run:
                 where = f" (session {session_id})" if session_id != "-" else ""
                 print(f"  would delete {key}{where}")
                 n["pruned"] += 1
-                continue
-            if got.get("version") is None:  # without it the delete would run unchecked
-                n["prune_failed"] += 1
-                print(f"  ✗ prune {key}: memory.get answered without a version", file=sys.stderr)
                 continue
             # The server deletes only the version read above, under this exact identity.
             res = await client.post("memory.delete", {**ident, "if_version": got["version"]})
@@ -983,7 +984,8 @@ async def _prune(
             n["prune_failed"] += 1
             print(f"  ✗ prune {key}: {e}", file=sys.stderr)
             continue
-        if res.get("reason") == "version_changed":
+        # Rewritten, or gone, since prune's read: nothing of ours was deleted.
+        if res.get("reason") == "version_changed" or res.get("found") is False:
             n["prune_kept"] += 1
             continue
         if res.get("tombstoned"):

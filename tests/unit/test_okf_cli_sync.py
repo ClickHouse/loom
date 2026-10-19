@@ -938,3 +938,34 @@ def test_a_dry_run_says_an_older_target_would_prune_nothing(
     out = capsys.readouterr()
     assert "prune deletes nothing" in out.err and "would delete" not in out.out
     assert loom.writes() == []
+
+
+def test_a_copy_gone_before_the_delete_counts_as_kept(
+    tmp_path: Path,
+    loom: _FakeLoom,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    post = loom.post
+
+    async def gone_before_the_delete(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == "memory.delete":
+            loom.rows.pop(("okf-sync", "-", "gone"))
+        return await post(op, body)
+
+    monkeypatch.setattr(loom, "post", gone_before_the_delete)
+    capsys.readouterr()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
+    assert "0 pruned (1 kept" in capsys.readouterr().out
+
+
+def test_a_dry_run_counts_a_row_without_a_version_as_the_real_run_does(
+    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    del loom.rows[("okf-sync", "-", "gone")]["version"]
+    capsys.readouterr()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune", "--dry-run") == 1
+    out = capsys.readouterr().out
+    assert "would delete" not in out and "0 would be pruned (1 failed)" in out

@@ -55,6 +55,10 @@ from server.memory.domain.sensitivity import HIGH, SENSITIVITY_TAG_PREFIX
 
 OKF_VERSION = "0.2"
 RESERVED_FILES = frozenset({"index.md", "log.md", "AGENTS.md", "README.md"})
+# Directory names a bundle reader skips or treats as something other than concepts: the
+# evidence and digest planes (okf_evidence.EVIDENCE_DIRS), the lint's staging area, and
+# tooling directories. A memory type that slugs to one of them is written under `type-<slug>`.
+_RESERVED_DIRS = frozenset({"evidence", "digests", "staging", "node_modules"})
 
 _TYPE_BY_MEMORY_TYPE: dict[str, str] = {
     "semantic": "Fact",
@@ -239,7 +243,7 @@ def memory_to_concept(
     memory_key = str(entry["memory_key"])
     memory_type = str(entry.get("memory_type") or "semantic")
     okf_type = okf_type_for(memory_type)
-    directory = directory if directory is not None else memory_type
+    directory = directory if directory is not None else type_directory(memory_type)
     slug = slug or slugify(memory_key)
     value = entry.get("value")
     body_text = value_to_body(value if value is not None else "")
@@ -689,6 +693,20 @@ def concept_paths_by_key(concepts: list[Concept]) -> dict[str, str]:
 # ------------------------------------------------------------------
 
 
+def type_directory(memory_type: str) -> str:
+    """The bundle directory of a memory type: its slug, prefixed when a reader would skip it
+    or read it as something other than concepts (a free-form type like `evidence`,
+    `.notes` or `../x` would otherwise drop its rows from the bundle or escape it)."""
+    slug = slugify(memory_type) or "type"
+    if slug in _RESERVED_DIRS or slug.startswith("."):
+        return f"type-{slug}"
+    return slug
+
+
+def _is_reserved(concept_id: str) -> bool:
+    return concept_id.rsplit("/", 1)[-1] + ".md" in RESERVED_FILES
+
+
 def _dedupe_slugs(concepts: list[Concept]) -> None:
     """Give each concept an id no other concept has: a later one whose slug is taken gets the
     first free `-<n>` suffix, so no file overwrites another (a lost file would leave a live
@@ -696,7 +714,9 @@ def _dedupe_slugs(concepts: list[Concept]) -> None:
     taken = {c.id for c in concepts}
     used: set[str] = set()
     for c in concepts:
-        if c.id in used:
+        # A key named `index` or `log` would be overwritten by, or read as, the bundle's own
+        # file of that name.
+        if c.id in used or _is_reserved(c.id):
             n = 1
             while f"{c.id}-{n}" in taken or f"{c.id}-{n}" in used:
                 n += 1
@@ -744,7 +764,9 @@ def plan_concepts(
 ) -> list[Concept]:
     """Entries → sorted, slug-deduped concepts carrying their typed edges."""
     concepts = [memory_to_concept(e) for e in entries]
-    concepts.sort(key=lambda c: c.id)
+    # Ties on a slug break on the key and the row id, never the listing's order: the concept
+    # that keeps the bare name must not change between runs, or its copy's trace changes.
+    concepts.sort(key=lambda c: (c.id, c.memory_key, str(c.loom.get("memory_id") or "")))
     _dedupe_slugs(concepts)
     typed = authored_relates_to(concepts, edges)
     for c in concepts:

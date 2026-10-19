@@ -539,3 +539,47 @@ def test_a_slug_suffix_never_lands_on_another_concepts_id() -> None:
         if p.startswith("semantic/") and p.rsplit("/", 1)[-1] not in okf.RESERVED_FILES
     ]
     assert len(concept_files) == 3, concept_files
+
+
+def _keys_read_back(tmp_path: Any, entries: list[dict[str, Any]]) -> list[str]:
+    """The memory keys an import finds in the bundle export writes for `entries`."""
+    from server.cli import okf as cli_okf
+    from server.memory.domain import okf_lint
+
+    files = okf.plan_bundle(entries, namespace="ns", exported_at=_NOW, complete=True)
+    cli_okf._write_bundle(tmp_path, files)
+    assert okf_lint.lint_bundle(tmp_path).criticals == []  # import's lint gate passes
+    read = okf_lint.read_bundle(tmp_path)
+    assert okf_lint.bundle_digest(read) == okf_lint.generation_pointer(read)["corpus_digest"]
+    return sorted(c.memory_key for c in cli_okf._walk_bundle(read))
+
+
+def _ids(n: int) -> list[str]:
+    return [f"{i:08d}-0000-0000-0000-000000000000" for i in range(n)]
+
+
+def test_a_key_named_like_a_bundle_file_still_travels(tmp_path: Any) -> None:
+    keys = ["index", "log", "README", "AGENTS", "index:"]
+    entries = [_entry(memory_key=k, memory_id=i) for k, i in zip(keys, _ids(5), strict=True)]
+    assert _keys_read_back(tmp_path, entries) == sorted(keys)
+
+
+@pytest.mark.parametrize(
+    "memory_type", ["evidence", "digests", "staging", "node_modules", ".notes", "a/b", "../x"]
+)
+def test_a_row_of_any_memory_type_still_travels(tmp_path: Any, memory_type: str) -> None:
+    entries = [
+        _entry(memory_key="k", memory_type=memory_type),
+        _entry(memory_key="plain", memory_id=_ids(2)[1]),
+    ]
+    assert _keys_read_back(tmp_path / "b", entries) == ["k", "plain"]
+    assert not any(p.resolve() == (tmp_path / "x").resolve() for p in tmp_path.rglob("*"))
+
+
+def test_the_same_rows_in_another_order_get_the_same_files() -> None:
+    # Two writers hold `deploy`; the newest-first listing order changes between runs.
+    a = _entry(memory_key="deploy", agent="a", memory_id=_ids(2)[0], value="from a")
+    b = _entry(memory_key="deploy", agent="b", memory_id=_ids(2)[1], value="from b")
+    one = okf.plan_bundle([a, b], namespace="ns", exported_at=_NOW)
+    two = okf.plan_bundle([b, a], namespace="ns", exported_at=_NOW)
+    assert one == two
