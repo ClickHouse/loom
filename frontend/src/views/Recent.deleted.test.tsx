@@ -95,4 +95,33 @@ describe("Recently deleted status", () => {
     await userEvent.click(screen.getByRole("button", { name: "Show live memories" }));
     expect(await screen.findByText("live/key")).toBeInTheDocument();
   });
+
+  // The server's tombstoned_at is a ClickHouse time with no zone, in UTC. Read as local time
+  // west of UTC, a row deleted 30 hours ago would be 23 hours old and keep all 14 days.
+  it("counts the days left from a zoneless ClickHouse time as UTC", async () => {
+    vi.stubEnv("TZ", "America/Los_Angeles");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-18T12:00:00Z"));
+    try {
+      vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+        opts?.include_tombstoned
+          ? {
+              entries: [{ ...entry("gone/key"), tombstoned_at: "2026-10-17 06:00:00" }],
+              total: 1,
+              truncated: false,
+              today: 0,
+            }
+          : { entries: [entry("live/key")], total: 1, truncated: false, today: 1 },
+      );
+      render(<Recent />);
+      await screen.findByText("live/key");
+      await userEvent.click(screen.getAllByRole("button", { name: "Status" })[0]);
+      await waitFor(() => expect(item("deleted")).not.toBeNull());
+      await userEvent.click(item("deleted") as HTMLElement);
+      expect(await screen.findByText(/13 days left to restore/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    }
+  });
 });

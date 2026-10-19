@@ -24,7 +24,7 @@ import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowSkeleton } from "../components/Skeleton";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { dayLabel, displayAgent, SENTINEL_AGENTS } from "../lib/format";
+import { dayLabel, displayAgent, parseChTime, SENTINEL_AGENTS } from "../lib/format";
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
 import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs, useMemoriesSection } from "../components/MemoryTabs";
@@ -824,8 +824,10 @@ function MemoryList() {
                       <div className="flex items-center justify-between mt-1 py-1 text-xs text-text-muted">
                         <span>
                           Deleted <ListTime iso={e.tombstoned_at} quiet /> ·{(() => {
-                            if (!e.tombstoned_at) return " in grace window";
-                            const ageMs = Date.now() - new Date(e.tombstoned_at).getTime();
+                            // A ClickHouse time has no zone and is UTC, as ListTime reads it.
+                            const deleted = parseChTime(e.tombstoned_at);
+                            if (!deleted) return " in grace window";
+                            const ageMs = Date.now() - deleted.getTime();
                             const daysLeft = Math.max(0, 14 - Math.floor(ageMs / (24 * 3600 * 1000)));
                             return ` ${daysLeft} day${daysLeft === 1 ? "" : "s"} left to restore`;
                           })()}
