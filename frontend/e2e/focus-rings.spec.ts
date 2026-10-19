@@ -6,7 +6,7 @@ import { installApi, NAMESPACE, ROUTES, SMALL_SEED, TASK_INBOX } from "./fixture
 // picker's options met on the way. At each stop the ring (the focused element's outline, or
 // the one an ancestor draws for it, as a list row does) must fit inside every box that clips
 // it, within 0.5 px: an ancestor in its containing-block chain whose overflow is not visible.
-// After Tab the browser scrolls, and Chromium leaves a partly visible element where it is, so
+// After Tab the browser scrolls, and leaves a partly visible element where it is, so
 // a scroll box counts its whole scrollable area: the ring is clipped when no scrolling shows
 // it. After an arrow key Loom scrolls the item itself, so the box's padding box counts.
 
