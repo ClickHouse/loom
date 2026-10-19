@@ -41,13 +41,18 @@ const REFRESH_MARGIN_S = 60;
 // provider first: giving up sooner turns a slow answer into a lost one.
 const REFRESH_TIMEOUT_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 30_000;
-/** Discovery, the exchange and its one retry together, so a refresh holds the lock for a bounded time. */
+/**
+ * Discovery, the exchange and its one retry together, so a refresh holds the
+ * lock for a bounded time: each request's timeout is what the deadline leaves,
+ * and covers the whole request, its answer's body included.
+ */
 export const REFRESH_DEADLINE_MS = 90_000;
 // The lock both SDKs take. Its holder touches the directory every heartbeat;
-// one silent for the stale age is broken, and so is one whose holder on this
-// machine is no longer running.
+// one silent for the stale age is broken, and so is one silent for two
+// heartbeats whose holder on this machine is no longer running.
 const LOCK_DIR = ".credentials.lock.d";
 export const LOCK_HEARTBEAT_MS = 10_000;
+export const LOCK_SILENT_MS = 2 * LOCK_HEARTBEAT_MS;
 export const LOCK_STALE_MS = 60_000;
 
 type FetchFn = (input: string, init: RequestInit) => Promise<Response>;
@@ -223,40 +228,28 @@ function locked<T>(fn: (n: NodeModules) => Promise<T> | T): Promise<T> {
 }
 
 /**
- * Take `~/.loom/.credentials.lock.d` by creating it (mkdir is atomic on
- * every filesystem the file can live on), with an owner file naming the
- * holder, and touch it every heartbeat while held. A stale lock is broken.
- * Returns the release, which also runs if the process exits holding it.
+ * Take `~/.loom/.credentials.lock.d`, a directory whose owner file names the
+ * holder, and touch it every heartbeat while held. Waits while another
+ * process holds it, and breaks it once stale. Returns the release, which
+ * also runs if the process exits holding it.
  */
 async function takeLockDir(n: NodeModules): Promise<() => void> {
   const dir = loomDir(n);
   n.fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const lock = n.path.join(dir, LOCK_DIR);
-  const owner = JSON.stringify({ pid: proc()?.pid ?? 0, host: n.os.hostname(), time: Date.now() / 1000 });
+  const owner = JSON.stringify({ pid: proc()?.pid, host: n.os.hostname(), time: Date.now() / 1000 });
+  sweep(n, lock);
   let wait = 10;
-  for (;;) {
-    try {
-      n.fs.mkdirSync(lock, { mode: 0o700 });
-      break;
-    } catch (e) {
-      if ((e as { code?: string }).code !== "EEXIST") throw e;
-    }
+  while (!createLock(n, lock, owner)) {
     const held = ownerOf(n, lock);
-    if (stale(n, lock, held) && breakLock(n, lock, held)) continue;
+    if (stale(n, lock, held)) breakLock(n, lock, held);
     await new Promise((resolve) => setTimeout(resolve, wait));
     wait = Math.min(wait * 2, 200);
-  }
-  try {
-    n.fs.writeFileSync(n.path.join(lock, "owner"), owner, { mode: 0o600 });
-  } catch (e) {
-    n.fs.rmSync(lock, { recursive: true, force: true });
-    throw e;
   }
   const beat = setInterval(() => {
     if (ownerOf(n, lock) !== owner) return;
     try {
-      const now = new Date();
-      n.fs.utimesSync(lock, now, now);
+      touch(n, lock);
     } catch {
       /* released meanwhile */
     }
@@ -266,10 +259,65 @@ async function takeLockDir(n: NodeModules): Promise<() => void> {
     clearInterval(beat);
     unhook();
     // Only our own: a lock broken as stale may be another process's by now.
-    if (ownerOf(n, lock) === owner) n.fs.rmSync(lock, { recursive: true, force: true });
+    if (ownerOf(n, lock) !== owner) return;
+    try {
+      removeLock(n, lock);
+    } catch {
+      /* left for the stale age; a release never fails the refresh it ends */
+    }
   };
   const unhook = releaseOnExit(release);
   return release;
+}
+
+/**
+ * Take `lock` by renaming a private directory that holds the owner file
+ * onto it. The rename fails while the lock exists, and a lock never exists
+ * without its owner. Answers whether it was taken.
+ */
+function createLock(n: NodeModules, lock: string, owner: string): boolean {
+  const tmp = `${lock}.${hex(n, 6)}.tmp`;
+  n.fs.mkdirSync(tmp, { mode: 0o700 });
+  try {
+    n.fs.writeFileSync(n.path.join(tmp, "owner"), owner, { mode: 0o600 });
+    touch(n, tmp);
+    n.fs.renameSync(tmp, lock);
+    return true;
+  } catch (e) {
+    if (!heldError(e)) throw e;
+    return false;
+  } finally {
+    removeQuietly(n, tmp); // gone already once renamed
+  }
+}
+
+/**
+ * What renaming a directory onto a lock that exists fails with: POSIX allows
+ * no rename onto a non-empty directory, and Windows none onto any directory.
+ */
+function heldError(e: unknown): boolean {
+  const code = errorCode(e);
+  if (code === "EEXIST" || code === "ENOTEMPTY") return true;
+  return proc()?.platform === "win32" && (code === "EPERM" || code === "EACCES");
+}
+
+function errorCode(e: unknown): string | undefined {
+  return (e as { code?: string } | null)?.code;
+}
+
+/** Delete `path` and all in it, ignoring a failure, as Python's ignore_errors does. */
+function removeQuietly(n: NodeModules, path: string): void {
+  try {
+    n.fs.rmSync(path, { recursive: true, force: true, maxRetries: 5 });
+  } catch {
+    /* left for the sweep */
+  }
+}
+
+/** This machine's clock: on a network home a file's mtime is otherwise the file server's. */
+function touch(n: NodeModules, path: string): void {
+  const now = new Date();
+  n.fs.utimesSync(path, now, now);
 }
 
 /**
@@ -287,7 +335,7 @@ function releaseOnExit(release: () => void): () => void {
   const onSignal = (signal: string) => {
     if (p.listenerCount?.(signal) !== 1) return;
     release(); // which unhooks this listener, restoring the signal's default
-    p.kill?.(p.pid ?? 0, signal);
+    if (p.pid !== undefined) p.kill?.(p.pid, signal);
   };
   on.call(p, "exit", release);
   for (const s of signals) on.call(p, s, onSignal);
@@ -297,7 +345,7 @@ function releaseOnExit(release: () => void): () => void {
   };
 }
 
-/** The owner file's text; empty when there is none (yet). */
+/** The owner file's text; empty when the lock is gone. */
 function ownerOf(n: NodeModules, lock: string): string {
   try {
     return n.fs.readFileSync(n.path.join(lock, "owner"), "utf8");
@@ -308,18 +356,22 @@ function ownerOf(n: NodeModules, lock: string): string {
 
 /**
  * Whether the holder of `lock` is gone: silent for the stale age (a holder
- * on another machine, a reused pid, a hung process), or a process of this
- * machine that is no longer running.
+ * on another machine, a reused pid, a hung process), or silent for two
+ * heartbeats and no longer running on this machine. The pid is asked only
+ * after the heartbeat stopped: a holder in another pid namespace on this
+ * host (a container sharing the home directory) looks dead to it.
  */
 function stale(n: NodeModules, lock: string, held: string): boolean {
-  if (ageMs(n, lock) > LOCK_STALE_MS) return true;
+  const age = ageMs(n, lock);
+  if (age > LOCK_STALE_MS) return true;
+  if (age <= LOCK_SILENT_MS) return false;
   let owner: unknown;
   try {
     owner = JSON.parse(held);
   } catch {
-    return false; // no owner file yet: its holder is between mkdir and write
+    return false;
   }
-  if (!isObject(owner) || owner.host !== n.os.hostname()) return false;
+  if (!isObject(owner) || owner.host !== n.os.hostname()) return false; // another machine's pid means nothing here
   const pid = owner.pid;
   return Number.isInteger(pid) && (pid as number) > 0 && !running(pid as number);
 }
@@ -329,39 +381,83 @@ function running(pid: number): boolean {
     proc()?.kill?.(pid, 0);
     return true;
   } catch (e) {
-    return (e as { code?: string }).code !== "ESRCH"; // EPERM: running, as another user
+    return errorCode(e) !== "ESRCH"; // EPERM: running, as another user
   }
 }
 
 /**
  * Remove the stale lock whose owner file read `held`. A claim directory
- * inside it lets one waiter at a time do it, and the owner is read again
- * under the claim, so a lock taken over meanwhile is left alone. The lock is
- * renamed away before it is removed, so a new holder never shares the path
- * with a half-removed one. Answers whether to retry at once.
+ * beside it lets one waiter at a time do it, and the owner is read again
+ * under the claim, so a lock taken over meanwhile is left alone.
  */
-function breakLock(n: NodeModules, lock: string, held: string): boolean {
-  const claim = n.path.join(lock, "breaking");
+function breakLock(n: NodeModules, lock: string, held: string): void {
+  const claim = `${lock}.breaking`;
   try {
-    n.fs.mkdirSync(claim);
+    n.fs.mkdirSync(claim, { mode: 0o700 });
   } catch (e) {
-    if ((e as { code?: string }).code !== "EEXIST") return true; // released meanwhile
-    // Left by a waiter that died mid-break: cleared once as old as a stale lock.
-    if (ageMs(n, claim) > LOCK_STALE_MS) n.fs.rmSync(claim, { recursive: true, force: true });
-    return false;
+    if (errorCode(e) === "EEXIST") {
+      // Left by a waiter that died mid-break: cleared once as old as a stale lock.
+      if (ageMs(n, claim) > LOCK_STALE_MS) rmdirQuietly(n, claim);
+      return;
+    }
+    if (errorCode(e) === "ENOENT") return; // the directory holding it is gone: try again
+    throw unbreakable(lock, e);
   }
-  if (ownerOf(n, lock) !== held) {
-    n.fs.rmSync(claim, { recursive: true, force: true });
-    return false;
+  try {
+    try {
+      touch(n, claim);
+    } catch {
+      /* aged by the file server's clock instead */
+    }
+    if (ownerOf(n, lock) === held) removeLock(n, lock);
+  } catch (e) {
+    throw unbreakable(lock, e);
+  } finally {
+    rmdirQuietly(n, claim);
   }
+}
+
+function unbreakable(lock: string, e: unknown): LoomError {
+  const why = errorCode(e) ?? String(e);
+  return new LoomError(`the credentials lock at ${lock} is stale but cannot be broken (${why}); remove it by hand`, {
+    cause: e,
+  });
+}
+
+function rmdirQuietly(n: NodeModules, path: string): void {
+  try {
+    n.fs.rmdirSync(path);
+  } catch {
+    /* gone, or not ours to remove */
+  }
+}
+
+/**
+ * Rename `lock` away, then delete it: the lock path is never a half-removed
+ * directory, empty, which a rename could replace.
+ */
+function removeLock(n: NodeModules, lock: string): void {
   const tomb = `${lock}.${hex(n, 6)}.stale`;
   try {
     n.fs.renameSync(lock, tomb);
-  } catch {
-    return true;
+  } catch (e) {
+    if (errorCode(e) === "ENOENT") return; // released meanwhile
+    throw e;
   }
-  n.fs.rmSync(tomb, { recursive: true, force: true });
-  return true;
+  removeQuietly(n, tomb);
+}
+
+/**
+ * Delete what a process that died taking or breaking the lock left beside
+ * it: its private directory, or the lock it renamed away.
+ */
+function sweep(n: NodeModules, lock: string): void {
+  const prefix = `${n.path.basename(lock)}.`;
+  for (const name of n.fs.readdirSync(n.path.dirname(lock))) {
+    const left = n.path.join(n.path.dirname(lock), name);
+    if (!name.startsWith(prefix) || !/\.(tmp|stale)$/.test(name)) continue;
+    if (ageMs(n, left) > LOCK_STALE_MS) removeQuietly(n, left);
+  }
 }
 
 function ageMs(n: NodeModules, path: string): number {

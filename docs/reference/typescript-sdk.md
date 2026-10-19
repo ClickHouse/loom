@@ -40,8 +40,11 @@ session is used only for the server it signed in to.
 the session in the file the Python SDK and the CLI share; `logout(profile?)`
 revokes it and `whoami(profile?)` asks the server who it says you are. A
 refresh holds the lock directory `~/.loom/.credentials.lock.d`, which the
-Python SDK takes too. Its holder touches it every 10 s; a lock whose holder on
-this machine stopped running, or that went 60 s untouched, is broken.
+Python SDK takes too. A process takes it by renaming a private directory that
+holds an owner file (its pid and host) onto that path, and touches it every
+10 s by its own clock while it holds it. A waiter breaks a lock untouched for
+60 s, or one untouched for 20 s whose holder on this machine is no longer
+running; a Python waiter on Windows does not check the pid and waits the 60 s.
 
 A blank or whitespace key counts as no key, so an exported-but-empty
 variable does not become `Authorization: Bearer `. The key is held in an

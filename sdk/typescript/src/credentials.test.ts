@@ -1,5 +1,15 @@
 import childProcess, { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import fs, {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { rm } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +20,7 @@ import {
   type CredentialOptions,
   defaultProfile,
   LOCK_HEARTBEAT_MS,
+  LOCK_SILENT_MS,
   LOCK_STALE_MS,
   LocalCredential,
   type LoginOptions,
@@ -43,6 +54,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  rmSync(home, { recursive: true, force: true });
 });
 
 type Scripted = { status: number; body?: unknown; previousBuild?: boolean };
@@ -446,7 +458,7 @@ describe("the credentials lock", () => {
   it("waits while another process holds the lock directory, then reads the token it stored", async () => {
     const srv = fakeServer();
     store("default", { expires_at: now() - 1 });
-    mkdirSync(lockDir());
+    heldBy(process.ppid, hostname());
     const done = accessToken(undefined, { fetch: srv.fetch });
     await new Promise((r) => setTimeout(r, 150));
     expect(srv.sent).toHaveLength(0);
@@ -460,12 +472,16 @@ describe("the credentials lock", () => {
   function heldBy(pid: number, host: string, ageMs = 0): void {
     mkdirSync(lockDir(), { recursive: true });
     writeFileSync(join(lockDir(), "owner"), JSON.stringify({ pid, host, time: Date.now() / 1000 }));
-    const at = new Date(Date.now() - ageMs);
-    utimesSync(lockDir(), at, at);
+    age(lockDir(), ageMs);
+  }
+
+  function age(path: string, ms: number): void {
+    const at = new Date(Date.now() - ms);
+    utimesSync(path, at, at);
   }
 
   const deadPid = () => spawnSync(process.execPath, ["-e", ""]).pid;
-  const leftovers = () => readdirSync(join(home, ".loom")).filter((f) => f.endsWith(".stale"));
+  const leftovers = () => readdirSync(join(home, ".loom")).filter((f) => f.startsWith(".credentials.lock.d."));
 
   it("breaks a lock whose holder on another machine went silent for the stale age", async () => {
     const srv = fakeServer();
@@ -476,10 +492,10 @@ describe("the credentials lock", () => {
     expect(leftovers()).toEqual([]);
   });
 
-  it("breaks at once a lock whose holder on this machine is no longer running", async () => {
+  it("breaks before the stale age a lock that missed two heartbeats and whose holder here stopped", async () => {
     const srv = fakeServer();
     store("default", { expires_at: now() - 1 });
-    heldBy(deadPid(), hostname());
+    heldBy(deadPid(), hostname(), LOCK_SILENT_MS + 1000);
     const t0 = performance.now();
     expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
     expect(performance.now() - t0).toBeLessThan(2000);
@@ -488,6 +504,8 @@ describe("the credentials lock", () => {
   it.each([
     ["on this machine, running", () => process.ppid, hostname()],
     ["on another machine, heard from recently", deadPid, "another-machine"],
+    // A process in another pid namespace (a container sharing the home) looks dead here.
+    ["whose pid is not running here, heard from recently", deadPid, hostname()],
   ])("waits for a holder %s", async (_, pid, host) => {
     const srv = fakeServer();
     store("default", { expires_at: now() - 1 });
@@ -502,16 +520,93 @@ describe("the credentials lock", () => {
   it("leaves a stale lock another waiter is breaking", async () => {
     const srv = fakeServer();
     store("default", { expires_at: now() - 1 });
-    heldBy(1, "another-machine");
-    mkdirSync(join(lockDir(), "breaking"));
-    const old = new Date(Date.now() - LOCK_STALE_MS - 1000);
-    utimesSync(lockDir(), old, old);
+    heldBy(1, "another-machine", LOCK_STALE_MS + 1000);
+    mkdirSync(`${lockDir()}.breaking`);
     const done = accessToken(undefined, { fetch: srv.fetch });
     await new Promise((r) => setTimeout(r, 150));
     expect(srv.sent).toHaveLength(0);
-    await rm(join(lockDir(), "breaking"), { recursive: true }); // that waiter gave up
-    utimesSync(lockDir(), old, old);
+    await rm(`${lockDir()}.breaking`, { recursive: true }); // that waiter gave up
     expect(await done).toBe("a1");
+    expect(leftovers()).toEqual([]);
+  });
+
+  it("clears a claim a breaker left when it died, once as old as a stale lock", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    heldBy(1, "another-machine", LOCK_STALE_MS + 1000);
+    mkdirSync(`${lockDir()}.breaking`);
+    age(`${lockDir()}.breaking`, LOCK_STALE_MS + 1000);
+    expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
+    expect(leftovers()).toEqual([]);
+  });
+
+  it("sweeps what a process that died taking or breaking the lock left beside it", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    const loom = join(home, ".loom");
+    for (const name of [".credentials.lock.d.0a.tmp", ".credentials.lock.d.0b.stale", ".credentials.lock.d.0c.tmp"]) {
+      mkdirSync(join(loom, name));
+      writeFileSync(join(loom, name, "owner"), "{}");
+    }
+    age(join(loom, ".credentials.lock.d.0a.tmp"), LOCK_STALE_MS + 1000);
+    age(join(loom, ".credentials.lock.d.0b.stale"), LOCK_STALE_MS + 1000);
+    expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
+    expect(leftovers()).toEqual([".credentials.lock.d.0c.tmp"]); // another process may be taking it now
+  });
+
+  it.each([
+    ["claiming it", "mkdirSync", () => `${lockDir()}.breaking`],
+    ["renaming it away", "renameSync", lockDir],
+  ] as const)("raises, never spins, on a stale lock it cannot break: %s fails", async (_, call, target) => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    heldBy(1, "another-machine", LOCK_STALE_MS + 1000);
+    const real = fs[call] as (...a: unknown[]) => unknown;
+    vi.spyOn(fs, call).mockImplementation(((path: string, ...rest: unknown[]) => {
+      if (path === target()) throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      return real(path, ...rest);
+    }) as never);
+    try {
+      await expect(accessToken(undefined, { fetch: srv.fetch })).rejects.toThrow(
+        /credentials lock at .* is stale but cannot be broken \(EACCES\)/,
+      );
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(srv.sent).toHaveLength(0);
+    expect(existsSync(lockDir())).toBe(true);
+  });
+
+  it("keeps a refresh that succeeded when deleting the released lock fails", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    vi.spyOn(fs, "rmSync").mockImplementation(() => {
+      throw Object.assign(new Error("resource busy"), { code: "EBUSY" });
+    });
+    try {
+      expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(existsSync(lockDir())).toBe(false); // renamed away; the sweep deletes the rest
+  });
+
+  it("dates the lock by this machine's clock when it takes it", async () => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    const touched: string[] = [];
+    const real = fs.utimesSync;
+    vi.spyOn(fs, "utimesSync").mockImplementation(((path: string, a: Date, m: Date) => {
+      touched.push(path);
+      return real(path, a, m);
+    }) as never);
+    try {
+      await accessToken(undefined, { fetch: srv.fetch });
+    } finally {
+      vi.restoreAllMocks();
+    }
+    // The private directory, before it is renamed onto the lock (a file server's clock otherwise).
+    expect(touched.map((p) => p.endsWith(".tmp"))).toEqual([true]);
   });
 
   it("touches the lock every heartbeat while it holds it", async () => {

@@ -212,7 +212,7 @@ def test_typescript_interrupted_mid_refresh_releases_the_lock(home, tmp_path, si
     assert not lock.exists()
 
 
-def test_typescript_breaks_at_once_a_lock_a_killed_python_process_held(home, tmp_path) -> None:
+def test_typescript_breaks_a_lock_a_killed_python_process_held_once_silent(home, tmp_path) -> None:
     tokens = {"access_token": "py-a1", "refresh_token": "py-r1", "expires_in": 30}
     credentials._save("work", SERVER, tokens, session="s1", marked=True)
     hold = textwrap.dedent(
@@ -236,11 +236,45 @@ def test_typescript_breaks_at_once_a_lock_a_killed_python_process_held(home, tmp
         assert py.stdout.readline().strip() == "held"
         py.kill()
         py.wait(timeout=30)
-    assert (home / ".loom" / ".credentials.lock.d").exists()  # left behind
+    lock = home / ".loom" / ".credentials.lock.d"
+    assert lock.exists()  # left behind
+    silent = time.time() - credentials._LOCK_SILENT_S - 1  # two heartbeats missed
+    os.utime(lock, (silent, silent))
     t0 = time.monotonic()
     out = _run(_script(tmp_path, 'console.log(await creds.accessToken("work", { fetch }));'), home)
     assert out == "node-a1"
     assert time.monotonic() - t0 < 20  # not a wait for the stale age
+
+
+def test_typescript_waits_for_a_python_breaker_s_claim_and_sweeps_its_leftovers(
+    home, tmp_path
+) -> None:
+    tokens = {"access_token": "py-a1", "refresh_token": "py-r1", "expires_in": 30}
+    credentials._save("work", SERVER, tokens, session="s1", marked=True)
+    loom = home / ".loom"
+    lock = loom / ".credentials.lock.d"
+    lock.mkdir()
+    (lock / "owner").write_text(json.dumps({"pid": 1, "host": "another-machine", "time": 0}))
+    old = time.time() - credentials._LOCK_STALE_S - 1
+    os.utime(lock, (old, old))
+    claim = loom / ".credentials.lock.d.breaking"
+    claim.mkdir()  # a Python waiter is breaking it
+    for name in (".credentials.lock.d.0a.tmp", ".credentials.lock.d.0b.stale"):
+        (loom / name).mkdir()
+        os.utime(loom / name, (old, old))
+    argv = _script(
+        tmp_path, 'console.log("asking");\nconsole.log(await creds.accessToken("work", { fetch }));'
+    )
+    with subprocess.Popen(argv, env=_env(home), stdout=subprocess.PIPE, text=True) as node:
+        assert node.stdout is not None
+        assert node.stdout.readline().strip() == "asking"
+        time.sleep(0.5)
+        assert node.poll() is None  # waits for the claim
+        claim.rmdir()  # that waiter gave up
+        out, _ = node.communicate(timeout=60)
+    assert node.returncode == 0
+    assert out.strip().splitlines()[-1] == "node-a1"
+    assert sorted(p.name for p in loom.glob(".credentials.lock.d*")) == []
 
 
 def test_both_sdks_time_the_lock_alike(home, tmp_path) -> None:
@@ -248,11 +282,17 @@ def test_both_sdks_time_the_lock_alike(home, tmp_path) -> None:
         _script(
             tmp_path,
             """
-            const { LOCK_HEARTBEAT_MS, LOCK_STALE_MS, REFRESH_DEADLINE_MS } = creds;
-            console.log(JSON.stringify([LOCK_HEARTBEAT_MS, LOCK_STALE_MS, REFRESH_DEADLINE_MS]));
+            const { LOCK_HEARTBEAT_MS, LOCK_SILENT_MS, LOCK_STALE_MS, REFRESH_DEADLINE_MS } = creds;
+            const timings = [LOCK_HEARTBEAT_MS, LOCK_SILENT_MS, LOCK_STALE_MS, REFRESH_DEADLINE_MS];
+            console.log(JSON.stringify(timings));
             """,
         ),
         home,
     )
-    py = [credentials._LOCK_HEARTBEAT_S, credentials._LOCK_STALE_S, credentials._REFRESH_DEADLINE_S]
+    py = [
+        credentials._LOCK_HEARTBEAT_S,
+        credentials._LOCK_SILENT_S,
+        credentials._LOCK_STALE_S,
+        credentials._REFRESH_DEADLINE_S,
+    ]
     assert json.loads(out) == [s * 1000 for s in py]

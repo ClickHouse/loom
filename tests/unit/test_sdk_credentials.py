@@ -586,21 +586,29 @@ def test_the_credentials_lock_waits_while_another_process_holds_the_directory(_h
     import threading
     import time as _time
 
-    lock = _lock_dir(_home)
-    lock.parent.mkdir(parents=True)
-    lock.mkdir()  # as a Node process mid-refresh holds it
-    threading.Timer(0.3, lock.rmdir).start()
+    lock = _held_by(_home, 1, "another-machine")  # as a Node process mid-refresh holds it
+    threading.Timer(0.3, lambda: credentials.shutil.rmtree(lock)).start()
     t0 = _time.monotonic()
     with credentials._locked():
         waited = _time.monotonic() - t0
     assert waited >= 0.25
 
 
-def _held_by(home: Any, pid: int, host: str) -> Any:
+def _held_by(home: Any, pid: int, host: str, age_s: float = 0.0) -> Any:
     lock = _lock_dir(home)
     lock.mkdir(parents=True)
     (lock / "owner").write_text(json.dumps({"pid": pid, "host": host, "time": time.time()}))
+    _age(lock, age_s)
     return lock
+
+
+def _age(path: Any, age_s: float) -> None:
+    at = time.time() - age_s
+    os.utime(path, (at, at))
+
+
+def _leftovers(home: Any) -> list[str]:
+    return sorted(p.name for p in (home / "loom").glob(".credentials.lock.d.*"))
 
 
 def _dead_pid() -> int:
@@ -613,36 +621,38 @@ def _dead_pid() -> int:
 
 
 def test_a_lock_whose_holder_on_another_machine_went_silent_is_broken(_home) -> None:
-    lock = _held_by(_home, 1, "another-machine")
-    old = time.time() - credentials._LOCK_STALE_S - 1
-    os.utime(lock, (old, old))
+    lock = _held_by(_home, 1, "another-machine", credentials._LOCK_STALE_S + 1)
     t0 = time.monotonic()
     with credentials._locked():
         assert json.loads((lock / "owner").read_text())["pid"] == os.getpid()
     assert time.monotonic() - t0 < 2
     assert not lock.exists()
-    assert not list(lock.parent.glob("*.stale"))  # the renamed lock is removed too
+    assert _leftovers(_home) == []  # the renamed lock is removed too
 
 
-def test_a_lock_whose_holder_on_this_machine_died_is_broken_at_once(_home) -> None:
+def test_a_lock_that_missed_two_heartbeats_and_whose_holder_here_died_is_broken(_home) -> None:
     import socket
 
-    lock = _held_by(_home, _dead_pid(), socket.gethostname())  # its heartbeat just now
+    lock = _held_by(_home, _dead_pid(), socket.gethostname(), credentials._LOCK_SILENT_S + 1)
     t0 = time.monotonic()
     with credentials._locked():
         assert json.loads((lock / "owner").read_text())["pid"] == os.getpid()
     assert time.monotonic() - t0 < 2
 
 
-@pytest.mark.parametrize("where", ["this machine", "another machine"])
-def test_a_lock_with_a_recent_heartbeat_and_a_live_holder_is_waited_for(_home, where) -> None:
+@pytest.mark.parametrize(
+    ("where", "alive"),
+    [("this machine", True), ("another machine", False), ("this machine", False)],
+)
+def test_a_lock_with_a_recent_heartbeat_is_waited_for(_home, where, alive) -> None:
     import socket
     import threading
 
     # pid 1 runs (as another user: EPERM counts as running); a holder on
-    # another machine cannot be asked, so its heartbeat decides.
+    # another machine cannot be asked, and one in another pid namespace here
+    # (a container sharing the home) looks dead: its heartbeat decides.
     host = socket.gethostname() if where == "this machine" else "another-machine"
-    lock = _held_by(_home, 1 if where == "this machine" else _dead_pid(), host)
+    lock = _held_by(_home, 1 if alive else _dead_pid(), host)
     threading.Timer(0.3, lambda: credentials.shutil.rmtree(lock)).start()
     t0 = time.monotonic()
     with credentials._locked():
@@ -661,18 +671,110 @@ def test_the_holder_touches_the_lock_while_it_holds_it(_home, monkeypatch) -> No
 
 
 def test_breaking_leaves_a_lock_that_changed_hands_or_another_waiter_is_breaking(_home) -> None:
-    lock = _held_by(_home, 1, "another-machine")
+    lock = _held_by(_home, 1, "another-machine", credentials._LOCK_STALE_S + 1)
     held = (lock / "owner").read_text()
+    claim = lock.with_name(".credentials.lock.d.breaking")
     # Taken over between the read and the break: left alone, claim withdrawn.
-    assert credentials._break(lock, '{"pid": 2}') is False
-    assert lock.exists() and not (lock / "breaking").exists()
-    # Another waiter is breaking it: this one waits.
-    (lock / "breaking").mkdir()
-    assert credentials._break(lock, held) is False
+    credentials._break(lock, '{"pid": 2}')
+    assert lock.exists() and not claim.exists()
+    # Another waiter is breaking it: this one waits, and the lock still looks stale.
+    claim.mkdir()
+    credentials._break(lock, held)
     assert (lock / "owner").read_text() == held
-    (lock / "breaking").rmdir()
-    assert credentials._break(lock, held) is True
-    assert not lock.exists() and not list(lock.parent.glob("*.stale"))
+    assert credentials._stale(lock, held)
+    claim.rmdir()
+    credentials._break(lock, held)
+    assert not lock.exists() and _leftovers(_home) == []
+
+
+def test_a_claim_left_by_a_breaker_that_died_is_cleared_once_old(_home) -> None:
+    lock = _held_by(_home, 1, "another-machine", credentials._LOCK_STALE_S + 1)
+    claim = lock.with_name(".credentials.lock.d.breaking")
+    claim.mkdir()
+    _age(claim, credentials._LOCK_STALE_S + 1)
+    t0 = time.monotonic()
+    with credentials._locked():
+        assert json.loads((lock / "owner").read_text())["pid"] == os.getpid()
+    assert time.monotonic() - t0 < 2
+    assert _leftovers(_home) == []
+
+
+def test_taking_the_lock_sweeps_what_a_dead_taker_or_breaker_left(_home) -> None:
+    loom = _home / "loom"
+    for name in (
+        ".credentials.lock.d.0a.tmp",
+        ".credentials.lock.d.0b.stale",
+        ".credentials.lock.d.0c.tmp",
+    ):
+        (loom / name).mkdir(parents=True)
+        (loom / name / "owner").write_text("{}")
+    _age(loom / ".credentials.lock.d.0a.tmp", credentials._LOCK_STALE_S + 1)
+    _age(loom / ".credentials.lock.d.0b.stale", credentials._LOCK_STALE_S + 1)
+    with credentials._locked():
+        pass
+    assert _leftovers(_home) == [
+        ".credentials.lock.d.0c.tmp"
+    ]  # another process may be taking it now
+
+
+@pytest.mark.parametrize("fails", ["claiming it", "renaming it away"])
+def test_a_stale_lock_that_cannot_be_broken_raises_and_never_spins(
+    _home, monkeypatch, fails
+) -> None:
+    lock = _held_by(_home, 1, "another-machine", credentials._LOCK_STALE_S + 1)
+    denied = PermissionError(13, "Permission denied")
+    real_mkdir, real_rename = credentials.Path.mkdir, credentials.os.rename
+
+    def mkdir(self: Any, *args: Any, **kw: Any) -> None:
+        if fails == "claiming it" and self.name == ".credentials.lock.d.breaking":
+            raise denied
+        real_mkdir(self, *args, **kw)
+
+    def rename(src: Any, dst: Any) -> None:
+        if fails == "renaming it away" and str(src) == str(lock):
+            raise denied
+        real_rename(src, dst)
+
+    monkeypatch.setattr(credentials.Path, "mkdir", mkdir)
+    monkeypatch.setattr(credentials.os, "rename", rename)
+    with pytest.raises(credentials.LoomError, match="is stale but cannot be broken"):
+        with credentials._locked():
+            pass
+    assert lock.exists()
+
+
+def test_the_lock_is_dated_by_this_machine_s_clock(_home, monkeypatch) -> None:
+    # utime with no time takes the file server's clock on a network home.
+    touched: list[Any] = []
+    real = credentials.os.utime
+
+    def utime(path: Any, times: Any = None, **kw: Any) -> None:
+        touched.append((str(path), times))
+        real(path, times, **kw)
+
+    monkeypatch.setattr(credentials.os, "utime", utime)
+    monkeypatch.setattr(credentials, "_LOCK_HEARTBEAT_S", 0.05)
+    with credentials._locked():
+        time.sleep(0.2)
+    assert touched[0][0].endswith(".tmp")  # before the rename onto the lock
+    assert touched[1][0] == str(_lock_dir(_home))  # a heartbeat
+    assert all(times is not None for _, times in touched)
+
+
+def test_a_refresh_s_discovery_is_bounded_by_its_deadline(server, monkeypatch) -> None:
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    monkeypatch.setattr(credentials, "_REFRESH_DEADLINE_S", 5.0)
+    timeouts: dict[str, Any] = {}
+    real = server.__class__.__call__
+
+    def record(self: Any, request: httpx.Request) -> httpx.Response:
+        timeouts.setdefault(request.url.path, request.extensions["timeout"])
+        return real(self, request)
+
+    monkeypatch.setattr(server.__class__, "__call__", record)
+    credentials.access_token(refused="a1")
+    discovery = timeouts["/.well-known/oauth-authorization-server"]
+    assert max(discovery.values()) <= 5.0
 
 
 def test_a_refresh_ends_within_its_deadline(server, monkeypatch) -> None:

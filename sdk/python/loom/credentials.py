@@ -58,15 +58,26 @@ _REFRESH_MARGIN_S = 60
 # Longer than a refresh can take on the server, which asks the identity
 # provider first: giving up sooner turns a slow answer into a lost one.
 _REFRESH_TIMEOUT_S = 60.0
+_REQUEST_TIMEOUT_S = 30.0
 # Discovery, the exchange and its one retry together, so a refresh holds the
-# lock for a bounded time.
+# lock for a bounded time. httpx times each phase of a request (connect, each
+# write, each read), not the whole: every phase of every request is bounded by
+# what the deadline leaves, so a server that trickles its answer can hold the
+# lock past it. The TypeScript SDK bounds the whole refresh.
 _REFRESH_DEADLINE_S = 90.0
 # The lock both SDKs take: Node has no flock. Its holder touches the
 # directory every heartbeat; one silent for the stale age is broken, and so
-# is one whose holder on this machine is no longer running.
+# is one silent for two heartbeats whose holder on this machine is no longer
+# running.
 _LOCK_DIR = ".credentials.lock.d"
 _LOCK_HEARTBEAT_S = 10.0
+_LOCK_SILENT_S = 2 * _LOCK_HEARTBEAT_S
 _LOCK_STALE_S = 60.0
+# What renaming a directory onto a lock that exists fails with: POSIX allows
+# no rename onto a non-empty directory, and Windows none onto any directory.
+_HELD = {errno.EEXIST, errno.ENOTEMPTY} | (
+    {errno.EPERM, errno.EACCES} if sys.platform == "win32" else set()
+)
 
 
 def _path() -> Path:
@@ -135,26 +146,17 @@ def _locked() -> Iterator[None]:
 
 @contextlib.contextmanager
 def _lock_dir(lock: Path) -> Iterator[None]:
-    """Hold `lock` by creating it (mkdir is atomic), with an owner file naming
-    the holder; wait while another process holds it, and break it once stale."""
+    """Hold `lock`, a directory whose owner file names the holder; wait while
+    another process holds it, and break it once stale."""
     owner = json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "time": time.time()})
+    _sweep(lock)
     wait = 0.01
-    while True:
-        try:
-            lock.mkdir(mode=0o700)
-            break
-        except FileExistsError:
-            pass
+    while not _create(lock, owner):
         held = _owner(lock)
-        if _stale(lock, held) and _break(lock, held):
-            continue
+        if _stale(lock, held):
+            _break(lock, held)
         time.sleep(wait)
         wait = min(wait * 2, 0.2)
-    try:
-        (lock / "owner").write_text(owner, encoding="utf-8")
-    except BaseException:
-        shutil.rmtree(lock, ignore_errors=True)
-        raise
     stop = threading.Event()
     beat = threading.Thread(target=_heartbeat, args=(lock, owner, stop), daemon=True)
     beat.start()
@@ -165,15 +167,41 @@ def _lock_dir(lock: Path) -> Iterator[None]:
         beat.join()
         # Only our own: a lock broken as stale may be another process's by now.
         if _owner(lock) == owner:
-            shutil.rmtree(lock, ignore_errors=True)
+            with contextlib.suppress(OSError):
+                _remove(lock)
+
+
+def _create(lock: Path, owner: str) -> bool:
+    """Take `lock` by renaming a private directory that holds the owner file
+    onto it. The rename fails while the lock exists, and a lock never exists
+    without its owner. Answers whether it was taken."""
+    tmp = lock.with_name(f"{lock.name}.{secrets.token_hex(6)}.tmp")
+    tmp.mkdir(mode=0o700)
+    try:
+        (tmp / "owner").write_text(owner, encoding="utf-8")
+        _touch(tmp)
+        os.rename(tmp, lock)
+        return True
+    except OSError as e:
+        if e.errno not in _HELD:
+            raise
+        return False
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)  # gone already once renamed
 
 
 def _owner(lock: Path) -> str:
-    """The owner file's text; empty when there is none (yet)."""
+    """The owner file's text; empty when the lock is gone."""
     try:
         return (lock / "owner").read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+def _touch(path: Path) -> None:
+    # This machine's clock: utime with no time takes the file server's on a network home.
+    now = time.time()
+    os.utime(path, (now, now))
 
 
 def _heartbeat(lock: Path, owner: str, stop: threading.Event) -> None:
@@ -181,21 +209,26 @@ def _heartbeat(lock: Path, owner: str, stop: threading.Event) -> None:
     while not stop.wait(_LOCK_HEARTBEAT_S):
         if _owner(lock) == owner:
             with contextlib.suppress(OSError):
-                os.utime(lock)
+                _touch(lock)
 
 
 def _stale(lock: Path, held: str) -> bool:
     """Whether the holder of `lock` is gone: silent for the stale age (a
-    holder on another machine, a reused pid, a hung process), or a process of
-    this machine that is no longer running."""
-    if _age_s(lock) > _LOCK_STALE_S:
+    holder on another machine, a reused pid, a hung process), or silent for
+    two heartbeats and no longer running on this machine. The pid is asked
+    only after the heartbeat stopped: a holder in another pid namespace on
+    this host (a container sharing the home directory) looks dead to it."""
+    age = _age_s(lock)
+    if age > _LOCK_STALE_S:
         return True
+    if age <= _LOCK_SILENT_S:
+        return False
     try:
         owner = json.loads(held)
     except ValueError:
-        return False  # no owner file yet: its holder is between mkdir and write
-    if not isinstance(owner, dict) or owner.get("host") != socket.gethostname():
         return False
+    if not isinstance(owner, dict) or owner.get("host") != socket.gethostname():
+        return False  # another machine's pid means nothing here
     pid = owner.get("pid")
     return isinstance(pid, int) and not isinstance(pid, bool) and pid > 0 and not _running(pid)
 
@@ -212,34 +245,59 @@ def _running(pid: int) -> bool:
     return True
 
 
-def _break(lock: Path, held: str) -> bool:
+def _break(lock: Path, held: str) -> None:
     """Remove the stale lock whose owner file read `held`. A claim directory
-    inside it lets one waiter at a time do it, and the owner is read again
-    under the claim, so a lock taken over meanwhile is left alone. The lock
-    is renamed away before it is removed, so a new holder never shares the
-    path with a half-removed one. Answers whether to retry at once."""
-    claim = lock / "breaking"
+    beside it lets one waiter at a time do it, and the owner is read again
+    under the claim, so a lock taken over meanwhile is left alone."""
+    claim = lock.with_name(f"{lock.name}.breaking")
     try:
-        claim.mkdir()
+        claim.mkdir(mode=0o700)
     except FileExistsError:
         # Left by a waiter that died mid-break: cleared once as old as a stale lock.
         if _age_s(claim) > _LOCK_STALE_S:
             with contextlib.suppress(OSError):
                 claim.rmdir()
-        return False
-    except OSError:
-        return True  # released meanwhile
-    if _owner(lock) != held:
+        return
+    except FileNotFoundError:
+        return  # the directory holding it is gone: try again
+    except OSError as e:
+        raise _unbreakable(lock, e) from e
+    try:
+        with contextlib.suppress(OSError):
+            _touch(claim)
+        if _owner(lock) == held:
+            _remove(lock)
+    except OSError as e:
+        raise _unbreakable(lock, e) from e
+    finally:
         with contextlib.suppress(OSError):
             claim.rmdir()
-        return False
+
+
+def _unbreakable(lock: Path, e: OSError) -> LoomError:
+    return LoomError(
+        f"the credentials lock at {lock} is stale but cannot be broken "
+        f"({e.strerror or e}); remove it by hand"
+    )
+
+
+def _remove(lock: Path) -> None:
+    """Rename `lock` away, then delete it: the lock path is never a
+    half-removed directory, empty, which a rename could replace."""
     tomb = lock.with_name(f"{lock.name}.{secrets.token_hex(6)}.stale")
     try:
         os.rename(lock, tomb)
-    except OSError:
-        return True
+    except FileNotFoundError:
+        return  # released meanwhile
     shutil.rmtree(tomb, ignore_errors=True)
-    return True
+
+
+def _sweep(lock: Path) -> None:
+    """Delete what a process that died taking or breaking the lock left
+    beside it: its private directory, or the lock it renamed away."""
+    for left in lock.parent.glob(f"{lock.name}.*"):
+        if left.suffix in (".tmp", ".stale") and _age_s(left) > _LOCK_STALE_S:
+            shutil.rmtree(left, ignore_errors=True)
 
 
 def _age_s(path: Path) -> float:
@@ -279,7 +337,7 @@ def _server(url: str) -> Iterator[httpx.Client]:
     """A client for `url` whose failures to reach it come out as
     BackendUnavailable: callers catch LoomError, never httpx."""
     try:
-        with httpx.Client(base_url=url, timeout=30.0) as client:
+        with httpx.Client(base_url=url, timeout=_REQUEST_TIMEOUT_S) as client:
             yield client
     except httpx.TransportError as e:
         raise BackendUnavailable(f"cannot reach {url}: {type(e).__name__}") from e
@@ -312,10 +370,12 @@ def same_server(a: str, b: str) -> bool:
     return _origin(a) == _origin(b) and urlsplit(a).path.rstrip("/") == urlsplit(b).path.rstrip("/")
 
 
-def _endpoints(client: httpx.Client, *, signed_in: bool = False) -> dict[str, str]:
+def _endpoints(
+    client: httpx.Client, *, signed_in: bool = False, timeout: float = _REQUEST_TIMEOUT_S
+) -> dict[str, str]:
     """The server's sign-in endpoints, each checked to be on the server itself,
     so a code or token only ever goes where the user chose to sign in."""
-    r = client.get("/.well-known/oauth-authorization-server")
+    r = client.get("/.well-known/oauth-authorization-server", timeout=timeout)
     if r.status_code not in (200, 404):
         raise _failed(r, "reading the server's sign-in endpoints")
     meta = _json(r) if r.status_code == 200 else {}
@@ -502,26 +562,28 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
     }
     deadline = time.monotonic() + _REFRESH_DEADLINE_S
 
-    def left() -> float:
-        # What the deadline leaves, for each phase of the next request (httpx
-        # bounds phases, not a whole request); nothing left, nothing is sent.
+    def left(usual: float) -> float:
+        # At most `usual`, and no more than the deadline leaves, as the
+        # timeout of each phase of the next request; nothing left, nothing is sent.
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise BackendUnavailable(
                 f"refreshing the session at {entry['server']} took over "
                 f"{_REFRESH_DEADLINE_S:.0f} s; retry"
             )
-        return min(_REFRESH_TIMEOUT_S, remaining)
+        return min(usual, remaining)
 
     with _server(entry["server"]) as client:
-        endpoint = _endpoints(client, signed_in=True)["token_endpoint"]
+        endpoint = _endpoints(client, signed_in=True, timeout=left(_REQUEST_TIMEOUT_S))[
+            "token_endpoint"
+        ]
         try:
-            r = client.post(endpoint, data=form, timeout=left())
+            r = client.post(endpoint, data=form, timeout=left(_REFRESH_TIMEOUT_S))
         except (httpx.ConnectError, httpx.ConnectTimeout):
             # Nothing reached the server, so nothing was spent: try once more.
             # (A lost answer cannot be asked again: the server spent the token,
             # and presenting it twice ends the session.)
-            r = client.post(endpoint, data=form, timeout=left())
+            r = client.post(endpoint, data=form, timeout=left(_REFRESH_TIMEOUT_S))
     marked = bool(entry.get("marked"))
     if marked and 400 <= r.status_code < 500 and _SESSIONS_HEADER not in r.headers:
         raise BackendUnavailable(
