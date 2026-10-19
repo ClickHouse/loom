@@ -285,14 +285,15 @@ async def test_named_turns_are_tombstoned_in_byte_bounded_slices() -> None:
 async def test_the_tombstone_reads_with_sequential_consistency() -> None:
     """The rows a tombstone copies come from a sequential read: a lagging replica must
     not miss a turn appended just before the delete."""
-    from server.core.ch import sequential_reads_active
+    from server.core.ch import query_settings
     from server.knowledge.store import conversations as repo
 
     seen: list[bool] = []
 
     class _CH:
         async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
-            seen.append(sequential_reads_active())
+            # The settings the client attaches to the statement it sends.
+            seen.append(query_settings().get("select_sequential_consistency") == 1)
 
     for msg_ids in (None, ["m1"]):
         await repo._tombstone_embeddings(
@@ -305,7 +306,7 @@ async def test_the_tombstone_reads_with_sequential_consistency() -> None:
 async def test_the_delete_counts_embeddings_with_sequential_consistency() -> None:
     """The embeddings tombstones are inserts, not a synchronous mutation, so the count
     after them reads sequentially or a lagging replica undercounts."""
-    from server.core.ch import sequential_reads_active
+    from server.core.ch import query_settings
     from server.knowledge.store import conversations as repo
 
     seen: dict[str, bool] = {}
@@ -313,7 +314,7 @@ async def test_the_delete_counts_embeddings_with_sequential_consistency() -> Non
     class _CH:
         async def query_one(self, sql: str, params: dict[str, Any] | None = None):
             table = "embeddings" if "conversation_embeddings" in sql else "messages"
-            seen[table] = sequential_reads_active()
+            seen[table] = query_settings().get("select_sequential_consistency") == 1
             return {"n": 1}
 
         async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
