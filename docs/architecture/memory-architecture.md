@@ -348,17 +348,19 @@ check again after their insert, and a write after the named version stays whiche
 first. The delete stamps the version it removed in its tombstone's `source_trace` and
 reads the key's newest version other than its own tombstone after writing it. A live row
 means the key moved on (`version_changed`); one below the tombstone, a plain write between
-the check and the tombstone, is written back above it. Another delete's tombstone means
-that delete removed the key (`found=false`); one below this tombstone is written back
-above it, so a restore brings back the row that delete removed. Only when the key did not
-move on does the delete stand and retire vectors and chunks. A `memory.delete` whose
-insert lands after that read can still answer `tombstoned` alongside it, as two racing
-`memory.delete` calls can. Between the tombstone and a write back, the key reads as
-deleted, and a `memory.delete` in that window answers `found=false`. If the read after the
-tombstone fails, the delete retires as `memory.delete` does and the degradation is noted;
-a write between the check and the tombstone then stays deleted unless its own check after
-its insert sees the tombstone. A write that lands under such a tombstone, aimed at an
-older version, writes itself again above it.
+the check and the tombstone, is written back above it. Another delete's or a sweep's
+tombstone means that delete removed the key (`found=false`); one below this tombstone is
+written back above it, stamped as this delete's own tombstone, so a restore brings back
+the row that delete removed and a write after it lifts over the copy as over this
+tombstone. Only when the key did not move on does the delete stand and retire vectors and
+chunks. A `memory.delete` whose insert lands after that read can still answer `tombstoned`
+alongside it, as two racing `memory.delete` calls can. Between the tombstone and a write
+back, the key reads as deleted, and a `memory.delete` in that window answers
+`found=false`. If the read after the tombstone fails, the delete retires as
+`memory.delete` does and the degradation is noted; a write between the check and the
+tombstone then stays deleted unless its own check after its insert sees the tombstone. A
+write that lands under such a tombstone, aimed at an older version, writes itself again
+above it.
 
 Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace's
 `retention_days`, or `LOOM_MEMORY_SENSITIVE_RETENTION_DAYS` set `expires_at` and

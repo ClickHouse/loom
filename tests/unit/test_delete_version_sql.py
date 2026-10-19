@@ -729,12 +729,13 @@ async def test_a_plain_delete_drawn_above_the_tombstone_is_not_undone(
 
 
 @pytest.mark.asyncio
-async def test_a_plain_delete_below_the_tombstone_answers_gone(
+async def test_a_plain_delete_below_the_tombstone_answers_not_found_and_restores_its_row(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A set lands and a plain memory.delete removes it after delete_version's check and
     # before it draws its tombstone's version: the plain delete came first, so the key was
-    # already gone when this delete ran (found=False), and nothing is written back.
+    # already gone when this delete ran (found=False). Its tombstone is written back on top,
+    # so a restore brings back the set's row.
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
     w = _in_flight_set(time.time_ns() - 1_000_000)
@@ -935,3 +936,78 @@ def test_no_caller_writes_a_delete_version_trace() -> None:
         MemorySetInput(**_ID, memory_key=_KEY, value="v", source_trace="memory.delete_version:1")
     with pytest.raises(pydantic.ValidationError, match="may not start with"):
         _BulkSetEntry(memory_key=_KEY, value="v", source_trace="memory.delete_version:1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("other", ["memory.delete", "sweep"])
+async def test_a_write_after_a_written_back_tombstone_lifts_over_it(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, other: str
+) -> None:
+    # Another delete (or a sweep) removes the key after delete_version's check; a set that
+    # began after it reads its fence before the tombstone lands and inserts after the
+    # write back. The copy is delete_version's own tombstone, so the set lifts over it:
+    # the key ends with the set's row (the other delete, delete_version, then the set).
+    from server.memory.app.write_fence import lift_after_insert
+
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    write: dict[str, Any] = {}
+    get_by_key = memory_repo.get_by_key
+
+    async def check_then_other_delete(identity: Any, key: str, **kw: Any) -> Any:
+        found = await get_by_key(identity, key, **kw)
+        if not write:
+            write.update(_row("Fridays", 0))  # the plain delete reads through here too
+            if other == "memory.delete":
+                await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
+            else:
+                swept = {
+                    **_row("Tuesdays", time.time_ns()),
+                    "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+                    "expire_reason": "blacklist.sweep:p1",
+                }
+                await ch.insert("loom.memory", [swept])
+            write["version"] = time.time_ns()  # drawn now; its fence read sees nothing yet
+        return found
+
+    monkeypatch.setattr(memory_repo, "get_by_key", check_then_other_delete)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.found is False
+    monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
+    await ch.insert("loom.memory", [write])
+    lifted = await lift_after_insert("o", "n", [write], [], ch=ch)
+    assert lifted
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Fridays"
+
+
+@pytest.mark.asyncio
+async def test_a_sweep_above_the_tombstone_answers_not_found_and_retires_nothing(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    write_row = hm._write_tombstone_row
+    retired: list[Any] = []
+
+    async def sweep_lands_above(existing: Any, **kw: Any) -> None:
+        await write_row(existing, **kw)
+        swept = {
+            **_row("Tuesdays", time.time_ns()),
+            "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+            "expire_reason": "blacklist.sweep:p1",
+        }
+        await ch.insert("loom.memory", [swept])
+
+    async def retire(*_a: Any, **_k: Any) -> tuple[int, int]:
+        retired.append(True)
+        return 0, 0
+
+    monkeypatch.setattr(hm, "_write_tombstone_row", sweep_lands_above)
+    monkeypatch.setattr(hm, "_retire_derived", retire)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is False and out.found is False and retired == []
