@@ -286,6 +286,23 @@ async def test_a_different_shape_is_a_different_precedent(prec_env) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_changed_answer_policy_setting_misses_the_precedent(
+    prec_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_ask_world_knowledge", "allow")
+    await _ask()
+    monkeypatch.setattr(settings, "memory_ask_world_knowledge", "forbid")
+    out = await _ask()
+    assert out.source == "synthesized" and len(prec_env.llm.calls) == 2
+    # The precedent settings only decide reuse; they leave the stored answer valid.
+    monkeypatch.setattr(settings, "memory_ask_precedents_max_age_hours", 48)
+    out = await _ask()
+    assert out.source == "precedent" and len(prec_env.llm.calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_unhashed_rows_never_anchor_a_precedent(prec_env) -> None:
     prec_env.hashes["m2"] = "0"
     await _ask()
