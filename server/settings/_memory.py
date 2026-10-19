@@ -397,14 +397,6 @@ class MemorySettings(BaseModel):
     def _check_resolver_confidences(self) -> MemorySettings:
         """Retiring takes more confidence than flagging, and flagging than clearing: the
         band between the flag and the retire confidence is the one that goes to review."""
-        if (
-            self.memory_conflict_resolver_retire_confidence
-            < self.memory_conflict_resolver_clear_confidence
-        ):
-            raise ValueError(
-                "LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE must not be below "
-                "LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE"
-            )
         if not (
             self.memory_conflict_resolver_clear_confidence
             <= self.memory_conflict_resolver_flag_confidence

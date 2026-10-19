@@ -76,7 +76,7 @@ def test_a_mode_is_case_folded_and_an_unknown_one_fails_at_load() -> None:
 
 
 def test_a_retire_confidence_below_the_clear_confidence_fails_at_load() -> None:
-    with pytest.raises(ValidationError, match="RETIRE_CONFIDENCE must not be below"):
+    with pytest.raises(ValidationError, match="FLAG_CONFIDENCE must lie between"):
         Settings(
             memory_conflict_resolver_retire_confidence=0.85,
             memory_conflict_resolver_clear_confidence=0.90,
