@@ -6237,7 +6237,7 @@ async def test_a_bulk_checking_its_revised_rows_edges_reads_once(ch, org, n) -> 
     write = MemoryBulkSetInput(org=org, namespace=NS, agent="bot", user_id=USER, entries=entries)
     counted = _Counted(ch)
     revised = {r.memory_id for r in results}
-    await _close_overtaken_edges(write, results, revised, entity_map={}, ch=counted)
+    await _close_overtaken_edges(write, results, revised, high=set(), entity_map={}, ch=counted)
     assert counted.sent == 1
 
 
