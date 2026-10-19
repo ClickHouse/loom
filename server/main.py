@@ -115,9 +115,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         dev_secret=settings.jwt_secret_is_dev_default(),
     )
     from server.auth.scim_routes import require_scim_settings
-    from server.llm.gateway import require_inference_identity_settings
-
-    require_inference_identity_settings()
 
     require_scim_settings(
         settings.scim_token, settings.oauth_login_provider, settings.auth_actually_required()

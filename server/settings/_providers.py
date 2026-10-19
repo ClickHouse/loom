@@ -149,6 +149,8 @@ class ProviderSettings(ModelSettings):
         if token.scheme == "http" and token.hostname not in ("localhost", "127.0.0.1", "::1"):
             # The identity token goes there.
             raise ValueError("LOOM_INFERENCE_TOKEN_URL must be https")
+        if self.inference_token_audience and not self.inference_token_url:
+            raise ValueError("LOOM_INFERENCE_TOKEN_AUDIENCE needs LOOM_INFERENCE_TOKEN_URL")
         sources = bool(self.inference_workload_token_file) + bool(self.inference_token_audience)
         if self.inference_token_url and sources != 1:
             raise ValueError(

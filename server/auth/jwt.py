@@ -364,7 +364,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         algorithm = "HS256"
         candidates = [secret]
 
-    trusted = trusted_issuers()
+    trusted = settings.trusted_issuers()
 
     try:
         decoded = _decode(token, candidates, algorithm)
@@ -554,13 +554,6 @@ def token_id_of(token: str, jti: Any) -> str:
     import hashlib
 
     return hashlib.sha256(str(token).encode("utf-8")).hexdigest()[:16]
-
-
-def trusted_issuers() -> set[str]:
-    """The `iss` values a token Loom verifies may carry: Loom's own issuer plus
-    the federated issuers in the `jwt_trusted_issuers` CSV."""
-    extra = (i.strip() for i in settings.jwt_trusted_issuers.split(","))
-    return {settings.jwt_issuer, *(i for i in extra if i)}
 
 
 def new_jti() -> str:

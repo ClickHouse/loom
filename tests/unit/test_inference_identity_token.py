@@ -184,31 +184,45 @@ def test_the_exchange_takes_exactly_one_token_source(
         Settings(_env_file=None)  # type: ignore[call-arg]
 
 
+_SIGNING_ENV = {
+    "LOOM_INFERENCE_TOKEN_URL": "https://gateway.example/oauth/token",
+    "LOOM_INFERENCE_TOKEN_AUDIENCE": _AUDIENCE,
+    "LOOM_PUBLIC_BASE_URL": "https://loom.example",
+    "LOOM_OPENAI_BASE_URL": "https://gateway.example/v1",
+    "LOOM_ANTHROPIC_BASE_URL": "https://gateway.example",
+}
+
+
+def _load_settings(monkeypatch: pytest.MonkeyPatch, **env: str) -> Settings:
+    for name, value in {**_SIGNING_ENV, **env}.items():
+        monkeypatch.setenv(name, value)
+    return Settings(_env_file=None)  # type: ignore[call-arg]
+
+
 @pytest.mark.parametrize(
-    ("setting", "value", "message"),
+    ("env", "message"),
     [
-        ("public_base_url", "", "needs LOOM_PUBLIC_BASE_URL"),
-        ("public_base_url", "http://loom.example", "https"),
+        ({"LOOM_PUBLIC_BASE_URL": ""}, "needs LOOM_PUBLIC_BASE_URL"),
+        ({"LOOM_PUBLIC_BASE_URL": "http://loom.example"}, "https"),
         # Loom's own tokens carry this audience, signed by the same RS256 keys.
-        ("inference_token_audience", "loom-platform", "LOOM_JWT_AUDIENCE"),
-        ("jwt_trusted_issuers", "https://loom.example/v1", "own verifier trusts"),
-        ("jwt_issuer", "https://loom.example/v1", "own verifier trusts"),
+        ({"LOOM_INFERENCE_TOKEN_AUDIENCE": "loom-platform"}, "LOOM_JWT_AUDIENCE"),
+        ({"LOOM_JWT_TRUSTED_ISSUERS": "https://loom.example/v1"}, "own verifier trusts"),
+        ({"LOOM_JWT_ISSUER": "https://loom.example/v1"}, "own verifier trusts"),
+        ({"LOOM_INFERENCE_TOKEN_URL": ""}, "needs LOOM_INFERENCE_TOKEN_URL"),
     ],
 )
-def test_it_will_not_start_signing_tokens_loom_or_a_wire_tap_could_misuse(
-    signs: _Gateway, monkeypatch: pytest.MonkeyPatch, setting: str, value: str, message: str
+def test_no_process_loads_signing_tokens_loom_or_a_wire_tap_could_misuse(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], message: str
 ) -> None:
-    monkeypatch.setattr(settings, "jwt_audience", "loom-platform")
-    monkeypatch.setattr(settings, setting, value)
-    with pytest.raises(gateway.InferenceIdentityRefused, match=message):
-        gateway.require_inference_identity_settings()
+    # Every process loads settings, a CLI command calling models too.
+    monkeypatch.setenv("LOOM_JWT_AUDIENCE", "loom-platform")
+    with pytest.raises(ValueError, match=message):
+        _load_settings(monkeypatch, **env)
 
 
-def test_it_starts_signing_with_a_loopback_http_address(
-    signs: _Gateway, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "public_base_url", "http://127.0.0.1:7777")
-    gateway.require_inference_identity_settings()
+def test_a_loopback_http_address_may_sign(monkeypatch: pytest.MonkeyPatch) -> None:
+    loaded = _load_settings(monkeypatch, LOOM_PUBLIC_BASE_URL="http://127.0.0.1:7777/")
+    assert loaded.inference_issuer() == "http://127.0.0.1:7777/v1"
 
 
 def test_a_process_running_no_refresh_loop_reads_the_keyring_to_sign(
@@ -235,6 +249,22 @@ def test_a_keyring_that_cannot_be_read_is_an_outage(
     with pytest.raises(gateway.GatewayUnavailable):
         asyncio.run(gateway.bearer("", _GW))
     assert signs.sent == []
+
+
+def test_a_stale_keyring_that_cannot_be_read_again_is_an_outage(
+    signs: _Gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rs, _ = _row("r1", "RS256")
+    _load(rs)
+    monkeypatch.setattr(keyring, "stale", lambda: True)  # read too long ago
+
+    async def away(**_: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(keyring, "refresh", away)
+    with pytest.raises(gateway.GatewayUnavailable):
+        asyncio.run(gateway.bearer("", _GW))
+    assert signs.sent == []  # nothing signed from a view a retire may have overtaken
 
 
 def test_the_keys_stay_reachable_while_a_model_change_drains() -> None:

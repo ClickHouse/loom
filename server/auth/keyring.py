@@ -277,12 +277,18 @@ def _signer(view: _View) -> SigningKey | None:
     return _root() if _root_signs(view.retired) else None
 
 
-def signing_key() -> SigningKey:
-    """The newest active key, else the root secret."""
+def _require_fresh() -> None:
+    """Nothing is signed from a keyring never read, or read too long ago: a
+    retire since may be unseen."""
     if not _view.loaded:
         raise BackendUnavailableError("the signing keyring is not loaded yet; retry shortly")
     if stale():
         raise BackendUnavailableError("the signing keyring is stale; retry shortly")
+
+
+def signing_key() -> SigningKey:
+    """The newest active key, else the root secret."""
+    _require_fresh()
     key = _signer(_view)
     if key is None:
         if ROOT_KID in _view.retired:
@@ -298,10 +304,7 @@ def rs256_signing_key() -> SigningKey | None:
     """The newest active RS256 key, for a token a party outside this deployment
     verifies against the JWKS (`/v1/.well-known/jwks.json`); None when every
     active key is HS256, whose secret no one else may hold."""
-    if not _view.loaded:
-        raise BackendUnavailableError("the signing keyring is not loaded yet; retry shortly")
-    if stale():
-        raise BackendUnavailableError("the signing keyring is stale; retry shortly")
+    _require_fresh()
     rsa = _active_rs256(_view, server_now(_view))
     return max(rsa, key=lambda k: (k.activate_at, k.kid)) if rsa else None
 

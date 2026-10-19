@@ -136,19 +136,11 @@ async def _identity_token() -> str:
     return signed_identity_token()
 
 
-def issuer() -> str:
-    """The `iss` of the identity tokens Loom signs: its public address under
-    /v1, where `/.well-known/openid-configuration` and `/.well-known/jwks.json`
-    are served."""
-    from server.auth.public_url import public_base_url
-
-    return f"{public_base_url(None, configured=settings.public_base_url)}/v1"
-
-
 def signed_identity_token() -> str:
     """A short identity token for the exchange, signed with the newest RS256
-    key. Raises ValueError when there is none: an HS256 secret is this
-    deployment's alone, and the gateway could not verify it."""
+    key. Raises ValueError when there is none (an HS256 secret is this
+    deployment's alone, and the gateway could not verify it), and
+    BackendUnavailableError while the keyring is not loaded or is stale."""
     import jwt as pyjwt
 
     from server.auth import keyring
@@ -162,7 +154,7 @@ def signed_identity_token() -> str:
         )
     now = int(time.time())
     claims = {
-        "iss": issuer(),
+        "iss": settings.inference_issuer(),
         "sub": IDENTITY_SUBJECT,
         "aud": settings.inference_token_audience,
         "iat": now,
@@ -171,46 +163,6 @@ def signed_identity_token() -> str:
         "jti": new_jti(),
     }
     return pyjwt.encode(claims, key.secret, algorithm="RS256", headers={"kid": key.kid})
-
-
-class InferenceIdentityRefused(RuntimeError):
-    """Loom would start signing identity tokens no gateway could trust."""
-
-
-def require_inference_identity_settings() -> None:
-    """Refuse to start when Loom is to sign its own identity tokens but has no
-    https public address for their issuer (a gateway fetches the keys from
-    there, and a key swapped on the way would be trusted), or when they could
-    be taken for Loom's own tokens: the same audience, or an issuer Loom's
-    verifier accepts. Either way the gateway would also take the tokens Loom
-    mints for its users, which the same RS256 keys sign."""
-    from server.auth.public_url import is_loopback_host
-
-    if not (settings.inference_token_url and settings.inference_token_audience):
-        return
-    base = urlsplit(settings.public_base_url.strip())
-    if not base.hostname:
-        raise InferenceIdentityRefused(
-            "refusing to start: LOOM_INFERENCE_TOKEN_AUDIENCE needs LOOM_PUBLIC_BASE_URL, "
-            "the issuer of the identity tokens Loom signs (the gateway reads its keys there)"
-        )
-    if base.scheme != "https" and not is_loopback_host(base.hostname):
-        raise InferenceIdentityRefused(
-            "refusing to start: LOOM_INFERENCE_TOKEN_AUDIENCE needs an https "
-            "LOOM_PUBLIC_BASE_URL: the gateway fetches the issuer's keys there"
-        )
-    if settings.inference_token_audience == settings.jwt_audience:
-        raise InferenceIdentityRefused(
-            "refusing to start: LOOM_INFERENCE_TOKEN_AUDIENCE is LOOM_JWT_AUDIENCE, the "
-            "audience of Loom's own tokens; name the gateway's"
-        )
-    from server.auth.jwt import trusted_issuers
-
-    if issuer() in trusted_issuers():
-        raise InferenceIdentityRefused(
-            f"refusing to start: the identity tokens' issuer {issuer()!r} is one Loom's "
-            "own verifier trusts (LOOM_JWT_ISSUER, LOOM_JWT_TRUSTED_ISSUERS)"
-        )
 
 
 def _error_code(r: httpx.Response) -> str:

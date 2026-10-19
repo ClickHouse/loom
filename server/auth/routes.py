@@ -25,11 +25,9 @@ async def v1_openid_configuration() -> JSONResponse:
     """The issuer of the identity tokens Loom signs for an inference gateway
     (`LOOM_INFERENCE_TOKEN_AUDIENCE`), and where its keys are; 404 when Loom
     signs none. It issues nothing to people: no authorization endpoint."""
-    from server.llm import gateway
-
-    if not (settings.inference_token_url and settings.inference_token_audience):
+    if not settings.inference_token_audience:
         return JSONResponse({"detail": "Not Found"}, status_code=404)
-    iss = gateway.issuer()
+    iss = settings.inference_issuer()
     return JSONResponse(
         {
             "issuer": iss,
