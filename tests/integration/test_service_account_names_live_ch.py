@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from server.auth import service_accounts
+from server.auth import revocation, service_accounts
 from server.auth.delegation import Delegated
 from server.core.ch import get_client
 from server.identity.app.me_service_accounts import save_token
@@ -92,28 +93,25 @@ async def test_the_tokens_a_reused_names_former_holder_made_are_revoked(org: str
     lee = f"lee-{uuid.uuid4().hex[:8]}"
     await _save(org, "parent", "sa:parent-old", lee, [lee])
     await _save(org, "child", "sa:child-1", "sa:parent-old", [lee, "sa:parent-old"])
-    old = await get_client().query_one(
-        "SELECT * FROM loom.service_accounts FINAL WHERE org = {org:String} AND name = 'parent'",
-        params={"org": org},
-    )
-    gone = service_accounts.revoked_row(
-        dict(old or {}), revoked_at=datetime(2026, 1, 1), revoked_by="lee"
-    )
-    await get_client().insert("loom.service_accounts", [gone])
-    await _save(org, "parent", "sa:parent-new", "admin", ["admin"])  # the name, reused
+    await _reuse(org, "parent", "lee")  # the name, reused
 
-    from server.auth import revocation
-
-    await revocation.scim_revoke(lee, reason="test", revoked_by="scim")
-    try:
-        await service_accounts.revoke_created_by([lee], revoked_by="scim")
+    async with _deactivated(lee):
         assert (await _head(org, "child"))["revoked_at"] is not None
         assert (await _head(org, "parent"))["revoked_at"] is None  # the new holder's
+
+
+@asynccontextmanager
+async def _deactivated(subject: str) -> AsyncIterator[None]:
+    """SCIM's revocation of `subject` and its token pass, removed on the way out."""
+    await revocation.scim_revoke(subject, reason="test", revoked_by="scim")
+    try:
+        await service_accounts.revoke_created_by([subject], revoked_by="scim")
+        yield
     finally:
         await get_client().execute(
             "ALTER TABLE loom.revoked_tokens DELETE WHERE jti = {j:String} "
             "SETTINGS mutations_sync = 2",
-            params={"j": revocation.SCIM_PREFIX + lee},
+            params={"j": revocation.SCIM_PREFIX + subject},
         )
 
 
@@ -132,28 +130,10 @@ async def test_a_reused_name_hands_its_ancestry_to_tokens_listed_before_lineage(
     lee = f"lee-{uuid.uuid4().hex[:8]}"
     await _listed_before_lineage(org, "parent", "sa:parent-old", lee)
     await _listed_before_lineage(org, "child", "sa:child-1", "sa:parent-old")
-    old = await get_client().query_one(
-        "SELECT * FROM loom.service_accounts FINAL WHERE org = {org:String} AND name = 'parent'",
-        params={"org": org},
-    )
-    gone = service_accounts.revoked_row(
-        dict(old or {}), revoked_at=datetime(2026, 1, 1), revoked_by=lee
-    )
-    await get_client().insert("loom.service_accounts", [gone])
-    await _save(org, "parent", "sa:parent-new", "admin", ["admin"])  # the name, reused
+    await _reuse(org, "parent", lee)  # the name, reused
 
-    from server.auth import revocation
-
-    await revocation.scim_revoke(lee, reason="test", revoked_by="scim")
-    try:
-        await service_accounts.revoke_created_by([lee], revoked_by="scim")
+    async with _deactivated(lee):
         assert (await _head(org, "child"))["revoked_at"] is not None
-    finally:
-        await get_client().execute(
-            "ALTER TABLE loom.revoked_tokens DELETE WHERE jti = {j:String} "
-            "SETTINGS mutations_sync = 2",
-            params={"j": revocation.SCIM_PREFIX + lee},
-        )
 
 
 async def _reuse(org: str, name: str, by: str) -> None:
@@ -171,18 +151,8 @@ async def test_two_reused_names_in_a_chain_listed_before_lineage_keep_its_root(o
     await _reuse(org, "mid", lee)
     await _reuse(org, "top", lee)
 
-    from server.auth import revocation
-
-    await revocation.scim_revoke(lee, reason="test", revoked_by="scim")
-    try:
-        await service_accounts.revoke_created_by([lee], revoked_by="scim")
+    async with _deactivated(lee):
         assert (await _head(org, "leaf"))["revoked_at"] is not None
-    finally:
-        await get_client().execute(
-            "ALTER TABLE loom.revoked_tokens DELETE WHERE jti = {j:String} "
-            "SETTINGS mutations_sync = 2",
-            params={"j": revocation.SCIM_PREFIX + lee},
-        )
 
 
 def _lost_ancestry_query() -> str:
@@ -212,18 +182,8 @@ async def test_the_guide_lists_a_token_whose_root_was_lost_before_this_build(org
     await _reuse(org, "mid", root)
     assert await _lost(org) == ["leaf"]
 
-    from server.auth import revocation
-
-    await revocation.scim_revoke(root, reason="test", revoked_by="scim")
-    try:
-        await service_accounts.revoke_created_by([root], revoked_by="scim")
+    async with _deactivated(root):
         assert (await _head(org, "leaf"))["revoked_at"] is None  # what the guide's query is for
-    finally:
-        await get_client().execute(
-            "ALTER TABLE loom.revoked_tokens DELETE WHERE jti = {j:String} "
-            "SETTINGS mutations_sync = 2",
-            params={"j": revocation.SCIM_PREFIX + root},
-        )
 
 
 async def test_the_guide_lists_no_token_whose_chain_leads_to_a_person(org: str) -> None:
