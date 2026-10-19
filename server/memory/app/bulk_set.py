@@ -820,14 +820,18 @@ async def _close_overtaken_edges(
 ) -> None:
     """The revised rows' edges end with their value if another write revised it
     again while they were written (`end_overtaken_edges`). An entry with fewer than
-    two graph nodes wrote no edge."""
-    versions = {
-        (res.memory_id, res.memory_key, value_sha256(entry))
-        for entry, res in zip(input.entries, results, strict=True)
-        if res.memory_id in revised and len(edge_nodes(entry, entity_map)) >= 2
-    }
-    if versions:
-        await end_overtaken_edges(input, sorted(versions), op="memory.bulk_set", ch=ch)
+    two graph nodes wrote no edge. Asked per set of nodes an entry paired: a 'high' row
+    still holds the edges of the entities it names."""
+    by_nodes: dict[tuple[str, ...], set[tuple[str, str, str]]] = {}
+    for entry, res in zip(input.entries, results, strict=True):
+        nodes = edge_nodes(entry, entity_map)
+        if res.memory_id in revised and len(nodes) >= 2:
+            version = (res.memory_id, res.memory_key, value_sha256(entry))
+            by_nodes.setdefault(tuple(nodes), set()).add(version)
+    for nodes, versions in by_nodes.items():
+        await end_overtaken_edges(
+            input, sorted(versions), op="memory.bulk_set", ch=ch, entities=nodes
+        )
 
 
 # The most supersession pairs one write follows in the request.
