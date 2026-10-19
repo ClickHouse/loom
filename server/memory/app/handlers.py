@@ -644,6 +644,21 @@ async def handle_memory_delete_version(
             identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
         )
         if existing is None:
+            # A retry of a delete of this version whose check is owed (it answered 503)
+            # runs the check now and answers as the delete would have.
+            check = await memory_repo.find_delete_check(
+                input.org,
+                input.namespace,
+                input.agent,
+                input.user_id,
+                input.session_id,
+                input.memory_key,
+                checked=int(input.version),
+            )
+            if check is not None and not check["done"]:
+                answer = await rerun_delete_check(check)
+                if answer is not None:
+                    return answer
             return MemoryDeleteVersionOutput(tombstoned=False, found=False)
         if existing.version != input.version:
             return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
@@ -653,35 +668,40 @@ async def handle_memory_delete_version(
         # The check this delete owes after its tombstone, recorded first: when the check
         # cannot run now, the delete_version_check worker runs it, so a write it would
         # have found is never left under the tombstone. A failure here deletes nothing.
-        await memory_repo.record_delete_check(
-            existing, checked=int(input.version), tombstone=version, done=False
-        )
+        check = {
+            "org": existing.org,
+            "namespace": existing.namespace,
+            "agent": existing.agent,
+            "user_id": existing.user_id,
+            "session_id": existing.session_id,
+            "memory_key": existing.memory_key,
+            "checked": int(input.version),
+            "tombstone": version,
+        }
+        await memory_repo.record_delete_check(check, done=False)
         await _write_tombstone_row(
             existing, version=version, trace=delete_version_trace(input.version)
         )
         try:
-            return await finish_delete_check(
-                existing, checked=int(input.version), tombstone=version
-            )
+            return await finish_delete_check(existing, check)
         except Exception as e:  # the check is recorded: the worker finishes it
             degradations.note("memory.delete_version", "check_deferred", e)
             log.warning("memory.delete_version: the check after the tombstone failed: %s", e)
             raise BackendUnavailableError(
-                "the delete is recorded but its check did not run; it finishes in the "
-                "background, and the key reads as deleted until it does"
+                "the delete is recorded but its check did not run; a retry runs it, and "
+                "it finishes in the background otherwise"
             ) from e
 
 
-async def finish_delete_check(
-    existing: Any, *, checked: int, tombstone: int
-) -> MemoryDeleteVersionOutput:
+async def finish_delete_check(existing: Any, check: dict[str, Any]) -> MemoryDeleteVersionOutput:
     """The check memory.delete_version owes after its tombstone, and its answer: when the
     key moved on (`_key_moved_on`) nothing derived is retired; otherwise the delete
     stands and what `existing` (the removed version) derived retires. The recorded check
-    is then marked done. Safe to run again: the delete_version_check worker runs it for a
-    delete whose own run failed."""
+    is then marked done. Safe to run again: a retry and the delete_version_check worker
+    run it for a delete whose own run failed."""
     import server.memory.store as memory_repo
 
+    checked, tombstone = int(check["checked"]), int(check["tombstone"])
     moved_on = await _key_moved_on(existing, checked=checked, tombstone=tombstone)
     if moved_on is not None:
         answer = moved_on
@@ -696,12 +716,32 @@ async def finish_delete_check(
             dependents_downgraded=downgraded,
         )
     try:
-        await memory_repo.record_delete_check(
-            existing, checked=checked, tombstone=tombstone, done=True
-        )
+        await memory_repo.record_delete_check(check, done=True)
     except Exception as e:  # noqa: BLE001 — a check left open runs again, harmlessly
         log.warning("memory.delete_version: the check ran but was not marked done: %s", e)
     return answer
+
+
+async def rerun_delete_check(check: dict[str, Any]) -> MemoryDeleteVersionOutput | None:
+    """Run an owed check (the caller holds the key lock) and answer as its delete would
+    have, or close it and answer None when there is nothing to check: the tombstone never
+    landed (the delete failed after recording it), or the rows were erased since."""
+    import server.memory.store as memory_repo
+
+    checked, tombstone = int(check["checked"]), int(check["tombstone"])
+    ident = (check["agent"], check["user_id"], check["session_id"])
+    rows = await memory_repo.fetch_version_rows(
+        check["org"],
+        check["namespace"],
+        [(check["memory_key"], checked), (check["memory_key"], tombstone)],
+        sequential=True,
+    )
+    mine = {r.version: r for r in rows if (r.agent, r.user_id, r.session_id) == ident}
+    removed, landed = mine.get(checked), mine.get(tombstone)
+    if removed is not None and landed is not None and landed.tombstoned_at is not None:
+        return await finish_delete_check(removed, check)
+    await memory_repo.record_delete_check(check, done=True)
+    return None
 
 
 async def _key_moved_on(

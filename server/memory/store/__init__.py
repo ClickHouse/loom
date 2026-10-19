@@ -44,7 +44,11 @@ from server.memory.store.dedup import (
     status_by_keys,
     superseded_successors,
 )
-from server.memory.store.delete_checks import pending_delete_checks, record_delete_check
+from server.memory.store.delete_checks import (
+    find_delete_check,
+    pending_delete_checks,
+    record_delete_check,
+)
 from server.memory.store.embeddings import (
     EmbeddingKey,
     divergent_namespaces,
@@ -207,8 +211,6 @@ __all__ = [
     "ENTITY_SUMMARY_PERSISTED_COLS",
     "FACET_SUFFIX_SYNONYMS",
     "fetch_version_rows",
-    "pending_delete_checks",
-    "record_delete_check",
     "fence_vectors",
     "find_by_content_terms",
     "find_by_identifier",
@@ -216,6 +218,7 @@ __all__ = [
     "find_by_key_prefix",
     "find_chunks_by_identifier",
     "find_chunks_by_session_date",
+    "find_delete_check",
     "find_duplicate_clusters",
     "find_duplicate_pairs",
     "find_embedding_stubs",
@@ -260,9 +263,11 @@ __all__ = [
     "namespace_version",
     "normalize_key_prefix",
     "parse_memory_value",
+    "pending_delete_checks",
     "read_unentitied_rows",
     "read_your_writes_enabled",
     "reconcile_embedding_status",
+    "record_delete_check",
     "record_usage_event",
     "key_derivative_scrubs",
     "redact_row",

@@ -96,6 +96,7 @@ async def test_matching_version_returns_unchanged_without_body_audit_or_exposure
     env.row = _row(version=7, sensitivity="high")
     out = await mem.handle_memory_get(_input(if_version=7))
     assert out.found and out.unchanged and out.value is None and out.version == 7
+    assert out.version_text == "7"  # exact for a JavaScript caller on this path too
     assert out.memory_id == env.row.memory_id
     assert env.audits == [] and env.exposures == []
 

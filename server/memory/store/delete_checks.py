@@ -15,29 +15,68 @@ from server.memory.store.sql import _SEQUENTIAL, read_your_writes_enabled
 TABLE = "loom.delete_version_checks"
 
 
+# A check's identity, key and versions: the columns `record_delete_check` writes and
+# the reads return.
+CHECK_COLUMNS = (
+    "org",
+    "namespace",
+    "agent",
+    "user_id",
+    "session_id",
+    "memory_key",
+    "checked",
+    "tombstone",
+)
+
+
 async def record_delete_check(
-    existing: Any, *, checked: int, tombstone: int, done: bool, ch: _CHClient | None = None
+    check: dict[str, Any], *, done: bool, ch: _CHClient | None = None
 ) -> None:
-    """The check row of the delete of `existing` (its identity and key) at `checked`,
-    tombstoned at `tombstone`; committed before the call returns."""
+    """The row of `check` (the delete of `memory_key` at version `checked`, tombstoned at
+    `tombstone`, under its identity), committed before the call returns."""
     ch = ch or _default_client()
-    await ch.insert(
-        TABLE,
-        [
-            {
-                "org": existing.org,
-                "namespace": existing.namespace,
-                "agent": existing.agent,
-                "user_id": existing.user_id,
-                "session_id": existing.session_id,
-                "memory_key": existing.memory_key,
-                "checked": int(checked),
-                "tombstone": int(tombstone),
-                "done": 1 if done else 0,
-            }
-        ],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+    row = {k: check[k] for k in CHECK_COLUMNS}
+    row["checked"], row["tombstone"] = int(row["checked"]), int(row["tombstone"])
+    row["done"] = 1 if done else 0
+    await ch.insert(TABLE, [row], settings={"async_insert": 0, "wait_for_async_insert": 1})
+
+
+async def find_delete_check(
+    org: str,
+    namespace: str,
+    agent: str,
+    user_id: str,
+    session_id: str,
+    memory_key: str,
+    *,
+    checked: int,
+    ch: _CHClient | None = None,
+) -> dict[str, Any] | None:
+    """The newest check of a delete of this key at version `checked` under this identity,
+    done or not, or None when no delete recorded one."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"""
+        SELECT org, namespace, agent, user_id, session_id, memory_key, checked, tombstone, done
+        FROM {TABLE} FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND agent = {{agent:String}}
+          AND user_id = {{uid:String}} AND session_id = {{sid:String}}
+          AND memory_key = {{key:String}} AND checked = {{checked:UInt64}}
+        ORDER BY tombstone DESC
+        LIMIT 1
+        {_SEQUENTIAL if read_your_writes_enabled() else ""}
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "uid": user_id,
+            "sid": session_id,
+            "key": memory_key,
+            "checked": int(checked),
+        },
     )
+    return rows[0] if rows else None
 
 
 async def pending_delete_checks(

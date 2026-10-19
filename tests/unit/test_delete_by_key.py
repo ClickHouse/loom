@@ -100,10 +100,15 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     # memory.delete_version's re-read after its tombstone: no write landed in between.
     monkeypatch.setattr(memory_repo, "versions_above", _no_later_write)
 
-    async def _record_check(_existing: Any, **check: Any) -> None:
-        state.setdefault("checks", []).append(check)
+    async def _record_check(check: dict[str, Any], **kw: Any) -> None:
+        state.setdefault("checks", []).append({**check, **kw})
 
     monkeypatch.setattr(memory_repo, "record_delete_check", _record_check)
+
+    async def _no_check(*_a: Any, **_k: Any) -> None:
+        return None  # no delete of this version recorded a check
+
+    monkeypatch.setattr(memory_repo, "find_delete_check", _no_check)
     monkeypatch.setattr(hm, "get_client", lambda: state["ch"])
     monkeypatch.setattr(_stack_mod, "get_client", lambda: state["ch"])
     monkeypatch.setattr(_restore_mod, "get_client", lambda: state["ch"])

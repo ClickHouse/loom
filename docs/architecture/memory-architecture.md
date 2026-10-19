@@ -342,32 +342,35 @@ carries the sweep's `expire_reason` marker; every other version drops it (a
 may write it. `memory.update` and `memory.update_by_id` revise a row and are not lifted: a
 revision that races a delete stays deleted. If the fence's read fails, the write keeps its
 version; `memory.set`'s answer names the degradation. `memory.delete_version` removes one
-version a caller read (`memory.get` and the list ops return it as `version` and, exact
-for a JavaScript caller, as the decimal string `version_text`) and nothing when the row has moved on; the key lock orders it
-against `if_match_sha256` writes. A plain write or delete takes no lock, so both sides
-check again after their insert, and a write after the named version stays whichever lands
-first. The delete stamps the version it removed in its tombstone's `source_trace` and
-reads the key's newest version other than its own tombstone after writing it. A live row
-means the key moved on (`version_changed`); one below the tombstone, a plain write between
-the check and the tombstone, is written back above it. Another delete's or a sweep's
-tombstone means that delete or sweep removed the key (`found=false`); one below this
-tombstone is written back above it, stamped as this delete's own tombstone, so a restore
-brings back the row it removed and a write after it lifts over the copy as over this
-tombstone. Only when the key did not move on does the delete stand and retire the removed
-version's vectors and chunks: the chunks whose index and content hash its own value
-writes, so a newer value's chunks of the key stay (a newer value that repeats one of those
-chunks at the same index shares its row and loses it until the key is written again). A
-`memory.delete` whose insert lands after that read can still answer `tombstoned`
-alongside it, as two racing `memory.delete` calls can. Between the tombstone and a write
-back, the key reads as deleted, and a `memory.delete` in that window answers
-`found=false`. Before its tombstone the delete records the check it owes in
+version a caller read (`memory.get` and the list ops return it as `version` and, exact for
+a JavaScript caller, as the decimal string `version_text`) and nothing when the row has
+moved on; the key lock orders it against `if_match_sha256` writes. A plain write or delete
+takes no lock, so both sides check again after their insert, and a write after the named
+version stays whichever lands first. The delete stamps the version it removed in its
+tombstone's `source_trace` and reads the key's newest version other than its own tombstone
+after writing it. A live row means the key moved on (`version_changed`); one below the
+tombstone, a plain write between the check and the tombstone, is written back above it.
+Another delete's or a sweep's tombstone means that delete or sweep removed the key
+(`found=false`); one below this tombstone is written back above it, stamped as this
+delete's own tombstone, so a restore brings back the row it removed and a write after it
+lifts over the copy as over this tombstone. Only when the key did not move on does the
+delete stand and retire the removed version's vectors and chunks: the chunks whose index
+and content hash its own value writes, so a newer value's chunks of the key stay (a newer
+value that repeats one of those chunks at the same index shares its row and loses it until
+the key is written again). A `memory.delete` whose insert lands after that read can still
+answer `tombstoned` alongside it, as two racing `memory.delete` calls can. Between the
+tombstone and a write back, the key reads as deleted, and a `memory.delete` in that window
+answers `found=false`. Before its tombstone the delete records the check it owes in
 `loom.delete_version_checks`, and marks it done once the check has run; if the record
 fails, nothing is deleted. If the read after the tombstone fails, the delete answers 503
-and retires nothing, and the `delete_version_check` worker runs the check later, under the
-key lock (`memory/workers/delete_version_check.py`): until then the key reads as deleted,
-and a write the tombstone hid comes back when it runs. A
-write that lands under such a tombstone, aimed at an older version, writes itself again
-above it.
+and retires nothing. A retry of the same delete runs the owed check and answers as the
+delete would have; otherwise the `delete_version_check` worker runs it under the key lock
+(`memory/workers/delete_version_check.py`), by default within about six minutes (a
+60-second grace, then a pass at most 300 seconds later). Until the check runs,
+`memory.get` and the list ops read the key as deleted, search can still return the removed
+value from its vectors and chunks, and a write the tombstone hid is not served; it comes
+back when the check runs. A write that lands under such a tombstone, aimed at an older
+version, writes itself again above it.
 
 Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace's
 `retention_days`, or `LOOM_MEMORY_SENSITIVE_RETENTION_DAYS` set `expires_at` and

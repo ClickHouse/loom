@@ -101,6 +101,11 @@ class MemoryGetOutput(ProjectedRow):
         # Then the caller's field whitelist, when one was sent.
         return _project_fields(data, self._projection)
 
+    @model_validator(mode="after")
+    def _version_text(self) -> MemoryGetOutput:
+        self.version_text = None if self.version is None else str(self.version)
+        return self
+
     # False when no live, unexpired row of this user holds the key.
     found: bool
     # True when `if_version` matched the live row: version below, no body.
@@ -117,7 +122,8 @@ class MemoryGetOutput(ProjectedRow):
     # Nanosecond version of the live row; send it back as `if_version` to poll.
     version: int | None = None
     # The same version as a decimal string, exact for a JavaScript caller (the number is
-    # above 2^53, which JSON.parse rounds): send this one to memory.delete_version.
+    # above 2^53, which JSON.parse rounds): send this one to memory.delete_version. Set
+    # from `version`, so every answer carrying one carries both.
     version_text: str | None = None
     # When the key was first written; kept across later versions.
     created_at: datetime | None = None
@@ -650,7 +656,8 @@ class _MemoryListEntry(ProjectedRow):
     memory_type: MemoryType
     confidence: float
     version: int
-    # The same version as a decimal string, exact for a JavaScript caller.
+    # The same version as a decimal string, exact for a JavaScript caller; set from
+    # `version`.
     version_text: str = ""
     # Provenance, e.g. "conversation:<thread_id>" for seeder-promoted facts.
     source_trace: str = ""
@@ -687,6 +694,11 @@ class _MemoryListEntry(ProjectedRow):
     char_limit: int | None = None
     # Sensitivity tier ('' | low | medium | high); the server withholds a high row's value.
     sensitivity: str = ""
+
+    @model_validator(mode="after")
+    def _version_text(self) -> _MemoryListEntry:
+        self.version_text = str(self.version)
+        return self
 
 
 class MemoryListOutput(BaseModel):

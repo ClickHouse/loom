@@ -236,6 +236,11 @@ class MemorySettings(BaseModel):
     # Expired rows one sweep pass applies.
     memory_expiry_sweep_batch_size: int = 500
 
+    # `demote` multiplies confidence by this factor, never below the floor.
+    memory_expiry_demote_factor: float = 0.5
+    # Lowest confidence a `demote` (expiry or run.complete) leaves on a row.
+    memory_expiry_demote_floor: float = 0.05
+
     # Finish the checks memory.delete_version could not run after its tombstone (a failed
     # read), so a write that landed between its version check and its tombstone is
     # written back above it rather than left deleted.
@@ -248,10 +253,6 @@ class MemorySettings(BaseModel):
     delete_version_check_grace_seconds: int = 60
     # Checks one pass runs.
     delete_version_check_batch_size: int = 200
-    # `demote` multiplies confidence by this factor, never below the floor.
-    memory_expiry_demote_factor: float = 0.5
-    # Lowest confidence a `demote` (expiry or run.complete) leaves on a row.
-    memory_expiry_demote_floor: float = 0.05
 
     # ---- namespace health, knowledge graph, communities ----
     # Seconds a namespace's health summary is cached per process (a failed
