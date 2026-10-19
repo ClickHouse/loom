@@ -62,6 +62,9 @@ type TrackerSourcesStatus =
  * `namespace.list_mine` into the store so the picker and the role chips see the new
  * grant.
  */
+// One empty list, so a page that memoises on `sources` sees the same one each render.
+const NO_SOURCES: TrackerSource[] = [];
+
 export function useTrackerSources(org: string): {
   status: TrackerSourcesStatus;
   sources: TrackerSource[];
@@ -112,7 +115,7 @@ export function useTrackerSources(org: string): {
 
   return {
     status,
-    sources: status.kind === "ready" ? status.sources : [],
+    sources: status.kind === "ready" ? status.sources : NO_SOURCES,
     selfService: status.kind === "ready" && selfService,
     refresh,
   };
