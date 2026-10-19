@@ -852,7 +852,8 @@ async def test_a_late_edges_cleanup_replays_with_the_revisions_end(
 
     calls: list[tuple] = []
 
-    async def close_late_edges(org, namespace, memory_id, sha, *, ended_at, ch):
+    async def close_late_edges(org, namespace, memory_id, sha, *, ended_at, declared, ch):
+        assert declared is False, "a mined value's cleanup"
         calls.append((org, namespace, memory_id, sha, ended_at))
 
     monkeypatch.setattr(entity_projections, "close_late_edges", close_late_edges)
