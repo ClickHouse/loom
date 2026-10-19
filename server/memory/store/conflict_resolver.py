@@ -484,6 +484,27 @@ _UNDOS_SQL = """
         """
 
 
+# The restore version the newest Undo record of one row names (0 when none does).
+_NEWEST_UNDO_SQL = """
+        SELECT argMax(JSONExtractUInt(subject, 'version'), ts) AS version
+        FROM loom.audit_log
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND event_type = 'memory.unsupersede'
+          AND JSONExtractString(subject, 'memory_id') = {id:String}
+        SETTINGS select_sequential_consistency = 1
+        """
+
+
+async def newest_undo_version(
+    org: str, namespace: str, memory_id: str, *, ch: _CHClient | None = None
+) -> int:
+    """The restore version the newest `memory.unsupersede` record of `memory_id` names;
+    0 when there is none (or it names no version)."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(_NEWEST_UNDO_SQL, {"org": org, "ns": namespace, "id": memory_id})
+    return int(rows[0]["version"] or 0) if rows else 0
+
+
 class Undo(NamedTuple):
     """A person's Undo of `memory_id`'s retirement behind `superseded_by`: the value it
     restored and the version the restore wrote."""
@@ -573,6 +594,7 @@ __all__ = [
     "cluster_peers",
     "dead_flags",
     "key_identity",
+    "newest_undo_version",
     "owed_rows",
     "protected_ids",
     "queued_namespaces",

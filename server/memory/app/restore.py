@@ -64,16 +64,17 @@ def _undo_lock(input: MemoryRestoreInput) -> AbstractAsyncContextManager[None]:
 
 
 async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryRestoreOutput:
-    import server.memory.store as memory_repo
-    from server.observability import audit
-
     # A conditional revision holds the key's write lock from its read to its insert; the
     # Undo does too, or it could write the retired value back over that revision.
     async with _undo_lock(input):
         existing = await _read_restorable(input)
         if existing is None:
             return MemoryRestoreOutput(restored=False)
-        if (
+        if await _landed_late(input, existing):
+            # A retry of an Undo whose restore landed after its 503: finish that one.
+            version, status = int(existing.version), str(existing.status)
+            restored_at = datetime.fromtimestamp(version / 1e9, UTC).replace(tzinfo=None)
+        elif (
             existing.tombstoned_at is not None
             or str(existing.status) != "superseded"
             or (input.if_superseded_by and existing.superseded_by != input.if_superseded_by)
@@ -81,78 +82,111 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
             return MemoryRestoreOutput(
                 restored=False, memory_id=str(existing.memory_id), version=int(existing.version)
             )
-        new_version = next_version()
-        # The Undo's assertion time, taken with the restore: its graph step runs after the
-        # lock is released, and is dated here, not then.
-        restored_at = naive_utc_now()
-        # The search row takes the same status: ranking reads its own copy.
-        status = await _status_before_retirement(existing, ch=ch)
-        restore_row = memory_repo.build_memory_version_row(
-            existing,
-            version=new_version,
-            updated_at=memory_repo.written_now(),
-            status=status,
-            superseded_by="",
-            invalid_at=None,
-        )
-        # The conflict resolver honours the Undo by this record, so it is written first,
-        # under the lock, and its failure fails the Undo: no restore it would not see. A
-        # record whose restore then fails names a version no row holds.
-        try:
-            await audit.emit_strict(
-                "memory.unsupersede",
-                org=input.org,
-                namespace=input.namespace,
-                actor=writer_actor() or "-",
-                subject={
-                    "memory_key": input.memory_key,
-                    "memory_id": str(existing.memory_id),
-                    "superseded_by": str(existing.superseded_by or ""),
-                    # The value restored and the restore's version: the resolver honours
-                    # the Undo while the row holds that value, from that version on.
-                    "content_sha256": str(existing.content_sha256 or ""),
-                    "version": new_version,
-                },
-            )
-        except Exception as e:  # the Undo must not land without its record
-            raise BackendUnavailableError(
-                "the Undo could not be recorded; nothing was restored, retry the Undo",
-                operation="memory.restore",
-            ) from e
-        try:
-            await insert_memory_versions([restore_row], ch=ch)
-        except Exception as e:  # an insert whose answer was lost may still have landed
-            if not await _restore_landed(input, new_version):
-                raise BackendUnavailableError(
-                    "the Undo may not have landed; retry the Undo",
-                    operation="memory.restore",
-                    outcome_unknown=True,
-                ) from e
-        try:
-            await memory_repo.unsupersede_embeddings(
-                input.org,
-                input.namespace,
-                input.agent,
-                input.user_id,
-                input.session_id,
-                input.memory_key,
-                status=status,
-                ch=ch,
-            )
-        except Exception:
-            log.warning(
-                "memory.restore: embeddings re-emit failed for %s",
-                input.memory_key,
-                exc_info=True,
-            )
+        else:
+            version, status, restored_at = await _write_restore(input, existing, ch=ch)
+        await _unsupersede_embeddings(input, status, ch=ch)
     # The facts the retirement closed and the restored value still holds come back.
     await _reopen_facts(input, existing, restored_at, ch=ch)
     return MemoryRestoreOutput(
         restored=True,
         memory_id=str(existing.memory_id),
-        version=new_version,
+        version=version,
         from_status="superseded",
     )
+
+
+async def _landed_late(input: MemoryRestoreInput, head: MemoryRow) -> bool:
+    """Whether `head` is the restore of an Undo whose insert landed after its 503: a
+    guarded Undo finds the row served again, at the version its newest record names."""
+    from server.memory.store.conflict_resolver import newest_undo_version
+
+    if not input.if_superseded_by or head.tombstoned_at is not None:
+        return False
+    if str(head.status) == "superseded":
+        return False
+    undone = await newest_undo_version(input.org, input.namespace, str(head.memory_id))
+    return undone == int(head.version)
+
+
+async def _write_restore(
+    input: MemoryRestoreInput, existing: MemoryRow, *, ch: Any
+) -> tuple[int, str, datetime]:
+    """Write the Undo's record, then its restore version; (that version, the status it
+    restores, when). Under the key's lock."""
+    import server.memory.store as memory_repo
+    from server.observability import audit
+
+    new_version = next_version()
+    # The Undo's assertion time, taken with the restore: its graph step runs after the
+    # lock is released, and is dated here, not then.
+    restored_at = naive_utc_now()
+    # The search row takes the same status: ranking reads its own copy.
+    status = await _status_before_retirement(existing, ch=ch)
+    restore_row = memory_repo.build_memory_version_row(
+        existing,
+        version=new_version,
+        updated_at=memory_repo.written_now(),
+        status=status,
+        superseded_by="",
+        invalid_at=None,
+    )
+    # The conflict resolver honours the Undo by this record, so it is written first,
+    # under the lock, and its failure fails the Undo: no restore it would not see. A
+    # record whose restore then fails names a version no row holds.
+    try:
+        await audit.emit_strict(
+            "memory.unsupersede",
+            org=input.org,
+            namespace=input.namespace,
+            actor=writer_actor() or "-",
+            subject={
+                "memory_key": input.memory_key,
+                "memory_id": str(existing.memory_id),
+                "superseded_by": str(existing.superseded_by or ""),
+                # The value restored and the restore's version: the resolver honours
+                # the Undo while the row holds that value, from that version on.
+                "content_sha256": str(existing.content_sha256 or ""),
+                "version": new_version,
+            },
+        )
+    except Exception as e:  # the Undo must not land without its record
+        raise BackendUnavailableError(
+            "the Undo could not be recorded; nothing was restored, retry the Undo",
+            operation="memory.restore",
+        ) from e
+    try:
+        await insert_memory_versions([restore_row], ch=ch)
+    except Exception as e:  # an insert whose answer was lost may still have landed
+        if not await _restore_landed(input, new_version):
+            raise BackendUnavailableError(
+                "the Undo may not have landed; retry the Undo",
+                operation="memory.restore",
+                outcome_unknown=True,
+            ) from e
+    return new_version, status, restored_at
+
+
+async def _unsupersede_embeddings(input: MemoryRestoreInput, status: str, *, ch: Any) -> None:
+    """Serve the key's search rows again, as `status`; a failure is logged, not raised."""
+    import server.memory.store as memory_repo
+
+    try:
+        await memory_repo.unsupersede_embeddings(
+            input.org,
+            input.namespace,
+            input.agent,
+            input.user_id,
+            input.session_id,
+            input.memory_key,
+            status=status,
+            ch=ch,
+        )
+    except Exception:
+        log.warning(
+            "memory.restore: embeddings re-emit failed for %s",
+            input.memory_key,
+            exc_info=True,
+        )
 
 
 async def _restore_landed(input: MemoryRestoreInput, version: int) -> bool:

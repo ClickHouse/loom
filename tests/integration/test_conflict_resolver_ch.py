@@ -3000,3 +3000,39 @@ async def test_memory_statuses_says_which_retirements_still_stand(ch, wired) -> 
         await handle_memory_restore(MemoryRestoreInput(**key, memory_key="office_location"))
     ).restored
     assert (await statuses())[winner] == ("active", "")
+
+
+async def test_a_retried_undo_finishes_a_restore_that_landed_after_its_503(
+    ch, wired, monkeypatch
+) -> None:
+    """The restore's insert lands only after the re-read, so the Undo answered 503. The
+    person's retry finds the row served at the version its record names: it finishes
+    that Undo (the search row served again) and answers restored."""
+    from server.core.errors import BackendUnavailableError
+    from server.memory.app import restore
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 2190)
+    assert (await run_pass())["retired"] == 1
+    winner = (await _rows(ch, org))["office_location"]["id"]
+    real = restore.insert_memory_versions
+    late: list[Any] = []
+
+    async def lost(rows: Any, **kw: Any) -> None:
+        late.append((rows, kw))
+        raise TimeoutError("answer lost")
+
+    with monkeypatch.context() as m:
+        m.setattr(restore, "insert_memory_versions", lost)
+        with pytest.raises(BackendUnavailableError):
+            await _undo(org, "office_city", winner)
+    rows, kw = late[0]
+    await real(rows, **kw)  # it lands now
+    assert (await _undo(org, "office_city", winner)).restored
+    search = await ch.query_all(
+        "SELECT status FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+        " AND memory_key = 'office_city' SETTINGS select_sequential_consistency = 1",
+        params={"o": org},
+    )
+    assert search and {r["status"] for r in search} == {"active"}
