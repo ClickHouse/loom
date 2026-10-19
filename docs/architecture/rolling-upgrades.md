@@ -115,7 +115,8 @@ schema. These rules keep that safe. The operator procedure is in
     deliveries two ready events, as two replicas of the previous build already can.
     Each task is whole (its event and its lease row) and claimable: a create of N cut
     off after its task row is finished by its retry, which under the key's lease writes
-    the created event and the lease row the first one left out. That event takes a fresh
+    the created event the first one left out, and by the lease sweep, which writes its
+    lease row after its grace. That event takes a fresh
     seq, so cursor readers deliver it, unless the task has events since: then it goes
     just before the first of them and is history only. A first create that was only
     stalled past its lease, or cancelled while its insert ran on, can still land its own

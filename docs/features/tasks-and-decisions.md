@@ -145,7 +145,8 @@ async with Agent(org="acme", namespace="public", agent="public-bot", api_key=PUB
 
 Two creates with one `idempotency_key` store one task, even when they race: they run one at a time under a
 lease on the key, each answers with the task, and only the one that stored it says `created=true`. A retry of
-a create that was cut off after storing its task writes the `created` event and lease row it left out. When the
+a create that was cut off after storing its task writes the `created` event it left out; its missing lease row
+is the lease sweep's to write, so the task is claimable after the sweep's 60 s grace and one more pass. When the
 first create's own event still lands (it was cancelled mid-insert), the two share one deduplication token and
 the readers (`task.history`, `task.updates`, `/v1/task/watch`, webhooks) keep only the first, so a task is
 created once in its history and in each cursor's delivery. A create that waits more than 10 s for another
@@ -188,12 +189,10 @@ async with Agent(org="acme", namespace="private", agent="private-bot", api_key=P
   gives the lease back as it found it. Each sweep also puts right a lease row a race left out of step with its
   task: a `todo` or triage task with no row gets one, an idle or expired row takes its task's fence (a claim cut
   off after winning leaves one a fence ahead), and an ended task's row goes. It skips rows written in the last
-  60 s, which may belong to a create or reopen still in flight; a cancel's first drop is not covered by the
-  grace, and its second drop, or the next pass, removes a row the reconcile wrote back. That second drop
-  removes only an idle row at the cancelled fence: a reopen and a claim since keep theirs, while a reopen
-  alone (which keeps the fence) can lose its idle row, and the reconcile writes it back after its grace. A
-  cancel that lands between a claim's lease and its status write is overwritten by the claim, which leaves
-  the task `in_progress`; this race predates the reconcile and is not closed by it.
+  60 s, which may belong to a create or reopen still in flight; a row the reconcile wrote back for a task a
+  cancel was ending goes in the next pass. A cancel that lands between a claim's lease and its status write is
+  overwritten by the claim, which leaves the task `in_progress`; this race predates the reconcile and is not
+  closed by it.
 - **Other moves.** `task.defer` (with `resume_at`), `task.block` (`blocked_on`: `sender`, `human`, `external`),
   `task.wont_do`, and `task.progress` (a note, no state change).
 - **Triage.** `task.pull(status="triage")` returns review items unclaimed; decide with `task.accept` or

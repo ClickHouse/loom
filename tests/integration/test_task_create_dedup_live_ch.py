@@ -92,11 +92,14 @@ async def test_a_create_that_raced_on_its_key_answers_with_the_stored_task(
 
 
 @pytest.mark.asyncio
-async def test_a_retry_of_a_create_cut_off_after_its_insert_gets_its_event_and_lease_row(
+async def test_a_create_cut_off_after_its_insert_gets_its_event_and_a_lease_row_from_the_reconcile(
     ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The key's lease timed the first create out after its task row landed and before
-    # its created event and lease row: the retry finds the task and must leave it whole.
+    # its created event and lease row: the retry logs the event, and one reconcile past
+    # its grace writes the lease row.
+    from server.tasks.app import sweep
+
     org = f"itest-cutoff-{uuid.uuid4().hex[:8]}"
     ident = {"org": org, "namespace": "private", "agent": "admin"}
     await inboxes.handle_inbox_register(
@@ -125,14 +128,15 @@ async def test_a_retry_of_a_create_cut_off_after_its_insert_gets_its_event_and_l
     retry = await transitions.handle_task_create(wire.TaskCreateInput(**body))
 
     assert not retry.created
-    leases = await ch.query_all(
-        "SELECT task_id, fence FROM loom.task_leases WHERE task_id = {tid:String}",
-        params={"tid": retry.task.task_id},
-    )
-    assert [(r["task_id"], int(r["fence"])) for r in leases] == [(retry.task.task_id, 0)]
+    # The retry writes no lease row: the reconcile writes the missing one after its grace.
+    tid = retry.task.task_id
+    assert await _lease(ch, tid) is None
+    _only_strays_of(monkeypatch, tid)
+    assert await sweep.reconcile_leases(_later(), limit=10_000) == 1
+    assert await _lease(ch, tid) == {"owner": "", "fence": 0}
     # One created event, and a second retry writes no other.
     await transitions.handle_task_create(wire.TaskCreateInput(**body))
-    assert await _claimable(ch, org, retry.task.task_id)
+    assert await _claimable(ch, org, tid)
 
 
 async def _erase_tasks(ch: Any, org: str, namespace: str) -> None:
@@ -745,8 +749,8 @@ async def test_paging_one_event_at_a_time_moves_past_a_discarded_backfill(
 async def test_a_create_retry_racing_an_end_leaves_no_lease_row(
     ch: Any, monkeypatch: pytest.MonkeyPatch, op: str
 ) -> None:
-    """A create retry that runs between an end's lease drop and its status row reads the
-    task still todo and gives it its lease row back: the end drops it again after."""
+    """A create retry that runs between an end's lease drop and its status row writes no
+    lease row: the ended task is left with none."""
     org = f"itest-end-{uuid.uuid4().hex[:8]}"
     await inboxes.handle_inbox_register(
         wire.InboxRegisterInput(
@@ -797,179 +801,6 @@ async def test_a_create_retry_racing_an_end_leaves_no_lease_row(
         params={"t": first.task.task_id},
     )
     assert rows == [], rows
-
-
-@pytest.mark.asyncio
-async def test_a_create_retry_landing_after_an_end_takes_its_lease_row_back(
-    ch: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A create retry read the task todo, then the cancel ran whole (its drops and its
-    row), then the retry wrote the lease row: its re-read sees the end and drops it."""
-    org = f"itest-late-{uuid.uuid4().hex[:8]}"
-    await inboxes.handle_inbox_register(
-        wire.InboxRegisterInput(
-            org=org,
-            namespace="private",
-            agent="admin",
-            inbox="bot",
-            owner_agent="bot",
-            accept_disclosure=["internal"],
-        )
-    )
-    body = {
-        "org": org,
-        "namespace": "public",
-        "agent": "poster",
-        "inbox": "bot",
-        "kind": "chore",
-        "title": "t",
-        "disclosure": "internal",
-        "idempotency_key": "k1",
-    }
-    first = await transitions.handle_task_create(wire.TaskCreateInput(**body))
-    backend = await repo.lease_backend()
-    real_ensure = type(backend).ensure_row
-
-    async def cancel_then_ensure(self: Any, *a: Any, **kw: Any) -> Any:
-        monkeypatch.setattr(type(backend), "ensure_row", real_ensure)
-        await transitions.handle_task_cancel(
-            wire.TaskReasonInput(
-                org=org, namespace="public", agent="poster", task_id=first.task.task_id, reason="x"
-            )
-        )
-        return await real_ensure(self, *a, **kw)
-
-    monkeypatch.setattr(type(backend), "ensure_row", cancel_then_ensure)
-    await transitions.handle_task_create(wire.TaskCreateInput(**body))
-    rows = await ch.query_all(
-        "SELECT task_id FROM loom.task_leases WHERE task_id = {t:String}",
-        params={"t": first.task.task_id},
-    )
-    assert rows == [], rows
-
-
-@pytest.mark.asyncio
-async def test_a_create_retry_racing_a_claim_keeps_the_claimants_lease(
-    ch: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A retry read the task todo, then a claim landed, then the retry wrote its lease row:
-    the claimant keeps its lease, and its heartbeat holds."""
-    org = f"itest-claim-{uuid.uuid4().hex[:8]}"
-    await inboxes.handle_inbox_register(
-        wire.InboxRegisterInput(
-            org=org,
-            namespace="private",
-            agent="admin",
-            inbox="bot",
-            owner_agent="bot",
-            accept_disclosure=["internal"],
-        )
-    )
-    body = {
-        "org": org,
-        "namespace": "public",
-        "agent": "poster",
-        "inbox": "bot",
-        "kind": "chore",
-        "title": "t",
-        "disclosure": "internal",
-        "idempotency_key": "k1",
-    }
-    first = await transitions.handle_task_create(wire.TaskCreateInput(**body))
-    tid = first.task.task_id
-    await transitions.handle_task_accept(
-        wire.TaskAcceptInput(org=org, namespace="private", agent="bot", task_id=tid)
-    )
-    backend = await repo.lease_backend()
-    real_ensure = type(backend).ensure_row
-    claimed: dict[str, Any] = {}
-
-    async def claim_then_ensure(self: Any, *a: Any, **kw: Any) -> Any:
-        monkeypatch.setattr(type(backend), "ensure_row", real_ensure)
-        claimed["out"] = await transitions.handle_task_claim(
-            wire.TaskClaimInput(org=org, namespace="private", agent="bot", task_id=tid)
-        )
-        return await real_ensure(self, *a, **kw)
-
-    monkeypatch.setattr(type(backend), "ensure_row", claim_then_ensure)
-    await transitions.handle_task_create(wire.TaskCreateInput(**body))
-    rows = await ch.query_all(
-        "SELECT owner FROM loom.task_leases WHERE task_id = {t:String}", params={"t": tid}
-    )
-    assert rows, "the claimant keeps its lease row"
-    await transitions.handle_task_heartbeat(
-        wire.TaskHeartbeatInput(
-            org=org,
-            namespace="private",
-            agent="bot",
-            task_id=tid,
-            fence=int(claimed["out"].task.fence),
-        )
-    )
-
-
-@pytest.mark.asyncio
-async def test_a_task_reopened_while_a_create_retry_drops_its_lease_row_is_still_claimable(
-    ch: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A create retry's re-read sees the task ended, then a reopen lands before the retry
-    deletes the lease row: the reopened todo task has no lease row, and a claim writes
-    it back and wins."""
-    org = f"itest-reopen-{uuid.uuid4().hex[:8]}"
-    await inboxes.handle_inbox_register(
-        wire.InboxRegisterInput(
-            org=org,
-            namespace="private",
-            agent="admin",
-            inbox="bot",
-            owner_agent="bot",
-            accept_disclosure=["internal"],
-        )
-    )
-    body = {
-        "org": org,
-        "namespace": "private",
-        "agent": "poster",
-        "inbox": "bot",
-        "kind": "chore",
-        "title": "t",
-        "disclosure": "internal",
-        "idempotency_key": "k1",
-    }
-    first = await transitions.handle_task_create(wire.TaskCreateInput(**body))
-    tid = first.task.task_id
-    ident = {"org": org, "namespace": "private", "task_id": tid, "reason": "x"}
-    backend = await repo.lease_backend()
-    real_ensure, real_fetch = backend.ensure_row, repo.fetch_task
-    armed = False
-
-    async def ensure(*a: Any, **k: Any) -> None:
-        nonlocal armed
-        await real_ensure(*a, **k)
-        armed = True  # the retry's ensure_row ran; its re-read is next
-
-    async def fetch(org_: str, task_id: str, *a: Any, **k: Any) -> Any:
-        nonlocal armed
-        if not armed:
-            return await real_fetch(org_, task_id, *a, **k)
-        armed = False
-        monkeypatch.setattr(backend, "ensure_row", real_ensure)
-        monkeypatch.setattr(repo, "fetch_task", real_fetch)
-        # The end lands, the retry's re-read sees it, then a reopen lands before the delete.
-        await transitions.handle_task_wont_do(wire.TaskReasonInput(agent="bot", **ident))
-        seen = await real_fetch(org_, task_id, *a, **k)
-        await transitions.handle_task_reopen(wire.TaskReasonInput(agent="admin", **ident))
-        return seen
-
-    monkeypatch.setattr(backend, "ensure_row", ensure)
-    monkeypatch.setattr(repo, "fetch_task", fetch)
-    await transitions.handle_task_create(wire.TaskCreateInput(**body))  # the client retry
-    assert (await repo.fetch_task(org, tid))["status"] == "todo"
-
-    out = await transitions.handle_task_claim(
-        wire.TaskClaimInput(org=org, namespace="private", agent="bot", task_id=tid)
-    )
-    assert out.task.status == "in_progress"
 
 
 @pytest.mark.asyncio
@@ -1065,78 +896,37 @@ def _reason(org: str, tid: str) -> Any:
 
 @pytest.mark.asyncio
 async def test_a_claim_won_on_a_stray_lease_row_of_a_cancelled_task_backs_out(
-    ch: Any, monkeypatch: pytest.MonkeyPatch
+    ch: Any,
 ) -> None:
-    """A create retry writes the lease row back after a reopen, and a cancel lands before
-    that write: a stray row for a cancelled task. A claim that read the task todo wins
-    the row, reads the task again and backs out: the task stays cancelled."""
+    """A late write left an idle lease row for a cancelled task. A claim that read the
+    task todo wins the row, reads the task again and backs out: the task stays
+    cancelled, and the stray row is the lease reconcile's to remove."""
     org = f"itest-stray-{uuid.uuid4().hex[:8]}"
-    tid = await _todo_task(org, idempotency_key="k1")
-    prior = await repo.fetch_task(org, tid)  # the retry's read: todo, fence 0
+    tid = await _todo_task(org)
+    stale = await repo.fetch_task(org, tid)  # a claimer reads todo
     await transitions.handle_task_cancel(_reason(org, tid))
     backend = await repo.lease_backend()
-    real_delete, real_ensure = backend.delete_held, backend.ensure_row
-    deleted, stale = False, {}
-
-    async def delete(task_id: str, holder: str, *, fence: int) -> None:
-        nonlocal deleted
-        monkeypatch.setattr(backend, "delete_held", real_delete)
-        await transitions.handle_task_reopen(_reason(org, tid))  # lands before the delete
-        await real_delete(task_id, holder, fence=fence)
-        deleted = True
-
-    async def ensure(*a: Any, **k: Any) -> None:
-        nonlocal deleted
-        if deleted:  # the retry's write after its re-read saw todo
-            deleted = False
-            stale["task"] = await repo.fetch_task(org, tid)  # a claimer reads todo
-            await transitions.handle_task_cancel(_reason(org, tid))
-        await real_ensure(*a, **k)
-
-    monkeypatch.setattr(backend, "delete_held", delete)
-    monkeypatch.setattr(backend, "ensure_row", ensure)
-    await transitions._prior_task(prior)
-    monkeypatch.undo()
-    got = await transitions._claim_one(
-        stale["task"], claimant="bot", actor="process:bot", lease_seconds=60
-    )
+    await backend.ensure_row(tid, org, stale["inbox"], 0)  # the late write
+    got = await transitions._claim_one(stale, claimant="bot", actor="process:bot", lease_seconds=60)
     assert got is None
     assert (await repo.fetch_task(org, tid))["status"] == "cancelled"
-    # The claim undid only its own bump; the stray row is the lease sweep's to remove.
-    leases = await ch.query_all(
-        "SELECT owner, fence FROM loom.task_leases WHERE task_id = {t:String}", params={"t": tid}
-    )
-    assert leases == [{"owner": "", "fence": 0}]
+    assert await _lease(ch, tid) == {"owner": "", "fence": 0}
 
 
 @pytest.mark.asyncio
 async def test_a_reopen_takes_back_a_lease_row_a_late_write_left_at_an_older_fence(
-    ch: Any, monkeypatch: pytest.MonkeyPatch
+    ch: Any,
 ) -> None:
-    """A reopen's second lease write is slow: the task is claimed and cancelled meanwhile,
-    and the write leaves an idle row at the older fence. The next reopen moves that row to
-    the task's fence, so the task is claimable again."""
+    """A task claimed (fence 1) and cancelled, then a late write leaves an idle row at
+    fence 0: the reopen moves that row to the task's fence, so the task is claimable."""
     org = f"itest-strand-{uuid.uuid4().hex[:8]}"
     tid = await _todo_task(org)
+    await _claim(org, tid)
     await transitions.handle_task_cancel(_reason(org, tid))
+    task = await repo.fetch_task(org, tid)
+    assert int(task["fence"]) == 1
     backend = await repo.lease_backend()
-    real_ensure = backend.ensure_row
-    calls = 0
-
-    async def ensure(*a: Any, **k: Any) -> None:
-        nonlocal calls
-        calls += 1
-        if calls == 2:  # the reopen's write after its status row
-            monkeypatch.setattr(backend, "ensure_row", real_ensure)
-            await transitions.handle_task_claim(
-                wire.TaskClaimInput(org=org, namespace="private", agent="bot", task_id=tid)
-            )
-            await transitions.handle_task_cancel(_reason(org, tid))
-        await real_ensure(*a, **k)
-
-    monkeypatch.setattr(backend, "ensure_row", ensure)
-    await transitions.handle_task_reopen(_reason(org, tid))
-    monkeypatch.undo()
+    await backend.ensure_row(tid, org, task["inbox"], 0)  # the late write, an older fence
     await transitions.handle_task_reopen(_reason(org, tid))
     out = await transitions.handle_task_claim(
         wire.TaskClaimInput(org=org, namespace="private", agent="bot", task_id=tid)
@@ -1394,12 +1184,11 @@ async def _claim_one_at(backend: Any, tid: str, *, fence: int) -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_ends_second_lease_drop_keeps_a_row_a_reopen_and_a_claim_wrote(
+async def test_a_reopen_and_a_claim_right_after_a_cancel_keep_the_claimants_lease(
     ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Between a cancel's status row and its second lease drop, the task is reopened and
-    claimed: the drop removes only an idle row at the cancelled fence, so the claimant
-    keeps its lease and its heartbeat passes."""
+    """Right after a cancel's status row, the task is reopened and claimed: the cancel
+    writes nothing more, so the claimant keeps its lease and its heartbeat passes."""
     org = f"itest-enddrop-{uuid.uuid4().hex[:8]}"
     tid = await _todo_task(org)
     real = transitions._record

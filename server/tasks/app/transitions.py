@@ -46,7 +46,6 @@ from server.tasks.app.common import (
     _actor,
     _caller_subject,
     _conflict,
-    _drop_idle_lease,
     _drop_lease,
     _err,
     _in_scope,
@@ -113,26 +112,11 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
 
 async def _prior_task(prior: TaskRow, *, backfill: bool = True) -> TaskCreateOutput:
     """The answer to a create whose key already holds `prior`: a never-claimed task a
-    cut-off create left without its created event or lease row gets them here
-    (`backfill=False`: the first create is still running and writes its own event)."""
-    if prior["status"] in ("todo", "triage") and int(prior["fence"]) == 0:
-        if backfill:
-            await _backfill_created_event(prior)
-        backend = await repo.lease_backend()
-        await backend.ensure_row(
-            str(prior["task_id"]), prior["org"], prior["inbox"], int(prior["fence"])
-        )
-        # An end that dropped the lease after the read above must not get it back; a claim
-        # since owns the row, and keeps it.
-        task_id = str(prior["task_id"])
-        now = await repo.fetch_task(prior["org"], task_id)
-        if now is None or now["status"] in TERMINAL:
-            await backend.delete_held(task_id, "", fence=int(prior["fence"]))
-            # A reopen that landed before the delete wrote its lease row first: it is
-            # todo again and needs the row back.
-            now = await repo.fetch_task(prior["org"], task_id)
-            if now is not None and now["status"] in ("todo", "triage"):
-                await backend.ensure_row(task_id, now["org"], now["inbox"], int(now["fence"]))
+    cut-off create left without its created event gets it here (`backfill=False`: the
+    first create is still running and writes its own event). A lease row it left out
+    is the lease reconcile's to write, after its grace."""
+    if backfill and prior["status"] in ("todo", "triage") and int(prior["fence"]) == 0:
+        await _backfill_created_event(prior)
     return TaskCreateOutput(task=_payload(prior), created=False, seq=int(prior["version"]))
 
 
@@ -715,9 +699,7 @@ async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
     if not owner_side:
         _owner_refusal(unverified)
         raise _not_found()
-    # The lease goes before the status row, so a claim racing this one finds none, and
-    # again after it while idle: a create retry in between (`_prior_task` reads todo)
-    # puts it back, and a reopen and a claim since keep theirs.
+    # The lease goes before the status row, so a claim racing this one finds none.
     await _drop_lease(task)
     row, seq = await _record(
         task,
@@ -729,7 +711,6 @@ async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
         owner="",
         lease_until=None,
     )
-    await _drop_idle_lease(task)
     return TaskOutput(task=_payload(row), seq=seq)
 
 
@@ -737,9 +718,7 @@ async def handle_task_cancel(input: TaskReasonInput) -> TaskOutput:
     """Owner side, or the poster while nobody owns the task."""
 
     task, _owner_side, _unverified = await _load_for_reason_op(input)
-    # The lease goes before the status row, so a claim racing this one finds none, and
-    # again after it while idle: a create retry in between (`_prior_task` reads todo)
-    # puts it back, and a reopen and a claim since keep theirs.
+    # The lease goes before the status row, so a claim racing this one finds none.
     await _drop_lease(task)
     row, seq = await _record(
         task,
@@ -751,7 +730,6 @@ async def handle_task_cancel(input: TaskReasonInput) -> TaskOutput:
         owner="",
         lease_until=None,
     )
-    await _drop_idle_lease(task)
     return TaskOutput(task=_payload(row), seq=seq)
 
 
@@ -775,11 +753,6 @@ async def handle_task_reopen(input: TaskReasonInput) -> TaskOutput:
         owner="",
         lease_until=None,
         blocked_on="",
-    )
-    # Again after the status row, as an end drops it before and after its own: a create
-    # retry that read the task ended may delete the row between the two.
-    await backend.ensure_row(
-        str(row["task_id"]), row["org"], row["inbox"], int(row["fence"]), reset_idle=True
     )
     return TaskOutput(task=_payload(row), seq=seq)
 
@@ -876,9 +849,7 @@ async def handle_task_reassign(input: TaskReassignInput) -> TaskReassignOutput:
     if mode == "deny":
         raise _err(403, "TASK_POSTER_DENIED", "the destination denies this poster and kind")
     actor = _actor(f"process:{input.agent}")
-    # The lease goes before the status row, so a claim racing this one finds none, and
-    # again after it while idle: a create retry in between (`_prior_task` reads todo)
-    # puts it back, and a reopen and a claim since keep theirs.
+    # The lease goes before the status row, so a claim racing this one finds none.
     await _drop_lease(task)
     old, _seq = await _record(
         task,
@@ -891,7 +862,6 @@ async def handle_task_reassign(input: TaskReassignInput) -> TaskReassignOutput:
         owner="",
         lease_until=None,
     )
-    await _drop_idle_lease(task)
     now = _naive(_now())
     new_id = str(uuid.uuid4())
     child = TaskRow(**task)

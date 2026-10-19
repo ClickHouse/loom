@@ -244,7 +244,13 @@ class FakeRepo:
         return {"expired": expired, "resume": resume, "stale_triage": stale}
 
     async def lease_strays(self, *, before, terminal, limit):
-        return [], []
+        # The todo and triage tasks with no lease row; no stray rows.
+        missing = [
+            {"task_id": tid, "org": r["org"], "inbox": r["inbox"], "fence": int(r["fence"])}
+            for tid, r in self.tasks.items()
+            if r["status"] in ("todo", "triage") and tid not in self.leases.rows
+        ]
+        return missing[:limit], []
 
     async def inbox_counts(self, org, *, namespace=None, inbox=None):
         out: dict[tuple[str, str, str], int] = {}
@@ -507,22 +513,21 @@ async def test_idempotency_key_returns_the_first_task(fake: FakeRepo) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_retried_create_writes_a_lease_row_only_for_an_unclaimed_task(
+async def test_a_create_cut_off_before_its_lease_row_is_claimable_after_one_reconcile(
     fake: FakeRepo,
 ) -> None:
+    """A create cut off after its task row: a retry writes no lease row (it reads a
+    status it cannot hold), and the lease reconcile writes the missing one."""
+    from server.tasks.app import sweep
+
     await _register(fake)
     a = await _post(fake, idempotency_key="k1")
     tid = a.task.task_id
-    # A create cut off after its task row: the retry writes the missing lease row.
-    fake.leases.rows.pop(tid)
-    await _post(fake, idempotency_key="k1")
-    assert tid in fake.leases.rows
-    # A claimed task finishing drops its lease before it records the terminal status:
-    # a retry in between must not write the lease row back.
-    fake.tasks[tid].update(status="in_progress", fence=1)
     fake.leases.rows.pop(tid)
     await _post(fake, idempotency_key="k1")
     assert tid not in fake.leases.rows
+    assert await sweep.reconcile_leases(datetime.now(UTC).replace(tzinfo=None), limit=10) == 1
+    assert fake.leases.rows[tid]["owner"] == "" and fake.leases.rows[tid]["fence"] == 0
 
 
 @pytest.mark.asyncio
