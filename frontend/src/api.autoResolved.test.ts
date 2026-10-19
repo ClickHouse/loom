@@ -13,7 +13,8 @@ import { isRecord } from "./lib/guards";
 // path, each listing up to 200 retired rows) and `memory.unsupersede` rows (one per
 // restore). Both are flattened client-side.
 
-function stubAudit(pages: Array<{ rows: Array<{ ts: string; subject: string }>; next_cursor?: string | null }>) {
+// A page of audit rows, or of `memory.statuses` rows, answered in order.
+function stubAudit(pages: Array<{ rows: Array<Record<string, unknown>>; next_cursor?: string | null }>) {
   const bodies: Record<string, unknown>[] = [];
   vi.stubGlobal(
     "fetch",
