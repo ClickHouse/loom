@@ -782,3 +782,32 @@ async def test_an_undo_reads_legacy_rows_whatever_links_its_rows_have(monkeypatc
         scope, ids, ch=_CH(), restored_at=datetime(2026, 10, 15), restore_id="u1"
     )
     assert read == [ids]
+
+
+@pytest.mark.parametrize("sensitivity", ["high", "low"])
+async def test_a_failed_undo_reopen_records_no_high_rows_hash(monkeypatch, sensitivity) -> None:
+    """The fact reopen of an Undo fails and is recorded for the repair: a 'high' row's
+    content_sha256 stays out of the payload, its id stays in (the repair reads the row
+    as it is), and another row's hash is kept as its fence."""
+    from types import SimpleNamespace
+
+    from server.memory.app import entity_projections as ep
+    from server.memory.app import graph_undo, restore
+
+    recorded: dict[str, Any] = {}
+
+    async def down(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("CH down")
+
+    async def record(input: Any, **kw: Any) -> None:
+        recorded.update(kw)
+
+    monkeypatch.setattr(graph_undo, "reopen_held_facts", down)
+    monkeypatch.setattr(ep, "record_input_projection_failure", record)
+    scope = SimpleNamespace(org="o", namespace="n", agent="a", user_id="-", session_id="-")
+    row = SimpleNamespace(memory_id="m1", content_sha256="f" * 64, sensitivity=sensitivity)
+    await restore._reopen_facts(scope, row, 1_700_000_000_000_000_000, ch=None)
+    payload = recorded["payload"]
+    assert payload["memory_ids"] == ["m1"] and payload["reopen"] is True
+    want = {} if sensitivity == "high" else {"m1": "f" * 64}
+    assert payload["content_sha256"] == want

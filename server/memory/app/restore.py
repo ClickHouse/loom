@@ -288,13 +288,19 @@ async def _reopen_facts(
     from server.memory.app.entity_projections import reconcile_row_facts
 
     restore = f"{existing.memory_id}:{version}"
+    # No failure payload names a 'high' row's content: its reopen reads the row as it is.
+    hashes = (
+        {}
+        if existing.sensitivity == "high"
+        else {str(existing.memory_id): str(existing.content_sha256)}
+    )
     await reconcile_row_facts(
         input,
         [str(existing.memory_id)],
         reopen=True,
         op="memory.restore",
         ch=ch,
-        hashes={str(existing.memory_id): str(existing.content_sha256)},
+        hashes=hashes,
         # Versions are time_ns: the restore's version is when it was made, the same on
         # its first write and on every retry that finishes it.
         restored_at=version_time(version),
