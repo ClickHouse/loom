@@ -12,6 +12,7 @@ from fastapi import APIRouter, Request
 
 from server.auth.bearer import auth_unavailable, bearer_token
 from server.auth.jwt import AuthUnavailable, TokenError, verify_token
+from server.observability.metrics import record_auth_refusal
 
 auth_router = APIRouter()
 
@@ -71,22 +72,26 @@ async def whoami(request: Request) -> dict[str, object]:
     Useful for SDK clients to debug "which kid is signing my tokens?" and
     for ops to verify a rolled-out kid is being accepted.
     """
+    # A refused token is counted in loom.auth.refusals; no token is a signed-out
+    # caller asking, not a refusal.
     try:
         token = bearer_token(request.headers.get("Authorization"))
     except TokenError as e:
+        record_auth_refusal(e, transport="http")
         return {"authenticated": False, "reason": str(e)}
     if token is None:
         return {"authenticated": False}
     try:
         info = verify_token(token)
-    except AuthUnavailable as e:
+    except TokenError as e:
+        record_auth_refusal(e, transport="http")
+        if not isinstance(e, AuthUnavailable):
+            # 200 + authenticated=false (not an error) so the SPA drops a stale
+            # token and shows login rather than erroring the welcome screen.
+            return {"authenticated": False, "reason": str(e)}
         # Transient: the token may be fine. authenticated=false would make the SPA
         # drop it, so answer 503 and let the client retry.
         raise auth_unavailable(e) from e
-    except TokenError as e:
-        # 200 + authenticated=false (not an error) so the SPA drops a stale
-        # token and shows login rather than erroring the welcome screen.
-        return {"authenticated": False, "reason": str(e)}
 
     try:
         header = pyjwt.get_unverified_header(token)

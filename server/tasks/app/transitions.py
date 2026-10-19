@@ -55,6 +55,8 @@ from server.tasks.app.common import (
     _loads,
     _naive,
     _not_found,
+    _owner_check,
+    _owner_refusal,
     _payload,
     _record,
     _release_lease,
@@ -508,8 +510,10 @@ async def handle_task_unblock(input: TaskUnblockInput) -> TaskOutput:
     if task is None:
         raise _not_found()
     subject = _caller_subject()
-    owner_side = await _in_scope(input.org, task["namespace"], write=True)
-    if not owner_side and not (task.get("blocked_on") == "sender" and _is_poster(task, subject)):
+    poster = task.get("blocked_on") == "sender" and _is_poster(task, subject)
+    owner_side, unverified = await _owner_check(input.org, task["namespace"])
+    if not owner_side and not poster:
+        _owner_refusal(unverified)
         raise _not_found()
     if task["status"] != "blocked":
         raise await _state_conflict("TASK_NOT_BLOCKED", task)
@@ -584,29 +588,34 @@ async def handle_task_fail(input: TaskFailInput) -> TaskOutput:
 # ============================================================
 
 
-async def _load_for_reason_op(input: TaskReasonInput) -> tuple[TaskRow, bool]:
-    """The row and whether the caller is on the owner side (else the poster)."""
+async def _load_for_reason_op(input: TaskReasonInput) -> tuple[TaskRow, bool, bool]:
+    """The row, whether the caller is on the owner side (else the poster), and
+    whether an owner-side refusal was unverified (see `_owner_check`)."""
     task = await repo.fetch_task(input.org, input.task_id)
     if task is None:
         raise _not_found()
-    owner_side = await _in_scope(input.org, task["namespace"], write=True)
-    if not owner_side and not _is_poster(task, _caller_subject()):
+    poster = _is_poster(task, _caller_subject())
+    owner_side, unverified = await _owner_check(input.org, task["namespace"])
+    if not owner_side and not poster:
+        _owner_refusal(unverified)
         raise _not_found()
     if task["status"] in TERMINAL:
         raise await _state_conflict("TASK_TERMINAL", task, want="it is already finished")
     if task["status"] == "in_progress":
         if not owner_side:
+            _owner_refusal(unverified)
             raise _conflict("TASK_IN_PROGRESS", "the task is owned; ask its owner")
         if input.fence is not None and int(input.fence) != int(task.get("fence") or 0):
             raise _conflict("TASK_FENCE_STALE", "the lease this fence belonged to is over")
-    return task, owner_side
+    return task, owner_side, unverified
 
 
 async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
     """Owner side (an approver from triage, the owner from anywhere)."""
 
-    task, owner_side = await _load_for_reason_op(input)
+    task, owner_side, unverified = await _load_for_reason_op(input)
     if not owner_side:
+        _owner_refusal(unverified)
         raise _not_found()
     await _drop_lease(task)
     row, seq = await _record(
@@ -625,7 +634,7 @@ async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
 async def handle_task_cancel(input: TaskReasonInput) -> TaskOutput:
     """Owner side, or the poster while nobody owns the task."""
 
-    task, _owner_side = await _load_for_reason_op(input)
+    task, _owner_side, _unverified = await _load_for_reason_op(input)
     await _drop_lease(task)
     row, seq = await _record(
         task,
@@ -675,8 +684,10 @@ async def handle_task_update(input: TaskUpdateInput) -> TaskUpdateOutput:
     task = await repo.fetch_task(input.org, input.task_id)
     if task is None:
         raise _not_found()
-    owner_side = await _in_scope(input.org, task["namespace"], write=True)
-    if not owner_side and not _is_poster(task, _caller_subject()):
+    poster = _is_poster(task, _caller_subject())
+    owner_side, unverified = await _owner_check(input.org, task["namespace"])
+    if not owner_side and not poster:
+        _owner_refusal(unverified)
         raise _not_found()
     if task["status"] not in EDITABLE:
         raise _conflict("TASK_NOT_EDITABLE", f"task is {task['status']!r}; add a note instead")

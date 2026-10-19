@@ -210,7 +210,7 @@ async def _tracker_facts(org: str, ns: str, nums: list[int]) -> dict[int, dict[s
         from server.tracker.app.binding import authorized_tracker_namespace
         from server.tracker.app.facts import tracker_facts_for_numbers
 
-        tracker_ns = await authorized_tracker_namespace(org, ns)
+        tracker_ns = await authorized_tracker_namespace(org, ns, hides_answer=False)
         if not tracker_ns:
             return {}
         return await tracker_facts_for_numbers(org, tracker_ns, nums)

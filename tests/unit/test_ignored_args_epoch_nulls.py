@@ -190,9 +190,9 @@ def test_mcp_structured_content_names_the_dropped_key_and_nulls_the_zero_date(
 
     tool = "loom_memory_get"
     monkeypatch.setitem(
-        mcp_call._TOOLS_BY_NAME,
+        mcp_call.TOOLS_BY_NAME,
         tool,
-        dataclasses.replace(mcp_call._TOOLS_BY_NAME[tool], handler=_handler),
+        dataclasses.replace(mcp_call.TOOLS_BY_NAME[tool], handler=_handler),
     )
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
@@ -222,9 +222,9 @@ def test_mcp_refuses_a_writes_misspelled_argument(monkeypatch: pytest.MonkeyPatc
 
     tool = "loom_task_complete"
     monkeypatch.setitem(
-        mcp_call._TOOLS_BY_NAME,
+        mcp_call.TOOLS_BY_NAME,
         tool,
-        dataclasses.replace(mcp_call._TOOLS_BY_NAME[tool], handler=_handler),
+        dataclasses.replace(mcp_call.TOOLS_BY_NAME[tool], handler=_handler),
     )
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:

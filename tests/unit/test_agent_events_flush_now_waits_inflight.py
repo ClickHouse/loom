@@ -99,9 +99,21 @@ async def test_lost_events_are_counted(monkeypatch: pytest.MonkeyPatch) -> None:
     em = ev.EventEmitter(queue=asyncio.Queue(maxsize=2))
     for _ in range(5):
         em.emit(_event())
-    assert em.stats() == {"queued": 2, "dropped_queue_full": 3, "dropped_flush_failed": 0}
+    assert em.stats() == {
+        "queued": 2,
+        "dropped_queue_full": 3,
+        "dropped_flush_failed": 0,
+        "dropped_batch_repeat": 0,
+        "batch_repeats": 0,
+    }
     await em.flush_now()
-    assert em.stats() == {"queued": 0, "dropped_queue_full": 3, "dropped_flush_failed": 2}
+    assert em.stats() == {
+        "queued": 0,
+        "dropped_queue_full": 3,
+        "dropped_flush_failed": 2,
+        "dropped_batch_repeat": 0,
+        "batch_repeats": 0,
+    }
 
 
 @pytest.mark.asyncio

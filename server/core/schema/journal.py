@@ -117,20 +117,21 @@ def split_statements(sql: str) -> list[str]:
 
 _OBJECT_DDL = re.compile(
     r"\b(CREATE)\s+(?:OR\s+REPLACE\s+)?(?:TABLE|MATERIALIZED\s+VIEW|VIEW|DICTIONARY)\s+"
-    r"(?:IF\s+NOT\s+EXISTS\s+)?(?:`?loom`?\.)?`?([A-Za-z_]\w*)`?"
-    r"|\b(DROP)\s+(?:TABLE|VIEW|DICTIONARY)\s+(?:IF\s+EXISTS\s+)?(?:`?loom`?\.)?`?([A-Za-z_]\w*)`?",
+    r"(?:IF\s+NOT\s+EXISTS\s+)?(?:`?(\w+)`?\.)?`?([A-Za-z_]\w*)`?"
+    r"|\b(DROP)\s+(?:TABLE|VIEW|DICTIONARY)\s+(?:IF\s+EXISTS\s+)?(?:`?(\w+)`?\.)?`?([A-Za-z_]\w*)`?",
     re.IGNORECASE,
 )
 
 
 def object_ddl(sql: str) -> Iterator[tuple[str, str]]:
-    """`("create" | "drop", name)` for each loom object `sql` creates or drops,
-    in order, comment lines skipped."""
+    """`("create" | "drop", name)` for each object `sql` creates or drops, in
+    order, comment lines skipped. A `loom` object is named bare; one in
+    another database keeps its qualifier (`loom_telemetry.sli_minute`)."""
     for m in _OBJECT_DDL.finditer(without_comments(sql)):
-        if m.group(1):
-            yield "create", m.group(2)
-        else:
-            yield "drop", m.group(4)
+        op, db, name = (
+            ("create", m.group(2), m.group(3)) if m.group(1) else ("drop", m.group(5), m.group(6))
+        )
+        yield op, name if db is None or db == "loom" else f"{db}.{name}"
 
 
 def created_objects(sql: str) -> tuple[str, ...]:
@@ -139,9 +140,9 @@ def created_objects(sql: str) -> tuple[str, ...]:
 
 
 def live_objects(files: Iterable[Path]) -> set[str]:
-    """The `loom.*` objects a replay of `files` leaves: each statement's CREATE
-    or DROP applied in migration order (a migration may drop an insert-time
-    view)."""
+    """The objects a replay of `files` leaves (named as `object_ddl` names
+    them): each statement's CREATE or DROP applied in migration order (a
+    migration may drop an insert-time view)."""
     names: set[str] = set()
     for path in sorted_migrations(files):
         for op, name in object_ddl(path.read_text("utf-8")):

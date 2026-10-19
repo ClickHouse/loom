@@ -41,9 +41,25 @@ def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
     """`request_identity` with the identity a narrowed token acts as: the user (and
     session) its read scope pins, and always its `read_user_id` pin, so a refused
     call naming another user is logged as the caller, never as that user. A history
-    rule keyed on the user counts the caller's own calls, whatever its body names."""
+    rule keyed on the user counts the caller's own calls, whatever its body names.
+    An org or namespace the body left out (absent to the gates: missing, blank
+    or "-") is the one the gate admitted the call against, so a call served on
+    a default is the tenant's row; one refused before that names the token's
+    own org, unless the token is org-wide (`*`). Whatever stays absent is "-"."""
+    from server.core import request_work
+    from server.core.naming import SENTINEL
+    from server.transport.gates import present
+
     out = request_identity(args)
+    bag = request_work.current()
+    admitted = bag.admitted if bag is not None else None
     auth = current_auth()
+    token_org = present(auth.org) if auth is not None else None
+    for k, fill in zip(("org", "namespace"), admitted or (SENTINEL, SENTINEL), strict=True):
+        if present(out[k]) is None:
+            out[k] = fill
+    if present(out["org"]) is None and token_org not in (None, "*"):
+        out["org"] = token_org
     if auth is None:
         return out
     try:
@@ -70,18 +86,59 @@ def bind_request(op_name: str, request_id: str) -> None:
     set_query_tag(f"{op_name} {request_id}")
 
 
+def sli_columns(op_name: str, transport: str) -> dict[str, Any]:
+    """The ledger row's SLI columns for a call of `op_name` (`emit_agent_event`
+    keywords): its transport, its SLO class and the budget it is held to."""
+    from server.observability import sli
+    from server.observability.budgets import effective_budget_ms
+    from server.operations.base import Role
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    op = OPERATIONS_BY_NAME.get(op_name)
+    if op is None:
+        return {"transport": transport}
+    return {
+        "transport": transport,
+        "slo_class": sli.slo_class(
+            op.name,
+            writes=not op.read_only,
+            admin=op.required_role >= Role.ADMIN,
+        ),
+        "budget_ms": effective_budget_ms(op.name, op.budget_p99_ms),
+    }
+
+
 def begin_request() -> RequestWork:
     """Bind everything a request accumulates, in one call for both transports:
     the cost accumulator (tokens and dollars), the degradation notes (what the
     response did NOT do) and the work bag (ClickHouse cost, ask stages,
     injection counts, skipped legs). A fresh set per op, so nothing leaks
     across requests on a long-lived task."""
+    from server.auth import fail_closed
     from server.core import request_work
     from server.observability import cost_accumulator, degradations
 
     cost_accumulator.begin_op()
     degradations.begin()
+    fail_closed.reset()
     return request_work.begin()
+
+
+def begin_call() -> None:
+    """`begin_request` for one MCP `tools/call`, and the request-scoped state a
+    batch would carry over: it runs its entries in one task, so the previous
+    entry's hint, traffic class, run and budget shape would otherwise ride
+    every later row. Each HTTP request runs in its own context."""
+    from server.observability.budget_shape import note_budget_shape
+    from server.observability.ledger import set_hint_context
+    from server.observability.run_context import set_ledger_run
+    from server.observability.traffic_class import set_current_traffic_class
+
+    begin_request()
+    set_hint_context("")
+    set_current_traffic_class("")
+    set_ledger_run("")  # bound again once the call is admitted
+    note_budget_shape("")
 
 
 async def emit_budget_violation(

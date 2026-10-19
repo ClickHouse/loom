@@ -842,7 +842,7 @@ def code_wired(monkeypatch):
     monkeypatch.setattr(hbi, "require_code_intel", lambda: None)
     monkeypatch.setattr(hbi, "schedule_code_trace", lambda **kw: None)
 
-    async def _authorized(org, code_ns):
+    async def _authorized(org, code_ns, *, hides_answer=True):
         return NS if code_ns == CODE_NS else ""
 
     monkeypatch.setattr(binding, "authorized_tracker_namespace", _authorized)

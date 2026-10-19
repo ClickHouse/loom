@@ -60,7 +60,7 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     async def _plain(org: str, namespace: str) -> bool:
         return False
 
-    monkeypatch.setattr("server.auth.authz._is_restricted", _plain)
+    monkeypatch.setattr("server.auth.authz.may_be_restricted", _plain)
     set_current_auth(
         AuthInfo(
             subject="alice",

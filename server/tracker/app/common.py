@@ -53,7 +53,8 @@ async def linked_trackers(org: str, namespace: str) -> list[str]:
         return []
     if tracker_namespace(org, namespace) is not None:
         return [namespace]
-    return await authorized_tracker_namespaces(org, namespace)
+    # The primary keeps marking through `_bound_input`; the rest Loom adds.
+    return await authorized_tracker_namespaces(org, namespace, hides_answer=False)
 
 
 def _unavailable(op: str, ns: str, e: Exception) -> None:

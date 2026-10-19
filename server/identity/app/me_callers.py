@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 
 from server.core.grant_sql import LIVE_GRANT
 from server.operations.base import grant_rank
@@ -98,14 +98,11 @@ def require_authed_info(request: Request) -> AuthInfo:
 
 def _authed(request: Request) -> AuthInfo:
     """The verified bearer's principal; 401 when the request carries none."""
-    from server.auth.bearer import verify_bearer_header
+    from server.auth.bearer import missing_bearer, verify_bearer_header
 
     info = verify_bearer_header(request.headers.get("Authorization"))
     if info is None:
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "AUTH_INVALID", "message": "missing bearer token"},
-        )
+        raise missing_bearer()
     return info
 
 

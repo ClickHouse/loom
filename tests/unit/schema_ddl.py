@@ -20,9 +20,10 @@ def schema_text() -> str:
 
 
 def ddl(name: str) -> str:
-    """The CREATE statement of `loom.<name>`, through its closing `;`."""
+    """The CREATE statement of `loom.<name>` (or of a qualified
+    `loom_telemetry.<name>`), through its closing `;`."""
     text = schema_text()
-    start = text.index(f"-- loom.{name}\n")
+    start = text.index(f"-- {name if '.' in name else 'loom.' + name}\n")
     return text[start : text.index(";\n", start) + 1]
 
 

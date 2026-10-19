@@ -46,7 +46,7 @@ def wired(monkeypatch):
     )
     readable: set[str] = {CODE}
 
-    async def _scope(org, ns, role=None):
+    async def _scope(org, ns, role=None, *, hides_answer=True):
         return ns in readable
 
     monkeypatch.setattr(authz, "row_in_scope", _scope)
@@ -112,7 +112,7 @@ async def test_linked_trackers_come_right_after_the_primary_and_are_never_capped
     got = await fo.readable_tracker_namespaces(ORG, QA, [], 1, linked=[QA, DESK])
     assert got == [QA, DESK], "cap 1 still reads every linked tracker"
     # a maintainer's link opens a standard tracker to the repository's readers
-    assert await fo._may_read_tracker(ORG, DESK, {CODE: "code"})
+    assert await fo._may_read_tracker(ORG, DESK, {CODE: "code"}, hides_answer=False)
 
 
 @pytest.mark.asyncio

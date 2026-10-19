@@ -20,6 +20,10 @@ if TYPE_CHECKING:
 
 
 DATABASE = "loom"
+# Telemetry Loom derives from its own tables (045_request_sli.sql). Only the
+# migrations write it: its refreshable view runs as the user that created it.
+TELEMETRY_DATABASE = "loom_telemetry"
+TELEMETRY_GRANTS = "CREATE DATABASE, CREATE TABLE, CREATE VIEW, INSERT, SELECT"
 # The oldest server that applies every migration: 26.3 still gates stem() and
 # 25.12 the text index. CI tests the latest release (dev/clickhouse_release.sh);
 # features of newer servers (the Quantized codec, aiEmbed) are probed where used.
@@ -117,6 +121,9 @@ class Server:
     unreadable: tuple[str, ...] = ()
     # May not SYSTEM REFRESH VIEW: purged code lingers until the next refresh.
     no_refresh: bool = False
+    # A server that does not migrate and may not read loom_telemetry.*: the
+    # schema status and the refresh gauges cannot see the SLI rollup.
+    no_telemetry_read: bool = False
     # What the next migration will refuse, passed now only because nothing
     # is pending.
     next_migration: tuple[PreflightError, ...] = ()
@@ -257,19 +264,25 @@ def oldest_version(
 
 def _require(ch: Client, user: str, grants: str) -> None:
     """Raise, naming only the missing ones, unless `user` holds all of `grants`."""
-    if not _granted(ch, grants):
-        missing = [g for g in grants.split(", ") if not _granted(ch, g)]
-        raise _lacks(user, ", ".join(missing))
+    if missing := _missing(ch, grants):
+        raise _lacks(user, missing)
 
 
-def _granted(ch: Client, grants: str) -> bool:
-    return str(ch.command(f"CHECK GRANT {grants} ON {DATABASE}.*")) == "1"
+def _missing(ch: Client, grants: str, database: str = DATABASE) -> str:
+    """The ones of `grants` this user lacks on `database`.*, '' when it holds all."""
+    if _granted(ch, grants, database):
+        return ""
+    return ", ".join(g for g in grants.split(", ") if not _granted(ch, g, database))
 
 
-def _lacks(user: str, grants: str) -> PreflightError:
+def _granted(ch: Client, grants: str, database: str = DATABASE) -> bool:
+    return str(ch.command(f"CHECK GRANT {grants} ON {database}.*")) == "1"
+
+
+def _lacks(user: str, grants: str, database: str = DATABASE) -> PreflightError:
     return PreflightError(
-        f"{user!r} is missing {grants} on {DATABASE}.*: "
-        f"an admin has to run GRANT CURRENT GRANTS ON {DATABASE}.* TO `{user}`",
+        f"{user!r} is missing {grants} on {database}.*: "
+        f"an admin has to run GRANT CURRENT GRANTS ON {database}.* TO `{user}`",
         needs_admin=True,
     )
 
@@ -333,6 +346,10 @@ def check(
     # Strict even with nothing pending: the running server uses them too.
     _require(ch, user, GRANTS[need])
     no_refresh = need == "server" and not _granted(ch, REFRESH_GRANT)
+    # A migrating process checks every telemetry grant below.
+    no_telemetry_read = (
+        need == "server" and not migrates and not _granted(ch, "SELECT", TELEMETRY_DATABASE)
+    )
 
     if migrates:
         refused = [t for t in RUNNER_SYSTEM_TABLES if not _readable(ch, f"system.{t}")]
@@ -342,6 +359,11 @@ def check(
                 "migrations need: an admin has to run Loom's setup SQL",
                 needs_admin=True,
             )
+            if migrating:
+                raise error
+            later.append(error)
+        if missing := _missing(ch, TELEMETRY_GRANTS, TELEMETRY_DATABASE):
+            error = _lacks(user, missing, TELEMETRY_DATABASE)
             if migrating:
                 raise error
             later.append(error)
@@ -370,6 +392,7 @@ def check(
         database=database or create_database,
         unreadable=unreadable,
         no_refresh=no_refresh,
+        no_telemetry_read=no_telemetry_read,
         next_migration=tuple(later),
     )
 
@@ -390,9 +413,20 @@ def warnings(server: Server) -> str:
             f"may not {REFRESH_GRANT} on {DATABASE}.*, so purged code stays in the "
             "refreshable views until their next scheduled refresh"
         )
+    if server.no_telemetry_read:
+        parts.append(
+            f"may not SELECT on {TELEMETRY_DATABASE}.*, so /v1/admin/schema.status reports the "
+            "SLI rollup missing, the view refresh gauges leave it out, and "
+            "loom.sli.rollup_lag_s and loom.sli.rollup_missed_rows are never reported"
+        )
     # Each reason may end in its own SQL advice: " | " keeps them apart.
     line = " | ".join(parts)
-    if server.unreadable or server.no_refresh or any(g.needs_admin for g in server.next_migration):
+    if (
+        server.unreadable
+        or server.no_refresh
+        or server.no_telemetry_read
+        or any(g.needs_admin for g in server.next_migration)
+    ):
         line += " (`loom ch-setup --print-sql` prints the SQL)"
     return line
 

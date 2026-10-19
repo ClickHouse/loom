@@ -540,7 +540,8 @@ def _common_error_codes() -> set[str]:
 
 SCHEMA = ROOT / "schemas" / "schema.sql"
 _STMT = re.compile(
-    r"^CREATE (?P<kind>TABLE|MATERIALIZED VIEW) IF NOT EXISTS (?P<name>loom\.\w+)(?P<body>.*?);\n",
+    r"^CREATE (?P<kind>TABLE|MATERIALIZED VIEW) IF NOT EXISTS "
+    r"(?P<name>loom(?:_telemetry)?\.\w+)(?P<body>.*?);\n",
     re.DOTALL | re.MULTILINE,
 )
 
@@ -572,7 +573,7 @@ def render_schema() -> str:
             )
         else:
             head = " ".join(body.split("(", 1)[0].split())
-            target = re.search(r"\bTO (loom\.\w+)", head)
+            target = re.search(r"\bTO (loom(?:_telemetry)?\.\w+)", head)
             refresh = re.search(r"REFRESH (EVERY [^A]+?)(?: APPEND)?(?: TO|$)", head)
             sources = sorted(
                 set(re.findall(r"\bFROM (loom\.\w+)", body)) - {target.group(1) if target else ""}
@@ -584,7 +585,8 @@ def render_schema() -> str:
                 f"{runs} |"
             )
     out = [
-        f"{len(tables)} tables and {len(views)} materialized views in the `loom` database.\n",
+        f"{len(tables)} tables and {len(views)} materialized views in the `loom` and "
+        "`loom_telemetry` databases; a `loom_telemetry` object keeps its database prefix.\n",
         "#### Tables\n",
         "| Table | Engine | ORDER BY | PARTITION BY | TTL | Indexes |",
         "| --- | --- | --- | --- | --- | --- |",

@@ -347,7 +347,7 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setattr(h.settings, "code_git_branch", "master")
     state: dict[str, Any] = {"qa": "", "src": None}
 
-    async def _authorized(org, code_ns):
+    async def _authorized(org, code_ns, *, hides_answer=True):
         return state["qa"]
 
     monkeypatch.setattr(binding, "authorized_tracker_namespace", _authorized)

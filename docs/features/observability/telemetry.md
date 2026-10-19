@@ -21,6 +21,76 @@ changed what, with tamper evidence.
 passes write rows with `kind='worker'`. [Cost and usage](./cost-and-usage.md) is built on
 this table.
 
+Each request row also carries its service-level columns:
+
+- `transport`: `http` or `mcp`.
+- `slo_class`: `code`, `search`, `admin`, then `write` for any other op that is not
+  read-only, else `read`.
+- `status_class`: `ok`; `client` for a 4xx refusal or a retried idempotency key still
+  running; `server` otherwise.
+- `budget_ms`: the latency budget the request was held to. A budget of 0 (an override that
+  forces violations) makes every successful request slow.
+
+A call that names no org or namespace is recorded under the ones the gate admitted it
+against (a code op's default is the deployment's code namespace), so the row is that
+tenant's: its SLIs, the cost rollup, `subject_last_seen` and the history policy's counts
+all see it there. A call that names no org and is refused before the gate is recorded
+under the token's org (`-` for an org-wide token or with auth off), so `cost.summary`,
+the connected-agents view and `subject_last_seen` count it in that org too.
+
+What counts against the server:
+
+- A write refused because its history policy could not be evaluated.
+- A refusal made because a read the check needed failed (a grant, a subject's aliases, a
+  service account's or a delegated token's creator, a namespace classification). A
+  request whose own answer was refused or hidden that way (an id lookup's `found=False`,
+  a 403 or 404 from a handler's own check, an org-wide rollup emptied whole) is `server`
+  even when it succeeded on the wire, with an empty `error_code` then.
+- Not a namespace left out of an answer that is whole without it: one Loom adds on its
+  own (code links, grounding, repository documents, a trunk, a tracker enriching a code
+  answer whose item the caller did not name), an entry a listing the caller did not
+  scope or a default pick leaves out, or an owner check on a task whose poster is
+  admitted anyway. Those keep the request `ok`.
+
+Refusals before a call is admitted:
+
+- MCP writes a row for a call it refuses before dispatch (an org or namespace the token
+  may not use, an op kept off MCP, a write on a read-only connection), as HTTP does for
+  its refusals. The caller is not bound yet, so that row carries the token's org (or the
+  org the call named, when the token may act in it), subject and consumer, `-` for the
+  rest and no arguments.
+- On either transport, a refusal naming an org the token may not act in is recorded in
+  the token's org, never the named one.
+- A refusal recorded before the call is classified carries the token's `traffic_class`
+  claim, or '' without one.
+- Within one MCP batch, a caller's refusal before a handler runs is recorded once per
+  operation, code, org and status class, and a server fault at most ten times; the rows not written
+  count in `loom.ledger.batch_repeats` (a caller's) or
+  `loom.ledger.dropped{reason="batch_repeat"}` (a server fault's, lost server errors).
+  An idempotency refusal (after the rate limiter) and a handler's failure always have
+  their own row.
+
+A refreshable materialized view folds the ledger into `loom_telemetry.sli_minute` once a
+minute (requests, server and client errors, rate-limited requests, which are among the
+client errors, over-budget successes, latency quantiles, kept 400 days; latency is the
+handler's time, the one the budgets are set against, not the gates before it), for SLO
+dashboards and alert rules to read without scanning the ledger. It resumes from when
+ClickHouse took each row (`ingested_at`), not from the row's `ts`, so a row whose flush
+was delayed is still counted once, in the minute of its `ts`; a row is folded at least 70
+seconds (up to about 130) after ClickHouse took it, which leaves its insert that long to
+commit. A refresh writes one part, so a failed refresh leaves nothing for its retry to
+fold twice or skip. A ledger part that commits more than 70 seconds after ClickHouse
+stamped its rows is never folded; `loom.sli.rollup_missed_rows` counts such rows over the
+last day, and refolding the rollup ([ClickHouse](../../architecture/clickhouse.md))
+recovers them. Rows with no SLO class (the `/v1/me/*` routes, and MCP calls that name no
+registered op, such as `initialize`) are left out. A minute can arrive as several rows
+until they merge, so a reader groups by its keys with `sum()` for the counts and
+`quantilesTDigestMerge(0.5, 0.95, 0.99)(latency)` for the latencies. Each refresh also
+writes a row with every key empty and every count 0, where the next refresh resumes: a
+reader filters `slo_class != ''`. To leave out test traffic, filter `traffic_class NOT IN
+('bench', 'background')`: a refusal recorded before the call is classified has an empty
+class.
+
 The emitter is batched and never fails a request; a crash can lose the unflushed queue.
 
 Every process that writes rows names its launcher. The compose files set
@@ -53,12 +123,12 @@ observability tables. `LOOM_OTEL_ENABLED=false` turns emission off.
 | Setting                                           | Default       | Effect                                                                                                                                                                 |
 | ------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LOOM_OTEL_EXPORTER`                              | `""`          | `ch` writes straight into the `default.otel_*` tables on Loom's own ClickHouse service; `otlp` ships to a collector; empty = `otlp` when an endpoint is set, else `ch` |
-| `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT`                | `""`          | OTLP/HTTP collector base URL (`/v1/traces` is appended)                                                                                                                |
+| `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT`                | `""`          | OTLP/HTTP collector base URL (`/v1/traces` and `/v1/metrics` are appended)                                                                                             |
 | `LOOM_OTEL_EXPORTER_OTLP_HEADERS`                 | `""`          | comma-separated `K=V` headers, e.g. `Authorization=Bearer <token>`                                                                                                     |
 | `LOOM_OTEL_SERVICE_NAME`, `LOOM_OTEL_ENVIRONMENT` | `loom`, `dev` | `service.name` and `deployment.environment` on every span, log and metric                                                                                              |
 | `LOOM_OTEL_METRICS_EXPORT_INTERVAL_S`             | `60`          | metric export cadence; spans keep their own 3-second batch delay                                                                                                       |
 | `LOOM_OTEL_METRICS_DELTA_TEMPORALITY`             | `false`       | delta instead of cumulative counters and histograms; the stock dashboards read cumulative rows, so flip them together                                                  |
-| `LOOM_OTEL_GAUGE_HEARTBEAT_S`                     | `0`           | write a gauge point only on change or after this many seconds; 0 = every export (gauge tiles fill gaps with 0)                                                         |
+| `LOOM_OTEL_GAUGE_HEARTBEAT_S`                     | `0`           | `ch` exporter only: write a gauge point only on change or after this many seconds; 0 = every export (gauge tiles fill gaps with 0). OTLP exports every point           |
 | `LOOM_OTEL_CENSUS_SCOPE`                          | `leader`      | who takes the whole-table censuses: only the supervisor-lease holder, or every process (costly)                                                                        |
 
 The `ch` exporter writes the tables ClickStack/HyperDX reads, so the stock stack has
@@ -69,7 +139,8 @@ dashboards with no collector. See [ClickStack](../integrations/clickstack.md) an
 
 Metrics are exported every `LOOM_OTEL_METRICS_EXPORT_INTERVAL_S`. With the `ch` exporter
 they are written into `default.otel_metrics_sum`, `default.otel_metrics_histogram` and
-`default.otel_metrics_gauge`. Dashboard definitions are in `deploy/dashboards/` and
+`default.otel_metrics_gauge`; with `otlp` they go to the collector's `/v1/metrics`.
+Dashboard definitions are in `deploy/dashboards/` and
 `deploy/hyperdx_dashboards.md`.
 
 Labels come from a closed set (operation, namespace, bounded enums). Keys, user ids,
@@ -85,18 +156,19 @@ retention census every `LOOM_OTEL_RETENTION_CENSUS_S` (3600 s), and code-plane c
 
 ### Requests and cost
 
-| Metric                          | Type      | Meaning                                                    |
-| ------------------------------- | --------- | ---------------------------------------------------------- |
-| `loom.requests`                 | counter   | operations processed, per operation, namespace and success |
-| `loom.request.duration`         | histogram | operation wall time, ms                                    |
-| `loom.cost.usd`                 | counter   | upstream provider spend attributed to an operation         |
-| `loom.tokens`                   | counter   | tokens by `kind` (`embed`, `llm_input`, `llm_output`)      |
-| `loom.ops.paid_errors`          | counter   | failed requests that had already spent upstream            |
-| `loom.llm.fallback`             | counter   | LLM calls answered by `LOOM_LLM_FALLBACK_MODEL`            |
-| `loom.llm.response_cache`       | counter   | exact-prompt LLM cache lookups by outcome                  |
-| `loom.memory.build.tokens`      | counter   | LLM tokens spent building memory, by stage and direction   |
-| `loom.memory.extraction_yield`  | histogram | prompt tokens per memory written, by `messages` range      |
-| `loom.extract.cost_per_row_usd` | histogram | USD per memory row written by one extraction               |
+| Metric                          | Type      | Meaning                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom.requests`                 | counter   | operations processed, per operation, namespace and success                                                                                                                                                                                                                                                                                                                                                      |
+| `loom.request.duration`         | histogram | operation wall time, ms                                                                                                                                                                                                                                                                                                                                                                                         |
+| `loom.cost.usd`                 | counter   | upstream provider spend attributed to an operation                                                                                                                                                                                                                                                                                                                                                              |
+| `loom.tokens`                   | counter   | tokens by `kind` (`embed`, `llm_input`, `llm_output`)                                                                                                                                                                                                                                                                                                                                                           |
+| `loom.ops.paid_errors`          | counter   | failed requests that had already spent upstream                                                                                                                                                                                                                                                                                                                                                                 |
+| `loom.llm.fallback`             | counter   | LLM calls answered by `LOOM_LLM_FALLBACK_MODEL`                                                                                                                                                                                                                                                                                                                                                                 |
+| `loom.llm.response_cache`       | counter   | exact-prompt LLM cache lookups by outcome                                                                                                                                                                                                                                                                                                                                                                       |
+| `loom.memory.build.tokens`      | counter   | LLM tokens spent building memory, by stage and direction                                                                                                                                                                                                                                                                                                                                                        |
+| `loom.memory.extraction_yield`  | histogram | prompt tokens per memory written, by `messages` range                                                                                                                                                                                                                                                                                                                                                           |
+| `loom.extract.cost_per_row_usd` | histogram | USD per memory row written by one extraction                                                                                                                                                                                                                                                                                                                                                                    |
+| `loom.auth.refusals`            | counter   | requests refused for their bearer token (none, one that failed verification, or one that could not be checked yet; also a mint by a token ClickHouse says is revoked), by `reason` (`missing`, `malformed`, `expired`, `revoked`, `invalid`, `unavailable`) and `loom.transport` (`http`, `mcp`, or `scim` for a SCIM request whose provider token is missing, malformed or wrong); none reaches the SLI rollup |
 
 ### Retrieval quality
 
@@ -135,24 +207,29 @@ extraction that fails outright is not a drop: `set_from_messages` answers 502
 
 A level is expected to be non-zero and to drain.
 
-| Metric                                                                                                                       | Type      | Meaning                                                                                                                                     |
-| ---------------------------------------------------------------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom.embed.pending`                                                                                                         | gauge     | rows waiting for a vector (`embedding_dim = 0`); memories not yet searchable                                                                |
-| `loom.vectors.total`                                                                                                         | gauge     | embedded vectors present                                                                                                                    |
-| `loom.vector_index.searches_total`, `adds_total`, `reads_indexed_ratio`                                                      | gauge     | vector-index use on the probed replica: searches served against build cost paid, and the share of recent vector reads that opened the index |
-| `loom.process.open_fds`, `loom.process.fd_limit`                                                                             | gauge     | open descriptors and the soft limit per process (`loom.pid`); a rising line is a leak                                                       |
-| `loom.host.disk.free_bytes`, `loom.host.disk.total_bytes`                                                                    | gauge     | bytes free and total on the disk that holds `var/`                                                                                          |
-| `loom.ch.mutations_pending`                                                                                                  | gauge     | unfinished ClickHouse mutations                                                                                                             |
-| `loom.ch.table.active_parts`, `wide_parts`, `patch_parts`, `bytes_on_disk`, `rows_per_mark`                                  | gauge     | per table (`loom.table`) for the housekept tables                                                                                           |
-| `loom.memory_embeddings.patch_parts`                                                                                         | gauge     | patch parts on `loom.memory_embeddings`; non-zero switches off the quantized-codes read                                                     |
-| `loom.ch.view_refresh.scheduled`, `loom.ch.view_refresh.age_s`                                                               | gauge     | per refreshable view (`loom.view`): 1 while scheduled without error; seconds since its last success                                         |
-| `loom.audit.checkpoint_lag_windows`                                                                                          | gauge     | hourly audit windows not yet sealed into the checkpoint chain ([audit log](./audit.md#checkpoint-lag))                                      |
-| `loom.langfuse.breaker`                                                                                                      | gauge     | Langfuse circuit breaker: 0 closed, 1 half-open, 2 open (traces dropped)                                                                    |
-| `loom.worker.passes`                                                                                                         | counter   | passes by `worker` and `outcome`                                                                                                            |
-| `loom.worker.pass_duration_ms`                                                                                               | histogram | pass wall time                                                                                                                              |
-| `loom.worker.consecutive_failures`                                                                                           | gauge     | current failure streak per worker; alert at 3                                                                                               |
-| `loom.worker.partial_failures`                                                                                               | gauge     | failures the last pass survived                                                                                                             |
-| `loom.retention.active_rows`, `never_recalled_ratio`, `low_information_rows`, `sensitive_without_expiry`, `stale_candidates` | gauge     | per-org memory hygiene counts; Loom deletes nothing by age                                                                                  |
+| Metric                                                                                                                       | Type      | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------------------------------------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom.embed.pending`                                                                                                         | gauge     | rows waiting for a vector (`embedding_dim = 0`); memories not yet searchable                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `loom.vectors.total`                                                                                                         | gauge     | embedded vectors present                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `loom.vector_index.searches_total`, `adds_total`, `reads_indexed_ratio`                                                      | gauge     | vector-index use on the probed replica: searches served against build cost paid, and the share of recent vector reads that opened the index                                                                                                                                                                                                                                                                                                                                                               |
+| `loom.process.open_fds`, `loom.process.fd_limit`                                                                             | gauge     | open descriptors and the soft limit per process (`loom.pid`); a rising line is a leak                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `loom.host.disk.free_bytes`, `loom.host.disk.total_bytes`                                                                    | gauge     | bytes free and total on the disk that holds `var/`                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `loom.ch.mutations_pending`                                                                                                  | gauge     | unfinished ClickHouse mutations                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `loom.ch.table.active_parts`, `wide_parts`, `patch_parts`, `bytes_on_disk`, `rows_per_mark`                                  | gauge     | per table (`loom.table`) for the housekept tables                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `loom.memory_embeddings.patch_parts`                                                                                         | gauge     | patch parts on `loom.memory_embeddings`; non-zero switches off the quantized-codes read                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `loom.ch.view_refresh.scheduled`, `loom.ch.view_refresh.age_s`                                                               | gauge     | per refreshable view (`loom.view`, bare in `loom`, else with its database: `loom_telemetry.sli_minute_refresh`): 1 while scheduled without error; seconds since its last success                                                                                                                                                                                                                                                                                                                          |
+| `loom.sli.rollup_lag_s`                                                                                                      | gauge     | seconds `loom_telemetry.sli_minute`'s mark trailed now at the last storage probe (every five minutes, on the workers-lease holder): about 70 to 130 while current; more is a rollup catching up, whose newest minutes read empty                                                                                                                                                                                                                                                                          |
+| `loom.sli.rollup_missed_rows`                                                                                                | gauge     | ledger request rows of the last day whose insert committed after the rollup's mark had passed them, so `sli_minute` never counts them (storage probe, every five minutes, on the workers-lease holder); alert above 0 and refold the rollup                                                                                                                                                                                                                                                               |
+| `loom.audit.checkpoint_lag_windows`                                                                                          | gauge     | hourly audit windows not yet sealed into the checkpoint chain ([audit log](./audit.md#checkpoint-lag))                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `loom.langfuse.breaker`                                                                                                      | gauge     | Langfuse circuit breaker: 0 closed, 1 half-open, 2 open (traces dropped)                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `loom.health.problems`                                                                                                       | gauge     | 1 per open `/v1/health` problem on this process, by `code` and `severity` (`provider` for `provider_failing`), except those `/v1/health` finds with a ClickHouse read (`otel_erasure_index`); a resolved problem stops reporting, so an alert reads a window of at least `LOOM_OTEL_GAUGE_HEARTBEAT_S` plus one `LOOM_OTEL_METRICS_EXPORT_INTERVAL_S` (two intervals without a heartbeat): with the `ch` exporter and a heartbeat, an unchanged value is written at the first export after each heartbeat |
+| `loom.ledger.dropped`                                                                                                        | counter   | ledger rows this process lost since it started, by `reason` (`queue_full`, `flush_failed`, and `batch_repeat`: server faults an MCP batch did not write past its ten rows); the SLIs undercount by as much                                                                                                                                                                                                                                                                                                |
+| `loom.ledger.batch_repeats`                                                                                                  | counter   | a caller's refusal rows an MCP batch did not write again (each is ledgered once per batch); the caller's doing, not a loss                                                                                                                                                                                                                                                                                                                                                                                |
+| `loom.worker.passes`                                                                                                         | counter   | passes by `worker` and `outcome`                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `loom.worker.pass_duration_ms`                                                                                               | histogram | pass wall time                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `loom.worker.consecutive_failures`                                                                                           | gauge     | current failure streak per worker; alert at 3                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `loom.worker.partial_failures`                                                                                               | gauge     | failures the last pass survived                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `loom.retention.active_rows`, `never_recalled_ratio`, `low_information_rows`, `sensitive_without_expiry`, `stale_candidates` | gauge     | per-org memory hygiene counts; Loom deletes nothing by age                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 ### Integrity invariants
 

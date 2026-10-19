@@ -131,6 +131,10 @@ async def test_ledger_insert_drops_the_unknown_columns_not_the_batch(
         "response_tokens",
         "traffic_class",
         "subject",
+        "transport",
+        "slo_class",
+        "status_class",
+        "budget_ms",
     )
     assert len(warned) == len(newer)
     assert {c for c in newer if any(f"'{c}'" in w for w in warned)} == set(newer)

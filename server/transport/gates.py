@@ -114,6 +114,7 @@ async def authorize(
     what an admitted call leaves (restricted-access audit, first-write
     registration). No-op without a principal (auth off)."""
     if auth is None:
+        _note_admitted(target)
         return
     from server.auth.authz import scope_flags
     from server.auth.personal_namespace import ensure_personal_namespace_cached
@@ -126,7 +127,16 @@ async def authorize(
         org=auth.org, subject=auth.subject, is_service_account=auth.is_service_account
     )
     await authorize_op(auth, op, org=target.org, namespace=target.namespace, **scope_flags(op))
+    _note_admitted(target)
     await _admitted(op, auth, target, transport=transport)
+
+
+def _note_admitted(target: Target) -> None:
+    from server.core import request_work
+
+    bag = request_work.current()
+    if bag is not None:
+        bag.admitted = (target.org or "-", target.register_namespace or "-")
 
 
 async def _admitted(op: Operation, auth: AuthInfo, target: Target, *, transport: str) -> None:

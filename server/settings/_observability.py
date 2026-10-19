@@ -54,9 +54,10 @@ class ObservabilitySettings(BaseModel):
     # Most windows one pass seals; a backlog is sealed over later passes.
     audit_checkpoint_max_seal_per_pass: int = 48
 
-    # OTel span exporter: "ch" writes to `default.otel_traces` on the same
-    # service, "otlp" ships to otel_exporter_otlp_endpoint (headers: comma-
-    # separated K=V), "" = auto (otlp when the endpoint is set, else ch).
+    # OTel exporter, for spans and metrics: "ch" writes to `default.otel_traces`
+    # and `default.otel_metrics_*` on the same service, "otlp" ships to
+    # otel_exporter_otlp_endpoint (headers: comma-separated K=V), "" = auto
+    # (otlp when the endpoint is set, else ch).
     otel_exporter: Annotated[Literal["", "ch", "otlp"], CaseFolded] = ""
     # Seconds between refreshes of the per-namespace code-plane COUNT gauges
     # (one FINAL scan each of code_files, code_chunks, code_symbols and
@@ -85,15 +86,16 @@ class ObservabilitySettings(BaseModel):
     # Metric export cadence, seconds. Spans keep their own 3 s batch delay,
     # which bounds span loss at SIGTERM.
     otel_metrics_export_interval_s: int = 60
-    # Delta temporality for counters and histograms (idle series write no row).
-    # Off: the dashboards (deploy/hyperdx_dashboards.md) read cumulative rows —
-    # flip together with them.
+    # Delta temporality for counters and histograms (an idle synchronous
+    # series writes no row). Off: the dashboards (deploy/hyperdx_dashboards.md)
+    # read cumulative rows — flip together with them.
     otel_metrics_delta_temporality: bool = False
     # Write a gauge point only when its value changed or this many seconds
-    # after the last write; 0 = every export. Off because gauge tiles fill
-    # gaps with 0 and would draw a sawtooth.
+    # after the last write; 0 = every export. The ClickHouse exporter only
+    # (LOOM_OTEL_EXPORTER=ch); OTLP exports every point. Off because gauge
+    # tiles fill gaps with 0 and would draw a sawtooth.
     otel_gauge_heartbeat_s: int = 0
-    # OTLP/HTTP collector base URL (`/v1/traces` is appended); set with
+    # OTLP/HTTP collector base URL (`/v1/traces` and `/v1/metrics` are appended); set with
     # `otel_exporter` = "", it selects the otlp exporter.
     otel_exporter_otlp_endpoint: str = ""
     # Comma-separated K=V headers sent to that endpoint, e.g.

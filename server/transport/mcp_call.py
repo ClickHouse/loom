@@ -19,13 +19,13 @@ from pydantic import BaseModel, ValidationError
 
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
+from server.core.errors import LoomServerError
 from server.identity.app.caller_home import home_namespace
 from server.operations.base import Operation
-from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
-from server.transport._common import bind_request, validation_note
+from server.transport._common import begin_call, bind_request, validation_note
 from server.transport._common import validation_errors as _validation_errors
 from server.transport.arg_feedback import feedback, refused_result, tool_error
 from server.transport.lean_results import lean_result
@@ -37,6 +37,7 @@ from server.transport.mcp_config import (
 )
 from server.transport.mcp_defaults import coerce_search_arguments, mcp_default_arguments
 from server.transport.mcp_identity import _caller_defaults, note_default_namespace
+from server.transport.mcp_ledger import batch_allows_row, emit_token_refusal
 from server.transport.mcp_op import UNKNOWN_OP
 from server.transport.mcp_outcome import (
     _emit_success,
@@ -46,17 +47,13 @@ from server.transport.mcp_outcome import (
     _success_response,
 )
 from server.transport.mcp_primer import _render_primer_and_emit
-from server.transport.mcp_tools import _emit_mcp_event
+from server.transport.mcp_tools import TOOLS_BY_NAME, _emit_mcp_event
 
 if TYPE_CHECKING:
     from server.core.idempotency import Scope
     from server.core.ratelimit import CheckResult
 
 log = logging.getLogger("server.transport.mcp")
-
-
-# Precomputed mapping: tool-name → operation (avoids a linear scan per call)
-_TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
 
 
 async def _ratelimit_retry_once(
@@ -207,7 +204,7 @@ async def _call_tool(
     if not isinstance(arguments, dict):
         return _err(req_id, INVALID_PARAMS, "tools/call 'arguments' must be an object")
 
-    _begin_call()
+    begin_call()
 
     tool = await _resolve_tool(req_id, name, auth, client_name, toolset)
     if isinstance(tool, dict):
@@ -317,25 +314,6 @@ async def _call_tool(
     )
 
 
-def _begin_call() -> None:
-    """Reset the request-scoped state a `tools/call` writes to."""
-    # Op-scoped cost accumulator so embedder / LLM spend during this call is
-    # attributed in agent_events (mirrors HTTP). _emit_mcp_event drains it.
-    from server.transport._common import begin_request
-
-    begin_request()  # + degradation notes and the work bag
-    # The ledger's `out_hint_code` and traffic class are this call's, as
-    # HTTP's `_begin_request` resets them: a batch runs its entries in one
-    # task, so the previous entry's would otherwise ride every later row.
-    from server.observability.ledger import set_hint_context
-    from server.observability.run_context import set_ledger_run
-    from server.observability.traffic_class import set_current_traffic_class
-
-    set_hint_context("")
-    set_current_traffic_class("")
-    set_ledger_run("")  # bound again once the call is admitted
-
-
 def _stamp_session_run(
     op: Operation, arguments: dict[str, Any], defaults: dict[str, str] | None, mcp_session_id: str
 ) -> tuple[_mcp_runs.Caller | None, bool]:
@@ -403,7 +381,7 @@ async def _resolve_tool(
             },
         )
 
-    op = _TOOLS_BY_NAME.get(name)
+    op = TOOLS_BY_NAME.get(name)
     if op is None or op.name in _MCP_HIDDEN_OPS:
         # Return a result-with-isError, not a JSON-RPC error frame: some
         # clients drop conversation state on JSON-RPC errors (surfaces as
@@ -415,6 +393,7 @@ async def _resolve_tool(
             from server.transport.mcp_op import hidden_refusal
 
             body = {**(hidden_refusal(op.name) or {}), "tool": name}
+            emit_token_refusal(op.name, auth, error_code="OP_NOT_ON_MCP")
             msg = f"{body.get('error', msg)}; instead: {body.get('instead', '')}"
         return _ok(
             req_id,
@@ -446,8 +425,10 @@ async def _bind_caller_identity(
     # the token's subject class — published for the event, audit and budget
     # writers of this call.
     from server.observability.consumer import bind_current_consumer
+    from server.observability.traffic_class import bind_claimed_class
 
     bind_current_consumer(arguments, auth)
+    bind_claimed_class(auth)
 
     request_id = str(uuid.uuid4())
     bind_request(op.name, request_id)
@@ -461,7 +442,14 @@ async def _bind_caller_identity(
     # org/namespace absent also keeps authz on the flat-role path, which is
     # what lets a human token with no code-namespace grant read the shared
     # index at all.
-    defaults = await _caller_defaults(auth, client_name)
+    try:
+        defaults = await _caller_defaults(auth, client_name)
+    except LoomServerError as e:
+        # A grants read past its cache's stale window (a 503), before the gate:
+        # counted against the server in the token's org (the call's identity
+        # is not filled in yet), then answered as raised.
+        emit_token_refusal(op.name, auth, error_code=e.code, request_id=request_id)
+        raise
     explicit_agent = bool(arguments.get("agent"))
     # A blank or "-" namespace names none, as the gates read it.
     unnamed = not gates.present(arguments.get("namespace"))
@@ -525,6 +513,7 @@ async def _idempotency_gate(
     rows. The validated input is hashed as HTTP hashes it; a run the session
     stamped is not part of what the caller asked."""
     req_id, op, arguments, request_id = call.req_id, call.op, call.arguments, call.request_id
+    start = time.perf_counter()
     replay = await gates.idempotency_check(
         op,
         call.auth,
@@ -535,6 +524,7 @@ async def _idempotency_gate(
     )
     if replay.conflict:
         code = "IDEMPOTENT_IN_PROGRESS" if replay.in_progress else "IDEMPOTENT_CONFLICT"
+        # After the rate limiter, which bounds these rows: one per entry.
         _emit_mcp_event(
             op.name, arguments, 0, success=False, error_code=code, request_id=request_id
         )
@@ -557,7 +547,11 @@ async def _idempotency_gate(
         )
     if replay.hit is not None:
         cached = lean_result(replay.hit.body, arguments)
-        _emit_mcp_event(op.name, arguments, 0, success=True, error_code="", request_id=request_id)
+        # The lookup that answered it, as a handler's run is timed.
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        _emit_mcp_event(
+            op.name, arguments, elapsed_ms, success=True, error_code="", request_id=request_id
+        )
         result = {
             "content": [{"type": "text", "text": json.dumps(cached, default=str)}],
             "isError": False,
@@ -578,13 +572,8 @@ def _validated_input(
 
     refused = named_argument_error(op, arguments)
     if refused is not None:
-        _emit_mcp_event(
-            op.name,
-            arguments,
-            0,
-            success=False,
-            error_code=refused.error_detail()["code"],
-            request_id=request_id,
+        _emit_refused(
+            op.name, arguments, error_code=refused.error_detail()["code"], request_id=request_id
         )
         return _ok(req_id, refused_result(op, refused.error_detail()))
 
@@ -592,18 +581,16 @@ def _validated_input(
     try:
         input_obj = op.input_model.model_validate(mcp_default_arguments(op.name, arguments))
     except ValidationError as e:
-        # The failing field on the row, and a code.* trace row.
+        # The failing field on the row, and a code.* trace row (each once a batch).
         errors = _validation_errors(e)
-        _emit_mcp_event(
+        if _emit_refused(
             op.name,
             arguments,
-            0,
-            success=False,
             error_code="VALIDATION_FAILED",
             request_id=request_id,
             error=validation_note(errors),
-        )
-        schedule_code_trace_validation_failure(op.name, arguments, errors)
+        ):
+            schedule_code_trace_validation_failure(op.name, arguments, errors)
         return _ok(req_id, tool_error(*feedback(op, arguments, errors)))
     return input_obj
 
@@ -620,7 +607,8 @@ async def _authorize_call(
     (server/transport/gates.py) — role / namespace check, restricted-access
     audit, first-write registration. Returns the target, or the refusal
     response: AUTH_INSUFFICIENT (a code/tracker index says how to get in) or
-    IDENTITY_INCOMPLETE. Any other error propagates."""
+    IDENTITY_INCOMPLETE. Any other error propagates, a LoomServerError
+    ledgered first."""
     from server.core.errors import IdentityIncompleteError
 
     try:
@@ -632,28 +620,54 @@ async def _authorize_call(
         )
         await gates.authorize(op, auth, target, transport="mcp")
     except PermissionError as e:
-        _emit_mcp_event(
-            op.name,
-            arguments,
-            0,
-            success=False,
-            error_code=gates.ROLE_REFUSAL_CODE,
-            request_id=request_id,
+        _emit_refused(
+            op.name, arguments, error_code=gates.ROLE_REFUSAL_CODE, request_id=request_id, error=e
         )
         return _ok(req_id, _forbidden_result(op, e, auth, target.org, target.namespace))
     except IdentityIncompleteError as e:
         # HTTP's 400 IDENTITY_INCOMPLETE, as a tool result: escaping, it
         # would become a bare HTTP 400 with no JSON-RPC frame and lose the batch.
+        _emit_refused(op.name, arguments, error_code=e.code, request_id=request_id)
+        return _ok(req_id, _refusal_result(e))
+    except LoomServerError as e:
+        # A read the gate could not make past its cache (a 503): counted
+        # against the server, then answered as raised.
+        _emit_refused(op.name, arguments, error_code=e.code, request_id=request_id, error=e)
+        raise
+    return target
+
+
+def _emit_refused(
+    op_name: str,
+    arguments: dict[str, Any],
+    *,
+    error_code: str,
+    request_id: str,
+    error: BaseException | None = None,
+) -> bool:
+    """A call's row when it is refused before its handler runs: within a
+    batch, a caller's refusal once and a server fault a few times, as
+    `mcp_ledger` explains.
+    False when the batch already wrote it, so the caller skips its other
+    rows too."""
+    from server.auth.fail_closed import answered_unverified
+    from server.observability.sli import row_status
+    from server.transport._common import ledger_identity
+
+    org = ledger_identity(arguments)["org"]
+    status = row_status(False, error_code, error, server_fault=answered_unverified())
+    first = batch_allows_row(op_name, error_code, org, status)
+    if first:
         _emit_mcp_event(
-            op.name,
+            op_name,
             arguments,
             0,
             success=False,
-            error_code=e.code,
+            error_code=error_code,
             request_id=request_id,
+            error=error,
         )
-        return _ok(req_id, _refusal_result(e))
-    return target
+    return first
 
 
 def _refusal_result(e: BaseException) -> dict[str, Any]:
@@ -709,9 +723,7 @@ async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
     try:
         call.input_obj = gates.read_scope(op, auth, input_obj)
     except (AuthInsufficientError, IdentityIncompleteError) as e:
-        _emit_mcp_event(
-            op.name, arguments, 0, success=False, error_code=e.code, request_id=request_id
-        )
+        _emit_refused(op.name, arguments, error_code=e.code, request_id=request_id)
         return _ok(req_id, _refusal_result(e))
 
     # History policy, at parity with HTTP: after authz, before the handler.
@@ -721,13 +733,8 @@ async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
     try:
         await gates.policy(op, target, call.input_obj, arguments, request_id=request_id)
     except _PolicyForbidden as e:
-        _emit_mcp_event(
-            op.name,
-            arguments,
-            0,
-            success=False,
-            error_code="POLICY_FORBIDDEN",
-            request_id=request_id,
+        _emit_refused(
+            op.name, arguments, error_code="POLICY_FORBIDDEN", request_id=request_id, error=e
         )
         return _ok(
             req_id,
@@ -744,14 +751,7 @@ async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
         # model as a failed tool call.
         rl = await _ratelimit_retry_once(rl, op, auth, target, traffic_class=traffic_class)
     if rl is not None and not rl.allowed:
-        _emit_mcp_event(
-            op.name,
-            arguments,
-            0,
-            success=False,
-            error_code="RATE_LIMITED",
-            request_id=request_id,
-        )
+        _emit_refused(op.name, arguments, error_code="RATE_LIMITED", request_id=request_id)
         wait = gates.retry_after_s(rl)
         msg = (
             f"namespace {target.named_namespace!r} exceeded {op.name} rate limit (retry in {wait}s)"

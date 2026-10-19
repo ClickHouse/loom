@@ -249,21 +249,21 @@ async def test_refusals(
     with pytest.raises(ValidationError):
         await h.handle_code_coverage_watch(_watch("zzzzzzzz"))
 
-    async def _viewer_only(org, ns, role):
+    async def _viewer_only(org, ns, role, *, hides_answer=True):
         return role.name == "VIEWER"
 
     monkeypatch.setattr(authz, "row_in_scope", _viewer_only)
     with pytest.raises(AuthInsufficientError, match="inbox"):
         await h.handle_code_coverage_watch(_watch(a))
 
-    async def _no_inbox_access(org, ns, role):
+    async def _no_inbox_access(org, ns, role, *, hides_answer=True):
         return ns == NS  # the code namespace only: the inbox's owner is unreadable
 
     monkeypatch.setattr(authz, "row_in_scope", _no_inbox_access)
     with pytest.raises(NotFoundError, match="not registered"):
         await h.handle_code_coverage_watch(_watch(a))  # never confirms the inbox exists
 
-    async def _no_code_access(org, ns, role):
+    async def _no_code_access(org, ns, role, *, hides_answer=True):
         return ns != NS
 
     monkeypatch.setattr(authz, "row_in_scope", _no_code_access)

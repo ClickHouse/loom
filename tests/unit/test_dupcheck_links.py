@@ -654,7 +654,7 @@ async def test_a_failed_bisect_cancels_the_duplicate_check_it_started(monkeypatc
         await asyncio.sleep(3600)
         return {}
 
-    async def _no_tracker(org: str, ns: str) -> str:
+    async def _no_tracker(org: str, ns: str, *, hides_answer=True) -> str:
         return ""
 
     async def _window(*_a: Any, **_k: Any) -> Any:
