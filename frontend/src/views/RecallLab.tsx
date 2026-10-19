@@ -62,7 +62,7 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
             <span className="italic text-text-muted">wording not recorded</span>
           )}
         </div>
-        <ListTime iso={r.ts} className="text-xs text-text-muted" />
+        <ListTime time={r.ts} className="text-xs text-text-muted" />
       </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
         <span>

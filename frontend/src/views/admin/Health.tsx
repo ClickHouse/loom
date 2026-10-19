@@ -24,6 +24,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { ListState } from "../../components/ui/ListState";
 import { ApiError } from "../../lib/errors";
 import { ListTime } from "../../components/ui/ListTime";
+import { parseChTime } from "../../lib/format";
 import { ListToolbar } from "../../components/ui/ListToolbar";
 import { BusyButton } from "../../components/ui/BusyButton";
 import { ScopeBadge } from "../../components/ScopeBadge";
@@ -245,10 +246,11 @@ function statusOf(w: WorkerRow): WorkerStatus {
   if (w.last_pass_status === "failed" || w.last_pass_status === "timeout" || w.last_pass_status === "partial") {
     return "degraded";
   }
-  if (!w.last_run_at) return "waiting";
+  const lastRun = parseChTime(w.last_run_at);
+  if (!lastRun) return "waiting";
   // Stalled = last tick older than 3× the interval. Unknown interval → healthy.
   if (w.interval_seconds && w.interval_seconds > 0) {
-    const ageMs = Date.now() - new Date(w.last_run_at).getTime();
+    const ageMs = Date.now() - lastRun.getTime();
     if (ageMs > w.interval_seconds * 1000 * 3) return "stalled";
   }
   return "healthy";
@@ -497,7 +499,7 @@ export function WorkersPanel() {
                         <div className="text-xs text-text-muted tabular">
                           {w.last_run_at ? (
                             <>
-                              Last ran <ListTime iso={w.last_run_at} quiet />
+                              Last ran <ListTime time={w.last_run_at} quiet />
                               {w.last_duration_ms != null && <> · took {fmtDuration(w.last_duration_ms)}</>}
                               {written > 0 && <> · {written.toLocaleString()} rows written</>}
                               {w.total_runs != null && <> · {w.total_runs.toLocaleString()} runs total</>}
@@ -887,7 +889,7 @@ function ConsolidationsTable({ rows }: { rows: ConsolidationRunRow[] }) {
           { label: <span className="tabular">{r.cluster_size}</span> },
           { label: <span className="tabular">{(r.tokens_in ?? 0) + (r.tokens_out ?? 0)}</span> },
           { label: <span className="tabular">{r.duration_ms}ms</span> },
-          { label: <ListTime iso={r.ran_at} quiet className="text-text-muted" /> },
+          { label: <ListTime time={r.ran_at} quiet className="text-text-muted" /> },
         ],
       }))}
     />

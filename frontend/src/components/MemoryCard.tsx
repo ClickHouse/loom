@@ -226,7 +226,7 @@ export const MemoryCard = memo(function MemoryCard({
             {/* The meta slot: who wrote it, then when. Flush right; under 640 px its own line. */}
             <span className="flex min-w-0 basis-full items-center gap-2 text-text-muted sm:ml-auto sm:basis-auto sm:shrink-0">
               {entry.agent && <AgentBadge agent={entry.agent} quiet />}
-              <ListTime iso={entry.created_at} quiet />
+              <ListTime time={entry.created_at} quiet />
             </span>
           </span>
           {/* Line 2: the value, two lines at most; a JSON object as one line of its pairs. */}

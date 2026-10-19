@@ -850,7 +850,7 @@ textarea[aria-invalid="true"]:focus-visible {
      layout, the row grid and the breakpoints live here because they are
      one component's shape, not a utility; type sizes are the tokens above.
      ============================================================ */
-  /* Measured hand sizes: a 208 px rail and a 440 px panel beside the list. */
+  /* A 208 px rail and a 440 px panel beside the list: measured hand sizes. */
   .tq-body {
     display: grid;
     grid-template-columns: 208px minmax(0, 1fr);
@@ -954,10 +954,10 @@ textarea[aria-invalid="true"]:focus-visible {
     margin-bottom: var(--spaces-3);
     overflow: hidden;
   }
+  /* 10 px between the caret, the label and the count: a measured hand size. */
   .tq-ghead {
     display: flex;
     align-items: center;
-    /* 10 px between the caret, the label and the count: a measured hand size. */
     gap: 10px;
     width: 100%;
     padding: var(--click-table-header-cell-space-sm-y) var(--click-table-header-cell-space-sm-x);
@@ -1264,7 +1264,11 @@ textarea[aria-invalid="true"]:focus-visible {
 /* ui/ListRow: a list page's row on Click UI's CardHorizontal md tokens (CardHorizontal's one
    body block cannot hold a checkbox, a stretched button and chips side by side). Hover
    tints the background (the stroke stays, as in Click UI); the open row takes the active
-   stroke; a checked row Click UI's Table row tint, its checkbox carrying the state. */
+   stroke; a checked row Click UI's Table row tint, its checkbox carrying the state. The
+   scroll margin leaves room for the row's focus ring (2 px out, 2 px wide) when it is
+   scrolled to an edge. The browser lays out and paints only the rows in view; a row not
+   drawn yet holds its list's measured height: a thread 76 px, a document 101, a memory 129,
+   and under 640 px, where a row's meta takes its own line, 105, 123 and 151 (below). */
 @layer components {
   .list-row {
     position: relative;
@@ -1275,11 +1279,7 @@ textarea[aria-invalid="true"]:focus-visible {
     border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
     border-radius: var(--click-card-horizontal-radii-all);
     background: var(--click-card-horizontal-default-color-background-default);
-    /* Room for the row's focus ring (2 px out, 2 px wide) when it is scrolled to an edge. */
     scroll-margin-block: var(--spaces-2);
-    /* The browser lays out and paints only the rows in view; a row not drawn yet holds its
-       list's measured height: a thread 76 px, a document 101, a memory 129, and under 640 px,
-       where a row's meta takes its own line, 105, 123 and 151 (below). */
     content-visibility: auto;
     contain-intrinsic-size: auto 76px;
   }
@@ -1457,8 +1457,9 @@ textarea[aria-invalid="true"]:focus-visible {
 }
 
 /* A scroll area that fades out at an edge it can still scroll past, so the rows below the
-   fold read as more to come (`data-fade` is set from the scroll position). The scroll
-   padding matches the fade, so a row focused with the arrow keys stops clear of it. */
+   fold read as more to come (`data-fade` is set from the scroll position). The fade is 24 px,
+   a measured hand size, and the scroll padding matches it, so a row focused with the arrow
+   keys stops clear of it. */
 @layer components {
   .scroll-fade {
     scroll-padding-block: 24px;
@@ -1600,8 +1601,8 @@ textarea[aria-invalid="true"]:focus-visible {
 
 /* Kbd (ui/Kbd.tsx): a key or a short chord. It stands in for Click UI's inline code
    (its stroke, radius and side padding) in the badge's 500 12 px Inter, muted text on the
-   muted surface. Click UI has no key component and no token for a key's 20 px square: the
-   one hand size here. In the components layer, so a utility the caller passes (`hidden`,
+   muted surface. Click UI has no key component and no token for a key's 20 px square: a
+   measured hand size. In the components layer, so a utility the caller passes (`hidden`,
    a position) still wins. */
 @layer components {
   .kbd {
@@ -1637,7 +1638,7 @@ textarea[aria-invalid="true"]:focus-visible {
 }
 
 /* ui/AnchoredPopover: a summary's width, kept inside a phone's screen. Click UI's Popover
-   has no width token: 360 px is the one hand size here. */
+   has no width token: a 360 px width, a measured hand size. */
 @layer components {
   .anchored-popover {
     width: min(360px, calc(100vw - 2rem));
@@ -1669,8 +1670,8 @@ textarea[aria-invalid="true"]:focus-visible {
     white-space: nowrap;
   }
   /* Recall Lab: a score cell's bar is Click UI's table bar chart, its width the score
-     against the top ranked hit; it darkens with the row's hover. */
-  /* A 4 px bar 2 px under the score: measured hand sizes. */
+     against the top ranked hit; it darkens with the row's hover. A 4 px bar 2 px under the
+     score: measured hand sizes. */
   .recall-bar {
     display: block;
     height: 4px;

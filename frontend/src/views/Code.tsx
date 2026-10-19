@@ -24,7 +24,7 @@ import { VerticalStepper } from "@clickhouse/click-ui/VerticalStepper";
 import { PageContainer } from "../layout/PageContainer";
 import { useStore, useIdentity } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
-import { fmtInt, relativeTime, humanizeError, listTime, refreshDetail } from "../lib/format";
+import { fmtInt, relativeTime, humanizeError, listTime, parseChTime, refreshDetail } from "../lib/format";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { EmptyState } from "../components/EmptyState";
 import { IconButton } from "../components/IconButton";
@@ -1770,8 +1770,9 @@ export function passFreshness(
   if (!w) return { text: "not on this replica", tone: "muted" };
   if (!w.enabled) return { text: "disabled", tone: "muted" };
   if (w.consecutive_failures > 0) return { text: "failing", tone: "bad" };
-  if (!w.last_run_at) return { text: "pending", tone: "muted" };
-  const age = (now - Date.parse(w.last_run_at)) / 1000;
+  const lastRun = parseChTime(w.last_run_at);
+  if (!lastRun) return { text: "pending", tone: "muted" };
+  const age = (now - lastRun.getTime()) / 1000;
   return age <= 2 * w.interval_seconds + w.last_duration_ms / 1000
     ? { text: "current", tone: "ok" }
     : { text: "stale", tone: "warn" };
@@ -2844,7 +2845,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
                       </span>
                       <span className="text-xs text-text-muted tabular shrink-0 hidden md:inline">{r.author}</span>
                       <span className="text-xs text-text-muted tabular shrink-0">{fmtInt(r.pack_tokens)} tokens</span>
-                      <ListTime iso={r.created_at} quiet className="text-xs text-text-muted shrink-0" />
+                      <ListTime time={r.created_at} quiet className="text-xs text-text-muted shrink-0" />
                     </button>
                     <span className="list-row-control shrink-0">
                       <ExternalLink
@@ -3286,7 +3287,7 @@ export function AccessTab({
                   {g.status !== "pending" && g.role === "viewer" && asked === "admin" ? " (reads today)" : ""}
                 </span>
                 <span className="text-text-muted tabular hidden md:inline">
-                  <ListTime iso={g.pending_since} quiet />
+                  <ListTime time={g.pending_since} quiet />
                 </span>
                 {canManage ? (
                   <div className="flex flex-wrap items-center gap-2">
@@ -3406,7 +3407,7 @@ export function AccessTab({
                   {
                     label: (
                       <span className="text-text-muted">
-                        <ListTime iso={g.granted_at} quiet /> by {g.granted_by}
+                        <ListTime time={g.granted_at} quiet /> by {g.granted_by}
                       </span>
                     ),
                   },

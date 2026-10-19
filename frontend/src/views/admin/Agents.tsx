@@ -151,7 +151,8 @@ export function Agents() {
             size="sm"
             headers={HEADERS}
             rows={rows.map((r) => {
-              const stale = Date.now() - (parseChTime(r.last_seen)?.getTime() ?? 0) > 24 * 3600 * 1000;
+              const seen = parseChTime(r.last_seen);
+              const stale = !seen || Date.now() - seen.getTime() > 24 * 3600 * 1000;
               return {
                 id: r.agent,
                 items: [
@@ -164,7 +165,7 @@ export function Agents() {
                     label: (
                       // Not seen for a day: said by a badge, not by the colour of the time alone.
                       <span className="inline-flex items-center gap-1.5">
-                        <ListTime iso={r.last_seen} quiet className="text-text-muted" />
+                        <ListTime time={r.last_seen} quiet className="text-text-muted" />
                         {stale && <Badge text="Stale" state="warning" size="sm" />}
                       </span>
                     ),

@@ -165,7 +165,7 @@ export function RepoDocsList({
                     {d.description ? <>{d.description} · </> : null}
                     {d.ingested_at ? (
                       <>
-                        added <ListTime iso={d.ingested_at} quiet />
+                        added <ListTime time={d.ingested_at} quiet />
                       </>
                     ) : null}
                     {phrase ? (

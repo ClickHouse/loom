@@ -287,7 +287,7 @@ function Timeline({ events }: { events: TaskEvent[] | null }) {
               )}
             </span>
             <span className="text-xs text-text-muted">
-              <ListTime iso={e.ts} quiet />
+              <ListTime time={e.ts} quiet />
             </span>
           </li>
         );
@@ -464,7 +464,7 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
             <span className="font-medium">this agent's own task</span>
           )}
           <span>
-            · posted <ListTime iso={current.created_at} />
+            · posted <ListTime time={current.created_at} />
           </span>
           {current.status === "in_progress" && (
             <span>

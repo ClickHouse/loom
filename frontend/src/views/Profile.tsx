@@ -423,9 +423,8 @@ function ActivityChip({ empty }: { empty?: boolean }) {
 
   const mostRecent = entries[0];
   const last = parseChTime(mostRecent.last_activated_at);
-  const ms = last ? Date.now() - last.getTime() : Infinity;
   // Green for a read in the last hour; an older one is not a warning.
-  const dotClass = ms < 3_600_000 ? "bg-success" : "bg-text-muted";
+  const dotClass = last && Date.now() - last.getTime() < 3_600_000 ? "bg-success" : "bg-text-muted";
 
   return (
     <Popover open={expanded} onOpenChange={setExpanded}>
@@ -453,7 +452,7 @@ function ActivityChip({ empty }: { empty?: boolean }) {
               )}
             </span>
             <span className="shrink-0 text-xs text-text-muted tabular-nums">
-              {e.event_count}× · <ListTime iso={e.last_activated_at} quiet={false} />
+              {e.event_count}× · <ListTime time={e.last_activated_at} quiet={false} />
             </span>
           </div>
         ))}
@@ -681,7 +680,7 @@ const SectionRow = memo(function SectionRow({
             <span className="min-w-0 truncate font-mono">{editor}</span>
             {section.updated_at && (
               <>
-                · <ListTime iso={section.updated_at} quiet />
+                · <ListTime time={section.updated_at} quiet />
               </>
             )}
           </span>

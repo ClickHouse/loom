@@ -338,7 +338,7 @@ export function ThreadReplayDialog({
             <>
               <span>·</span>
               <span>
-                updated <ListTime iso={threadDetail.updated_at} />
+                updated <ListTime time={threadDetail.updated_at} />
               </span>
             </>
           )}
@@ -399,7 +399,7 @@ export function ThreadReplayDialog({
                     {typeof m.tokens === "number" && m.tokens > 0 && (
                       <span className="text-xs text-text-muted">· {m.tokens} tok</span>
                     )}
-                    <ListTime iso={m.ts} quiet className="text-xs text-text-muted ml-auto" />
+                    <ListTime time={m.ts} quiet className="text-xs text-text-muted ml-auto" />
                   </div>
                   {m.reasoning ? <ReasoningDisclosure text={m.reasoning} /> : null}
                   <MessageBody content={m.content} muted={meta.muted} />

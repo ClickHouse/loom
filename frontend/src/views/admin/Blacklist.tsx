@@ -276,7 +276,7 @@ export function PrivacyFilters({
                     <span>{r.scope}</span>
                     <span>·</span>
                     <span>
-                      added <ListTime iso={r.created_at} quiet />
+                      added <ListTime time={r.created_at} quiet />
                     </span>
                     <span>·</span>
                     <PrivacyFilterHits row={r} />
@@ -327,9 +327,9 @@ function PrivacyFiltersHitSummary({ rows }: { rows: BlacklistRow[] }) {
   let mostRecent = 0;
   let activePatterns = 0;
   for (const r of rows) {
-    if (!r.last_hit_at) continue;
-    const t = parseChTime(r.last_hit_at)?.getTime();
-    if (t === undefined) continue;
+    const hit = parseChTime(r.last_hit_at);
+    if (!hit) continue;
+    const t = hit.getTime();
     if (t > mostRecent) mostRecent = t;
     if (now - t <= SEVEN_DAYS) activePatterns += 1;
   }
@@ -360,7 +360,7 @@ export function PrivacyFilterHits({ row }: { row: BlacklistRow }) {
   }
   const lastHitText = row.last_hit_at ? (
     <>
-      last <ListTime iso={row.last_hit_at} quiet />
+      last <ListTime time={row.last_hit_at} quiet />
     </>
   ) : (
     <>last hit unknown</>

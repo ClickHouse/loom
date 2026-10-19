@@ -105,7 +105,7 @@ function Meta({ r, ctx }: { r: TaskListRow; ctx: RowContext }) {
         </Tip>
       )}
       {who && <Assignee name={who.name} label={who.label} />}
-      <ListTime iso={r.created_at} quiet />
+      <ListTime time={r.created_at} quiet />
       <RowMenu name={r.title} items={ctx.menuFor(r)} />
     </span>
   );

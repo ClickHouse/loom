@@ -60,9 +60,8 @@ const STATUSES: ReadonlyArray<{ value: Status; label: string }> = [
 ];
 const EVERY_AGENT = "*";
 
-/** The tags and agent a search filters the list by. */
-function filterOf(query: string): TagAgentFilter {
-  const { tags, agent } = parseSearchQuery(query);
+/** The tags and agent a parsed search filters the list by. */
+function filterOf({ tags, agent }: ReturnType<typeof parseSearchQuery>): TagAgentFilter {
   return { tags, agent: agent ?? "" };
 }
 
@@ -183,12 +182,12 @@ function MemoryList() {
   // itself). Pinned, Conflicted and Verified have no server filter: the list reads the
   // newest 1,000 and keeps the matching ones. What is typed is debounced, so `tag:…` sends
   // one read, not one per key; a chip applies at once.
-  const typedNow = useSameFilter({ tags: parsed.tags, agent: parsed.agent ?? "" });
+  const typedNow = useSameFilter(filterOf(parsed));
   const [typed, setTyped] = useState(typedNow);
   // A tag chosen on a card or elsewhere in the app, or Clear filters, applies at once.
   const applyQuery = useCallback((next: string) => {
     setQuery(next);
-    setTyped(filterOf(next));
+    setTyped(filterOf(parseSearchQuery(next)));
   }, []);
   // A card's tag adds `tag:<tag>` to the search, or takes it out again, so tags stack the
   // way typed ones do. One callback for every card: it reads the query through a ref.
@@ -847,7 +846,7 @@ function MemoryList() {
                     {isTombstoned && (
                       <div className="flex items-center justify-between mt-1 py-1 text-xs text-text-muted">
                         <span>
-                          Deleted <ListTime iso={e.tombstoned_at} quiet /> · {restoreText(e.tombstoned_at)}
+                          Deleted <ListTime time={e.tombstoned_at} quiet /> · {restoreText(e.tombstoned_at)}
                         </span>
                         <Button
                           type="empty"

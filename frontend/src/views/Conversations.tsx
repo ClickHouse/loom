@@ -414,7 +414,7 @@ export function Conversations() {
                       {title || UNTITLED_THREAD}
                     </span>
                     <span className="shrink-0 text-xs text-text-muted">
-                      <ListTime iso={t.last_seen} quiet />
+                      <ListTime time={t.last_seen} quiet />
                     </span>
                   </span>
                   {/* Line 2: the last turn; right, who and how long. Under 640 px the right
@@ -631,7 +631,7 @@ export function Conversations() {
                     <span className="min-w-0 truncate font-mono text-xs text-text-muted">{g.namespace}</span>
                   )}
                   <span className="shrink-0 text-xs text-text-muted tabular">
-                    {g.hits.length} match{g.hits.length === 1 ? "" : "es"} · <ListTime iso={g.newest} quiet />
+                    {g.hits.length} match{g.hits.length === 1 ? "" : "es"} · <ListTime time={g.newest} quiet />
                   </span>
                 </span>
               </button>

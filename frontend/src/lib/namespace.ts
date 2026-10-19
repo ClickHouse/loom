@@ -1,4 +1,5 @@
 import type { MyNamespaceEntry } from "../api";
+import { parseChTime } from "./format";
 import type { View } from "./state";
 
 /**
@@ -112,9 +113,8 @@ function ownNamespace(mine: readonly MyNamespaceEntry[]): string | null {
   if (admin.length === 0) return null;
   const personal = admin.find((m) => isPersonalNamespace(m.namespace));
   if (personal) return personal.namespace;
-  const byOldestGrant = [...admin].sort(
-    (a, b) => (a.joined_at ? Date.parse(a.joined_at) : Infinity) - (b.joined_at ? Date.parse(b.joined_at) : Infinity),
-  );
+  const grantedAt = (m: MyNamespaceEntry) => parseChTime(m.joined_at)?.getTime() ?? Infinity;
+  const byOldestGrant = [...admin].sort((a, b) => grantedAt(a) - grantedAt(b));
   return byOldestGrant[0].namespace;
 }
 

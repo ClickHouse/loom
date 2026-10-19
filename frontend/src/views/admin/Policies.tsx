@@ -332,7 +332,7 @@ export function Policies() {
                           <div>{r.policy_id}</div>
                           {r.updated_at && (
                             <div className="text-xs font-sans text-text-muted">
-                              updated <ListTime iso={r.updated_at} quiet />
+                              updated <ListTime time={r.updated_at} quiet />
                             </div>
                           )}
                         </div>
@@ -842,7 +842,7 @@ function DecisionsPanel({ version }: { version: number }) {
               items: [
                 {
                   // ListTime is the time and its UTC tooltip: no second one around it.
-                  label: <ListTime iso={r.ts} quiet className="text-text-muted" />,
+                  label: <ListTime time={r.ts} quiet className="text-text-muted" />,
                 },
                 { label: <AgentBadge agent={r.agent} /> },
                 { label: <span className="font-mono text-xs">{r.operation}</span> },

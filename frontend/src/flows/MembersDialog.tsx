@@ -275,7 +275,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                             requested <span className="font-medium">{r.requested_role}</span>
                           </>
                         )}{" "}
-                        · <ListTime iso={sinceDate} quiet />
+                        · <ListTime time={sinceDate} quiet />
                         {elsewhere.length > 0 && (
                           <div className="mt-0.5 break-words">
                             also waiting on {elsewhere.map((t) => t.label).join(", ")} — one decision covers all
@@ -358,7 +358,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                     {r.subject === me && <span className="ml-2 font-sans text-xs text-text-muted">(you)</span>}
                   </div>
                   <div className="text-xs text-text-muted">
-                    Granted <ListTime iso={r.granted_at} quiet /> by {r.granted_by}
+                    Granted <ListTime time={r.granted_at} quiet /> by {r.granted_by}
                   </div>
                 </div>
                 {canManage && r.subject !== me ? (

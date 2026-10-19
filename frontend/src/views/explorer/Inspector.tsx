@@ -221,7 +221,7 @@ function FactList({
               </div>
               <div className="mt-0.5 flex items-center gap-1.5 text-xs text-text-muted min-w-0 flex-wrap">
                 {f.provenance && <Badge text={f.provenance} state="neutral" size="sm" />}
-                {f.last_seen && <ListTime iso={f.last_seen} quiet />}
+                {f.last_seen && <ListTime time={f.last_seen} quiet />}
                 {f.stale ? (
                   <span className="inline-flex items-center gap-1 text-warn">
                     <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" /> stale —{" "}
@@ -775,7 +775,7 @@ export function Inspector({
                     <TextClamp text={excerpt} lines={1} max={200} reach="parent" className="leading-snug" />
                     <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-xs text-text-muted">
                       <Badge text={h.memory_type} state="neutral" size="sm" className="shrink-0" />
-                      {h.created_at && <ListTime iso={h.created_at} quiet className="shrink-0" />}
+                      {h.created_at && <ListTime time={h.created_at} quiet className="shrink-0" />}
                       <span className="font-mono truncate flex-1">{h.memory_key}</span>
                       {h.namespace && h.namespace !== identity.namespace && (
                         <Chip label={h.namespace} mono className="shrink-0 min-h-5" />

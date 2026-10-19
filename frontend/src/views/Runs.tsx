@@ -411,7 +411,7 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
       { label: <span className={NUMERIC}>{(r.memories_used ?? []).length}</span> },
       { label: <span className={NUMERIC}>{(r.memories_written ?? []).length}</span> },
       { label: <span className={NUMERIC}>{fmtDuration(r.duration_ms)}</span> },
-      { label: <ListTime iso={r.started_at} quiet className="text-text-muted" /> },
+      { label: <ListTime time={r.started_at} quiet className="text-text-muted" /> },
     ],
   };
 }
@@ -487,7 +487,7 @@ function RunRows({ label, rows, onOpen, busy }: RunListProps) {
               <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
                 <span className="min-w-0 truncate">{displayAgent(r.agent)}</span>
                 <span aria-hidden="true">·</span>
-                <ListTime iso={r.started_at} quiet />
+                <ListTime time={r.started_at} quiet />
                 <span aria-hidden="true">·</span>
                 <span className="tabular-nums whitespace-nowrap">
                   <span className="sr-only">took </span>
@@ -590,7 +590,7 @@ export function Runs() {
     setShown(null);
     setAgents([]);
     setPage(0);
-    setLocal(false); // another namespace may be a server that pages
+    setLocal(false); // the next read may reach a build that pages
     setAgent("");
   }
   // What the list holds (a change starts it again from page 1), and what one read asked for.

@@ -267,9 +267,10 @@ function filtered(data: AdminUsersResult | null, filter: Filter): AdminUserRow[]
   if (!data) return [];
   if (filter === "pending") return data.users.filter((u) => u.grants.some((g) => g.pending_role));
   if (filter === "active7d") {
-    return data.users.filter(
-      (u) => Date.now() - (parseChTime(u.last_active)?.getTime() ?? Number.NEGATIVE_INFINITY) < SEVEN_DAYS_MS,
-    );
+    return data.users.filter((u) => {
+      const active = parseChTime(u.last_active);
+      return !!active && Date.now() - active.getTime() < SEVEN_DAYS_MS;
+    });
   }
   return data.users;
 }
@@ -431,7 +432,7 @@ function UserListTable({ rows, filter }: { rows: AdminUserRow[]; filter: Filter 
           {
             label: (
               <span className="text-xs text-text-muted">
-                {u.last_active ? <ListTime iso={u.last_active} quiet /> : "never"}
+                {u.last_active ? <ListTime time={u.last_active} quiet /> : "never"}
               </span>
             ),
           },

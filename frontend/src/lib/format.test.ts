@@ -219,7 +219,8 @@ describe("dayLabel", () => {
 });
 
 // Some ops answer a ClickHouse time as it prints ("2026-10-16 12:00:00.123456789": UTC, no
-// zone). West of UTC, a time read as local would be seven hours later than its ISO spelling.
+// zone). In Los Angeles (UTC-7 in October), a time read as local would be seven hours later
+// than its ISO spelling.
 describe("ClickHouse times", () => {
   const ch = "2026-10-16 12:00:00.123456789";
   const iso = "2026-10-16T12:00:00.123Z";

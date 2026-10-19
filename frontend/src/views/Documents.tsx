@@ -722,7 +722,7 @@ export function Documents() {
           <div className="min-w-0 text-xs text-text-muted flex items-center gap-2 flex-wrap">
             {previewEntry?.ingested_at && (
               <span>
-                Uploaded <ListTime iso={previewEntry.ingested_at} quiet />
+                Uploaded <ListTime time={previewEntry.ingested_at} quiet />
               </span>
             )}
             {previewEntry?.has_blob && previewEntry.blob_size != null && (
@@ -976,7 +976,7 @@ const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, acti
           {/* The meta slot: flush right; under 640 px its own line. */}
           <span className="basis-full text-xs text-text-muted tabular sm:ml-auto sm:basis-auto sm:shrink-0">
             {(r.chunk_count ?? 0).toLocaleString()} chunk{r.chunk_count === 1 ? "" : "s"} ·{" "}
-            <ListTime iso={r.ingested_at} quiet />
+            <ListTime time={r.ingested_at} quiet />
           </span>
         </span>
         {/* Line 2: the file it came from and what it is about. */}

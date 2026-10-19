@@ -1278,7 +1278,8 @@ function ProvenanceSection({
  *  never — the sentinel is truthy, so a plain `? :` would print "01/01/1970". */
 function recalledLabel(recallCount: number | undefined, lastRecalledAt: string | null | undefined): string {
   const n = recallCount ?? 0;
-  if (n === 0 || (parseChTime(lastRecalledAt)?.getFullYear() ?? 1970) <= 1970) return "Never recalled";
+  const last = parseChTime(lastRecalledAt);
+  if (n === 0 || !last || last.getFullYear() <= 1970) return "Never recalled";
   return `${n}× · ${relativeTime(lastRecalledAt)}`;
 }
 
@@ -1448,7 +1449,7 @@ function ExpiryEditor({
 }) {
   const current = expiresAt ? `Expires ${relativeTime(expiresAt)}` : "Never expires";
   const expiry = parseChTime(expiresAt);
-  const isExpired = expiry ? expiry.getTime() < Date.now() : false;
+  const isExpired = !!expiry && expiry.getTime() < Date.now();
 
   return (
     <div className="inline-flex items-center gap-2">

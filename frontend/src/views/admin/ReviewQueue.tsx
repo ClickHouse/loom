@@ -523,7 +523,7 @@ function QueueTable({
           },
           { label: <span className="tabular">v{c.version}</span> },
           { label: c.pinned ? "Pinned" : <span className="text-text-muted">—</span> },
-          { label: <ListTime iso={c.created_at} quiet className="text-text-muted" /> },
+          { label: <ListTime time={c.created_at} quiet className="text-text-muted" /> },
         ],
       }))}
     />
@@ -642,7 +642,7 @@ function LearningsPanel({
                 <span className="font-mono text-sm text-text-muted">{r.memory_key}</span>
                 <span className="text-xs text-text-muted tabular">
                   {r.supporter_count} supporters · conf {(r.confidence_avg ?? 0).toFixed(2)} ·{" "}
-                  <ListTime iso={r.proposed_at} quiet />
+                  <ListTime time={r.proposed_at} quiet />
                 </span>
               </div>
               <div className="text-sm text-text mb-2">{truncate(formatValue(r.proposed_value), 240)}</div>
@@ -682,7 +682,7 @@ function LearningsPanel({
                   {r.decided_at && (
                     <>
                       {" "}
-                      <ListTime iso={r.decided_at} quiet />
+                      <ListTime time={r.decided_at} quiet />
                     </>
                   )}
                   {r.decided_by && <> by {r.decided_by}</>}
@@ -802,7 +802,7 @@ function AllowlistPanel({ initial, onSeedUsed }: { initial?: AllowlistRow[] | nu
               ),
             },
             { label: <span className="text-xs">{r.allowed_by}</span> },
-            { label: <ListTime iso={r.allowed_at} quiet className="text-xs text-text-muted" /> },
+            { label: <ListTime time={r.allowed_at} quiet className="text-xs text-text-muted" /> },
             {
               label: r.reason ? (
                 <span className="text-xs">{r.reason}</span>
@@ -865,7 +865,7 @@ function Side({
       <div className="flex items-center gap-2 text-xs text-text-muted tabular">
         {version != null && <span>v{version}</span>}
         {pinned && <span>Pinned</span>}
-        {createdAt && <ListTime iso={createdAt} quiet />}
+        {createdAt && <ListTime time={createdAt} quiet />}
       </div>
     </Panel>
   );

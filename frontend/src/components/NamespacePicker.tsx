@@ -19,7 +19,7 @@ import { listMine, setSavedNamespace, cancelNamespaceRequest, isAuthDisabled, ty
 import { invalidateShared, sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
 import { WILDCARD_NAMESPACE } from "../lib/namespace";
-import { isSystemKind } from "../lib/format";
+import { isSystemKind, parseChTime } from "../lib/format";
 import { toast, toastError } from "./Toast";
 import { confirmAction } from "./ConfirmDialog";
 import { Loading, Tip } from "./ui";
@@ -173,8 +173,8 @@ function NamespacePickerMenu() {
     arr.filter(matches).sort((a, b) => {
       if (a.namespace === current) return -1;
       if (b.namespace === current) return 1;
-      const at = a.joined_at ? Date.parse(a.joined_at) : 0;
-      const bt = b.joined_at ? Date.parse(b.joined_at) : 0;
+      const at = parseChTime(a.joined_at)?.getTime() ?? 0;
+      const bt = parseChTime(b.joined_at)?.getTime() ?? 0;
       return bt - at;
     });
   // Code indexes and tracker records: current first, then by name.

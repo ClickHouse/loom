@@ -400,7 +400,7 @@ function branchRow(b: CodeRepoSummary, actions: CodeActions, busy: boolean): Tab
       { label: <span className="font-mono">{b.branch}</span> },
       { label: <HealthBadge health={branchHealth(b)} /> },
       { label: <span className="tabular">{behind > 0 ? fmtInt(behind) : "—"}</span>, className: WIDE_ONLY },
-      { label: b.indexed_at ? <ListTime iso={b.indexed_at} quiet /> : "—" },
+      { label: b.indexed_at ? <ListTime time={b.indexed_at} quiet /> : "—" },
       { label: <span className="tabular">{counts ? fmtInt(counts.code_files) : "—"}</span>, className: WIDE_ONLY },
       { label: <span className="tabular">{counts ? fmtInt(counts.code_symbols) : "—"}</span>, className: WIDE_ONLY },
       { label: ACCESS_WORD[branchState(b)] ?? "—", className: WIDE_ONLY },

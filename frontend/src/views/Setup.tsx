@@ -1028,12 +1028,9 @@ function TokensSection({
           {sa !== null && sa.length > 0 && (
             <div className="space-y-1">
               {sa.map((s) => {
-                const createdMs = s.created_at ? Date.parse(s.created_at) : NaN;
+                const created = parseChTime(s.created_at);
                 const stranded =
-                  !s.revoked_at &&
-                  !s.last_used_at &&
-                  Number.isFinite(createdMs) &&
-                  Date.now() - createdMs > 60 * 60 * 1000;
+                  !s.revoked_at && !s.last_used_at && !!created && Date.now() - created.getTime() > 60 * 60 * 1000;
                 return (
                   <div
                     key={s.sa_subject || s.name}
@@ -1048,11 +1045,11 @@ function TokensSection({
                         <SaExpiryBadge expiresAt={s.expires_at} revoked={!!s.revoked_at} />
                       </div>
                       <div className="text-xs text-text-muted tabular">
-                        {describeTokenScope(s)} · created <ListTime iso={s.created_at} quiet />
+                        {describeTokenScope(s)} · created <ListTime time={s.created_at} quiet />
                         {" · "}
                         {s.last_used_at ? (
                           <>
-                            used <ListTime iso={s.last_used_at} quiet />
+                            used <ListTime time={s.last_used_at} quiet />
                           </>
                         ) : (
                           <span className="text-text-muted">no calls in 30 days</span>
@@ -1323,22 +1320,16 @@ function TokensStatusSummary({ tokens }: { tokens: ServiceAccountEntry[] | null 
   let idle = 0;
   let expiringSoon = 0;
   for (const t of live) {
-    if (t.expires_at) {
-      const exp = Date.parse(t.expires_at);
-      if (Number.isFinite(exp) && exp > now && exp - now <= FOURTEEN_DAYS) {
-        expiringSoon += 1;
-      }
+    const exp = parseChTime(t.expires_at);
+    if (exp && exp.getTime() > now && exp.getTime() - now <= FOURTEEN_DAYS) {
+      expiringSoon += 1;
     }
     if (!t.last_used_at) {
       waiting += 1;
       continue;
     }
-    const usedAt = Date.parse(t.last_used_at);
-    if (!Number.isFinite(usedAt)) {
-      idle += 1;
-      continue;
-    }
-    if (now - usedAt <= SEVEN_DAYS) active += 1;
+    const usedAt = parseChTime(t.last_used_at);
+    if (usedAt && now - usedAt.getTime() <= SEVEN_DAYS) active += 1;
     else idle += 1;
   }
 
@@ -1367,11 +1358,12 @@ function SaExpiryBadge({ expiresAt, revoked }: { expiresAt: string | null; revok
   if (!expiresAt) {
     return <span className="ml-2 text-xs text-text-muted">never expires</span>;
   }
-  const expiryMs = parseChTime(expiresAt)?.getTime() ?? Number.NaN;
+  const expiry = parseChTime(expiresAt);
+  if (!expiry) return null;
   const now = Date.now();
   const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
-  const expired = expiryMs < now;
-  const expiringSoon = !expired && expiryMs - now <= FOURTEEN_DAYS;
+  const expired = expiry.getTime() < now;
+  const expiringSoon = !expired && expiry.getTime() - now <= FOURTEEN_DAYS;
   const tone = expired ? "text-danger" : expiringSoon ? "text-warn" : "text-text-muted";
   return <span className={`ml-2 text-xs ${tone}`}>{expired ? "expired" : `expires ${relativeTime(expiresAt)}`}</span>;
 }
@@ -1408,8 +1400,10 @@ function BotConnectPreview({ org, namespace, baseUrl }: { org: string; namespace
 function ConnectionBadge({ token }: { token: ServiceAccountEntry }) {
   if (token.revoked_at) return null;
   if (!token.last_used_at) return <Badge text="Waiting…" state="warning" size="sm" />;
-  const ageMs = Date.now() - (parseChTime(token.last_used_at)?.getTime() ?? Number.NaN);
-  if (ageMs < 30 * 24 * 3600 * 1000) return <Badge text="Connected" state="success" size="sm" />;
+  const usedAt = parseChTime(token.last_used_at);
+  if (usedAt && Date.now() - usedAt.getTime() < 30 * 24 * 3600 * 1000) {
+    return <Badge text="Connected" state="success" size="sm" />;
+  }
   return null;
 }
 

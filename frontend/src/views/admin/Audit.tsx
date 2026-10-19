@@ -514,8 +514,8 @@ function ErasuresPanel({ org }: { org: string }) {
             ),
           },
           { label: <span className="tabular">{r.steps_completed_count}</span> },
-          { label: <ListTime iso={r.requested_at} quiet /> },
-          { label: r.completed_at ? <ListTime iso={r.completed_at} quiet /> : "—" },
+          { label: <ListTime time={r.requested_at} quiet /> },
+          { label: r.completed_at ? <ListTime time={r.completed_at} quiet /> : "—" },
         ],
       }))}
     />
@@ -568,7 +568,7 @@ function eventRow(row: AuditEntry, i: number): TableRowType {
         ),
       },
       {
-        label: <ListTime iso={row.ts} quiet className="text-xs text-text-muted" />,
+        label: <ListTime time={row.ts} quiet className="text-xs text-text-muted" />,
       },
     ],
   };
