@@ -263,3 +263,78 @@ async def test_a_wildcard_agent_reads_the_keys_history_namespace_wide() -> None:
     ch = _Hist([], [])
     await memory_repo.list_history(_IDENT, "k", ch=ch, scope=WHOLE_NAMESPACE)
     assert all("agent = {a:String}" in sql for sql in ch.sqls)
+
+
+def _selected(sql: str) -> set[str]:
+    """The column names (or aliases) a statement's SELECT list returns."""
+    select = re.sub(r"--[^\n]*", "", sql.split("SELECT", 1)[1].split("FROM loom.memory", 1)[0])
+    while "(" in select:
+        select = re.sub(r"\([^()]*\)", "", select)
+    return {re.findall(r"\w+", part)[-1] for part in select.split(",")}
+
+
+@pytest.mark.asyncio
+async def test_bulk_get_answers_what_memory_get_answers_for_the_same_row() -> None:
+    # A column the plain fetch leaves out reads as its default: an empty `sensitivity`
+    # let export-okf publish high rows. Every column the answer reads is off its default.
+    from server.memory.app.get_output import row_output
+
+    row = {
+        **_full(),
+        "pinned": True,
+        "status": "duplicate",
+        "expires_at": "2099-06-01 00:00:00",
+        "on_expire": "tombstone",
+        "expire_reason": "rotated",
+        "updated_at": "2026-09-20 00:00:00",
+        "valid_at": "2026-09-19 00:00:00",
+        "valid_to": "2027-01-01 00:00:00",
+        "temporal_anchor": "2026-09-18 00:00:00",
+        "temporal_confidence": 0.5,
+        "char_limit": 100,
+        "tags": ["t"],
+        "entities": ["e"],
+        "duplicate_of": "k-canon",
+        "superseded_by": "k-new",
+        "recall_count": 3,
+        "last_recalled_at": "2026-09-21 00:00:00",
+        "verified_by": "human:x",
+        "verified_at": "2026-09-20 00:00:00",
+        "verified_sha256": "v" * 64,
+        "sensitivity": "high",
+        "source_class": "derived",
+        "lock_mode": "no_delete",
+        "lock_reason": "audit",
+        "lock_until": "2099-01-01 00:00:00",
+        "locked_by": "human:y",
+        "locked_at": "2026-09-20 00:00:00",
+    }
+
+    class _Columns(_CH):
+        """Answers a fetch with only the columns its SELECT list names, as ClickHouse does."""
+
+        def _answer(self, sql: str) -> list[dict[str, Any]]:
+            rows = super()._answer(sql)
+            if rows is self.located:
+                return rows
+            return [{k: v for k, v in r.items() if k in _selected(sql)} for r in rows]
+
+    answers = []
+    for strong in (False, True):
+        ch = _Columns([_located()], [row])
+        got = await memory_repo.get_many_by_keys(
+            _IDENT, ["k"], ch=ch, scope=WHOLE_NAMESPACE, strong=strong
+        )
+        r = got[0]
+        out = row_output(
+            r,
+            sha="s",
+            canonical_key=None,
+            duplicate_of=r.duplicate_of,
+            superseded_by=r.superseded_by,
+        )
+        answers.append(out.model_dump())
+    plain, whole = answers
+    assert plain["sensitivity"] == "high" and plain["valid_to"] is not None
+    assert plain["duplicate_of"] == "k-canon" and plain["lock_mode"] == "no_delete"
+    assert plain == whole

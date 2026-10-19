@@ -165,3 +165,14 @@ async def test_two_identities_sharing_a_key_and_version_each_get_their_own_excer
     )
     assert ch.params[2] is not None and ch.params[2]["pairs"] == [("ma", 7), ("mb", 7)]
     assert [r["content_excerpt"] for r in rows] == ["agent a", "agent b"]
+
+
+@pytest.mark.asyncio
+async def test_related_leaves_high_rows_out() -> None:
+    # A 'high' row is readable by key only, not as another row's neighbour.
+    ch = _CH()
+    await memory_repo.find_related_by_entities(
+        _IDENT, "src", top_k=5, min_overlap=1, ch=ch, scope=WHOLE_NAMESPACE
+    )
+    scan = next(sql for sql in ch.sqls if "arrayIntersect" in sql)
+    assert "sensitivity != 'high'" in scan

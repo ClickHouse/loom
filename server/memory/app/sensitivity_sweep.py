@@ -1,7 +1,7 @@
 """Sensitivity backfill and sweep (the tier is `memory.domain.sensitivity`).
 
-`resolve_sensitivity` runs on two write paths — `memory.set` and the
-extractor's entries. Rows that arrive by `observe.record`, `copy_to`, the
+`resolve_sensitivity` runs on the write paths — `memory.set`, `memory.bulk_set`,
+`memory.update` and the extractor's entries. Rows that arrive by `observe.record`, `copy_to`, the
 imports, or were written before the column existed carry `sensitivity = ''`
 whatever they hold, so a row with an `sk-`-shaped key or an e-mail address can
 sit unlabelled, embedded and returned by every search leg.
@@ -34,7 +34,13 @@ from typing import Any
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.app.high_fence import fence_high, tombstone_chunks_of
-from server.memory.domain.sensitivity import HIGH, MEDIUM, detect_sensitivity, sensitivity_tags
+from server.memory.domain.sensitivity import (
+    HIGH,
+    MEDIUM,
+    detect_sensitivity,
+    detector_text,
+    sensitivity_tags,
+)
 
 # RE2, for ClickHouse `match()`: a superset of the shapes in
 # `memory/domain/sensitivity.py`'s high and medium patterns. Anything this misses
@@ -47,9 +53,8 @@ COARSE_SHAPE_RE = (
     r"|[0-9]{3}[\s.()-]*[0-9]{3}[\s.-]*[0-9]{4}"
 )
 
-# Two probe shapes reported beside the detector's levels, so a dry run says how
-# many credential- and e-mail-shaped rows it found.
-_PROBE_CREDENTIAL = r"sk-[A-Za-z0-9_-]{20,}"
+# A probe shape reported beside the detector's levels, so a dry run says how many
+# e-mail-shaped rows it found (every high row is a credential).
 _PROBE_EMAIL = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
 
 
@@ -87,11 +92,13 @@ class SweepReport:
         return out
 
 
-def _shapes(text: str) -> tuple[str, ...]:
+def _shapes(text: str, level: str) -> tuple[str, ...]:
     import re
 
     shapes: list[str] = []
-    if re.search(_PROBE_CREDENTIAL, text):
+    # Every row the detector reads as high is a credential, whatever its shape: the scheduled
+    # pass applies `credential` and `email` rows by default.
+    if level == HIGH:
         shapes.append("credential")
     if re.search(_PROBE_EMAIL, text):
         shapes.append("email")
@@ -151,11 +158,13 @@ async def scan(
     report = SweepReport(scanned=len(rows), truncated=len(rows) >= int(limit))
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
     for r in rows:
-        text = str(r.get("value") or "")
+        # Decoded, as the write path reads it: in the stored JSON a token after a newline
+        # follows `\\n`, and the detector's word boundary never matches there.
+        text = detector_text(r.get("value") or "")
         level = detect_sensitivity(text)
         if level not in (HIGH, MEDIUM):
             continue
-        shapes = _shapes(text)
+        shapes = _shapes(text, level)
         if keep and not keep.intersection(shapes):
             continue
         report.candidates.append(

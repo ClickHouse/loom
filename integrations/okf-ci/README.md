@@ -25,7 +25,7 @@ severity.
 | `unknown_relation`              | warning  | a `relates_to` kind outside Loom's canonical verbs                                               |
 | `edited_since_export`           | warning  | the body no longer hashes to `loom.content_sha256` (a concept or a raw chunk edited by hand)     |
 | `derived_needs_confidence`      | warning  | `source_class: derived` at confidence 1.0, an inference written as a fact                        |
-| `high_sensitivity_present`      | warning  | a `sensitivity: high` row travelled; the export skips them by default                            |
+| `high_sensitivity_present`      | warning  | a `sensitivity: high` row (by field or tag) travelled; the export skips them by default          |
 | `index_listing`                 | warning  | a concept its directory index or the root index does not list                                    |
 | `drift`                         | warning  | the root index's `loom.corpus_digest` no longer matches the concept files                        |
 | `orphans`                       | info     | concepts that link to nothing and are linked from nothing (a property of the data, not a defect) |

@@ -609,3 +609,27 @@ async def test_lossy_merge_is_refused_and_sources_stay(
     )
     out2 = await handle_memory_consolidate(_input())
     assert out2.clusters_refused_lossy == 0 and len(out2.consolidated) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_unlabelled_credential_row_never_reaches_the_merge_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # copy_to and imports leave a row unlabelled until the sweep; its value never goes into
+    # the merge prompt.
+    from server.memory.app.consolidate import handle_memory_consolidate
+
+    token = "ghp_" + "a" * 36
+    rows = _two_row_cluster()
+    rows[0]["value"] = f"deploy token:\n{token}"
+    sent: list[str] = []
+    llm = _LLM('{"canonical_key":"dog","canonical_value":"a dog"}')
+
+    async def _complete(system, user, max_tokens=256):
+        sent.append(user)
+        return await _LLM.complete(llm, system, user, max_tokens)
+
+    llm.complete = _complete  # type: ignore[method-assign]
+    _wire(monkeypatch, _CH(rows), llm)
+    out = await handle_memory_consolidate(_input())
+    assert out.examined == 1 and not any(token in u for u in sent)

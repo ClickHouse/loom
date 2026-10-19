@@ -106,7 +106,7 @@ def test_taxonomy_state_key_names_the_version_and_the_request_shape() -> None:
     inp = NamespaceTaxonomyInput(
         org="acme", namespace="team", top_n_tags=10, top_n_entities=20, top_n_communities=5
     )
-    assert namespace.taxonomy_state_key(inp, 1234) == "taxonomy@1234:10:20:5"
+    assert namespace.taxonomy_state_key(inp, 1234) == "taxonomy.v2@1234:10:20:5"
 
 
 @pytest.mark.asyncio

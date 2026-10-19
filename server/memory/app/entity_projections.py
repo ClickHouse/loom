@@ -320,18 +320,25 @@ def set_entities_for_projection(input: Any, value: Any) -> list[str]:
     namespace 65% of all edges came from mining step transcripts, making `command`, `step`,
     `bash`, `after bash`, `revealed`, `content` its top entities. Otherwise the value is
     mined."""
-    from server.memory.domain.graph_quality import canonical_entity_text
     from server.memory.domain.transcript_rows import is_transcript_row
+
+    declared = declared_entities(input)
+    transcript = is_transcript_row(getattr(input, "tags", None), getattr(input, "source_trace", ""))
+    if declared or transcript:
+        return declared
+    return _candidate_entities_from_value(value)
+
+
+def declared_entities(input: Any) -> list[str]:
+    """The caller's own `entities`, canonical and capped, without mining the value."""
+    from server.memory.domain.graph_quality import canonical_entity_text
 
     declared: list[str] = []
     for raw in getattr(input, "entities", None) or []:
         canon = canonical_entity_text(str(raw))
         if len(canon) >= 2 and canon not in declared:
             declared.append(canon)
-    transcript = is_transcript_row(getattr(input, "tags", None), getattr(input, "source_trace", ""))
-    if declared or transcript:
-        return declared[:_SET_ENTITY_MAX_CANDIDATES]
-    return _candidate_entities_from_value(value)
+    return declared[:_SET_ENTITY_MAX_CANDIDATES]
 
 
 async def project_memory_set_entities(

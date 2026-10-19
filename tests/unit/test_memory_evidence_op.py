@@ -64,6 +64,7 @@ class _FakeCH:
 class _Row:
     memory_id = "mem-1"
     value = "User's dog Max is awesome at catching frisbees mid-air."
+    sensitivity = ""
 
 
 @pytest.mark.asyncio
@@ -136,6 +137,7 @@ async def test_missing_key_is_not_found(monkeypatch: pytest.MonkeyPatch) -> None
 class _DerivedRow:
     memory_id = "mem-d"
     value = "User keeps two dogs, Max and Bowie."
+    sensitivity = ""
 
 
 @pytest.mark.asyncio
@@ -177,3 +179,27 @@ async def test_derived_links_resolve_to_the_source_memories(
     assert out.items[0].role == "memory" and out.items[0].content.startswith("[user_dog_max] ")
     # the second read went to loom.memory for the source ids, not to the evidence table
     assert ch.calls[1]["ids"] == ["m1", "m2"]
+
+
+@pytest.mark.asyncio
+async def test_a_high_rows_evidence_read_is_audited(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.observability import audit
+
+    class _HighRow(_Row):
+        sensitivity = "high"
+
+    async def fake_get_by_key(identity: Any, key: str, **kw: Any) -> Any:
+        return _HighRow()
+
+    audits: list[str] = []
+
+    async def fake_emit(event: str, **kw: Any) -> None:
+        audits.append(f"{event}:{kw['subject']['memory_key']}")
+
+    monkeypatch.setattr(memory_repo, "get_by_key", fake_get_by_key)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _FakeCH(links=[], evidence=[]))
+    monkeypatch.setattr(audit, "emit", fake_emit)
+    out = await handle_memory_evidence(
+        MemoryEvidenceInput(org="o", namespace="ns", agent="a", memory_key="vault")
+    )
+    assert out.found and audits == ["memory.sensitive_read:vault"]
