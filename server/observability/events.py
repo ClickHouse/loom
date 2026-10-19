@@ -88,7 +88,8 @@ class AgentEvent:
     subject: str = ""
     # The SLI columns (server/observability/sli.py): `http` | `mcp` | '' for
     # rows no transport wrote, the op's class, `ok` | `client` | `server`, and
-    # the latency budget the request was held to (0 = none).
+    # the latency budget the request was held to (0 is a real budget, which
+    # every success exceeds; a row with no registered op has 0 and no class).
     transport: str = ""
     slo_class: str = ""
     status_class: str = ""

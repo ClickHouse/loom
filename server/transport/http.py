@@ -328,8 +328,8 @@ def _refused_body(raw_body: dict[str, Any], auth: AuthInfo | None) -> dict[str, 
     namespace `-`, never the named one."""
     from server.auth.authz import may_act_in_org
 
-    named = str(raw_body.get("org") or "")
-    if auth is not None and named and not may_act_in_org(auth, named):
+    named = gates.present(raw_body.get("org"))
+    if auth is not None and named is not None and not may_act_in_org(auth, named):
         return {**raw_body, "org": auth.org, "namespace": SENTINEL}
     return raw_body
 

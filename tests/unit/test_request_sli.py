@@ -1671,10 +1671,11 @@ def test_a_call_served_on_its_default_namespace_counts_in_that_tenant(monkeypatc
     monkeypatch.setattr(http_mod, "_extract_auth", lambda request: eve)
     client = TestClient(app)
     assert client.post("/v1/code.repos", json={"org": None}).status_code == 422
-    for body in ({}, {"org": "", "namespace": ""}, {"org": " "}):
+    for body in ({}, {"org": "", "namespace": ""}, {"org": " "}, {"org": "-", "namespace": "n"}):
         assert client.post("/v1/code.repos", json=body).status_code == 403
     got = [(row["org"], row["namespace"]) for row in rows]
-    assert got == [("eve-org", "-")] * 4
+    # An absent org is the token's; a namespace the body named is kept.
+    assert got == [("eve-org", "-")] * 4 + [("eve-org", "n")]
 
 
 def test_the_ledger_reads_an_absent_org_or_namespace_as_the_gates_do() -> None:
