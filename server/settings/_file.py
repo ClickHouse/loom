@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Hashable
 from typing import Any
 
 from pydantic import ValidationError
@@ -45,12 +46,19 @@ def _load_yaml(f: Any) -> Any:
     def _mapping(loader: _Strict, node: yaml.MappingNode) -> dict[Any, Any]:
         seen: set[Any] = set()
         for key_node, _ in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue  # `<<: *base`: its keys may be overridden here
             key = loader.construct_object(key_node)
+            if not isinstance(key, Hashable):
+                raise yaml.constructor.ConstructorError(
+                    None, None, "a key must be a name, not a list or a mapping", key_node.start_mark
+                )
             if key in seen:
                 raise yaml.constructor.ConstructorError(
                     None, None, f"{key!r} is given twice", key_node.start_mark
                 )
             seen.add(key)
+        loader.flatten_mapping(node)
         return loader.construct_mapping(node)
 
     _Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _mapping)

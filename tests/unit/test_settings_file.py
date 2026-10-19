@@ -65,6 +65,7 @@ def test_the_file_sets_a_value_and_the_dotenv_file_and_environment_win(
         ("- 1\n", "expected a mapping"),
         ("version: 1\nsettings: {a: [\n", "not readable YAML"),
         ("version: true\nsettings: {}\n", "version True is not supported"),
+        ("version: 1\nsettings:\n  ? [a]\n  : 1\n", "a key must be a name"),
         (
             "version: 1\nsettings:\n  memory_ask_recency_weight: 0.4\n"
             "  memory_ask_recency_weight: 0.5\n",
@@ -166,3 +167,15 @@ def test_the_schema_holds_every_setting_but_the_secrets() -> None:
     assert set(props) == {f for f in Settings.model_fields if not is_secret_field(f)}
     assert schema["properties"]["settings"]["additionalProperties"] is False
     assert props["memory_ask_recency_weight"]["description"].startswith("memory.ask only")
+
+
+def test_a_yaml_merge_key_reads_as_yaml_does(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    s = _load(
+        monkeypatch,
+        tmp_path,
+        "version: 1\nsettings:\n  <<: {memory_ask_recency_weight: 0.3, memory_ask_synth_budget_ratio: 0.4}\n"
+        "  memory_ask_recency_weight: 0.5\n",
+    )
+    assert (s.memory_ask_recency_weight, s.memory_ask_synth_budget_ratio) == (0.5, 0.4)
