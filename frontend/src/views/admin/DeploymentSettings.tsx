@@ -117,6 +117,8 @@ export function DeploymentSettings() {
     () => matching(rows ?? [], query, changedOnly, liveOnly),
     [rows, query, changedOnly, liveOnly],
   );
+  // One array per list read and filter: the table waits for a new one to place focus.
+  const pageRows = useMemo(() => shownRows.slice(page * pageSize, (page + 1) * pageSize), [shownRows, page, pageSize]);
 
   if (!allowed) {
     return (
@@ -130,7 +132,6 @@ export function DeploymentSettings() {
     );
   }
 
-  const pageRows = shownRows.slice(page * pageSize, (page + 1) * pageSize);
   const refresh = () => setReads((n) => n + 1);
   return (
     <PageContainer>
@@ -364,8 +365,9 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
   );
 }
 
-/** Only an override is the deployment's value to set back; anything else was the
- *  changing process's own, which a reset restores (as `loom settings history` marks it). */
+/** Only an override is the deployment's value to set back; anything else but null (the
+ *  reset of a setting this build lacks, which has no undo) was the changing process's
+ *  own, which a reset restores (as `loom settings history` marks it). */
 export function undoIsReset(c: SettingChange): boolean {
   return c.previous_source !== null && c.previous_source !== "override";
 }

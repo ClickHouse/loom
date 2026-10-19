@@ -75,7 +75,7 @@ describe("matching", () => {
     expect(parsed("rrf", { default: 3 })).toBe("rrf");
     expect(parsed("123", { default: "" })).toBe("123"); // a namespace named 123
   });
-  it("calls an undo a reset unless the value before was an override", () => {
+  it("calls an undo a reset unless the value before was an override, or there was none", () => {
     expect(undoIsReset(CHANGE)).toBe(true);
     expect(undoIsReset({ ...CHANGE, previous_source: "override" })).toBe(false);
     expect(undoIsReset({ ...CHANGE, previous_source: null })).toBe(false);

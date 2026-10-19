@@ -631,7 +631,8 @@ async def admin_settings_set(
 async def admin_settings_history(input: SettingsHistoryInput) -> SettingsHistoryOutput:
     """The recorded changes of one setting, or of every setting, newest first: who
     made each, the value before and after. Undo one by setting `previous` back when
-    `previous_source` is `override`, else by a reset."""
+    `previous_source` is `override`, by a reset when it is another source; a null one
+    (the reset of a setting this build lacks) has no undo."""
     from server.insights.app import settings_changes
 
     rows = await settings_changes.history(input.name, input.limit)

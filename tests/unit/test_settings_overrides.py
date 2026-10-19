@@ -316,13 +316,13 @@ def test_the_history_route_reads_the_recorded_changes(
         return _HISTORY
 
     monkeypatch.setattr(admin_repo, "setting_changes", setting_changes)
-    r = client.post("/v1/admin/settings.history", json={"name": LIVE, "limit": 5})
+    r = client.post("/v1/admin/settings.history", json={"name": "", "limit": 5})
     assert r.status_code == 200, r.text
     newer, older = r.json()["changes"]
     assert (newer["actor"], newer["previous"], newer["value"]) == ("cli:ops", 0.35, 0.4)
     assert newer["previous_source"] == "env"
     assert older["previous_source"] is None  # the reset of a retired setting's override
-    assert seen == [("setting.changed", LIVE, 5)]
+    assert seen == [("setting.changed", "", 5)]
 
 
 _HISTORY = [
@@ -368,7 +368,7 @@ def test_the_cli_history_says_when_an_undo_is_a_reset(
 
     monkeypatch.setattr(admin_repo, "setting_changes", setting_changes)
     monkeypatch.setattr(settings_cmd, "run_connected", lambda run: asyncio.run(run(None)))
-    args = argparse.Namespace(name=LIVE, limit=5, json=False)
+    args = argparse.Namespace(name="", limit=5, json=False)
     assert settings_cmd._cmd_history(args) == 0
     newer, older = capsys.readouterr().out.splitlines()
     assert "0.35 (undo: reset) → 0.4 (set)" in newer
@@ -418,3 +418,21 @@ def test_a_change_a_web_page_could_send_is_refused(
     r = client.post("/v1/admin/settings.set", json=body, headers={"sec-fetch-site": "cross-site"})
     assert r.status_code == 403
     assert stored == {} and audits == []
+
+
+async def test_resetting_a_retired_setting_is_audited_with_no_value_before(
+    stored: dict, audits: list
+) -> None:
+    from server.insights.app import settings_changes
+
+    stored[("retired_setting",)] = 3
+    assert await settings_changes.change("retired_setting", clear=True, actor="cli:ops") is None
+    ((event, kw),) = audits
+    assert event == "setting.changed" and (kw["org"], kw["namespace"]) == ("-", "-")
+    assert kw["subject"] == {
+        "name": "retired_setting",
+        "value": None,
+        "previous": None,
+        "previous_source": None,
+        "cleared": True,
+    }

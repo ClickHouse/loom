@@ -80,8 +80,9 @@ def _cmd_history(args: argparse.Namespace) -> int:
             return 0
         for c in changes:
             after = "reset" if c["cleared"] else "set"
-            # Only an override is the deployment's value to set back; anything else was
-            # the changing process's own, which a reset restores.
+            # Only an override is the deployment's value to set back; anything else but
+            # None (a retired setting's reset, with no undo) was the changing process's
+            # own, which a reset restores.
             was = "" if c["previous_source"] in ("override", None) else " (undo: reset)"
             print(
                 f"{c['ts']}  {c['actor']}  {c['name']}: {json.dumps(c['previous'])}{was} → "

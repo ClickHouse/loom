@@ -53,9 +53,13 @@ class DeploymentClient:
             body["expected"] = expected
         return await self._call("POST", "/v1/admin/settings.set", body)
 
-    async def reset_setting(self, name: str) -> dict[str, Any]:
-        """Remove the override: back to the environment's value or the default."""
-        return await self._call("POST", "/v1/admin/settings.set", {"name": name, "clear": True})
+    async def reset_setting(self, name: str, *, expected: Any = ...) -> dict[str, Any]:
+        """Remove the override: back to the environment's value or the default.
+        `expected`: change nothing (409) unless that is the value in force."""
+        body: dict[str, Any] = {"name": name, "clear": True}
+        if expected is not ...:
+            body["expected"] = expected
+        return await self._call("POST", "/v1/admin/settings.set", body)
 
     async def setting_history(self, name: str = "", limit: int = 50) -> dict[str, Any]:
         """Recorded changes of one setting ("" = all), newest first."""

@@ -2024,7 +2024,8 @@
           "expected_version"
         ],
         "reset_setting": [
-          "name"
+          "name",
+          "expected"
         ],
         "retry_models": [
           "config_id"

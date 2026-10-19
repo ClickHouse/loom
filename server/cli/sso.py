@@ -19,6 +19,16 @@ _ADOPT_HELP = (
 )
 
 
+def _duration(seconds: int) -> str:
+    """`1 day`, `6 h` or `45 min`: the largest whole unit."""
+    if seconds % 86400 == 0:
+        days = seconds // 86400
+        return f"{days} day" + ("s" if days != 1 else "")
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600} h"
+    return f"{seconds // 60} min"
+
+
 def register_sso_cli(sub: Any) -> None:
     p_sso = sub.add_parser("sso", help="Carry password accounts over to single sign-on.")
     sso = p_sso.add_subparsers(dest="subcommand", required=True)
@@ -179,7 +189,7 @@ def _cmd_password_link(args: argparse.Namespace) -> int:
             )
         print(f"{base}/oauth/set-password?code={code}")
         print(
-            f"  one use, for {settings.password_link_ttl_seconds // 60} min, while single "
+            f"  one use, for {_duration(settings.password_link_ttl_seconds)}, while single "
             "sign-on is off; sets the password of " + ", ".join(namespaces)
         )
         return 0
