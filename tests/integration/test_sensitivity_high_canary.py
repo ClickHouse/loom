@@ -190,6 +190,7 @@ def test_a_read_by_id_that_omits_a_high_value_serves_none_and_audits_none(
     assert r.status_code == 200 and r.json()["found"] is True, r.text
     out = r.json()
     assert out["sensitivity"] == "high" and out["value"] is None and out["content_sha256"] == ""
+    assert out["verification"] == "none"
     assert _CANARY_SECRET not in r.text
     r = _post(control_plane_url, token, "memory.get_by_id", by_id)
     assert _CANARY_SECRET in r.text
