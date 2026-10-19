@@ -707,8 +707,6 @@ class ClaimResult:
     won: bool
     fence: int
     owner: str
-    # The task has no lease row at all (ended, or its row was lost).
-    missing: bool = False
 
 
 class KeeperLeases:
@@ -777,7 +775,7 @@ class KeeperLeases:
             params={"tid": task_id},
         )
         if row is None:
-            return ClaimResult(False, int(expected_fence), "", missing=True)
+            return ClaimResult(False, int(expected_fence), "")
         won = row["owner"] == claimant and int(row["fence"]) == int(expected_fence) + 1
         return ClaimResult(won, int(row["fence"]), str(row["owner"]))
 

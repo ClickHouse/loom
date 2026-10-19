@@ -970,3 +970,68 @@ async def test_a_task_reopened_while_a_create_retry_drops_its_lease_row_is_still
         wire.TaskClaimInput(org=org, namespace="private", agent="bot", task_id=tid)
     )
     assert out.task.status == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_a_claim_racing_a_cancel_leaves_the_task_cancelled(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cancel dropped the lease row; a claim that read the task todo finds no row: it
+    loses, and once the cancel finishes the task is cancelled with no lease row."""
+    org = f"itest-cancel-{uuid.uuid4().hex[:8]}"
+    await inboxes.handle_inbox_register(
+        wire.InboxRegisterInput(
+            org=org,
+            namespace="private",
+            agent="admin",
+            inbox="bot",
+            owner_agent="bot",
+            accept_disclosure=["internal"],
+        )
+    )
+    first = await transitions.handle_task_create(
+        wire.TaskCreateInput(
+            org=org,
+            namespace="private",
+            agent="poster",
+            inbox="bot",
+            kind="chore",
+            title="t",
+            disclosure="internal",
+        )
+    )
+    tid = first.task.task_id
+    if first.task.status == "triage":
+        await transitions.handle_task_accept(
+            wire.TaskAcceptInput(org=org, namespace="private", agent="bot", task_id=tid)
+        )
+    backend = await repo.lease_backend()
+    await backend.delete(tid)  # the cancel's first drop
+    real_ensure = backend.ensure_row
+    cancelled = False
+
+    async def cancel() -> None:
+        nonlocal cancelled
+        cancelled = True
+        await transitions.handle_task_cancel(
+            wire.TaskReasonInput(org=org, namespace="private", agent="bot", task_id=tid, reason="x")
+        )
+
+    async def ensure(*a: Any, **k: Any) -> None:
+        # A claim that wrote a lease row back would do it here: the cancel finishes first.
+        monkeypatch.setattr(backend, "ensure_row", real_ensure)
+        await cancel()
+        await real_ensure(*a, **k)
+
+    monkeypatch.setattr(backend, "ensure_row", ensure)
+    with pytest.raises(Exception, match="TASK_ALREADY_CLAIMED"):
+        await transitions.handle_task_claim(
+            wire.TaskClaimInput(org=org, namespace="private", agent="bot", task_id=tid)
+        )
+    if not cancelled:  # the claim wrote no lease row: the cancel lands after it
+        await cancel()
+    assert (await repo.fetch_task(org, tid))["status"] == "cancelled"
+    leases = await ch.query_all(
+        "SELECT task_id FROM loom.task_leases WHERE task_id = {t:String}", params={"t": tid}
+    )
+    assert leases == []
