@@ -94,10 +94,12 @@ class AuthSettings(BaseModel):
     # password sign-in and self-signup, and requires `oauth_issuer` and the
     # three oidc_* values.
     oauth_login_provider: Literal["password", "oidc"] = "password"
-    # Lifetime of an OAuth access token, in seconds.
-    oauth_access_token_ttl_seconds: int = Field(default=3600, ge=60)
-    # Seconds a password set-up or reset link stays valid.
-    password_link_ttl_seconds: int = Field(default=86400, ge=300)
+    # Lifetime of an OAuth access token, in seconds. At most a day: the dashboard
+    # cannot refresh its token, and only a refresh asks the IdP whether the person is
+    # still active, so this bounds how long someone deactivated there keeps access.
+    oauth_access_token_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+    # Seconds a password set-up link stays valid, at most a week (it sets a password once).
+    password_link_ttl_seconds: int = Field(default=86400, ge=300, le=7 * 86400)
     # Seconds between passes of the always-on sweep that drops sign-in state
     # (loom.oauth_signin_state keys) past its credential's expiry.
     oauth_signin_state_sweep_interval_seconds: int = Field(default=300, ge=1)

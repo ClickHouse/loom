@@ -200,11 +200,12 @@ first applies pending migrations ([upgrades](./upgrades.md#how-migrations-run)).
   once at startup; a change needs a restart.
 - `.env` in the working directory is read by default. `LOOM_ENV_FILE` names another
   file; an empty value reads none. `.env.example` is the commented template.
-- Settings that are not secrets can also go in a YAML settings file, `loom.yaml` in the
-  working directory or the path `LOOM_SETTINGS_FILE` names (`loom.example.yaml` is the
-  template, `schemas/loom-settings.schema.json` its schema). The environment and `.env`
-  win over it. An unknown name, a secret or an unsupported `version` stops the server
-  at startup.
+- Settings that are not secrets can also go in a YAML settings file, the path
+  `LOOM_SETTINGS_FILE` names (`loom.example.yaml` is the template,
+  `schemas/loom-settings.schema.json` its schema). The environment and `.env` win over
+  it. A secret, a key given twice or an unsupported `version` stops the server at
+  startup; a name no setting has is logged and ignored, so a replica of the previous
+  build starts on a file that names a new setting.
 - The compose file's `environment:` wins over `.env`. `dev/docker-compose.dev.yml` pins
   the ClickHouse connection and `LOOM_SELF_SIGNUP=open`, so those lines in `.env` do
   nothing on the local stack. `compose.yaml` and `dev/docker-compose.cloud.yml` take

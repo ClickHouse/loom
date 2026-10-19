@@ -133,12 +133,12 @@ class ExtractionSettings(BaseModel):
     # Seconds between deferred-extraction queue passes.
     extraction_queue_interval_seconds: int = 15
     # Most queued batches one pass claims.
-    extraction_queue_max_batches_per_pass: Annotated[int, LIVE] = Field(default=8, ge=1)
+    extraction_queue_max_batches_per_pass: Annotated[int, LIVE] = Field(default=8, ge=0)
     # Seconds a claimed batch stays leased to one worker before another may claim it;
     # at least a minute, so a batch still replaying is not claimed twice.
     extraction_queue_lease_seconds: Annotated[int, LIVE] = Field(default=600, ge=60)
     # Attempts before a failing batch stops returning to `pending` and is marked failed.
-    extraction_queue_max_attempts: Annotated[int, LIVE] = Field(default=3, ge=1)
+    extraction_queue_max_attempts: Annotated[int, LIVE] = Field(default=3, ge=0)
     # Namespaces replayed concurrently per pass; batches inside one namespace
-    # stay serial in session-date order.
+    # stay serial in session-date order. At least 1: none would hang the pass.
     extraction_queue_namespace_concurrency: Annotated[int, LIVE] = Field(default=4, ge=1)

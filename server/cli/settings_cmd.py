@@ -80,8 +80,11 @@ def _cmd_history(args: argparse.Namespace) -> int:
             return 0
         for c in changes:
             after = "reset" if c["cleared"] else "set"
+            # Only an override is the deployment's value to set back; anything else was
+            # the changing process's own, which a reset restores.
+            was = "" if c["previous_source"] in ("override", None) else " (undo: reset)"
             print(
-                f"{c['ts']}  {c['actor']}  {c['name']}: {json.dumps(c['previous'])} → "
+                f"{c['ts']}  {c['actor']}  {c['name']}: {json.dumps(c['previous'])}{was} → "
                 f"{json.dumps(c['value'])} ({after})"
             )
         return 0
@@ -96,7 +99,9 @@ def register_settings_cli(sub: Any) -> None:
     ssub = p.add_subparsers(dest="settings_cmd", required=True)
     ls = ssub.add_parser("list", help="Each setting: value, where it came from, whether live.")
     ls.add_argument("--prefix", default="", help="Only the settings whose name starts with this")
-    ls.add_argument("--changed", action="store_true", help="Only the ones not at their default")
+    ls.add_argument(
+        "--changed", action="store_true", help="Only the ones off their default or overridden"
+    )
     ls.add_argument("--json", action="store_true", help="One JSON array")
     ls.set_defaults(func=_cmd_list)
     expect = "Change nothing unless this is the value in force (written as for set)"

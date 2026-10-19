@@ -309,7 +309,7 @@ async def run_bounded(
     got = 0
     truncated = False
     try:
-        async with asyncio.timeout(timeout_s or settings.code_git_timeout_s):
+        async with asyncio.timeout(settings.code_git_timeout_s if timeout_s is None else timeout_s):
             while True:
                 piece = await proc.stdout.read(65536)
                 if not piece:

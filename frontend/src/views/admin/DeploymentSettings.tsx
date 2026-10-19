@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -27,7 +27,7 @@ import { TableSkeleton } from "../../components/Skeleton";
 import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { PageContainer } from "../../layout/PageContainer";
-import { PageHeader } from "../../components/ui";
+import { PageHeader, SectionHeading } from "../../components/ui";
 
 const SOURCE_LABEL: Record<SettingRow["source"], string> = {
   override: "Override",
@@ -44,9 +44,11 @@ export function shown(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
-/** What the edit field holds, as the server takes it: JSON when it parses, else the text,
+/** What the edit field holds, as the server takes it: the text for a string setting
+ *  (a namespace named `123` stays a string), else JSON when it parses, else the text,
  *  which the setting validates as its environment variable. */
-export function parsed(text: string): unknown {
+export function parsed(text: string, row: Pick<SettingRow, "default">): unknown {
+  if (typeof row.default === "string") return text;
   try {
     return JSON.parse(text);
   } catch {
@@ -54,12 +56,18 @@ export function parsed(text: string): unknown {
   }
 }
 
+/** Off its default or overridden, as `settings.list changed` and `loom settings list
+ *  --changed` mean it. */
+export function changed(r: SettingRow): boolean {
+  return r.source === "override" || shown(r.value) !== shown(r.default);
+}
+
 /** The settings a search keeps: by name or by what the description says. */
 export function matching(rows: SettingRow[], query: string, changedOnly: boolean, liveOnly: boolean): SettingRow[] {
   const q = query.trim().toLowerCase();
   return rows.filter(
     (r) =>
-      (!changedOnly || r.source !== "default") &&
+      (!changedOnly || changed(r)) &&
       (!liveOnly || r.live) &&
       (!q || r.name.includes(q) || r.description.toLowerCase().includes(q)),
   );
@@ -213,17 +221,35 @@ export function DeploymentSettings() {
 
 const HEADERS = [{ label: "Setting" }, { label: "Value" }, { label: "Source" }, { label: "" }];
 
+/** The id of a row's control, so focus can land on it once it renders. */
+const controlId = (kind: "change" | "value", name: string) => `setting-${kind}-${name}`;
+
 function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () => void }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  // The control that takes focus once it renders: the edit field when Change opens it,
+  // the row's Change button when Save, Cancel or Reset takes the focused one away.
+  const [focusNext, setFocusNext] = useState<string | null>(null);
+  useEffect(() => {
+    if (!focusNext) return;
+    const el = document.getElementById(focusNext);
+    if (el) {
+      el.focus();
+      setFocusNext(null);
+    }
+  });
+  const close = (name: string) => {
+    setEditing(null);
+    setFocusNext(controlId("change", name));
+  };
 
   const save = async (row: SettingRow) => {
     setBusy(true);
     try {
-      const after = await adminSettingSet(row.name, parsed(draft), row.value);
+      const after = await adminSettingSet(row.name, parsed(draft, row), row.value);
       toast(`${row.name} is ${shown(after.value)} on every replica within seconds`, "ok");
-      setEditing(null);
+      close(row.name);
       onChanged();
     } catch (e) {
       toast(`${row.name} not changed: ${humanizeError(e)}`, "error");
@@ -242,6 +268,7 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
       return;
     try {
       await adminSettingReset(row.name, row.value);
+      setFocusNext(controlId("change", row.name));
       onChanged();
     } catch (e) {
       toast(`${row.name} not reset: ${humanizeError(e)}`, "error");
@@ -275,6 +302,7 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
             label:
               editing === r.name ? (
                 <TextField
+                  id={controlId("value", r.name)}
                   aria-label={`New value for ${r.name}`}
                   value={draft}
                   onChange={(v) => setDraft(v)}
@@ -297,19 +325,21 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
                 <Button type="primary" htmlType="button" loading={busy} onClick={() => void save(r)}>
                   Save
                 </Button>
-                <Button type="secondary" htmlType="button" onClick={() => setEditing(null)}>
+                <Button type="secondary" htmlType="button" onClick={() => close(r.name)}>
                   Cancel
                 </Button>
               </div>
             ) : (
               <div className="flex gap-2">
                 <Button
+                  id={controlId("change", r.name)}
                   type="secondary"
                   htmlType="button"
                   aria-label={`Change ${r.name}`}
                   onClick={() => {
                     setEditing(r.name);
                     setDraft(shown(r.value));
+                    setFocusNext(controlId("value", r.name));
                   }}
                 >
                   Change
@@ -338,7 +368,7 @@ const CHANGE_HEADERS = [{ label: "When" }, { label: "Who" }, { label: "Setting" 
 function RecentChanges({ changes }: { changes: SettingChange[] }) {
   return (
     <section className="mt-8">
-      <h2 className="mb-3">Recent changes</h2>
+      <SectionHeading label="Recent changes" />
       <Table
         aria-label="Recent setting changes"
         size="sm"

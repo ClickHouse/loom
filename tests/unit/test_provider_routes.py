@@ -19,13 +19,14 @@ from server.insights.app import provider_routes as routes
 from server.insights.app import provider_runtime as runtime
 from server.insights.domain.provider_rebuild import REBUILD_TABLES
 from server.operations.base import Role
+from server.settings import settings
 
 
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(runtime, "_environment_settings", None)
     runtime.environment_settings()
-    monkeypatch.setattr(type(routes.settings), "auth_actually_required", lambda _: False)
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda _: False)
     monkeypatch.setattr(routes, "require_admin", AsyncMock(return_value=None))
     monkeypatch.setattr(routes, "_existing_keys", AsyncMock(return_value={}))
     monkeypatch.setattr(routes, "configurations", AsyncMock(return_value=[]))
@@ -171,8 +172,8 @@ def test_status_uses_committed_models_before_replica_refresh(client, monkeypatch
         AsyncMock(return_value=[{"state": "active", "version": 123, "envelope": "encrypted"}]),
     )
     monkeypatch.setenv("OPENAI_API_KEY", "environment-embedding-key")
-    monkeypatch.setattr(routes.settings, "llm_model", "stale-local-model")
-    monkeypatch.setattr(routes.settings, "embedding_model", "stale-local-embedding")
+    monkeypatch.setattr(settings, "llm_model", "stale-local-model")
+    monkeypatch.setattr(settings, "embedding_model", "stale-local-embedding")
     response = client.get("/v1/admin/models")
     assert response.status_code == 200
     body = response.json()

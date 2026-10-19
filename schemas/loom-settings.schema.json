@@ -1998,13 +1998,13 @@
         },
         "extraction_queue_max_attempts": {
           "default": 3,
-          "minimum": 1,
+          "minimum": 0,
           "type": "integer",
           "description": "Attempts before a failing batch stops returning to `pending` and is marked failed."
         },
         "extraction_queue_max_batches_per_pass": {
           "default": 8,
-          "minimum": 1,
+          "minimum": 0,
           "type": "integer",
           "description": "Most queued batches one pass claims."
         },
@@ -2012,7 +2012,7 @@
           "default": 4,
           "minimum": 1,
           "type": "integer",
-          "description": "Namespaces replayed concurrently per pass; batches inside one namespace stay serial in session-date order."
+          "description": "Namespaces replayed concurrently per pass; batches inside one namespace stay serial in session-date order. At least 1: none would hang the pass."
         },
         "facts_traverse_hub_share": {
           "default": 0.01,
@@ -3595,9 +3595,10 @@
         },
         "oauth_access_token_ttl_seconds": {
           "default": 3600,
+          "maximum": 86400,
           "minimum": 60,
           "type": "integer",
-          "description": "Lifetime of an OAuth access token, in seconds."
+          "description": "Lifetime of an OAuth access token, in seconds. At most a day: the dashboard cannot refresh its token, and only a refresh asks the IdP whether the person is still active, so this bounds how long someone deactivated there keeps access."
         },
         "oauth_enabled": {
           "default": false,
@@ -3837,9 +3838,10 @@
         },
         "password_link_ttl_seconds": {
           "default": 86400,
+          "maximum": 604800,
           "minimum": 300,
           "type": "integer",
-          "description": "Seconds a password set-up or reset link stays valid."
+          "description": "Seconds a password set-up link stays valid, at most a week (it sets a password once)."
         },
         "platform_admins": {
           "default": "",

@@ -1,5 +1,6 @@
-"""The YAML settings file: below the dotenv file and the environment, above the
-defaults, and read strictly (an unknown name, a secret or another version refuses)."""
+"""The YAML settings file LOOM_SETTINGS_FILE names: below the dotenv file and the
+environment, above the defaults. A secret, a duplicate key or another version refuses;
+a name no setting has is logged and ignored (N-1 and N share the file in a rollout)."""
 
 from __future__ import annotations
 
@@ -52,7 +53,6 @@ def test_the_file_sets_a_value_and_the_dotenv_file_and_environment_win(
 @pytest.mark.parametrize(
     ("text", "names"),
     [
-        ("version: 1\nsettings:\n  memory_ask_recency_wieght: 0.4\n", "memory_ask_recency_wieght"),
         ("version: 1\nsettings:\n  jwt_secret: x\n", "jwt_secret is a secret"),
         ("version: 2\nsettings: {}\n", "version 2 is not supported"),
         ("settings: {}\n", "version None is not supported"),
@@ -96,18 +96,30 @@ def test_a_named_file_that_does_not_exist_refuses(
         Settings(_env_file=None)  # type: ignore[call-arg]
 
 
-def test_empty_reads_no_file_and_an_absent_default_is_fine(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_only_a_named_file_is_read(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # A `loom.yaml` where the CLI happens to run is not the server's.
     (tmp_path / "loom.yaml").write_text("version: 1\nsettings:\n  memory_ask_recency_weight: 0.9\n")
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("LOOM_MEMORY_ASK_RECENCY_WEIGHT", raising=False)
+    monkeypatch.delenv("LOOM_SETTINGS_FILE", raising=False)
+    assert Settings(_env_file=None).memory_ask_recency_weight == 0.2  # type: ignore[call-arg]
     monkeypatch.setenv("LOOM_SETTINGS_FILE", "")
     assert Settings(_env_file=None).memory_ask_recency_weight == 0.2  # type: ignore[call-arg]
-    monkeypatch.delenv("LOOM_SETTINGS_FILE")
+    monkeypatch.setenv("LOOM_SETTINGS_FILE", "loom.yaml")
     assert Settings(_env_file=None).memory_ask_recency_weight == 0.9  # type: ignore[call-arg]
-    monkeypatch.chdir(ROOT)  # no loom.yaml here
-    assert Settings(_env_file=None).memory_ask_recency_weight == 0.2  # type: ignore[call-arg]
+
+
+def test_a_name_no_setting_has_is_logged_and_the_rest_apply(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.delenv("LOOM_MEMORY_ASK_RECENCY_WEIGHT", raising=False)
+    s = _load(
+        monkeypatch,
+        tmp_path,
+        "version: 1\nsettings:\n  a_setting_of_a_newer_build: 1\n  memory_ask_recency_weight: 0.4\n",
+    )
+    assert s.memory_ask_recency_weight == 0.4
+    assert "no setting is named a_setting_of_a_newer_build" in caplog.text
 
 
 def test_the_example_file_loads(monkeypatch: pytest.MonkeyPatch) -> None:

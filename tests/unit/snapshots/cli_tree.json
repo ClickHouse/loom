@@ -4801,7 +4801,7 @@
            "nargs": 0,
            "type": null,
            "required": false,
-           "help": "Only the ones not at their default",
+           "help": "Only the ones off their default or overridden",
            "metavar": null
           },
           {
@@ -8996,7 +8996,7 @@
         },
         {
          "dest": "password-link",
-         "help": "Print a one-time link (a day) that sets the password of an email's SSO accounts, for after single sign-on is turned off.",
+         "help": "Print a one-time link (valid for LOOM_PASSWORD_LINK_TTL_SECONDS, a day by default) that sets the password of an email's SSO accounts, for after single sign-on is turned off.",
          "metavar": "password-link"
         }
        ]

@@ -5,8 +5,8 @@ Every setting is an environment variable `LOOM_<FIELD>` read at startup into
 `.env.example` lists the common ones. `LOOM_ENV_FILE` names a different dotenv file,
 and empty reads none.
 
-The same settings, named in lowercase, can go in a YAML settings file: `loom.yaml` in
-the working directory, or the path `LOOM_SETTINGS_FILE` names (empty reads none).
+The same settings, named in lowercase, can go in a YAML settings file, read when
+`LOOM_SETTINGS_FILE` names it.
 
 ```yaml
 # yaml-language-server: $schema=schemas/loom-settings.schema.json
@@ -16,9 +16,10 @@ settings:
 ```
 
 A value comes from the first of: the environment, the dotenv file, the settings file,
-the default. The file is read strictly: an unknown name, a secret (keep those in the
-environment or a secrets manager) or a `version` this build does not read stops the
-server at startup. `schemas/loom-settings.schema.json` is the file's JSON Schema
+the default. A secret (keep those in the environment or a secrets manager), a key
+given twice or a `version` this build does not read stops the server at startup; a name
+no setting has is logged and ignored, since builds N-1 and N share the file during a
+rolling upgrade. `schemas/loom-settings.schema.json` is the file's JSON Schema
 (`python scripts/codegen/settings_schema.py`), and `loom.example.yaml` a template.
 
 A setting marked **live** also takes a deployment-wide override while Loom runs, which
@@ -53,8 +54,8 @@ Source: `server/settings/_auth.py`
 | `LOOM_OAUTH_ENABLED` | `bool` | `False` |  | MCP one-click connect: dynamic client registration and /oauth/authorize on top of the sign-in routes (device grant, token, revoke) every auth-on deployment serves. Opt-in: anyone can register a client. |
 | `LOOM_OAUTH_ISSUER` | `str` | `''` |  | Public base URL used in OAuth discovery and redirects; empty derives it from each request. Required when `oauth_login_provider` is "oidc" (the IdP callback URL is built from it). |
 | `LOOM_OAUTH_LOGIN_PROVIDER` | `'password' \| 'oidc'` | `'password'` |  | How people sign in (dashboard, `loom login`, MCP connect): "password" (Loom's own form) or "oidc" (the external IdP; loom maps the verified email to an account and still mints its own token). "oidc" closes password sign-in and self-signup, and requires `oauth_issuer` and the three oidc_* values. |
-| `LOOM_OAUTH_ACCESS_TOKEN_TTL_SECONDS` | `int` | `3600` |  | Lifetime of an OAuth access token, in seconds. |
-| `LOOM_PASSWORD_LINK_TTL_SECONDS` | `int` | `86400` |  | Seconds a password set-up or reset link stays valid. |
+| `LOOM_OAUTH_ACCESS_TOKEN_TTL_SECONDS` | `int` | `3600` |  | Lifetime of an OAuth access token, in seconds. At most a day: the dashboard cannot refresh its token, and only a refresh asks the IdP whether the person is still active, so this bounds how long someone deactivated there keeps access. |
+| `LOOM_PASSWORD_LINK_TTL_SECONDS` | `int` | `86400` |  | Seconds a password set-up link stays valid, at most a week (it sets a password once). |
 | `LOOM_OAUTH_SIGNIN_STATE_SWEEP_INTERVAL_SECONDS` | `int` | `300` |  | Seconds between passes of the always-on sweep that drops sign-in state (loom.oauth_signin_state keys) past its credential's expiry. |
 | `LOOM_OIDC_ISSUER` | `str` | `''` |  | External IdP issuer URL; its `/.well-known/openid-configuration` must name the same issuer. |
 | `LOOM_OIDC_CLIENT_ID` | `str` | `''` |  | Client id registered at the IdP; also the audience each id_token must carry. |
@@ -572,7 +573,7 @@ Source: `server/settings/_extraction.py`
 | `LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS` | `int` | `8` | live | Most queued batches one pass claims. |
 | `LOOM_EXTRACTION_QUEUE_LEASE_SECONDS` | `int` | `600` | live | Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute, so a batch still replaying is not claimed twice. |
 | `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `int` | `3` | live | Attempts before a failing batch stops returning to `pending` and is marked failed. |
-| `LOOM_EXTRACTION_QUEUE_NAMESPACE_CONCURRENCY` | `int` | `4` | live | Namespaces replayed concurrently per pass; batches inside one namespace stay serial in session-date order. |
+| `LOOM_EXTRACTION_QUEUE_NAMESPACE_CONCURRENCY` | `int` | `4` | live | Namespaces replayed concurrently per pass; batches inside one namespace stay serial in session-date order. At least 1: none would hang the pass. |
 
 ## Knowledge
 

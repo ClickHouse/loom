@@ -5,7 +5,9 @@ timeout, an interval, a limit, a batch, a budget) and whose value is a number is
 an operator's knob hidden from the configuration reference and from `loom
 settings`. The ones that predate this rule are listed in
 tests/unit/tunable_constants.txt. The list only shrinks: a new one goes into
-`server/settings/` instead, and one moved there leaves the list.
+`server/settings/` instead, and one moved there leaves the list. A number that must
+not be a knob (another value is derived from it, or changing it breaks what is stored)
+says so on its line: `# not a setting: <reason>`.
 """
 
 from __future__ import annotations
@@ -31,9 +33,11 @@ def _numeric(node: ast.AST) -> bool:
     return False
 
 
-def _constants(tree: ast.Module) -> list[str]:
+def _constants(tree: ast.Module, lines: list[str] | None = None) -> list[str]:
     out = []
     for stmt in tree.body:
+        if lines and "# not a setting: " in lines[stmt.lineno - 1]:
+            continue
         targets: list[ast.expr] = []
         if isinstance(stmt, ast.Assign):
             targets, value = stmt.targets, stmt.value
@@ -58,7 +62,8 @@ def _found() -> set[str]:
         rel = path.relative_to(ROOT).as_posix()
         if rel.startswith("server/settings/"):
             continue
-        for name in _constants(ast.parse(path.read_text(encoding="utf-8"))):
+        src = path.read_text(encoding="utf-8")
+        for name in _constants(ast.parse(src), src.splitlines()):
             found.add(f"{rel}::{name}")
     return found
 
@@ -82,5 +87,8 @@ def test_the_list_only_names_constants_that_exist() -> None:
 
 
 def test_the_walk_sees_a_tunable_number() -> None:
-    src = "A_TTL = 60\n_FETCH_TIMEOUT_S = 2 * 60.0\nNAME = 'x'\nMAX_ROWS: int = 5\nFLAG = True\n"
-    assert _constants(ast.parse(src)) == ["A_TTL", "_FETCH_TIMEOUT_S", "MAX_ROWS"]
+    src = (
+        "A_TTL = 60\n_FETCH_TIMEOUT_S = 2 * 60.0\nNAME = 'x'\nMAX_ROWS: int = 5\nFLAG = True\n"
+        "B_TTL = 9  # not a setting: tokens issued under it read it back\n"
+    )
+    assert _constants(ast.parse(src), src.splitlines()) == ["A_TTL", "_FETCH_TIMEOUT_S", "MAX_ROWS"]

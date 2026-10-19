@@ -31,7 +31,6 @@ server/auth/oauth.py::_MAX_REDIRECT_URIS
 server/auth/oauth.py::_MAX_URI_CHARS
 server/auth/oauth.py::_PUT_BACK_S
 server/auth/oauth.py::_REFRESH_DEADLINE_S
-server/auth/oauth.py::_REFRESH_TTL
 server/auth/oauth_store.py::PENDING_TTL
 server/auth/oauth_store.py::_ABANDONED_S
 server/auth/oidc.py::_DISCOVERY_TTL

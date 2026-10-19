@@ -59,8 +59,9 @@ def register_sso_cli(sub: Any) -> None:
     p_unlink.set_defaults(func=_cmd_unlink)
     p_password_link = sso.add_parser(
         "password-link",
-        help="Print a one-time link (a day) that sets the password of an email's SSO "
-        "accounts, for after single sign-on is turned off.",
+        help="Print a one-time link (valid for LOOM_PASSWORD_LINK_TTL_SECONDS, a day by "
+        "default) that sets the password of an email's SSO accounts, for after single "
+        "sign-on is turned off.",
     )
     p_password_link.add_argument("--email", required=True)
     p_password_link.add_argument(
@@ -178,8 +179,8 @@ def _cmd_password_link(args: argparse.Namespace) -> int:
             )
         print(f"{base}/oauth/set-password?code={code}")
         print(
-            "  one use, for a day, while single sign-on is off; sets the password of "
-            + ", ".join(namespaces)
+            f"  one use, for {settings.password_link_ttl_seconds // 3600} h, while single "
+            "sign-on is off; sets the password of " + ", ".join(namespaces)
         )
         return 0
 

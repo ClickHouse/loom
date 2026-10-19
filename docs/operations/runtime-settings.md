@@ -31,7 +31,7 @@ ch_host = "clickhouse"  (env)
 | `dashboard`     | the model configuration saved in Settings → Models & keys                                |
 | `env`           | the process environment                                                                  |
 | `env_file`      | the dotenv file (`LOOM_ENV_FILE`, default `.env`), also when copied into the environment |
-| `settings_file` | the YAML settings file (`LOOM_SETTINGS_FILE`, default `loom.yaml`)                       |
+| `settings_file` | the YAML settings file (`LOOM_SETTINGS_FILE`)                                            |
 | `inferred`      | filled in at startup from other settings (the LLM provider, a local model's width)       |
 | `default`       | the built-in default                                                                     |
 
@@ -55,8 +55,9 @@ removes the override of a setting a later build no longer has. Each change write
 `setting.changed` audit row with the value before and after.
 
 `--expect <value>` (`expected` over HTTP) changes nothing unless that is the value in
-force, and answers `409 PRECONDITION_FAILED` with the value it found: two operators
-tuning one setting do not overwrite each other unseen.
+force after a fresh read of the stored overrides, and answers `409 PRECONDITION_FAILED`
+with the value it found: a change made since through another replica or the CLI is not
+overwritten unseen. Two changes sent in the same instant can still both pass.
 
 ## See and undo past changes
 
@@ -66,8 +67,10 @@ loom settings history --limit 20      # every setting
 ```
 
 Each line is one recorded change, newest first: when, who (`cli:<user>` or the token
-subject) and the value before and after. To undo one, set `previous` back with
-`loom settings set`, or reset the setting when `previous` was its own value.
+subject) and the value before and after. A value before that was an override is the
+deployment's: undo by setting it back with `loom settings set`. Any other was the value
+on the process that made the change (its environment or a default), marked
+`(undo: reset)`: undo with `loom settings reset`, which puts back each replica's own.
 
 An override is the deployment's default, so what a namespace or a request sets still wins
 over it: a namespace's `retrieval_defaults` (`top_k`, `min_similarity`,
@@ -92,6 +95,8 @@ has `agent.deployment.settings()`, `set_setting(name, value, expected=...)`,
 ## During a rolling upgrade
 
 A build that does not have a setting, or does not read it live, logs the stored override
-once and ignores it; the other processes keep applying it. Ranking settings change what
+once and ignores it; the other processes keep applying it. A build from before runtime
+settings existed ignores the stored overrides without a word, so while one still serves,
+an override applies on the newer replicas only. Ranking settings change what
 `memory.search` returns: measure a change with a benchmark before you keep it
 ([running a benchmark](../benchmarks/running.md)).

@@ -11,6 +11,7 @@ import asyncio
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -602,6 +603,7 @@ async def admin_settings_list(input: SettingsListInput) -> SettingsListOutput:
 
 @admin_router.post("/v1/admin/settings.set")
 async def admin_settings_set(
+    request: Request,
     input: SettingSetInput,
     # The router's own gate, cached for the request: the token is verified once.
     info: Annotated[Any, Depends(require_admin)],
@@ -614,6 +616,7 @@ async def admin_settings_set(
     from server.insights.app import settings_changes
 
     set_query_tag("admin.settings_set")
+    refuse_browser_reach(request, "setting changes")
     row = await settings_changes.change(
         input.name,
         input.value,
@@ -949,6 +952,25 @@ async def admin_token_mint(
             "ignored_args": ignored,
         }
     )
+
+
+def refuse_browser_reach(request: Request, what: str) -> None:
+    """Refuse a write a web page could send from the operator's browser: with auth
+    off, a Host that is not loopback (DNS rebinding of a keyless local install); always,
+    a cross-site Origin or Sec-Fetch-Site."""
+    if not settings.auth_actually_required() and request.url.hostname not in (
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    ):
+        raise HTTPException(403, f"Enable authentication for remote {what}")
+    origin = request.headers.get("origin")
+    if origin:
+        parsed = urlsplit(origin)
+        if (parsed.scheme, parsed.netloc) != (request.url.scheme, request.url.netloc):
+            raise HTTPException(403, f"Cross-origin {what} is not allowed")
+    if request.headers.get("sec-fetch-site", "none") not in ("same-origin", "none"):
+        raise HTTPException(403, f"Cross-origin {what} is not allowed")
 
 
 def refuse_foreign_org(info: AuthInfo | None, org: str, action: str) -> None:

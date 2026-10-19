@@ -66,10 +66,16 @@ describe("matching", () => {
     ]);
     expect(matching(ROWS, "synthesis", false, false).map((r) => r.name)).toEqual(["memory_ask_recency_weight"]);
   });
-  it("reads an edit as JSON when it parses, else as text", () => {
-    expect(parsed("0.4")).toBe(0.4);
-    expect(parsed("true")).toBe(true);
-    expect(parsed("rrf")).toBe("rrf");
+  it("reads an edit as JSON when it parses, else as text, and a string setting as text", () => {
+    expect(parsed("0.4", { default: 0.2 })).toBe(0.4);
+    expect(parsed("true", { default: false })).toBe(true);
+    expect(parsed("rrf", { default: 3 })).toBe("rrf");
+    expect(parsed("123", { default: "" })).toBe("123"); // a namespace named 123
+  });
+  it("counts an override at the default as changed, as the server does", () => {
+    const at = row({ value: 0.2, default: 0.2, source: "override" });
+    expect(matching([at], "", true, false)).toEqual([at]);
+    expect(matching([row({ value: 0.2, default: 0.2, source: "env" })], "", true, false)).toEqual([]);
   });
 });
 
@@ -93,6 +99,18 @@ describe("DeploymentSettings", () => {
     });
     expect(api.adminSettingSet).toHaveBeenCalledWith("memory_ask_recency_weight", 0.4, 0.35);
     await waitFor(() => expect(api.adminSettingsList).toHaveBeenCalledTimes(2));
+  });
+
+  it("moves focus to the field it opens and back to Change when it closes", async () => {
+    render(<DeploymentSettings />);
+    fireEvent.click(await screen.findByRole("button", { name: "Change memory_ask_recency_weight" }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByLabelText("New value for memory_ask_recency_weight")),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Change memory_ask_recency_weight" })),
+    );
   });
 
   it("tells a caller without a platform admin claim, and reads nothing", () => {

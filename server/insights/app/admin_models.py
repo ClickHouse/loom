@@ -81,7 +81,7 @@ class RatelimitSetInput(BaseModel):
 class SettingsListInput(BaseModel):
     # Only the settings whose field name starts with this.
     prefix: str = Field(default="", max_length=128)
-    # Only the settings whose value in force is not the default.
+    # Only the settings off their default or overridden.
     changed: bool = False
 
 
@@ -93,8 +93,9 @@ class SettingSetInput(BaseModel):
     # JSON, validated as the setting validates its environment value.
     value: Any = None
     clear: bool = False
-    # Refuse (409 PRECONDITION_FAILED) unless this is the value in force, so a
-    # change made meanwhile through another replica or the CLI is not overwritten.
+    # Refuse (409 PRECONDITION_FAILED) unless this is the value in force after a fresh
+    # read of the stored overrides, so a change made since through another replica or
+    # the CLI is not overwritten (two in the same instant can still both pass).
     expected: Any = None
 
     @model_validator(mode="after")
@@ -350,6 +351,9 @@ class SettingChange(BaseModel):
     name: str
     value: Any
     previous: Any
+    # `override`: undo by setting `previous` back. Anything else (env, default, …) was
+    # the value on the process that made the change: undo with a reset.
+    previous_source: str | None = None
     cleared: bool
 
 

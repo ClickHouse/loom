@@ -78,16 +78,19 @@ async def change(
     clear: bool = False,
     expected: Any = NOT_GIVEN,
     ch: _CHClient | None = None,
-) -> tuple[Any, dict[str, Any] | None]:
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Store (or, with `clear`, remove) the override of `name` and apply it here.
-    Returns the value in force before and the `row()` after, None for a field this
-    build does not have. Stored first: a failed write changes no process. Clearing
-    takes any name with a stored override, a field since removed included, and
-    refuses one with none. `expected`: refuse unless that is the value in force,
-    so two operators changing one setting do not overwrite each other unseen."""
+    Returns the `row()` before and after, None for a field this build does not
+    have. Stored first: a failed write changes no process. Clearing takes any name
+    with a stored override, a field since removed included, and refuses one with none.
+    `expected`: refuse unless that is the value in force after a fresh read of the
+    table, so a change made since through another replica or the CLI is not
+    overwritten unseen; two changes in the same instant can still both pass (the
+    table has no conditional write)."""
     snapshot = await refresh(ch=ch)
     known = name in Settings.model_fields
-    previous = row(name)["value"] if known else None
+    before = row(name) if known else None
+    previous = before["value"] if before else None
     if expected is not NOT_GIVEN and known:
         try:
             matches = coerce(Settings, name, expected) == getattr(settings, name)
@@ -107,7 +110,7 @@ async def change(
         checked = check(name, value)
         await ro.put(KIND, (name,), to_json(Settings, name, checked), ch=ch)
         _apply(name, checked)
-    return previous, row(name) if known else None
+    return before, row(name) if known else None
 
 
 def adopt(snapshot: ro.Snapshot) -> None:
@@ -186,7 +189,7 @@ def _shown(name: str, value: Any) -> Any:
 def rows(*, prefix: str = "", changed: bool = False) -> list[dict[str, Any]]:
     """Every setting whose name starts with `prefix`: its value in force, its
     default, where the value came from and whether it takes an override.
-    `changed` keeps the ones whose value is not the default."""
+    `changed` keeps the ones off their default or overridden."""
     from server.settings._describe import descriptions
 
     about = descriptions(Settings)
@@ -197,7 +200,7 @@ def rows(*, prefix: str = "", changed: bool = False) -> list[dict[str, Any]]:
             continue
         value = getattr(settings, name)
         default = field.get_default(call_default_factory=True)
-        if changed and value == default:
+        if changed and value == default and sources[name] != "override":
             continue
         out.append(
             {

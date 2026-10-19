@@ -59,7 +59,9 @@ settingsFile:
 ```
 
 The chart mounts it at `/app/config/loom.yaml` on every pod and rolls the pods when it
-changes; `env` wins over it. A live setting can also change without a rollout
+changes; `env` wins over it. Every pod of a rollout reads the one file, and a pod of the
+previous build logs a setting it does not have and ignores it, so a new setting can go in
+the same upgrade. A live setting can also change without a rollout
 ([runtime settings](./runtime-settings.md)). `values.yaml` documents the chart's own values.
 
 ### On a laptop

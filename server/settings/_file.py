@@ -1,16 +1,18 @@
 """The YAML settings file: `version: 1` and a flat `settings:` mapping of field
 names (the `LOOM_<FIELD>` names, lowercase) to values.
 
-It ranks below the dotenv file and the environment, above the defaults. Unlike
-the environment, whose unknown `LOOM_*` names are only logged, the file is read
-strictly: an unknown name, a secret or an unsupported version refuses to start,
-since a file is written on purpose and a typo in it must not pass silently.
-Secrets stay in the environment or a secrets manager, never in a file that is
-committed. `schemas/loom-settings.schema.json` describes the file for editors.
+Read only when LOOM_SETTINGS_FILE names it. It ranks below the dotenv file and the
+environment, above the defaults. A secret, a key given twice, an unsupported
+version or a value of the wrong type refuses to start. A name no setting has is
+logged and ignored, as an unknown `LOOM_*` variable is: builds N-1 and N share one
+file during a rolling upgrade. Secrets stay in the environment or a secrets
+manager, never in a file that is committed. `schemas/loom-settings.schema.json`
+describes the file for editors, which catches a misspelt name there.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -19,6 +21,8 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from server.core.env_file import settings_file_path
 from server.settings._env import is_secret_field
+
+log = logging.getLogger(__name__)
 
 VERSIONS = (1,)
 
@@ -73,16 +77,18 @@ def read_settings_file(path: str, fields: set[str]) -> dict[str, Any]:
     values = doc.get("settings") or {}
     if not isinstance(values, dict):
         raise SettingsFileError(f"{path}: `settings` must be a mapping of setting names")
+    # Logged, not refused: builds N-1 and N read one file during a rolling upgrade,
+    # and a setting only N has is unknown to N-1. The schema catches a typo in an editor.
     unknown = sorted(str(k) for k in values if k not in fields)
     if unknown:
-        raise SettingsFileError(f"{path}: no setting is named {', '.join(unknown)}")
+        log.warning("%s: no setting is named %s; ignored", path, ", ".join(unknown))
     secrets = sorted(str(k) for k in values if is_secret_field(str(k)))
     if secrets:
         raise SettingsFileError(
             f"{path}: {', '.join(secrets)} is a secret: set it in the environment "
             "(LOOM_<NAME>) or a secrets manager, not in the settings file"
         )
-    return dict(values)
+    return {k: v for k, v in values.items() if k in fields}
 
 
 class SettingsFileSource(PydanticBaseSettingsSource):
@@ -90,14 +96,12 @@ class SettingsFileSource(PydanticBaseSettingsSource):
 
     def __init__(self, settings_cls: type[BaseSettings]) -> None:
         super().__init__(settings_cls)
-        path, named = settings_file_path()
+        path = settings_file_path()
         self._values: dict[str, Any] = {}
         if path is None:
             return
         if not os.path.isfile(path):
-            if named:
-                raise SettingsFileError(f"LOOM_SETTINGS_FILE names {path}, which does not exist")
-            return
+            raise SettingsFileError(f"LOOM_SETTINGS_FILE names {path}, which does not exist")
         self._values = read_settings_file(path, set(settings_cls.model_fields))
 
     def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:

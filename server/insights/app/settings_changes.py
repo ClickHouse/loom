@@ -1,6 +1,7 @@
 """Changing a live setting and reading back its changes: what `/v1/admin/settings.*`
 and `loom settings` share. Every change writes one `setting.changed` audit row,
-deployment-wide (org and namespace `-`), with the value before and after."""
+deployment-wide (org and namespace `-`), with the value before and after and where the
+value before came from."""
 
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ async def change(
     ch: _CHClient | None = None,
 ) -> dict[str, Any] | None:
     """`settings_overrides.change`, audited; returns the setting's row after."""
-    previous, row = await settings_overrides.change(
+    before, row = await settings_overrides.change(
         name, value, clear=clear, expected=expected, ch=ch
     )
     await audit.emit(
@@ -36,7 +37,10 @@ async def change(
         subject={
             "name": name,
             "value": row["value"] if row else None,
-            "previous": previous,
+            "previous": before["value"] if before else None,
+            # Where `previous` came from: an override to set back, or the value of the
+            # process that made the change (an env or a default), which a reset restores.
+            "previous_source": before["source"] if before else None,
             "cleared": clear,
         },
     )
@@ -57,6 +61,7 @@ async def history(
                 "name": subject["name"],
                 "value": subject["value"],
                 "previous": subject["previous"],
+                "previous_source": subject.get("previous_source"),
                 "cleared": subject["cleared"],
             }
         )

@@ -1,13 +1,12 @@
 # yaml-language-server: $schema=schemas/loom-settings.schema.json
 #
-# Loom settings file. Copy to `loom.yaml` in the server's working directory, or
-# name another path with LOOM_SETTINGS_FILE (empty reads none).
+# Loom settings file, read from the path LOOM_SETTINGS_FILE names.
 #
 # Each key is a setting's LOOM_<NAME> environment variable in lowercase, and
 # docs/reference/configuration.md lists them all. The environment and the dotenv
-# file win over this file. An unknown name, a secret (passwords, keys, tokens) or
-# an unsupported version stops the server at startup: keep secrets in the
-# environment or a secrets manager.
+# file win over this file. A secret (passwords, keys, tokens), a key given twice
+# or an unsupported version stops the server at startup: keep secrets in the
+# environment or a secrets manager. A name no setting has is logged and ignored.
 version: 1
 settings:
   # Search mode when a caller sets neither search_mode nor a recipe.

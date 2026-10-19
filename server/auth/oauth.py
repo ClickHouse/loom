@@ -92,9 +92,8 @@ def oauth_error_response(request: Request, exc: Exception) -> JSONResponse:
 
 
 _CODE_TTL = 60  # auth code: short-lived, single-use
-# 30d refresh token; each refresh issues a new one. A constant, not a setting: a
-# refresh reads the token's issue time back as exp minus this.
-_REFRESH_TTL = 30 * 86400
+# 30d refresh token; each refresh issues a new one.
+_REFRESH_TTL = 30 * 86400  # not a setting: a refresh reads the issue time back as exp minus this
 store: OAuthStore = ClickHouseStore()
 
 
@@ -1134,7 +1133,7 @@ async def _dashboard_signed_in(identity: Identity) -> Response:
         ttl_seconds=settings.oauth_access_token_ttl_seconds,
         is_service_account=False,
         # A sign-in session like the CLI's: revocable as one, and what it mints
-        # is bounded like the person, not by its hour.
+        # is bounded like the person, not by its access-token lifetime.
         session_id=family,
         first_party=True,
     )

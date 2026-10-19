@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from typing import Any
 
 import pytest
@@ -51,12 +52,14 @@ def stored(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, ...], Any]:
 
 
 async def test_change_stores_the_validated_value_and_applies_it_here(stored: dict) -> None:
-    previous, row = await so.change(LIVE, "0.5")
-    assert (previous, stored) == (0.2, {(LIVE,): 0.5})
+    before, row = await so.change(LIVE, "0.5")
+    assert before is not None and (before["value"], before["source"]) == (0.2, "default")
+    assert stored == {(LIVE,): 0.5}
     assert settings.memory_ask_recency_weight == 0.5
     assert row is not None and (row["value"], row["source"]) == (0.5, "override")
-    previous, row = await so.change(LIVE, clear=True)
-    assert (previous, stored) == (0.5, {})
+    before, row = await so.change(LIVE, clear=True)
+    assert before is not None and (before["value"], before["source"]) == (0.5, "override")
+    assert stored == {}
     assert settings.memory_ask_recency_weight == 0.2
     assert row is not None and row["source"] == "default"
 
@@ -65,8 +68,8 @@ async def test_the_value_before_is_the_stored_override_not_this_process_view(
     stored: dict,
 ) -> None:
     stored[(LIVE,)] = 0.35  # set through another process, not adopted here yet
-    previous, _ = await so.change(LIVE, 0.4)
-    assert previous == 0.35
+    before, _ = await so.change(LIVE, 0.4)
+    assert before is not None and (before["value"], before["source"]) == (0.35, "override")
 
 
 async def test_a_setting_read_at_startup_takes_no_override(stored: dict) -> None:
@@ -141,7 +144,7 @@ def test_rows_say_where_each_value_came_from(
     yaml_file.write_text(
         "version: 1\nsettings:\n  memory_ask_synth_budget_ratio: 0.4\n  ch_database: x\n"
     )
-    for name in [k for k in __import__("os").environ if k.startswith("LOOM_")]:
+    for name in [k for k in os.environ if k.startswith("LOOM_")]:
         monkeypatch.delenv(name)
     monkeypatch.setenv("LOOM_SETTINGS_FILE", str(yaml_file))
     monkeypatch.setenv("LOOM_CH_HOST", "from-env")
@@ -202,7 +205,7 @@ def client(monkeypatch: pytest.MonkeyPatch, stored: dict, audits: list) -> TestC
     app = FastAPI()
     register_exception_handler(app)
     app.include_router(admin_router)
-    return TestClient(app)
+    return TestClient(app, base_url="http://localhost")
 
 
 def test_the_admin_routes_set_list_and_reset(
@@ -218,8 +221,26 @@ def test_the_admin_routes_set_list_and_reset(
     assert r.json()["setting"] == {**r.json()["setting"], "value": 0.2, "source": "default"}
     assert stored == {}
     assert [(e, kw["subject"]) for e, kw in audits] == [
-        ("setting.changed", {"name": LIVE, "value": 0.45, "previous": 0.2, "cleared": False}),
-        ("setting.changed", {"name": LIVE, "value": 0.2, "previous": 0.45, "cleared": True}),
+        (
+            "setting.changed",
+            {
+                "name": LIVE,
+                "value": 0.45,
+                "previous": 0.2,
+                "previous_source": "default",
+                "cleared": False,
+            },
+        ),
+        (
+            "setting.changed",
+            {
+                "name": LIVE,
+                "value": 0.2,
+                "previous": 0.45,
+                "previous_source": "override",
+                "cleared": True,
+            },
+        ),
     ]
 
 
@@ -301,3 +322,18 @@ def test_the_history_route_reads_the_recorded_changes(
     (change,) = r.json()["changes"]
     assert (change["actor"], change["previous"], change["value"]) == ("cli:ops", 0.35, 0.4)
     assert seen == [("setting.changed", LIVE, 5)]
+
+
+def test_a_change_a_web_page_could_send_is_refused(
+    client: TestClient, stored: dict, audits: list
+) -> None:
+    body = {"name": LIVE, "value": 0.4}
+    rebound = TestClient(client.app, base_url="http://attacker.example")  # auth off, DNS rebinding
+    assert rebound.post("/v1/admin/settings.set", json=body).status_code == 403
+    r = client.post(
+        "/v1/admin/settings.set", json=body, headers={"origin": "http://attacker.example"}
+    )
+    assert r.status_code == 403
+    r = client.post("/v1/admin/settings.set", json=body, headers={"sec-fetch-site": "cross-site"})
+    assert r.status_code == 403
+    assert stored == {} and audits == []
