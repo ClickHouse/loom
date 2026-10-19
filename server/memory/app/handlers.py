@@ -49,7 +49,6 @@ from server.memory.app.provenance import writer_actor
 from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
-from server.memory.domain.expire_reasons import carried_reason
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
@@ -845,13 +844,11 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
         version = next_version()
         versions[key] = version
         # Mirror every persisted column; only the touch deltas override.
-        overrides: dict[str, Any] = {
-            "version": version,
-            "expires_at": new_expires_at,
-            "expire_reason": input.expire_reason[:512] or carried_reason(existing.expire_reason),
-        }
+        overrides: dict[str, Any] = {"version": version, "expires_at": new_expires_at}
         if input.on_expire:
             overrides["on_expire"] = input.on_expire
+        if input.expire_reason:
+            overrides["expire_reason"] = input.expire_reason[:512]
         touch_rows.append(memory_repo.build_memory_version_row(existing, **overrides))
     if touch_rows:
         await insert_memory_versions(touch_rows, ch=ch)

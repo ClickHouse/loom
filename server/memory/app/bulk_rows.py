@@ -157,8 +157,7 @@ def _bulk_carried(state: _BulkWriteState, memory_key: str) -> dict[str, Any]:
         c: (live.get(c) if live.get(c) is not None else d)
         for c, d in _BULK_CARRIED_DEFAULTS.items()
     }
-    if "expire_reason" in carried:
-        carried["expire_reason"] = carried_reason(carried["expire_reason"])
+    carried["expire_reason"] = carried_reason(carried["expire_reason"])
     return carried
 
 

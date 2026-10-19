@@ -2,7 +2,9 @@
 
 The write fence (server/memory/app/write_fence.py) tells a sweep's tombstone from a
 delete's by it, so it lives only on the sweep's tombstone: a caller may not send it, and
-a write that carries a row's reason forward drops it.
+every other version drops it when it carries a row's reason forward (the row builder
+`server.memory.store.rows.build_memory_version_row`, memory.set's and memory.bulk_set's
+own rows).
 """
 
 from __future__ import annotations

@@ -147,9 +147,12 @@ async def _read_back(ch: _StatefulCH) -> Any:
     )
 
 
-async def _delete_during_the_set(ch: _StatefulCH, op: str) -> set_commit._SetWrite:
-    head = time.time_ns() - 10_000_000_000
-    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+async def _delete_during_the_set(
+    ch: _StatefulCH, op: str, *, head_inserted: bool = False, head: int = 0
+) -> set_commit._SetWrite:
+    if not head_inserted:
+        head = time.time_ns() - 10_000_000_000
+        await ch.insert("loom.memory", [_row("Tuesdays", head)])
     w = _in_flight_set(head + 5_000_000)  # drawn after the head, before the delete
     if op == "memory.delete":
         out: Any = await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
@@ -435,12 +438,12 @@ async def test_an_embedded_set_in_flight_during_a_delete_lands_with_its_vector(
     assert [int(v["version"]) for v in vectors] == [w.version]
 
 
-async def _conditional_set(
+async def _set_through_phases(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, *, sha: str, after_build: Any = None
 ) -> Any:
-    """memory.set's phases with `if_match_sha256`, against the stateful clickhouse-local (a
-    procedural row, embedded); `after_build` runs once the row is built at the version
-    drawn after the check and embedded, right before the insert."""
+    """memory.set's phases against the stateful clickhouse-local (a procedural row,
+    embedded), with `if_match_sha256` when `sha` is set; `after_build` runs once the row
+    is built and embedded, right before the insert."""
     from server.memory.app import write
 
     async def _none(*_a: Any, **_k: Any) -> None:
@@ -483,7 +486,7 @@ async def test_a_conditional_set_whose_check_passed_lands_above_the_row_it_check
     draws = iter([head - 1, head + 1])
     monkeypatch.setattr(write, "next_version", lambda: next(draws))
     sha = _content_sha256_of_stored(json.dumps("Tuesdays"))
-    out = await _conditional_set(ch, monkeypatch, sha=sha)
+    out = await _set_through_phases(ch, monkeypatch, sha=sha)
     got = await _read_back(ch)
     assert got is not None and got.value == "Thursdays" and out.version == head + 1
 
@@ -503,7 +506,7 @@ async def test_a_delete_after_a_conditional_sets_check_answers_409(
         await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
 
     with pytest.raises(HTTPException) as refused:
-        await _conditional_set(ch, monkeypatch, sha=sha, after_build=delete)
+        await _set_through_phases(ch, monkeypatch, sha=sha, after_build=delete)
     assert refused.value.detail["code"] == "PRECONDITION_FAILED"
     assert await _read_back(ch) is None
 
@@ -565,8 +568,8 @@ def test_a_bulk_write_does_not_carry_a_sweeps_marker() -> None:
 async def test_a_set_and_a_touch_do_not_carry_a_sweeps_marker(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A row an older build restored from a sweep still holds the marker; the next write of
-    # the key leaves it off, so a later delete is a delete to the fence.
+    # A row an older build restored from a sweep still holds the marker; the next touch or
+    # set of the key writes a version without it.
     from server.memory.api.models_crud import MemoryTouchInput
 
     await ch.insert(
@@ -581,6 +584,23 @@ async def test_a_set_and_a_touch_do_not_carry_a_sweeps_marker(
         "loom.memory",
         [{**_row("Tuesdays", time.time_ns()), "expire_reason": "blacklist.sweep:p1"}],
     )
-    await _conditional_set(ch, monkeypatch, sha="")
+    await _set_through_phases(ch, monkeypatch, sha="")
     written = await _read_back(ch)
     assert written is not None and written.value == "Thursdays" and written.expire_reason == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["memory.delete_version", "memory.delete"])
+async def test_a_delete_of_a_row_still_holding_a_sweeps_marker_is_a_delete(
+    ch: _StatefulCH, op: str
+) -> None:
+    # The row was restored from a sweep by an older build and never written since: the
+    # delete's tombstone does not take the marker, so the set in flight keeps its row.
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert(
+        "loom.memory", [{**_row("Tuesdays", head), "expire_reason": "blacklist.sweep:p1"}]
+    )
+    w = await _delete_during_the_set(ch, op, head_inserted=True, head=head)
+    await set_commit._set_plain_insert(w, ch)
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays"
