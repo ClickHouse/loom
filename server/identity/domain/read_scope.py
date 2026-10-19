@@ -290,6 +290,7 @@ SCOPED_OPS = frozenset(
         "memory.search",
         "memory.search_trace",
         "memory.stack",
+        "memory.statuses",
         "memory.timeline",
         "procedure.list",
         "procedure.match",

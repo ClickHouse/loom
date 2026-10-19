@@ -720,6 +720,16 @@ def test_another_users_memory_id_is_not_found(
         assert r.status_code == 200 and r.json().get("found") is False, r.text
 
 
+def test_another_users_memory_ids_have_no_status(
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str]
+) -> None:
+    body = {"org": seed.org, "namespace": seed.ns, "memory_ids": seed.memory_ids_v}
+    r = _post(control_plane_url, tokens["pinned_u"], "memory.statuses", body)
+    assert r.status_code == 200 and r.json()["rows"] == [], r.text
+    r = _post(control_plane_url, tokens["namespace"], "memory.statuses", body)
+    assert r.status_code == 200 and len(r.json()["rows"]) == len(seed.memory_ids_v), r.text
+
+
 def test_an_answer_cached_for_v_is_never_served_to_u(
     control_plane_url: str, seed: _Seed, tokens: dict[str, str]
 ) -> None:
