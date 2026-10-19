@@ -152,12 +152,13 @@ export async function listAutoResolved(
   return { rows: out, next_cursor: page.next_cursor ?? null };
 }
 
-/** Whether the Auto-resolved tab has a row to show: its newest record, read with the
- *  tab's filter. The sidebar shows the Review queue for it when there is no open conflict. */
+/** Whether the Auto-resolved tab has a row to show: its newest records (five: one may list
+ *  no entry the tab can show), read with the tab's filter. The sidebar shows the Review
+ *  queue for it when there is no open conflict. */
 export async function hasAutoResolved(
   id: Pick<Identity, "org" | "namespace">,
   opts: RequestOpts = {},
 ): Promise<boolean> {
-  const page = await listAutoResolved(id, { limit: 1, withCurrent: false, signal: opts.signal });
+  const page = await listAutoResolved(id, { limit: 5, withCurrent: false, signal: opts.signal });
   return page.rows.length > 0;
 }

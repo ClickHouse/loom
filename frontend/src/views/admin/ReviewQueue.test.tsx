@@ -139,7 +139,7 @@ function seed(namespace: string, role?: MyNamespaceEntry["role"]) {
 
 const page = (rows: AutoResolvedRow[], next_cursor: string | null = null) => ({ rows, next_cursor });
 /** The panel's own page reads, not the probe's one-record ask. */
-const panelReads = () => vi.mocked(listAutoResolved).mock.calls.filter(([, o]) => o?.limit !== 1);
+const panelReads = () => vi.mocked(listAutoResolved).mock.calls.filter(([, o]) => o?.limit !== 5);
 
 describe("ReviewQueue", () => {
   beforeEach(() => {
@@ -168,7 +168,7 @@ describe("ReviewQueue", () => {
     });
     // Like the real one: the newest record of the same read.
     vi.mocked(hasAutoResolved).mockImplementation(
-      async (id) => (await listAutoResolved(id, { limit: 1 })).rows.length > 0,
+      async (id) => (await listAutoResolved(id, { limit: 5 })).rows.length > 0,
     );
   });
   afterEach(() => {
@@ -875,6 +875,19 @@ describe("ReviewQueue", () => {
     expect(screen.queryByText("k/a")).toBeNull();
   });
 
+  it("says nothing was retired when the tab's read finds none", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    // The probe saw a record (the tab shows); by the panel's own read it is gone.
+    vi.mocked(listAutoResolved).mockImplementation(async (_id, o) =>
+      o?.limit === 5 ? page([retired("user_city")]) : page([]),
+    );
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    expect(await screen.findByText("Nothing retired automatically", {}, WAIT)).toBeTruthy();
+    expect(screen.queryByRole("table", { name: "Auto-resolved memories" })).toBeNull();
+  });
+
   it("lists what Loom retired on its own, why and behind what, with an Undo", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listAutoResolved).mockResolvedValue(
@@ -1297,7 +1310,7 @@ describe("ReviewQueue", () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     let fail = true;
     vi.mocked(listAutoResolved).mockImplementation(async (_id, o) => {
-      if (o?.limit !== 1 && fail) throw new Error("boom");
+      if (o?.limit !== 5 && fail) throw new Error("boom");
       return page([retired("user_city")]);
     });
     seed("ns-a", "writer");

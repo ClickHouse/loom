@@ -183,9 +183,9 @@ schema. These rules keep that safe. The operator procedure is in
 17. **N-1 does not know N's retirement intents.** A user erasure N-1 runs deletes no
     projection failure (N-1 erases them by namespace only), so a point-write retirement
     intent naming that user in `retired[]` stays until N erases the user again, or the
-    intent is resolved and its TTL ends it. A projection repair on N-1 leaves N's `triples_follow_owed`
-    and `entity_edges_drop_undeclared` rows active as `unsupported_projection`; N's repair
-    replays them once N-1 stops serving.
+    intent is resolved and its TTL ends it. A projection repair on N-1 leaves every projection kind N adds
+    (rule 3), `triples_follow_owed` and `entity_edges_drop_undeclared` among them, active
+    as `unsupported_projection`; N's repair replays them once N-1 stops serving.
 18. **A new revocation key** (such as SCIM's `SCIM_PREFIX`): N-1 does not read
     it, so a token it revokes still works on an N-1 replica. The feature that writes
     it is turned on only once no N-1 replica serves: SCIM provisioning

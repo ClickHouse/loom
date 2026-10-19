@@ -964,6 +964,16 @@ function AutoResolvedPanel() {
       <ListState kind="error" things="retired memories" error={loadError} onRetry={() => setReload((n) => n + 1)} />
     );
   }
+  if (rows !== null && rows.length === 0 && !cursor) {
+    return (
+      <ListState
+        kind="empty"
+        icon="secure"
+        title="Nothing retired automatically"
+        description="Memories Loom retires on its own in the last 30 days show here, each with an Undo."
+      />
+    );
+  }
   return (
     <div>
       <p className="text-sm text-text-muted mb-3 max-w-2xl">

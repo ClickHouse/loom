@@ -146,11 +146,17 @@ describe("hasAutoResolved", () => {
     vi.unstubAllGlobals();
   });
 
-  it("reads one record and counts it only if it holds a retirement the tab can show", async () => {
+  it("reads five records and counts them only if one holds a retirement the tab can show", async () => {
     const shown = JSON.stringify({ reason: "newest_wins_contradiction", retired: [entry("a")] });
     const malformed = JSON.stringify({ reason: "newest_wins_contradiction", retired: [{ memory_key: "no_id" }] });
     const bodies = stubAudit([
-      { rows: [{ ts: "2026-10-02T00:00:00Z", subject: shown }] },
+      // The newest record lists nothing the tab shows; an older one does.
+      {
+        rows: [
+          { ts: "2026-10-02T00:00:00Z", subject: malformed },
+          { ts: "2026-10-01T00:00:00Z", subject: shown },
+        ],
+      },
       { rows: [{ ts: "2026-10-02T00:00:00Z", subject: malformed }] },
     ]);
     expect(await hasAutoResolved({ org: "o", namespace: "n" })).toBe(true);
@@ -160,7 +166,7 @@ describe("hasAutoResolved", () => {
       org: "o",
       namespace: "n",
       event_type: "memory.auto_supersede",
-      limit: 1,
+      limit: 5,
       fields: ["ts", "subject"],
     });
     const since = Date.parse(String(bodies[0]?.["since"]));
