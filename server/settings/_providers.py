@@ -67,10 +67,8 @@ class ProviderSettings(ModelSettings):
     # service-account token on Kubernetes). With inference_token_url, this or
     # inference_token_audience.
     inference_workload_token_file: str = ""
-    # With no workload token: Loom signs its own identity token with this
-    # audience (what the gateway's trust entry for it names), from issuer
-    # <public_base_url>/v1 with its newest RS256 signing key. Needs
-    # LOOM_PUBLIC_BASE_URL and an RS256 key in the keyring.
+    # With inference_token_url and no workload token: the audience of the identity token Loom
+    # signs (issuer <https public_base_url>/v1, newest RS256 key); never jwt_audience.
     inference_token_audience: str = ""
     # The scope sent with that exchange; "" sends none.
     inference_token_scope: str = ""

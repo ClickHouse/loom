@@ -260,14 +260,13 @@ the key set somewhere it can. Each Loom publishes a key at its next keyring
 refresh after `rotate` writes it, and the key signs only `--activate-in` later
 (300 s by default): rotate with an `--activate-in` longer than the gateway
 keeps its copy of the keys, or than copying them takes. A retired key stays
-trusted at the gateway until its copy is refreshed, and Loom refuses to retire
-the last active RS256 key while it signs these tokens. Loom (the server and
-every `loom` command) refuses these settings without an https
+trusted at the gateway until its copy is refreshed. `loom signing-key retire`
+refuses to retire the last active RS256 key when `LOOM_INFERENCE_TOKEN_AUDIENCE`
+is set in its own environment, so run it with the servers'. Loom (the server
+and every `loom` command) refuses these settings without an https
 `LOOM_PUBLIC_BASE_URL`, with `LOOM_JWT_AUDIENCE` as the audience, or with an
 issuer its own verifier trusts, and its own verifier never accepts a token with
-the gateway's audience. Set the audience only once every replica runs a build
-that knows it, and unset it before rolling back to one that does not: an
-older build refuses to load without a workload token file.
+the gateway's audience.
 
 ## Apply changes and check the result
 

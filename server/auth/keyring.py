@@ -739,7 +739,8 @@ async def _retire(kid: str, *, ch: _CHClient, held: Callable[[], bool]) -> bool:
         # The inference gateway verifies only RS256: model calls would stop.
         raise ValueError(
             f"retiring {kid!r} would leave no RS256 key to sign the inference gateway's "
-            "identity tokens; rotate one with --algorithm RS256 first"
+            "identity tokens (LOOM_INFERENCE_TOKEN_AUDIENCE is set here); rotate one with "
+            "--algorithm RS256 first"
         )
     if not held():
         raise ValueError(_LAPSED)
