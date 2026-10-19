@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -231,27 +231,29 @@ async def list_projection_failures(
 
 async def mark_projection_failures_resolved(
     *,
-    org: str,
+    org: str | Sequence[str],
     failure_ids: list[str],
     ch: Any | None = None,
 ) -> int:
-    """Mark failures resolved with one ALTER UPDATE, narrow by UUID. Callers batch the
-    ids (`MARK_CHUNK`): every point write that retires rows leaves an intent here, so a
-    mutation per id would be one per write. Resolved rows leave by the table's TTL."""
+    """Mark failures resolved with one ALTER UPDATE, narrow by UUID, in `org` (one, or
+    several for a batch of them). Callers batch the ids (`MARK_CHUNK`): every point
+    write that retires rows leaves an intent here, so a mutation per id would be one per
+    write. Resolved rows leave by the table's TTL."""
 
     ids = [fid for fid in failure_ids if fid]
     if not ids:
         return 0
+    orgs = [org] if isinstance(org, str) else sorted(set(org))
     ch = ch or get_client()
     await ch.execute(
         """
         ALTER TABLE loom.memory_projection_failures
         UPDATE status = 'resolved', resolved_at = now()
-        WHERE org = {org:String}
+        WHERE org IN {orgs:Array(String)}
           AND toString(failure_id) IN {failure_ids:Array(String)}
           AND status = 'active'
         """,
-        params={"org": org, "failure_ids": ids},
+        params={"orgs": orgs, "failure_ids": ids},
     )
     return len(ids)
 
@@ -316,7 +318,7 @@ async def mark_retried(done: list[Retried], *, ch: Any | None = None) -> None:
             )
 
 
-async def mark_resolved(org: str, ids: list[str], *, ch: Any | None = None) -> None:
+async def mark_resolved(org: str | Sequence[str], ids: list[str], *, ch: Any | None = None) -> None:
     """`mark_projection_failures_resolved`, `MARK_CHUNK` ids to a mutation."""
     for start in range(0, len(ids), MARK_CHUNK):
         chunk = ids[start : start + MARK_CHUNK]
