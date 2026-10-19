@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from server.llm.json_text import strip_code_fence
+from server.memory.api.models_common import entity_name_fits
 from server.memory.app.extract.keys import _sanitize_key
 from server.memory.app.extract.models import (
     MAX_DERIVED_PER_FACT,
@@ -64,10 +65,11 @@ def _parse_fact_list(
             tags = []
         raw_entities = raw.get("entities", [])
         if isinstance(raw_entities, list):
+            # A name past the entity cap would refuse the whole batch's write: drop it.
             entities = [
                 str(e).strip().lower()
                 for e in raw_entities
-                if isinstance(e, (str, int)) and str(e).strip()
+                if isinstance(e, (str, int)) and entity_name_fits(str(e).strip())
             ][:6]
             # Dedup preserving order — LLMs sometimes repeat names.
             entities = list(dict.fromkeys(entities))

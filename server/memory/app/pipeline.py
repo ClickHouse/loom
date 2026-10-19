@@ -15,6 +15,7 @@ from typing import Any
 from server.core.datetimes import parse_iso_dt
 from server.core.hashing import hash_text
 from server.memory.api.models_bulk import REFUSED, MemoryBulkSetInput, _BulkSetEntry, refused_facts
+from server.memory.api.models_common import entity_name_fits
 from server.memory.api.models_crud import MemoryDeleteInput
 from server.memory.app.pipeline_state import PipelineStep, StepCallable, WorkflowState
 from server.memory.domain.extracted_facts import (
@@ -939,7 +940,7 @@ async def _step_bulk_write(
                 confidence=fact_confidence,
                 source_trace=trace,
                 tags=merged,
-                entities=list(fact.get("entities") or []),
+                entities=[e for e in fact.get("entities") or [] if entity_name_fits(str(e))],
                 relations=rels,
                 derived=derived,
                 temporal_anchor=fact.get("temporal_anchor"),

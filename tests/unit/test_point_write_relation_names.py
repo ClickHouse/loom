@@ -96,3 +96,39 @@ def test_a_declared_entity_name_is_at_most_500_characters():
         )
     with pytest.raises(ValidationError):
         MemoryMoveInput(**_IDENTITY, from_key="k", to_key="k2", entities=[name + "x"])
+
+
+def test_an_entity_name_is_capped_as_the_graph_stores_it_lowercased():
+    # "İ" lowercases to two characters: 300 of them are 600 in the graph.
+    with pytest.raises(ValidationError):
+        MemorySetInput(**_IDENTITY, memory_key="k", value="v", entities=["İ" * 300])
+    # A triple's subject and object are graph names too, capped as an entity is.
+    fact = MemorySetInput(
+        **_IDENTITY, memory_key="k", value="v", relations=[("a" * 500, "knows", "dan")]
+    )
+    assert fact.relations
+
+
+def test_an_extracted_entity_past_the_cap_is_dropped_not_the_batch():
+    """One 501-character name the extractor returns would make the bulk entry refuse the
+    whole set_from_messages batch: parse leaves it out and keeps the fact."""
+    import json
+
+    from server.memory.api.models_bulk import _BulkSetEntry
+    from server.memory.app.extract.parse import _parse_fact_list
+
+    reply = {
+        "facts": [{"key": "user/home", "value": "lives in Rome", "entities": ["rome", "x" * 501]}]
+    }
+    (fact,) = _parse_fact_list(json.dumps(reply))
+    assert list(fact.entities) == ["rome"]
+    assert _BulkSetEntry(
+        memory_key="user/home", value="lives in Rome", entities=list(fact.entities)
+    )
+
+
+def test_a_replayed_entry_recorded_with_a_long_entity_name_drops_only_that_name():
+    from server.memory.app.projection_failures import _fitting_entities
+
+    entry = {"memory_key": "k", "value": "v", "entities": ["rome", "x" * 501]}
+    assert _fitting_entities(entry)["entities"] == ["rome"]
