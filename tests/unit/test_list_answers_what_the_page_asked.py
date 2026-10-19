@@ -14,10 +14,12 @@ from pathlib import Path
 import pydantic
 import pytest
 
+from server.knowledge.api.models_conversations import ConversationThreadsInput
 from server.memory import store as memory_repo
 from server.memory.api import models_crud as memory_crud
 from server.memory.app import query as _memory_query
 from server.operations import read_projection
+from server.tasks.api.models_run import RunListInput
 from server.transport import mcp_schemas
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -53,6 +55,19 @@ def test_preview_chars_is_bounded_and_hidden_from_the_mcp_listing() -> None:
     with pytest.raises(pydantic.ValidationError):
         memory_crud.MemoryListInput(**ident, preview_chars=4096)
     assert "preview_chars" in mcp_schemas._HIDDEN_OP_PROPS["memory.list"]
+
+
+def test_memory_list_takes_an_offset_past_100k() -> None:
+    """Exports and the LangGraph store page a whole namespace by offset, so memory.list has no cap."""
+    ident = {"org": "acme", "namespace": "team", "agent": "*"}
+    assert memory_crud.MemoryListInput(**ident, offset=250_000).offset == 250_000
+
+
+def test_run_list_and_threads_refuse_an_offset_past_100k() -> None:
+    for model in (RunListInput, ConversationThreadsInput):
+        assert model(org="acme", namespace="team", offset=100_000).offset == 100_000
+        with pytest.raises(pydantic.ValidationError):
+            model(org="acme", namespace="team", offset=100_001)
 
 
 def test_a_row_longer_than_the_preview_sent_is_marked_truncated() -> None:

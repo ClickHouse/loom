@@ -7055,6 +7055,7 @@ class ConflictsListInput(TypedDict, total=False):
     limit: NotRequired[int]
     before_version: NotRequired[Optional[int]]
     count_only: NotRequired[bool]
+    fresh: NotRequired[bool]
     keys_only: NotRequired[bool]
     fields: NotRequired[Optional[list[str]]]
 
@@ -7065,6 +7066,7 @@ class ConflictsListBody(TypedDict, total=False):
     limit: NotRequired[int]
     before_version: NotRequired[Optional[int]]
     count_only: NotRequired[bool]
+    fresh: NotRequired[bool]
     keys_only: NotRequired[bool]
     fields: NotRequired[Optional[list[str]]]
 
@@ -7152,6 +7154,7 @@ class ConflictsResolveOutput(TypedDict, total=False):
     decision: Required[Literal["revise", "contract", "allow"]]
     affected_memory_ids: Required[list[str]]
     resolved_at: NotRequired[Optional[str]]
+    total: NotRequired[Optional[int]]
 
 
 class ConsolidationsListInput(TypedDict, total=False):
@@ -7668,6 +7671,7 @@ class ConversationThreadsInput(TypedDict, total=False):
     agent: NotRequired[str]
     window_days: NotRequired[int]
     limit: NotRequired[int]
+    offset: NotRequired[int]
     fields: NotRequired[Optional[list[str]]]
 
 
@@ -7677,6 +7681,7 @@ class ConversationThreadsBody(TypedDict, total=False):
     agent: NotRequired[str]
     window_days: NotRequired[int]
     limit: NotRequired[int]
+    offset: NotRequired[int]
     fields: NotRequired[Optional[list[str]]]
 
 
@@ -8962,6 +8967,7 @@ class KnowledgeListInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
     tags: NotRequired[list[str]]
+    tags_every: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
     include_superseded: NotRequired[bool]
     limit: NotRequired[int]
@@ -8975,6 +8981,7 @@ class KnowledgeListBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
     tags: NotRequired[list[str]]
+    tags_every: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
     include_superseded: NotRequired[bool]
     limit: NotRequired[int]
@@ -11128,6 +11135,7 @@ class MemoryListInput(TypedDict, total=False):
     include_proposed: NotRequired[bool]
     as_of: NotRequired[Optional[str]]
     tags: NotRequired[list[str]]
+    tags_every: NotRequired[bool]
     contains: NotRequired[Optional[str]]
     fields: NotRequired[list[str]]
     known_version: NotRequired[Union[int, str, None]]
@@ -11157,6 +11165,7 @@ class MemoryListBody(TypedDict, total=False):
     include_proposed: NotRequired[bool]
     as_of: NotRequired[Optional[str]]
     tags: NotRequired[list[str]]
+    tags_every: NotRequired[bool]
     contains: NotRequired[Optional[str]]
     fields: NotRequired[list[str]]
     known_version: NotRequired[Union[int, str, None]]
@@ -15197,6 +15206,18 @@ class RunListInput(TypedDict, total=False):
     session_id: NotRequired[str]
     status: NotRequired[Literal["", "active", "completed", "failed", "cancelled"]]
     limit: NotRequired[int]
+    offset: NotRequired[int]
+    order_by: NotRequired[
+        Literal[
+            "started_desc",
+            "started_asc",
+            "duration_desc",
+            "duration_asc",
+            "relied_on_desc",
+            "relied_on_asc",
+        ]
+    ]
+    q: NotRequired[str]
     memory_activity: NotRequired[Literal["", "with", "without"]]
     grade: NotRequired[Literal["", "ungraded", "graded", "pass", "fail"]]
     fields: NotRequired[Optional[list[str]]]
@@ -15209,6 +15230,18 @@ class RunListBody(TypedDict, total=False):
     session_id: NotRequired[str]
     status: NotRequired[Literal["", "active", "completed", "failed", "cancelled"]]
     limit: NotRequired[int]
+    offset: NotRequired[int]
+    order_by: NotRequired[
+        Literal[
+            "started_desc",
+            "started_asc",
+            "duration_desc",
+            "duration_asc",
+            "relied_on_desc",
+            "relied_on_asc",
+        ]
+    ]
+    q: NotRequired[str]
     memory_activity: NotRequired[Literal["", "with", "without"]]
     grade: NotRequired[Literal["", "ungraded", "graded", "pass", "fail"]]
     fields: NotRequired[Optional[list[str]]]
@@ -15216,6 +15249,7 @@ class RunListBody(TypedDict, total=False):
 
 class RunListOutput(TypedDict, total=False):
     runs: Required[list["RunRow"]]
+    total: NotRequired[Optional[int]]
 
 
 class SearchQueryInput(TypedDict, total=False):

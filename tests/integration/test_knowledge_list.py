@@ -134,3 +134,25 @@ async def test_list_cross_namespace_isolation(control_plane_url: str) -> None:
     uris = {r["source_uri"] for r in page["rows"]}
     assert any(ns_b in u for u in uris)
     assert not any(ns_a in u for u in uris)
+
+
+@pytest.mark.asyncio
+async def test_list_tags_match_in_any_case(control_plane_url: str) -> None:
+    from loom import Agent
+
+    ns = f"kl-case-{uuid.uuid4().hex[:6]}"
+    async with Agent(org=ORG, namespace=ns, agent="w", base_url=control_plane_url) as a:
+        await a.knowledge.add(content="x", source_uri="doc://specs", title="t", tags=["Specs"])
+        await a.knowledge.add(
+            content="y", source_uri="doc://summer", title="t", tags=["ÉTÉ", "Draft"]
+        )
+        await a.knowledge.add(content="z", source_uri="doc://plain", title="t", tags=["été"])
+
+        def uris(page: dict) -> set[str]:
+            return {r["source_uri"] for r in page["rows"]}
+
+        assert uris(await a.knowledge.list(tags=["specs"], limit=10)) == {"doc://specs"}
+        summer = await a.knowledge.list(tags=["Été"], limit=10)
+        assert uris(summer) == {"doc://summer", "doc://plain"}
+        every = await a.knowledge.list(tags=["été", "draft"], tags_every=True, limit=10)
+        assert uris(every) == {"doc://summer"}

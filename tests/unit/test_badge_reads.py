@@ -75,6 +75,26 @@ async def test_count_only_answers_the_number_from_one_cached_count(
 
 
 @pytest.mark.asyncio
+async def test_a_fresh_count_skips_the_cache_and_refills_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_conflicts import ConflictsListInput
+    from server.memory.store import conflicts as conflicts_repo
+
+    fake = _FakeConflictsRepo()
+    monkeypatch.setattr(conflicts_repo, "count_conflicted", fake.count_conflicted)
+    cached = ConflictsListInput(org="acme", namespace="team", count_only=True)
+    fresh = ConflictsListInput(org="acme", namespace="team", count_only=True, fresh=True)
+    await conflicts_mod.handle_conflicts_list(cached)
+    # The review queue asks fresh: another replica's resolve may have made the cache stale.
+    await conflicts_mod.handle_conflicts_list(fresh)
+    assert fake.counts == 2
+    # The badge's next tick takes the count the fresh read stored.
+    await conflicts_mod.handle_conflicts_list(cached)
+    assert fake.counts == 2
+
+
+@pytest.mark.asyncio
 async def test_the_listing_path_is_unchanged_without_count_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

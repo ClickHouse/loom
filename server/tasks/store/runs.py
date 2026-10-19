@@ -221,22 +221,69 @@ async def runs_to_grade(
     return rows
 
 
+# run.list's search: `{q:String}` anywhere in the goal, run id or agent, in any case.
+RUN_TEXT_MATCH = (
+    "(positionCaseInsensitiveUTF8(goal, {q:String}) > 0"
+    " OR positionCaseInsensitiveUTF8(run_id, {q:String}) > 0"
+    " OR positionCaseInsensitiveUTF8(agent, {q:String}) > 0)"
+)
+
+# run.list's orders. Each ends on started_at and run_id (unique in a namespace under
+# FINAL), so an OFFSET page boundary never repeats or skips a run.
+LIST_ORDERS: dict[str, str] = {
+    "started_desc": "started_at DESC, run_id DESC",
+    "started_asc": "started_at ASC, run_id ASC",
+    "duration_desc": "duration_ms DESC, started_at DESC, run_id DESC",
+    "duration_asc": "duration_ms ASC, started_at ASC, run_id ASC",
+    "relied_on_desc": "length(memories_used) DESC, started_at DESC, run_id DESC",
+    "relied_on_asc": "length(memories_used) ASC, started_at ASC, run_id ASC",
+}
+
+
 async def list_runs(
-    ch: Any, org: str, ns: str, *, where: list[str], params: dict[str, Any], limit: int
+    ch: Any,
+    org: str,
+    ns: str,
+    *,
+    where: list[str],
+    params: dict[str, Any],
+    limit: int,
+    offset: int,
+    order_by: str,
 ) -> list[RunLedgerRow]:
-    """The namespace's runs matching the extra `where` fragments, newest first."""
+    """One page of the namespace's runs matching the extra `where` fragments, in
+    `order_by` order (a key of LIST_ORDERS), `offset` runs in."""
+    # The order is written into the statement: only a LIST_ORDERS key gets that far.
+    order = LIST_ORDERS[order_by]
     clauses = ["org = {org:String}", "namespace = {ns:String}", *where]
     rows: list[RunLedgerRow] = await ch.query_all(
         f"""
         SELECT {_RUN_SELECT}
         FROM loom.agent_runs FINAL
         WHERE {" AND ".join(clauses)}
-        ORDER BY started_at DESC
-        LIMIT {{lim:UInt32}}
+        ORDER BY {order}
+        LIMIT {{lim:UInt32}} OFFSET {{off:UInt32}}
         """,
-        params={**params, "org": org, "ns": ns, "lim": limit},
+        params={**params, "org": org, "ns": ns, "lim": limit, "off": offset},
     )
     return rows
+
+
+async def count_runs(
+    ch: Any, org: str, ns: str, *, where: list[str], params: dict[str, Any]
+) -> int:
+    """How many of the namespace's runs match the extra `where` fragments: the
+    rows `list_runs` pages through."""
+    clauses = ["org = {org:String}", "namespace = {ns:String}", *where]
+    row = await ch.query_one(
+        f"""
+        SELECT count() AS n
+        FROM loom.agent_runs FINAL
+        WHERE {" AND ".join(clauses)}
+        """,
+        params={**params, "org": org, "ns": ns},
+    )
+    return int(row["n"])
 
 
 async def recent_run_heads(
@@ -440,7 +487,10 @@ async def live_memories_by_key(
 
 __all__ = [
     "DERIVED_LIMIT",
+    "LIST_ORDERS",
     "RUN_COLUMNS",
+    "RUN_TEXT_MATCH",
+    "count_runs",
     "fetch_run",
     "insert_runs",
     "list_runs",
