@@ -644,9 +644,8 @@ async def run_backport_gap(req: BackportGapRequest) -> Any:  # noqa: PLR0915 —
         org, resolve_branches(org, ns, list(req.branches)), explicit=bool(req.branches)
     )
     branch_ns = [b for b, _ in branches]
-    # The tracker only enriches the answer, unless the caller named its issue or PR.
-    named = bool(req.issue_number or req.pr_number)
-    tracker_ns = await authorized_tracker_namespace(org, ns, hides_answer=named)
+    # The caller always names a PR or an issue, whose record the tracker holds.
+    tracker_ns = await authorized_tracker_namespace(org, ns)
     source = tracker_source(org, tracker_ns) if tracker_ns else None
 
     stage_ms: dict[str, int] = {}

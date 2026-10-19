@@ -169,7 +169,7 @@ def _caller_is_human() -> bool:
 
 async def _in_scope(org: str, namespace: str, *, write: bool, hides_answer: bool = True) -> bool:
     """`row_in_scope` at the role a side needs; `hides_answer=False` for a
-    listing's filter, or a probe whose refusal another check decides."""
+    listing's filter, or when another way in (a poster's) already admits."""
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
 

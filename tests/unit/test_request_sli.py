@@ -1172,10 +1172,10 @@ def test_a_5xx_while_mcp_computes_the_caller_s_defaults_is_ledgered(monkeypatch)
 def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_unmarked() -> None:
     """A refusal `row_in_scope` makes without a readable grant marks the request
     the server's unless the call site says the answer is whole without that
-    namespace (`hides_answer=False`): one Loom adds on its own, a listing's
-    filter, a probe of which side of a task the caller acts on. Marking is the
-    default, so a new call site counts an outage; this pins which ones opt
-    out, by file and enclosing function."""
+    namespace (one Loom adds on its own), the call filters a listing the
+    caller did not scope, or another way in already admits the caller.
+    Marking is the default, so a new call site counts an outage; this pins
+    the opt-outs by file and function, and whether each is unconditional."""
     import ast
 
     from server.core.paths import REPO_ROOT
@@ -1206,10 +1206,10 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
                     if isinstance(kw.value, ast.Name) and kw.value.id == "hides_answer":
                         continue  # a gate passing its caller's choice through
                     if not isinstance(kw.value, ast.Constant):
-                        unmarked.add((rel, fn.name, "unless the caller named it"))
+                        unmarked.add((rel, fn.name, "conditional"))
                     elif kw.value.value is False:
                         unmarked.add((rel, fn.name, "never"))
-    never, named = "never", "unless the caller named it"
+    never, cond = "never", "conditional"
     assert unmarked == {
         # Namespaces Loom adds to the answer on its own.
         ("server/code/app/answers.py", "_inject_memory_context", never),
@@ -1228,13 +1228,14 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
         ("server/tracker/app/ask_route.py", "_searched_everywhere", never),
         ("server/tracker/app/ask_route.py", "qa_route_answer", never),
         # ...unless the caller named the tracker's item or the namespace.
-        ("server/code/app/backport.py", "run_backport_gap", named),
-        ("server/code/app/bisect.py", "_handle_bisect", named),
-        ("server/code/app/first_build.py", "handle_code_first_build", named),
-        ("server/tracker/app/test_signal.py", "_code_namespace_authorized", named),
-        # A listing the caller did not scope, and a probe another check decides.
+        ("server/code/app/bisect.py", "_handle_bisect", cond),
+        ("server/tracker/app/test_signal.py", "_code_namespace_authorized", cond),
+        # A task's owner side, when a poster's way in already admits the caller.
+        ("server/tasks/app/transitions.py", "_load_for_reason_op", cond),
+        ("server/tasks/app/transitions.py", "handle_task_unblock", cond),
+        ("server/tasks/app/transitions.py", "handle_task_update", cond),
+        # A listing the caller did not scope.
         ("server/tasks/app/inboxes.py", "handle_inbox_list", never),
-        ("server/tasks/app/trust.py", "_poster_may_post", never),
     }
 
 
@@ -1268,3 +1269,48 @@ def test_a_task_op_refused_on_its_own_side_without_a_readable_grant_is_the_serve
 
     assert asyncio.run(_side()) is True
     assert asyncio.run(_side(hides_answer=False)) is False  # a listing's filter
+
+
+def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
+    monkeypatch,
+) -> None:
+    """The owner-side check marks only when it is the caller's last way in: a
+    poster is admitted without a read, so its success stays ok; anyone else
+    gets the 404, counted as the server's."""
+    from types import SimpleNamespace
+
+    from server.auth import authz
+    from server.auth.context import set_current_auth
+    from server.auth.fail_closed import answered_unverified
+    from server.auth.jwt import AuthInfo
+    from server.core import request_work
+    from server.tasks.app import transitions
+
+    async def _unverified(*a: Any, **k: Any) -> None:
+        e = PermissionError("refused")
+        e.unverified = True  # type: ignore[attr-defined]
+        raise e
+
+    async def _task(org: str, task_id: str) -> dict[str, Any]:
+        return {"namespace": "owner", "from_subject": "poster", "status": "todo"}
+
+    monkeypatch.setattr(authz, "check_authorized", _unverified)
+    monkeypatch.setattr(transitions.repo, "fetch_task", _task)
+    reason = SimpleNamespace(org="o", task_id="t")
+
+    async def _as(subject: str) -> bool:
+        request_work.begin()
+        set_current_auth(
+            AuthInfo(
+                subject=subject, org="o", namespaces=(), roles=(Role.WRITER,),
+                is_service_account=False,
+            )
+        )  # fmt: skip
+        try:
+            await transitions._load_for_reason_op(reason)
+        except Exception:  # noqa: BLE001 — the 404 the handler answers
+            pass
+        return answered_unverified()
+
+    assert asyncio.run(_as("poster")) is False
+    assert asyncio.run(_as("someone-else")) is True

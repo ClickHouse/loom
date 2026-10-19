@@ -508,8 +508,10 @@ async def handle_task_unblock(input: TaskUnblockInput) -> TaskOutput:
     if task is None:
         raise _not_found()
     subject = _caller_subject()
-    owner_side = await _in_scope(input.org, task["namespace"], write=True)
-    if not owner_side and not (task.get("blocked_on") == "sender" and _is_poster(task, subject)):
+    # A poster's way in needs no read: the owner check marks only when it is the last one.
+    poster = task.get("blocked_on") == "sender" and _is_poster(task, subject)
+    owner_side = await _in_scope(input.org, task["namespace"], write=True, hides_answer=not poster)
+    if not owner_side and not poster:
         raise _not_found()
     if task["status"] != "blocked":
         raise await _state_conflict("TASK_NOT_BLOCKED", task)
@@ -589,8 +591,9 @@ async def _load_for_reason_op(input: TaskReasonInput) -> tuple[TaskRow, bool]:
     task = await repo.fetch_task(input.org, input.task_id)
     if task is None:
         raise _not_found()
-    owner_side = await _in_scope(input.org, task["namespace"], write=True)
-    if not owner_side and not _is_poster(task, _caller_subject()):
+    poster = _is_poster(task, _caller_subject())
+    owner_side = await _in_scope(input.org, task["namespace"], write=True, hides_answer=not poster)
+    if not owner_side and not poster:
         raise _not_found()
     if task["status"] in TERMINAL:
         raise await _state_conflict("TASK_TERMINAL", task, want="it is already finished")
@@ -675,8 +678,9 @@ async def handle_task_update(input: TaskUpdateInput) -> TaskUpdateOutput:
     task = await repo.fetch_task(input.org, input.task_id)
     if task is None:
         raise _not_found()
-    owner_side = await _in_scope(input.org, task["namespace"], write=True)
-    if not owner_side and not _is_poster(task, _caller_subject()):
+    poster = _is_poster(task, _caller_subject())
+    owner_side = await _in_scope(input.org, task["namespace"], write=True, hides_answer=not poster)
+    if not owner_side and not poster:
         raise _not_found()
     if task["status"] not in EDITABLE:
         raise _conflict("TASK_NOT_EDITABLE", f"task is {task['status']!r}; add a note instead")
