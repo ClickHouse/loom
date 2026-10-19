@@ -3639,3 +3639,39 @@ async def test_a_flapping_provider_stops_the_pass(ch, wired, monkeypatch) -> Non
     await worker.run_pass()
     assert flapping.calls == worker.SAME_REFUSAL_STOP
     assert worker._state.paused_until > 0
+
+
+async def test_a_high_row_restored_after_a_lost_undelete_answers_not_restored(
+    ch, wired, monkeypatch
+) -> None:
+    """A high row's undelete lost its answer and its re-read: the retry has no search row
+    to bring back, so it answers what it did, nothing."""
+    import asyncio
+
+    from server.core.errors import BackendUnavailableError
+    from server.memory.api.models_crud import MemoryDeleteInput, MemoryRestoreInput
+    from server.memory.app import restore
+    from server.memory.app.handlers import handle_memory_delete
+
+    org, _ = wired
+    key = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s1"}
+    await _set(org, "s1", "vault4", "The vault code is 4417", sensitivity="high")
+    await asyncio.sleep(1.0)
+    await handle_memory_delete(MemoryDeleteInput(**key, memory_key="vault4"))
+    await asyncio.sleep(1.0)
+    real = restore.insert_memory_versions
+
+    async def lands_then_fails(rows: Any, **kw: Any) -> None:
+        await real(rows, **kw)
+        raise RuntimeError("answer lost")
+
+    async def unread(*a: Any, **kw: Any) -> bool:
+        return False
+
+    with monkeypatch.context() as m:
+        m.setattr(restore, "insert_memory_versions", lands_then_fails)
+        m.setattr(restore, "_restore_landed", unread)
+        with pytest.raises(BackendUnavailableError):
+            await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="vault4"))
+    out = await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="vault4"))
+    assert not out.restored

@@ -143,7 +143,12 @@ async def _restore_live(
     memory_id, version = str(row.get("memory_id") or ""), int(row.get("version") or 0)
     if await _undelete_left_unmirrored(input, ch=ch):
         existing = await _read_restorable(input)
-        if existing is not None and existing.tombstoned_at is None:
+        # A high row has no search row to bring back: the mirror writes none.
+        if (
+            existing is not None
+            and existing.tombstoned_at is None
+            and existing.sensitivity != "high"
+        ):
             await _restore_embedding_mirror(ch, input, existing, row["memory_type"])
             return MemoryRestoreOutput(
                 restored=True,
