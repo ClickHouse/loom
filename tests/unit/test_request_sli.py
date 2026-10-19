@@ -1664,3 +1664,21 @@ def test_a_call_served_on_its_default_namespace_counts_in_that_tenant(monkeypatc
     monkeypatch.setattr(member_writes, "authorize_op", _refuse)
     asyncio.run(mcp_call._call_tool(1, {"name": "loom_code_repos", "arguments": {}}, auth=eve))
     assert [(row["org"], row["namespace"]) for row in rows] == [("eve-org", "-")]
+
+    # HTTP with a token: refused at the gate, naming no org or an empty one.
+    from server.auth.context import set_current_auth
+
+    def _http_refusal(body: dict) -> None:
+        set_current_auth(eve)
+        try:
+            call = http_mod._HttpCall("r", raw_body=body, auth=eve)
+            http_mod._refuse(op, call, 403, error_code="AUTH_INSUFFICIENT")
+        finally:
+            set_current_auth(None)
+
+    rows.clear()
+    for body in ({}, {"org": "", "namespace": ""}, {"org": " "}):
+        contextvars.copy_context().run(_http_refusal, body)
+    # The org falls back to the token's; a refused call keeps the namespace it sent.
+    got = [(row["org"], row["namespace"]) for row in rows]
+    assert got == [("eve-org", "-"), ("eve-org", ""), ("eve-org", "-")]

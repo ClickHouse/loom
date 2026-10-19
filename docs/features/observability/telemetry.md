@@ -34,7 +34,9 @@ Each request row also carries its service-level columns:
 A call that names no org or namespace is recorded under the ones the gate admitted it
 against (a code op's default is the deployment's code namespace), so the row is that
 tenant's: its SLIs, the cost rollup, `subject_last_seen` and the history policy's counts
-all see it there. A call refused before the gate is recorded under the token's own org.
+all see it there. A call that names no org and is refused before the gate is recorded
+under the token's org (`-` for an org-wide token or with auth off), so `cost.summary`,
+the connected-agents view and `subject_last_seen` count it in that org too.
 
 What counts against the server:
 

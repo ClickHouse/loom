@@ -42,21 +42,23 @@ def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
     session) its read scope pins, and always its `read_user_id` pin, so a refused
     call naming another user is logged as the caller, never as that user. A history
     rule keyed on the user counts the caller's own calls, whatever its body names.
-    An org or namespace the body left out (absent, empty or "-") is the one the
+    An org or namespace the body left out (absent to the gates) is the one the
     gate admitted the call against, so a call served on a default is the
-    tenant's row; a call refused before that has the token's own org."""
+    tenant's row; one refused before that names the token's own org, unless
+    the token is org-wide (`*`)."""
     from server.core import request_work
+    from server.transport.gates import present
 
     out = request_identity(args)
     bag = request_work.current()
     if bag is not None and bag.admitted is not None:
         for k, v in zip(("org", "namespace"), bag.admitted, strict=True):
-            if out[k] in ("", "-"):
+            if present(out[k]) is None:
                 out[k] = v
     auth = current_auth()
     if auth is None:
         return out
-    if out["org"] in ("", "-") and auth.org not in ("", "*"):
+    if present(out["org"]) is None and present(auth.org) not in (None, "*"):
         out["org"] = auth.org
     try:
         scope: ReadFilters | None = request_read_filters(auth)
