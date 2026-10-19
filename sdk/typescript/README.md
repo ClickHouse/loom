@@ -45,7 +45,7 @@ if (!answer.abstain) console.log(answer.answer, answer.memory_keys);
 for (const key of answer.memory_keys ?? []) await bot.outcome(key, "used", { userId: "u-42" });
 ```
 
-`Agent` holds the identity tuple loom addresses memories by — `(org, namespace, agent)` from the constructor, `user_id` / `session_id` / `run_id` per call (the wire's sentinel `"-"` when omitted) — and stamps it on every request. `Datapack` holds `(org, namespace)` plus the platform defaults so `.agent(name)` spawns agents without repeating them. `LOOM_BASE_URL` and `LOOM_API_KEY` fill what the options leave out.
+`Agent` holds the identity tuple loom addresses memories by — `(org, namespace, agent)` from the constructor, `user_id` / `session_id` / `run_id` per call (the wire's sentinel `"-"` when omitted) — and stamps it on every request. `Datapack` holds `(org, namespace)` plus the platform defaults so `.agent(name)` spawns agents without repeating them. The server and credential the options leave out come from the environment and your `loom login` session ([The credential](#the-credential)).
 
 ## Every operation, typed
 
@@ -183,6 +183,33 @@ console.log(r.data.results.length, r.requestId, r.serverTimingMs, r.rateLimit?.r
 ```
 
 ## The credential
+
+A client picks its server and credential as the Python SDK does. `profile` names a `loom login` session and uses it on the server it signed in to; it cannot be combined with `apiKey` or another `baseUrl`. Otherwise the server is `baseUrl`, else `LOOM_BASE_URL`, else `http://localhost:7777`, and the credential is the first of:
+
+1. `tokenProvider` or `apiKey`
+2. `LOOM_API_KEY`
+3. a bot's `LOOM_CLIENT_ID` ([Bots and CI jobs](#bots-and-ci-jobs))
+4. the session stored in `~/.loom/credentials` for that server, under the profile `LOOM_PROFILE` (default `default`)
+5. the first line of `~/.loom/token`, which `loom mint-token --save` writes
+
+Steps 4 and 5 run in Node only, on the client's first request; a browser skips them. With no credential found, requests go out without an `Authorization` header.
+
+### Signing in
+
+```ts
+import { LoomClient, login, logout, whoami } from "@clickhouse/loom";
+
+await login("https://loom.example.com"); // prints a URL and a code; approve on any browser
+const loom = new LoomClient({ baseUrl: "https://loom.example.com" }); // uses the stored session
+console.log(await whoami());
+await logout();
+```
+
+`login(server?, { profile, openBrowser, echo })` runs the OAuth device authorization grant (RFC 8628): it prints a URL and a short code, opens the page when stdout is a terminal, and resolves once you approve with your password or single sign-on. The access and refresh tokens go to `~/.loom/credentials` (mode 0600), the file `loom login` and the Python SDK's `loom.login()` use, so a session made by any of them serves all three. A client refreshes the hour-long access token a minute before it expires and once more on a 401, and sends a session only to the server it signed in to. `profile: "staging"` (or `LOOM_PROFILE=staging`) keeps a second server's session beside the first, and `new LoomClient({ profile: "staging" })` uses it. `logout(profile?)` revokes the session on the server and forgets it here; `accessToken(profile?)` returns a live token for requests of your own.
+
+A refresh holds the lock directory `~/.loom/.credentials.lock.d`, which the Python SDK takes too, and re-reads the file first, so two processes never spend the same refresh token. Signing in is Node-only.
+
+### The key
 
 `apiKey` (or `LOOM_API_KEY`) is held in a private field: `JSON.stringify(loom)` and `util.inspect(loom)` show `apiKey: "…1234"`, never the token. A blank or whitespace value is no credential (`transport.hasCredential`), so an exported-but-empty variable does not turn into `Authorization: Bearer ` and a puzzling 401.
 

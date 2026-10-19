@@ -15,6 +15,8 @@ The refresh token rotates on every use and the server ends the session when
 a spent one comes back, so two processes must never refresh the same profile
 at once: a refresh holds an exclusive lock on the credentials file and
 re-reads it first, so the second process finds the new token and uses it.
+The lock is a file lock (which older SDK builds take) and the directory
+`~/.loom/.credentials.lock.d` (which the TypeScript SDK takes too).
 """
 
 from __future__ import annotations
@@ -25,6 +27,8 @@ import errno
 import json
 import os
 import secrets
+import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -54,6 +58,10 @@ _REFRESH_MARGIN_S = 60
 # Longer than a refresh can take on the server, which asks the identity
 # provider first: giving up sooner turns a slow answer into a lost one.
 _REFRESH_TIMEOUT_S = 60.0
+# The lock both SDKs take: Node has no flock. A directory older than the
+# stale age was left by a process that died holding it.
+_LOCK_DIR = ".credentials.lock.d"
+_LOCK_STALE_S = 2 * _REFRESH_TIMEOUT_S
 
 
 def _path() -> Path:
@@ -107,15 +115,58 @@ if hasattr(os, "register_at_fork"):  # not on Windows
 @contextlib.contextmanager
 def _locked() -> Iterator[None]:
     """Hold the credentials lock: this process's, then a sibling file's (so the
-    atomic replace of the credentials themselves never drops it)."""
+    atomic replace of the credentials themselves never drops it), then the
+    lock directory beside it."""
     path = _path()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with _in_process, open(path.with_name(".credentials.lock"), "a") as lock:
         _lock_file(lock.fileno())
         try:
-            yield
+            with _lock_dir(path.with_name(_LOCK_DIR)):
+                yield
         finally:
             _unlock_file(lock.fileno())
+
+
+@contextlib.contextmanager
+def _lock_dir(lock: Path) -> Iterator[None]:
+    """Hold `lock` by creating it (mkdir is atomic), with an owner file naming
+    the holder; wait while another process holds it, and break it once stale."""
+    owner = json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "time": time.time()})
+    wait = 0.01
+    while True:
+        try:
+            lock.mkdir(mode=0o700)
+            break
+        except FileExistsError:
+            pass
+        if _lock_age_s(lock) > _LOCK_STALE_S:
+            shutil.rmtree(lock, ignore_errors=True)
+            continue
+        time.sleep(wait)
+        wait = min(wait * 2, 0.2)
+    try:
+        (lock / "owner").write_text(owner, encoding="utf-8")
+    except BaseException:
+        shutil.rmtree(lock, ignore_errors=True)
+        raise
+    try:
+        yield
+    finally:
+        # Only our own: a lock broken as stale may be another process's by now.
+        try:
+            held = (lock / "owner").read_text(encoding="utf-8")
+        except OSError:
+            held = ""
+        if held == owner:
+            shutil.rmtree(lock, ignore_errors=True)
+
+
+def _lock_age_s(lock: Path) -> float:
+    try:
+        return time.time() - lock.stat().st_mtime
+    except FileNotFoundError:
+        return 0.0  # released meanwhile: take it on the next try
 
 
 if sys.platform == "win32":

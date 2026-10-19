@@ -14,9 +14,11 @@
 
 import { AccountClient } from "./account.js";
 import { type Capabilities, capabilities as fetchCapabilities } from "./capabilities.js";
+import { DEFAULT_SERVER, LocalCredential, StoredLogin, sameServer, signedInServer } from "./credentials.js";
+import { AuthError, LoomError } from "./errors.js";
 import { OP_BY_NAME, OPS, type OpMap, type OpName, type OpSpec } from "./generated/ops.js";
 import { machineLogin } from "./machine.js";
-import { envVar } from "./runtime.js";
+import { envVar, isBrowser } from "./runtime.js";
 import { type CallOptions, type CallResult, Transport, type TransportOptions } from "./transport.js";
 
 export type OpInput<K extends OpName> = OpMap[K]["input"];
@@ -41,7 +43,12 @@ export type GroupClient<G extends string> = {
   [K in OpsInGroup<G> as MethodOf<K>]: (input: OpInput<K>, opts?: CallOptions) => Promise<OpOutput<K>>;
 };
 
-export type LoomClientOptions = TransportOptions;
+export interface LoomClientOptions extends Omit<TransportOptions, "baseUrl"> {
+  /** The server. Default `LOOM_BASE_URL`, else `http://localhost:7777`. */
+  baseUrl?: string;
+  /** The `loom login` session to use, on the server it signed in to; not with `apiKey` or another `baseUrl`. Node only. */
+  profile?: string;
+}
 
 // biome-ignore lint/suspicious/noUnsafeDeclarationMerging: the constructor defines every group property the interface declares.
 export class LoomClient {
@@ -50,7 +57,7 @@ export class LoomClient {
   readonly account: AccountClient;
   private caps: { promise: Promise<Capabilities>; at: number } | undefined;
 
-  constructor(opts: LoomClientOptions | Transport) {
+  constructor(opts: LoomClientOptions | Transport = {}) {
     this.transport = opts instanceof Transport ? opts : new Transport(readEnv(opts));
     this.account = new AccountClient(this.transport);
     for (const group of new Set(OPS.map((o) => o.group))) {
@@ -119,15 +126,34 @@ export interface LoomClient extends LoomClientGroups {}
 export type LoomClientGroups = { readonly [G in Groups]: GroupClient<G> };
 
 /**
- * `LOOM_BASE_URL` / `LOOM_API_KEY` fill what the options leave out; with
- * neither key nor `tokenProvider`, a bot's LOOM_CLIENT_ID signs in as that bot.
+ * The server and credential a client uses, as the Python SDK picks them. A
+ * `profile` names the `loom login` session to use, on the server it signed
+ * in to. Otherwise the server is `baseUrl`, else `LOOM_BASE_URL`, else
+ * localhost, and the credential, first found wins: `tokenProvider`,
+ * `apiKey`, `LOOM_API_KEY`, a bot's `LOOM_CLIENT_ID`, then (Node only,
+ * decided on the first request) the stored login of `LOOM_PROFILE` (else
+ * `default`) for that server and `~/.loom/token`.
  */
-export function readEnv(opts: LoomClientOptions): LoomClientOptions {
-  const baseUrl = (opts.baseUrl || envVar("LOOM_BASE_URL") || "").trim();
-  if (!baseUrl) throw new Error("LoomClient: baseUrl is required (or set LOOM_BASE_URL)");
-  if (opts.tokenProvider) return { ...opts, baseUrl };
+export function readEnv(opts: LoomClientOptions = {}): TransportOptions {
+  const { profile, ...rest } = opts;
+  if (profile) return withProfile(rest, profile);
+  const baseUrl = (opts.baseUrl || envVar("LOOM_BASE_URL") || "").trim() || DEFAULT_SERVER;
+  if (opts.tokenProvider) return { ...rest, baseUrl };
   // A blank value is unset: `LOOM_API_KEY=""` in a shell profile counts as no key.
   const apiKey = [opts.apiKey, envVar("LOOM_API_KEY")].map((v) => v?.trim()).find((v) => v) || undefined;
-  if (apiKey) return { ...opts, baseUrl, apiKey };
-  return { ...opts, baseUrl, apiKey, tokenProvider: machineLogin(baseUrl, { fetch: opts.fetch, now: opts.now }) };
+  if (apiKey) return { ...rest, baseUrl, apiKey };
+  const bot = machineLogin(baseUrl, { fetch: opts.fetch, now: opts.now });
+  // A browser has no files to read a stored login or token from.
+  const local = bot ?? (isBrowser() ? undefined : new LocalCredential(baseUrl, { fetch: opts.fetch }));
+  return { ...rest, baseUrl, apiKey, tokenProvider: local };
+}
+
+/** The `loom login` session `profile` names, on the server it signed in to. */
+function withProfile(opts: Omit<LoomClientOptions, "profile">, profile: string): TransportOptions {
+  if (isBrowser()) throw new LoomError("the `profile` option needs Node: a browser has no stored login");
+  const server = signedInServer(profile);
+  if (server === undefined) throw new AuthError(`not signed in (profile '${profile}'); run \`loom login\``);
+  if (opts.apiKey?.trim() || opts.tokenProvider || (opts.baseUrl && !sameServer(opts.baseUrl, server)))
+    throw new LoomError(`profile '${profile}' is a session for ${server}; pass one or the other`);
+  return { ...opts, baseUrl: server, apiKey: undefined, tokenProvider: new StoredLogin(profile, server, opts) };
 }

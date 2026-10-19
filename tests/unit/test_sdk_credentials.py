@@ -567,3 +567,49 @@ def test_a_refresh_answered_without_the_mark_still_rotates(server) -> None:
     with pytest.raises(BackendUnavailable, match="predates"):
         credentials.access_token(refused="a2")
     assert credentials.stored_login(_SERVER) is not None
+
+
+def _lock_dir(home) -> Any:
+    return home / "loom" / ".credentials.lock.d"
+
+
+def test_the_credentials_lock_holds_a_lock_directory_naming_its_holder(_home) -> None:
+    # The lock the TypeScript SDK takes too: Node has no flock.
+    with credentials._locked():
+        owner = json.loads((_lock_dir(_home) / "owner").read_text())
+        assert owner["pid"] == os.getpid()
+        assert isinstance(owner["host"], str) and isinstance(owner["time"], float)
+    assert not _lock_dir(_home).exists()
+
+
+def test_the_credentials_lock_waits_while_another_process_holds_the_directory(_home) -> None:
+    import threading
+    import time as _time
+
+    lock = _lock_dir(_home)
+    lock.parent.mkdir(parents=True)
+    lock.mkdir()  # as a Node process mid-refresh holds it
+    threading.Timer(0.3, lock.rmdir).start()
+    t0 = _time.monotonic()
+    with credentials._locked():
+        waited = _time.monotonic() - t0
+    assert waited >= 0.25
+
+
+def test_a_stale_lock_directory_is_broken(_home) -> None:
+    lock = _lock_dir(_home)
+    lock.parent.mkdir(parents=True)
+    lock.mkdir()
+    old = time.time() - credentials._LOCK_STALE_S - 1
+    os.utime(lock, (old, old))
+    with credentials._locked():
+        assert lock.exists()
+    assert not lock.exists()
+    assert credentials._LOCK_STALE_S == 2 * credentials._REFRESH_TIMEOUT_S
+
+
+def test_releasing_leaves_a_lock_directory_another_process_took_over(_home) -> None:
+    lock = _lock_dir(_home)
+    with credentials._locked():
+        (lock / "owner").write_text('{"pid": 1}')  # broken as stale and taken meanwhile
+    assert lock.exists()
