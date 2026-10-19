@@ -455,8 +455,9 @@ on each other (a busy one answers 503 and the provider retries it). The
 filters served are `userName eq "<userName>"` and, on the email,
 `emails[type eq "work"].value eq "<email>"` (or `emails.value eq`), which
 match the address Loom keys a user on when its `emails` list holds it, and
-for `emails[type eq "work"].value` only as a `work` entry. `GET /Users`, `GET /Users/{id}` and `GET /ServiceProviderConfig` answer as
-RFC 7644 says, and `GET /Groups` answers an empty list.
+for `emails[type eq "work"].value` only as a `work` entry. `GET /Users`,
+`GET /Users/{id}` and `GET /ServiceProviderConfig` answer as RFC 7644 says,
+and `GET /Groups` answers an empty list.
 
 Turning SCIM off (`LOOM_SCIM_TOKEN` empty) unmounts `/scim/v2`, so nothing
 deactivates or reactivates anyone any more, and leaves everyone as they are:
