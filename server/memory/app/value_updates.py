@@ -327,7 +327,7 @@ async def link_value_updates(
     namespace: str,
     rows: list[dict[str, Any]],
     embeddings_by_key: dict[str, list[float]],
-    agent: str = "",
+    agent: str,
     min_cosine: float = 0.75,
     concurrency: int = 6,
     ch: Any = None,

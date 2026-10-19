@@ -170,6 +170,7 @@ async def test_link_value_updates_uses_one_statement_per_batch(monkeypatch) -> N
         namespace="ns",
         rows=rows,
         embeddings_by_key={"k0": [0.1, 0.2], "user_5k_personal_best_time": [0.3, 0.4]},
+        agent="a",
         ch=ch,
     )
     assert len(ch.query_all_calls) == 1  # two rows, one statement
@@ -204,6 +205,7 @@ async def test_batch_zero_keeps_the_per_row_statement(monkeypatch) -> None:
         namespace="ns",
         rows=rows,
         embeddings_by_key={f"k{i}": [0.1, 0.2] for i in range(3)},
+        agent="a",
         ch=ch,
     )
     assert len(ch.query_all_calls) == 3
