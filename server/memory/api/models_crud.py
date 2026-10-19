@@ -91,7 +91,7 @@ class MemoryGetOutput(ProjectedRow):
         data: dict[str, Any] = handler(self)
         if self.canonical_key is None:
             data.pop("canonical_key", None)
-        # `resolved_from` only on a followed read.
+        # `resolved_from` only on an answer given by another row.
         if self.resolved_from is None:
             data.pop("resolved_from", None)
         # Then the caller's field whitelist, when one was sent.
@@ -170,8 +170,9 @@ class MemoryGetOutput(ProjectedRow):
     # from the payload for every other status. On a `follow: true` read that
     # served the canonical it is the key served.
     canonical_key: str | None = None
-    # On a `follow: true` read that served a duplicate's
-    # canonical, the memory_key the caller asked for. Absent otherwise.
+    # On an answer given by another row, the memory_key the caller asked for: a
+    # `follow: true` read that served a duplicate's canonical, or a memory.bulk_get
+    # chunk id answered by its parent fact. Absent otherwise.
     resolved_from: str | None = None
     # Surfaced so an in-place tag edit can preserve existing tags/entities
     # rather than clobbering them.

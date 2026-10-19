@@ -394,7 +394,7 @@ Periodic consolidation pass — merges fragmented memories about the same subjec
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `consolidated` | `list[MemoryConsolidateResult]` | One entry per cluster merged (or that would be, under `dry_run`). |
-| `examined` | `int` | Eligible rows read: live, unpinned, unlocked, embedded and older than `min_age_seconds`. |
+| `examined` | `int` | Eligible rows read: live, unpinned, unlocked, embedded, older than `min_age_seconds`, and neither labelled high nor reading as a credential (never sent to the merge model). |
 | `clusters_found` | `int` | Clusters of two or more rows found. |
 | `clusters_failed` | `int` | Clusters whose merge LLM call failed or returned an unparseable / incomplete JSON object. |
 | `clusters_refused_lossy` | `int` | Of the failed clusters, those the merge guard refused because the merged text lost a date, quantity, identifier, name or negation one source carried; the sources stay as they were. |
@@ -787,7 +787,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `duplicate_of` | `str` | The row this one duplicates (status='duplicate'), and the verdict the row shows on read — `pending` while a deferred judge still holds it, else derived from `status` (active → clear, conflicted → conflict, duplicate, superseded). |
 | `conflict_verdict` | `str` | pending \| clear \| conflict \| duplicate \| superseded, as described above. |
 | `canonical_key` | `str \| None` | For a `status='duplicate'` row, the memory_key of the canonical that answers for it ("" when that row is no longer active — the orphan case `memory.resolve_orphan_duplicates` repairs). |
-| `resolved_from` | `str \| None` | On a `follow: true` read that served a duplicate's canonical, the memory_key the caller asked for. |
+| `resolved_from` | `str \| None` | On an answer given by another row, the memory_key the caller asked for: a `follow: true` read that served a duplicate's canonical, or a memory.bulk_get chunk id answered by its parent fact. |
 | `tags` | `list[str]` | Surfaced so an in-place tag edit can preserve existing tags/entities rather than clobbering them. |
 | `entities` | `list[str]` | Entity names stored on the row (lowercased), internal sentinels left out. |
 | `content_sha256` | `str` | SHA-256 of the live value (canonical JSON); pass back as if_match_sha256 for a no-clobber update against the value THIS read saw. |

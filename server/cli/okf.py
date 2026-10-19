@@ -189,7 +189,7 @@ async def _fetch_namespace(
             full.update(got.get("results") or {})
         for r in rows:
             g = full.get(r["memory_key"])
-            if g is not None and _answered_by_parent(r["memory_key"], g):
+            if g is not None and _answered_by_parent(r["memory_key"], g, r.get("version")):
                 # A key shaped like a chunk id, gone since the list, falls back to its
                 # parent's row: that is not this row's value.
                 g = None
@@ -211,16 +211,21 @@ async def _fetch_namespace(
     return out, unreadable
 
 
-def _answered_by_parent(memory_key: str, answer: dict[str, Any]) -> bool:
+def _answered_by_parent(memory_key: str, answer: dict[str, Any], listed_version: Any) -> bool:
     """Whether bulk_get answered `memory_key` with another row: a chunk-id-shaped key
     (`chunk:memory.set:<parent>:<n>`) that no row holds reads its parent. This build marks
-    that answer with `resolved_from`; an older one only names the parent as `canonical_key`
-    (a duplicate row's own answer names its canonical, a different key)."""
+    that answer with `resolved_from`. An older one marks it only by `canonical_key`, which a
+    duplicate parent sets to its own canonical, so a chunk-shaped key whose answer carries
+    another version than the listed row is taken as another row's too."""
     if answer.get("resolved_from"):
         return True
     rest = memory_key.removeprefix("chunk:memory.set:")
     parent, _, index = rest.rpartition(":")
-    return rest != memory_key and index.isdigit() and answer.get("canonical_key") == parent
+    if rest == memory_key or not index.isdigit():
+        return False
+    version = answer.get("version")
+    other_version = listed_version is not None and version not in (None, listed_version)
+    return answer.get("canonical_key") == parent or other_version
 
 
 async def _fetch_evidence(

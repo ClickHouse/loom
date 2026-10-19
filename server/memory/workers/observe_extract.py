@@ -22,7 +22,7 @@ from server.memory.domain.observation_tags import (
     CRYSTALLIZE_READY_TAG,
     OBSERVATION_TAG,
 )
-from server.memory.domain.sensitivity import reads_high, value_text
+from server.memory.domain.sensitivity import value_reads_high
 from server.memory.store.rows import next_version
 from server.workers.status import record_pass
 
@@ -315,7 +315,7 @@ async def _load_session_context(session: dict[str, Any], *, ch: Any) -> list[Any
 def _sendable(sensitivity: str, value: Any) -> bool:
     """Whether an observation may go to the model: neither labelled 'high' nor reading as a
     credential."""
-    return sensitivity != "high" and not reads_high(value_text(value))
+    return sensitivity != "high" and not value_reads_high(value)
 
 
 # The most observations a session's notes read: the notes

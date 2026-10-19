@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.memory.api.models_crud import MemorySetInput
-from server.memory.domain.sensitivity import reads_high, value_text
+from server.memory.domain.sensitivity import value_reads_high
 from server.memory.store.session_outcomes import insert_outcomes
 from server.observability.genai import llm_stage
 
@@ -112,7 +112,7 @@ def judge_prompt(summary: str, key_facts: list[str]) -> tuple[str, str]:
         "\n".join(
             f"- {str(f).strip()}"
             for f in (key_facts or [])
-            if str(f).strip() and not reads_high(value_text(f))
+            if str(f).strip() and not value_reads_high(f)
         )
         or "- (none)"
     )

@@ -19,7 +19,9 @@ from pydantic import BaseModel, SerializerFunctionWrapHandler, model_serializer
 from server.core.errors import ValidationError
 
 # The keys a projected payload always carries, per response model.
-GET_ALWAYS: frozenset[str] = frozenset({"found", "unchanged"})
+# `resolved_from` too: an answer given by another row (a followed redirect, a chunk id's
+# parent) says so whatever the projection; it is absent on every other answer.
+GET_ALWAYS: frozenset[str] = frozenset({"found", "unchanged", "resolved_from"})
 # `sensitivity` comes with every list entry rather than by name: a reader that asked for it
 # by name would get a 422 from a replica still on a build without the field.
 LIST_ENTRY_ALWAYS: frozenset[str] = frozenset({"memory_key", "sensitivity"})

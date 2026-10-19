@@ -793,8 +793,9 @@ async def handle_memory_bulk_get(
     )
     # A `chunk:memory.set:<key>:<n>` id (a memory.search chunk hit) names its parent fact in
     # the id; a bulk reader that got chunk ids back from a search reads the parent rows here
-    # instead of a miss. The parent's row is answered under every id that asked for it, with
-    # `canonical_key` naming the parent, so the caller can fold.
+    # instead of a miss, when no row is stored under the id itself. The parent's row answers
+    # under every id that asked for it, with `canonical_key` naming the parent (so the caller
+    # can fold) and `resolved_from` the id.
     from server.memory.app.handlers import chunk_parent_key
 
     parent_of: dict[str, str] = {}
@@ -842,7 +843,6 @@ async def handle_memory_bulk_get(
                     "resolved_from": k,
                 }
             )
-            alias._projection = keep
             results[k] = alias
         else:
             continue

@@ -21,7 +21,10 @@ from server.memory.api.models_admin import (
 )
 from server.memory.app.drops import record_drop
 from server.memory.app.provenance import writer_actor
-from server.memory.domain.sensitivity import inherited_sensitivity, reads_high, value_text
+from server.memory.domain.sensitivity import (
+    inherited_sensitivity,
+    value_reads_high,
+)
 from server.memory.store.rows import next_version
 from server.observability.genai import staged
 
@@ -633,7 +636,7 @@ async def handle_memory_consolidate(
     )
     # An unlabelled row (copy_to, an import, before the sweep) holding a credential never
     # goes into the merge prompt, which is sent to the LLM.
-    rows = [r for r in rows if not reads_high(value_text(r.get("value")))]
+    rows = [r for r in rows if not value_reads_high(r.get("value"))]
 
     out = MemoryConsolidateOutput(examined=len(rows))
     if len(rows) < 2:

@@ -28,7 +28,7 @@ import yaml
 
 from server.core.hashing import sha256_text
 from server.memory.domain.okf_bundle import slugify, split_frontmatter
-from server.memory.domain.sensitivity import reads_high, value_text
+from server.memory.domain.sensitivity import reads_high, value_reads_high
 
 EVIDENCE_DIR = "evidence"
 DIGEST_DIR = "digests"
@@ -103,10 +103,13 @@ def evidence_is_high(item: ChunkLike | DigestLike, held_keys: set[str]) -> bool:
     if isinstance(item, DigestLike):
         # each part on its own, as memory.digests and the outcome judge read them; a key fact
         # an earlier build stored as JSON is decoded first
-        parts = [item.summary_text, *(value_text(k) for k in item.key_facts)]
+        facts = item.key_facts
+        text = item.summary_text
     else:
-        parts = [item.content]
-    return bool(set(evidence_keys(item)) & held_keys) or any(reads_high(p) for p in parts)
+        facts, text = [], item.content
+    if set(evidence_keys(item)) & held_keys or reads_high(text):
+        return True
+    return any(value_reads_high(k) for k in facts)
 
 
 def without_high(

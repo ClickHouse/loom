@@ -206,6 +206,13 @@ def value_text(value: Any) -> str:
     return _SCALAR_SEP.join(lines)
 
 
+def value_reads_high(value: Any) -> bool:
+    """Whether a stored value holds a credential shape, read decoded (`value_text`), whatever
+    the autodetect setting. For a value; raw stored text (a chunk, a passage) goes through
+    `reads_high`, which also undoes JSON escapes."""
+    return detect_sensitivity(value_text(value)) == HIGH
+
+
 # A JSON string escape, decoded once and in order (so `\\n`, an escaped backslash then `n`,
 # stays a backslash and an `n`).
 _JSON_ESCAPE = re.compile(r'\\(["\\/bfnrt])')

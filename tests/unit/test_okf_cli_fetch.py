@@ -304,7 +304,13 @@ def test_a_chunk_shaped_duplicate_rows_own_answer_is_kept() -> None:
     # A duplicate row's answer names its canonical (another key); only the parent named in
     # the id, or `resolved_from`, marks an answer given by another row.
     own = {"value": "v", "canonical_key": "notes-v2"}
-    assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", own)
-    assert cli_okf._answered_by_parent("chunk:memory.set:notes:0", {"canonical_key": "notes"})
-    assert cli_okf._answered_by_parent("chunk:memory.set:notes:0", {"resolved_from": "x"})
-    assert not cli_okf._answered_by_parent("chunk:memory.set:notes", {"canonical_key": "notes"})
+    assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", own, None)
+    assert cli_okf._answered_by_parent("chunk:memory.set:notes:0", {"canonical_key": "notes"}, None)
+    assert cli_okf._answered_by_parent("chunk:memory.set:notes:0", {"resolved_from": "x"}, None)
+    assert not cli_okf._answered_by_parent(
+        "chunk:memory.set:notes", {"canonical_key": "notes"}, None
+    )
+    # an older build answering with a duplicate parent: its canonical, and another version
+    older = {"value": "v", "canonical_key": "notes-v2", "version": 9}
+    assert cli_okf._answered_by_parent("chunk:memory.set:notes:0", older, 5)
+    assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", {**older, "version": 5}, 5)
