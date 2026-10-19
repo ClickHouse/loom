@@ -1397,3 +1397,53 @@ def test_an_answer_hidden_whole_for_want_of_the_classification_is_the_server_s(
         return await context.restricted_namespaces_hidden_from("o"), answered_unverified()
 
     assert asyncio.run(_hidden()) == (["*"], True)
+
+
+def test_a_restricted_namespace_left_out_of_a_rollup_for_want_of_a_grant_is_the_server_s(
+    monkeypatch,
+) -> None:
+    from server.auth import authz, context, fail_closed
+    from server.auth.jwt import AuthInfo
+    from server.core import request_work
+
+    class _Directory:
+        def restricted_code_namespaces(self, org: str) -> set[str]:
+            return {"secret"}
+
+        async def restricted_set(self, org: str) -> list[str]:
+            return []
+
+    grant_read_fails = {"value": False}
+
+    async def _allows(*a: Any, **k: Any) -> bool:
+        if grant_read_fails["value"]:
+            fail_closed.note_unreadable()
+        return False
+
+    monkeypatch.setattr(context, "directory", lambda: _Directory())
+    monkeypatch.setattr(authz, "restricted_allows", _allows)
+    eve = AuthInfo(
+        subject="eve", org="o", namespaces=("n",), roles=(Role.VIEWER,), is_service_account=False
+    )
+
+    async def _hidden() -> tuple[list[str], bool]:
+        request_work.begin()
+        context.set_current_auth(eve)
+        return await context.restricted_namespaces_hidden_from(
+            "o"
+        ), fail_closed.answered_unverified()
+
+    assert asyncio.run(_hidden()) == (["secret"], False)  # no grant: the caller's
+    grant_read_fails["value"] = True
+    assert asyncio.run(_hidden()) == (["secret"], True)
+
+
+def test_http_s_ledger_note_of_a_handler_error_keeps_its_cause() -> None:
+    from server.transport import http
+
+    marked = PermissionError("no grant could be read")
+    marked.unverified = True  # type: ignore[attr-defined]
+    raised = HTTPException(status_code=403, detail={"code": "AUTH_INSUFFICIENT"})
+    raised.__cause__ = marked
+    note = http._http_exception_note(raised)
+    assert sli.status_class(False, "HANDLER_HTTP_ERROR", note) == "server"

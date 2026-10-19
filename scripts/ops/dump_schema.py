@@ -33,8 +33,9 @@ if (_ROOT := str(Path(__file__).resolve().parents[2])) not in sys.path:  # run a
 
 from scripts.codegen.common import ROOT, GeneratedFile
 
-DATABASE = "loom"  # every migration addresses loom.<table>, whatever LOOM_CH_DATABASE says
-# Telemetry the migrations derive from loom's own tables (the SLI rollup).
+# The migrations address loom.<table> whatever LOOM_CH_DATABASE says, and
+# loom_telemetry.<table> for telemetry derived from it (the SLI rollup).
+DATABASE = "loom"
 DATABASES = (DATABASE, "loom_telemetry")
 TARGET = GeneratedFile(ROOT / "schemas" / "schema.sql", "make schema-dump")
 DIFF_LINES = 40

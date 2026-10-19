@@ -242,7 +242,15 @@ async def restricted_namespaces_hidden_from(org: str) -> list[str]:
 
         note_answered_unverified()
         return ["*"]
-    hidden = [ns for ns in sorted(names) if not await restricted_allows(auth, Role.VIEWER, org, ns)]
+    from server.auth import fail_closed
+
+    hidden = []
+    for ns in sorted(names):
+        fail_closed.reset()
+        if not await restricted_allows(auth, Role.VIEWER, org, ns):
+            hidden.append(ns)
+            if fail_closed.unreadable():  # hidden for want of a read: the server's
+                fail_closed.note_answered_unverified()
     return hidden
 
 

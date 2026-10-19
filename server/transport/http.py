@@ -785,7 +785,9 @@ def _http_exception_note(he: HTTPException) -> HTTPException:
     detail = he.detail
     code = detail.get("code") if isinstance(detail, dict) else None
     text = str(code) if code else " ".join(str(detail or "").split())[:80]
-    return HTTPException(status_code=he.status_code, detail=text)
+    note = HTTPException(status_code=he.status_code, detail=text)
+    note.__cause__ = he  # status_class reads an unverified refusal through the chain
+    return note
 
 
 def _emit_event(
