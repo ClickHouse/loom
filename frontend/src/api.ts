@@ -447,8 +447,16 @@ export interface MemoryById {
   sensitivity?: string;
 }
 
-export async function getMemoryById(org: string, memoryId: string, opts: RequestOpts = {}): Promise<MemoryById> {
-  return post<MemoryById>("/v1/memory.get_by_id", { org, memory_id: memoryId }, opts.signal);
+/** `omit_high_value`: a high row answers without its value, and no sensitive read is
+ *  audited, for a view that only names the row. */
+export async function getMemoryById(
+  org: string,
+  memoryId: string,
+  opts: { omit_high_value?: boolean } & RequestOpts = {},
+): Promise<MemoryById> {
+  const body: Record<string, unknown> = { org, memory_id: memoryId };
+  if (opts.omit_high_value) body["omit_high_value"] = true;
+  return post<MemoryById>("/v1/memory.get_by_id", body, opts.signal);
 }
 
 /** POST /v1/memory.bulk_get — N keys in one CH round-trip. `agent: "*"` is the

@@ -10773,12 +10773,14 @@ class MemoryGetByIdInput(TypedDict, total=False):
     org: Required[str]
     memory_id: Required[str]
     as_of: NotRequired[Optional[str]]
+    omit_high_value: NotRequired[bool]
 
 
 class MemoryGetByIdBody(TypedDict, total=False):
     org: NotRequired[str]
     memory_id: Required[str]
     as_of: NotRequired[Optional[str]]
+    omit_high_value: NotRequired[bool]
 
 
 class MemoryGetByIdOutput(TypedDict, total=False):

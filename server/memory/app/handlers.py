@@ -897,12 +897,16 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
 
     if not await row_in_scope(input.org, row.namespace):
         return MemoryGetByIdOutput(found=False)
+    high = str(getattr(row, "sensitivity", "") or "") == "high"
+    # A caller that only names the row (the dashboard's conflict peer) never reads a
+    # high value, so nothing sensitive was read and nothing is audited.
+    omit_value = high and input.omit_high_value
     sha = (
         _content_sha256_of_stored(json.dumps(row.value, default=str))
         if row.value is not None
         else ""
     )
-    if str(getattr(row, "sensitivity", "") or "") == "high":
+    if high and not omit_value:
         # Key-only read of a 'high' row: audited. Never raises.
         from server.observability import audit as _audit
 
@@ -924,7 +928,7 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
         session_id=row.session_id,
         memory_key=row.memory_key,
         memory_type=row.memory_type,
-        value=row.value,
+        value=None if omit_value else row.value,
         confidence=row.confidence,
         version=row.version,
         created_at=row.created_at,
@@ -934,7 +938,8 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
         valid_at=getattr(row, "valid_at", None),
         valid_to=getattr(row, "valid_to", None),
         pinned=row.pinned,
-        content_sha256=sha,
+        # The hash of a short secret names it as well as the value does.
+        content_sha256="" if omit_value else sha,
         verified_by=getattr(row, "verified_by", "") or "",
         actor=getattr(row, "actor", "") or "",
         source_class=getattr(row, "source_class", "") or "",

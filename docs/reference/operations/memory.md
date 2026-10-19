@@ -818,6 +818,7 @@ Fetch a memory by its UUID (not memory_key).
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `memory_id` | `str` | required | UUID returned by memory.set |
 | `as_of` | `datetime \| None` | `None` | As-of replay filter — see MemoryGetInput.as_of. |
+| `omit_high_value` | `bool` | `False` | True answers a 'high' row without its value or hash, and audits no sensitive read. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

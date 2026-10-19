@@ -757,6 +757,8 @@ class MemoryGetByIdInput(BaseModel):
     memory_id: str  # UUID returned by memory.set
     # As-of replay filter — see MemoryGetInput.as_of.
     as_of: datetime | None = None
+    # True answers a 'high' row without its value or hash, and audits no sensitive read.
+    omit_high_value: bool = False
 
 
 class MemoryGetByIdOutput(BaseModel):

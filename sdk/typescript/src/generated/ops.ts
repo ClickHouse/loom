@@ -4326,6 +4326,7 @@ export interface MemoryGetByIdInput {
   org: string;
   memory_id: string;
   as_of?: string | null;
+  omit_high_value?: boolean;
 }
 
 export interface MemoryGetByIdOutput {

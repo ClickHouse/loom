@@ -1182,7 +1182,8 @@ function PeerSide({ rows, peerId }: { rows: ConflictRow[]; peerId?: string }) {
   useAbortableEffect(
     (signal, live) => {
       if (!peerId || listed) return;
-      getMemoryById(identity.org, peerId, { signal })
+      // The card never shows a high peer's value, so the read never fetches one.
+      getMemoryById(identity.org, peerId, { signal, omit_high_value: true })
         .then((r) => {
           if (live()) setFetched({ id: peerId, row: r.found ? r : null });
         })

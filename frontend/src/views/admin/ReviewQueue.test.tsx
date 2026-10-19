@@ -800,7 +800,7 @@ describe("ReviewQueue", () => {
     await waitFor(() => expect(peer.textContent).toContain("the other value"), WAIT);
     expect(peer.textContent).toContain("lesson_other");
     expect(peer.textContent).not.toContain("lesson_a");
-    expect(getMemoryById).toHaveBeenCalledWith(ORG, "id-elsewhere", expect.anything());
+    expect(getMemoryById).toHaveBeenCalledWith(ORG, "id-elsewhere", expect.objectContaining({ omit_high_value: true }));
   });
 
   it("shows a high peer the queue holds as read by key, without reading it by id", async () => {
