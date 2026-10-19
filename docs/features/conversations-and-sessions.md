@@ -39,7 +39,8 @@ up front.
   double the transcript.
 - **User and assistant turns are embedded**, up to their first 2,048 characters,
   which the embedding row keeps: a re-embed starts from the text the vector was built
-  from. `system` and `tool` turns stay in the transcript unindexed, except a
+  from. Rows written by earlier builds keep 240 characters, and a re-embed works from
+  those. `system` and `tool` turns stay in the transcript unindexed, except a
   compaction's summary.
 - **The embed is fail-open.** A failed embed still stores the turn, with the error
   recorded on its embedding row. Nothing retries it: the turn stays out of vector
@@ -88,6 +89,8 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   same text that search indexes (a user or assistant turn, or a summary), since the
   two copies share one embedding row; the row takes that copy's agent, role, run and
   user, so the deleting agent's own search drops it (compaction does the same). A
+  240-character row from an earlier build is kept only for a copy of its agent's whole
+  turn, and is tombstoned when no message row is left to check that against. A
   delete also finishes rows of the thread left live under an agent that has tombstoned
   its copy of the turn, such as turns an earlier build compacted. For a
   person's or a namespace's data everywhere, use
