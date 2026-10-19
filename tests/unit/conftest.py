@@ -404,6 +404,36 @@ def _grant_claims_in_memory() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_parent_revoked_in_the_store() -> Iterator[None]:
+    """A mint reads the parent's revocations from ClickHouse; unit fakes have no
+    such table. test_delegation.py drives the real read. No `monkeypatch`, as above."""
+    from server.auth import delegation
+
+    async def not_revoked(*_a: Any, **_k: Any) -> None:
+        return None
+
+    before = delegation._refuse_a_revoked_parent
+    delegation._refuse_a_revoked_parent = not_revoked  # type: ignore[assignment]
+    yield
+    delegation._refuse_a_revoked_parent = before
+
+
+@pytest.fixture(autouse=True)
+def _nobody_deactivated_over_scim() -> Iterator[None]:
+    """An SSO sign-in reads whether SCIM deactivated the email; unit fakes have
+    no such table. test_scim.py drives the real read. No `monkeypatch`, as above."""
+    from server.auth import scim
+
+    async def not_deactivated(email: str) -> bool:
+        return False
+
+    before = scim.deactivated
+    scim.deactivated = not_deactivated  # type: ignore[assignment]
+    yield
+    scim.deactivated = before
+
+
+@pytest.fixture(autouse=True)
 def _not_draining() -> Iterator[None]:
     """A test that ran an app's lifespan leaves the process marked draining,
     which the workers lease reads: every test starts serving."""

@@ -15,7 +15,7 @@ import jwt as pyjwt
 import pytest
 from fastapi.testclient import TestClient
 
-from server.auth import device, jit, login, oauth, oidc, revocation, sso_links
+from server.auth import device, jit, login, oauth, oidc, revocation, scim, sso_links
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
@@ -772,6 +772,21 @@ def test_two_link_pages_in_one_browser_keep_their_own_binding(bobs_password_acco
     first = _sso_round_trip(c, _start(c)["user_code"])
     _sso_round_trip(c, _start(c)["user_code"])  # a second sign-in, in another tab
     assert _link(c, first.text, "bobpw").status_code == 200
+
+
+def test_a_link_page_open_across_a_deactivation_writes_nothing(
+    bobs_password_account, monkeypatch
+) -> None:
+    c = _client()
+    page = _sso_round_trip(c, _start(c)["user_code"])
+
+    async def deactivated(email: str) -> bool:
+        return email == "bob@example.com"  # SCIM deactivated bob while the page was open
+
+    monkeypatch.setattr(scim, "deactivated", deactivated)
+    r = _link(c, page.text, "bobpw")
+    assert r.status_code == 403 and "deactivated" in r.text
+    assert not bobs_password_account  # no link: it would be reachable but never revoked
 
 
 def test_a_link_ticket_is_spent_once(bobs_password_account) -> None:

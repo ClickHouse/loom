@@ -30,6 +30,7 @@ import httpx
 import jwt
 
 from server.core.ch import get_client, own_write_reads
+from server.core.versions import next_version
 
 log = logging.getLogger(__name__)
 
@@ -163,12 +164,7 @@ async def save(m: Machine, *, by: str, active: bool = True, ch: Any = None) -> N
     # Past the name's newest row, whichever replica's clock wrote it: under
     # FINAL a later change with a lower version would be lost.
     ch = ch or get_client()
-    with own_write_reads():
-        row = await ch.query_one(
-            f"SELECT max(version) AS v FROM {TABLE} WHERE name = {{name:String}}",
-            params={"name": m["name"]},
-        )
-    version = max(time.time_ns(), int((row or {}).get("v") or 0) + 1)
+    version = await next_version(ch, TABLE, {"name": m["name"]})
     await ch.insert(
         TABLE,
         [
