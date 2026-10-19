@@ -1828,7 +1828,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "namespace, whether it is restricted and authorized, the templates."
     ),
     "task.get": "One task by `task_id`: its state, lease, poster, result and history.",
-    "memory.restore": "Undo a delete: restore a tombstoned memory by key within its 14-day window.",
+    "memory.restore": (
+        "Undo a delete (within 14 days) or an automatic retirement; `if_superseded_by` "
+        "restores only a row still retired behind that memory."
+    ),
     "memory.search_trace_log": (
         "Recall telemetry of a namespace: past queries with the keys and "
         "scores they returned, abstain/risk and latency (needs telemetry on)."
