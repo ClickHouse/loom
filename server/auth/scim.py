@@ -393,7 +393,7 @@ async def _converge_active(
         lift_to = max(
             datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1),
             *(
-                revocation.past_every_token_before(_aware(r["revoked_at"]))
+                revocation.past_every_token_before(as_aware_utc(r["revoked_at"]))
                 for r in rows.values()
                 if r["issued_before"] is None
             ),
@@ -519,10 +519,6 @@ async def _lift(row: dict[str, Any], subjects: list[str], cutoff: datetime) -> b
     return lifted
 
 
-def _aware(ts: datetime) -> datetime:
-    return as_aware_utc(ts) or ts  # a time read back from ClickHouse is naive UTC
-
-
 def _outright(rows: dict[str, dict[str, Any]]) -> set[str]:
     """The subjects SCIM revokes outright (an operator's `--scim` row always narrows)."""
     return {s for s, r in rows.items() if r["issued_before"] is None}
@@ -536,7 +532,7 @@ def _newest_cutoff(rows: dict[str, dict[str, Any]]) -> datetime | None:
     ]
     if not cutoffs:
         return None
-    return _aware(max(cutoffs))
+    return as_aware_utc(max(cutoffs))
 
 
 async def _held_by_another_inactive(uid: str, subject: str) -> bool:
@@ -567,7 +563,7 @@ async def _write(row: dict[str, Any]) -> None:
 def _keyed(subject: str) -> str:
     """A hash of `subject` keyed with the root secret: a list of addresses
     does not reverse it, as it would an unkeyed one."""
-    key = hmac.new(str(settings.jwt_secret).encode(), b"scim-audit", hashlib.sha256).digest()
+    key = hmac.new(settings.jwt_secret.encode(), b"scim-audit", hashlib.sha256).digest()
     return hmac.new(key, subject.encode(), hashlib.sha256).hexdigest()
 
 

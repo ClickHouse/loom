@@ -397,7 +397,7 @@ def _resource(request: Request, row: dict[str, Any]) -> dict[str, Any]:
 
 def _utc(ts: datetime) -> str:
     # ClickHouse hands DateTime64(3, 'UTC') back without its zone; a fresh row has one.
-    return (as_aware_utc(ts) or ts).isoformat()
+    return as_aware_utc(ts).isoformat()
 
 
 def _email(row: dict[str, Any]) -> dict[str, Any]:

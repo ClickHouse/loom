@@ -172,16 +172,17 @@ def _is_dead(row: dict[str, Any], revoked: dict[str, int | None], dead: set[str]
     creator is revoked outright, or narrowed to a cutoff later than the row's
     `created_at`. Judged by the row's `created_at`, which is never earlier
     than the chain's oldest `iat`: a token this calls live may still be dead
-    at the gate (a stale replica let an old session make it), never the
-    reverse."""
+    at the gate (a revocation landed between its mint's check and its save),
+    never the reverse."""
+    from server.auth import revocation
+
     creator = str(row["created_by"])
     if creator in dead:
         return True
     if creator not in revoked:
         return False
     cutoff = revoked[creator]
-    made = as_aware_utc(row["created_at"]) or row["created_at"]
-    return cutoff is None or int(made.timestamp()) < cutoff
+    return revocation.kills(cutoff, int(as_aware_utc(row["created_at"]).timestamp()))
 
 
 async def _revoke_all(

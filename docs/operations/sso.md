@@ -377,10 +377,10 @@ What Loom does with each request:
   (`emails[type eq "work"].value`) is checked only when its filter selects
   that entry, so an unchanged address passes and other addresses may be
   added, changed or removed (see
-  [Changing a person's email](#changing-a-persons-email)). A refused request that also sets
-  `active: false` still deactivates: providers send a leaver's changes
-  together and do not retry a 400. A `PUT` whose body names another user's
-  `id` is refused before anything is applied.
+  [Changing a person's email](#changing-a-persons-email)). A refused request
+  that also sets `active: false` still deactivates: providers send a leaver's
+  changes together and do not retry a 400. A `PUT` whose body names another
+  user's `id` is refused before anything is applied.
 - **Deactivating** (`active: false` by `PATCH` or `PUT`, or a `DELETE`)
   revokes outright every subject an SSO sign-in with the email could reach
   (each SSO account naming it and each password account linked to it, in any
@@ -391,11 +391,13 @@ What Loom does with each request:
   namespace's grant list, though it reaches nothing: revoke it there to tidy
   the list. While it lasts, SSO sign-in with the email is refused ("this
   account is deactivated"), even if it reaches no account yet. The accounts,
-  their grants and their data stay; this is not erasure. A password account
-  that names the email but was never linked to it (not adopted, linked or
-  proven at an SSO sign-in) is not one an SSO sign-in reaches, so it is left
-  alone: revoke it with `loom revoke-token --subject`, or adopt it before
-  offboarding ([Accounts](#accounts)). Likewise a token an operator minted
+  their grants and their data stay; this is not erasure. Bots and CI trusts
+  the person registered (`loom bot`) are the org's and keep working: disable
+  them with `loom bot disable` if they should stop. A password account that
+  names the email but was never linked to it (not adopted, linked or proven at
+  an SSO sign-in) is not one an SSO sign-in reaches, so it is left alone:
+  revoke it with `loom revoke-token --subject`, or adopt it before offboarding
+  ([Accounts](#accounts)). Likewise a token an operator minted
   with the email itself as its subject (`loom mint-token --subject <email>`)
   for an adopted account whose subject is a handle: revoke the email with
   `loom revoke-token --subject <email>`. A subject is a name, not an org's:

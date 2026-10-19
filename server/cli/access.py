@@ -294,9 +294,7 @@ async def _scim_give_back(
             # replica: its own second, and a clock ahead of the one that wrote it.
             floor = to_naive_utc(
                 current["issued_before"]
-                or revocation.past_every_token_before(
-                    as_aware_utc(current["revoked_at"]) or current["revoked_at"]
-                )
+                or revocation.past_every_token_before(as_aware_utc(current["revoked_at"]))
             )
             if issued_before < floor:
                 print(

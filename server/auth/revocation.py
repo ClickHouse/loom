@@ -433,11 +433,18 @@ def _forget_old() -> None:
     _recent[:] = [w for w in _recent if now - w[3] < _RECENT_S]
 
 
+def kills(cutoff: int | None, issued_at: int) -> bool:
+    """Whether a revocation (None: outright, else the cutoff in unix seconds)
+    ends a token issued at `issued_at`: the rule the gate, a mint and the token
+    list all apply."""
+    return cutoff is None or issued_at < cutoff
+
+
 async def subjects_revoked(subjects: list[str], *, issued_at: int) -> bool:
     """`is_revoked` for any of `subjects`, read from ClickHouse in one query:
     a token minting path cannot wait for this process's snapshot to see a
     `revoke-token`."""
-    return any(c is None or issued_at < c for c in (await cutoffs(subjects)).values())
+    return any(kills(c, issued_at) for c in (await cutoffs(subjects)).values())
 
 
 async def cutoffs(subjects: list[str]) -> dict[str, int | None]:
