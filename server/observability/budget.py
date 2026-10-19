@@ -36,8 +36,8 @@ async def namespaces_over_cap(
     entity extractor asks once per pass for the namespaces of the rows it is
     about to extract, instead of two point reads per namespace. With `operation`, a
     namespace is also over once that operation's own spend reaches `share` of the cap
-    (a worker held to its part of the cap). Fail-open like the single form: on any error every pair
-    reads False, or True with `fail_open=False` (a background spender)."""
+    (a worker held to its part of the cap). On a read error every pair reads
+    `not fail_open`, as the single form does."""
     wanted = sorted({(str(o), str(n)) for o, n in pairs})
     if not wanted:
         return {}
