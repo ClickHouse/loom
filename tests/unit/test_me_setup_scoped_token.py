@@ -33,6 +33,8 @@ class _CH:
         return []  # no restricted namespace, no ranked grants, no kinds
 
     async def query_one(self, sql: str, **kw: Any) -> dict[str, Any] | None:
+        if "max(version)" in sql:  # a new token's version, past its name's rows
+            return {"v": time.time_ns()}
         return None  # no saved pick
 
 
@@ -196,6 +198,7 @@ async def test_the_saved_row_is_an_mcp_row_in_the_token_list(
         "kind": "mcp",
         "client": "cursor",
         "inherit_creator_grants": True,
+        "lineage": ["alice"],  # the subject that made it
     }
 
 

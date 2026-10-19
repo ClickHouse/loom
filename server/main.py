@@ -114,6 +114,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         auth_required=settings.auth_actually_required(),
         dev_secret=settings.jwt_secret_is_dev_default(),
     )
+    from server.auth.scim_routes import require_scim_settings
+
+    require_scim_settings(
+        settings.scim_token, settings.oauth_login_provider, settings.auth_actually_required()
+    )
     boot.require_safe_bind(
         bind_host=settings.bind_host,
         public_base_url=settings.public_base_url,
@@ -433,6 +438,7 @@ mcp_transport.attach(app)
 
 from server.auth import login as _login  # noqa: E402
 from server.auth import oauth as _oauth  # noqa: E402
+from server.auth import scim_routes as _scim_routes  # noqa: E402
 from server.auth import self_signup as _self_signup  # noqa: E402
 from server.identity.app import claim_release as _claim_release  # noqa: E402
 from server.identity.app import password_link as _password_link  # noqa: E402
@@ -443,6 +449,8 @@ _claim_release.attach(app)
 # Sign-in (device grant, SSO) wherever auth is on; MCP connect only with LOOM_OAUTH_ENABLED.
 _oauth.attach(app)
 _password_link.attach(app)
+# SCIM provisioning (deactivating people from the IdP) only with LOOM_SCIM_TOKEN.
+_scim_routes.attach(app)
 
 from server.insights.app.admin_routes import admin_router as _admin_router  # noqa: E402
 from server.insights.app.admin_routes import org_admin_router as _org_admin_router  # noqa: E402

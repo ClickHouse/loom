@@ -7854,6 +7854,7 @@
         "subject",
         "list",
         "issued_before",
+        "scim",
         "reason",
         "expires_at",
         "json"
@@ -7946,6 +7947,21 @@
        "required": false,
        "help": "With --subject: revoke only the tokens issued (`iat`) before this instant, so a token re-minted after a leak keeps working.",
        "metavar": "ISO-8601"
+      },
+      {
+       "option_strings": [
+        "--scim"
+       ],
+       "dest": "scim",
+       "action": "_StoreTrueAction",
+       "default": false,
+       "const": true,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "With --subject and --issued-before: narrow SCIM's revocation of the subject instead of its own, to give back a subject a SCIM deactivation caught that is someone else's. Waits up to 10 s while SCIM is changing the subject.",
+       "metavar": null
       },
       {
        "option_strings": [
