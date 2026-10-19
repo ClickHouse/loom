@@ -283,7 +283,7 @@ def action_for(
     policy: str,
     retire_at: float,
     clear_at: float,
-    flag_at: float | None = None,
+    flag_at: float,
     cross_session: bool = False,
     same_written: bool = False,
 ) -> str:
@@ -291,7 +291,7 @@ def action_for(
 
     An update or contradiction about a different entity or attribute contradicts
     itself: nothing changes. Below `clear_at` nothing changes either, nor does an update or
-    a contradiction below `flag_at` (`clear_at` when not given). An update retires the
+    a contradiction below `flag_at`. An update retires the
     older row under `newest_wins` and `auto_reinforce` at `retire_at` or above; any other
     update, and a contradiction, goes to the review queue. `cross_session`: the peer is
     another session's row of a subject with no real user, whose sessions are an agent's
@@ -306,9 +306,7 @@ def action_for(
         return NOTHING
     if cross_session and verdict in (UPDATE, CONTRADICTION):
         return NOTHING
-    if verdict in (UPDATE, CONTRADICTION) and v.confidence < (
-        clear_at if flag_at is None else flag_at
-    ):
+    if verdict in (UPDATE, CONTRADICTION) and v.confidence < flag_at:
         return NOTHING
     if verdict == UPDATE:
         retires = policy in RETIRING_POLICIES and v.confidence >= retire_at and not same_written

@@ -87,7 +87,7 @@ def test_an_update_from_another_session_of_an_agent_changes_nothing() -> None:
     # The anonymous user is one subject per agent, whose sessions are separate tasks: a
     # confident update across them is neither retired nor flagged.
     v = _v("update", 0.99)
-    kw = {"policy": "auto_reinforce", "retire_at": 0.95, "clear_at": 0.90}
+    kw = {"policy": "auto_reinforce", "retire_at": 0.95, "clear_at": 0.90, "flag_at": 0.95}
     assert cr.action_for(v, **kw, cross_session=True) == cr.NOTHING
     assert cr.action_for(_v("contradiction", 0.99), **kw, cross_session=True) == cr.NOTHING
     assert cr.action_for(v, **kw) == cr.RETIRE
@@ -2082,7 +2082,7 @@ def test_the_resolver_interval_is_at_least_a_second() -> None:
 
 def test_an_update_between_two_facts_of_one_day_goes_to_review() -> None:
     sure = _v("update", 0.99)
-    kw = {"policy": "newest_wins", "retire_at": 0.98, "clear_at": 0.90}
+    kw = {"policy": "newest_wins", "retire_at": 0.98, "clear_at": 0.90, "flag_at": 0.95}
     assert cr.action_for(sure, **kw, same_written=True) == cr.FLAG
     assert cr.action_for(sure, **kw) == cr.RETIRE
 
