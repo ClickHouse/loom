@@ -94,8 +94,9 @@ class MemorySettings(BaseModel):
     memory_conflict_resolver_min_similarity: float = Field(default=0.60, gt=0.0, le=1.0)
     # Most peers judged with a row in one call, nearest first.
     memory_conflict_resolver_max_peers: int = Field(default=8, ge=1, le=8)
-    # An update at or above this confidence retires the older row (auto_reinforce, newest_wins).
-    memory_conflict_resolver_retire_confidence: float = Field(default=0.95, ge=0.0, le=1.0)
+    # An update at or above this confidence retires the older row (auto_reinforce, newest_wins);
+    # one between the clear confidence and this is flagged for review.
+    memory_conflict_resolver_retire_confidence: float = Field(default=0.98, ge=0.0, le=1.0)
     # Below this confidence a verdict changes nothing. At or above it a compatible
     # verdict clears the pair's flag, and an update this build does not retire or a
     # contradiction flags the pair for review.

@@ -237,11 +237,11 @@ down.
 | `update` or `contradiction` with a different entity or attribute | any          | nothing (the answer contradicts itself)          |
 | `update` or `contradiction` from another session, for user `-`   | any          | nothing (an agent's sessions are separate tasks) |
 | any                                                              | below 0.90   | nothing                                          |
-| `update`, namespace `auto_reinforce` or `newest_wins`            | 0.95 or more | retire the peer if stated first                  |
-| `update` (0.90 to 0.95, or `manual_review`), `contradiction`     | 0.90 or more | flag both rows `conflicted` for review           |
+| `update`, namespace `auto_reinforce` or `newest_wins`            | 0.98 or more | retire the peer if stated first                  |
+| `update` (0.90 to 0.98, or `manual_review`), `contradiction`     | 0.90 or more | flag both rows `conflicted` for review           |
 | `elaboration`, `restatement`, `related`, `unrelated`             | 0.90 or more | clear a flag between the pair                    |
 
-The two thresholds are `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` (0.95) and
+The two thresholds are `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` (0.98) and
 `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` (0.90): an update retires only at the
 first, an update between the two goes to review, and nothing below the second changes a
 row. A peer the answer leaves out, or an answer that cannot be parsed, changes nothing.

@@ -38,14 +38,15 @@ def _v(verdict: str, confidence: float, *, entity: bool = True, attribute: bool 
 
 
 def _action(v: Any, policy: str = "newest_wins") -> str:
-    return cr.action_for(v, policy=policy, retire_at=0.95, clear_at=0.90)
+    return cr.action_for(v, policy=policy, retire_at=0.98, clear_at=0.90)
 
 
 @pytest.mark.parametrize("policy", ["newest_wins", "auto_reinforce"])
 def test_an_update_retires_only_at_the_retire_confidence(policy: str) -> None:
-    assert _action(_v("update", 0.97), policy) == cr.RETIRE
-    assert _action(_v("update", 0.95), policy) == cr.RETIRE
+    assert _action(_v("update", 0.99), policy) == cr.RETIRE
+    assert _action(_v("update", 0.98), policy) == cr.RETIRE
     # Between the two thresholds an update goes to review, never to a retirement.
+    assert _action(_v("update", 0.97), policy) == cr.FLAG
     assert _action(_v("update", 0.92), policy) == cr.FLAG
 
 
@@ -412,7 +413,7 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         heads={},
         flags_left=set(),
         peers=[_peer_row("m2", "s2", "office_city", '"Office is in Paris"') | {"similarity": 0.8}],
-        answer=_answer(_entry("p1", "update", 0.97)),
+        answer=_answer(_entry("p1", "update", 0.99)),
         stamped=[],
         acted=[],
         audits=[],
@@ -1948,13 +1949,14 @@ async def test_a_bulk_update_inside_the_batch_is_owed_under_every_policy_but_app
 
 
 def test_the_defaults_are_the_benched_operating_point() -> None:
-    # gpt-6.1-sol at low effort: update precision 0.98-1.00 at >= 0.95 on held-out pairs,
-    # clear precision 0.96-0.98 at >= 0.90; a 0.60 floor flagged nothing it should not.
+    # gpt-6.1-sol at low effort: update precision 0.99 or more at >= 0.98 on held-out pairs
+    # (below it, the wrong retirements sat at 0.96), clear precision 0.96-0.98 at >= 0.90;
+    # a 0.60 floor flagged nothing it should not.
     defaults = {n: f.default for n, f in Settings.model_fields.items()}
     assert defaults["conflict_resolver_model"] == "gpt-6.1-sol"
     assert defaults["memory_conflict_resolver_min_similarity"] == 0.60
     assert defaults["memory_conflict_resolver_max_peers"] == 8
-    assert defaults["memory_conflict_resolver_retire_confidence"] == 0.95
+    assert defaults["memory_conflict_resolver_retire_confidence"] == 0.98
     assert defaults["memory_conflict_resolver_clear_confidence"] == 0.90
     # 48 rows a pass, 8 at once at ~5 s a call, then 10 s: ~70 rows a minute.
     assert defaults["memory_conflict_resolver_batch"] == 40
