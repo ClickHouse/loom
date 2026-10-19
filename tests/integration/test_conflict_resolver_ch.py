@@ -3680,3 +3680,40 @@ async def test_a_high_row_restored_after_a_lost_undelete_answers_not_restored(
             await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="vault4"))
     out = await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="vault4"))
     assert not out.restored
+
+
+@pytest.mark.parametrize("holder", ["judged row", "peer"])
+async def test_an_unlabelled_credential_never_reaches_the_judge(
+    ch, wired, monkeypatch, holder
+) -> None:
+    """A value holding a credential shape that no write labelled 'high' (detection off),
+    on the judged row or on its peer: the resolver reads it before its prompt and makes
+    no model call; the judged row is stamped."""
+    import uuid
+
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+    from server.settings import settings
+
+    org, llm = wired
+    secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    old = f"The deploy token is {secret}" if holder == "peer" else "The deploy token is unset"
+    new = f"The deploy token is now {secret}" if holder == "judged row" else "The token rotated"
+    with monkeypatch.context() as m:
+        m.setattr(settings, "memory_sensitivity_autodetect", False)
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s1", "deploy_token", old)
+        await _later()
+        await _set(org, "s2", "deploy_token_now", new)
+        await after_write.drain()
+    await _place(ch, org, "s1", "deploy_token", _vec((40, 1.0)), owed=False)
+    await _place(ch, org, "s2", "deploy_token_now", _vec((40, 0.8), (41, 0.6)), owed=True)
+
+    out = await run_pass()
+    assert llm.calls == [] and out["judged"] == 0
+    assert (await _marks(ch, org))["deploy_token_now"] == 2, "stamped judged"

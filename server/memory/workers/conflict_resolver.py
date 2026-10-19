@@ -236,7 +236,9 @@ async def _out_of_attempts(r: Mapping[str, Any], judged: frozenset[str] = frozen
 
 
 # The same refusal (or outage) this many rows in a row is the request's fault, not the
-# rows': the rest stay owed, instead of being stamped judged unjudged.
+# rows': the rest stay owed, instead of being stamped judged unjudged. A namespace with
+# fewer owed rows than this never reaches the stop, so its refused rows are stamped at
+# the pass's end like any row refused for a reason of its own.
 SAME_REFUSAL_STOP = 3
 
 

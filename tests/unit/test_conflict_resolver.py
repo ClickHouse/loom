@@ -814,7 +814,8 @@ async def test_a_key_held_past_the_locks_wait_leaves_the_row_owed(
     row_env: NS, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The holder may fail its own if_match or change only metadata: no new mark brings
-    # the pair back, so the row is judged again.
+    # the pair back, so the row is judged again. The call was paid: it counts as an
+    # attempt (JudgedThenFailed), so a key held on every pass ends the row's attempts.
     from contextlib import asynccontextmanager
 
     from server.core.errors import PreconditionFailedError
@@ -825,9 +826,9 @@ async def test_a_key_held_past_the_locks_wait_leaves_the_row_owed(
         yield
 
     monkeypatch.setattr(resolver, "_pair_locks", busy)
-    counts = await _resolve()
+    with pytest.raises(resolver.JudgedThenFailed):
+        await _resolve()
     assert row_env.llm_calls == 1 and row_env.acted == [] and row_env.stamped == []
-    assert counts.skipped_changed == 1
 
 
 async def test_a_row_gone_or_under_append_only_is_stamped_without_a_call(row_env: NS) -> None:

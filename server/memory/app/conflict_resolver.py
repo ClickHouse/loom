@@ -26,6 +26,7 @@ from server.memory.app import intent_marks
 from server.memory.app.projection_errors import ProjectionScope
 from server.memory.domain import conflict_resolution as cr
 from server.memory.domain.conflicts import ConflictPeer
+from server.memory.domain.sensitivity import value_reads_high
 from server.memory.store import conflict_resolver as queue
 from server.observability.genai import llm_stage
 from server.settings import settings
@@ -297,7 +298,12 @@ async def _after_retire(org: str, namespace: str, done: Retired) -> None:
     memory row."""
     from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
 
-    if await queue.under_erasure(org):
+    try:
+        erasing = await queue.under_erasure(org)
+    except Exception as e:  # noqa: BLE001 — the intent stays for the repair
+        log.warning("conflict_resolver: erasure check failed, follow left for the repair: %s", e)
+        return
+    if erasing:
         return  # the intent stays; the repair replays it once the erasure is over
     recorded = await record_auto_supersessions(  # the intent's id: the repair finds it
         org=org,
@@ -633,11 +639,11 @@ async def resolve_row(
             unanswered = await _judge_and_act(
                 org, namespace, row, peers, policy=policy, counts=counts
             )
-        except PreconditionFailedError:
-            # A key another write held past the lock's wait. That write may change only
-            # metadata or fail, leaving no new mark: the row stays owed.
-            counts.skipped_changed += 1
-            return None
+        except PreconditionFailedError as e:
+            # The judge answered, then a key another write held past the lock's wait
+            # stopped the act: the call was paid, so it counts as an attempt, and the row
+            # stays owed until its attempts run out.
+            raise JudgedThenFailed(f"{type(e).__name__}: {e}") from e
         judged_ids = frozenset(str(p["memory_id"]) for p in peers)
         if unanswered & {str(x) for x in row.conflict_with} or cluster.flags_left:
             # A flagged peer the answer left out, or one past the cluster's places: stamped,
@@ -673,13 +679,19 @@ async def _still_unprotected(
     org: str, row: Any, peers: list[dict[str, Any]]
 ) -> tuple[Any, list[dict[str, Any]]]:
     """The row and its peers re-read right before the prompt is built: a row relabelled
-    'high' since it was read (same bytes, same hash) is never sent. (None, []) when the
-    judged row is no longer eligible; a protected peer is dropped."""
+    'high' since it was read (same bytes, same hash) is never sent, nor one whose value
+    holds a credential shape the sweep has not labelled yet. (None, []) when the judged
+    row is no longer eligible or holds one (it is stamped judged, with no model call);
+    such a peer is dropped."""
     fresh = await _head(org, str(row.memory_id))
     if not _holds(fresh, str(row.namespace), str(row.content_sha256 or "")):
         return None, []
+    if value_reads_high(fresh.value):
+        return None, []
     high = await queue.protected_ids(org, str(row.namespace), [str(p["memory_id"]) for p in peers])
-    return fresh, [p for p in peers if str(p["memory_id"]) not in high]
+    return fresh, [
+        p for p in peers if str(p["memory_id"]) not in high and not value_reads_high(p["value"])
+    ]
 
 
 def _action(v: cr.PeerVerdict, policy: str, *, cross_session: bool, same_written: bool) -> str:

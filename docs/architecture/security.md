@@ -620,7 +620,8 @@ facts when written, listed by `memory.digests` or read by the outcome judge. The
 counting as `credential` for its default shape filter: a new version per row and, for
 `high`, tombstoned embedding rows and entity vectors. Until the sweep labels it, an
 unlabelled row that holds a credential is embedded like any other, so search serves it, and
-`memory.ask` and the conflict judge can send it to their models.
+`memory.ask` can send it to its model; the conflict resolver reads every row and peer for a
+credential shape before its prompt and sends none that holds one.
 
 ## Audit log
 
