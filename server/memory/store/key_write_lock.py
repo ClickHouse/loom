@@ -2,10 +2,9 @@
 `memory.delete`'s `if_version`).
 
 The check runs before the insert (for a set, before the embed too), so two writers could
-both pass it. Writers of one key are serialized per process, and across
-processes by a lease (`server.core.leases`); a Keeper that fails refuses the write
-(503) rather than lock this process alone.
-`lease` holds a lock of any name across hosts for as long as a job runs.
+both pass it. Writers of one key are serialized per process, and across processes by a
+lease (`server.core.leases`); a Keeper that fails refuses the write (503) rather than lock
+this process alone. `lease` holds a lock of any name across hosts for as long as a job runs.
 """
 
 from __future__ import annotations

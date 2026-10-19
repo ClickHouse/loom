@@ -771,8 +771,7 @@ def _dedupe_slugs(concepts: list[Concept]) -> None:
     for c in concepts:
         if c.id.casefold() in used or _is_reserved(c.id):
             identity = f"{c.memory_key}\0{c.loom.get('memory_id') or ''}"
-            # A key literally named like this one's suffixed name and sorting first holds it:
-            # hash again with a counter, so each attempt is a new name and the loop ends.
+            # a counter makes each attempt a new name, so the loop ends
             attempt = 0
             while (renamed := _suffixed(c.id, _short_hash(identity, attempt))).casefold() in used:
                 attempt += 1
