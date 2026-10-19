@@ -289,6 +289,7 @@ def test_both_sdks_time_the_lock_alike(home, tmp_path) -> None:
               creds.REFRESH_DEADLINE_MS,
               creds.RELEASE_WAIT_MS,
               creds.RENAME_WAIT_MS,
+              creds.CLAIM_POLL_MS,
             ];
             console.log(JSON.stringify({ timings, renameTries: creds.RENAME_TRIES }));
             """,
@@ -302,6 +303,7 @@ def test_both_sdks_time_the_lock_alike(home, tmp_path) -> None:
         credentials._REFRESH_DEADLINE_S,
         credentials._RELEASE_WAIT_S,
         credentials._RENAME_WAIT_S,
+        credentials._CLAIM_POLL_S,
     ]
     assert json.loads(out) == {
         "timings": [round(s * 1000) for s in py],

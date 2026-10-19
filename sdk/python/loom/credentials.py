@@ -80,6 +80,8 @@ _RELEASE_WAIT_S = 2.0
 _BUSY = {errno.EACCES, errno.EPERM, errno.EBUSY}
 _RENAME_TRIES = 5
 _RENAME_WAIT_S = 0.02
+# How often a release asks again for the claim a breaker holds.
+_CLAIM_POLL_S = 0.02
 
 
 def _path() -> Path:
@@ -317,7 +319,7 @@ def _release(lock: Path, owner: str) -> None:
         except FileExistsError:
             if time.monotonic() > deadline:
                 return
-            time.sleep(0.02)
+            time.sleep(_CLAIM_POLL_S)
     try:
         with contextlib.suppress(OSError):
             _touch(claim)  # as a breaker's is, so it never looks old to the next one

@@ -61,6 +61,8 @@ export const RELEASE_WAIT_MS = 2_000;
 const BUSY = new Set(["EACCES", "EPERM", "EBUSY"]);
 export const RENAME_TRIES = 5;
 export const RENAME_WAIT_MS = 20;
+/** How often a release asks again for the claim a breaker holds. */
+export const CLAIM_POLL_MS = 20;
 
 type FetchFn = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -263,19 +265,22 @@ async function takeLockDir(n: NodeModules): Promise<() => Promise<void>> {
   }, LOCK_HEARTBEAT_MS);
   beat.unref?.();
   // A release never fails the refresh it ends: a lock it cannot remove is left for the stale age.
+  // An exit during the release finishes that one: a second would find its own claim taken.
+  let releasing: Waiting<void> | undefined;
   const unhook = releaseOnExit(() => {
     clearInterval(beat);
     unhook();
     try {
-      waitSync(releaseLock(n, lock, owner));
+      waitSync(releasing ?? releaseLock(n, lock, owner));
     } catch {
       /* left for the stale age */
     }
   });
   return async () => {
     clearInterval(beat);
+    releasing = releaseLock(n, lock, owner);
     try {
-      await waitAsync(releaseLock(n, lock, owner));
+      await waitAsync(releasing);
     } catch {
       /* left for the stale age */
     } finally {
@@ -486,7 +491,7 @@ function* releaseLock(n: NodeModules, lock: string, owner: string): Waiting<void
     } catch (e) {
       if (errorCode(e) !== "EEXIST") throw e;
       if (performance.now() > deadline) return;
-      yield 20;
+      yield CLAIM_POLL_MS;
     }
   }
   try {

@@ -868,6 +868,38 @@ describe("the credentials lock", () => {
     expect(["exit", "SIGINT", "SIGTERM"].map((e) => process.listenerCount(e))).toEqual(before);
   });
 
+  it("finishes its own release when the process exits while the release waits", async () => {
+    // The release holds its claim and waits out a busy rename (Windows) when the exit comes:
+    // a second release would find that claim taken and leave the lock.
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 1 });
+    const before = process.listenerCount("exit");
+    let exited = false;
+    srv.onRefresh = async () => {
+      const real = fs.renameSync;
+      vi.spyOn(fs, "renameSync").mockImplementation(((from: string, ...rest: unknown[]) => {
+        if (from === lockDir() && !exited) {
+          exited = true;
+          const exit = process.listeners("exit").at(-1) as () => void;
+          setImmediate(exit); // the exit lands while the release waits to try again
+          throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+        }
+        return (real as (...a: unknown[]) => unknown)(from, ...rest);
+      }) as never);
+    };
+    const started = performance.now();
+    try {
+      expect(await accessToken(undefined, { fetch: srv.fetch })).toBe("a1");
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(exited).toBe(true);
+    expect(() => statSync(lockDir())).toThrow();
+    expect(() => statSync(`${lockDir()}.breaking`)).toThrow();
+    expect(performance.now() - started).toBeLessThan(RELEASE_WAIT_MS);
+    expect(process.listenerCount("exit")).toBe(before);
+  });
+
   it("leaves a lock another process took over while it held it", async () => {
     const srv = fakeServer();
     store("default", { expires_at: now() - 1 });
