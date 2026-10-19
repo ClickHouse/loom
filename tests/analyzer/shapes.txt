@@ -132,6 +132,7 @@
 1891df92bb07	SELECT DISTINCT org FROM ( SELECT org FROM loom.namespaces FINAL WHERE owner_email = {s:String} AND active = ? UNION ALL SELECT org FROM loom.namespace_grants FINAL WHERE lower(subject) = lower({s:Str
 18beffc43c3d	SELECT memory_key_a, memory_key_b, allowed_at, allowed_by, reason FROM loom.conflict_allowlist FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL ORDER BY allowed_at 
 1904c89aac43	SELECT uniqExact(path) AS n FROM loom.code_chunks FINAL WHERE org = {org:String} AND namespace = {ns:String} AND embedding_model = {model:String} AND tombstoned_at IS NULL AND startsWith(path, {prefix
+190702c74f85	SELECT ts, actor, subject FROM loom.audit_log WHERE org = ? AND namespace = ? AND event_type = {event:String} AND ({name:String} = ? OR JSONExtractString(subject, ?) = {name:String}) ORDER BY ts DESC 
 190758ec6ba2	SELECT count() AS n FROM loom.memory_drops WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND ?
 19091cfef8cd	SELECT memory_key, memory_type, content_excerpt, valid_at, created_at, namespace, count() OVER () AS total_matching FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:Strin
 195d537e48e7	SELECT ts, event_type, org, namespace, actor, subject, request_id FROM loom.audit_log WHERE org = {org:String} AND namespace = {ns:String} ORDER BY ts DESC LIMIT {lim:UInt64}

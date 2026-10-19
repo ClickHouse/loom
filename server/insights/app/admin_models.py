@@ -3,6 +3,7 @@ per endpoint, and the typed return shapes the OpenAPI document shows."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -92,6 +93,9 @@ class SettingSetInput(BaseModel):
     # JSON, validated as the setting validates its environment value.
     value: Any = None
     clear: bool = False
+    # Refuse (409 PRECONDITION_FAILED) unless this is the value in force, so a
+    # change made meanwhile through another replica or the CLI is not overwritten.
+    expected: Any = None
 
     @model_validator(mode="after")
     def _value_or_clear(self) -> SettingSetInput:
@@ -331,6 +335,27 @@ class SettingRow(BaseModel):
 
 class SettingsListOutput(BaseModel):
     settings: list[SettingRow]
+
+
+class SettingsHistoryInput(BaseModel):
+    # One setting's changes; "" = every setting's.
+    name: str = Field(default="", max_length=128)
+    limit: int = Field(default=50, ge=1, le=1000)
+
+
+class SettingChange(BaseModel):
+    ts: datetime
+    # Who made it: a token subject, or `cli:<user>`.
+    actor: str
+    name: str
+    value: Any
+    previous: Any
+    cleared: bool
+
+
+class SettingsHistoryOutput(BaseModel):
+    # Newest first.
+    changes: list[SettingChange]
 
 
 class SettingSetOutput(BaseModel):

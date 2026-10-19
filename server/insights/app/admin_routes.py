@@ -38,9 +38,12 @@ from server.insights.app.admin_models import (
     RatelimitSetInput,
     RatelimitSetOutput,
     SchemaStatusOutput,
+    SettingChange,
     SettingRow,
     SettingSetInput,
     SettingSetOutput,
+    SettingsHistoryInput,
+    SettingsHistoryOutput,
     SettingsListInput,
     SettingsListOutput,
     TokenMintInput,
@@ -599,26 +602,32 @@ async def admin_settings_list(input: SettingsListInput) -> SettingsListOutput:
 @admin_router.post("/v1/admin/settings.set")
 async def admin_settings_set(request: Request, input: SettingSetInput) -> SettingSetOutput:
     """Install a deployment-wide override of a live setting ({name, value}) or
-    remove it ({name, clear: true}). Every process applies it within
-    `runtime_overrides_refresh_seconds`; this one at once."""
-    from server.core import settings_overrides
+    remove it ({name, clear: true}); with `expected`, only while that is the value
+    in force. Every process applies it within `runtime_overrides_refresh_seconds`;
+    this one at once."""
+    from server.core.settings_overrides import NOT_GIVEN
+    from server.insights.app import settings_changes
 
     set_query_tag("admin.settings_set")
     info = await require_admin(request)
-    previous, row = await settings_overrides.change(input.name, input.value, clear=input.clear)
-    await audit.emit(
-        "setting.changed",
-        org=info.org if info is not None else "-",
-        namespace="-",
+    row = await settings_changes.change(
+        input.name,
+        input.value,
+        clear=input.clear,
+        expected=input.expected if "expected" in input.model_fields_set else NOT_GIVEN,
         actor=info.subject if info is not None else "dev-admin",
-        subject={
-            "name": input.name,
-            "value": row["value"] if row else None,
-            "previous": previous,
-            "cleared": input.clear,
-        },
     )
     return SettingSetOutput(ok=True, setting=SettingRow(**row) if row else None)
+
+
+@admin_router.post("/v1/admin/settings.history")
+async def admin_settings_history(input: SettingsHistoryInput) -> SettingsHistoryOutput:
+    """The recorded changes of one setting, or of every setting, newest first: who
+    made each, the value before and after. Undo one by setting `previous` back."""
+    from server.insights.app import settings_changes
+
+    rows = await settings_changes.history(input.name, input.limit)
+    return SettingsHistoryOutput(changes=[SettingChange(**r) for r in rows])
 
 
 # ============================================================

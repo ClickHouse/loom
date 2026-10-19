@@ -2034,7 +2034,12 @@
         ],
         "set_setting": [
           "name",
-          "value"
+          "value",
+          "expected"
+        ],
+        "setting_history": [
+          "name",
+          "limit"
         ],
         "settings": [
           "prefix",

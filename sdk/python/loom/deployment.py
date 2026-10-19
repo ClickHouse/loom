@@ -39,13 +39,23 @@ class DeploymentClient:
             "POST", "/v1/admin/settings.list", {"prefix": prefix, "changed": changed}
         )
 
-    async def set_setting(self, name: str, value: Any) -> dict[str, Any]:
-        """Override a live setting for the whole deployment; outlives a restart."""
-        return await self._call("POST", "/v1/admin/settings.set", {"name": name, "value": value})
+    async def set_setting(self, name: str, value: Any, *, expected: Any = ...) -> dict[str, Any]:
+        """Override a live setting for the whole deployment; outlives a restart.
+        `expected`: change nothing (409) unless that is the value in force."""
+        body: dict[str, Any] = {"name": name, "value": value}
+        if expected is not ...:
+            body["expected"] = expected
+        return await self._call("POST", "/v1/admin/settings.set", body)
 
     async def reset_setting(self, name: str) -> dict[str, Any]:
         """Remove the override: back to the environment's value or the default."""
         return await self._call("POST", "/v1/admin/settings.set", {"name": name, "clear": True})
+
+    async def setting_history(self, name: str = "", limit: int = 50) -> dict[str, Any]:
+        """Recorded changes of one setting ("" = all), newest first."""
+        return await self._call(
+            "POST", "/v1/admin/settings.history", {"name": name, "limit": limit}
+        )
 
     async def models(self) -> dict[str, Any]:
         """The LLM and embedding settings in force, and any change pending."""

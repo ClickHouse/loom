@@ -54,6 +54,21 @@ process's own value or the default. `reset` refuses a setting with no stored ove
 removes the override of a setting a later build no longer has. Each change writes a
 `setting.changed` audit row with the value before and after.
 
+`--expect <value>` (`expected` over HTTP) changes nothing unless that is the value in
+force, and answers `409 PRECONDITION_FAILED` with the value it found: two operators
+tuning one setting do not overwrite each other unseen.
+
+## See and undo past changes
+
+```bash
+loom settings history memory_ask_recency_weight
+loom settings history --limit 20      # every setting
+```
+
+Each line is one recorded change, newest first: when, who (`cli:<user>` or the token
+subject) and the value before and after. To undo one, set `previous` back with
+`loom settings set`, or reset the setting when `previous` was its own value.
+
 An override is the deployment's default, so what a namespace or a request sets still wins
 over it: a namespace's `retrieval_defaults` (`top_k`, `min_similarity`,
 `reinforcement_weight` and the other search knobs `namespace.register` takes) and a
@@ -70,8 +85,9 @@ curl -s "$LOOM_BASE_URL/v1/admin/settings.set" -H "Authorization: Bearer $TOKEN"
   -H 'content-type: application/json' -d '{"name": "memory_ask_recency_weight", "clear": true}'
 ```
 
-The Python SDK has `agent.deployment.settings()`, `set_setting(name, value)` and
-`reset_setting(name)`.
+`POST /v1/admin/settings.history` takes `{"name": "...", "limit": 50}`. The Python SDK
+has `agent.deployment.settings()`, `set_setting(name, value, expected=...)`,
+`reset_setting(name)` and `setting_history(name)`.
 
 ## During a rolling upgrade
 

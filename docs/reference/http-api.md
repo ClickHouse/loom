@@ -97,7 +97,8 @@ another org, for example) needs `platform_admin`.
 | `POST /v1/admin/budget.set`        | Install or clear a per-operation (or per-consumer) latency-budget override.                                                     |
 | `POST /v1/admin/ratelimit.set`     | Install or clear a per-namespace or per-org rate-limit override (see [Rate limits](#rate-limits)).                              |
 | `POST /v1/admin/settings.list`     | Every setting's value in force, default, source and whether it is live ([Runtime settings](../operations/runtime-settings.md)). |
-| `POST /v1/admin/settings.set`      | Install or clear a deployment-wide override of a live setting.                                                                  |
+| `POST /v1/admin/settings.set`      | Install or clear a deployment-wide override of a live setting; `expected` refuses a value that moved (409).                     |
+| `POST /v1/admin/settings.history`  | The recorded changes of one setting, or all, newest first: who, the value before and after.                                     |
 | `POST /v1/admin/consumers`         | Per-consumer calls, error rate, p50 latency, spend and outcome feedback over a window.                                          |
 | `POST /v1/admin/fleet.cost`        | The top tenants by attributed cost over a window.                                                                               |
 | `POST /v1/admin/prompts.evaluate`  | A should-promote verdict for one prompt version.                                                                                |

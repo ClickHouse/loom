@@ -163,8 +163,8 @@
   "options: -h, --help show this help message and exit --yes Replace what must match --check Write nothing; exit 2 when this env differs from the published configuration"
  ],
  "loom settings": [
-  "usage: loom settings [-h] {list,set,reset} ...",
-  "positional arguments: {list,set,reset} list Each setting: value, where it came from, whether live. set Override a live setting for the whole deployment; outlives a restart. reset Remove the override: back to the env or the default.",
+  "usage: loom settings [-h] {list,set,reset,history} ...",
+  "positional arguments: {list,set,reset,history} list Each setting: value, where it came from, whether live. set Override a live setting for the whole deployment; outlives a restart. reset Remove the override: back to the env or the default. history Recorded changes, newest first: who, the value before and after.",
   "options: -h, --help show this help message and exit"
  ],
  "loom settings list": [
@@ -172,14 +172,19 @@
   "options: -h, --help show this help message and exit --prefix PREFIX Only the settings whose name starts with this --changed Only the ones not at their default --json One JSON array"
  ],
  "loom settings set": [
-  "usage: loom settings set [-h] name value",
+  "usage: loom settings set [-h] [--expect EXPECT] name value",
   "positional arguments: name The field name, e.g. memory_ask_recency_weight value Written as its LOOM_<NAME> environment value would be",
-  "options: -h, --help show this help message and exit"
+  "options: -h, --help show this help message and exit --expect EXPECT Change nothing unless this is the value in force (written as for set)"
  ],
  "loom settings reset": [
-  "usage: loom settings reset [-h] name",
+  "usage: loom settings reset [-h] [--expect EXPECT] name",
   "positional arguments: name",
-  "options: -h, --help show this help message and exit"
+  "options: -h, --help show this help message and exit --expect EXPECT Change nothing unless this is the value in force (written as for set)"
+ ],
+ "loom settings history": [
+  "usage: loom settings history [-h] [--limit LIMIT] [--json] [name]",
+  "positional arguments: name One setting; all when omitted",
+  "options: -h, --help show this help message and exit --limit LIMIT --json One JSON array"
  ],
  "loom secrets": [
   "usage: loom secrets [-h] {reseal} ...",

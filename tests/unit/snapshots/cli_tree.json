@@ -4845,7 +4845,8 @@
            "title": "options",
            "description": null,
            "dests": [
-            "help"
+            "help",
+            "expect"
            ]
           }
          ],
@@ -4892,6 +4893,21 @@
            "required": true,
            "help": "Written as its LOOM_<NAME> environment value would be",
            "metavar": null
+          },
+          {
+           "option_strings": [
+            "--expect"
+           ],
+           "dest": "expect",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Change nothing unless this is the value in force (written as for set)",
+           "metavar": null
           }
          ]
         },
@@ -4918,7 +4934,8 @@
            "title": "options",
            "description": null,
            "dests": [
-            "help"
+            "help",
+            "expect"
            ]
           }
          ],
@@ -4952,6 +4969,113 @@
            "required": true,
            "help": null,
            "metavar": null
+          },
+          {
+           "option_strings": [
+            "--expect"
+           ],
+           "dest": "expect",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Change nothing unless this is the value in force (written as for set)",
+           "metavar": null
+          }
+         ]
+        },
+        "history": {
+         "prog": "loom settings history",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.settings_cmd:_cmd_history"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "name"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "limit",
+            "json"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "name",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": "?",
+           "type": null,
+           "required": false,
+           "help": "One setting; all when omitted",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--limit"
+           ],
+           "dest": "limit",
+           "action": "_StoreAction",
+           "default": 50,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--json"
+           ],
+           "dest": "json",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "One JSON array",
+           "metavar": null
           }
          ]
         }
@@ -4959,7 +5083,8 @@
        "aliases_of": {
         "list": "loom settings list",
         "set": "loom settings set",
-        "reset": "loom settings reset"
+        "reset": "loom settings reset",
+        "history": "loom settings history"
        },
        "choices_help": [
         {
@@ -4976,6 +5101,11 @@
          "dest": "reset",
          "help": "Remove the override: back to the env or the default.",
          "metavar": "reset"
+        },
+        {
+         "dest": "history",
+         "help": "Recorded changes, newest first: who, the value before and after.",
+         "metavar": "history"
         }
        ]
       }

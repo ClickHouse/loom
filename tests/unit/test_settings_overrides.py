@@ -5,6 +5,7 @@ clearing it puts back the value each process started with."""
 from __future__ import annotations
 
 import argparse
+import json
 from typing import Any
 
 import pytest
@@ -243,13 +244,54 @@ def test_the_cli_records_the_stored_value_before_its_change(
     monkeypatch.setattr(cli_ch, "run_connected", run_connected)
     monkeypatch.setattr(settings_cmd, "run_connected", run_connected)
     stored[(LIVE,)] = 0.35  # an override this CLI process has not adopted
-    args = argparse.Namespace(settings_cmd="set", name=LIVE, value="0.4")
+    args = argparse.Namespace(settings_cmd="set", name=LIVE, value="0.4", expect="0.2")
+    assert settings_cmd._cmd_change(args) == 2  # the value in force is 0.35
+    assert "not the expected '0.2'" in capsys.readouterr().err
+    args = argparse.Namespace(settings_cmd="set", name=LIVE, value="0.4", expect=None)
     assert settings_cmd._cmd_change(args) == 0
     assert "✓ set: memory_ask_recency_weight = 0.4 (override)" in capsys.readouterr().out
-    args = argparse.Namespace(settings_cmd="reset", name=LIVE)
+    args = argparse.Namespace(settings_cmd="reset", name=LIVE, expect=None)
     assert settings_cmd._cmd_change(args) == 0
     assert [kw["subject"]["previous"] for _, kw in audits] == [0.35, 0.4]
     assert all(kw["actor"].startswith("cli:") for _, kw in audits)
-    args = argparse.Namespace(settings_cmd="reset", name=LIVE)
+    assert {(kw["org"], kw["namespace"]) for _, kw in audits} == {("-", "-")}
     assert settings_cmd._cmd_change(args) == 2  # nothing stored any more
     assert "no override to reset" in capsys.readouterr().err
+
+
+async def test_expected_refuses_a_value_that_moved(stored: dict) -> None:
+    stored[(LIVE,)] = 0.35  # another operator's change
+    with pytest.raises(so.SettingMovedError, match="not the expected 0.2") as e:
+        await so.change(LIVE, 0.4, expected=0.2)
+    assert e.value.extra == {"current": 0.35} and stored == {(LIVE,): 0.35}
+    _, row = await so.change(LIVE, 0.4, expected="0.35")  # written as for set
+    assert row is not None and row["value"] == 0.4
+
+
+def test_the_admin_route_refuses_a_change_whose_expected_value_moved(
+    client: TestClient, stored: dict, audits: list
+) -> None:
+    stored[(LIVE,)] = 0.35
+    r = client.post("/v1/admin/settings.set", json={"name": LIVE, "value": 0.4, "expected": 0.2})
+    assert r.status_code == 409 and r.json()["detail"]["current"] == 0.35
+    assert stored == {(LIVE,): 0.35} and audits == []
+
+
+def test_the_history_route_reads_the_recorded_changes(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    from server.insights.store import admin as admin_repo
+
+    seen: list[tuple[str, str, int]] = []
+
+    async def setting_changes(event: str, name: str, limit: int, *, ch: Any = None) -> list:
+        seen.append((event, name, limit))
+        subject = json.dumps({"name": LIVE, "value": 0.4, "previous": 0.35, "cleared": False})
+        return [{"ts": "2026-01-02 03:04:05.000", "actor": "cli:ops", "subject": subject}]
+
+    monkeypatch.setattr(admin_repo, "setting_changes", setting_changes)
+    r = client.post("/v1/admin/settings.history", json={"name": LIVE, "limit": 5})
+    assert r.status_code == 200, r.text
+    (change,) = r.json()["changes"]
+    assert (change["actor"], change["previous"], change["value"]) == ("cli:ops", 0.35, 0.4)
+    assert seen == [("setting.changed", LIVE, 5)]

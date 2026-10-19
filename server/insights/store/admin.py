@@ -69,6 +69,25 @@ async def audit_summary(
     )
 
 
+async def setting_changes(
+    event_type: str, name: str, limit: int, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The deployment-wide `event_type` rows (org and namespace `-`) of setting
+    `name` ("" = all), newest first; the sort key's prefix bounds the read."""
+    ch = ch or _default_client()
+    return await ch.query_all(
+        """
+        SELECT ts, actor, subject
+        FROM loom.audit_log
+        WHERE org = '-' AND namespace = '-' AND event_type = {event:String}
+          AND ({name:String} = '' OR JSONExtractString(subject, 'name') = {name:String})
+        ORDER BY ts DESC
+        LIMIT {limit:UInt32}
+        """,
+        params={"event": event_type, "name": name, "limit": int(limit)},
+    )
+
+
 async def events_tail(
     since_seconds: int,
     limit: int,

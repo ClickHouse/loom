@@ -48,6 +48,30 @@ async def test_set_list_and_reset_a_live_setting(control_plane_url: str, ch_clie
 
 
 @pytest.mark.asyncio
+async def test_a_change_names_the_value_it_replaces_and_is_recorded(
+    control_plane_url: str,
+) -> None:
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=10.0) as c:
+        before = (await _listed(c))["value"]
+        try:
+            r = await c.post(
+                "/v1/admin/settings.set", json={"name": NAME, "value": 999, "expected": before + 1}
+            )
+            assert r.status_code == 409 and r.json()["detail"]["current"] == before
+            r = await c.post(
+                "/v1/admin/settings.set", json={"name": NAME, "value": 999, "expected": before}
+            )
+            assert r.status_code == 200, r.text
+        finally:
+            await c.post("/v1/admin/settings.set", json={"name": NAME, "clear": True})
+        r = await c.post("/v1/admin/settings.history", json={"name": NAME, "limit": 2})
+        assert r.status_code == 200, r.text
+        reset, made = r.json()["changes"]
+        assert (made["previous"], made["value"], made["cleared"]) == (before, 999, False)
+        assert (reset["previous"], reset["value"], reset["cleared"]) == (999, before, True)
+
+
+@pytest.mark.asyncio
 async def test_a_setting_read_at_startup_is_refused(control_plane_url: str) -> None:
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=10.0) as c:
         r = await c.post("/v1/admin/settings.set", json={"name": "ch_host", "value": "x"})

@@ -21,7 +21,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from server.core import runtime_overrides as ro
 from server.core.env_file import env_file_path, settings_file_path
-from server.core.errors import ValidationError
+from server.core.errors import LoomServerError, ValidationError
 from server.core.repo_base import _CHClient
 from server.settings import Settings, settings
 from server.settings._env import is_secret_field
@@ -40,6 +40,14 @@ _applied: dict[str, Any] = {}
 _warned: set[tuple[str, str]] = set()
 # source -> the fields code outside this module set on `settings` (`register_source`).
 _assigned: dict[str, Callable[[], Iterable[str]]] = {}
+
+
+class SettingMovedError(LoomServerError):
+    """409 — the setting's value in force is not the `expected` one the change
+    named, so nothing changed; `current` carries the value in force."""
+
+    code = "PRECONDITION_FAILED"
+    status_code = 409
 
 
 def check(name: str, value: Any) -> Any:
@@ -64,17 +72,36 @@ async def refresh(*, ch: _CHClient | None = None) -> ro.Snapshot:
     return snapshot
 
 
+NOT_GIVEN: Any = object()
+
+
 async def change(
-    name: str, value: Any = None, *, clear: bool = False, ch: _CHClient | None = None
+    name: str,
+    value: Any = None,
+    *,
+    clear: bool = False,
+    expected: Any = NOT_GIVEN,
+    ch: _CHClient | None = None,
 ) -> tuple[Any, dict[str, Any] | None]:
     """Store (or, with `clear`, remove) the override of `name` and apply it here.
     Returns the value in force before and the `row()` after, None for a field this
     build does not have. Stored first: a failed write changes no process. Clearing
     takes any name with a stored override, a field since removed included, and
-    refuses one with none."""
+    refuses one with none. `expected`: refuse unless that is the value in force,
+    so two operators changing one setting do not overwrite each other unseen."""
     snapshot = await refresh(ch=ch)
     known = name in Settings.model_fields
     previous = row(name)["value"] if known else None
+    if expected is not NOT_GIVEN and known:
+        try:
+            matches = coerce(Settings, name, expected) == getattr(settings, name)
+        except PydanticValidationError:
+            matches = False
+        if not matches:
+            raise SettingMovedError(
+                f"{name} is {previous!r}, not the expected {expected!r}; nothing changed",
+                current=previous,
+            )
     if clear:
         if (name,) not in snapshot.get(KIND, {}):
             raise ValidationError(f"{name} has no override to reset")

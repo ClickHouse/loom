@@ -1,7 +1,7 @@
-"""`loom settings list|set|reset`: every setting's value in force and where it
-came from, and the deployment-wide overrides of live settings
-(`server.core.settings_overrides`). Run with the deployment's env: `list`
-shows that env with the stored overrides laid over it.
+"""`loom settings list|set|reset|history`: every setting's value in force and
+where it came from, the deployment-wide overrides of live settings
+(`server.core.settings_overrides`) and the record of their changes. Run with the
+deployment's env: `list` shows that env with the stored overrides laid over it.
 """
 
 from __future__ import annotations
@@ -37,38 +37,51 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_change(args: argparse.Namespace) -> int:
-    from server.core import settings_overrides
     from server.core.errors import LoomServerError
-    from server.observability import audit
+    from server.core.settings_overrides import NOT_GIVEN
+    from server.insights.app import settings_changes
 
     clearing = args.settings_cmd == "reset"
+    expected = NOT_GIVEN if args.expect is None else args.expect
 
     async def _go(ch: Any) -> int:
         try:
             # The raw text, validated as the environment variable would be.
-            previous, row = await settings_overrides.change(
-                args.name, None if clearing else args.value, clear=clearing, ch=ch
+            row = await settings_changes.change(
+                args.name,
+                None if clearing else args.value,
+                clear=clearing,
+                expected=expected,
+                actor=f"cli:{getpass.getuser()}",
+                ch=ch,
             )
         except LoomServerError as e:
             print(f"✗ {e.message}", file=sys.stderr)
             return 2
-        await audit.emit(
-            "setting.changed",
-            org="-",
-            namespace="-",
-            actor=f"cli:{getpass.getuser()}",
-            subject={
-                "name": args.name,
-                "value": row["value"] if row else None,
-                "previous": previous,
-                "cleared": clearing,
-            },
-        )
         if row is None:
             print(f"✓ reset: {args.name} (not a setting of this build)")
         else:
             verb = "reset" if clearing else "set"
             print(f"✓ {verb}: {args.name} = {json.dumps(row['value'])} ({row['source']})")
+        return 0
+
+    return run_connected(_go)
+
+
+def _cmd_history(args: argparse.Namespace) -> int:
+    from server.insights.app import settings_changes
+
+    async def _go(ch: Any) -> int:
+        changes = await settings_changes.history(args.name, args.limit, ch=ch)
+        if args.json:
+            print(json.dumps(changes, indent=2, default=str))
+            return 0
+        for c in changes:
+            after = "reset" if c["cleared"] else "set"
+            print(
+                f"{c['ts']}  {c['actor']}  {c['name']}: {json.dumps(c['previous'])} → "
+                f"{json.dumps(c['value'])} ({after})"
+            )
         return 0
 
     return run_connected(_go)
@@ -84,12 +97,22 @@ def register_settings_cli(sub: Any) -> None:
     ls.add_argument("--changed", action="store_true", help="Only the ones not at their default")
     ls.add_argument("--json", action="store_true", help="One JSON array")
     ls.set_defaults(func=_cmd_list)
+    expect = "Change nothing unless this is the value in force (written as for set)"
     st = ssub.add_parser(
         "set", help="Override a live setting for the whole deployment; outlives a restart."
     )
     st.add_argument("name", help="The field name, e.g. memory_ask_recency_weight")
     st.add_argument("value", help="Written as its LOOM_<NAME> environment value would be")
+    st.add_argument("--expect", help=expect)
     st.set_defaults(func=_cmd_change)
     rs = ssub.add_parser("reset", help="Remove the override: back to the env or the default.")
     rs.add_argument("name")
+    rs.add_argument("--expect", help=expect)
     rs.set_defaults(func=_cmd_change)
+    hs = ssub.add_parser(
+        "history", help="Recorded changes, newest first: who, the value before and after."
+    )
+    hs.add_argument("name", nargs="?", default="", help="One setting; all when omitted")
+    hs.add_argument("--limit", type=int, default=50)
+    hs.add_argument("--json", action="store_true", help="One JSON array")
+    hs.set_defaults(func=_cmd_history)
