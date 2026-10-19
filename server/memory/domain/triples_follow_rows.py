@@ -327,12 +327,34 @@ def still_states(text: str, triple: Triple) -> bool:
     if not _still_named(_tokens(text), triple):
         return False
     obj = _words_and_signs(triple[2])
+    subject = _words_and_signs(triple[0])
     return any(
-        not any(w in _NEGATORS or w.endswith("n't") for w in clause)
+        # The subject's and object's own words are names, not denials ("the band No Doubt").
+        not any(w in _NEGATORS or w.endswith("n't") for w in _without(_without(c, obj), subject))
         for sentence in _sentences(text, triple)
-        for clause in sentence.clauses
-        if _mentions(clause, obj)
+        for c in sentence.clauses
+        if _mentions(c, obj)
     )
+
+
+def _without(clause: list[str], entity: list[str]) -> list[str]:
+    """`clause` with each run of words naming `entity` (as `_mentions` matches) left out."""
+    n, out, i = len(entity), [], 0
+    while i < len(clause):
+        here = clause[i : i + n]
+        if (
+            n
+            and len(here) == n
+            and all(
+                w == e or (len(e) >= 3 and w.startswith(e))
+                for w, e in zip(here, entity, strict=True)
+            )
+        ):
+            i += n
+            continue
+        out.append(clause[i])
+        i += 1
+    return out
 
 
 def _still_named(words: Sequence[str], triple: Triple) -> bool:

@@ -913,3 +913,10 @@ def test_a_value_that_denies_the_fact_does_not_still_state_it(text: str) -> None
 )
 def test_a_value_that_names_the_fact_still_states_it(text: str) -> None:
     assert tfr.still_states(text, ("ana", "lives_in", "london"))
+
+
+def test_a_name_with_a_negator_in_it_still_states_its_fact() -> None:
+    assert tfr.still_states("The user loves the band No Doubt", ("user", "loves", "no doubt"))
+    assert not tfr.still_states(
+        "The user no longer loves the band No Doubt", ("user", "loves", "no doubt")
+    )
