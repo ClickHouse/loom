@@ -130,8 +130,9 @@ leader-only worker judges each write that has a live peer of its type at cosine
 
 - an update it is sure of (confidence 0.98 or more) under `auto_reinforce` (the default)
   or `newest_wins` retires the older row, recorded for Undo (reason `conflict_resolver`),
-  when the older row's value was asserted first (to the nanosecond); otherwise the pair
-  is flagged. Under `manual_review` it is flagged;
+  when the older row's value was asserted first (to the nanosecond) and the two facts are
+  not dated the same day; otherwise the pair is flagged. Under `manual_review` it is
+  flagged;
 - any other update, and a contradiction, at 0.90 or more flags both rows for review;
 - a compatible pair (elaboration, restatement, related, unrelated) at 0.90 or more has its
   flag cleared;

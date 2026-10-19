@@ -244,8 +244,10 @@ down.
 The two thresholds are `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` (0.98) and
 `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` (0.90): an update retires only at the
 first, an update between the two goes to review, and nothing below the second changes a
-row. A peer the answer leaves out, or an answer that cannot be parsed, changes nothing.
-The default
+row. An update between two rows whose writers both dated the fact (`valid_at`) on the
+same day goes to review too: the prompt shows both as that day, and two facts from one
+conversation day have no order. A peer the answer leaves out, or an answer that cannot be
+parsed, changes nothing. The default
 `auto_reinforce` retires as `newest_wins` does: in agent use nobody works the Review
 queue, so a flagged update would leave search serving the stale value, while a
 retirement is recorded, undoable, and its history stays readable with
