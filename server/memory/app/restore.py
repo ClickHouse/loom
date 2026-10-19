@@ -4,6 +4,7 @@ version, mirrored onto its embedding row."""
 from __future__ import annotations
 
 import logging
+import uuid
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -73,8 +74,6 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
         if await _landed_late(input, existing):
             # A retry of an Undo whose restore landed after its 503: finish that one.
             version, status = int(existing.version), str(existing.status)
-            # Versions are time_ns: the restore's version is when it was made.
-            restored_at = datetime.fromtimestamp(version / 1e9, UTC).replace(tzinfo=None)
         elif (
             existing.tombstoned_at is not None
             or str(existing.status) != "superseded"
@@ -84,10 +83,10 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
                 restored=False, memory_id=str(existing.memory_id), version=int(existing.version)
             )
         else:
-            version, status, restored_at = await _write_restore(input, existing, ch=ch)
+            version, status = await _write_restore(input, existing, ch=ch)
         await _unsupersede_embeddings(input, status, ch=ch)
     # The facts the retirement closed and the restored value still holds come back.
-    await _reopen_facts(input, existing, restored_at, ch=ch)
+    await _reopen_facts(input, existing, version, ch=ch)
     return MemoryRestoreOutput(
         restored=True,
         memory_id=str(existing.memory_id),
@@ -114,16 +113,13 @@ async def _landed_late(input: MemoryRestoreInput, head: MemoryRow) -> bool:
 
 async def _write_restore(
     input: MemoryRestoreInput, existing: MemoryRow, *, ch: Any
-) -> tuple[int, str, datetime]:
+) -> tuple[int, str]:
     """Write the Undo's record, then its restore version; (that version, the status it
-    restores, when). Under the key's lock."""
+    restores). Under the key's lock."""
     import server.memory.store as memory_repo
     from server.observability import audit
 
     new_version = next_version()
-    # The Undo's assertion time, taken with the restore: its graph step runs after the
-    # lock is released, and is dated here, not then.
-    restored_at = naive_utc_now()
     # The search row takes the same status: ranking reads its own copy.
     status = await _status_before_retirement(existing, ch=ch)
     restore_row = memory_repo.build_memory_version_row(
@@ -167,7 +163,7 @@ async def _write_restore(
                 operation="memory.restore",
                 outcome_unknown=True,
             ) from e
-    return new_version, status, restored_at
+    return new_version, status
 
 
 async def _unsupersede_embeddings(input: MemoryRestoreInput, status: str, *, ch: Any) -> None:
@@ -205,12 +201,14 @@ async def _restore_landed(input: MemoryRestoreInput, version: int) -> bool:
 
 
 async def _reopen_facts(
-    input: MemoryRestoreInput, existing: MemoryRow, restored_at: datetime, *, ch: Any
+    input: MemoryRestoreInput, existing: MemoryRow, version: int, *, ch: Any
 ) -> None:
-    """Open again the facts the restored row states, dated at the restore: while it was
-    retired or deleted, another row's revision or delete may have closed them."""
+    """Open again the facts the restored row states, dated at the restore (`version`):
+    while it was retired or deleted, another row's revision or delete may have closed
+    them. Named by the restore, so finishing it again writes nothing new."""
     from server.memory.app.entity_projections import reconcile_row_facts
 
+    restore = f"{existing.memory_id}:{version}"
     await reconcile_row_facts(
         input,
         [str(existing.memory_id)],
@@ -218,7 +216,10 @@ async def _reopen_facts(
         op="memory.restore",
         ch=ch,
         hashes={str(existing.memory_id): str(existing.content_sha256)},
-        restored_at=restored_at,
+        # Versions are time_ns: the restore's version is when it was made, the same on
+        # its first write and on every retry that finishes it.
+        restored_at=datetime.fromtimestamp(version / 1e9, UTC).replace(tzinfo=None),
+        restore_id=uuid.uuid5(uuid.NAMESPACE_OID, restore).hex,
     )
 
 
@@ -480,7 +481,6 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
                 memory_id=str(row.get("memory_id") or ""),
                 version=int(row.get("version") or 0),
             )
-        restored_at = naive_utc_now()
         restore_row = memory_repo.build_memory_version_row(
             existing,
             version=new_version,
@@ -506,7 +506,7 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
             )
 
     # A fact the row states may have closed while it was deleted.
-    await _reopen_facts(input, existing, restored_at, ch=ch)
+    await _reopen_facts(input, existing, new_version, ch=ch)
 
     # If this row was tombstoned inside an erasure's scope + time window,
     # record the restore as a reversal so the audit log stops claiming

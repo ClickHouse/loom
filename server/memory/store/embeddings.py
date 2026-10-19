@@ -740,7 +740,8 @@ async def unsupersede_embeddings(
     """Inverse of the supersede re-emit for one key: every live
     memory_embeddings row goes back to `status` (the restored memory row's:
     `active`, `conflicted` or `duplicate`) with the retirement
-    stamp cleared, so recall sees it again. Returns rows re-emitted."""
+    stamp cleared, so recall sees it again. A row already so is left as it is: an Undo
+    finished again writes nothing. Returns rows re-emitted."""
     ch = ch or _default_client()
     rows = await live_embedding_rows_for_key(
         ch,
@@ -759,6 +760,7 @@ async def unsupersede_embeddings(
             )
         )
         for r in rows
+        if r.get("status") != status or r.get("invalid_at") is not None
     ]
     if out:
         await insert_embedding_rows(out, ch=ch)

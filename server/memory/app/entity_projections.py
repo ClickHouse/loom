@@ -831,13 +831,15 @@ async def reconcile_row_facts(
     ch: Any,
     hashes: Mapping[str, str] | None = None,
     restored_at: datetime | None = None,
+    restore_id: str | None = None,
 ) -> None:
     """Fail-open `reopen_held_facts` (`reopen`) or `close_dropped_facts` for the rows
     `ids` of `input`'s namespace. An Undo passes the time it restored at and the
     `content_sha256` each row had (`hashes`): a row revised since is left to its
     revision, now and on a replay. A failure is recorded for the projection repair with
-    both and the Undo's id, which its replay finds its rows by."""
-    restored_at, restore_id = restored_at or naive_utc_now(), uuid.uuid4().hex
+    both and the Undo's id, which its replay finds its rows by. `restore_id`: the same
+    for every call that finishes one restore, so a repeat writes no new markers."""
+    restored_at, restore_id = restored_at or naive_utc_now(), restore_id or uuid.uuid4().hex
     try:
         if reopen:
             # Lazy: graph_undo reads row links through this module.

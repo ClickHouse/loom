@@ -3171,3 +3171,59 @@ async def test_reconcile_status_clears_the_end_of_an_undone_rows_search_row(
         params={"o": org},
     )
     assert [(r["status"], r["invalid_at"]) for r in search] == [("active", None)]
+
+
+async def test_a_repeat_undo_writes_no_new_facts_or_search_rows(ch, wired, monkeypatch) -> None:
+    """Rome retires Paris by a value update and a person undoes it; the same Undo again
+    (the queue offers it when it cannot read the row) finishes the same restore: no new
+    fact rows, no new search-row versions."""
+    import asyncio
+
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+
+    org, _ = wired
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(
+            org,
+            "s1",
+            "office_city",
+            "The office is in Paris",
+            relations=[("office", "located_in", "paris")],
+        )
+        await _later()
+        await _set(
+            org,
+            "s2",
+            "office_location",
+            "The office moved to Rome",
+            relations=[("office", "located_in", "rome")],
+        )
+        await after_write.drain()
+    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+    winner = (await _rows(ch, org))["office_location"]["id"]
+
+    async def counts() -> tuple[int, int]:
+        await asyncio.sleep(1.0)  # the fact step settles
+        facts = await ch.query_all(
+            "SELECT count() AS n FROM loom.entity_triples WHERE org = {o:String}"
+            " SETTINGS select_sequential_consistency = 1",
+            params={"o": org},
+        )
+        search = await ch.query_all(
+            "SELECT count() AS n FROM loom.memory_embeddings WHERE org = {o:String}"
+            " AND memory_key = 'office_city' SETTINGS select_sequential_consistency = 1",
+            params={"o": org},
+        )
+        return int(facts[0]["n"]), int(search[0]["n"])
+
+    assert (await _undo(org, "office_city", winner)).restored
+    first = await counts()
+    for _ in range(2):
+        assert (await _undo(org, "office_city", winner)).restored
+        assert await counts() == first
