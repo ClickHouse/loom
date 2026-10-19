@@ -216,7 +216,7 @@ async def _distill_session(
 
     # A 'high' observation (a credential in tool output the sweep labelled) is never sent
     # to the model; it is still marked DONE below.
-    readable = [o for o in observations if getattr(o, "sensitivity", "") != "high"]
+    readable = [o for o in observations if o.sensitivity != "high"]
     msgs = replay_messages(readable, agent=str(session.get("agent") or ""))
     # observation_date anchor: use the newest valid_at the capture path
     # stamped, if any, so relative time refs resolve.

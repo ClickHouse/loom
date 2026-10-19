@@ -86,6 +86,20 @@ def test_defaults_match_schema_for_omitted_columns() -> None:
 # ----------------------------------------------------------------------
 
 
+def test_top_key_facts_never_carry_a_high_fact() -> None:
+    # The digest is listed by memory.digests and sent to the outcome judge; a fact labelled
+    # high, or one whose text reads as a credential, stays out of its key facts.
+    from server.memory.app.extract.handler import _top_key_facts
+
+    token = "ghp_" + "a" * 36
+    facts = [
+        {"value": "door code 4412", "sensitivity": "high"},
+        {"value": f"the deploy token is {token}"},
+        {"value": "user lives in Berlin"},
+    ]
+    assert _top_key_facts(facts) == ["user lives in Berlin"]
+
+
 def test_top_key_facts_dedups_and_caps() -> None:
     from server.memory.app.extract.handler import (
         _SESSION_SUMMARY_MAX_KEY_FACTS,

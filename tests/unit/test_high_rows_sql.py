@@ -537,13 +537,18 @@ async def test_a_period_row_never_carries_a_high_sources_entities() -> None:
         f"['acme-prod']), ('o', 'n', 'a', '-', '-', '{_B}', 'tea', 'semantic', 'v', 'active', "
         "'', 1, ['oolong'])",
     )
-    period = SimpleNamespace(org="o", namespace="n", digests=[{"derived_from": ["door", "tea"]}])
+    period = SimpleNamespace(
+        org="o", namespace="n", agent="a", user_id="-", digests=[{"derived_from": ["door", "tea"]}]
+    )
     ids, ents = await period_digest._source_memories(ch, period)  # type: ignore[arg-type]
     assert sorted(ids) == sorted([_A, _B]) and ents == ["oolong"]
+    # another user's period finds neither: the keys are this identity's rows
+    other = SimpleNamespace(**{**vars(period), "user_id": "u2"})
+    assert await period_digest._source_memories(ch, other) == ([], [])  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
-async def test_the_taxonomy_never_counts_a_high_rows_entities(monkeypatch) -> None:
+async def test_the_taxonomy_never_counts_a_high_rows_entities() -> None:
     from server.identity.api.models_namespace_catalog import NamespaceTaxonomyInput
     from server.identity.app import namespace_catalog
 
@@ -559,3 +564,25 @@ async def test_the_taxonomy_never_counts_a_high_rows_entities(monkeypatch) -> No
         ch, NamespaceTaxonomyInput(org="o", namespace="n")
     )
     assert [e.value for e in out.entities] == ["oolong"]
+
+
+@pytest.mark.asyncio
+async def test_a_distill_pass_never_reads_a_high_observation_into_its_context() -> None:
+    # The whole-session context feeds the notes prompt, which is sent to the model; earlier
+    # passes may have marked a high observation done, so this read must filter it itself.
+    from server.memory.domain.observation_tags import OBSERVATION_TAG
+    from server.memory.workers import observe_extract
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version, tags) VALUES "
+        f"('o', 'n', 'a', '-', 's', '{_A}', 'obs/1', 'episodic', "
+        "'{\"narrative\": \"ran the tests\"}', 'active', '', 1, "
+        f"['{OBSERVATION_TAG}']), ('o', 'n', 'a', '-', 's', '{_B}', 'obs/2', 'episodic', "
+        "'{\"narrative\": \"printed the token\"}', 'active', 'high', 1, "
+        f"['{OBSERVATION_TAG}'])",
+    )
+    session = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "s"}
+    context = await observe_extract._load_session_context(session, ch=ch)
+    assert len(context) == 1 and "ran the tests" in str(context[0])
