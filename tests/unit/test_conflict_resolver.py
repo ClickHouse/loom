@@ -406,6 +406,12 @@ def _mem(mid: str = "m1", **kw: Any) -> Any:
     return NS(**(base | kw))
 
 
+# When the judged row's value and its peer's were asserted (ns): a day apart, as the
+# prompt shows them (to the minute).
+_PEER_AT = 1_767_312_000_000_000_000  # 2026-01-02
+_ROW_AT = _PEER_AT + 86_400 * 10**9  # 2026-01-03
+
+
 @pytest.fixture
 def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     e = NS(
@@ -451,7 +457,7 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         return 1
 
     # When each row's value was first asserted (ns): the peer a moment before the row.
-    e.asserted = {"m1": 2_000, "m2": 1_000}
+    e.asserted = {"m1": _ROW_AT, "m2": _PEER_AT}
 
     e.reads = 0
     e.undone_from_read = 1  # the read (1-based) from which the Undos are seen
@@ -619,7 +625,7 @@ async def test_a_pair_that_fails_leaves_the_audit_row_of_the_pairs_done_before_i
         _peer_row("m3", "s3", "office_town", '"Office is in Lyon"') | {"similarity": 0.7}
     )
     row_env.heads["m3"] = _mem("m3", session_id="s3", content_sha256="sha-m3")
-    row_env.asserted["m3"] = 1_000
+    row_env.asserted["m3"] = _PEER_AT
     row_env.answer = _answer(
         _entry("p1", "contradiction", 0.95), _entry("p2", "contradiction", 0.95)
     )
@@ -677,7 +683,7 @@ async def test_a_failed_audit_read_after_a_failed_pair_raises_the_pairs_error(
         _peer_row("m3", "s3", "office_town", '"Office is in Lyon"') | {"similarity": 0.7}
     )
     row_env.heads["m3"] = _mem("m3", session_id="s3", content_sha256="sha-m3")
-    row_env.asserted["m3"] = 1_000
+    row_env.asserted["m3"] = _PEER_AT
     row_env.answer = _answer(
         _entry("p1", "contradiction", 0.95), _entry("p2", "contradiction", 0.95)
     )
@@ -701,7 +707,7 @@ async def test_a_failed_audit_read_after_a_failed_pair_raises_the_pairs_error(
         await _resolve()
 
 
-@pytest.mark.parametrize("peer_at", [2_000, 3_000])
+@pytest.mark.parametrize("peer_at", [_ROW_AT, _ROW_AT + 10**9])
 async def test_an_update_whose_peer_was_not_asserted_first_is_flagged(
     row_env: NS, peer_at: int
 ) -> None:
@@ -1254,7 +1260,7 @@ async def test_a_row_with_a_newer_flagged_peer_is_judged_as_itself(row_env: NS) 
     # The flagged peer is the newer statement: the row is NEW all the same, and only its
     # own mark is stamped (the peer comes to its own turn from its own mark).
     row_env.mem.conflict_with = ["m2"]
-    row_env.asserted = {"m1": 1_000, "m2": 2_000}
+    row_env.asserted = {"m1": _PEER_AT, "m2": _ROW_AT}
     await _resolve()
     assert row_env.notes[0].memory_id == "m2" and row_env.stamped == ["office_city"]
     assert row_env.acted == [(cr.FLAG, "m1", "m2")], "an update not stated later flags"
@@ -2068,3 +2074,23 @@ def test_the_resolver_interval_is_at_least_a_second() -> None:
     with pytest.raises(ValidationError, match="memory_conflict_resolver_interval_seconds"):
         MemorySettings(memory_conflict_resolver_interval_seconds=0.5)
     assert MemorySettings().memory_conflict_resolver_interval_seconds == 10.0
+
+
+def test_an_update_between_two_facts_of_one_day_goes_to_review() -> None:
+    sure = _v("update", 0.99)
+    kw = {"policy": "newest_wins", "retire_at": 0.98, "clear_at": 0.90}
+    assert cr.action_for(sure, **kw, same_written=True) == cr.FLAG
+    assert cr.action_for(sure, **kw) == cr.RETIRE
+
+
+@pytest.mark.parametrize(("peer_day", "want"), [("2026-01-03", cr.FLAG), ("2026-01-02", cr.RETIRE)])
+async def test_an_update_retires_only_a_fact_dated_an_earlier_day(
+    row_env: NS, peer_day: str, want: str
+) -> None:
+    # Both writers gave the fact's date: the prompt shows the day alone. The same day has
+    # no order between the two, so the update is flagged; the day before retires.
+    row_env.mem.valid_at = datetime(2026, 1, 3)
+    row_env.peers[0]["valid_at"] = datetime.fromisoformat(peer_day)
+    row_env.asserted = {"m1": _ROW_AT + 10**9, "m2": _ROW_AT if want == cr.FLAG else _PEER_AT}
+    await _resolve()
+    assert row_env.acted == [(want, "m1", "m2")]
