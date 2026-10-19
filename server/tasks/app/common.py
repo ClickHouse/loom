@@ -508,6 +508,13 @@ async def _drop_lease(task: TaskRow) -> None:
     await backend.delete(str(task["task_id"]))
 
 
+async def _drop_idle_lease(task: TaskRow) -> None:
+    """Drop the lease row only while it is idle at `task`'s fence: an end's second drop,
+    after its status row, never removes a row that a reopen and a claim wrote since."""
+    backend = await repo.lease_backend()
+    await backend.delete_held(str(task["task_id"]), "", fence=int(task.get("fence") or 0))
+
+
 async def _readable(task: TaskRow) -> bool:
     # The poster's way in needs no read, so the owner check, last, decides alone.
     if _is_poster(task, _caller_subject()):

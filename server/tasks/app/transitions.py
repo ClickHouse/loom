@@ -46,6 +46,7 @@ from server.tasks.app.common import (
     _actor,
     _caller_subject,
     _conflict,
+    _drop_idle_lease,
     _drop_lease,
     _err,
     _in_scope,
@@ -126,7 +127,7 @@ async def _prior_task(prior: TaskRow, *, backfill: bool = True) -> TaskCreateOut
         task_id = str(prior["task_id"])
         now = await repo.fetch_task(prior["org"], task_id)
         if now is None or now["status"] in TERMINAL:
-            await backend.delete(task_id)
+            await backend.delete_held(task_id, "", fence=int(prior["fence"]))
             # A reopen that landed before the delete wrote its lease row first: it is
             # todo again and needs the row back.
             now = await repo.fetch_task(prior["org"], task_id)
@@ -715,7 +716,8 @@ async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
         _owner_refusal(unverified)
         raise _not_found()
     # The lease goes before the status row, so a claim racing this one finds none, and
-    # again after it: a create retry in between (`_prior_task` reads todo) puts it back.
+    # again after it while idle: a create retry in between (`_prior_task` reads todo)
+    # puts it back, and a reopen and a claim since keep theirs.
     await _drop_lease(task)
     row, seq = await _record(
         task,
@@ -727,7 +729,7 @@ async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
         owner="",
         lease_until=None,
     )
-    await _drop_lease(task)
+    await _drop_idle_lease(task)
     return TaskOutput(task=_payload(row), seq=seq)
 
 
@@ -736,7 +738,8 @@ async def handle_task_cancel(input: TaskReasonInput) -> TaskOutput:
 
     task, _owner_side, _unverified = await _load_for_reason_op(input)
     # The lease goes before the status row, so a claim racing this one finds none, and
-    # again after it: a create retry in between (`_prior_task` reads todo) puts it back.
+    # again after it while idle: a create retry in between (`_prior_task` reads todo)
+    # puts it back, and a reopen and a claim since keep theirs.
     await _drop_lease(task)
     row, seq = await _record(
         task,
@@ -748,7 +751,7 @@ async def handle_task_cancel(input: TaskReasonInput) -> TaskOutput:
         owner="",
         lease_until=None,
     )
-    await _drop_lease(task)
+    await _drop_idle_lease(task)
     return TaskOutput(task=_payload(row), seq=seq)
 
 
@@ -874,7 +877,8 @@ async def handle_task_reassign(input: TaskReassignInput) -> TaskReassignOutput:
         raise _err(403, "TASK_POSTER_DENIED", "the destination denies this poster and kind")
     actor = _actor(f"process:{input.agent}")
     # The lease goes before the status row, so a claim racing this one finds none, and
-    # again after it: a create retry in between (`_prior_task` reads todo) puts it back.
+    # again after it while idle: a create retry in between (`_prior_task` reads todo)
+    # puts it back, and a reopen and a claim since keep theirs.
     await _drop_lease(task)
     old, _seq = await _record(
         task,
@@ -887,7 +891,7 @@ async def handle_task_reassign(input: TaskReassignInput) -> TaskReassignOutput:
         owner="",
         lease_until=None,
     )
-    await _drop_lease(task)
+    await _drop_idle_lease(task)
     now = _naive(_now())
     new_id = str(uuid.uuid4())
     child = TaskRow(**task)

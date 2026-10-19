@@ -189,7 +189,7 @@ async with Agent(org="acme", namespace="private", agent="private-bot", api_key=P
   task: a `todo` or triage task with no row gets one, an idle or expired row takes its task's fence (a claim cut
   off after winning leaves one a fence ahead), and an ended task's row goes. It skips rows written in the last
   60 s, which may belong to a create or reopen still in flight; a cancel's first drop is not covered by the
-  grace, and its second drop removes a row the reconcile wrote back. A cancel that lands between a claim's
+  grace, and its second drop, or the next pass, removes a row the reconcile wrote back. A cancel that lands between a claim's
   lease and its status write is overwritten by the claim, which leaves the task `in_progress`; this race
   predates the reconcile and is not closed by it.
 - **Other moves.** `task.defer` (with `resume_at`), `task.block` (`blocked_on`: `sender`, `human`, `external`),

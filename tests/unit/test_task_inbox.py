@@ -94,6 +94,12 @@ class FakeLeases:
         self.rows.pop(task_id, None)
         self.deleted.append(task_id)
 
+    async def delete_held(self, task_id: str, holder: str, *, fence: int) -> bool:
+        row = self.rows.get(task_id)
+        if row is not None and row["owner"] == holder and row["fence"] == fence:
+            await self.delete(task_id)
+        return task_id not in self.rows
+
 
 class FakeRepo:
     """The repository surface the handlers use, over dicts. Version rows

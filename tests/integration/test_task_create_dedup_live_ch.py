@@ -1075,14 +1075,14 @@ async def test_a_claim_won_on_a_stray_lease_row_of_a_cancelled_task_backs_out(
     prior = await repo.fetch_task(org, tid)  # the retry's read: todo, fence 0
     await transitions.handle_task_cancel(_reason(org, tid))
     backend = await repo.lease_backend()
-    real_delete, real_ensure = backend.delete, backend.ensure_row
+    real_delete, real_ensure = backend.delete_held, backend.ensure_row
     deleted, stale = False, {}
 
-    async def delete(task_id: str) -> None:
+    async def delete(task_id: str, holder: str, *, fence: int) -> None:
         nonlocal deleted
-        monkeypatch.setattr(backend, "delete", real_delete)
+        monkeypatch.setattr(backend, "delete_held", real_delete)
         await transitions.handle_task_reopen(_reason(org, tid))  # lands before the delete
-        await real_delete(task_id)
+        await real_delete(task_id, holder, fence=fence)
         deleted = True
 
     async def ensure(*a: Any, **k: Any) -> None:
@@ -1093,7 +1093,7 @@ async def test_a_claim_won_on_a_stray_lease_row_of_a_cancelled_task_backs_out(
             await transitions.handle_task_cancel(_reason(org, tid))
         await real_ensure(*a, **k)
 
-    monkeypatch.setattr(backend, "delete", delete)
+    monkeypatch.setattr(backend, "delete_held", delete)
     monkeypatch.setattr(backend, "ensure_row", ensure)
     await transitions._prior_task(prior)
     monkeypatch.undo()
@@ -1208,7 +1208,9 @@ async def test_a_claim_that_backs_out_never_removes_a_row_a_reopen_wrote(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stranded", ["no row", "idle row at another fence", "ended task"])
-async def test_one_lease_sweep_puts_a_stranded_lease_row_right(ch: Any, stranded: str) -> None:
+async def test_one_lease_sweep_puts_a_stranded_lease_row_right(
+    ch: Any, monkeypatch: pytest.MonkeyPatch, stranded: str
+) -> None:
     """Whatever race left a lease row out of step with its task, one sweep past the grace
     makes it agree: a todo task gets its row, an idle row takes the task's fence, and an
     ended task's row goes."""
@@ -1229,7 +1231,8 @@ async def test_one_lease_sweep_puts_a_stranded_lease_row_right(ch: Any, stranded
         task = await repo.fetch_task(org, tid)
         await backend.ensure_row(tid, org, task["inbox"], int(task["fence"]))
     later = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=5)
-    assert await sweep.reconcile_leases(later, limit=10_000) >= 1, "counts only a repair"
+    _only_strays_of(monkeypatch, tid)
+    assert await sweep.reconcile_leases(later, limit=10_000) == 1
     if stranded == "ended task":
         assert await _lease(ch, tid) is None
     else:
@@ -1240,6 +1243,21 @@ def _later() -> datetime:
     from datetime import timedelta
 
     return datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=5)
+
+
+def _only_strays_of(monkeypatch: pytest.MonkeyPatch, *task_ids: str) -> None:
+    """The lease reconcile sees only these tasks: the shared ClickHouse holds every other
+    test's tasks too."""
+    strays = repo.lease_strays
+
+    async def only(**kw: Any) -> Any:
+        missing, stray = await strays(**kw)
+        return (
+            [t for t in missing if t["task_id"] in task_ids],
+            [r for r in stray if r["task_id"] in task_ids],
+        )
+
+    monkeypatch.setattr(repo, "lease_strays", only)
 
 
 @pytest.mark.asyncio
@@ -1267,6 +1285,7 @@ async def test_the_lease_reconcile_never_deletes_a_row_a_claim_took_since_its_re
         await real_delete(*a, **k)
 
     monkeypatch.setattr(backend, "delete_held", delete_held)
+    _only_strays_of(monkeypatch, tid)
     await sweep.reconcile_leases(_later(), limit=10_000)
     monkeypatch.undo()
     fence = claimed["task"].fence
@@ -1278,7 +1297,7 @@ async def test_the_lease_reconcile_never_deletes_a_row_a_claim_took_since_its_re
 
 @pytest.mark.asyncio
 async def test_the_lease_reconcile_gives_back_a_row_a_claim_cut_off_after_winning_holds(
-    ch: Any,
+    ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A claim wins the row (fence 1) and its process dies before the status write: the
     task stays todo at fence 0 under an expired row at 1. One sweep gives the row back
@@ -1292,7 +1311,8 @@ async def test_the_lease_reconcile_gives_back_a_row_a_claim_cut_off_after_winnin
     backend = await repo.lease_backend()
     past = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=10)
     assert (await backend.try_claim(tid, "dead-bot", expected_fence=0, lease_until=past)).won
-    await sweep.sweep_once(now=_later(), limit=10_000)
+    _only_strays_of(monkeypatch, tid)
+    assert await sweep.reconcile_leases(_later(), limit=10_000) == 1
     assert await _lease(ch, tid) == {"owner": "", "fence": 0}
     assert (await _claim(org, tid)).task.status == "in_progress"
 
@@ -1330,13 +1350,14 @@ async def test_one_failing_lease_repair_does_not_stop_the_others(
     await backend.delete(second)
     real_ensure = backend.ensure_row
 
-    async def ensure(task_id: str, *a: Any, **k: Any) -> None:
+    async def ensure(task_id: str, *a: Any, **k: Any) -> bool:
         if task_id == first:
             raise RuntimeError("keeper down")
-        await real_ensure(task_id, *a, **k)
+        return await real_ensure(task_id, *a, **k)
 
     monkeypatch.setattr(backend, "ensure_row", ensure)
-    await sweep.reconcile_leases(_later(), limit=10_000)
+    _only_strays_of(monkeypatch, first, second)
+    assert await sweep.reconcile_leases(_later(), limit=10_000) == 1
     monkeypatch.undo()
     assert await _lease(ch, first) is None
     assert await _lease(ch, second) == {"owner": "", "fence": 0}
@@ -1370,3 +1391,33 @@ async def _claim_one_at(backend: Any, tid: str, *, fence: int) -> None:
 
     until = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=5)
     assert (await backend.try_claim(tid, "bot", expected_fence=fence, lease_until=until)).won
+
+
+@pytest.mark.asyncio
+async def test_an_ends_second_lease_drop_keeps_a_row_a_reopen_and_a_claim_wrote(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Between a cancel's status row and its second lease drop, the task is reopened and
+    claimed: the drop removes only an idle row at the cancelled fence, so the claimant
+    keeps its lease and its heartbeat passes."""
+    org = f"itest-enddrop-{uuid.uuid4().hex[:8]}"
+    tid = await _todo_task(org)
+    real = transitions._record
+    claimed: dict[str, Any] = {}
+
+    async def record(task: Any, **kw: Any) -> Any:
+        out = await real(task, **kw)
+        if kw.get("event") == "cancelled":
+            monkeypatch.setattr(transitions, "_record", real)
+            await transitions.handle_task_reopen(_reason(org, tid))
+            claimed["task"] = (await _claim(org, tid)).task
+        return out
+
+    monkeypatch.setattr(transitions, "_record", record)
+    await transitions.handle_task_cancel(_reason(org, tid))
+    monkeypatch.undo()
+    fence = claimed["task"].fence
+    assert await _lease(ch, tid) == {"owner": "bot", "fence": fence}
+    await transitions.handle_task_heartbeat(
+        wire.TaskHeartbeatInput(org=org, namespace="private", agent="bot", task_id=tid, fence=fence)
+    )

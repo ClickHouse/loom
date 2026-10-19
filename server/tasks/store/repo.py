@@ -18,6 +18,7 @@ Handlers own the state machine; this module owns the statements.
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import re
@@ -506,49 +507,65 @@ async def sweep_candidates(
     return {"expired": expired, "resume": resume, "stale_triage": stale_triage}
 
 
+# Task ids one query names: a query parameter is one HTTP form field, which ClickHouse
+# caps at 128 KiB (`http_max_field_value_size`).
+_TASK_IDS_PER_QUERY = 1000
+
+
 async def lease_strays(
     *, before: datetime, terminal: list[str], limit: int, ch: _CHClient | None = None
 ) -> tuple[list[MissingLeaseRow], list[StrayLeaseRow]]:
     """What the lease reconcile acts on, org-wide, among rows last written before
     `before` (a transition still in flight keeps its own rows; a cancel's first drop is
     not covered by the grace: its second drop removes a row the reconcile wrote back):
-    todo and triage tasks with no lease row, and lease rows idle or expired whose task
-    is gone, ended
-    (`terminal`) or at another fence (a claim cut off after winning holds an expired row
-    one fence ahead of its todo task)."""
+    todo and triage tasks with no lease row, and idle or expired rows whose task is
+    gone, ended or at another fence. The lease rows are read once (each is a Keeper
+    read)."""
     ch = ch or _default_client()
-    params: dict[str, Any] = {"before": before, "terminal": terminal, "limit": int(limit)}
-    missing = cast(
-        "list[MissingLeaseRow]",
-        await ch.query_all(
-            "SELECT toString(task_id) AS task_id, org, inbox, fence FROM loom.tasks FINAL "
-            "WHERE is_deleted = 0 AND status IN ('todo', 'triage') "
-            "AND updated_at < {before:DateTime} "
-            "AND toString(task_id) NOT IN (SELECT task_id FROM loom.task_leases) "
-            "LIMIT {limit:UInt32} SETTINGS select_sequential_consistency = 1",
-            params=params,
-        ),
+    leases = await ch.query_all(
+        "SELECT task_id, owner, fence, "
+        "(owner = '' OR lease_until < {before:DateTime}) AND updated_at < {before:DateTime} "
+        "AS settled FROM loom.task_leases",
+        params={"before": before},
     )
-    stray = cast(
-        "list[StrayLeaseRow]",
-        await ch.query_all(
-            "SELECT l.task_id AS task_id, l.owner AS owner, l.fence AS lease_fence, "
-            "t.id AS found, t.status AS status, t.fence AS fence "
-            "FROM (SELECT task_id, owner, fence FROM loom.task_leases "
-            "      WHERE (owner = '' OR lease_until < {before:DateTime}) "
-            "        AND updated_at < {before:DateTime}) AS l "
-            "LEFT JOIN (SELECT toString(task_id) AS id, toString(status) AS status, fence "
-            "           FROM loom.tasks FINAL WHERE is_deleted = 0 AND toString(task_id) IN "
-            "           (SELECT task_id FROM loom.task_leases)) AS t "
-            "ON t.id = l.task_id "
-            "WHERE t.id = '' OR t.status IN {terminal:Array(String)} OR t.fence != l.fence "
-            # A row with no task joins as '' (join_use_nulls = 0): `t.id = ''` finds it.
-            "LIMIT {limit:UInt32} "
-            "SETTINGS select_sequential_consistency = 1, join_use_nulls = 0",
-            params=params,
-        ),
+    leased = {str(r["task_id"]) for r in leases}
+    todo = await ch.query_all(
+        "SELECT toString(task_id) AS task_id, org, inbox, fence FROM loom.tasks FINAL "
+        "WHERE is_deleted = 0 AND status IN ('todo', 'triage') "
+        "AND updated_at < {before:DateTime} SETTINGS select_sequential_consistency = 1",
+        params={"before": before},
     )
-    return missing, stray
+    missing = [cast("MissingLeaseRow", dict(t)) for t in todo if str(t["task_id"]) not in leased][
+        : int(limit)
+    ]
+    settled = sorted((r for r in leases if r["settled"]), key=lambda r: str(r["task_id"]))
+    stray: list[StrayLeaseRow] = []
+    for chunk in itertools.batched(settled, _TASK_IDS_PER_QUERY):
+        tasks = await ch.query_all(
+            "SELECT toString(task_id) AS id, toString(status) AS status, fence "
+            "FROM loom.tasks FINAL WHERE is_deleted = 0 "
+            "AND toString(task_id) IN {ids:Array(String)} "
+            "SETTINGS select_sequential_consistency = 1",
+            params={"ids": [str(r["task_id"]) for r in chunk]},
+        )
+        by_id = {str(t["id"]): t for t in tasks}
+        for row in chunk:
+            task = by_id.get(str(row["task_id"]))
+            if task and task["status"] not in terminal and int(task["fence"]) == int(row["fence"]):
+                continue
+            stray.append(
+                StrayLeaseRow(
+                    task_id=str(row["task_id"]),
+                    owner=str(row["owner"]),
+                    lease_fence=int(row["fence"]),
+                    found=str(task["id"]) if task else "",
+                    status=str(task["status"]) if task else "",
+                    fence=int(task["fence"]) if task else 0,
+                )
+            )
+        if len(stray) >= int(limit):
+            break
+    return missing, stray[: int(limit)]
 
 
 async def inbox_counts(
@@ -792,8 +809,8 @@ class KeeperLeases:
         """Insert the lease row for a new task (owner empty); True when this call wrote
         it. A retry that finds the key present is fine: the row is the same. `reset_idle`
         (a reopen): a row already present with no owner and an older fence takes `fence`,
-        so a stray row a late write left behind cannot keep every claim losing. Fences
-        only grow, so a late reset never lowers one."""
+        so a stray row a late write left behind cannot keep every claim losing. A reset
+        never lowers a fence."""
         try:
             await self.ch.execute(
                 "INSERT INTO loom.task_leases "
@@ -829,7 +846,7 @@ class KeeperLeases:
         """Put the row `holder` holds at `held_fence` back idle (todo) at `fence`: a claim
         that backs out undoes its own bump, and the lease reconcile moves an idle or
         dead-owner row to its task's fence. Changes nothing when the row has moved on.
-        True when the row, read back, is idle at `fence`."""
+        True when the row ends as wanted (read back idle at `fence`), whoever wrote it."""
         try:
             await self.ch.execute(
                 "ALTER TABLE loom.task_leases UPDATE owner = '', lease_until = toDateTime(0), "
@@ -852,7 +869,7 @@ class KeeperLeases:
     async def delete_held(self, task_id: str, holder: str, *, fence: int) -> bool:
         """Drop the row only while `holder` ('' for an idle row) still holds it at
         `fence`: the lease reconcile never removes a row a claim took since its read.
-        True when no row is left."""
+        True when the row ends as wanted (none is left), whoever removed it."""
         try:
             await self.ch.execute(
                 "ALTER TABLE loom.task_leases DELETE WHERE task_id = {tid:String} "
