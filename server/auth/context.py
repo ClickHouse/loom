@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from server.auth.directory import ClassificationUnavailable, directory
-from server.auth.fail_closed import note_answered_unverified
+from server.auth.fail_closed import note_answered_unverified, reset, unreadable
 from server.core.ch import set_quota_key
 
 if TYPE_CHECKING:
@@ -262,6 +262,17 @@ class OrgScopeFilter:
     params: dict[str, list[str]]
 
 
+async def my_namespaces_or_none(org: str) -> list[str]:
+    """`resolve_my_namespaces`, sorted, for an org-wide rollup's scope. One that
+    comes back empty because a read failed is the request's answer refused, so
+    it marks the request the server's, as an admin's `*` scope does."""
+    reset()
+    ns_list = sorted(await resolve_my_namespaces(org))
+    if not ns_list and unreadable():
+        note_answered_unverified()
+    return ns_list
+
+
 async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeFilter:
     """WHERE fragment scoping an org-wide read to the namespaces the caller
     may see. Org/platform admins (and the auth-off path) get an empty filter;
@@ -294,14 +305,8 @@ async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeF
             where=f" AND {column} NOT IN {{ns_hidden:Array(String)}}",
             params={"ns_hidden": hidden},
         )
-    from server.auth import fail_closed
-
-    fail_closed.reset()
-    ns_list = sorted(await resolve_my_namespaces(org))
+    ns_list = await my_namespaces_or_none(org)
     if not ns_list:
-        # Emptied whole because a read failed, as the admin's `*` above: the server's.
-        if fail_closed.unreadable():
-            note_answered_unverified()
         return OrgScopeFilter(accessible=False, where="", params={})
     return OrgScopeFilter(
         accessible=True,

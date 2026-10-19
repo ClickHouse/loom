@@ -1478,3 +1478,42 @@ def test_http_s_ledger_note_of_a_handler_error_keeps_its_cause() -> None:
     raised.__cause__ = marked
     note = http._http_exception_note(raised)
     assert sli.status_class(False, "HANDLER_HTTP_ERROR", note) == "server"
+
+
+def test_audit_list_naming_a_restricted_namespace_it_cannot_verify_is_the_server_s(
+    monkeypatch,
+) -> None:
+    """An org admin's `audit.list` naming one restricted namespace: its refusal
+    is the whole answer, so it marks when the grant read failed."""
+    from server.auth import authz, context, fail_closed
+    from server.auth.jwt import AuthInfo
+    from server.core import request_work
+    from server.insights.api.models_audit import AuditListInput
+    from server.insights.app import audit
+
+    read_fails = {"value": False}
+
+    @fail_closed.marks_unverified
+    async def _check(*a: Any, **k: Any) -> None:
+        if read_fails["value"]:
+            fail_closed.note_unreadable()
+        raise PermissionError("no grant on sec")
+
+    async def _hidden(org: str) -> list[str]:
+        return ["sec"]
+
+    monkeypatch.setattr(authz, "_check_restricted", _check)
+    monkeypatch.setattr(context, "restricted_namespaces_hidden_from", _hidden)
+    admin = AuthInfo(
+        subject="ada", org="o", namespaces=("*",), roles=(Role.ORG_ADMIN,), is_service_account=False
+    )
+
+    async def _list() -> tuple[int, bool]:
+        request_work.begin()
+        context.set_current_auth(admin)
+        out = await audit.handle_audit_list(AuditListInput(org="o", namespace="sec"))
+        return len(out.rows), fail_closed.answered_unverified()
+
+    assert asyncio.run(_list()) == (0, False)  # no grant: the caller's
+    read_fails["value"] = True
+    assert asyncio.run(_list()) == (0, True)
