@@ -168,13 +168,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             key = _attempt_key(r)
             shown = _state.attempts.get(key, (0, frozenset()))[1]
             judged = await resolver.resolve_row(r, policy=policy, counts=counts, shown=shown)
-            # This row's own counts: the rows judged beside it answer for themselves.
-            if counts.judged:
-                # An answer: the namespace's refusals and the outages are not in a row.
-                p.refusals.pop((org, namespace), None)
-                p.outage = 0
-            if judged is None and not counts.skipped_changed:
-                _state.attempts.pop(key, None)  # stamped: a later write starts over
+            _after_row(p, (org, namespace), key, counts, judged)
             if judged is not None and await _out_of_attempts(r, judged):
                 counts.errored += 1
                 p.errors.append(f"{namespace}/{r.get('memory_key')}: a flagged peer never judged")
@@ -214,6 +208,23 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             emit_worker_cost_event_for(
                 org=org, namespace=namespace, operation=f"worker.{NAME}", started=started
             )
+
+
+def _after_row(
+    p: _Pass,
+    namespace: tuple[str, str],
+    key: tuple[str, ...],
+    counts: resolver.Counts,
+    judged: frozenset[str] | None,
+) -> None:
+    """A row that returned, by its own `counts` (the rows judged beside it answer for
+    themselves): an answer ends its namespace's refusal streak and the outage count, and
+    a row stamped judged forgets its attempts."""
+    if counts.judged:
+        p.refusals.pop(namespace, None)
+        p.outage = 0
+    if judged is None and not counts.skipped_changed:
+        _state.attempts.pop(key, None)
 
 
 def _attempt_key(r: Mapping[str, Any]) -> tuple[str, ...]:
