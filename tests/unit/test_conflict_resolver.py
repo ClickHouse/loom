@@ -38,16 +38,18 @@ def _v(verdict: str, confidence: float, *, entity: bool = True, attribute: bool 
 
 
 def _action(v: Any, policy: str = "newest_wins") -> str:
-    return cr.action_for(v, policy=policy, retire_at=0.98, clear_at=0.90)
+    return cr.action_for(v, policy=policy, retire_at=0.98, clear_at=0.90, flag_at=0.95)
 
 
 @pytest.mark.parametrize("policy", ["newest_wins", "auto_reinforce"])
 def test_an_update_retires_only_at_the_retire_confidence(policy: str) -> None:
     assert _action(_v("update", 0.99), policy) == cr.RETIRE
     assert _action(_v("update", 0.98), policy) == cr.RETIRE
-    # Between the two thresholds an update goes to review, never to a retirement.
+    # Between the flag and the retire threshold an update goes to review, never to a
+    # retirement; below the flag threshold it changes nothing.
     assert _action(_v("update", 0.97), policy) == cr.FLAG
-    assert _action(_v("update", 0.92), policy) == cr.FLAG
+    assert _action(_v("update", 0.95), policy) == cr.FLAG
+    assert _action(_v("update", 0.92), policy) == cr.NOTHING
 
 
 def test_an_update_under_manual_review_is_a_flag_at_any_confidence() -> None:
@@ -722,11 +724,11 @@ async def test_an_update_whose_peer_was_not_asserted_first_is_flagged(
 @pytest.mark.parametrize(
     ("answer", "policy", "want"),
     [
-        (_entry("p1", "update", 0.93), "newest_wins", cr.FLAG),
+        (_entry("p1", "update", 0.96), "newest_wins", cr.FLAG),
         (_entry("p1", "update", 0.99), "auto_reinforce", cr.RETIRE),
-        (_entry("p1", "update", 0.92), "auto_reinforce", cr.FLAG),
+        (_entry("p1", "update", 0.95), "auto_reinforce", cr.FLAG),
         (_entry("p1", "update", 0.99), "manual_review", cr.FLAG),
-        (_entry("p1", "contradiction", 0.91), "newest_wins", cr.FLAG),
+        (_entry("p1", "contradiction", 0.95), "newest_wins", cr.FLAG),
         (_entry("p1", "elaboration", 0.95), "newest_wins", cr.CLEAR),
     ],
 )
@@ -1964,6 +1966,8 @@ def test_the_defaults_are_the_benched_operating_point() -> None:
     assert defaults["memory_conflict_resolver_max_peers"] == 8
     assert defaults["memory_conflict_resolver_retire_confidence"] == 0.98
     assert defaults["memory_conflict_resolver_clear_confidence"] == 0.90
+    # On a drained chat-memory run, flags at 0.90-0.95 were right 11 times in 26.
+    assert defaults["memory_conflict_resolver_flag_confidence"] == 0.95
     # 48 rows a pass, 8 at once at ~5 s a call, then 10 s: ~70 rows a minute.
     assert defaults["memory_conflict_resolver_batch"] == 40
     assert defaults["memory_conflict_resolver_recheck_batch"] == 8
@@ -2012,11 +2016,11 @@ async def test_the_recheck_waits_once_it_comes_back_short(
 # --- the claims each pinned on its own ---------------------------------------------------
 
 
-def test_the_clear_confidence_itself_changes_the_pair() -> None:
-    """At exactly 0.90 a compatible verdict clears and a contradiction flags."""
+def test_the_thresholds_themselves_change_the_pair() -> None:
+    """At exactly 0.90 a compatible verdict clears; at exactly 0.95 a contradiction flags."""
     assert _action(_v("restatement", 0.90)) == cr.CLEAR
-    assert _action(_v("contradiction", 0.90)) == cr.FLAG
-    assert _action(_v("contradiction", 0.8999)) == cr.NOTHING
+    assert _action(_v("contradiction", 0.95)) == cr.FLAG
+    assert _action(_v("contradiction", 0.9499)) == cr.NOTHING
 
 
 async def test_at_most_half_the_places_go_to_rows_of_the_key_in_other_sessions() -> None:
@@ -2112,3 +2116,15 @@ def test_same_fact_day_needs_both_dates() -> None:
     assert cr.same_fact_day(day, cr.Note("b", "k", "v", written="2026-01-03", dated=True))
     assert not cr.same_fact_day(day, cr.Note("b", "k", "v", written="2026-01-03"))
     assert not cr.same_fact_day(day, cr.Note("b", "k", "v", written="2026-01-02", dated=True))
+
+
+@pytest.mark.parametrize("verdict", ["update", "contradiction"])
+def test_a_flag_takes_the_flag_confidence(verdict: str) -> None:
+    # Below it an update or a contradiction changes nothing; at it, the pair is flagged.
+    assert _action(_v(verdict, 0.94)) == cr.NOTHING
+    assert _action(_v(verdict, 0.95), "manual_review") == cr.FLAG
+
+
+def test_a_compatible_verdict_still_clears_at_the_clear_confidence() -> None:
+    assert _action(_v("related", 0.90)) == cr.CLEAR
+    assert _action(_v("related", 0.89)) == cr.NOTHING

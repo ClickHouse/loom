@@ -726,6 +726,7 @@ def _action(
         policy=policy,
         retire_at=float(settings.memory_conflict_resolver_retire_confidence),
         clear_at=float(settings.memory_conflict_resolver_clear_confidence),
+        flag_at=float(settings.memory_conflict_resolver_flag_confidence),
         cross_session=cross_session,
         same_written=same_written,
     )

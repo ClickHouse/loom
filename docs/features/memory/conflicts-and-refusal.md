@@ -133,7 +133,7 @@ leader-only worker judges each write that has a live peer of its type at cosine
   when the older row's value was asserted first (to the nanosecond) and the two facts are
   not dated the same day; otherwise the pair is flagged. Under `manual_review` it is
   flagged;
-- any other update, and a contradiction, at 0.90 or more flags both rows for review;
+- any other update, and a contradiction, at 0.95 or more flags both rows for review;
 - a compatible pair (elaboration, restatement, related, unrelated) at 0.90 or more has its
   flag cleared;
 - anything less sure changes nothing, and so does an update or a contradiction between two sessions of the
@@ -314,7 +314,8 @@ not erasing: to remove a person's data, use [erasure](./retention-and-erasure.md
 | `LOOM_CONFLICT_RESOLVER_MODEL`                    | gpt-6.1-sol                                                           | The resolver's judge.                                                                                |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY`    | 0.60                                                                  | Lowest cosine that marks a write and joins its cluster.                                              |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` | 0.98                                                                  | An update retires its predecessor (`auto_reinforce`, `newest_wins`) at this confidence.              |
-| `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE`  | 0.90                                                                  | Below it nothing changes; at it a compatible pair clears and a contradiction flags.                  |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_FLAG_CONFIDENCE`   | 0.95                                                                  | An update or a contradiction flags the pair (or retires, as above) only at this confidence.          |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE`  | 0.90                                                                  | Below it nothing changes; at it a compatible pair clears.                                            |
 | `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`            | 200                                                                   | Entries per `memory.bulk_set` checked; 0 = none.                                                     |
 | `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS`   | 2.0                                                                   | Cross-replica pattern refresh bound.                                                                 |
 

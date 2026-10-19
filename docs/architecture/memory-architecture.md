@@ -237,14 +237,18 @@ down.
 | `update` or `contradiction` with a different entity or attribute | any          | nothing (the answer contradicts itself)          |
 | `update` or `contradiction` from another session, for user `-`   | any          | nothing (an agent's sessions are separate tasks) |
 | any                                                              | below 0.90   | nothing                                          |
+| `update` or `contradiction`                                      | below 0.95   | nothing                                          |
 | `update`, namespace `auto_reinforce` or `newest_wins`            | 0.98 or more | retire the peer if stated first                  |
-| `update` (0.90 to 0.98, or `manual_review`), `contradiction`     | 0.90 or more | flag both rows `conflicted` for review           |
+| `update` (0.95 to 0.98, or `manual_review`), `contradiction`     | 0.95 or more | flag both rows `conflicted` for review           |
 | `elaboration`, `restatement`, `related`, `unrelated`             | 0.90 or more | clear a flag between the pair                    |
 
-The two thresholds are `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` (0.98) and
-`LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` (0.90): an update retires only at the
-first, an update between the two goes to review, and nothing below the second changes a
-row. An update between two rows whose writers both dated the fact (`valid_at`) on the
+The three thresholds are `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` (0.98),
+`LOOM_MEMORY_CONFLICT_RESOLVER_FLAG_CONFIDENCE` (0.95) and
+`LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` (0.90), in that order (the settings refuse
+any other): an update retires only at the first, an update or a contradiction between the
+second and the first goes to review and below the second changes nothing, and a compatible
+verdict clears at the third. On a drained chat-memory run, flags between 0.90 and 0.95
+were right 11 times in 26. An update between two rows whose writers both dated the fact (`valid_at`) on the
 same day goes to review too: the prompt shows both as that day, and two facts from one
 conversation day have no order. A peer the answer leaves out, or an answer that cannot be
 parsed, changes nothing. The default

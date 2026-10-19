@@ -95,11 +95,14 @@ class MemorySettings(BaseModel):
     # Most peers judged with a row in one call, nearest first.
     memory_conflict_resolver_max_peers: int = Field(default=8, ge=1, le=8)
     # An update at or above this confidence retires the older row (auto_reinforce, newest_wins);
-    # one between the clear confidence and this is flagged for review.
+    # one between the flag confidence and this is flagged for review.
     memory_conflict_resolver_retire_confidence: float = Field(default=0.98, ge=0.0, le=1.0)
+    # An update or a contradiction at or above this confidence acts: it flags the pair for
+    # review, or retires where the retire confidence and the policy allow; below it, it
+    # changes nothing. Between the clear confidence and the retire confidence.
+    memory_conflict_resolver_flag_confidence: float = Field(default=0.95, ge=0.0, le=1.0)
     # Below this confidence a verdict changes nothing. At or above it a compatible
-    # verdict clears the pair's flag, and an update this build does not retire or a
-    # contradiction flags the pair for review.
+    # verdict clears the pair's flag.
     memory_conflict_resolver_clear_confidence: float = Field(default=0.90, ge=0.0, le=1.0)
     # Marked rows read per batch; a full batch with no errors is followed at once by the
     # next, for up to 300 s of a pass.
@@ -392,8 +395,8 @@ class MemorySettings(BaseModel):
 
     @model_validator(mode="after")
     def _check_resolver_confidences(self) -> MemorySettings:
-        """Retiring takes more confidence than clearing: the band between them is the
-        one that goes to review."""
+        """Retiring takes more confidence than flagging, and flagging than clearing: the
+        band between the flag and the retire confidence is the one that goes to review."""
         if (
             self.memory_conflict_resolver_retire_confidence
             < self.memory_conflict_resolver_clear_confidence
@@ -401,5 +404,15 @@ class MemorySettings(BaseModel):
             raise ValueError(
                 "LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE must not be below "
                 "LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE"
+            )
+        if not (
+            self.memory_conflict_resolver_clear_confidence
+            <= self.memory_conflict_resolver_flag_confidence
+            <= self.memory_conflict_resolver_retire_confidence
+        ):
+            raise ValueError(
+                "LOOM_MEMORY_CONFLICT_RESOLVER_FLAG_CONFIDENCE must lie between "
+                "LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE and "
+                "LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE"
             )
         return self

@@ -1621,7 +1621,8 @@ async def test_dead_rows_of_the_key_do_not_take_the_live_rows_place(ch, wired, m
     [
         ("auto_reinforce", 0.98, "retired"),
         ("auto_reinforce", 0.97, "flagged"),
-        ("auto_reinforce", 0.92, "flagged"),
+        ("auto_reinforce", 0.95, "flagged"),
+        ("auto_reinforce", 0.94, "unsure"),
         ("manual_review", 0.99, "flagged"),
         ("append_only", 0.99, None),
     ],
@@ -1655,6 +1656,10 @@ async def test_the_policy_decides_whether_an_update_retires_or_flags(
     elif want == "flagged":
         assert out["retired"] == 0 and out["flagged"] == 1, out
         assert old["status"] == "conflicted" and records == []
+    elif want == "unsure":
+        # Judged, but below the flag confidence: nothing changes.
+        assert out["judged"] == 1 and out["retired"] == out["flagged"] == 0, out
+        assert old["status"] == "active" and records == []
     else:
         assert llm.calls == [] and out["retired"] == out["flagged"] == 0, out
         assert {k: (r["status"], r["version"]) for k, r in rows.items()} == {
