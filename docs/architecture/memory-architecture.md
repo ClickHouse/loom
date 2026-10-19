@@ -332,17 +332,17 @@ embedding rows (`memory/app/write_fence.py`). A write whose version is above the
 tombstone's by more than about a microsecond stays above them, and a write the key had
 moved past before the delete (a later version came and went) stays deleted. Two writes
 lifted over one delete rarely share a version (each is offset by a hash of its row); which
-of them wins is not defined. A delete that commits after the insert wins, as before. A
-`memory.set` with `if_match_sha256` draws its version after the check, under the key lock,
-so a delete above it landed after the check: it answers 409 instead. A blacklist sweep's
-tombstone is not a delete: a write it caught stays under it. Only that tombstone carries
-the sweep's `expire_reason` marker; every other version drops it (a `namespace.rollback`
-to a time the tombstone held writes it back as it was), and no caller may write it.
-`memory.update` and `memory.update_by_id` revise a row and are not lifted: a revision that
-races a delete stays deleted. If the fence's read fails, the write keeps its version;
-`memory.set`'s answer names the degradation. `memory.delete_version` removes one version a
-caller read and nothing when the row has moved on; the key lock orders it against
-`if_match_sha256` writes.
+of them wins is not defined. A delete that commits after the insert wins, as it does
+between any two writes. A `memory.set` with `if_match_sha256` draws its version after the
+check, under the key lock, so a delete above it landed after the check: it answers 409
+instead. A blacklist sweep's tombstone is not a delete: a write it caught stays under it.
+Only that tombstone carries the sweep's `expire_reason` marker; every other version drops
+it (a `namespace.rollback` to a time the tombstone held writes it back as it was), and no
+caller may write it. `memory.update` and `memory.update_by_id` revise a row and are not
+lifted: a revision that races a delete stays deleted. If the fence's read fails, the write
+keeps its version; `memory.set`'s answer names the degradation. `memory.delete_version`
+removes one version a caller read and nothing when the row has moved on; the key lock
+orders it against `if_match_sha256` writes.
 
 Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace's
 `retention_days`, or `LOOM_MEMORY_SENSITIVE_RETENTION_DAYS` set `expires_at` and
