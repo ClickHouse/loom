@@ -296,6 +296,8 @@ async def test_the_tombstone_reads_with_sequential_consistency() -> None:
     class _CH:
         async def query_all(self, sql: str, params: dict[str, Any] | None = None):
             seen.append(query_settings().get("select_sequential_consistency") == 1)
+            if sql.startswith("SELECT DISTINCT embedding_model, msg_id"):
+                return [{"embedding_model": "m", "msg_id": "m1"}]  # the delete's key read
             return []
 
         async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
@@ -303,10 +305,12 @@ async def test_the_tombstone_reads_with_sequential_consistency() -> None:
             seen.append(query_settings().get("select_sequential_consistency") == 1)
 
     for msg_ids in (None, ["m1"]):
+        seen.clear()
         await repo.tombstone_embeddings(
             "o", "n", "a", "t", msg_ids=msg_ids, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
         )
-    assert seen and all(seen)
+        # The key read (delete only), the reconcile and its re-read.
+        assert len(seen) == (3 if msg_ids is None else 2) and all(seen)
 
 
 @pytest.mark.asyncio

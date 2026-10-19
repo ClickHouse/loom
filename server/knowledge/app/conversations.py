@@ -814,7 +814,8 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
 
     summary_msg_id = f"compact-{_uuid.uuid4().hex[:12]}"
     # The summary is what search finds once the turns it replaces are tombstoned, so
-    # it is embedded before anything is written; without a vector nothing changes.
+    # it is embedded before the compaction writes anything; without a vector there is
+    # no summary and no turn is tombstoned.
     embedded = await _embed_turn(
         summary_text,
         org=input.org,
