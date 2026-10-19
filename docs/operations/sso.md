@@ -556,15 +556,15 @@ WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())
 ```
 
 A machine trust's agents (`sa:<trust>:<agent>`) count as people here. A token
-made before this build by a token since revoked shows up too: it is dead
-already, and revoking it frees its name. Revoke each token it lists as an
-admin of one of its namespaces, with `/v1/me/service_accounts.revoke` and its
-`name` (its creator is a token, not a person, so it is in no one's own list; a
-namespace admin's Tokens list shows it among the newest 200). Then run it
-again: a token below one you revoked shows up once that one is revoked. A
-token made from a subject you minted with `loom mint-token --subject sa:…` is
-listed on every run and is not one of these: keep it, and stop when the query
-lists only those. While the previous build still serves, a token it lists,
+made from a subject you minted with `loom mint-token --subject sa:…` is listed
+on every run and is not one of these: keep it. A token made before this build
+by a token since revoked shows up too: it is dead already, and revoking it
+frees its name. Revoke each other token it lists as an admin of one of its
+namespaces, with `/v1/me/service_accounts.revoke` and its `name` (its creator
+is a token, not a person, so it is in no one's own list; a namespace admin's
+Tokens list shows it among the newest 200). Then run it again: a token below
+one you revoked shows up once that one is revoked. Stop when it lists only
+tokens made from subjects you minted. While the previous build still serves, a token it lists,
 revokes or reuses the name of records no lineage.
 
 A browser sign-in whose steps land on both builds (a code exchanged, an

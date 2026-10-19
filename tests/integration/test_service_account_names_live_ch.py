@@ -93,7 +93,7 @@ async def test_the_tokens_a_reused_names_former_holder_made_are_revoked(org: str
     lee = f"lee-{uuid.uuid4().hex[:8]}"
     await _save(org, "parent", "sa:parent-old", lee, [lee])
     await _save(org, "child", "sa:child-1", "sa:parent-old", [lee, "sa:parent-old"])
-    await _reuse(org, "parent", "lee")  # the name, reused
+    await _reuse(org, "parent", lee)  # the name, reused
 
     async with _deactivated(lee):
         assert (await _head(org, "child"))["revoked_at"] is not None
