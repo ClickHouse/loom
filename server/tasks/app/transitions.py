@@ -696,6 +696,8 @@ async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
     task, owner_side = await _load_for_reason_op(input)
     if not owner_side:
         raise _not_found()
+    # The lease goes before the status row, so a claim racing this one finds none, and
+    # again after it: a create retry in between (`_prior_task` reads todo) puts it back.
     await _drop_lease(task)
     row, seq = await _record(
         task,
@@ -707,6 +709,7 @@ async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
         owner="",
         lease_until=None,
     )
+    await _drop_lease(task)
     return TaskOutput(task=_payload(row), seq=seq)
 
 
@@ -714,6 +717,8 @@ async def handle_task_cancel(input: TaskReasonInput) -> TaskOutput:
     """Owner side, or the poster while nobody owns the task."""
 
     task, _owner_side = await _load_for_reason_op(input)
+    # The lease goes before the status row, so a claim racing this one finds none, and
+    # again after it: a create retry in between (`_prior_task` reads todo) puts it back.
     await _drop_lease(task)
     row, seq = await _record(
         task,
@@ -725,6 +730,7 @@ async def handle_task_cancel(input: TaskReasonInput) -> TaskOutput:
         owner="",
         lease_until=None,
     )
+    await _drop_lease(task)
     return TaskOutput(task=_payload(row), seq=seq)
 
 
@@ -840,6 +846,8 @@ async def handle_task_reassign(input: TaskReassignInput) -> TaskReassignOutput:
     if mode == "deny":
         raise _err(403, "TASK_POSTER_DENIED", "the destination denies this poster and kind")
     actor = _actor(f"process:{input.agent}")
+    # The lease goes before the status row, so a claim racing this one finds none, and
+    # again after it: a create retry in between (`_prior_task` reads todo) puts it back.
     await _drop_lease(task)
     old, _seq = await _record(
         task,
@@ -852,6 +860,7 @@ async def handle_task_reassign(input: TaskReassignInput) -> TaskReassignOutput:
         owner="",
         lease_until=None,
     )
+    await _drop_lease(task)
     now = _naive(_now())
     new_id = str(uuid.uuid4())
     child = TaskRow(**task)

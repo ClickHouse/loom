@@ -738,3 +738,62 @@ async def test_paging_one_event_at_a_time_moves_past_a_discarded_backfill(
         (retry.task.task_id, "created"),
         (second.task.task_id, "created"),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["cancel", "wont_do"])
+async def test_a_create_retry_racing_an_end_leaves_no_lease_row(
+    ch: Any, monkeypatch: pytest.MonkeyPatch, op: str
+) -> None:
+    """A create retry that runs between an end's lease drop and its status row reads the
+    task still todo and gives it its lease row back: the end drops it again after."""
+    org = f"itest-end-{uuid.uuid4().hex[:8]}"
+    await inboxes.handle_inbox_register(
+        wire.InboxRegisterInput(
+            org=org,
+            namespace="private",
+            agent="admin",
+            inbox="bot",
+            owner_agent="bot",
+            accept_disclosure=["internal"],
+        )
+    )
+    body = {
+        "org": org,
+        "namespace": "public" if op == "cancel" else "private",
+        "agent": "poster",
+        "inbox": "bot",
+        "kind": "chore",
+        "title": "t",
+        "disclosure": "internal",
+        "idempotency_key": "k1",
+    }
+    first = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    real_drop = transitions._drop_lease
+    drops = 0
+
+    async def drop_then_retry(task: Any) -> None:
+        nonlocal drops
+        drops += 1
+        await real_drop(task)
+        if drops == 1:
+            # The client's create retry lands here, before the end's own row.
+            await transitions.handle_task_create(wire.TaskCreateInput(**body))
+
+    monkeypatch.setattr(transitions, "_drop_lease", drop_then_retry)
+    end = transitions.handle_task_cancel if op == "cancel" else transitions.handle_task_wont_do
+    out = await end(
+        wire.TaskReasonInput(
+            org=org,
+            namespace=body["namespace"],
+            agent="poster" if op == "cancel" else "bot",
+            task_id=first.task.task_id,
+            reason="x",
+        )
+    )
+    assert out.task.status == ("cancelled" if op == "cancel" else "wont_do")
+    rows = await ch.query_all(
+        "SELECT task_id FROM loom.task_leases WHERE task_id = {t:String}",
+        params={"t": first.task.task_id},
+    )
+    assert rows == [], rows
