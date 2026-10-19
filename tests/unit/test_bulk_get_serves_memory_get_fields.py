@@ -235,7 +235,9 @@ async def test_history_of_a_high_key_audits_every_version_it_serves(
     async def _history(*_a: Any, **_k: Any) -> list[HistoryVersion]:
         return [version(2, sensitivity=labels[1]), version(1, sensitivity=labels[0])]
 
-    async def _high_keys(_org: str, _ns: str, keys: Any) -> set[str]:
+    async def _high_keys(_org: str, _ns: str, keys: Any, *, memory_ids: Any) -> set[str]:
+        # asked about the served row only, not every row of the key in the namespace
+        assert list(memory_ids) == ["m1", "m1"]
         return high_elsewhere & set(keys)
 
     audits: list[list[int]] = []

@@ -445,3 +445,38 @@ async def test_a_wildcard_key_read_without_high_answers_the_plain_row_behind_it(
         ident, ["p:deploy"], scope=WHOLE_NAMESPACE, ch=ch, exclude_high_sensitivity=True
     )
     assert [(r.agent, r.value) for r in plain] == [("a", "plain")]
+
+
+@pytest.mark.asyncio
+async def test_a_key_read_without_high_answers_nothing_when_the_head_is_high() -> None:
+    # One identity: FINAL collapses to the high v2 before the filter, so the older plain v1
+    # never answers in its place.
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import Identity, get_many_by_keys
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version) VALUES "
+        f"('o', 'n', 'a', '-', '-', '{_A}', 'p:deploy', 'procedural', 'plain', 'active', '', 1), "
+        f"('o', 'n', 'a', '-', '-', '{_A}', 'p:deploy', 'procedural', 'vault', 'active', "
+        "'high', 2)",
+    )
+    for agent in ("a", "*"):
+        ident = Identity(org="o", namespace="n", agent=agent, user_id="-", session_id="-")
+        rows = await get_many_by_keys(
+            ident, ["p:deploy"], scope=WHOLE_NAMESPACE, ch=ch, exclude_high_sensitivity=True
+        )
+        assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_high_keys_narrowed_to_rows_ignores_another_rows_high_version() -> None:
+    ch = _LocalCH(
+        ddl("memory_versions"),
+        _version(_A, "k", 1, ""),
+        _version(_B, "k", 1, "high"),
+    )
+    assert await memory_repo.high_keys("o", "n", ["k"], ch=ch) == {"k"}
+    assert await memory_repo.high_keys("o", "n", ["k"], memory_ids=[_A], ch=ch) == set()
+    assert await memory_repo.high_keys("o", "n", ["k"], memory_ids=[_B], ch=ch) == {"k"}

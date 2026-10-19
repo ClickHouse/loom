@@ -796,3 +796,26 @@ def test_list_never_reads_a_high_procedures_body(monkeypatch: pytest.MonkeyPatch
         handle_procedure_list(ProcedureListInput(org="o", namespace="ns", tags=["prod"]))
     )
     assert [p.memory_key for p in tagged.procedures] == ["procedure_vault"]
+
+
+def test_list_leaves_out_an_expired_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.memory.api.models_procedure import ProcedureListInput
+    from server.memory.app.procedure import handle_procedure_list
+
+    async def _rows(_ident: Any, keys: list[str], **_k: Any) -> list[Any]:
+        past = datetime(2026, 1, 1)
+        return [NS(memory_key="procedure_old", value=_value("old"), expires_at=past)]
+
+    async def _list(_inp: Any) -> Any:
+        entry = NS(
+            memory_key="procedure_old",
+            sensitivity="",
+            tags=["procedure", "ops"],
+            created_at=datetime(2025, 9, 1),
+        )
+        return NS(entries=[entry])
+
+    monkeypatch.setattr("server.memory.store.get_many_by_keys", _rows)
+    monkeypatch.setattr("server.memory.app.query.handle_memory_list", _list)
+    out = asyncio.run(handle_procedure_list(ProcedureListInput(org="o", namespace="ns")))
+    assert [(p.situation, p.tags) for p in out.procedures] == [("", ["ops"])]

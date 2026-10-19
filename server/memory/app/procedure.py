@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.core.ch import own_write_reads
 from server.core.datetimes import naive_utc_now
 from server.core.errors import NotFoundError
 from server.identity.app.request_scope import request_scope
@@ -33,6 +34,7 @@ from server.memory.api.models_procedure import (
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.domain.procedure_evidence import two_axis_score
 from server.memory.domain.procedure_graph import utility_from_stats
+from server.memory.domain.sensitivity import ATTRIBUTE_TAG_PREFIX, SENSITIVITY_TAG_PREFIX
 
 log = logging.getLogger(__name__)
 _REJECTED_PUBLIC_KEYS = ("revision", "digest", "reason", "before", "after", "steps")
@@ -390,7 +392,8 @@ async def handle_procedure_list(input: ProcedureListInput) -> ProcedureListOutpu
     # One read of the listed bodies. A list never reads a 'high' body: such a procedure is
     # listed by its key and the tags on its row.
     readable = [row.memory_key for row in list_out.entries if row.sensitivity != "high"]
-    bodies = await _procedure_rows(input, {input.namespace: readable})
+    with own_write_reads():  # the body a procedure.add just revised, as memory.get read it
+        bodies = await _procedure_rows(input, {input.namespace: readable})
     now = naive_utc_now()
     summaries: list[_ProcedureSummary] = []
     for row in list_out.entries:
@@ -401,7 +404,8 @@ async def handle_procedure_list(input: ProcedureListInput) -> ProcedureListOutpu
         row_tags = [
             t
             for t in row.tags
-            if t != _PROCEDURE_TAG and not t.startswith(("sensitivity:", "attribute:"))
+            if t != _PROCEDURE_TAG
+            and not t.startswith((SENSITIVITY_TAG_PREFIX, ATTRIBUTE_TAG_PREFIX))
         ]
         summaries.append(
             _ProcedureSummary(

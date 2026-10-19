@@ -478,26 +478,37 @@ _BULK_FETCH_SQL = """
 
 
 async def high_keys(
-    org: str, namespace: str, keys: Sequence[str], *, ch: _CHClient | None = None
+    org: str,
+    namespace: str,
+    keys: Sequence[str],
+    *,
+    memory_ids: Sequence[str] = (),
+    ch: _CHClient | None = None,
 ) -> set[str]:
     """The keys among `keys` with any version labelled 'high', live or deleted, under any
     memory id (a key deleted and written again gets a new one): the raw chunks and digests
-    behind such a row may hold its text. memory_key follows the identity columns in
-    loom.memory_versions' sort key, so this reads the namespace's memory_key and
-    sensitivity columns."""
+    behind such a row may hold its text. `memory_ids` narrows it to those rows' versions.
+    memory_key follows the identity columns in loom.memory_versions' sort key, so this
+    reads the namespace's memory_key and sensitivity columns."""
     if not keys:
         return set()
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "keys": sorted(set(keys))}
+    of_rows = ""
+    if memory_ids:
+        of_rows = "AND toString(memory_id) IN {ids:Array(String)}"
+        params["ids"] = sorted(set(memory_ids))
     rows = await ch.query_all(
-        """
+        f"""
         SELECT DISTINCT memory_key
         FROM loom.memory_versions
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND memory_key IN {keys:Array(String)}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND memory_key IN {{keys:Array(String)}}
           AND sensitivity = 'high'
+          {of_rows}
         """,
-        params={"org": org, "ns": namespace, "keys": sorted(set(keys))},
+        params=params,
     )
     return {str(r["memory_key"]) for r in rows}
 

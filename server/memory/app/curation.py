@@ -408,13 +408,18 @@ async def handle_memory_history(input: MemoryHistoryInput) -> MemoryHistoryOutpu
         )
         for r in rows
     ]
-    # The history of a key with any 'high' version is audited version by version, as
+    # The history of a row with any 'high' version is audited version by version, as
     # memory.get audits the head: the version before a sweep labelled the row holds the same
     # value unlabelled.
     high = any(r.sensitivity == "high" for r in rows) or (
         bool(rows)
         and input.memory_key
-        in await memory_repo.high_keys(input.org, input.namespace, [input.memory_key])
+        in await memory_repo.high_keys(
+            input.org,
+            input.namespace,
+            [input.memory_key],
+            memory_ids=[str(r.memory_id) for r in rows],
+        )
     )
     await _audit.emit_many(
         "memory.sensitive_read",
