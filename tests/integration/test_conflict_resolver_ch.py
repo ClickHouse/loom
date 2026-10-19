@@ -3256,3 +3256,68 @@ async def test_a_plain_restore_of_a_live_row_takes_no_lock(ch, wired, monkeypatc
         )
     )
     assert not out.restored and taken == []
+
+
+class _Garbage:
+    """A model whose every answer is unusable."""
+
+    provider, model = "fake", "garbage"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, system: str, user: str, **kw: Any) -> Any:
+        from types import SimpleNamespace
+
+        self.calls += 1
+        return SimpleNamespace(text="I cannot answer in JSON today.")
+
+
+async def test_rows_refused_pass_after_pass_are_stamped_after_three_attempts(
+    ch, wired, monkeypatch
+) -> None:
+    """Unusable answers stop each pass after three refusals; each refused row counts
+    an attempt, so after three it is stamped, the next rows get their turns, and the
+    passes come to pay nothing."""
+    import server.llm.client as llm_client
+    from server.memory.workers import conflict_resolver as worker
+
+    org, _ = wired
+    await _seed(ch, org, monkeypatch)
+    garbage = _Garbage()
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: garbage)
+    monkeypatch.setattr(worker.settings, "memory_conflict_resolver_concurrency", 1)
+    monkeypatch.setattr(worker, "PAUSE_AFTER_STOP_S", 0.0)
+    per_pass = []
+    for _ in range(8):
+        before = garbage.calls
+        await worker.run_pass()
+        per_pass.append(garbage.calls - before)
+    assert per_pass[0] > 0 and per_pass[-2:] == [0, 0], per_pass
+    assert (await _marks(ch, org))["office_location"] != 1, "stamped"
+
+
+async def test_a_pass_stopped_by_the_lease_store_pauses_the_worker(ch, wired, monkeypatch) -> None:
+    """Keeper down: the first pass pays for a call whose settle cannot take a lock and
+    stops; the passes after it pay nothing until the pause ends."""
+    from server.core import leases
+    from server.memory.workers import conflict_resolver as worker
+
+    org, llm = wired
+    await _seed(ch, org, monkeypatch)
+
+    async def down(*a: Any, **kw: Any) -> Any:
+        raise RuntimeError("keeper unreachable")
+
+    monkeypatch.setattr(leases, "take", down)
+    monkeypatch.setattr(worker.settings, "memory_conflict_resolver_concurrency", 1)
+    per_pass = []
+    for _ in range(3):
+        before = len(llm.calls)
+        await worker.run_pass()
+        per_pass.append(len(llm.calls) - before)
+    assert per_pass[0] >= 1 and per_pass[1:] == [0, 0], per_pass
+    monkeypatch.setattr(worker._state, "paused_until", 0.0)
+    before = len(llm.calls)
+    await worker.run_pass()
+    assert len(llm.calls) > before, "the pause ended: rows are judged again"

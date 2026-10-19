@@ -37,6 +37,9 @@ BURST_S = 300.0
 # call) is paid for again every pass: after this many such attempts it is stamped,
 # errored. Counted per (identity, content hash) on this leader.
 MAX_ATTEMPTS = 3
+# A pass stopped by the model, the keys' locks or the same refusal row after row: the
+# next passes would pay for the same answer, so the worker waits this long first.
+PAUSE_AFTER_STOP_S = 300.0
 
 
 @dataclass
@@ -53,6 +56,8 @@ class _State:
     # Attempts that left a row owed, per (identity, content hash): how many, and the
     # peers they judged it against.
     attempts: dict[tuple[str, ...], tuple[int, frozenset[str]]] = field(default_factory=dict)
+    # time.monotonic() before which no pass runs, after a pass that stopped.
+    paused_until: float = 0.0
 
 
 _state = _State()
@@ -164,6 +169,9 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {e}")
             p.refused.append(r)
             _count_refusal(p, e)
+            # An attempt all the same: a refusal that stops every pass still ends.
+            if await _out_of_attempts(r):
+                p.errors.append(f"{namespace}/{r.get('memory_key')}: stamped after {MAX_ATTEMPTS}")
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the pass
             p.counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {type(e).__name__}: {e}")
@@ -271,6 +279,12 @@ async def run_pass() -> dict[str, Any]:
             idle: dict[str, Any] = p.counts.as_dict()
             rec.outcome = idle
             return idle
+        if time.monotonic() < _state.paused_until:
+            # The last pass stopped: the same answer would be paid for again.
+            pass_context.mark_idle()
+            paused: dict[str, Any] = p.counts.as_dict()
+            rec.outcome = paused
+            return paused
         started = time.monotonic()
         found = False  # any batch of the pass held rows
         while True:
@@ -290,6 +304,8 @@ async def run_pass() -> dict[str, Any]:
                 break
         await _stamp_refused(p)
         await resolver.resolve_done_intents(p.done_intents)
+        if p.unavailable is not None:
+            _state.paused_until = time.monotonic() + PAUSE_AFTER_STOP_S
         if not found:
             pass_context.mark_idle()
         if isinstance(p.unavailable, LeaseUnavailable):
