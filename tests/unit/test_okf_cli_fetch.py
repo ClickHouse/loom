@@ -302,8 +302,8 @@ async def test_a_limit_the_namespace_never_reached_is_listed_again_like_a_whole_
 
 @pytest.mark.asyncio
 async def test_a_repeated_row_never_counts_toward_the_limit() -> None:
-    # Three rows under --limit 3. After the first page a row moves to the top, so the next
-    # offset serves "b" again before "c": the repeat must not make the listing look cut.
+    # Three rows under --limit 3. After the first page a new row lands above "b", so the next
+    # offsets serve "b" twice before "c": the repeat must not make the listing look cut.
     class _Repeating:
         async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
             if op == "memory.bulk_get":

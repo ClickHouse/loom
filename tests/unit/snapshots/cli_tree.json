@@ -3889,7 +3889,7 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "Delete the rows an earlier import wrote (this --agent and token, an okf: source_trace) whose key is no longer in the bundle. Refuses an empty bundle, one its export did not mark complete (--limit, or an older release), or one that does not match its loom.corpus_digest. With --dry-run, lists the rows it would delete.",
+       "help": "Delete the rows an earlier import wrote (this --agent and token, an okf: source_trace) whose key is no longer in the bundle. Refuses an empty bundle or one that does not match its loom.corpus_digest; a bundle its export did not mark complete is written but not pruned. With --dry-run, lists the rows it would delete.",
        "metavar": null
       }
      ]
