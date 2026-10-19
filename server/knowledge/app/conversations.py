@@ -7,7 +7,6 @@ import hashlib
 import json
 import logging
 from collections.abc import Mapping
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from server.auth.fanout import namespaces_to_search
