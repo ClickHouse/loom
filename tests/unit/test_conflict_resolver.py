@@ -451,8 +451,12 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     # When each row's value was first asserted (ns): the peer a moment before the row.
     e.asserted = {"m1": 2_000, "m2": 1_000}
 
-    async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> dict[str, int]:
-        return {i: e.asserted[i] for i, _ in rows if i in e.asserted}
+    async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> Any:
+        # An Undo restored after everything, of the value its row holds.
+        undos = [
+            queue.Undo(lo, w, str(e.heads[lo].content_sha256 or ""), 10**20) for lo, w in e.undone
+        ]
+        return {i: e.asserted[i] for i, _ in rows if i in e.asserted}, undos
 
     async def head(org: str, mid: str) -> Any:
         return e.heads.get(mid)
@@ -497,12 +501,7 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         e.unlinked.append((row.memory_id, ids))
         return True
 
-    e.undone: set[tuple[str, str]] = set()
-
-    async def undone_at(org: str, ns: str, loser: str, sha: str, winner: str, **kw: Any) -> Any:
-        return 10**20 if (loser, winner) in e.undone else None  # an Undo after everything
-
-    monkeypatch.setattr(queue, "undone_at", undone_at)
+    e.undone: set[tuple[str, str]] = set()  # (loser, winner) pairs a person undid
     monkeypatch.setattr(queue, "dead_flags", dead_flags)
     monkeypatch.setattr(resolver, "_unlink", unlink)
     monkeypatch.setattr(queue, "asserted_versions", asserted)
@@ -1189,16 +1188,16 @@ async def test_the_order_is_finer_than_the_second_and_ignores_metadata_writes(
     touched = datetime(2026, 1, 3)
     peer = _mem("m2", version=1_767_398_400_000_000_001, created_at=second, updated_at=touched)
 
-    async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> dict[str, int]:
-        return {"m1": 1_767_312_000_010_000_000, "m2": 1_767_312_000_005_000_000}
+    async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> Any:
+        return {"m1": 1_767_312_000_010_000_000, "m2": 1_767_312_000_005_000_000}, []
 
     monkeypatch.setattr(queue, "asserted_versions", asserted)
-    order = await resolver._assertion_order("o", "ns", [row, peer])
+    order, _ = await resolver._assertion_order("o", "ns", [row, peer])
     assert order["m2"] < order["m1"]
     # An explicit valid_at earlier than the assertion moves the row back.
     peer.valid_at = datetime(2020, 1, 1)
     row.valid_at = datetime(2019, 1, 1)
-    order = await resolver._assertion_order("o", "ns", [row, peer])
+    order, _ = await resolver._assertion_order("o", "ns", [row, peer])
     assert order["m1"] < order["m2"]
 
 
@@ -1210,20 +1209,20 @@ async def test_the_order_reads_valid_time_in_utc_caps_it_at_the_assertion_and_fa
     ns = 1_000_000_000
     asserted_at = {"m1": 1_800_000_000 * ns}
 
-    async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> dict[str, int]:
-        return dict(asserted_at)
+    async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> Any:
+        return dict(asserted_at), []
 
     monkeypatch.setattr(queue, "asserted_versions", asserted)
     # 01:00 at -07:00 is 08:00 UTC.
     row = _mem("m1", valid_at=datetime(2023, 5, 30, 1, 0, tzinfo=timezone(timedelta(hours=-7))))
-    order = await resolver._assertion_order("o", "ns", [row])
+    order, _ = await resolver._assertion_order("o", "ns", [row])
     assert order["m1"][0] == calendar.timegm(datetime(2023, 5, 30, 8, 0).utctimetuple()) * ns
     # A valid time after the assertion (a fact dated ahead) holds from the assertion.
     row.valid_at = datetime(2030, 1, 1)
-    assert (await resolver._assertion_order("o", "ns", [row]))["m1"] == (asserted_at["m1"],) * 2
+    assert (await resolver._assertion_order("o", "ns", [row]))[0]["m1"] == (asserted_at["m1"],) * 2
     # A row the history does not hold: its current version.
     other = _mem("m9", version=42)
-    assert (await resolver._assertion_order("o", "ns", [other]))["m9"] == (42, 42)
+    assert (await resolver._assertion_order("o", "ns", [other]))[0]["m9"] == (42, 42)
 
 
 async def test_a_row_with_a_newer_flagged_peer_is_judged_as_itself(row_env: NS) -> None:

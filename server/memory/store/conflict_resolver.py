@@ -18,6 +18,7 @@ An older build reads only the epoch as its own pending mark (`toUnixTimestamp(..
 
 from __future__ import annotations
 
+import asyncio
 import calendar
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -459,19 +460,31 @@ _HISTORY_SQL = """
         SETTINGS select_sequential_consistency = 1
         """
 
-# The restore versions of some rows' Undos (`memory.unsupersede` records); a record
-# without one is not read.
+# Some rows' Undos (`memory.unsupersede` records); a record without the restored hash
+# and the restore's version is not read.
 _UNDOS_SQL = """
         SELECT JSONExtractString(subject, 'memory_id') AS memory_id,
-               groupArray(JSONExtractUInt(subject, 'version')) AS versions
+               JSONExtractString(subject, 'superseded_by') AS superseded_by,
+               JSONExtractString(subject, 'content_sha256') AS content_sha256,
+               JSONExtractUInt(subject, 'version') AS version
         FROM loom.audit_log
         WHERE org = {org:String} AND namespace = {ns:String}
           AND event_type = 'memory.unsupersede'
           AND JSONExtractString(subject, 'memory_id') IN {ids:Array(String)}
+          AND JSONExtractString(subject, 'content_sha256') != ''
           AND JSONExtractUInt(subject, 'version') > 0
-        GROUP BY memory_id
         SETTINGS select_sequential_consistency = 1
         """
+
+
+class Undo(NamedTuple):
+    """A person's Undo of `memory_id`'s retirement behind `superseded_by`: the value it
+    restored and the version the restore wrote."""
+
+    memory_id: str
+    superseded_by: str
+    content_sha256: str
+    version: int
 
 
 def _run_start(run: list[tuple[int, bool, bool]], undos: set[int]) -> int | None:
@@ -491,14 +504,15 @@ def _run_start(run: list[tuple[int, bool, bool]], undos: set[int]) -> int | None
 
 async def asserted_versions(
     org: str, namespace: str, rows: list[tuple[str, str]], *, ch: _CHClient | None = None
-) -> dict[str, int]:
+) -> tuple[dict[str, int], list[Undo]]:
     """{memory_id: the first version of the current run of history rows holding `sha`}
     for each (memory_id, sha) in `rows`: when the row's current value was asserted, in
     wall-clock ns. A metadata copy (touch, pin, tags) keeps the hash, so it does not
     move it; a value that came back, or that its writer restated after a retirement no
-    one undid, is asserted then. An id the history does not hold is left out."""
+    one undid, is asserted then. An id the history does not hold is left out. With
+    them, the rows' Undos."""
     if not rows:
-        return {}
+        return {}, []
     ch = ch or _default_client()
     ids = [str(i) for i, _ in rows]
     params = {
@@ -507,55 +521,41 @@ async def asserted_versions(
         "ids": ids,
         "rows": [(str(i), str(h)) for i, h in rows],
     }
-    history = await ch.query_all(_HISTORY_SQL, params)
-    undos = await ch.query_all(_UNDOS_SQL, {"org": org, "ns": namespace, "ids": ids})
-    undone = {str(u["memory_id"]): {int(v) for v in u["versions"]} for u in undos}
+    history, found = await asyncio.gather(
+        ch.query_all(_HISTORY_SQL, params),
+        ch.query_all(_UNDOS_SQL, {"org": org, "ns": namespace, "ids": ids}),
+    )
+    undos = [
+        Undo(
+            str(u["memory_id"]),
+            str(u["superseded_by"]),
+            str(u["content_sha256"]),
+            int(u["version"]),
+        )
+        for u in found
+    ]
+    undone: dict[str, set[int]] = {}
+    for u in undos:
+        undone.setdefault(u.memory_id, set()).add(u.version)
     out: dict[str, int] = {}
     for h in history:
         run = [(int(v), bool(held), bool(sup)) for v, held, sup in h["run"]]
         start = _run_start(run, undone.get(str(h["memory_id"]), set()))
         if start is not None:
             out[str(h["memory_id"])] = start
-    return out
-
-
-# The restore version of the newest Undo of `loser` reversing a retirement behind
-# `winner` while it held `sha`.
-_UNDONE_AT_SQL = """
-        SELECT maxOrNull(JSONExtractUInt(subject, 'version')) AS at
-        FROM loom.audit_log
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND event_type = 'memory.unsupersede'
-          AND JSONExtractString(subject, 'memory_id') = {loser:String}
-          AND JSONExtractString(subject, 'superseded_by') = {winner:String}
-          AND JSONExtractString(subject, 'content_sha256') = {sha:String}
-          AND JSONExtractUInt(subject, 'version') > 0
-        SETTINGS select_sequential_consistency = 1
-        """
-
-
-async def undone_at(
-    org: str, namespace: str, loser: str, sha: str, winner: str, *, ch: _CHClient | None = None
-) -> int | None:
-    """The version of the restore by which a person last undid `loser`'s retirement
-    behind `winner` while it held `sha`, from the Undo's record; None when none did."""
-    ch = ch or _default_client()
-    params = {"org": org, "ns": namespace, "loser": loser, "sha": sha, "winner": winner}
-    rows = await ch.query_all(_UNDONE_AT_SQL, params)
-    at = rows[0]["at"] if rows else None
-    return None if at is None else int(at)
+    return out, undos
 
 
 __all__ = [
     "JUDGED_MARK",
     "OWED_MARK",
+    "Undo",
     "asserted_versions",
     "cluster_peers",
     "dead_flags",
     "key_identity",
     "owed_rows",
     "protected_ids",
-    "undone_at",
     "queued_namespaces",
     "stamp_judged",
     "under_erasure",
