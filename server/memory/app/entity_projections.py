@@ -18,6 +18,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, parse_iso_dt, to_naive_utc
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app.projection_errors import (
+    ProjectionScope,
     bulk_projection_payload,
     failed_projection,
     record_input_projection_failure,
@@ -607,8 +608,7 @@ async def close_late_edges(
         ended_at = await value_ended_at(
             org, namespace, memory_id, content_sha256, ch=ch, holder=holder
         )
-    scope = SimpleNamespace(org=org, namespace=namespace)
-    await _end_edges_of(scope, memory_id, content_sha256, ended_at, ch=ch)
+    await _end_edges_of(org, namespace, memory_id, content_sha256, ended_at, ch=ch)
 
 
 async def end_overtaken_edges(
@@ -643,7 +643,7 @@ async def end_overtaken_edges(
             ended_at = await value_ended_at(
                 input.org, input.namespace, memory_id, sha, ch=ch, holder=holder
             )
-            await _end_edges_of(input, memory_id, sha, ended_at, ch=ch)
+            await _end_edges_of(input.org, input.namespace, memory_id, sha, ended_at, ch=ch)
         except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
             await _record_edges_close(
                 input,
@@ -736,7 +736,7 @@ async def value_ended_at(
 
 
 async def _end_edges_of(
-    input: Any, memory_id: str, content_sha256: str, ended_at: datetime, *, ch: Any
+    org: str, namespace: str, memory_id: str, content_sha256: str, ended_at: datetime, *, ch: Any
 ) -> None:
     """End at `ended_at` the open edges linked to the row's value `content_sha256` that
     no live row names (`end_edges` keeps those). An edge row another row closed since
@@ -748,10 +748,10 @@ async def _end_edges_of(
           AND memory_id = {id:UUID} AND content_sha256 = {sha:String}
         SETTINGS select_sequential_consistency = 1
         """,
-        params={"org": input.org, "ns": input.namespace, "id": memory_id, "sha": content_sha256},
+        params={"org": org, "ns": namespace, "id": memory_id, "sha": content_sha256},
     )
     ends = [(str(p["entity_a"]), str(p["entity_b"]), ended_at) for p in pairs]
-    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, open_only=True)
+    await end_edges(ch, org=org, namespace=namespace, ends=ends, open_only=True)
 
 
 def owes_undeclared_drop(previous: Any, declared: Sequence[str]) -> bool:
@@ -933,11 +933,8 @@ async def project_stated_relations(
             if not revised and not await _holds_its_value(row, ch=ch):
                 revised = True
     if revised:
-        scope = SimpleNamespace(
-            org=row["org"],
-            namespace=row["namespace"],
-            agent=row["agent"],
-            user_id=str(row.get("user_id") or ""),
+        scope = ProjectionScope(
+            org=row["org"], namespace=row["namespace"], agent=row["agent"], user_id=row["user_id"]
         )
         await reconcile_row_facts(scope, [str(row["memory_id"])], reopen=False, op=op, ch=ch)
 
@@ -947,7 +944,7 @@ async def _holds_its_value(row: Mapping[str, Any], *, ch: Any) -> bool:
     version = [(str(row["memory_id"]), str(row["content_sha256"]))]
     key = (str(row["agent"]), str(row["user_id"]), str(row["session_id"]), str(row["memory_key"]))
     held = await rows_holding(
-        row["org"], row["namespace"], version, ch=ch, holder_sql=HOLDS_VALUE_SQL, key=key
+        row["org"], row["namespace"], version, ch=ch, holder=(HOLDS_VALUE_SQL, {}), key=key
     )
     return bool(held)
 
@@ -1681,18 +1678,15 @@ async def rows_holding(
     versions: list[tuple[str, str]],
     *,
     ch: Any,
-    holder_sql: str = GRAPH_HOLDER_SQL,
+    holder: tuple[str, dict[str, Any]] = (GRAPH_HOLDER_SQL, {}),
     key: tuple[str, str, str, str] | None = None,
-    holder: tuple[str, dict[str, Any]] | None = None,
 ) -> set[str]:
     """Of `versions`, (memory_id, content_sha256) pairs, the ids of the rows whose
-    current value is still that version and that pass `holder_sql`: by default
-    GRAPH_HOLDER_SQL (may hold graph facts), or a weaker test such as
-    HOLDS_VALUE_SQL (not deleted, retired or 'high'); `holder` (a test and its
-    parameters, as `edge_holder_sql` builds one) instead. `key` as `versions_held`."""
-    held = await versions_held(
-        org, namespace, versions, ch=ch, holder_sql=holder_sql, key=key, holder=holder
-    )
+    current value is still that version and that pass `holder` (a test and its
+    parameters): by default GRAPH_HOLDER_SQL (may hold graph facts), or a weaker test
+    such as HOLDS_VALUE_SQL (not deleted, retired or 'high') or one `edge_holder_sql`
+    builds. `key` as `versions_held`."""
+    held = await versions_held(org, namespace, versions, ch=ch, holder=holder, key=key)
     return {memory_id for memory_id, _ in held}
 
 
@@ -1702,9 +1696,8 @@ async def versions_held(
     versions: list[tuple[str, str]],
     *,
     ch: Any,
-    holder_sql: str = GRAPH_HOLDER_SQL,
+    holder: tuple[str, dict[str, Any]] = (GRAPH_HOLDER_SQL, {}),
     key: tuple[str, str, str, str] | None = None,
-    holder: tuple[str, dict[str, Any]] | None = None,
 ) -> set[tuple[str, str]]:
     """`rows_holding`, answered by version: the pairs still current. A row revised
     twice in one write is asked about both values and holds only one. `key` (agent,
@@ -1712,10 +1705,13 @@ async def versions_held(
     the read to it through the table's sort key, as `memory.get_by_id` does."""
     if not versions:
         return set()
-    params: dict[str, Any] = {"org": org, "ns": namespace, "versions": sorted(set(versions))}
-    if holder is not None:
-        holder_sql, extra = holder
-        params.update(extra)
+    holder_sql, holder_params = holder
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "versions": sorted(set(versions)),
+        **holder_params,
+    }
     prewhere = ""
     if key is not None:
         prewhere = """PREWHERE agent = {agent:String} AND user_id = {uid:String}

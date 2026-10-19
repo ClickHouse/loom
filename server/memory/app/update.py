@@ -38,6 +38,7 @@ from server.memory.app.entity_projections import (
     project_stated_relations,
 )
 from server.memory.app.high_fence import fence_high
+from server.memory.app.projection_errors import ProjectionScope
 from server.memory.domain import lock as _lock
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
 from server.memory.domain.excerpt import build_excerpt
@@ -406,7 +407,7 @@ async def _revised_edges(
         await project_revised_edges(memory_row, new_value, op=op, ch=ch)
     declared = declared_entities(SimpleNamespace(entities=memory_row.get("entities")))
     if sensitivity == "high" and owes_undeclared_drop(existing, declared):
-        scope = SimpleNamespace(
+        scope = ProjectionScope(
             org=existing.org,
             namespace=existing.namespace,
             agent=str(existing.agent),

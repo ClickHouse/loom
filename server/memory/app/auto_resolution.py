@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from server.memory.app.projection_errors import ProjectionScope
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 
 if TYPE_CHECKING:
@@ -262,7 +262,8 @@ async def _owe(
 
     pairs = [[str(r["memory_id"]), str(r["superseded_by"])] for r in left]
     await record_input_projection_failure(
-        SimpleNamespace(org=org, namespace=namespace, agent=agent),
+        # No top-level user: each `retired` entry names its row's, as erasure reads it.
+        ProjectionScope(org=org, namespace=namespace, agent=agent, user_id=""),
         projection=FOLLOW_OWED,
         error=f"retirement left for the repair to record: {len(pairs)} row(s)",
         payload={"pairs": pairs, "retired": left, "reason": reason},
@@ -284,7 +285,7 @@ def follow_beside_response(
         from server.memory.app import after_write
 
         intents = sorted({p.intent for p in pairs if p.intent})
-        scope = SimpleNamespace(org=org, namespace=namespace, agent=agent, user_id=user_id)
+        scope = ProjectionScope(org=org, namespace=namespace, agent=agent, user_id=user_id)
         follow = _follow(scope, [(p.loser, p.winner) for p in pairs], op, intents)
         after_write.schedule(follow, name=f"{op}.follow")
     except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them

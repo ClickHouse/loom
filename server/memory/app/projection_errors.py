@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from datetime import datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError
 from server.identity.app.request_scope import request_scope
@@ -21,6 +21,17 @@ from server.identity.domain.read_scope import (
 from server.memory.domain.graph_quality import IntervalRepair
 
 log = logging.getLogger(__name__)
+
+
+class ProjectionScope(NamedTuple):
+    """The identity a projection, its close or its repair runs as, where there is no
+    request input: the writer's, or the row's. `user_id` goes on any failure recorded."""
+
+    org: str
+    namespace: str
+    agent: str
+    user_id: str
+
 
 # The payload keys saying when a write's triples arrived (every failure), that they
 # landed before their interval repair failed, which closes that repair had made, and

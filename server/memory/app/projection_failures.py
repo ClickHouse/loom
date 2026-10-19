@@ -30,6 +30,7 @@ from server.memory.app.projection_errors import (
     TRIPLES_REPAIR,
     TRIPLES_REPAIRS,
     TRIPLES_RESTORE_ID,
+    ProjectionScope,
     TriplesRepairFailed,
     repair_failure_payload,
     restated_repair_payload,
@@ -503,7 +504,6 @@ async def _retry_follow_rows(failure: ProjectionFailureRow, *, ch: Any) -> str:
     its end. A pair still unread is a cycle or a chain past `REPAIR_CHAIN_HOPS`,
     which no retry reads: the reason returned abandons the failure, as it does for
     a payload no retry can read."""
-    from types import SimpleNamespace
 
     from server.memory.app.entity_projections import REPAIR_CHAIN_HOPS, follow_row_supersessions
 
@@ -513,12 +513,7 @@ async def _retry_follow_rows(failure: ProjectionFailureRow, *, ch: Any) -> str:
             raise ValueError("no pairs")
     except (KeyError, TypeError, ValueError):
         return "malformed_payload"
-    scope = SimpleNamespace(
-        org=failure.org,
-        namespace=failure.namespace,
-        agent=failure.agent,
-        user_id=str(failure.payload.get("user_id") or ""),
-    )
+    scope = _failure_scope(failure)
     async with _recording_restated_repair(failure, ch=ch):
         await _finish_restated_repair(failure, scope, ch=ch)
         outcome = await follow_row_supersessions(scope, pairs, ch=ch, hops=REPAIR_CHAIN_HOPS)
@@ -640,21 +635,26 @@ async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
     return ""
 
 
+def _failure_scope(failure: ProjectionFailureRow) -> ProjectionScope:
+    """The scope a replay runs as: the failure's own, with the user its payload names."""
+    return ProjectionScope(
+        org=failure.org,
+        namespace=failure.namespace,
+        agent=failure.agent,
+        user_id=str(failure.payload.get("user_id") or ""),
+    )
+
+
 async def _retry_edges_drop(failure: ProjectionFailureRow, *, ch: Any) -> str:
     """Drop again the undeclared edge links of the rows a write made 'high'; a failure
     raises and leaves the row active."""
-    from types import SimpleNamespace
 
     from server.memory.app.entity_projections import drop_undeclared_links
 
     rows = failure.payload.get("rows")
     if not isinstance(rows, dict) or not all(isinstance(d, list) for d in rows.values()):
         return "malformed_payload"
-    scope = SimpleNamespace(
-        org=failure.org,
-        namespace=failure.namespace,
-        user_id=str(failure.payload.get("user_id") or ""),
-    )
+    scope = _failure_scope(failure)
     declared = {str(memory_id): [str(d) for d in ents] for memory_id, ents in rows.items()}
     await drop_undeclared_links(scope, declared, ch=ch)
     return ""
@@ -723,7 +723,6 @@ async def _finish_restated_repair(failure: ProjectionFailureRow, scope: Any, *, 
 
 async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) -> str:
     """Reconcile the facts of the rows a revision or an Undo changed, as it would have."""
-    from types import SimpleNamespace
 
     from server.memory.app.entity_projections import close_dropped_facts
     from server.memory.app.graph_undo import reopen_held_facts
@@ -731,12 +730,7 @@ async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) ->
     ids = [str(i) for i in failure.payload.get("memory_ids") or []]
     if not ids:
         return "malformed_payload"
-    scope = SimpleNamespace(
-        org=failure.org,
-        namespace=failure.namespace,
-        agent=failure.agent,
-        user_id=str(failure.payload.get("user_id") or ""),
-    )
+    scope = _failure_scope(failure)
     async with _recording_restated_repair(failure, ch=ch):
         await _finish_restated_repair(failure, scope, ch=ch)
         if failure.payload.get("reopen"):
@@ -985,7 +979,7 @@ async def _retry_graph_projection(
             failure.namespace,
             [(r.memory_id, value_sha256(e)) for e, r in pairs if r.memory_id],
             ch=ch,
-            holder_sql=HOLDS_VALUE_SQL,
+            holder=(HOLDS_VALUE_SQL, {}),
         )
         pairs = [
             (e, r) for e, r in pairs if not r.memory_id or (r.memory_id, value_sha256(e)) in held

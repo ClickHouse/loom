@@ -141,7 +141,14 @@ async def test_a_point_write_states_relations_only_for_a_row_that_may_hold_them(
 
     monkeypatch.setattr(ep, "_write_stated_relations", write)
     monkeypatch.setattr(ep, "reconcile_row_facts", reconcile)
-    row = {"org": "o", "namespace": "n", "agent": "a", "memory_id": "m1", "status": "active"}
+    row = {
+        "org": "o",
+        "namespace": "n",
+        "agent": "a",
+        "user_id": "u",
+        "memory_id": "m1",
+        "status": "active",
+    }
     row.update(extra)
     await ep.project_stated_relations(
         row, "I live in Rome", [("user", "live_in", "rome")], revised=True, op="o", ch=None
@@ -160,7 +167,7 @@ async def test_a_point_write_reconciles_only_a_row_it_revised(monkeypatch) -> No
         reconciled.append(ids)
 
     monkeypatch.setattr(ep, "reconcile_row_facts", reconcile)
-    row = {"org": "o", "namespace": "n", "agent": "a", "memory_id": "m1"}
+    row = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "memory_id": "m1"}
     await ep.project_stated_relations(row, "I live in Rome", [], revised=False, op="o", ch=None)
     assert reconciled == []
     await ep.project_stated_relations(row, "I live in Rome", [], revised=True, op="o", ch=None)
@@ -181,7 +188,7 @@ async def test_a_first_write_states_relations_only_while_its_row_holds_the_value
 
     answers, seen, closed = list(held), [], []
 
-    async def holding(org, namespace, versions, *, ch, holder_sql, key):
+    async def holding(org, namespace, versions, *, ch, holder, key):
         assert versions == [("m1", "sha")]
         # Narrowed to the row's own key, not the whole namespace.
         assert key == ("a", "u", "s", "k")
@@ -196,8 +203,15 @@ async def test_a_first_write_states_relations_only_while_its_row_holds_the_value
     monkeypatch.setattr(ep, "rows_holding", holding)
     monkeypatch.setattr(ep, "_write_stated_relations", write)
     monkeypatch.setattr(ep, "reconcile_row_facts", reconcile)
-    row = {"org": "o", "namespace": "n", "agent": "a", "memory_id": "m1", "status": "active"}
-    row.update(user_id="u", session_id="s", memory_key="k", content_sha256="sha")
+    row = {
+        "org": "o",
+        "namespace": "n",
+        "agent": "a",
+        "user_id": "u",
+        "memory_id": "m1",
+        "status": "active",
+    }
+    row.update(session_id="s", memory_key="k", content_sha256="sha")
     await ep.project_stated_relations(
         row, "I live in Rome", [("user", "live_in", "rome")], revised=False, op="o", ch=None
     )

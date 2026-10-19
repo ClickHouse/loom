@@ -505,7 +505,7 @@ async def test_a_failed_replay_keeps_only_the_entries_it_wrote(monkeypatch) -> N
     failure.payload["entries"].append({**failure.payload["entries"][0], "memory_key": "k2"})
     failure.payload["results"].append({"memory_key": "k2", "version": 1, "memory_id": other})
 
-    async def holding(org, namespace, pairs, *, ch, holder_sql):
+    async def holding(org, namespace, pairs, *, ch, holder):
         return {(mid, sha) for mid, sha in pairs if mid == _ROW_ID}
 
     made = IntervalRepair("alice", "works_with", "carol", "bob", datetime(2026, 10, 1, 9))
