@@ -240,3 +240,31 @@ async def test_a_delete_during_the_last_pages_read_is_caught_after_it() -> None:
     rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
     assert [r["memory_key"] for r in rows] == ["a", "b", "d"]  # "c" was skipped
     assert not whole
+
+
+class _DeletedBeforeTheFullRead:
+    """One page of two rows, every check unchanged; `gone` was deleted before bulk_get."""
+
+    async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == "memory.bulk_get":
+            return {"results": {k: {"value": k} for k in body["memory_keys"] if k != "gone"}}
+        if "known_version" in body:
+            return {"entries": [], "unchanged": True}
+        return {
+            "entries": [
+                {"memory_key": k, "agent": "x", "user_id": "-", "session_id": "-", "value": "cut…"}
+                for k in ("kept", "gone")
+            ],
+            "truncated": False,
+            "total": 2,
+            "namespace_version": "1",
+        }
+
+
+@pytest.mark.asyncio
+async def test_a_row_deleted_before_its_full_read_is_left_out_and_the_bundle_not_complete() -> None:
+    # Its list preview is a cut value, and its absence says nothing about the rows around it.
+    rows, whole = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        _DeletedBeforeTheFullRead(), "o", "ns", include_tombstoned=False
+    )
+    assert [r["memory_key"] for r in rows] == ["kept"] and not whole

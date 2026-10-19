@@ -763,9 +763,10 @@ def _dedupe_slugs(concepts: list[Concept]) -> None:
     like the bundle's own `index` or `log` file or a Windows device (`nul`, `con`), gets
     `-<hash of its key and row id>`. A lost file would leave a live key out of a bundle that
     still says complete, and prune would delete its copy. A suffix taken from the concept
-    itself does not depend on the other keys, so a suffixed file moves only when the concept
-    holding the bare name changes (a key that sorts before it arrives, or the holder leaves),
-    and then once."""
+    itself does not depend on the other keys, unless one is literally named like it (the next
+    attempt's name is then taken), so a suffixed file moves only when the concept holding the
+    bare name changes (a key that sorts before it arrives, or the holder leaves) or such a key
+    arrives, and then once."""
     used: set[str] = set()
     for c in concepts:
         if c.id.casefold() in used or _is_reserved(c.id):

@@ -177,7 +177,12 @@ async def _fetch_namespace(
             client, org, namespace, include_tombstoned=include_tombstoned
         )
         attempts += 1
-    return await _with_full_values(client, org, namespace, entries), whole
+    rows, gone = await _with_full_values(
+        client, org, namespace, entries, include_tombstoned=include_tombstoned
+    )
+    # A row deleted between the listing and its full read is left out, and the bundle is
+    # not called complete: its absence says nothing about the rows around it.
+    return rows, whole and not gone
 
 
 async def _list_namespace(
@@ -243,8 +248,16 @@ def _entry_id(r: dict[str, Any]) -> tuple[Any, ...]:
 
 
 async def _with_full_values(
-    client: _Client, org: str, namespace: str, entries: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
+    client: _Client,
+    org: str,
+    namespace: str,
+    entries: list[dict[str, Any]],
+    *,
+    include_tombstoned: bool = False,
+) -> tuple[list[dict[str, Any]], int]:
+    """The entries with their full values, and how many `memory.bulk_get` no longer found
+    (deleted since the listing; left out, as the list preview is a cut value). With
+    `include_tombstoned` a deleted row is listed on purpose and keeps its preview."""
     # Full values (list previews are capped) grouped by the writer identity,
     # since bulk_get resolves keys within one identity tuple.
     by_ident: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
@@ -253,6 +266,7 @@ async def _with_full_values(
         by_ident.setdefault(ident, []).append(r)
 
     out: list[dict[str, Any]] = []
+    gone = 0
     for (agent, user_id, session_id), rows in by_ident.items():
         keys = [r["memory_key"] for r in rows]
         full: dict[str, dict[str, Any]] = {}
@@ -270,12 +284,15 @@ async def _with_full_values(
             )
             full.update(got.get("results") or {})
         for r in rows:
+            if r["memory_key"] not in full and not include_tombstoned:
+                gone += 1
+                continue
             g = full.get(r["memory_key"]) or {}
             merged = {**r, **{k: v for k, v in g.items() if v not in (None, "", [], {})}}
             merged.setdefault("namespace", namespace)
             merged["agent"] = agent if agent != "*" else (r.get("agent") or "")
             out.append(merged)
-    return out
+    return out, gone
 
 
 async def _fetch_evidence(
