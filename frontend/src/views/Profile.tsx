@@ -18,7 +18,7 @@ import {
 } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { RowSkeleton } from "../components/Skeleton";
-import { fmtInt, humanizeError, relativeTime } from "../lib/format";
+import { fmtInt, humanizeError, parseChTime, relativeTime } from "../lib/format";
 import { useVisiblePoll } from "../lib/hooks";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
@@ -422,7 +422,8 @@ function ActivityChip({ empty }: { empty?: boolean }) {
   }
 
   const mostRecent = entries[0];
-  const ms = mostRecent.last_activated_at ? Date.now() - new Date(mostRecent.last_activated_at).getTime() : Infinity;
+  const last = parseChTime(mostRecent.last_activated_at);
+  const ms = last ? Date.now() - last.getTime() : Infinity;
   // Green for a read in the last hour; an older one is not a warning.
   const dotClass = ms < 3_600_000 ? "bg-success" : "bg-text-muted";
 

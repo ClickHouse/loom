@@ -26,7 +26,7 @@ import { GettingStarted, useOnboarding } from "../components/GettingStarted";
 import { Skeleton } from "../components/Skeleton";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { relativeTime, humanizeError } from "../lib/format";
+import { relativeTime, humanizeError, parseChTime } from "../lib/format";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { PrivacyFilters, type PrivacyFilterStarter } from "./admin/Blacklist";
 import { canCall, canCallCodeRepos } from "../lib/canCall";
@@ -1367,7 +1367,7 @@ function SaExpiryBadge({ expiresAt, revoked }: { expiresAt: string | null; revok
   if (!expiresAt) {
     return <span className="ml-2 text-xs text-text-muted">never expires</span>;
   }
-  const expiryMs = new Date(expiresAt).getTime();
+  const expiryMs = parseChTime(expiresAt)?.getTime() ?? Number.NaN;
   const now = Date.now();
   const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
   const expired = expiryMs < now;
@@ -1408,7 +1408,7 @@ function BotConnectPreview({ org, namespace, baseUrl }: { org: string; namespace
 function ConnectionBadge({ token }: { token: ServiceAccountEntry }) {
   if (token.revoked_at) return null;
   if (!token.last_used_at) return <Badge text="Waiting…" state="warning" size="sm" />;
-  const ageMs = Date.now() - new Date(token.last_used_at).getTime();
+  const ageMs = Date.now() - (parseChTime(token.last_used_at)?.getTime() ?? Number.NaN);
   if (ageMs < 30 * 24 * 3600 * 1000) return <Badge text="Connected" state="success" size="sm" />;
   return null;
 }

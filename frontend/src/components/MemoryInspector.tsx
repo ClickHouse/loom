@@ -50,7 +50,7 @@ import { CHIP_OUTLINE_CLASS } from "./ui/Chip";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
 import { ThreadReplayDialog, type ReplayThread } from "./ThreadReplayDialog";
-import { relativeTime, formatValue, humanizeError, SENTINEL_AGENTS } from "../lib/format";
+import { relativeTime, formatValue, humanizeError, parseChTime, SENTINEL_AGENTS } from "../lib/format";
 import { detectEncodedValue } from "../lib/encoded";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
@@ -1278,7 +1278,7 @@ function ProvenanceSection({
  *  never — the sentinel is truthy, so a plain `? :` would print "01/01/1970". */
 function recalledLabel(recallCount: number | undefined, lastRecalledAt: string | null | undefined): string {
   const n = recallCount ?? 0;
-  if (n === 0 || !lastRecalledAt || new Date(lastRecalledAt).getFullYear() <= 1970) return "Never recalled";
+  if (n === 0 || (parseChTime(lastRecalledAt)?.getFullYear() ?? 1970) <= 1970) return "Never recalled";
   return `${n}× · ${relativeTime(lastRecalledAt)}`;
 }
 
@@ -1447,7 +1447,8 @@ function ExpiryEditor({
   onChange: (ttlSeconds: number | null) => void;
 }) {
   const current = expiresAt ? `Expires ${relativeTime(expiresAt)}` : "Never expires";
-  const isExpired = expiresAt ? new Date(expiresAt).getTime() < Date.now() : false;
+  const expiry = parseChTime(expiresAt);
+  const isExpired = expiry ? expiry.getTime() < Date.now() : false;
 
   return (
     <div className="inline-flex items-center gap-2">
