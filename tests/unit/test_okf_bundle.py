@@ -106,7 +106,11 @@ def test_slug_is_file_safe_and_collisions_get_suffixes() -> None:
     files = okf.plan_bundle(
         [_entry(memory_key="a/b"), _entry(memory_key="a b")], namespace="ns", exported_at=_NOW
     )
-    assert "semantic/a-b.md" in files and "semantic/a-b-1.md" in files
+    named = {p for p in files if p.startswith("semantic/a-b")}
+    # one keeps the name; the other takes a suffix from its own key and row id
+    assert "semantic/a-b.md" in named and len(named) == 2
+    (other,) = named - {"semantic/a-b.md"}
+    assert re.fullmatch(r"semantic/a-b-[0-9a-f]{8}\.md", other)
 
 
 # ---------------- serialisation shapes ----------------
@@ -583,3 +587,69 @@ def test_the_same_rows_in_another_order_get_the_same_files() -> None:
     one = okf.plan_bundle([a, b], namespace="ns", exported_at=_NOW)
     two = okf.plan_bundle([b, a], namespace="ns", exported_at=_NOW)
     assert one == two
+
+
+def test_a_colliding_key_keeps_its_file_when_another_key_arrives_or_leaves() -> None:
+    # Adding `deploy-step`, which sorts before both, moves only the one that held the bare
+    # name; the suffixed file depends on its own key and row id.
+    ids = _ids(3)
+    a = _entry(memory_key="deploy/step", memory_id=ids[0])
+    b = _entry(memory_key="deploy:step", memory_id=ids[1])
+    new = _entry(memory_key="deploy-step", memory_id=ids[2])
+
+    def paths(entries: list[dict[str, Any]]) -> dict[str, str]:
+        files = okf.plan_bundle(entries, namespace="ns", exported_at=_NOW)
+        concepts = [
+            okf.parse_concept(p, t) for p, t in files.items() if p.startswith("semantic/deploy")
+        ]
+        return {c.memory_key: c.path for c in concepts}
+
+    before, after = paths([a, b]), paths([a, b, new])
+    assert after["deploy:step"] == before["deploy:step"]
+    assert after["deploy-step"] == "semantic/deploy-step.md"
+
+
+def test_names_that_collide_only_in_case_get_two_files(tmp_path: Any) -> None:
+    keys = ["Foo", "foo", "Index"]
+    entries = [_entry(memory_key=k, memory_id=i) for k, i in zip(keys, _ids(3), strict=True)]
+    entries.append(_entry(memory_key="x", memory_type="Semantic", memory_id=_ids(4)[3]))
+    assert _keys_read_back(tmp_path, entries) == sorted([*keys, "x"])
+    assert len({p.as_posix().casefold() for p in tmp_path.rglob("*")}) == len(
+        list(tmp_path.rglob("*"))
+    )
+
+
+@pytest.mark.parametrize("memory_type", ["index.md", "log.md", "  "])
+def test_a_type_named_like_a_bundle_file_or_blank_still_travels(
+    tmp_path: Any, memory_type: str
+) -> None:
+    entries = [_entry(memory_key="k", memory_type=memory_type)]
+    assert _keys_read_back(tmp_path, entries) == ["k"]
+
+
+def test_a_very_long_key_gets_a_file_name_the_filesystem_takes(tmp_path: Any) -> None:
+    long_a, long_b = "x" * 400 + "a", "x" * 400 + "b"
+    entries = [
+        _entry(memory_key=k, memory_id=i) for k, i in zip([long_a, long_b], _ids(2), strict=True)
+    ]
+    assert _keys_read_back(tmp_path, entries) == sorted([long_a, long_b])
+
+
+def test_the_reserved_directories_cover_every_name_a_reader_skips() -> None:
+    from server.memory.domain import okf_evidence, okf_lint
+
+    skipped = {p for p in okf_lint._SKIP_PARTS if not p.startswith(".")}
+    assert okf_evidence.EVIDENCE_DIRS | {okf_lint.STAGING_DIR} | skipped <= okf._RESERVED_DIRS
+
+
+@pytest.mark.parametrize("memory_type", ["My Type", "Semantic", "evidence"])
+def test_lint_never_warns_on_the_directory_export_chose(tmp_path: Any, memory_type: str) -> None:
+    from server.cli import okf as cli_okf
+    from server.memory.domain import okf_lint
+
+    files = okf.plan_bundle(
+        [_entry(memory_type=memory_type)], namespace="ns", exported_at=_NOW, complete=True
+    )
+    cli_okf._write_bundle(tmp_path, files)
+    found = [f.id for f in okf_lint.lint_bundle(tmp_path).warnings]
+    assert "type_directory_mismatch" not in found

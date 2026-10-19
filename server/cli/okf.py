@@ -170,7 +170,7 @@ async def _fetch_namespace(
     )
     # Offset pages shift when the namespace changes mid-listing, which can skip a live row;
     # a bundle that says complete without it would let --prune delete its copy. A --limit
-    # export is never complete, so it is listed once.
+    # export that stops at its limit is never complete, so it is listed once.
     attempts = 1
     while not whole and limit is None and attempts < _LIST_ATTEMPTS:
         entries, whole = await _list_namespace(
@@ -984,15 +984,10 @@ async def _prune(
             n["prune_failed"] += 1
             print(f"  ✗ prune {key}: {e}", file=sys.stderr)
             continue
-        # Rewritten, or gone, since prune's read: nothing of ours was deleted.
-        if res.get("reason") == "version_changed" or res.get("found") is False:
-            n["prune_kept"] += 1
-            continue
-        if res.get("tombstoned"):
-            n["pruned"] += 1
         if "if_version" in res.get("ignored_args", []):
-            # A replica still on the older build deleted without the check (a rolling
-            # upgrade); stop before it does that again.
+            # A replica still on the older build ran the delete without the check (a
+            # rolling upgrade), whatever it answered; stop before it does that again.
+            n["pruned"] += int(bool(res.get("tombstoned")))
             done = "deleted" if res.get("tombstoned") else "found nothing to delete"
             print(
                 f"  ✗ prune {key}: the server ignored if_version and {done}; it is older "
@@ -1001,6 +996,12 @@ async def _prune(
             )
             n["prune_failed"] += 1
             break
+        # Rewritten, or gone, since prune's read: nothing of ours was deleted.
+        if res.get("reason") == "version_changed" or res.get("found") is False:
+            n["prune_kept"] += 1
+            continue
+        if res.get("tombstoned"):
+            n["pruned"] += 1
     return n
 
 

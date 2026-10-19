@@ -15,8 +15,11 @@ feeds these pure functions from the HTTP API and writes the files.
 
 Mapping, memory → concept:
 
-  memory_key                → file name (slug) and `loom.memory_key`
-  memory_type               → directory and `type` (semantic→Fact,
+  memory_key                → file name and `loom.memory_key` (the key's slug, capped at
+                              160 bytes; `-<hash>` when another key holds it or it is
+                              a bundle file's name)
+  memory_type               → directory (its lowercased slug; `type-<slug>` for a
+                              reserved name) and `type` (semantic→Fact,
                               procedural→Procedure, preference→Preference,
                               episodic→Event; anything else Title-cased)
   value                     → body (text as-is; JSON as a fenced block)
@@ -43,6 +46,7 @@ trip cannot launder an inference into a first-hand fact.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -204,7 +208,7 @@ def _date(ts: Any) -> str:
 
 
 def okf_type_for(memory_type: str) -> str:
-    mt = (memory_type or "semantic").strip()
+    mt = (memory_type or "").strip() or "semantic"
     return _TYPE_BY_MEMORY_TYPE.get(mt, mt[:1].upper() + mt[1:])
 
 
@@ -241,10 +245,10 @@ def memory_to_concept(
     verified_by, verified_at, verification. Missing keys fall back.
     """
     memory_key = str(entry["memory_key"])
-    memory_type = str(entry.get("memory_type") or "semantic")
+    memory_type = str(entry.get("memory_type") or "").strip() or "semantic"
     okf_type = okf_type_for(memory_type)
     directory = directory if directory is not None else type_directory(memory_type)
-    slug = slug or slugify(memory_key)
+    slug = slug or file_slug(memory_key)
     value = entry.get("value")
     body_text = value_to_body(value if value is not None else "")
     title = humanise_key(memory_key)
@@ -697,31 +701,56 @@ def type_directory(memory_type: str) -> str:
     """The bundle directory of a memory type: its slug, prefixed when a reader would skip it
     or read it as something other than concepts (a free-form type like `evidence`,
     `.notes` or `../x` would otherwise drop its rows from the bundle or escape it)."""
-    slug = slugify(memory_type) or "type"
-    if slug in _RESERVED_DIRS or slug.startswith("."):
+    # Lowercase: `Semantic` and `semantic` would share one directory on a case-insensitive
+    # filesystem, and their index files would overwrite each other.
+    slug = slugify(memory_type).lower()
+    if slug in _RESERVED_DIRS or slug in _RESERVED_STEMS:
         return f"type-{slug}"
     return slug
 
 
+# File names compared case-insensitively, as macOS and Windows filesystems compare them.
+_RESERVED_STEMS = frozenset(f.casefold() for f in RESERVED_FILES)
+# The longest file-name slug: a filesystem refuses a name over 255 bytes.
+_MAX_SLUG_BYTES = 160
+
+
+def file_slug(memory_key: str) -> str:
+    """A key's file name: its slug, cut to `_MAX_SLUG_BYTES` with a hash of the whole key when
+    longer (so two long keys that share a prefix still differ)."""
+    slug = slugify(memory_key)
+    if len(slug.encode()) <= _MAX_SLUG_BYTES:
+        return slug
+    cut = slug.encode()[:_MAX_SLUG_BYTES].decode(errors="ignore").rstrip("-.")
+    return f"{cut}-{_short_hash(memory_key)}"
+
+
+def _short_hash(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:8]
+
+
 def _is_reserved(concept_id: str) -> bool:
-    return concept_id.rsplit("/", 1)[-1] + ".md" in RESERVED_FILES
+    return f"{concept_id.rsplit('/', 1)[-1]}.md".casefold() in _RESERVED_STEMS
 
 
 def _dedupe_slugs(concepts: list[Concept]) -> None:
-    """Give each concept an id no other concept has: a later one whose slug is taken gets the
-    first free `-<n>` suffix, so no file overwrites another (a lost file would leave a live
-    key out of a bundle that still says complete, and prune would delete its copy)."""
-    taken = {c.id for c in concepts}
+    """Give each concept an id no other concept has, compared case-insensitively. The first
+    concept (in sorted order) with a name keeps it; another that shares it, and a key named
+    like the bundle's own `index` or `log` file, gets `-<hash of its key and row id>`. A lost
+    file would leave a live key out of a bundle that still says complete, and prune would
+    delete its copy; a suffix taken from the concept itself never changes when other keys
+    come and go, so its file (and its copy's trace) stays put."""
     used: set[str] = set()
     for c in concepts:
-        # A key named `index` or `log` would be overwritten by, or read as, the bundle's own
-        # file of that name.
-        if c.id in used or _is_reserved(c.id):
-            n = 1
-            while f"{c.id}-{n}" in taken or f"{c.id}-{n}" in used:
-                n += 1
-            c.id = f"{c.id}-{n}"
-        used.add(c.id)
+        if c.id.casefold() in used or _is_reserved(c.id):
+            identity = f"{c.memory_key}\0{c.loom.get('memory_id') or ''}"
+            n = 8
+            renamed = f"{c.id}-{hashlib.sha256(identity.encode()).hexdigest()[:n]}"
+            while renamed.casefold() in used:  # a key literally named like another's suffix
+                n += 4
+                renamed = f"{c.id}-{hashlib.sha256(identity.encode()).hexdigest()[:n]}"
+            c.id = renamed
+        used.add(c.id.casefold())
 
 
 def related_links(

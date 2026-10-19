@@ -252,7 +252,9 @@ def _check_concept(
             rep.add("required_keys", rel, f"missing `loom.{key}`")
     mt = str(loom.get("memory_type") or "").strip()
     folder_type = okf.memory_type_for(str(fm.get("type") or ""), directory)
-    if mt and directory and directory != mt and folder_type != mt:
+    # export writes a type under `okf.type_directory(mt)`: its slug, lowercased, prefixed when
+    # reserved, so a directory that is neither the type nor that name is a mismatch
+    if mt and directory and directory not in (mt, okf.type_directory(mt)) and folder_type != mt:
         rep.add(
             "type_directory_mismatch",
             rel,

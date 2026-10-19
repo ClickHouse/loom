@@ -189,7 +189,12 @@ class _FakeLoom:
             ident = (body["agent"], body["session_id"], body["memory_key"])
             if self.older_server:
                 gone = self.rows.pop(ident, None)
-                return {"tombstoned": gone is not None, "ignored_args": ["if_version"]}
+                # as an N-1 replica answers: found is set, if_version named and ignored
+                return {
+                    "tombstoned": gone is not None,
+                    "found": gone is not None,
+                    "ignored_args": ["if_version"],
+                }
             row = self.rows.get(ident)
             if row is None:
                 return {"tombstoned": False, "found": False}
