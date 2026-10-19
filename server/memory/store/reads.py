@@ -12,6 +12,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.core.tag_sql import TagFilter, tag_where
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
+from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 from server.memory.domain.temporal_sql import as_of_predicate
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
 from server.memory.store.sql import (
@@ -912,6 +913,7 @@ async def versions_above(
         "ns": namespace,
         "keys": keys,
         "v": min(int(r["version"]) for r in rows),
+        "sweep": SWEEP_REASON_PREFIX,
     }
     found = await ch.query_all(
         f"""
@@ -920,7 +922,7 @@ async def versions_above(
         FROM (
             SELECT agent, user_id, session_id, memory_key, version,
                    tombstoned_at IS NOT NULL
-                       AND NOT startsWith(expire_reason, 'blacklist.sweep:') AS deleted
+                       AND NOT startsWith(expire_reason, {{sweep:String}}) AS deleted
             FROM loom.memory_versions
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND (agent, user_id, session_id, memory_key)

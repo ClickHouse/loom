@@ -217,8 +217,8 @@ class _SetWrite:
 
 
 async def _lift_above_deletes(w: _SetWrite, ch: Any) -> int:
-    """The row's version, drawn again when a delete of the key committed while it was in
-    flight (`write_fence`); the embedding row is built from it afterwards. A write with
+    """The row's version, moved just above a delete of the key that committed while it was
+    in flight (`write_fence`); the embedding row is built from it afterwards. A write with
     `if_match_sha256` checked the row the delete removed, so it is refused."""
     await lift_above_deletes(
         w.input.org,

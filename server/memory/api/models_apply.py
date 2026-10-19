@@ -10,10 +10,12 @@ from typing import Literal
 from pydantic import (
     BaseModel,
     Field,
+    field_validator,
     model_validator,
 )
 
 from server.memory.api.models_common import _Identity
+from server.memory.domain.expire_reasons import caller_reason
 
 MAX_KEYS = 500
 
@@ -147,6 +149,12 @@ class MemoryApplyInput(_Identity):
     # Why (1..512 chars); stored as lock_reason / expire_reason where the action has
     # such a column.
     reason: str = Field(..., min_length=1, max_length=512)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason(cls, v: str) -> str:
+        return caller_reason(v)
+
     # Row cap for a `filter` or `search` target, where it is required; unused for
     # `keys`.
     limit: int | None = Field(default=None, ge=1, le=1000)

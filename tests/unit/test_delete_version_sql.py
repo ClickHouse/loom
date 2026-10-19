@@ -278,8 +278,29 @@ async def test_two_writes_lifted_over_one_delete_never_share_a_version(ch: _Stat
     first, second = _row("one", head - 2), _row("two", head - 1)
     await lift_above_deletes("o", "n", [first], [], ch=ch)
     await lift_above_deletes("o", "n", [second], [], ch=ch)
-    assert head < first["version"] != second["version"] > head
-    assert max(first["version"], second["version"]) < head + 1_000 + 2
+    assert first["version"] != second["version"]
+    assert min(first["version"], second["version"]) > head
+    assert max(first["version"], second["version"]) <= head + 1_000
+
+
+@pytest.mark.asyncio
+async def test_writes_drawn_on_a_microsecond_clock_lifted_together_differ(
+    ch: _StatefulCH,
+) -> None:
+    # A clock that reports microseconds draws versions 1,000 ns apart: their offsets come
+    # from a hash of the row, not from the clock's last digits.
+    from server.memory.app.write_fence import lift_above_deletes
+
+    head = time.time_ns() // 1_000 * 1_000 + 60_000_000_000
+    tombstone = {
+        **_row("Tuesdays", head),
+        "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+    }
+    await ch.insert("loom.memory", [tombstone])
+    rows = [_row(str(i), head - 1_000 * (i + 1)) for i in range(4)]
+    for row in rows:
+        await lift_above_deletes("o", "n", [row], [], ch=ch)
+    assert len({r["version"] for r in rows}) == len(rows)
 
 
 @pytest.mark.asyncio
@@ -446,14 +467,18 @@ async def test_a_conditional_set_whose_check_passed_lands_above_the_row_it_check
 ) -> None:
     # The row it checks was written after the set began: its version is drawn after the
     # check, so it lands above that row instead of beneath it.
+    from server.memory.app import write
     from server.memory.app.write import _content_sha256_of_stored
 
-    later = _row("Tuesdays", time.time_ns() + 1_000_000_000)
-    await ch.insert("loom.memory", [later])
+    head = time.time_ns()
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    # The set's first draw is below the row it then checks; the draw after the check is not.
+    draws = iter([head - 1, head + 1])
+    monkeypatch.setattr(write, "next_version", lambda: next(draws))
     sha = _content_sha256_of_stored(json.dumps("Tuesdays"))
     out = await _conditional_set(ch, monkeypatch, sha=sha)
     got = await _read_back(ch)
-    assert got is not None and got.value == "Thursdays" and out.version > later["version"]
+    assert got is not None and got.value == "Thursdays" and out.version == head + 1
 
 
 @pytest.mark.asyncio
@@ -474,3 +499,23 @@ async def test_a_delete_after_a_conditional_sets_check_answers_409(
         await _conditional_set(ch, monkeypatch, sha=sha, after_build=delete)
     assert refused.value.detail["code"] == "PRECONDITION_FAILED"
     assert await _read_back(ch) is None
+
+
+@pytest.mark.parametrize("field", ["memory.set", "memory.touch", "memory.apply"])
+def test_no_caller_writes_a_sweeps_expire_reason(field: str) -> None:
+    # The fence tells a sweep's tombstone by this prefix, so only the sweep stamps it.
+    import pydantic
+
+    from server.memory.api.models_apply import MemoryApplyInput
+    from server.memory.api.models_crud import MemoryTouchInput
+
+    reason = "blacklist.sweep:x"
+    with pytest.raises(pydantic.ValidationError, match="may not start with"):
+        if field == "memory.set":
+            MemorySetInput(**_ID, memory_key=_KEY, value="v", expire_reason=reason)
+        elif field == "memory.touch":
+            MemoryTouchInput(**_ID, memory_keys=[_KEY], ttl_seconds=60, expire_reason=reason)
+        else:
+            MemoryApplyInput(
+                org="o", namespace="n", target={"keys": [_KEY]}, action="delete", reason=reason
+            )

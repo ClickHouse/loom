@@ -15,6 +15,7 @@ from server.memory.api.models_crud import (
     MemoryRestoreOutput,
 )
 from server.memory.domain.excerpt import build_excerpt
+from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
 
@@ -306,7 +307,7 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
         # A blacklist sweep's marker belongs to its tombstone, not to the row brought back:
         # carried on, it would make a later delete of the key read as that sweep.
         expire_reason=""
-        if existing.expire_reason.startswith("blacklist.sweep:")
+        if existing.expire_reason.startswith(SWEEP_REASON_PREFIX)
         else existing.expire_reason,
     )
     await insert_memory_versions([restore_row], ch=ch)

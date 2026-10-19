@@ -5,15 +5,16 @@ write begins, then embed. A delete of the key that commits during the embed draw
 higher version, and its tombstone would hide the write that finished after it. Right
 before the insert, when every committed version of a key above the rows' versions is a
 delete's tombstone, the rows take new versions just above the newest one, in their own
-order, and so do their embedding rows. A write drawn after the delete stays above them,
-and a write the key had moved past before the delete (a later version came and went) is
-not brought back. A blacklist sweep's tombstone is not a delete: a write it caught stays
-under it.
+order, and so do their embedding rows. A write whose version is above the tombstone's by
+more than the spread below stays above them, and a write the key had moved past before
+the delete (a later version came and went) is not brought back. A blacklist sweep's
+tombstone is not a delete: a write it caught stays under it.
 """
 
 from __future__ import annotations
 
 import logging
+import zlib
 from typing import Any
 
 from fastapi import HTTPException
@@ -22,9 +23,9 @@ from server.observability import degradations
 
 log = logging.getLogger(__name__)
 
-# A lifted row sits this many nanoseconds above the tombstone at most, offset by its own
-# drawn version so two writes lifted over one delete do not share a version. A write
-# drawn after the delete is drawn later than that.
+# A lifted row sits within this many nanoseconds above the tombstone (plus one per row of
+# its key in the batch), offset by a hash of its own id and drawn version so two writes
+# lifted over one delete rarely share a version, whatever the clock's resolution.
 _LIFT_SPREAD_NS = 1_000
 
 
@@ -69,7 +70,9 @@ async def lift_above_deletes(
                     "message": "the key was deleted after the if_match_sha256 check",
                 },
             )
-        base = above[0][0] + 1 + lowest % _LIFT_SPREAD_NS
+        first = min(rows, key=lambda r: int(r["version"]))
+        spread = zlib.crc32(f"{first.get('memory_id', '')}:{lowest}".encode()) % _LIFT_SPREAD_NS
+        base = above[0][0] + 1 + spread
         for i, row in enumerate(sorted(rows, key=lambda r: int(r["version"]))):
             old, new = int(row["version"]), base + i
             row["version"] = new

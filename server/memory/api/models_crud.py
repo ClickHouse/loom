@@ -20,6 +20,7 @@ from pydantic import (
 
 from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
 from server.memory.domain.code_change import CodeState
+from server.memory.domain.expire_reasons import caller_reason
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 from server.operations.read_projection import project as _project_fields
@@ -260,6 +261,12 @@ class MemorySetInput(_Identity):
     on_expire: Literal["", "tombstone", "demote", "anonymize"] = ""
     # Why the expiry is set (at most 512 chars); '' keeps the row's current reason.
     expire_reason: str = Field(default="", max_length=512)
+
+    @field_validator("expire_reason")
+    @classmethod
+    def _expire_reason(cls, v: str) -> str:
+        return caller_reason(v)
+
     # Real-world time the fact became true (distinct from created_at and from
     # temporal_anchor). NULL = unknown; as-of reads fall through to created_at.
     valid_at: datetime | None = None
@@ -518,6 +525,11 @@ class MemoryTouchInput(_Identity):
     on_expire: Literal["", "tombstone", "demote", "anonymize"] = ""
     # Why the new expiry is set (at most 512 chars); '' keeps the row's reason.
     expire_reason: str = Field(default="", max_length=512)
+
+    @field_validator("expire_reason")
+    @classmethod
+    def _expire_reason(cls, v: str) -> str:
+        return caller_reason(v)
 
     @model_validator(mode="after")
     def _shape(self) -> MemoryTouchInput:
