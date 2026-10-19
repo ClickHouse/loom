@@ -753,6 +753,22 @@ async def tombstone_messages(
     await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
 
 
+async def tombstone_compacted_embeddings(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_ids: list[str],
+    *,
+    when: datetime,
+    ch: _CHClient | None = None,
+) -> None:
+    """One embeddings pass over turns an earlier compaction tombstoned: it finishes
+    that compaction's last pass if it failed, and writes nothing otherwise."""
+    ch = ch or _default_client()
+    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
+
+
 async def tombstone_embedding_if_message_gone(
     org: str,
     namespace: str,

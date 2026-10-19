@@ -385,6 +385,40 @@ async def test_a_failed_compaction_step_never_leaves_a_hidden_turn_searchable(
     assert await _rows(ch, scope) == [("1", "retry me", False)]
 
 
+@pytest.mark.asyncio
+async def test_a_retried_compaction_finishes_a_failed_last_pass(ch, scope) -> None:
+    """The turn's embedding lands after compaction's first embeddings pass and the last
+    pass fails, so the turn is hidden and its embedding live. The retry's window no
+    longer holds that turn, but the op passes over what each live summary replaced
+    and tombstones it."""
+    from server.knowledge.api.models_conversations import ConversationCompactInput
+    from server.knowledge.app.conversations import handle_conversation_compact
+
+    await _message(ch, scope, "a", "1", "retry me", T0)
+    await _message(
+        ch, scope, "a", "s", "summary", T0, role="system", metadata='{"compacted_from": ["1"]}'
+    )
+
+    class _EmbedThenFail(_FailOnce):
+        async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
+            if self.writes == 1:  # the messages mutation, after the first pass
+                await _embedding(ch, scope, "a", "1", "retry me", T0)
+            return await super().execute(sql, params, **kw)
+
+    args = (scope["org"], scope["ns"], "a", scope["tid"], ["1"])
+    with pytest.raises(RuntimeError):
+        await repo.tombstone_messages(*args, when=T0, ch=_EmbedThenFail(ch, 2))
+    assert await _rows(ch, scope) == [("1", "retry me", True)]
+
+    out = await handle_conversation_compact(
+        ConversationCompactInput(
+            org=scope["org"], namespace=scope["ns"], agent="a", thread_id=scope["tid"]
+        )
+    )
+    assert out.compacted is False
+    assert await _rows(ch, scope) == [("1", "retry me", False)]
+
+
 class _LateReconcile(_PassThrough):
     """Runs the first embeddings reconcile as a read, then `meanwhile`, then the write
     of what it read: a reconcile whose rows land after another agent's whole delete."""

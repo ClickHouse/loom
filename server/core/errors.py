@@ -107,10 +107,11 @@ class GrantBusyError(LoomServerError):
 
 
 class OverloadedError(LoomServerError):
-    """503 — too busy, retry: every pooled ClickHouse connection was busy past
-    `ch_pool_wait_ms`, a sibling held an override's lock past its wait, or a
-    conversation delete or compaction kept meeting writes to the thread's embeddings.
-    A retry is safe; `retry_after_s` is the hint the SDK's retry layer honours."""
+    """503 — too busy, retry: the ClickHouse pool, an override's lock or a conversation
+    delete or compaction stayed contended. The pool: every pooled connection was busy
+    past `ch_pool_wait_ms`; the lock: a sibling held it past its wait; a conversation
+    delete or compaction: writes to the thread's embeddings kept landing. A retry is
+    safe; `retry_after_s` is the hint the SDK's retry layer honours."""
 
     code = "OVERLOADED"
     status_code = 503

@@ -538,3 +538,12 @@ def test_the_compaction_window(
     lines: list[str], folded: list[bool], expected: tuple[list[int], str]
 ) -> None:
     assert ch_mod._compaction_window(lines, folded) == expected
+
+
+@pytest.mark.parametrize(
+    ("metadata", "summary"),
+    [('{"compacted_from": ["m1"]}', True), ('{"compacted_from": "m1"}', False), ("{}", False)],
+)
+def test_only_a_compacted_from_list_marks_a_summary(metadata: str, summary: bool) -> None:
+    """The rule search's peer copies apply in SQL: a non-empty list, nothing else."""
+    assert ch_mod._is_compaction_summary({"role": "system", "metadata": metadata}) is summary

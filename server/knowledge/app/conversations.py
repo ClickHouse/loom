@@ -706,15 +706,23 @@ def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[list[int],
     return [*read, *range(k, fit)], transcript
 
 
-def _is_compaction_summary(row: Mapping[str, Any]) -> bool:
-    """A system turn conversation.compact wrote: its metadata names what it replaced."""
+def _compacted_from(row: Mapping[str, Any]) -> list[str]:
+    """The msg_ids a compaction summary replaced, from its metadata.compacted_from
+    list; empty for any other turn."""
     if row.get("role") != "system":
-        return False
+        return []
     try:
         meta = json.loads(row.get("metadata") or "{}")
     except (ValueError, TypeError):
-        return False
-    return isinstance(meta, dict) and bool(meta.get("compacted_from"))
+        return []
+    ids = meta.get("compacted_from") if isinstance(meta, dict) else None
+    return [str(i) for i in ids] if isinstance(ids, list) else []
+
+
+def _is_compaction_summary(row: Mapping[str, Any]) -> bool:
+    """A system turn conversation.compact wrote: its metadata names what it replaced
+    (the rule search's peer copies apply too)."""
+    return bool(_compacted_from(row))
 
 
 @staged("compact")
@@ -737,6 +745,19 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     rows = await conversation_repo.live_messages(
         input.org, input.namespace, input.agent, input.thread_id
     )
+    # A run that failed after tombstoning its turns leaves their embeddings to a retry,
+    # whose window no longer holds those turns: the turns every live summary replaced
+    # get an embeddings pass first.
+    replaced_earlier = sorted({mid for r in rows for mid in _compacted_from(r)})
+    if replaced_earlier:
+        await conversation_repo.tombstone_compacted_embeddings(
+            input.org,
+            input.namespace,
+            input.agent,
+            input.thread_id,
+            replaced_earlier,
+            when=datetime.now(UTC).replace(tzinfo=None),
+        )
 
     if len(rows) <= input.keep_recent:
         return ConversationCompactOutput(
