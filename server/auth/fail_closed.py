@@ -33,8 +33,8 @@ def answered_unverified() -> bool:
 
 
 def reset() -> None:
-    """A request starts with no failed read noted (a batch's earlier entry
-    may have left one set)."""
+    """Forget any failed read noted so far: at a request's start (a batch's
+    earlier entry may have left one set) and before one access decision."""
     _unreadable.set(False)
 
 
@@ -69,10 +69,8 @@ def marks_unverified[**P](check: Callable[P, Awaitable[None]]) -> Callable[P, Aw
     return checked
 
 
-def refused_unverified() -> bool:
-    """Whether a read the refusing check needed failed since the last `reset()`;
-    if so, the request is marked the server's."""
-    failed = unreadable()
-    if failed:
+def refused_unverified() -> None:
+    """For a check that refused: if a read it needed failed since the last
+    `reset()`, the request is marked the server's."""
+    if unreadable():
         note_answered_unverified()
-    return failed

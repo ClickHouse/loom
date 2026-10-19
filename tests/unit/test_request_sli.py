@@ -518,7 +518,12 @@ def test_lost_ledger_rows_are_counted_by_reason(monkeypatch) -> None:
 
     class _Emitter:
         def stats(self) -> dict[str, int]:
-            return {"dropped_queue_full": 3, "dropped_flush_failed": 5, "batch_repeats": 7}
+            return {
+                "dropped_queue_full": 3,
+                "dropped_flush_failed": 5,
+                "dropped_batch_repeat": 2,
+                "batch_repeats": 7,
+            }
 
     monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
     meter = _Meter()
@@ -527,6 +532,7 @@ def test_lost_ledger_rows_are_counted_by_reason(monkeypatch) -> None:
     assert {(p.attributes["reason"], p.value) for p in points} == {
         ("queue_full", 3),
         ("flush_failed", 5),
+        ("batch_repeat", 2),
     }
     # A caller's repeated refusals are no loss, so a loss alert never sees them.
     assert [p.value for p in meter.callbacks["loom.ledger.batch_repeats"](None)] == [7]
@@ -877,6 +883,7 @@ def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> N
 
     class _Emitter:
         batch_repeats = 0
+        dropped_batch_repeat = 0
 
         def emit(self, event) -> None:
             emitted.append(event)
@@ -919,7 +926,10 @@ def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> N
         ("memory.set", "UNKNOWN_ARGUMENT", "client"),
     ]
     assert len(rows) == 4 + 10  # each client refusal once, a server fault ten times
-    assert emitter.batch_repeats == 5000 - len(rows)  # the rows not repeated
+    # The rows not repeated: a caller's are its own doing; a server fault's are
+    # lost server errors.
+    assert emitter.batch_repeats == 4000 - 4
+    assert emitter.dropped_batch_repeat == 1000 - 10
     # Outside a batch, each call is its own request.
     emitted.clear()
     emit_token_refusal("memory.set", eve, error_code="ORG_MISMATCH")
