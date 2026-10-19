@@ -498,7 +498,9 @@ test("Recall Lab: typing and clearing over a table of 100 scores stay under the 
   await cdp.detach();
 });
 
-test("Repositories: typing and clearing the filter stay under the INP budget at 4x with 100 repositories", async ({ page }) => {
+test("Repositories: typing and clearing the filter stay under the INP budget at 4x with 100 repositories", async ({
+  page,
+}) => {
   await page.addInitScript(() => localStorage.setItem("loom_page_size_repositories_v1", "100"));
   const one = codeReposFixture()[0];
   await installApi(page, {

@@ -513,9 +513,7 @@ const SpaceRow = memo(function SpaceRow({
   const member = standing === "member" || standing === "admin";
   /** The More menu: Settings where you manage it, Copy name, Leave where you belong. */
   const menu: RowMenuItem[] = [
-    ...(standing === "admin"
-      ? [{ label: "Settings", icon: "gear" as const, onSelect: settings }]
-      : []),
+    ...(standing === "admin" ? [{ label: "Settings", icon: "gear" as const, onSelect: settings }] : []),
     {
       label: "Copy name",
       icon: "copy",

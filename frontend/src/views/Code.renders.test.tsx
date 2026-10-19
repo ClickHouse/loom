@@ -21,7 +21,11 @@ vi.mock("../components/ui/ListRow", async (importOriginal) => {
   };
 });
 
-const REPOS = ["acme/app", "acme/api", "acme/web"].map((repo, i) => ({ ...codeRepoFixture, repo, namespace: `code-${i}` }));
+const REPOS = ["acme/app", "acme/api", "acme/web"].map((repo, i) => ({
+  ...codeRepoFixture,
+  repo,
+  namespace: `code-${i}`,
+}));
 
 describe("Repositories card renders", () => {
   beforeEach(() => {

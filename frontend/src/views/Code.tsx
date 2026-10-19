@@ -559,8 +559,10 @@ function RepositoriesHome({
   // The cards call the latest render's handlers through objects that keep their identity
   // while the data they carry is unchanged, so a memoised card renders again only when its
   // own fields change.
-  const handlers = useRef({ onOpen, onChanged, actions, record, tracker, refreshBranch, removeBranch, setAccess, bindSource });
-  handlers.current = { onOpen, onChanged, actions, record, tracker, refreshBranch, removeBranch, setAccess, bindSource };
+  const now = { onOpen, onChanged, actions, record, tracker, refreshBranch, removeBranch, setAccess, bindSource };
+  const handlers = useRef(now);
+  handlers.current = now;
+
   const cardCode = useMemo<CodeActions>(
     () => ({
       onOpen: (b) => handlers.current.onOpen(b.namespace),
