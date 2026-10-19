@@ -146,6 +146,7 @@ def _wire(monkeypatch: pytest.MonkeyPatch, existing: MemoryRow, ch: _CH) -> None
         return None
 
     monkeypatch.setattr("server.observability.audit.emit", _audit)
+    monkeypatch.setattr("server.observability.audit.emit_strict", _audit)
     ch.query_one_result = _query_one_row(existing)
 
 

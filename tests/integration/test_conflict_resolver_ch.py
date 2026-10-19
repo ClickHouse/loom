@@ -2724,3 +2724,65 @@ async def test_a_writer_restating_a_retired_value_is_a_new_statement(
     rows = await _rows(ch, org)
     assert out["retired"] == 1, out
     assert rows["office_location"]["superseded_by"] == rows["office_city"]["id"]
+
+
+async def _undo(org: str, key: str, winner: str) -> Any:
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app.restore import handle_memory_restore
+
+    return await handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key=key,
+            if_superseded_by=winner,
+        )
+    )
+
+
+async def test_a_pass_right_after_an_undo_sees_it(ch, wired, monkeypatch) -> None:
+    """A pass landing once the Undo's lock is released, before its fact step ends,
+    already finds the Undo's record: the winner judged again leaves both served."""
+    from server.memory.app import restore
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 1880)
+    assert (await run_pass())["retired"] == 1
+    winner = (await _rows(ch, org))["office_location"]["id"]
+    real = restore._reopen_facts
+    seen: dict[str, Any] = {}
+
+    async def reopen_then_pass(*a: Any, **kw: Any) -> None:
+        await real(*a, **kw)
+        await _place(ch, org, "s2", "office_location", _vec((1880, 0.8), (1881, 0.6)), owed=True)
+        seen["out"] = await run_pass()
+
+    monkeypatch.setattr(restore, "_reopen_facts", reopen_then_pass)
+    assert (await _undo(org, "office_city", winner)).restored
+    assert seen["out"]["retired"] == seen["out"]["flagged"] == 0, seen
+    assert {r["status"] for r in (await _rows(ch, org)).values()} == {"active"}
+
+
+async def test_an_undo_whose_record_fails_restores_nothing(ch, wired, monkeypatch) -> None:
+    """The resolver honours an Undo by its record alone, so an Undo whose record is not
+    written answers 503 and leaves the retirement as it was."""
+    from server.core.errors import BackendUnavailableError
+    from server.memory.workers.conflict_resolver import run_pass
+    from server.observability import audit
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 1820)
+    assert (await run_pass())["retired"] == 1
+    winner = (await _rows(ch, org))["office_location"]["id"]
+
+    async def lost(*a: Any, **kw: Any) -> str:
+        raise RuntimeError("audit insert failed")
+
+    monkeypatch.setattr(audit, "emit_strict", lost)
+    with pytest.raises(BackendUnavailableError):
+        await _undo(org, "office_city", winner)
+    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"

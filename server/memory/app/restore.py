@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.errors import BackendUnavailableError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
     MemoryRestoreInput,
@@ -94,6 +95,29 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
             superseded_by="",
             invalid_at=None,
         )
+        # The conflict resolver honours the Undo by this record, so it is written first,
+        # under the lock, and its failure fails the Undo: no restore it would not see.
+        try:
+            await audit.emit_strict(
+                "memory.unsupersede",
+                org=input.org,
+                namespace=input.namespace,
+                actor=writer_actor() or "-",
+                subject={
+                    "memory_key": input.memory_key,
+                    "memory_id": str(existing.memory_id),
+                    "superseded_by": str(existing.superseded_by or ""),
+                    # The value restored and the restore's version: the resolver honours
+                    # the Undo while the row holds that value, from that version on.
+                    "content_sha256": str(existing.content_sha256 or ""),
+                    "version": new_version,
+                },
+            )
+        except Exception as e:  # any failure to record refuses the Undo
+            raise BackendUnavailableError(
+                "the Undo could not be recorded; nothing was restored, retry the Undo",
+                operation="memory.restore",
+            ) from e
         await insert_memory_versions([restore_row], ch=ch)
         try:
             await memory_repo.unsupersede_embeddings(
@@ -114,19 +138,6 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
             )
     # The facts the retirement closed and the restored value still holds come back.
     await _reopen_facts(input, existing, restored_at, ch=ch)
-    await audit.emit(
-        "memory.unsupersede",
-        org=input.org,
-        namespace=input.namespace,
-        actor=writer_actor() or "-",
-        subject={
-            "memory_key": input.memory_key,
-            "memory_id": str(existing.memory_id),
-            "superseded_by": str(existing.superseded_by or ""),
-            # The value restored: the resolver honours the Undo while the row holds it.
-            "content_sha256": str(existing.content_sha256 or ""),
-        },
-    )
     return MemoryRestoreOutput(
         restored=True,
         memory_id=str(existing.memory_id),

@@ -111,6 +111,7 @@ async def test_restore_reverses_an_automatic_supersession_and_writes_the_ledger_
     monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
     monkeypatch.setattr("server.memory.store.unsupersede_embeddings", _unsupersede)
     monkeypatch.setattr("server.observability.audit.emit", _emit)
+    monkeypatch.setattr("server.observability.audit.emit_strict", _emit)
     from types import SimpleNamespace
 
     from server.auth.context import set_current_auth
@@ -137,6 +138,34 @@ async def test_restore_reverses_an_automatic_supersession_and_writes_the_ledger_
     assert emitted and emitted[0][0] == "memory.unsupersede"
     subj = emitted[0][1]["subject"]
     assert subj["superseded_by"] == "keeper-id" and "retired_by" not in subj
+    assert subj["version"] == out.version, "the resolver reads the restore's version"
+
+
+@pytest.mark.asyncio
+async def test_an_undo_whose_record_fails_restores_nothing(monkeypatch):
+    # The resolver honours an Undo only by its record: an Undo it could not see would
+    # be judged again, so a failed record fails the Undo before the restore is written.
+    from server.core.errors import BackendUnavailableError
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore as restore_mod
+
+    ch = _CH({"status": "superseded", "superseded_by": "keeper-id", "tombstoned_at": None})
+    monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
+
+    async def _get_by_key(*_: Any, **__: Any) -> MemoryRow:
+        return _superseded_row()
+
+    async def _boom(*_: Any, **__: Any) -> str:
+        raise RuntimeError("audit insert failed")
+
+    monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
+    monkeypatch.setattr("server.observability.audit.emit_strict", _boom)
+    with pytest.raises(BackendUnavailableError) as raised:
+        await restore_mod.handle_memory_restore(
+            MemoryRestoreInput(org="o", namespace="n", agent="a", session_id="s1", memory_key="k")
+        )
+    assert raised.value.status_code == 503
+    assert ch.inserts == [], "nothing restored"
 
 
 @pytest.mark.parametrize("deleted_since", [True, False])
@@ -267,6 +296,7 @@ async def test_undoing_a_retired_duplicate_keeps_it_a_duplicate(monkeypatch, kee
     monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
     monkeypatch.setattr("server.memory.store.unsupersede_embeddings", _unsupersede)
     monkeypatch.setattr("server.observability.audit.emit", _emit)
+    monkeypatch.setattr("server.observability.audit.emit_strict", _emit)
     out = await restore_mod.handle_memory_restore(
         MemoryRestoreInput(org="o", namespace="n", agent="a", session_id="s1", memory_key="k")
     )
