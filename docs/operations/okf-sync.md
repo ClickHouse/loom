@@ -71,8 +71,9 @@ guard, a path that is not a directory, or a missing `--agent`, token or org.
   the caller's choice), is still the version the import's listing saw with an `okf:`
   trace, and has no `memory.lock`: anything else is counted as kept. It deletes with
   `memory.delete_version`, which removes only that version, under that exact identity, and
-  never another agent's row. A write to the key that is in flight when the delete lands
-  keeps its row: its insert takes a version above the tombstone.
+  never another agent's row. A `memory.set` or `memory.bulk_set` of the key that is in
+  flight when the delete lands keeps its row; the exceptions are in the
+  [memory architecture](../architecture/memory-architecture.md#lifecycle).
 - A target replica too old to know `memory.delete_version` answers 404 and deletes
   nothing; the prune counts the failure and the import exits 1. A rolling upgrade of
   either Loom needs no pause.

@@ -615,8 +615,8 @@ async def handle_memory_delete_version(
     input: MemoryDeleteVersionInput,
 ) -> MemoryDeleteVersionOutput:
     """Tombstone one version of a key under this exact identity, or nothing when the row
-    under it has moved on. Conditional writes of the key wait for the key lock; a plain
-    write that lands after the tombstone is lifted above it (`write_fence`)."""
+    under it has moved on. Conditional writes of the key wait for the key lock; a
+    memory.set or memory.bulk_set in flight across it may land above it (`write_fence`)."""
     import server.memory.store as memory_repo
 
     if input.agent == "*":
@@ -675,9 +675,6 @@ async def _tombstone(existing: Any, *, version: int, op: str) -> tuple[int, int]
         tombstoned_at=now,
         source_trace="",
         expires_at=None,
-        # A reason carried from an earlier version (a blacklist sweep's, restored since)
-        # must not make this delete read as that sweep (write_fence).
-        expire_reason="",
     )
     with traced("ch.insert.memory.tombstone", table="loom.memory"):
         await insert_memory_versions([tombstone_row], ch=ch)

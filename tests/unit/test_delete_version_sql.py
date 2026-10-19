@@ -7,6 +7,7 @@ absent: their best-effort retires log, and the row tombstone stands."""
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -26,7 +27,7 @@ from server.memory.api.models_crud import (
 from server.memory.app import set_commit
 from server.memory.store import key_write_lock
 from server.memory.store.rows import build_first_version_row
-from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, ddl, run
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 
@@ -35,13 +36,22 @@ _MID = "00000000-0000-0000-0000-00000000000a"
 _KEY = "deploy_window"
 
 
+def _versions_view() -> str:
+    """The materialized view that copies every loom.memory insert into memory_versions."""
+    schema = (ROOT / "schemas" / "schema.sql").read_text()
+    head = "CREATE MATERIALIZED VIEW IF NOT EXISTS loom.memory_versions_mv"
+    return head + schema.split(head, 1)[1].split(";", 1)[0]
+
+
 class _StatefulCH:
     """clickhouse-local that keeps every insert: each query runs after all of them."""
 
     def __init__(self) -> None:
-        self.setup = [ddl("memory")]
+        self.setup = [ddl("memory"), ddl("memory_versions"), _versions_view()]
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        if not any(f"CREATE TABLE {table}\n" in stmt for stmt in self.setup):
+            return  # a table this test does not hold, as a write the test does not read
         for r in rows:
             cols = ", ".join(r)
             data = json.dumps(r, default=str)
@@ -50,11 +60,28 @@ class _StatefulCH:
             )
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
-        return run(self.setup, sql, params)
+        try:
+            rows = run(self.setup, sql, params)
+        except AssertionError as e:
+            if "UNKNOWN_TABLE" not in str(e):
+                raise
+            return []  # a table this test does not hold reads as empty
+        return [_as_driver(r) for r in rows]
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
-        rows = run(self.setup, sql, params)
+        rows = await self.query_all(sql, params)
         return rows[0] if rows else None
+
+
+_DATETIME = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$")
+
+
+def _as_driver(row: dict[str, Any]) -> dict[str, Any]:
+    """A DateTime column as the driver answers it: a datetime, not JSON text."""
+    return {
+        k: datetime.fromisoformat(v) if isinstance(v, str) and _DATETIME.match(v) else v
+        for k, v in row.items()
+    }
 
 
 def _row(value: str, version: int) -> dict[str, Any]:
@@ -88,6 +115,11 @@ def ch(monkeypatch: pytest.MonkeyPatch) -> _StatefulCH:
     monkeypatch.setattr(key_write_lock.key_write_locks, "hold", _no_lease)
     monkeypatch.setattr(hm, "get_client", lambda: ch)
     monkeypatch.setattr("server.memory.store.reads._default_client", lambda: ch)
+    # Every other read and write the handlers make through the process's client.
+    from server.core import ch as ch_mod
+
+    for name in ("query_all", "query_one", "insert"):
+        monkeypatch.setattr(ch_mod.get_client(), name, getattr(ch, name))
     return ch
 
 
@@ -173,15 +205,29 @@ async def test_a_conditional_set_in_flight_during_a_delete_is_refused(ch: _State
 
 
 @pytest.mark.asyncio
-async def test_a_delete_of_a_key_a_sweep_once_caught_is_still_a_delete(ch: _StatefulCH) -> None:
-    # The sweep's reason rides the row after a restore; the delete's tombstone clears it.
-    head = time.time_ns() - 10_000_000_000
-    await ch.insert(
-        "loom.memory", [{**_row("Tuesdays", head), "expire_reason": "blacklist.sweep:p1"}]
-    )
-    w = _in_flight_set(head + 5_000_000)
+async def test_a_key_a_sweep_caught_and_restore_brought_back_deletes_as_a_delete(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The sweep's marker stays on its tombstone: the restored row does not carry it, so a
+    # later delete of the key is a delete to the write fence.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore as restore_mod
+
+    monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
+    head = time.time_ns() - 20_000_000_000
+    swept = {
+        **_row("Tuesdays", head + 1),
+        "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+        "expire_reason": "blacklist.sweep:p1",
+    }
+    await ch.insert("loom.memory", [_row("Tuesdays", head), swept])
+    out = await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
+    assert out.restored is True
+    restored = await _read_back(ch)
+    assert restored is not None
+    w = _in_flight_set(restored.version + 5_000_000)
     await hm.handle_memory_delete_version(
-        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=restored.version)
     )
     await set_commit._set_plain_insert(w, ch)
     got = await _read_back(ch)
@@ -218,29 +264,49 @@ async def test_a_blacklist_sweeps_tombstone_keeps_the_write_under_it(ch: _Statef
 
 
 @pytest.mark.asyncio
-async def test_of_two_writes_in_flight_across_a_delete_the_first_fenced_wins(
-    ch: _StatefulCH,
-) -> None:
-    # The deleting replica's clock runs ahead: the first write to reach its fence takes the
-    # tombstone's version + 1. The second then finds a live row newest and stays under it,
-    # as two writes in flight together resolve in the order they land.
+async def test_two_writes_lifted_over_one_delete_never_share_a_version(ch: _StatefulCH) -> None:
+    # The deleting replica's clock runs a minute ahead. Both writes read the fence before
+    # either lands: each sits just above the tombstone, offset by its own drawn version.
     from server.memory.app.write_fence import lift_above_deletes
 
-    head = time.time_ns() + 60_000_000_000  # the deleting replica runs a minute ahead
-    await ch.insert(
-        "loom.memory",
-        [
-            {
-                **_row("Tuesdays", head),
-                "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
-            }
-        ],
-    )
+    head = time.time_ns() + 60_000_000_000
+    tombstone = {
+        **_row("Tuesdays", head),
+        "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+    }
+    await ch.insert("loom.memory", [tombstone])
     first, second = _row("one", head - 2), _row("two", head - 1)
     await lift_above_deletes("o", "n", [first], [], ch=ch)
-    await ch.insert("loom.memory", [first])
     await lift_above_deletes("o", "n", [second], [], ch=ch)
-    assert first["version"] == head + 1 and second["version"] == head - 1
+    assert head < first["version"] != second["version"] > head
+    assert max(first["version"], second["version"]) < head + 1_000 + 2
+
+
+@pytest.mark.asyncio
+async def test_a_write_the_key_moved_past_before_the_delete_stays_deleted(
+    ch: _StatefulCH,
+) -> None:
+    # Drawn before a later write replaced it; the delete then removed that later write.
+    # Lifting it would bring back a value the key had already moved past.
+    w = _in_flight_set(time.time_ns() - 10_000_000_000)
+    drawn = w.version
+    await ch.insert("loom.memory", [_row("Wednesdays", drawn + 1_000_000)])
+    await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
+    await set_commit._set_plain_insert(w, ch)
+    assert w.version == drawn and await _read_back(ch) is None
+
+
+@pytest.mark.asyncio
+async def test_a_write_drawn_after_the_delete_stays_above_a_lifted_one(ch: _StatefulCH) -> None:
+    # The older write reaches its fence first and is lifted; the write drawn after the
+    # delete lands later and still wins.
+    w = await _delete_during_the_set(ch, "memory.delete")
+    after = time.time_ns()
+    await set_commit._set_plain_insert(w, ch)
+    assert w.version < after
+    await ch.insert("loom.memory", [_row("Fridays", after)])
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Fridays"
 
 
 @pytest.mark.asyncio
@@ -339,3 +405,72 @@ async def test_an_embedded_set_in_flight_during_a_delete_lands_with_its_vector(
         "SELECT version FROM loom.memory_embeddings FINAL WHERE tombstoned_at IS NULL"
     )
     assert [int(v["version"]) for v in vectors] == [w.version]
+
+
+async def _conditional_set(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, *, sha: str, after_build: Any = None
+) -> Any:
+    """memory.set's phases with `if_match_sha256`, against the stateful clickhouse-local (a
+    procedural row, embedded); `after_build` runs once the row is built at the version
+    drawn after the check and embedded, right before the insert."""
+    from server.memory.app import write
+
+    async def _none(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(write, "get_client", lambda: ch)
+    monkeypatch.setattr("server.memory.app.blacklist_guard.find_match", _none)
+    monkeypatch.setattr(set_commit, "_project_set_entities_fail_open", _none)
+    if after_build is not None:
+        dual_write = write._set_dual_write
+
+        async def build_then_write(w: Any, *args: Any) -> Any:
+            await after_build()
+            return await dual_write(w, *args)
+
+        monkeypatch.setattr(write, "_set_dual_write", build_then_write)
+    return await write._memory_set_phases(
+        MemorySetInput(
+            **_ID,
+            memory_key=_KEY,
+            value="Thursdays",
+            memory_type="procedural",
+            if_match_sha256=sha,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_conditional_set_whose_check_passed_lands_above_the_row_it_checked(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The row it checks was written after the set began: its version is drawn after the
+    # check, so it lands above that row instead of beneath it.
+    from server.memory.app.write import _content_sha256_of_stored
+
+    later = _row("Tuesdays", time.time_ns() + 1_000_000_000)
+    await ch.insert("loom.memory", [later])
+    sha = _content_sha256_of_stored(json.dumps("Tuesdays"))
+    out = await _conditional_set(ch, monkeypatch, sha=sha)
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays" and out.version > later["version"]
+
+
+@pytest.mark.asyncio
+async def test_a_delete_after_a_conditional_sets_check_answers_409(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi import HTTPException
+
+    from server.memory.app.write import _content_sha256_of_stored
+
+    await ch.insert("loom.memory", [_row("Tuesdays", time.time_ns() - 1_000_000)])
+    sha = _content_sha256_of_stored(json.dumps("Tuesdays"))
+
+    async def delete() -> None:
+        await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
+
+    with pytest.raises(HTTPException) as refused:
+        await _conditional_set(ch, monkeypatch, sha=sha, after_build=delete)
+    assert refused.value.detail["code"] == "PRECONDITION_FAILED"
+    assert await _read_back(ch) is None

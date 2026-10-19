@@ -3,11 +3,12 @@
 memory.set and memory.bulk_set draw a row's version (wall-clock nanoseconds) when the
 write begins, then embed. A delete of the key that commits during the embed draws a
 higher version, and its tombstone would hide the write that finished after it. Right
-before the insert, when the newest committed version of a key is a delete's tombstone
-above the rows' versions, the rows take new versions above it, in their own order, and
-so do their embedding rows. A write drawn after the delete keeps winning over them, as
-it would without the delete. A blacklist sweep's tombstone is not a delete: a write it
-caught stays under it.
+before the insert, when every committed version of a key above the rows' versions is a
+delete's tombstone, the rows take new versions just above the newest one, in their own
+order, and so do their embedding rows. A write drawn after the delete stays above them,
+and a write the key had moved past before the delete (a later version came and went) is
+not brought back. A blacklist sweep's tombstone is not a delete: a write it caught stays
+under it.
 """
 
 from __future__ import annotations
@@ -17,10 +18,14 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.memory.store.rows import next_version
 from server.observability import degradations
 
 log = logging.getLogger(__name__)
+
+# A lifted row sits this many nanoseconds above the tombstone at most, offset by its own
+# drawn version so two writes lifted over one delete do not share a version. A write
+# drawn after the delete is drawn later than that.
+_LIFT_SPREAD_NS = 1_000
 
 
 async def lift_above_deletes(
@@ -32,10 +37,10 @@ async def lift_above_deletes(
     conditional: bool = False,
     ch: Any = None,
 ) -> dict[tuple[str, int], int]:
-    """New versions for the rows of each key whose newest committed version is a delete's
-    tombstone above them, in the rows' own order; their embedding rows follow.
-    (memory_key, old version) → new, for each row lifted. A `conditional` write (its
-    precondition read the row the delete removed) is refused instead (409)."""
+    """New versions for the rows of each key whose committed versions above them are all
+    delete tombstones: just above the newest, in the rows' own order; their embedding rows
+    follow. (memory_key, old version) → new, for each row lifted. A `conditional` write
+    (its precondition read the row the delete removed) is refused instead (409)."""
     import server.memory.store as memory_repo
 
     try:
@@ -54,7 +59,7 @@ async def lift_above_deletes(
     for key, rows in by_key.items():
         lowest = min(int(r["version"]) for r in rows)
         above = [(v, deleted) for v, deleted in committed.get(key, []) if v > lowest]
-        if not above or not above[0][1]:
+        if not above or not all(deleted for _, deleted in above):
             continue
         if conditional:
             raise HTTPException(
@@ -64,7 +69,7 @@ async def lift_above_deletes(
                     "message": "the key was deleted after the if_match_sha256 check",
                 },
             )
-        base = max(next_version(), above[0][0] + 1)
+        base = above[0][0] + 1 + lowest % _LIFT_SPREAD_NS
         for i, row in enumerate(sorted(rows, key=lambda r: int(r["version"]))):
             old, new = int(row["version"]), base + i
             row["version"] = new

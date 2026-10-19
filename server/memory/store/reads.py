@@ -900,8 +900,9 @@ async def versions_above(
 ) -> dict[tuple[str, str, str, str], list[tuple[int, bool]]]:
     """Every committed version of each row's key (agent, user_id, session_id, memory_key)
     above the lowest version among `rows`, newest first, with whether it is a delete's
-    tombstone (a blacklist sweep's is not one). Read with sequential consistency, since
-    the answer feeds the write."""
+    tombstone (a blacklist sweep's is not one). From loom.memory_versions, which keeps
+    every version (a merge of loom.memory keeps only the newest). Read with sequential
+    consistency, since the answer feeds the write."""
     if not rows:
         return {}
     ch = ch or _default_client()
@@ -920,7 +921,7 @@ async def versions_above(
             SELECT agent, user_id, session_id, memory_key, version,
                    tombstoned_at IS NOT NULL
                        AND NOT startsWith(expire_reason, 'blacklist.sweep:') AS deleted
-            FROM loom.memory
+            FROM loom.memory_versions
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND (agent, user_id, session_id, memory_key)
                   IN {{keys:Array(Tuple(String, String, String, String))}}
