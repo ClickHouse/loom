@@ -2838,3 +2838,43 @@ async def test_a_newer_statement_retires_an_undone_older_one(ch, wired, monkeypa
     rows = await _rows(ch, org)
     assert rows["office_site"]["status"] == "active"
     assert rows["office_city"]["superseded_by"] == rows["office_site"]["id"]
+
+
+async def test_an_undo_whose_restore_failed_does_not_hold_a_later_restatement(
+    ch, wired, monkeypatch
+) -> None:
+    """The Undo's record lands but its restore does not (503, nothing restored). The
+    writer then states Paris again: a statement after the Undo, judged as new, so it
+    retires Rome."""
+    from server.core.errors import BackendUnavailableError
+    from server.memory.app import after_write, conflicts, restore
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 1960)
+    assert (await run_pass())["retired"] == 1
+    winner = (await _rows(ch, org))["office_location"]["id"]
+
+    async def lost(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("insert failed")
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(restore, "insert_memory_versions", lost)
+        with pytest.raises(BackendUnavailableError):
+            await _undo(org, "office_city", winner)
+    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+    await _later()
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s1", "office_city", "The office is in Paris")
+        await after_write.drain()
+    await _place(ch, org, "s1", "office_city", _vec((1960, 1.0)), owed=True)
+    monkeypatch.setitem(_SCRIPT, "office_city", ("update", 0.98))
+    out = await run_pass()
+    rows = await _rows(ch, org)
+    assert out["retired"] == 1, out
+    assert rows["office_location"]["superseded_by"] == rows["office_city"]["id"]

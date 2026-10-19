@@ -299,8 +299,8 @@ actions, verdicts and confidences, never the text.
   rows unowed: the next pass does not judge the pair again.
   Should the winner be judged again anyway (still owed), the pair is left alone, neither
   retired nor flagged from either side, while the Undo's `memory.unsupersede` record names
-  that retirement, the restored row still holds the value it had at the Undo, and the
-  winner's value is older than the Undo. A later write of either row carries its own mark
+  that retirement, the restored row still holds the value it had at the Undo, and both
+  rows' values were stated before it. A later write of either row carries its own mark
   and is judged afresh; a writer restating a retired value makes a new statement, dated
   when it was restated.
 - A row is stamped judged only after its actions. A pass cut short judges it again, and

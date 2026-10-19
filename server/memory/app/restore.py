@@ -96,7 +96,8 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
             invalid_at=None,
         )
         # The conflict resolver honours the Undo by this record, so it is written first,
-        # under the lock, and its failure fails the Undo: no restore it would not see.
+        # under the lock, and its failure fails the Undo: no restore it would not see. A
+        # record whose restore then fails names a version no row holds.
         try:
             await audit.emit_strict(
                 "memory.unsupersede",
@@ -113,12 +114,12 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
                     "version": new_version,
                 },
             )
-        except Exception as e:  # any failure to record refuses the Undo
+            await insert_memory_versions([restore_row], ch=ch)
+        except Exception as e:  # the Undo must not land without its record
             raise BackendUnavailableError(
-                "the Undo could not be recorded; nothing was restored, retry the Undo",
+                "the Undo could not be written; nothing was restored, retry the Undo",
                 operation="memory.restore",
             ) from e
-        await insert_memory_versions([restore_row], ch=ch)
         try:
             await memory_repo.unsupersede_embeddings(
                 input.org,

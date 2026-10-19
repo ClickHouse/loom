@@ -541,13 +541,15 @@ def _undone(
     row: Any, head: Any, order: Mapping[str, tuple[int, int]], undos: list[queue.Undo]
 ) -> bool:
     """Whether a person undid a retirement of either row behind the other (the Undo's
-    record), while it holds the value it had then and the other's current value was
-    asserted before the Undo's restore: their decision stands."""
+    record): their decision stands while both rows' current statements began before the
+    Undo's restore. A value restated since (or after a record whose restore failed) is a
+    new statement, judged as one."""
     for loser, winner in ((head, row), (row, head)):
         undone = (str(loser.memory_id), str(winner.memory_id), str(loser.content_sha256 or ""))
         if any(
             (u.memory_id, u.superseded_by, u.content_sha256) == undone
             and order[str(winner.memory_id)][1] < u.version
+            and order[str(loser.memory_id)][1] < u.version
             for u in undos
         ):
             return True
