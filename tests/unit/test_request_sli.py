@@ -1762,4 +1762,4 @@ def test_a_mint_by_a_revoked_token_and_a_refused_scim_bearer_are_counted(monkeyp
             asyncio.run(scim_routes._authorized(_Request(header)))
     reasons = [c["reason"] for c in counter.calls]
     assert reasons == ["revoked", "missing", "malformed", "malformed", "invalid"]
-    assert {c["loom.transport"] for c in counter.calls} == {"http"}
+    assert [c["loom.transport"] for c in counter.calls] == ["http"] + ["scim"] * 4

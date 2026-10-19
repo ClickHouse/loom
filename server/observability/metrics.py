@@ -365,6 +365,7 @@ def _init_auth_instruments(meter: Any) -> None:
         description=(
             "Requests refused for their bearer token (none, one that failed"
             " verification, or one that could not be checked yet), by reason and transport"
+            " (http, mcp, or scim for the SCIM provider's token)"
         ),
         unit="1",
     )

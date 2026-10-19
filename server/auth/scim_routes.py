@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
 from server.auth import scim
+from server.auth.bearer import bearer_token
 from server.auth.jwt import TokenError
 from server.auth.public_url import public_base_url
 from server.core.ch import set_query_tag
@@ -60,19 +61,23 @@ class ScimError(Exception):
 
 async def _authorized(request: Request) -> None:
     set_query_tag(f"scim.{request.method.lower()}")  # these routes are not under the transports
-    scheme, _, token = request.headers.get("authorization", "").partition(" ")
-    presented = token.strip().encode()
+    refused = "a valid SCIM bearer token is required"
+    # Counted apart from Loom's own bearers: a provider holding a rotated token
+    # needs another fix than a storm of bad user tokens.
+    try:
+        token = bearer_token(request.headers.get("authorization"))
+    except TokenError as e:
+        record_auth_refusal(e, transport="scim")
+        raise ScimError(401, refused) from None
+    if token is None:
+        record_auth_refusal(None, transport="scim")
+        raise ScimError(401, refused)
     # Every token is compared, so the time taken doesn't say which one matched.
+    presented = token.encode()
     matches = [hmac.compare_digest(presented, t.encode()) for t in scim.tokens(settings.scim_token)]
-    if scheme.lower() != "bearer" or not any(matches):
-        if not scheme:
-            reason = "missing"
-        elif scheme.lower() != "bearer" or not presented:
-            reason = "malformed"
-        else:
-            reason = "invalid"
-        record_auth_refusal(TokenError(reason=reason), transport="http")
-        raise ScimError(401, "a valid SCIM bearer token is required")
+    if not any(matches):
+        record_auth_refusal(TokenError(reason="invalid"), transport="scim")
+        raise ScimError(401, refused)
 
 
 def _answer(body: dict[str, Any], status: int = 200, **headers: str) -> JSONResponse:
