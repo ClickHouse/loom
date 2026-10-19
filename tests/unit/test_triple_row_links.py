@@ -293,7 +293,7 @@ async def test_a_bulk_write_reconciles_only_the_rows_it_revised(monkeypatch) -> 
 
     closed: list = []
 
-    async def end_overtaken(input, versions, *, op, ch):
+    async def end_overtaken(input, versions, *, op, ch, entities):
         closed.extend(memory_id for memory_id, _, _ in versions)
 
     monkeypatch.setattr(bulk_set, "reconcile_row_facts", reconcile)
