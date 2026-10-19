@@ -368,27 +368,27 @@ test("a focused button that draws no ring fails the walk; a text field shows foc
 });
 
 /** The text fields on the page, outside any dialog, whose look does not change on focus:
- *  the walk passes a ringless field because it shows focus by its border, so each field's
- *  border colour, box shadow or outline, or its wrapper's (Click UI's field box, the
- *  chip field), must differ focused from blurred. Transitions are off while it compares. */
+ *  the walk passes a ringless field because it shows focus by its border, so the border,
+ *  box shadow or outline the field draws, or its wrapper draws (Click UI's field box, the
+ *  chip field), must differ focused from blurred. Only what is drawn counts: a border's
+ *  colour follows the text colour even with no border, and a box further out (a toolbar
+ *  with a :focus-within style) is not the field's own look. Transitions are off while it
+ *  compares. */
 async function fieldsWithoutFocusLook(page: Page): Promise<{ checked: number; flat: string[] }> {
   return page.evaluate(() => {
     const off = document.createElement("style");
     off.textContent = "*, *::before, *::after { transition: none !important; animation: none !important; }";
     document.head.append(off);
-    const look = (el: Element) => {
-      const parts: string[] = [];
-      // The field and the two boxes around it: Click UI draws the border on its wrapper.
-      for (let e: Element | null = el, i = 0; e && i < 3; e = e.parentElement, i++) {
-        const s = getComputedStyle(e);
-        parts.push(
-          [s.borderTopColor, s.borderBottomColor, s.borderLeftColor, s.boxShadow, s.outlineStyle, s.outlineWidth].join(
-            " ",
-          ),
-        );
-      }
-      return parts.join(" | ");
+    const drawn = (s: CSSStyleDeclaration) => {
+      const sides = (["Top", "Right", "Bottom", "Left"] as const)
+        .filter((side) => s[`border${side}Style`] !== "none" && s[`border${side}Width`] !== "0px")
+        .map((side) => `${side} ${s[`border${side}Width`]} ${s[`border${side}Color`]}`);
+      const outline =
+        s.outlineStyle !== "none" && s.outlineWidth !== "0px" ? `${s.outlineWidth} ${s.outlineColor}` : "";
+      return [...sides, s.boxShadow, outline].join(" ");
     };
+    // The field and the box right around it: Click UI draws the border on its wrapper.
+    const look = (el: Element) => [el, el.parentElement].map((e) => (e ? drawn(getComputedStyle(e)) : "")).join(" | ");
     const fields = [
       ...document.querySelectorAll<HTMLElement>(
         'input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([disabled]), textarea:not([disabled])',
@@ -409,13 +409,22 @@ async function fieldsWithoutFocusLook(page: Page): Promise<{ checked: number; fl
   });
 }
 
-test("a text field whose look does not change on focus is found; one with a focused border is not", async ({
+test("a text field whose own look does not change on focus is found; one whose border or wrapper changes is not", async ({
   page,
 }) => {
   await page.setContent(`
-    <style>input { border: 1px solid #ccc; outline: none; } #good:focus { border-color: #000; }</style>
-    <input id="good" aria-label="Good"><input aria-label="Flat">`);
-  expect(await fieldsWithoutFocusLook(page)).toEqual({ checked: 2, flat: ["Flat"] });
+    <style>
+      input { border: 1px solid #ccc; outline: none; }
+      #good:focus { border-color: #000; }
+      .box input { border: none; }
+      .box { border: 1px solid #ccc; }
+      .box:focus-within { border-color: #000; }
+      .bar:focus-within { color: #00f; box-shadow: 0 0 0 1px #00f; }
+    </style>
+    <input id="good" aria-label="Good"><input aria-label="Flat">
+    <div class="box"><input aria-label="Wrapped"></div>
+    <div class="bar"><div><div><input aria-label="In a bar"></div></div></div>`);
+  expect(await fieldsWithoutFocusLook(page)).toEqual({ checked: 4, flat: ["Flat", "In a bar"] });
 });
 
 test.describe("text fields", () => {
