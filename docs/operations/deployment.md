@@ -209,7 +209,11 @@ first applies pending migrations ([upgrades](./upgrades.md#how-migrations-run)).
   it. A secret, a key given twice, an unsupported `version` or a value of the wrong
   type or outside its bounds (also one the environment overrides) stops the server
   at startup; a name no setting has is logged and ignored, so a replica of the previous
-  build starts on a file that names a new setting.
+  build starts on a file that names a new setting. `LOOM_SETTINGS_FILE` can be set in
+  the environment or in `.env`. Under compose it names a path inside the containers:
+  mount the file into both `loom-server` and `loom-workers` (a `volumes:` entry such as
+  `./loom.yaml:/app/config/loom.yaml:ro`), or they refuse to start on a file that does
+  not exist.
 - The compose file's `environment:` wins over `.env`. `dev/docker-compose.dev.yml` pins
   the ClickHouse connection and `LOOM_SELF_SIGNUP=open`, so those lines in `.env` do
   nothing on the local stack. `compose.yaml` and `dev/docker-compose.cloud.yml` take
