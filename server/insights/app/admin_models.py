@@ -77,6 +77,29 @@ class RatelimitSetInput(BaseModel):
     clear: bool = False
 
 
+class SettingsListInput(BaseModel):
+    # Only the settings whose field name starts with this.
+    prefix: str = Field(default="", max_length=128)
+    # Only the settings whose value in force is not the default.
+    changed: bool = False
+
+
+class SettingSetInput(BaseModel):
+    """Install a deployment-wide override of a live setting ({name, value}), or
+    remove it ({name, clear: true})."""
+
+    name: str = Field(max_length=128)
+    # JSON, validated as the setting validates its environment value.
+    value: Any = None
+    clear: bool = False
+
+    @model_validator(mode="after")
+    def _value_or_clear(self) -> SettingSetInput:
+        if not self.clear and "value" not in self.model_fields_set:
+            raise ValueError("value required when clear=false")
+        return self
+
+
 class FleetCostInput(BaseModel):
     since_seconds: int = Field(86400, ge=1)
     top_n: int = Field(20, ge=1, le=500)
@@ -287,6 +310,28 @@ class RatelimitSetOutput(BaseModel):
     capacity: float | None = None
     rate: float | None = None
     cleared: bool | None = None
+
+
+class SettingRow(BaseModel):
+    name: str
+    env: str
+    # A secret shows only its length.
+    value: Any
+    default: Any
+    # override (settings.set), env, env_file (the dotenv file) or default.
+    source: Literal["override", "env", "env_file", "default"]
+    # True: takes an override while Loom runs; False: read once at startup.
+    live: bool
+    description: str
+
+
+class SettingsListOutput(BaseModel):
+    settings: list[SettingRow]
+
+
+class SettingSetOutput(BaseModel):
+    ok: bool
+    setting: SettingRow
 
 
 class FleetCostRow(BaseModel):

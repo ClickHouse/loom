@@ -279,7 +279,10 @@ The `lifespan` in `server/main.py` runs in every process, in this order (its ste
 8. **Token state and overrides.** Load the revoked-token snapshot
    (`server/auth/revocation.py`) and the signing keyring (`server/auth/keyring.py`); every
    process refreshes both on its own timer. Start adopting the admin runtime overrides
-   (`loom.runtime_overrides`) every `LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS`.
+   (`loom.runtime_overrides`: rate limits, latency budgets and live settings) every
+   `LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS`; the workers child process adopts them too. A
+   live setting's override is laid over the process's own `settings`, so code reads it as
+   `settings.<field>` ([runtime settings](../operations/runtime-settings.md)).
 9. **Start the workers** in the leader, and the lease loop in `auto`.
 10. **Provider report.** Log the resolved LLM provider and probe the embedder's dimension.
 11. **Vector features.** Probe the quantized-codes read setting, patch parts and whether

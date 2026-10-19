@@ -84,21 +84,23 @@ Every `/v1/admin/*` route (`server/insights/app/admin_routes.py`, `admin_router`
 auth off. An admin acts inside its own org; crossing orgs (minting a token for
 another org, for example) needs `platform_admin`.
 
-| Method and path                    | What it is                                                                                                        |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `POST /v1/admin/token.mint`        | Mint a service-account token delegated from the caller's, saved to their token list under `name`.                 |
-| `POST /v1/admin/namespace.adopt`   | Give a namespace that holds data but no registry row an owner.                                                    |
-| `POST /v1/admin/claim_release`     | Release a self-signup claim: revoke its grants, clear the owner, deactivate it (`org_admin` or `platform_admin`). |
-| `GET /v1/admin/schema.status`      | The gap between the migrations this build carries and what the database has applied.                              |
-| `GET /v1/admin/workers.status`     | Every worker's switch, interval and latest pass; see [Workers](./workers.md#seeing-what-the-workers-did).         |
-| `POST /v1/admin/audit.summary`     | `audit_log` aggregated by event type over a window.                                                               |
-| `POST /v1/admin/events.tail`       | Recent `loom.agent_events` rows, for live debugging.                                                              |
-| `POST /v1/admin/budget.violations` | Recent latency-budget violations, aggregated.                                                                     |
-| `POST /v1/admin/budget.set`        | Install or clear a per-operation (or per-consumer) latency-budget override.                                       |
-| `POST /v1/admin/ratelimit.set`     | Install or clear a per-namespace or per-org rate-limit override (see [Rate limits](#rate-limits)).                |
-| `POST /v1/admin/consumers`         | Per-consumer calls, error rate, p50 latency, spend and outcome feedback over a window.                            |
-| `POST /v1/admin/fleet.cost`        | The top tenants by attributed cost over a window.                                                                 |
-| `POST /v1/admin/prompts.evaluate`  | A should-promote verdict for one prompt version.                                                                  |
+| Method and path                    | What it is                                                                                                                      |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/admin/token.mint`        | Mint a service-account token delegated from the caller's, saved to their token list under `name`.                               |
+| `POST /v1/admin/namespace.adopt`   | Give a namespace that holds data but no registry row an owner.                                                                  |
+| `POST /v1/admin/claim_release`     | Release a self-signup claim: revoke its grants, clear the owner, deactivate it (`org_admin` or `platform_admin`).               |
+| `GET /v1/admin/schema.status`      | The gap between the migrations this build carries and what the database has applied.                                            |
+| `GET /v1/admin/workers.status`     | Every worker's switch, interval and latest pass; see [Workers](./workers.md#seeing-what-the-workers-did).                       |
+| `POST /v1/admin/audit.summary`     | `audit_log` aggregated by event type over a window.                                                                             |
+| `POST /v1/admin/events.tail`       | Recent `loom.agent_events` rows, for live debugging.                                                                            |
+| `POST /v1/admin/budget.violations` | Recent latency-budget violations, aggregated.                                                                                   |
+| `POST /v1/admin/budget.set`        | Install or clear a per-operation (or per-consumer) latency-budget override.                                                     |
+| `POST /v1/admin/ratelimit.set`     | Install or clear a per-namespace or per-org rate-limit override (see [Rate limits](#rate-limits)).                              |
+| `POST /v1/admin/settings.list`     | Every setting's value in force, default, source and whether it is live ([Runtime settings](../operations/runtime-settings.md)). |
+| `POST /v1/admin/settings.set`      | Install or clear a deployment-wide override of a live setting.                                                                  |
+| `POST /v1/admin/consumers`         | Per-consumer calls, error rate, p50 latency, spend and outcome feedback over a window.                                          |
+| `POST /v1/admin/fleet.cost`        | The top tenants by attributed cost over a window.                                                                               |
+| `POST /v1/admin/prompts.evaluate`  | A should-promote verdict for one prompt version.                                                                                |
 
 Monitoring use of these routes is in [Monitoring](../operations/monitoring.md),
 and tokens in [Tokens and grants](../guides/tokens-and-grants.md).

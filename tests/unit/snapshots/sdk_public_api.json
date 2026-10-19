@@ -2023,11 +2023,22 @@
         "reset_models": [
           "expected_version"
         ],
+        "reset_setting": [
+          "name"
+        ],
         "retry_models": [
           "config_id"
         ],
         "save_models": [
           "setup"
+        ],
+        "set_setting": [
+          "name",
+          "value"
+        ],
+        "settings": [
+          "prefix",
+          "changed"
         ],
         "validate_models": [
           "setup"

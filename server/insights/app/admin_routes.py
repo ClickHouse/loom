@@ -38,6 +38,11 @@ from server.insights.app.admin_models import (
     RatelimitSetInput,
     RatelimitSetOutput,
     SchemaStatusOutput,
+    SettingRow,
+    SettingSetInput,
+    SettingSetOutput,
+    SettingsListInput,
+    SettingsListOutput,
     TokenMintInput,
     TokenMintOutput,
     WorkersStatusOutput,
@@ -579,6 +584,46 @@ async def admin_ratelimit_set(input: RatelimitSetInput) -> RatelimitSetOutput:
             "rate": input.rate,
         }
     )
+
+
+@admin_router.post("/v1/admin/settings.list")
+async def admin_settings_list(input: SettingsListInput) -> SettingsListOutput:
+    """Every setting with its value in force in this process, its default, where
+    the value came from (override, env, env_file, default) and whether it is live."""
+    from server.core import settings_overrides
+
+    rows = settings_overrides.rows(prefix=input.prefix, changed=input.changed)
+    return SettingsListOutput(settings=[SettingRow(**r) for r in rows])
+
+
+@admin_router.post("/v1/admin/settings.set")
+async def admin_settings_set(request: Request, input: SettingSetInput) -> SettingSetOutput:
+    """Install a deployment-wide override of a live setting ({name, value}) or
+    remove it ({name, clear: true}). Every process applies it within
+    `runtime_overrides_refresh_seconds`; this one at once."""
+    from server.core import settings_overrides
+
+    set_query_tag("admin.settings_set")
+    info = await require_admin(request)
+    previous = settings_overrides.row(input.name)["value"]
+    if input.clear:
+        await settings_overrides.clear(input.name)
+    else:
+        await settings_overrides.put(input.name, input.value)
+    row = settings_overrides.row(input.name)
+    await audit.emit(
+        "setting.changed",
+        org=info.org if info is not None else "-",
+        namespace="-",
+        actor=info.subject if info is not None else "dev-admin",
+        subject={
+            "name": input.name,
+            "value": row["value"],
+            "previous": previous,
+            "cleared": input.clear,
+        },
+    )
+    return SettingSetOutput(ok=True, setting=SettingRow(**row))
 
 
 # ============================================================

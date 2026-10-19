@@ -73,8 +73,8 @@ class RuntimeSettings(BaseModel):
     # warm-up nothing is cloned at boot and readiness does not wait for mirrors.
     # Off by default: history ops answer `no_git_mirror` meanwhile.
     ready_requires_mirrors: bool = False
-    # Seconds between re-reads of loom.runtime_overrides (the admin rate-limit
-    # and latency-budget overrides) in every process.
+    # Seconds between re-reads of loom.runtime_overrides (the admin rate-limit,
+    # latency-budget and live-setting overrides) in every process.
     runtime_overrides_refresh_seconds: float = 10.0
     # The deployment's compose files set LOOM_DEPLOYMENT=1; every other process
     # must set LOOM_INSTANCE_LABEL (e.g. `iso:<worktree>:<port>`,

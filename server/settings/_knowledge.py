@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import BaseModel
+
+from server.settings._live import LIVE
 
 
 class KnowledgeSettings(BaseModel):
     # ---- conversations ----
     # conversation.search cosine floor; without it the top_k nearest threads
     # return however far. Stricter than memory recall: chat excerpts are noisy.
-    conversation_search_min_similarity: float = 0.30
+    conversation_search_min_similarity: Annotated[float, LIVE] = 0.30
 
     # LLM-title untitled threads in namespaces with conversation_logging_enabled
     # (the Sessions "Recording" toggle is the off-switch). Skipped with the fake
@@ -29,5 +33,5 @@ class KnowledgeSettings(BaseModel):
     # chunk_size 0 = one chunk per doc (hurts long-form retrieval); stride <
     # chunk_size overlaps. Smaller chunks mean more embed calls; 1500/1230
     # stays well under the text-embedding-3 context.
-    knowledge_chunk_size: int = 1500  # characters per chunk; 0 disables
-    knowledge_chunk_stride: int = 1230  # stride < chunk_size produces overlap
+    knowledge_chunk_size: Annotated[int, LIVE] = 1500  # characters per chunk; 0 disables
+    knowledge_chunk_stride: Annotated[int, LIVE] = 1230  # stride < chunk_size produces overlap

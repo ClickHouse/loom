@@ -477,12 +477,22 @@ async def start_token_state() -> list[asyncio.Task[None]]:
 _OVERRIDES_ADOPTED = False
 
 
-def start_runtime_overrides() -> asyncio.Task[None]:
-    """Every process adopts the deployment's runtime rate-limit and
-    latency-budget overrides (loom.runtime_overrides) now and on a timer."""
-    from server.core import runtime_overrides
+async def adopt_runtime_overrides() -> None:
+    """Read loom.runtime_overrides once and apply it: the rate-limit, latency-budget
+    and setting overrides."""
+    from server.core import runtime_overrides, settings_overrides
     from server.core.ratelimit import get_limiter
     from server.observability.budgets import get_overrides
+
+    snapshot = await runtime_overrides.load()
+    get_limiter().adopt(snapshot)
+    get_overrides().adopt(snapshot)
+    settings_overrides.adopt(snapshot)
+
+
+def start_runtime_overrides() -> asyncio.Task[None]:
+    """Every process adopts the deployment's runtime overrides
+    (loom.runtime_overrides) now and on a timer."""
 
     async def _loop() -> None:
         global _OVERRIDES_ADOPTED
@@ -491,9 +501,7 @@ def start_runtime_overrides() -> asyncio.Task[None]:
         set_query_tag("runtime_overrides.refresh")
         while True:
             try:
-                snapshot = await runtime_overrides.load()
-                get_limiter().adopt(snapshot)
-                get_overrides().adopt(snapshot)
+                await adopt_runtime_overrides()
                 _OVERRIDES_ADOPTED = True
             except Exception as e:  # noqa: BLE001 — keep the overrides already adopted; retry
                 logging.getLogger(__name__).warning("runtime overrides not adopted: %s", e)

@@ -253,6 +253,10 @@ python scripts/codegen/docs_reference.py
 | `loom participant retire` | Retire the provider participant of a process that died without shutting down (its id is `participant_id` in that process's /v1/health). | `--participant`, `--yes` |
 | `loom deployment` | The configuration every replica checks itself against. |  |
 | `loom deployment publish` | Publish this env's configuration as the deployment's, replacing its root secret or LOOM_EMBEDDING_MODEL/DIM on purpose. | `--yes`, `--check` |
+| `loom settings` | Every setting's value in force, and overrides of the live ones. |  |
+| `loom settings list` | Each setting: value, where it came from, whether live. | `--prefix`, `--changed`, `--json` |
+| `loom settings set` | Override a live setting for the whole deployment; outlives a restart. | `<name>`, `<value>` |
+| `loom settings reset` | Remove the override: back to the env or the default. | `<name>` |
 | `loom secrets` | Credentials and signing keys stored sealed in ClickHouse. |  |
 | `loom secrets reseal` | Seal again under LOOM_JWT_SECRET what only LOOM_JWT_SECRET_PREVIOUS opens. | `--dry-run`, `--check` |
 | `loom signing-key` | The token signing keys beside LOOM_JWT_SECRET, kept in ClickHouse. |  |
