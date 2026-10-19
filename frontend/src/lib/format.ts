@@ -19,9 +19,8 @@ export function _formatterCacheSize(): number {
   return _fmt.size;
 }
 
-export function relativeTime(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const d = parseIso(iso);
+export function relativeTime(time: string | null | undefined): string {
+  const d = parseChTime(time);
   if (!d) return "";
   const s = Math.floor((Date.now() - d.getTime()) / 1000);
   // Future timestamps: render "in Xh / in Xd". Used for expires_at, which
@@ -43,31 +42,84 @@ export function relativeTime(iso: string | null | undefined): string {
   return fmt("date").format(d);
 }
 
-export function parseIso(iso: string): Date | null {
-  if (!iso) return null;
-  // CH datetimes come back without timezone — treat them as UTC.
-  const hasOffset = /[+-]\d{2}:?\d{2}$|Z$/.test(iso);
-  const d = new Date(hasOffset ? iso : iso + "Z");
-  return isNaN(d.getTime()) ? null : d;
-}
-
-export function dayLabel(iso: string): string {
-  const d = parseIso(iso);
+export function dayLabel(time: string): string {
+  const d = parseChTime(time);
   if (!d) return "Unknown";
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const yesterday = new Date(today.getTime() - 86400000);
   const dDate = new Date(d.getTime());
   dDate.setHours(0, 0, 0, 0);
-  if (dDate.getTime() === today.getTime()) return "Today";
-  if (dDate.getTime() === yesterday.getTime()) return "Yesterday";
-  const diff = Math.floor((today.getTime() - dDate.getTime()) / 86400000);
-  if (diff < 7) {
-    return fmt("weekday", { weekday: "long" }).format(dDate);
-  }
-  return dDate.getFullYear() === today.getFullYear()
-    ? fmt("month-day", { month: "short", day: "numeric" }).format(dDate)
-    : fmt("month-day-year", { month: "short", day: "numeric", year: "numeric" }).format(dDate);
+  const date =
+    dDate.getFullYear() === today.getFullYear()
+      ? fmt("month-day", { month: "short", day: "numeric" }).format(dDate)
+      : fmt("month-day-year", { month: "short", day: "numeric", year: "numeric" }).format(dDate);
+  if (dDate.getTime() === today.getTime()) return `Today · ${date}`;
+  if (dDate.getTime() === yesterday.getTime()) return `Yesterday · ${date}`;
+  return date;
+}
+
+/** A ClickHouse time ("YYYY-MM-DD hh:mm:ss[.fff…]", no zone, so UTC) or an ISO time, as a
+ *  Date; null for nothing or anything that is not a time. */
+export function parseChTime(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  let t = s.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) t += "T00:00:00";
+  t = t.replace(/^(\d{4}-\d{2}-\d{2}) (\d)/, "$1T$2");
+  // DateTime64(6|9): Date reads three fraction digits at most.
+  t = t.replace(/(\.\d{3})\d+/, "$1");
+  // No zone: UTC.
+  const d = new Date(/[+-]\d{2}:?\d{2}$|Z$/.test(t) ? t : t + "Z");
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** The whole days left of the 14-day grace window for a memory deleted at `tombstonedAt`, a
+ *  ClickHouse time and so UTC; null for no time or one that does not parse. */
+export function daysLeftToRestore(tombstonedAt: string | null | undefined, now = Date.now()): number | null {
+  const deleted = parseChTime(tombstonedAt);
+  if (!deleted) return null;
+  // A deletion stamped a moment ahead of this browser's clock is still day one.
+  const age = Math.max(0, now - deleted.getTime());
+  return Math.max(0, 14 - Math.floor(age / (24 * 3600 * 1000)));
+}
+
+/** "13 days left to restore", or "in grace window" when the time is unknown. */
+export function restoreText(tombstonedAt: string | null | undefined): string {
+  const daysLeft = daysLeftToRestore(tombstonedAt);
+  if (daysLeft === null) return "in grace window";
+  return `${daysLeft} day${daysLeft === 1 ? "" : "s"} left to restore`;
+}
+
+/** A list row's time (one rule for every list): "just now", "12m ago", "3h ago", "3d ago"
+ *  within the week, then "Sep 20", or "Sep 20, 2025" in another year. `ui/ListTime`
+ *  renders it with the absolute time in a tooltip. */
+export function listTime(time: string | null | undefined): string {
+  const d = parseChTime(time);
+  if (!d) return "";
+  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (s > -60 && s < 60) return "just now";
+  if (s > 0 && s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s > 0 && s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s > 0 && s < 7 * 86400) return `${Math.floor(s / 86400)}d ago`;
+  return d.getFullYear() === new Date().getFullYear()
+    ? fmt("month-day", { month: "short", day: "numeric" }).format(d)
+    : fmt("month-day-year", { month: "short", day: "numeric", year: "numeric" }).format(d);
+}
+
+/** The absolute time behind a `listTime`, in UTC: "Sep 20, 2026, 14:32 UTC". */
+export function listTimeTitle(time: string | null | undefined): string {
+  const d = parseChTime(time);
+  if (!d) return "";
+  const f = fmt("utc-minute", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "UTC",
+  });
+  return `${f.format(d)} UTC`;
 }
 
 export function formatValue(v: unknown): string {
@@ -80,6 +132,11 @@ export function formatValue(v: unknown): string {
   }
 }
 
+/** A wire value shown as a label, in sentence case ("assistant" → "Assistant"). */
+export function sentenceCase(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
 export function truncate(s: string, max: number): string {
   if (!s || s.length <= max) return s;
   return s.slice(0, max - 1).trimEnd() + "…";
@@ -87,7 +144,7 @@ export function truncate(s: string, max: number): string {
 
 /** A bounded preview of a value for a card: the first `max` characters of the string, or
  *  of a compact serialisation of the object — never a pretty-print of the whole value,
- *  which a list of a hundred cards paid for to show 140 characters each. */
+ *  which a list of a hundred cards paid for to show two lines each. */
 export function previewValue(v: unknown, max = 320): string {
   if (v == null) return "";
   if (typeof v === "string") return v.length > max ? v.slice(0, max) : v;
@@ -191,8 +248,8 @@ export function errorRequestId(err: unknown): string {
   return err instanceof ApiError ? err.requestId : "";
 }
 
-export function timeOfDay(iso: string): string {
-  const d = parseIso(iso);
+export function timeOfDay(time: string): string {
+  const d = parseChTime(time);
   if (!d) return "";
   return fmt("time", { hour: "2-digit", minute: "2-digit" }).format(d);
 }
@@ -254,9 +311,9 @@ export function fmtInt(n: number | null | undefined): string {
 
 /** A full local date and time for tooltips: the cached formatter, not a
  *  `Date.toLocaleString()` that builds one per row. */
-export function absoluteTime(iso: string | null | undefined): string {
-  const d = iso ? parseIso(iso) : null;
-  return d ? fmt("abs", { dateStyle: "medium", timeStyle: "short" }).format(d) : (iso ?? "");
+export function absoluteTime(time: string | null | undefined): string {
+  const d = parseChTime(time);
+  return d ? fmt("abs", { dateStyle: "medium", timeStyle: "short" }).format(d) : (time ?? "");
 }
 
 /** A `code.refresh` caller line without the fields the caller left empty (`expected_head=`). */
@@ -265,14 +322,6 @@ export function refreshDetail(detail: string): string {
     .split(/\s+/)
     .filter((part) => part && !part.endsWith("="))
     .join(" ");
-}
-
-/** The line above a search's results: how many rows hold the text, then the ranked rest. */
-export function searchSummary(shown: number, query: string, keywordShown: number, keywordTotal: number): string {
-  const head = `${shown} match${shown === 1 ? "" : "es"} for "${query}"`;
-  if (keywordShown === 0) return `${head} · ranked by relevance`;
-  const more = keywordTotal > keywordShown ? ` (newest ${keywordShown} of ${keywordTotal})` : "";
-  return `${head} · ${keywordTotal} contain the text${more}, newest first, then related by meaning`;
 }
 
 /** What a card shows for a high row, which the list sends without its value. */

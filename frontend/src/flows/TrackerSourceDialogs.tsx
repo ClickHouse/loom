@@ -59,6 +59,7 @@ import { CopyButton } from "../components/CopyButton";
 import { IconButton } from "../components/IconButton";
 import { Skeleton } from "../components/Skeleton";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
+import { LoadingSkeleton } from "../components/ui/Loading";
 import { Unavailable } from "../components/ui/Unavailable";
 import { MappingEditor } from "./TrackerMapping";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
@@ -690,11 +691,13 @@ function ViewsStep({ org, database }: { org: string; database: string }) {
         </ErrorNote>
       )}
       {!cat && !error && (
-        <div className="space-y-2" role="status" aria-label="Loading the views">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
+        <LoadingSkeleton label="Loading the views">
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        </LoadingSkeleton>
       )}
       {cat && (
         <>
@@ -845,7 +848,7 @@ function RepoChips({ repos, onChange }: { repos: string[]; onChange: (r: string[
     setDraft("");
   };
   return (
-    <div className="flex flex-wrap items-center gap-1.5 min-h-8 rounded-sm border border-[var(--click-field-color-stroke-default)] bg-[var(--click-field-color-background-default)] px-2 py-1 focus-within:border-[var(--click-field-color-stroke-active)]">
+    <div className="chip-field flex flex-wrap items-center min-h-8">
       {repos.map((r) => (
         <span key={r} className="inline-flex items-center gap-1 rounded-full bg-surface-3 pl-2 text-xs font-mono">
           {r}
@@ -1495,10 +1498,12 @@ export function EditMappingDialog({
       }
     >
       {!inspected && !error && (
-        <div className="space-y-2" role="status" aria-label="Reading the tracker's tables">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
+        <LoadingSkeleton label="Loading the tracker's tables">
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        </LoadingSkeleton>
       )}
       {error && <ErrorNote>{error}</ErrorNote>}
       {inspected && (

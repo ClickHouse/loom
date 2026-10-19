@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./errors";
 import {
+  actionDone,
   actionsFor,
+  assigneeOf,
   actorKind,
   attentionCounts,
   briefSections,
@@ -9,6 +11,7 @@ import {
   conflictOf,
   dropAction,
   evidenceStatus,
+  filterSummary,
   firstUrl,
   groupOf,
   groupTasks,
@@ -33,6 +36,7 @@ import {
   type Filters,
 } from "./tasks";
 import { attentionByInbox, bellCount } from "./taskBell";
+import { listTime } from "./format";
 import type { InboxCount, PosterPolicy, TaskEvent, TaskListRow, TaskStatus } from "../api/tasks";
 import { must } from "../test/must";
 
@@ -154,7 +158,7 @@ describe("filters", () => {
     attention: null,
     kind: null,
     poster: null,
-    showClosed: false,
+    q: "",
     ...extra,
   });
 
@@ -164,28 +168,61 @@ describe("filters", () => {
     expect(posterKind(human, "reporter")).toBe("human");
     expect(posterKind(mine, undefined)).toBe("bot");
   });
-  it("posted-by filters on that; closed rows hide unless shown or the Failed tile is on", () => {
+  it("posted-by filters on that; closed rows pass (their lane folds them), the Failed tile keeps only failures", () => {
     expect(passesFilters(mine, f({ poster: "me" }), owner, NOW)).toBe(true);
     expect(passesFilters(theirs, f({ poster: "me" }), owner, NOW)).toBe(false);
     expect(passesFilters(theirs, f({ poster: "others" }), owner, NOW)).toBe(true);
-    expect(passesFilters(closed, f({}), owner, NOW)).toBe(false);
-    expect(passesFilters(closed, f({ showClosed: true }), owner, NOW)).toBe(true);
+    expect(passesFilters(closed, f({}), owner, NOW)).toBe(true);
     expect(passesFilters(failed, f({ attention: "failed" }), owner, NOW)).toBe(true);
     expect(passesFilters(closed, f({ attention: "failed" }), owner, NOW)).toBe(false);
     expect(passesFilters(theirs, f({ kind: "coverage" }), owner, NOW)).toBe(false);
+  });
+  it("the search matches the title, kind, poster, reason or id, case-insensitively, every word", () => {
+    const r = row("0f3a9c-task", { title: "Recall dropped", kind: "bug_report", reason: "needs a repro" });
+    for (const q of ["recall", "BUG_REPORT", "reporter-public", "repro", "0f3a9c", "recall bug"])
+      expect(passesFilters(r, f({ q }), owner, NOW)).toBe(true);
+    expect(passesFilters(r, f({ q: "recall latency" }), owner, NOW)).toBe(false);
+    expect(passesFilters(r, f({ q: "   " }), owner, NOW)).toBe(true);
+  });
+  it("says what is in force, for the filtered state", () => {
+    expect(filterSummary(f({}))).toBe("");
+    expect(filterSummary(f({ q: " recall ", kind: "docs", poster: "others", attention: "triage" }))).toBe(
+      '"recall" · kind:docs · posted by others · Triage · decide',
+    );
+  });
+});
+
+describe("the row's assignee", () => {
+  it("is the owner once claimed, else the inbox's agent, else nobody", () => {
+    expect(assigneeOf(row("a", { status: "in_progress", owner: "bench-bot" }), "reporter")).toEqual({
+      name: "bench-bot",
+      label: "Claimed by bench-bot",
+    });
+    expect(assigneeOf(row("a"), "reporter")).toEqual({ name: "reporter", label: "For reporter, the inbox's agent" });
+    expect(assigneeOf(row("a"), undefined)).toBeNull();
+  });
+});
+
+describe("what an action says when it is done", () => {
+  it("is the past tense with the task's title", () => {
+    expect(actionDone("accept", "Fix it")).toBe("Accepted “Fix it”: it moved to To do");
+    expect(actionDone("wont_do", "Fix it")).toBe("Closed “Fix it” as won't do");
+    expect(actionDone("start", "Fix it")).toBe("Started “Fix it”");
   });
 });
 
 describe("the row's one line, per state", () => {
   it("says the right thing for each status", () => {
+    // The time is the row's meta; the line says who posted it.
     expect(sublineOf(row("a", { status: "triage", created_at: ago(42) }), NOW)).toEqual({
-      text: "from reporter-public · 42 min ago",
+      text: "from reporter-public",
     });
-    expect(sublineOf(row("a", { status: "todo" }), NOW)).toBeNull();
+    expect(sublineOf(row("a", { status: "todo" }), NOW)).toEqual({ text: "from reporter-public" });
     expect(sublineOf(row("a", { status: "todo", not_before: ago(-14 * 60) }), NOW)).toEqual({
-      text: "scheduled · in 14 h",
+      text: "from reporter-public",
+      suffix: "· scheduled in 14h",
     });
-    expect(sublineOf(row("a", { status: "todo", not_before: ago(5) }), NOW)).toBeNull();
+    expect(sublineOf(row("a", { status: "todo", not_before: ago(5) }), NOW)).toEqual({ text: "from reporter-public" });
     expect(sublineOf(row("a", { status: "in_progress" }), NOW)).toBeNull();
     expect(sublineOf(row("a", { status: "in_progress" }), NOW, "seed 1/3 clean")).toEqual({
       text: "seed 1/3 clean",
@@ -198,7 +235,7 @@ describe("the row's one line, per state", () => {
     expect(sublineOf(row("a", { status: "deferred", reason: "binary not built", resume_at: ago(-120) }), NOW)).toEqual({
       text: "binary not built",
       italic: true,
-      suffix: "· resumes in 2 h",
+      suffix: "· resumes in 2h",
     });
     expect(
       sublineOf(
@@ -219,13 +256,18 @@ describe("the row's one line, per state", () => {
       italic: true,
     });
   });
-  it("reads relative time the way the page says it", () => {
+  // One date rule with every list (lib/format.ts listTime), plus the countdowns it has no form for.
+  it("reads relative time the way every list says it", () => {
     expect(rel(ago(0), NOW)).toBe("just now");
-    expect(rel(ago(42), NOW)).toBe("42 min ago");
-    expect(rel(ago(-5), NOW)).toBe("in 5 min");
-    expect(rel(ago(3 * 60), NOW)).toBe("3 h ago");
-    expect(rel(ago(-2 * 60), NOW)).toBe("in 2 h");
-    expect(rel(ago(3 * 24 * 60), NOW)).toBe("3 d ago");
+    expect(rel(ago(42), NOW)).toBe("42m ago");
+    expect(rel(ago(-5), NOW)).toBe("in 5m");
+    expect(rel(ago(3 * 60), NOW)).toBe("3h ago");
+    expect(rel(ago(-2 * 60), NOW)).toBe("in 2h");
+    expect(rel(ago(3 * 24 * 60), NOW)).toBe("3d ago");
+    expect(rel(ago(-3 * 24 * 60), NOW)).toBe("in 3d");
+    // Past a week, the date listTime writes ("Sep 11", with the year when it is not this one).
+    expect(rel(ago(9 * 24 * 60), NOW)).toBe(listTime(ago(9 * 24 * 60)));
+    expect(rel(ago(-9 * 24 * 60), NOW)).toBe(`on ${listTime(ago(-9 * 24 * 60))}`);
     expect(rel(null, NOW)).toBe("");
   });
   it("names the poster and draws initials", () => {
@@ -504,5 +546,22 @@ describe("time helpers", () => {
     expect(localFromIso(iso)).toBe(local);
     expect(isoFromLocal("")).toBeNull();
     expect(localFromIso(null)).toBe("");
+  });
+});
+
+// The page reads times with parseChTime, as every list does: Safari's Date.parse refuses a
+// ClickHouse time ("2026-09-20 01:00:00", or six fraction digits). Date.parse is held to the
+// ISO form Safari accepts.
+describe("ClickHouse times under a strict date parser", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it("reads a lease, a schedule and a date input from a ClickHouse time", () => {
+    const parse = Date.parse;
+    vi.spyOn(Date, "parse").mockImplementation((s: string) =>
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/.test(s) ? parse(s) : NaN,
+    );
+    const now = parse("2026-09-20T01:00:00Z");
+    expect(leaseMinutesLeft("2026-09-20 01:08:00.123456", now)).toBe(8);
+    expect(rel("2026-09-20 00:18:00", now)).toBe("42m ago");
+    expect(localFromIso("2026-09-20 01:00:00")).not.toBe("");
   });
 });

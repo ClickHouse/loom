@@ -75,17 +75,8 @@ export function TaskInboxBell() {
 
   const openInbox = (inbox: string) => {
     setOpen(false);
-    // The Tasks view owns `?inbox=` (state.ts VIEW_QUERY_KEYS), so setting
-    // it before the navigation carries it into the view's URL.
-    try {
-      const u = new URL(window.location.href);
-      u.searchParams.set("inbox", inbox);
-      u.searchParams.delete("task");
-      window.history.replaceState(null, "", u.toString());
-    } catch {
-      /* no URL to carry it in */
-    }
-    useStore.getState().setView("tasks");
+    // A new entry for Tasks on that inbox: the page being left keeps its URL and state.
+    useStore.getState().navigate("tasks", { query: { inbox } });
   };
 
   const tip =
@@ -100,7 +91,8 @@ export function TaskInboxBell() {
             tooltip={tip}
           />
         </PopoverTrigger>
-        {total > 0 && <CountBadge count={total} state="warning" />}
+        {/* Neutral: triage items and blocks on a person wait, they have not failed. */}
+        {total > 0 && <CountBadge count={total} />}
       </span>
       <Popover.Content
         align="end"
@@ -151,8 +143,8 @@ export function TaskInboxBell() {
                   .join(" · ")}
               </div>
             </div>
-            <span className="text-xs text-text-muted mt-1 shrink-0">
-              Open <span aria-hidden="true">→</span>
+            <span className="text-xs text-text-muted mt-1 shrink-0 inline-flex items-center gap-1">
+              Open <Icon name="arrow-right" size="xs" aria-hidden="true" />
             </span>
           </button>
         ))}

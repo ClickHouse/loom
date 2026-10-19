@@ -6,6 +6,7 @@ import type { Inbox, InboxCount, TaskListRow, TaskRow } from "../api/tasks";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { axeViolations } from "../test/axe";
+import { must } from "../test/must";
 import { Tasks } from "./Tasks";
 
 // The Tasks page. Mocked at the wrapper level, like Recent.polls.test.tsx: the page reads
@@ -172,6 +173,13 @@ const taskRows = (el: HTMLElement = document.body) =>
     .filter((r) => r.hasAttribute("data-task-id"))
     .map((r) => r.getAttribute("aria-label"));
 const groupRows = (name: RegExp) => taskRows(screen.getByRole("rowgroup", { name }));
+const laneHead = (name: RegExp) => within(screen.getByRole("rowgroup", { name })).getByRole("button", { name });
+
+// Click UI's Select items carry no option role; they are addressed by value.
+async function pick(user: ReturnType<typeof userEvent.setup>, select: string, value: string) {
+  await user.click(screen.getByRole("button", { name: select }));
+  await user.click(must(document.querySelector<HTMLElement>(`[cui-select-item][data-value="${value}"]`), value));
+}
 
 describe("Tasks page", () => {
   beforeEach(() => {
@@ -207,18 +215,30 @@ describe("Tasks page", () => {
     expect(listTasks).toHaveBeenCalledTimes(1);
   });
 
+  it("writes ?inbox= and ?task= into the entry without dropping the place it remembers", async () => {
+    const place = { scrollTop: 120, focusKey: "task:urgent", inspected: null, inspectedAgent: "" };
+    window.history.replaceState({ loomPlace: place }, "", "/tasks");
+    seed(admin, [row("admin")]);
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    expect(new URLSearchParams(window.location.search).get("inbox")).toBe("private-bot");
+    expect((window.history.state as Record<string, unknown>).loomPlace).toEqual(place);
+    fireEvent.click(screen.getByRole("row", { name: "Task urgent" }));
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("task")).toBe("urgent"));
+    expect((window.history.state as Record<string, unknown>).loomPlace).toEqual(place);
+  });
+
   it("the list is a valid grid: rowgroups of rows of gridcells, axe-clean with every group open", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();
     render(<Tasks />);
     await screen.findByRole("row", { name: "Task urgent" });
-    await user.click(screen.getByRole("checkbox", { name: "Show closed" }));
-    await user.click(within(screen.getByRole("rowgroup", { name: /^Closed/ })).getByRole("button", { name: /Closed/ }));
+    await user.click(laneHead(/^Closed/));
     const grid = screen.getByRole("grid", { name: "Tasks by what happens next" });
     expect(await axeViolations(grid)).toEqual([]);
   });
 
-  it("groups rows by what happens next, in queue order, with Closed hidden until asked for", async () => {
+  it("groups rows by what happens next, in queue order, with Closed folded until opened", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();
     render(<Tasks />);
@@ -227,17 +247,27 @@ describe("Tasks page", () => {
     expect(groupRows(/^To do/)).toEqual(["Task low-late"]);
     expect(groupRows(/^In progress/)).toEqual(["Task running"]);
     expect(groupRows(/^Waiting/)).toEqual(["Task blocked"]);
-    expect(screen.queryByRole("rowgroup", { name: /^Closed/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Show closed" })).toBeNull();
     expect(screen.getByText("decide: accept or won't do")).toBeInTheDocument();
-    // The row's one line: the reason for a wait, the poster and age in triage, the lease in progress.
+    // The row's second line: the kind as a plain badge, then the reason for a wait, the poster
+    // in triage, the lease in progress. The time and the assignee are the row's meta.
+    const urgent = screen.getByRole("row", { name: "Task urgent" });
+    expect(within(urgent).getByText("from reporter-public")).toBeInTheDocument();
+    expect(within(urgent).getByText("bug_report")).toBeInTheDocument();
+    expect(within(urgent).getByText("42m ago").closest("time")).toHaveAttribute("datetime");
+    expect(within(urgent).getByText("P1")).toBeInTheDocument();
+    expect(within(urgent).getByText("For reporter, the inbox's agent")).toBeInTheDocument();
     expect(screen.getByText("blocked on human: needs a repro")).toBeInTheDocument();
-    expect(screen.getByText("from reporter-public · 42 min ago")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /lease: 6 min left/ })).toBeInTheDocument();
-    await user.click(screen.getByRole("checkbox", { name: "Show closed" }));
+    expect(screen.getByRole("img", { name: "Lease: 6 min left" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("row", { name: "Task running" })).getByText("Claimed by reporter"),
+    ).toBeInTheDocument();
+    // Closed is listed with its count and folded: the header shows, the rows do not.
     const closed = screen.getByRole("rowgroup", { name: /^Closed/ });
-    // collapsed by default: the header shows, the rows do not
-    expect(within(closed).getByRole("button", { name: /Closed/ })).toHaveAttribute("aria-expanded", "false");
-    await user.click(within(closed).getByRole("button", { name: /Closed/ }));
+    expect(laneHead(/^Closed/)).toHaveAttribute("aria-expanded", "false");
+    expect(laneHead(/^Closed/)).toHaveTextContent("2");
+    expect(groupRows(/^Closed/)).toEqual([]);
+    await user.click(laneHead(/^Closed/));
     expect(groupRows(/^Closed/)).toEqual(["Task closed", "Task failed"]);
     expect(within(closed).getByText("duplicate of #12")).toBeInTheDocument();
   });
@@ -261,18 +291,202 @@ describe("Tasks page", () => {
     expect(taskRows()).toEqual(["Task running"]);
   });
 
-  it("filters by kind and by who posted (the inbox's own agent vs others)", async () => {
+  it("the toolbar searches and filters by kind and by who posted (the inbox's own agent vs others), and counts", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();
     render(<Tasks />);
     await screen.findByRole("row", { name: "Task urgent" });
-    await user.click(screen.getByRole("button", { name: "coverage_gap" }));
+    const bar = screen.getByLabelText("Search and filters");
+    expect(bar).toHaveTextContent("6 tasks");
+    await pick(user, "Kind", "coverage_gap");
     expect(taskRows()).toEqual(["Task low-late"]);
-    await user.click(screen.getByRole("button", { name: "coverage_gap" }));
-    await user.click(screen.getByRole("button", { name: "this agent" }));
+    expect(bar).toHaveTextContent("1 match");
+    await pick(user, "Kind", "*");
+    await pick(user, "Posted by", "me");
     expect(taskRows()).toEqual(["Task low-late"]);
-    await user.click(screen.getByRole("button", { name: "other agents" }));
-    expect(taskRows()).toEqual(["Task urgent", "Task running", "Task blocked"]);
+    await pick(user, "Posted by", "others");
+    expect(taskRows()).toEqual(["Task urgent", "Task running", "Task blocked", "Task closed", "Task failed"]);
+    await pick(user, "Posted by", "*");
+    await user.type(within(bar).getByLabelText("Search tasks"), "repro");
+    expect(taskRows()).toEqual(["Task blocked"]);
+  });
+
+  it("a search that matches nothing says so on one line, and Clear filters brings the rows back", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await user.type(screen.getByLabelText("Search tasks"), "zzz");
+    expect(screen.getByRole("status")).toHaveTextContent('No tasks match "zzz"');
+    expect(screen.queryByRole("grid")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(await screen.findByRole("row", { name: "Task urgent" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Search tasks")).toHaveValue("");
+  });
+
+  it("/ focuses the search", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await user.keyboard("/");
+    expect(screen.getByLabelText("Search tasks")).toHaveFocus();
+  });
+
+  it("a failed read says so with Retry, and the tiles show no zero", async () => {
+    vi.mocked(listTasks).mockRejectedValueOnce(new Error("ClickHouse timed out"));
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("heading", { name: "Couldn't load tasks" });
+    const tiles = screen.getByRole("group", { name: "Needs you" });
+    expect(within(tiles).queryByText("0")).toBeNull();
+    expect(within(tiles).getByRole("button", { name: "Triage · decide: not loaded" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("row", { name: "Task urgent" })).toBeInTheDocument();
+    expect(listTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it("an inbox with only closed tasks says nothing is open and offers to show them", async () => {
+    vi.mocked(listTasks).mockResolvedValue({ tasks: [ROWS[4], ROWS[5]], truncated: false });
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("heading", { name: "No open tasks" });
+    await user.click(screen.getByRole("button", { name: "Show closed" }));
+    expect(groupRows(/^Closed/)).toEqual(["Task closed", "Task failed"]);
+  });
+
+  it("on a phone with Board saved, an inbox of closed tasks still says nothing is open", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: /max-width: (639|767|1279)px/.test(query),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    localStorage.setItem("loom_tasks_mode", "board");
+    try {
+      vi.mocked(listTasks).mockResolvedValue({ tasks: [ROWS[4], ROWS[5]], truncated: false });
+      seed(admin, [row("admin")]);
+      render(<Tasks />);
+      expect(await screen.findByRole("heading", { name: "No open tasks" })).toBeInTheDocument();
+    } finally {
+      localStorage.removeItem("loom_tasks_mode");
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("a lane shows 20 rows, then Show all N opens the rest and focuses the first new one", async () => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      task(`t${String(i).padStart(2, "0")}`, { created_at: iso(100 - i) }),
+    );
+    vi.mocked(listTasks).mockResolvedValue({ tasks: many, truncated: false });
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task t00" });
+    expect(groupRows(/^To do/)).toHaveLength(20);
+    await user.click(screen.getByRole("button", { name: "Show all 25" }));
+    expect(groupRows(/^To do/)).toHaveLength(25);
+    expect(screen.getByRole("row", { name: "Task t20" })).toHaveFocus();
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+  });
+
+  it("Show all N leaves the task open in the panel where it is", async () => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      task(`t${String(i).padStart(2, "0")}`, { created_at: iso(100 - i) }),
+    );
+    vi.mocked(listTasks).mockResolvedValue({ tasks: many, truncated: false });
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await user.click(await screen.findByRole("row", { name: "Task t03" }));
+    const panel = await screen.findByRole("complementary", { name: "Task detail" });
+    expect(within(panel).getByRole("heading", { name: "Task t03" })).toBeInTheDocument();
+    const before = window.location.search;
+    await user.click(screen.getByRole("button", { name: "Show all 25" }));
+    expect(screen.getByRole("row", { name: "Task t20" })).toHaveFocus();
+    // The panel still holds t03: Show all moved focus, it opened nothing.
+    expect(window.location.search).toBe(before);
+    const still = screen.getByRole("complementary", { name: "Task detail" });
+    expect(within(still).getByRole("heading", { name: "Task t03" })).toBeInTheDocument();
+  });
+
+  it("on the board, Show all N focuses the first new card and leaves the open task where it is", async () => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      task(`t${String(i).padStart(2, "0")}`, { created_at: iso(100 - i) }),
+    );
+    vi.mocked(listTasks).mockResolvedValue({ tasks: many, truncated: false });
+    localStorage.setItem("loom_tasks_mode", "board");
+    try {
+      seed(admin, [row("admin")]);
+      const user = userEvent.setup();
+      render(<Tasks />);
+      await screen.findByRole("region", { name: "Tasks board" });
+      await user.click(document.querySelector<HTMLElement>('[data-task-id="t03"]') as HTMLElement);
+      const panel = await screen.findByRole("complementary", { name: "Task detail" });
+      expect(within(panel).getByRole("heading", { name: "Task t03" })).toBeInTheDocument();
+      const before = window.location.search;
+      await user.click(screen.getByRole("button", { name: "Show all 25" }));
+      await waitFor(() => expect(document.querySelector('[data-task-id="t20"]')).toHaveFocus());
+      expect(window.location.search).toBe(before);
+      const still = screen.getByRole("complementary", { name: "Task detail" });
+      expect(within(still).getByRole("heading", { name: "Task t03" })).toBeInTheDocument();
+    } finally {
+      localStorage.removeItem("loom_tasks_mode");
+    }
+  });
+
+  it("says its count covers the first 200 tasks when an inbox holds more", async () => {
+    vi.mocked(listTasks).mockResolvedValue({ tasks: ROWS, truncated: true });
+    seed(admin, [row("admin")]);
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    expect(screen.getByLabelText("Search and filters")).toHaveTextContent("in the first 200 per inbox");
+  });
+
+  it("every row has an actions menu with the moves its status allows; the triage row's one inline action is Accept", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    const urgent = await screen.findByRole("row", { name: "Task urgent" });
+    expect(within(urgent).getByRole("button", { name: "Accept Task urgent" })).toBeInTheDocument();
+    expect(within(urgent).queryByRole("button", { name: /Won't do/ })).toBeNull();
+    await user.click(within(urgent).getByRole("button", { name: "Actions for Task urgent" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Won't do…",
+      "Reassign…",
+      "Cancel task…",
+      "Copy id",
+    ]);
+    await user.keyboard("{Escape}");
+    const todo = screen.getByRole("row", { name: "Task low-late" });
+    expect(within(todo).queryByRole("button", { name: /^Accept/ })).toBeNull();
+    await user.click(within(todo).getByRole("button", { name: "Actions for Task low-late" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Start",
+      "Defer…",
+      "Block…",
+      "Won't do…",
+      "Reassign…",
+      "Cancel task…",
+      "Copy id",
+    ]);
+    await user.click(screen.getByRole("menuitem", { name: "Start" }));
+    await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "low-late"));
+  });
+
+  // Picking another inbox from the bell while on Tasks changes the page, not only the URL.
+  it("opens the inbox a navigation names while the page is already up", async () => {
+    vi.mocked(listInboxes).mockResolvedValueOnce([INBOX, INBOX2]);
+    vi.mocked(listTasks).mockImplementation(async () => ({ tasks: ROWS, truncated: false }));
+    seed(admin, [row("admin")]);
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    const rail = screen.getByRole("navigation", { name: "Inboxes" });
+    act(() => useStore.getState().navigate("tasks", { query: { inbox: INBOX2.inbox } }));
+    await waitFor(() =>
+      expect(within(rail).getByRole("button", { name: /public-bot/ })).toHaveAttribute("aria-current", "true"),
+    );
   });
 
   it("lists every inbox with its to-do and running counts, and All inboxes reads one task.list per inbox", async () => {
@@ -295,7 +509,6 @@ describe("Tasks page", () => {
       "true",
     );
     expect(within(rail).getByRole("button", { name: /public-bot.*4 to do/ })).toBeInTheDocument();
-    expect(within(rail).getByRole("button", { name: /Register inbox/ })).toBeInTheDocument();
     await user.click(within(rail).getByRole("button", { name: /All inboxes/ }));
     await waitFor(() => expect(listTasks).toHaveBeenCalledTimes(3));
     expect(
@@ -326,9 +539,13 @@ describe("Tasks page", () => {
       within(screen.getByRole("rowgroup", { name: /^Triage/ })).getByText("Nothing waiting for a decision."),
     ).toBeInTheDocument();
     expect(taskCounts).toHaveBeenCalledTimes(2); // the rail's numbers follow the action
+    // The decision is made: the focus goes on to the next task, not back to the page.
+    const next = screen.getByRole("row", { name: "Task low-late" });
+    expect(next).toHaveFocus();
+    expect(next).toHaveAttribute("aria-selected", "true");
   });
 
-  it("Won't do… asks for a reason, calls task.wont_do and the row lands in Closed", async () => {
+  it("Won't do… from the row's menu asks for a reason, calls task.wont_do and the row lands in Closed", async () => {
     vi.mocked(listTasks)
       .mockResolvedValueOnce({ tasks: ROWS, truncated: false })
       .mockResolvedValue({
@@ -341,17 +558,37 @@ describe("Tasks page", () => {
     const user = userEvent.setup();
     render(<Tasks />);
     await screen.findByRole("row", { name: "Task urgent" });
-    await user.click(screen.getByRole("button", { name: "Won't do Task urgent" }));
+    await user.click(screen.getByRole("button", { name: "Actions for Task urgent" }));
+    await user.click(screen.getByRole("menuitem", { name: "Won't do…" }));
     const dialog = await screen.findByRole("dialog");
+    // A reasoned, reversible close: the primary button, not the danger one.
+    const confirm = within(dialog).getByRole("button", { name: "Won't do" });
+    expect(confirm).toBeDisabled();
     await user.type(within(dialog).getByLabelText(/Reason/), "duplicate of private#3990");
-    await user.click(within(dialog).getByRole("button", { name: "Won't do" }));
+    await user.click(confirm);
     await waitFor(() =>
       expect(wontDoTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "urgent", "duplicate of private#3990"),
     );
-    await user.click(screen.getByRole("checkbox", { name: "Show closed" }));
-    await user.click(within(screen.getByRole("rowgroup", { name: /^Closed/ })).getByRole("button", { name: /Closed/ }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The row left Triage: the focus is on the next task.
+    await waitFor(() => expect(screen.getByRole("row", { name: "Task low-late" })).toHaveFocus());
+    await user.click(laneHead(/^Closed/));
     await waitFor(() => expect(groupRows(/^Closed/)).toContain("Task urgent"));
     expect(screen.getByText("duplicate of private#3990")).toBeInTheDocument();
+  });
+
+  it("Back in a row's dialog returns the focus to the row", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await user.click(screen.getByRole("button", { name: "Actions for Task urgent" }));
+    await user.click(screen.getByRole("menuitem", { name: "Won't do…" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByRole("row", { name: "Task urgent" })).toHaveFocus();
+    expect(wontDoTask).not.toHaveBeenCalled();
   });
 
   it("a row opens the panel, which reads task.get and task.history once; a triage task adds the poster's record and the rule", async () => {
@@ -425,20 +662,51 @@ describe("Tasks page", () => {
     render(<Tasks />);
     await screen.findByRole("row", { name: "Task urgent" });
     expect(screen.queryByRole("button", { name: /New task/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Inbox settings/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Register inbox/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Accept Task urgent" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Page options" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Keyboard shortcuts"]);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Actions for Task urgent" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Copy id"]);
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("row", { name: "Task urgent" }));
     const panel = await screen.findByRole("complementary", { name: "Task detail" });
     expect(within(panel).queryByRole("button", { name: "Accept" })).not.toBeInTheDocument();
   });
 
-  it("an admin gets Inbox settings and New task", async () => {
+  it("an admin gets New task, and Inbox settings and Register inbox under Page options", async () => {
     seed(admin, [row("admin")]);
+    const user = userEvent.setup();
     render(<Tasks />);
     await screen.findByRole("row", { name: "Task urgent" });
-    expect(screen.getByRole("button", { name: /Inbox settings/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /New task/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /New task/ })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Page options" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Inbox settings…",
+      "Register inbox…",
+      "Keyboard shortcuts",
+    ]);
+  });
+
+  it("a namespace switch closes the task the old namespace had open", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await user.keyboard("j{Enter}");
+    await screen.findByRole("complementary", { name: "Task detail" });
+    act(() => useStore.getState().setIdentity({ org: "dev", namespace: "other", agent: "loom-ui" }));
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Task detail" })).toBeNull());
+    // Once the new namespace's inboxes load, nothing reads the old task under it.
+    await waitFor(() =>
+      expect(
+        vi.mocked(listInboxes).mock.calls.some(([id]) => (id as { namespace: string }).namespace === "other"),
+      ).toBe(true),
+    );
+    expect(screen.queryByRole("complementary", { name: "Task detail" })).toBeNull();
+    expect(vi.mocked(getTask).mock.calls.filter(([id]) => (id as { namespace: string }).namespace === "other")).toEqual(
+      [],
+    );
   });
 
   it("keys: j/k move the selection, Enter opens, Esc closes, a accepts the selected triage row", async () => {
@@ -458,6 +726,26 @@ describe("Tasks page", () => {
     expect(screen.queryByRole("complementary", { name: "Task detail" })).not.toBeInTheDocument();
     await user.keyboard("a");
     await waitFor(() => expect(acceptTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "urgent"));
+  });
+
+  // The keys live in the help dialog and in each action's tooltip, not in a strip under the
+  // lanes; a lane's name is its state badge.
+  it("names the keys in the action tooltips and the help dialog, with no key strip", async () => {
+    seed(admin, [row("admin")]);
+    useStore.setState({ helpOpen: false });
+    const user = userEvent.setup();
+    const { container } = render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    expect(container.querySelector("kbd")).toBeNull();
+    const accept = screen.getByRole("button", { name: "Accept Task urgent" });
+    expect(accept).toHaveAttribute("aria-keyshortcuts", "a");
+    await user.hover(accept);
+    expect((await screen.findAllByText("Accept · A")).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Page options" }));
+    await user.click(screen.getByRole("menuitem", { name: "Keyboard shortcuts" }));
+    expect(useStore.getState().helpOpen).toBe(true);
+    const triage = within(screen.getByRole("rowgroup", { name: /^Triage/ })).getByRole("button", { name: /^Triage/ });
+    expect(triage.querySelector("[class*='badge']")).not.toBeNull();
   });
 
   it("the grid is one tab stop: arrows move between headers and rows, Home / End jump, Left / Right walk a row", async () => {
@@ -480,7 +768,9 @@ describe("Tasks page", () => {
     expect(stops()).toEqual([urgent]);
     await user.keyboard("{ArrowRight}");
     expect(within(urgent).getByRole("button", { name: "Accept Task urgent" })).toHaveFocus();
-    await user.keyboard("{ArrowLeft}");
+    await user.keyboard("{ArrowRight}");
+    expect(within(urgent).getByRole("button", { name: "Actions for Task urgent" })).toHaveFocus();
+    await user.keyboard("{ArrowLeft}{ArrowLeft}");
     expect(urgent).toHaveFocus();
     await user.keyboard("{ArrowDown}");
     expect(
@@ -491,7 +781,7 @@ describe("Tasks page", () => {
     await user.keyboard("{ArrowUp}{ArrowUp}");
     expect(urgent).toHaveFocus();
     await user.keyboard("{End}");
-    expect(screen.getByRole("row", { name: "Task blocked" })).toHaveFocus();
+    expect(laneHead(/^Closed/)).toHaveFocus();
     await user.keyboard("{Home}");
     expect(triageHead).toHaveFocus();
   });
@@ -540,6 +830,161 @@ describe("Tasks page", () => {
     expect(screen.getByRole("row", { name: "Task low-late" })).toHaveAttribute("aria-selected", "true");
     await user.keyboard("s");
     await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "low-late"));
+  });
+
+  it("keys act on a deep-linked task past a lane's first rows", async () => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      task(`t${String(i).padStart(2, "0")}`, { created_at: iso(100 - i) }),
+    );
+    vi.mocked(listTasks).mockResolvedValue({ tasks: many, truncated: false });
+    window.history.replaceState(null, "", "/tasks?task=t24");
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("complementary", { name: "Task detail" });
+    // t24 is not drawn: the To do lane shows its first 20.
+    expect(screen.queryByRole("row", { name: "Task t24" })).toBeNull();
+    await user.keyboard("s");
+    await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "t24"));
+  });
+
+  it("on the board, a key acts on the card that has focus, not the one selected before", async () => {
+    vi.mocked(listTasks).mockResolvedValue({
+      tasks: [task("t-a", { created_at: iso(3) }), task("t-b", { created_at: iso(2) })],
+      truncated: false,
+    });
+    localStorage.setItem("loom_tasks_mode", "board");
+    try {
+      seed(admin, [row("admin")]);
+      const user = userEvent.setup();
+      render(<Tasks />);
+      await screen.findByRole("region", { name: "Tasks board" });
+      await user.click(document.querySelector<HTMLElement>('[data-task-id="t-a"]') as HTMLElement);
+      await screen.findByRole("complementary", { name: "Task detail" });
+      await user.keyboard("{Escape}");
+      document.querySelector<HTMLElement>('[data-task-id="t-b"]')?.focus();
+      await user.keyboard("s");
+      await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "t-b"));
+      expect(claimTask).not.toHaveBeenCalledWith(expect.anything(), "t-a");
+    } finally {
+      localStorage.removeItem("loom_tasks_mode");
+    }
+  });
+
+  it("on the board, j moves from the card that has focus", async () => {
+    vi.mocked(listTasks).mockResolvedValue({
+      tasks: [
+        task("t-a", { created_at: iso(5) }),
+        task("t-b", { created_at: iso(4) }),
+        task("t-c", { created_at: iso(3) }),
+      ],
+      truncated: false,
+    });
+    localStorage.setItem("loom_tasks_mode", "board");
+    try {
+      seed(admin, [row("admin")]);
+      const user = userEvent.setup();
+      render(<Tasks />);
+      await screen.findByRole("region", { name: "Tasks board" });
+      await user.click(document.querySelector<HTMLElement>('[data-task-id="t-a"]') as HTMLElement);
+      await screen.findByRole("complementary", { name: "Task detail" });
+      await user.keyboard("{Escape}");
+      document.querySelector<HTMLElement>('[data-task-id="t-b"]')?.focus();
+      await user.keyboard("j");
+      await waitFor(() =>
+        expect(document.querySelector('[data-task-id="t-c"]')).toHaveAttribute("aria-current", "true"),
+      );
+    } finally {
+      localStorage.removeItem("loom_tasks_mode");
+    }
+  });
+
+  it("a selected row a filter hid, with no panel open, takes no keys", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await user.keyboard("jj");
+    expect(screen.getByRole("row", { name: "Task low-late" })).toHaveAttribute("aria-selected", "true");
+    await user.type(screen.getByLabelText("Search tasks"), "urgent");
+    await waitFor(() => expect(screen.queryByRole("row", { name: "Task low-late" })).toBeNull());
+    (document.activeElement as HTMLElement | null)?.blur();
+    await user.keyboard("s");
+    expect(claimTask).not.toHaveBeenCalled();
+  });
+
+  it("a failed first task.counts leaves the rail's counts unknown, never 'empty'", async () => {
+    vi.mocked(taskCounts).mockRejectedValueOnce(new Error("down"));
+    seed(admin, [row("admin")]);
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await waitFor(() => expect(taskCounts).toHaveBeenCalled());
+    const rail = screen.getByRole("navigation", { name: "Inboxes" });
+    expect(within(rail).queryByText("empty")).toBeNull();
+  });
+
+  it("reads counts a failed read left unknown again on the next poll", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(taskCounts).mockRejectedValueOnce(new Error("down"));
+      seed(admin, [row("admin")]);
+      render(<Tasks />);
+      await screen.findByRole("row", { name: "Task urgent" });
+      expect(taskCounts).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await waitFor(() => expect(taskCounts).toHaveBeenCalledTimes(2));
+      const rail = screen.getByRole("navigation", { name: "Inboxes" });
+      await waitFor(() => expect(within(rail).queryByText("…")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a failed poll after a good read keeps the tasks and says it could not refresh", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      seed(admin, [row("admin")]);
+      render(<Tasks />);
+      await screen.findByRole("row", { name: "Task urgent" });
+      vi.mocked(listTasks).mockRejectedValueOnce(new Error("down"));
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await waitFor(() => expect(screen.getByText(/Couldn't refresh the tasks/)).toBeInTheDocument());
+      expect(screen.getByRole("row", { name: "Task urgent" })).toBeInTheDocument();
+      expect(screen.queryByText("Couldn't load tasks")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an empty board column under a filter says none match", async () => {
+    localStorage.setItem("loom_tasks_mode", "board");
+    try {
+      seed(admin, [row("admin")]);
+      const user = userEvent.setup();
+      render(<Tasks />);
+      await screen.findByRole("region", { name: "Tasks board" });
+      expect(screen.queryByText("None match the filters.")).toBeNull();
+      await user.type(screen.getByLabelText("Search tasks"), "urgent");
+      await waitFor(() => expect(screen.getAllByText("None match the filters.").length).toBeGreaterThan(0));
+      expect(screen.queryByText("Nothing closed yet.")).toBeNull();
+    } finally {
+      localStorage.removeItem("loom_tasks_mode");
+    }
+  });
+
+  it("an empty Closed lane under a filter says none match, not that nothing closed", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await user.type(screen.getByLabelText("Search tasks"), "urgent");
+    await waitFor(() => expect(screen.queryByRole("row", { name: "Task low-late" })).toBeNull());
+    expect(screen.queryByText("Nothing closed yet.")).toBeNull();
+    expect(screen.getAllByText("None match the filters.").length).toBeGreaterThan(0);
   });
 
   it("with no inbox registered, explains and offers Register inbox to an admin only", async () => {
@@ -663,11 +1108,48 @@ describe("Tasks page", () => {
     expect(within(rail).queryByRole("button", { name: /9 to do/ })).toBeNull();
   });
 
-  it("an inbox with nothing in it shows the empty state", async () => {
+  it("an inbox with nothing in it shows the empty state, whose New task is the page's one primary", async () => {
     vi.mocked(listTasks).mockResolvedValueOnce({ tasks: [], truncated: false });
     seed(admin, [row("admin")]);
     render(<Tasks />);
-    await screen.findByText(/Nothing here yet/);
-    expect(screen.getByText("task.create")).toBeInTheDocument();
+    await screen.findByRole("heading", { name: "No tasks in private-bot yet" });
+    expect(screen.getByText(/task\.create/)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /New task/ })).toHaveLength(1);
+    // The toolbar stays, so nothing jumps when a task lands.
+    expect(screen.getByLabelText("Search and filters")).toBeInTheDocument();
+  });
+
+  // On a phone under a touch pointer the four tiles, the kind and the poster fold into one
+  // Filters menu beside the inbox, so the first task starts inside the chrome budget and no
+  // tile label is cut.
+  it("on a phone folds the tiles, the kind and the poster into one Filters menu", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: /max-width: (639|767|1279)px/.test(query),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    try {
+      seed(admin, [row("admin")]);
+      const user = userEvent.setup();
+      render(<Tasks />);
+      await screen.findByRole("row", { name: "Task urgent" });
+      expect(screen.queryByRole("group", { name: "Needs you" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Posted by" })).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Filters" }));
+      const menu = await screen.findByRole("menu", { name: "Filters" });
+      expect(within(menu).getByRole("menuitemradio", { name: "Everything" })).toHaveAttribute("aria-checked", "true");
+      await user.click(within(menu).getByRole("menuitemradio", { name: "Failed · reopen or close (1)" }));
+      expect(taskRows()).toEqual(["Task failed"]);
+      // The trigger says a filter is on.
+      await user.click(screen.getByRole("button", { name: "Filters (1)" }));
+      await user.click(await screen.findByRole("menuitemradio", { name: "This agent" }));
+      expect(screen.getByRole("button", { name: "Filters (2)" })).toBeInTheDocument();
+      expect(taskRows()).toEqual([]);
+      await user.click(screen.getByRole("button", { name: "Clear filters" }));
+      expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument();
+      // The open menu is checked by axe in e2e/tasks-ux.spec.ts.
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
+import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { listMemories, searchMemory, listSearchTraceLog, type SearchHit, type SearchTraceLogRow } from "../api";
 import { useStore, useIdentity } from "../lib/state";
@@ -11,8 +12,10 @@ import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs } from "../components/MemoryTabs";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { Chip, PageHeader, TabTrigger, TipTarget } from "../components/ui";
-import { humanizeError, relativeTime, displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
+import { Chip, ListTime, Loading, PageHeader, TabTrigger, TipTarget } from "../components/ui";
+import { ListState } from "../components/ui/ListState";
+import { ListToolbar } from "../components/ui/ListToolbar";
+import { humanizeError, displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, whyTerms } from "../lib/whyNote";
 
@@ -59,7 +62,7 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
             <span className="italic text-text-muted">wording not recorded</span>
           )}
         </div>
-        <div className="text-xs text-text-muted whitespace-nowrap">{relativeTime(r.ts)}</div>
+        <ListTime time={r.ts} className="text-xs text-text-muted" />
       </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
         <span>
@@ -141,8 +144,9 @@ function RecallHistory() {
   const setRunFilter = useStore((s) => s.setRecallRunFilter);
   const [rows, setRows] = useState<SearchTraceLogRow[] | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [hours, setHours] = useState(168);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -158,7 +162,7 @@ function RecallHistory() {
         if (!cancelled) setRows(r.rows || []);
       } catch (e) {
         if (!cancelled) {
-          setError(humanizeError(e));
+          setError(e);
           setRows([]);
         }
       } finally {
@@ -168,7 +172,7 @@ function RecallHistory() {
     return () => {
       cancelled = true;
     };
-  }, [identity, hours, runFilter]);
+  }, [identity, hours, runFilter, retry]);
 
   // Recording is an operator switch (LOOM_SEARCH_TRACE_LOG_ENABLED) and the
   // query wording needs the namespace's own consent on top, so "empty" has two
@@ -208,10 +212,12 @@ function RecallHistory() {
         </div>
       )}
 
-      {loading && <div className="text-sm text-text-muted px-1">Loading…</div>}
-      {error && <div className="text-sm text-danger px-1">{error}</div>}
+      {loading && <Loading layout="inline" label="Loading recorded searches" className="px-1 mb-2" />}
+      {error !== null && (
+        <ListState kind="error" things="recorded searches" error={error} onRetry={() => setRetry((n) => n + 1)} />
+      )}
 
-      {rows != null && !loading && !error && rows.length === 0 && (
+      {rows != null && !loading && error === null && rows.length === 0 && (
         <EmptyState
           icon="history"
           title={runFilter ? "No recorded searches under this run" : "No recorded searches"}
@@ -232,29 +238,13 @@ function RecallHistory() {
               <em>&ldquo;Record what I search and what I store&rdquo;</em>.
             </div>
           )}
-          <div className="space-y-2">
+          <div className="space-y-2" aria-busy={loading || undefined}>
             {rows.map((r, i) => (
               <RecallHistoryRow key={`${r.ts}-${i}`} r={r} />
             ))}
           </div>
         </>
       )}
-    </>
-  );
-}
-
-/** A ranked hit's similarity, final score and the terms that moved it. */
-function RankedTerms({ hit }: { hit: SearchHit }) {
-  return (
-    <>
-      <TipTarget tip="similarity the search reports for the hit">sim {hit.similarity.toFixed(3)}</TipTarget>
-      <TipTarget tip="final score the ranked hits are ordered by">score {hit.rank_score.toFixed(3)}</TipTarget>
-      {whyTerms(hit.score_components).map((t) => (
-        <span key={t.label} className={t.value < 0 ? "text-warn" : "text-accent"}>
-          {t.label} {signed(t.value)}
-        </span>
-      ))}
-      {hit.source && <Badge text={hit.source} state="neutral" size="sm" />}
     </>
   );
 }
@@ -266,6 +256,107 @@ interface RecallRow {
   memoryType: string;
   keyword: boolean;
   hit?: SearchHit;
+}
+
+// The entity boost has its own column; the other terms that moved a hit sit under its score.
+const ENTITY = "entity";
+
+const NUMERIC = "block w-full text-right [@media(max-width:768px)]:text-left tabular-nums";
+// Under 769 px Click UI's Table lays each row out as a card of wrapping cells: the key and
+// the value take a whole line each, the figures pair up two to a line, and none may grow
+// past the card.
+const CARD = "[@media(max-width:768px)]:min-w-0 [@media(max-width:768px)]:basis-1/2";
+const CARD_WIDE = "[@media(max-width:768px)]:min-w-0 [@media(max-width:768px)]:basis-full";
+const SCORE_HEADERS = [
+  { label: <span className={NUMERIC}>#</span>, width: "48px" },
+  { label: "Key", width: "24%" },
+  { label: "Value" },
+  { label: <span className={NUMERIC}>Similarity</span>, width: "96px" },
+  { label: "Score", width: "160px" },
+  { label: <span className={NUMERIC}>Entity</span>, width: "80px" },
+  { label: "Type", width: "140px" },
+];
+
+/** One scored row: the key opens the memory (a button, so the keyboard reaches it), the
+ *  score draws Click UI's table bar against the top ranked hit. */
+function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) => void): TableRowType {
+  const hit = row.hit;
+  const terms = whyTerms(hit?.score_components);
+  const entity = terms.find((t) => t.label === ENTITY);
+  const width = hit && top > 0 ? Math.max(0, Math.min(100, (hit.rank_score / top) * 100)) : 0;
+  return {
+    id: row.key,
+    onClick: () => open(row.key),
+    className: "cursor-pointer",
+    items: [
+      { className: CARD, label: <span className={`${NUMERIC} text-text-muted`}>{i + 1}</span> },
+      {
+        className: CARD_WIDE,
+        label: (
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                open(row.key);
+              }}
+              className="min-w-0 max-w-full line-clamp-1 break-all rounded text-left font-mono text-xs text-text"
+            >
+              {row.key}
+            </button>
+            {row.keyword && (
+              <TipTarget tip="its text holds the query; the Memories list shows these first, newest first">
+                <Badge text="keyword match" state="neutral" size="sm" />
+              </TipTarget>
+            )}
+          </div>
+        ),
+      },
+      {
+        className: CARD_WIDE,
+        label: (
+          <span className="line-clamp-1 break-words text-sm" title={row.text}>
+            {row.text}
+          </span>
+        ),
+      },
+      { className: CARD, label: <span className={NUMERIC}>{hit ? hit.similarity.toFixed(3) : "—"}</span> },
+      {
+        className: CARD,
+        label: hit ? (
+          <div className="min-w-0 w-full">
+            <span className="tabular-nums">{hit.rank_score.toFixed(3)}</span>
+            <span className="recall-bar" aria-hidden="true">
+              <span style={{ width: `${Math.round(width * 10) / 10}%` }} />
+            </span>
+            {terms.some((t) => t !== entity) && (
+              <span className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-text-muted">
+                {terms
+                  .filter((t) => t !== entity)
+                  .map((t) => (
+                    <span key={t.label}>
+                      {t.label} {signed(t.value)}
+                    </span>
+                  ))}
+              </span>
+            )}
+          </div>
+        ) : (
+          "—"
+        ),
+      },
+      { className: CARD, label: <span className={NUMERIC}>{entity ? signed(entity.value) : "—"}</span> },
+      {
+        className: CARD,
+        label: (
+          <span className="inline-flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-text-muted">
+            <span>{row.memoryType}</span>
+            {hit?.source && <Badge text={hit.source} state="neutral" size="sm" />}
+          </span>
+        ),
+      },
+    ],
+  };
 }
 
 // Recall Lab — the "why did this rank here" surface: the rows the Memories list shows for a
@@ -286,11 +377,28 @@ export function RecallLab() {
   const [abstain, setAbstain] = useState(false);
   const [model, setModel] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // The failed read itself, so its request id shows beside the message.
+  const [error, setError] = useState<unknown>(null);
+  // Bumped by Retry: the same query is asked again.
+  const [attempt, setAttempt] = useState(0);
+  const inspect = useStore((s) => s.inspect);
+  const open = useCallback((key: string) => inspect(key, { agent: "*" }), [inspect]);
   // The ranked search failed while keyword rows stood: those still show, with this said.
   const [rankedError, setRankedError] = useState<string | null>(null);
   // A result set the search abstained on stays collapsed until the user opts in.
   const [showWeak, setShowWeak] = useState(false);
+  // Another namespace's rows are not this one's to open: they go during render, before a
+  // click could open the old namespace's key under the new one.
+  const namespaceKey = `${identity.org}/${identity.namespace}`;
+  const [rowsFor, setRowsFor] = useState(namespaceKey);
+  if (rowsFor !== namespaceKey) {
+    setRowsFor(namespaceKey);
+    setRows(null);
+    setAbstain(false);
+    setRankedError(null);
+    setShowWeak(false);
+    setError(null);
+  }
 
   useEffect(() => {
     // The text the Memories list would send; its tag: / agent: filters are not applied here.
@@ -355,7 +463,7 @@ export function RecallLab() {
         setRankedError(failure);
       } catch (e) {
         if (ac.signal.aborted) return;
-        setError(humanizeError(e));
+        setError(e);
         setRows([]);
       } finally {
         if (!ac.signal.aborted) setLoading(false);
@@ -365,10 +473,14 @@ export function RecallLab() {
       ac.abort();
       clearTimeout(t);
     };
-  }, [query, identity]);
+  }, [query, identity, attempt]);
 
   const showResults = !abstain || showWeak;
   const topScore = Math.max(0, ...(rows ?? []).map((row) => row.hit?.rank_score ?? 0));
+  const count =
+    rows != null && rows.length > 0 && showResults && error == null
+      ? `${rows.length} row${rows.length === 1 ? "" : "s"}${model ? ` · ${model}` : ""}`
+      : undefined;
 
   return (
     <PageContainer>
@@ -403,24 +515,28 @@ export function RecallLab() {
           <RecallHistory />
         </Tabs.Content>
         <Tabs.Content value="score">
-          <div className="mb-4">
-            <SearchField
-              aria-label="Recall query"
-              autoFocus
-              value={query}
-              onChange={(value) => setQuery(value)}
-              placeholder="Search your memories — see the scoring breakdown"
-            />
-          </div>
-          {loading && <div className="text-sm text-text-muted px-1">Scoring…</div>}
-          {error && <div className="text-sm text-danger px-1">{error}</div>}
+          <ListToolbar label="Score a query" count={count}>
+            <div className="min-w-0 flex-1">
+              <SearchField
+                aria-label="Recall query"
+                autoFocus
+                value={query}
+                onChange={(value) => setQuery(value)}
+                placeholder="Search your memories — see the scoring breakdown"
+              />
+            </div>
+          </ListToolbar>
+          {loading && <Loading layout="inline" label="Loading scores" className="px-1 mb-2" />}
+          {error != null && !loading && (
+            <ListState kind="error" things="scores" error={error} onRetry={() => setAttempt((n) => n + 1)} />
+          )}
           {rankedError && !loading && (
             <div className="mb-2 text-xs text-text-muted px-1">
               Ranked search failed ({rankedError}); showing the keyword matches only.
             </div>
           )}
 
-          {rows != null && !loading && !error && rows.length === 0 && (
+          {rows != null && !loading && error == null && rows.length === 0 && (
             <EmptyState
               icon="flask"
               title="No candidates"
@@ -444,47 +560,14 @@ export function RecallLab() {
                   )}
                 </div>
               )}
-              {model && showResults && (
-                <div className="text-xs text-text-muted mb-2 px-1">
-                  {rows.length} row{rows.length === 1 ? "" : "s"} · embedder <span className="font-mono">{model}</span>
-                </div>
-              )}
               {showResults && (
-                <div className="space-y-1.5">
-                  {rows.map((row, i) => (
-                    <div key={row.key} className="p-3.5 rounded-xl border border-border bg-surface">
-                      <div className="flex items-start gap-3">
-                        <span className="shrink-0 mt-0.5 w-6 text-right text-xs font-mono text-text-muted">
-                          #{i + 1}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-mono text-text-muted break-all">{row.key}</p>
-                          <p className="text-sm text-text break-words">{row.text}</p>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-mono text-text-muted">
-                            {row.keyword && (
-                              <TipTarget tip="its text holds the query; the Memories list shows these first, newest first">
-                                <Badge text="keyword match" state="neutral" size="sm" />
-                              </TipTarget>
-                            )}
-                            {row.hit && <RankedTerms hit={row.hit} />}
-                            <span className="text-text-muted">{row.memoryType}</span>
-                          </div>
-                          {row.hit && (
-                            // score bar, relative to the top ranked hit
-                            <div className="mt-1.5 h-1 rounded-full bg-surface-2 overflow-hidden">
-                              <div
-                                className="h-full bg-accent"
-                                style={{
-                                  width: `${topScore > 0 ? Math.max(0, Math.min(100, (row.hit.rank_score / topScore) * 100)).toFixed(1) : 0}%`,
-                                }}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <Table
+                  aria-label="Recall scores"
+                  aria-busy={loading || undefined}
+                  size="sm"
+                  headers={SCORE_HEADERS}
+                  rows={rows.map((row, i) => scoreRow(row, i, topScore, open))}
+                />
               )}
             </>
           )}

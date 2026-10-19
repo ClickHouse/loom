@@ -147,7 +147,7 @@ describe("Add repository — fetching versus reading are two questions", () => {
     await fillRepo();
     fireEvent.click(screen.getByRole("button", { name: /Find branches/ }));
     await waitFor(() => expect(remoteBranches).toHaveBeenCalledWith("dev", "acme/app", "", ""));
-    const list = await screen.findByRole("list", { name: "branches" });
+    const list = await screen.findByRole("list", { name: "Branches" });
     expect(list.textContent).toMatch(/master/);
     expect(list.textContent).toMatch(/26\.8/);
     // the default is pre-selected, the indexed one is disabled, the release one is marked

@@ -26,13 +26,13 @@ import { GettingStarted, useOnboarding } from "../components/GettingStarted";
 import { Skeleton } from "../components/Skeleton";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { relativeTime, humanizeError } from "../lib/format";
+import { relativeTime, humanizeError, parseChTime } from "../lib/format";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { PrivacyFilters, type PrivacyFilterStarter } from "./admin/Blacklist";
 import { canCall, canCallCodeRepos } from "../lib/canCall";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { Alert, PageHeader, TabTrigger, Tip, Unavailable } from "../components/ui";
+import { Alert, ListTime, LoadingSkeleton, PageHeader, TabTrigger, Tip, Unavailable } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
 import { READ_ONLY_TIP, canWrite, roleOnNamespace, useNamespaceRole } from "../lib/namespaceRole";
@@ -350,7 +350,7 @@ function MemoryTab() {
           </h2>
           <p className="text-xs text-text-muted mt-0.5">
             Turn an AGENTS.md, CLAUDE.md or rules file into memories — one per{" "}
-            <code className="font-mono text-xs">##</code> section.
+            <code className="code-inline text-xs">##</code> section.
           </p>
         </div>
         <Button type="secondary" htmlType="button" iconLeft="upload" onClick={() => setImporting(true)}>
@@ -1014,7 +1014,11 @@ function TokensSection({
 
         <div className="rounded-2xl border border-border bg-surface p-2">
           <TokensStatusSummary tokens={sa} />
-          {sa === null && <Skeleton className="h-12 w-full" />}
+          {sa === null && (
+            <LoadingSkeleton label="Loading tokens">
+              <Skeleton className="h-12 w-full" />
+            </LoadingSkeleton>
+          )}
           {sa !== null && sa.length === 0 && (
             <p className="text-sm text-text-muted px-2.5 py-3">
               No tokens yet. Generate one above; you pick the client (Claude Code, Cursor, …) after it is minted, and
@@ -1024,12 +1028,9 @@ function TokensSection({
           {sa !== null && sa.length > 0 && (
             <div className="space-y-1">
               {sa.map((s) => {
-                const createdMs = s.created_at ? Date.parse(s.created_at) : NaN;
+                const created = parseChTime(s.created_at);
                 const stranded =
-                  !s.revoked_at &&
-                  !s.last_used_at &&
-                  Number.isFinite(createdMs) &&
-                  Date.now() - createdMs > 60 * 60 * 1000;
+                  !s.revoked_at && !s.last_used_at && !!created && Date.now() - created.getTime() > 60 * 60 * 1000;
                 return (
                   <div
                     key={s.sa_subject || s.name}
@@ -1044,10 +1045,12 @@ function TokensSection({
                         <SaExpiryBadge expiresAt={s.expires_at} revoked={!!s.revoked_at} />
                       </div>
                       <div className="text-xs text-text-muted tabular">
-                        {describeTokenScope(s)} · created {relativeTime(s.created_at)}
+                        {describeTokenScope(s)} · created <ListTime time={s.created_at} quiet />
                         {" · "}
                         {s.last_used_at ? (
-                          <>used {relativeTime(s.last_used_at)}</>
+                          <>
+                            used <ListTime time={s.last_used_at} quiet />
+                          </>
                         ) : (
                           <span className="text-text-muted">no calls in 30 days</span>
                         )}
@@ -1290,10 +1293,9 @@ function TokensSection({
               </pre>
               <CopyButton text={botSnippet(mintedToken)} label="Copy code" className={COPY_BELOW_CAPTION} />
               <div className="mt-1.5 text-xs text-text-muted leading-relaxed">
-                Install with{" "}
-                <code className="font-mono text-xs bg-surface-2 px-1 rounded">pip install clickhouse-loom</code>. The
-                same token also works on raw HTTP:{" "}
-                <code className="font-mono text-xs bg-surface-2 px-1 rounded">
+                Install with <code className="code-inline text-xs">pip install clickhouse-loom</code>. The same token
+                also works on raw HTTP:{" "}
+                <code className="code-inline text-xs">
                   curl -H "Authorization: Bearer $LOOM_API_KEY" {mintedToken.baseUrl}/v1/memory.search
                 </code>
               </div>
@@ -1318,22 +1320,16 @@ function TokensStatusSummary({ tokens }: { tokens: ServiceAccountEntry[] | null 
   let idle = 0;
   let expiringSoon = 0;
   for (const t of live) {
-    if (t.expires_at) {
-      const exp = Date.parse(t.expires_at);
-      if (Number.isFinite(exp) && exp > now && exp - now <= FOURTEEN_DAYS) {
-        expiringSoon += 1;
-      }
+    const exp = parseChTime(t.expires_at);
+    if (exp && exp.getTime() > now && exp.getTime() - now <= FOURTEEN_DAYS) {
+      expiringSoon += 1;
     }
     if (!t.last_used_at) {
       waiting += 1;
       continue;
     }
-    const usedAt = Date.parse(t.last_used_at);
-    if (!Number.isFinite(usedAt)) {
-      idle += 1;
-      continue;
-    }
-    if (now - usedAt <= SEVEN_DAYS) active += 1;
+    const usedAt = parseChTime(t.last_used_at);
+    if (usedAt && now - usedAt.getTime() <= SEVEN_DAYS) active += 1;
     else idle += 1;
   }
 
@@ -1362,11 +1358,12 @@ function SaExpiryBadge({ expiresAt, revoked }: { expiresAt: string | null; revok
   if (!expiresAt) {
     return <span className="ml-2 text-xs text-text-muted">never expires</span>;
   }
-  const expiryMs = new Date(expiresAt).getTime();
+  const expiry = parseChTime(expiresAt);
+  if (!expiry) return null;
   const now = Date.now();
   const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
-  const expired = expiryMs < now;
-  const expiringSoon = !expired && expiryMs - now <= FOURTEEN_DAYS;
+  const expired = expiry.getTime() < now;
+  const expiringSoon = !expired && expiry.getTime() - now <= FOURTEEN_DAYS;
   const tone = expired ? "text-danger" : expiringSoon ? "text-warn" : "text-text-muted";
   return <span className={`ml-2 text-xs ${tone}`}>{expired ? "expired" : `expires ${relativeTime(expiresAt)}`}</span>;
 }
@@ -1380,7 +1377,7 @@ function BotConnectPreview({ org, namespace, baseUrl }: { org: string; namespace
     <div className="mt-2 rounded-lg border border-border bg-surface-2 p-3">
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="text-xs text-text-muted leading-relaxed">
-          Export the minted token as <code className="font-mono">LOOM_API_KEY</code>; the namespace follows the first
+          Export the minted token as <code className="code-inline">LOOM_API_KEY</code>; the namespace follows the first
           one you tick.
         </div>
         <CopyButton
@@ -1393,9 +1390,8 @@ function BotConnectPreview({ org, namespace, baseUrl }: { org: string; namespace
         {code}
       </pre>
       <div className="mt-2 text-xs text-text-muted leading-relaxed">
-        Install with <code className="font-mono text-xs bg-surface px-1 rounded">pip install clickhouse-loom</code>.
-        Same JWT also works on raw HTTP — set{" "}
-        <code className="font-mono text-xs bg-surface px-1 rounded">Authorization: Bearer $LOOM_API_KEY</code>.
+        Install with <code className="code-inline text-xs">pip install clickhouse-loom</code>. Same JWT also works on
+        raw HTTP — set <code className="code-inline text-xs">Authorization: Bearer $LOOM_API_KEY</code>.
       </div>
     </div>
   );
@@ -1404,8 +1400,10 @@ function BotConnectPreview({ org, namespace, baseUrl }: { org: string; namespace
 function ConnectionBadge({ token }: { token: ServiceAccountEntry }) {
   if (token.revoked_at) return null;
   if (!token.last_used_at) return <Badge text="Waiting…" state="warning" size="sm" />;
-  const ageMs = Date.now() - new Date(token.last_used_at).getTime();
-  if (ageMs < 30 * 24 * 3600 * 1000) return <Badge text="Connected" state="success" size="sm" />;
+  const usedAt = parseChTime(token.last_used_at);
+  if (usedAt && Date.now() - usedAt.getTime() < 30 * 24 * 3600 * 1000) {
+    return <Badge text="Connected" state="success" size="sm" />;
+  }
   return null;
 }
 
@@ -1508,9 +1506,9 @@ function ImportCuratedPanel() {
     <div className="space-y-3">
       <div className="text-xs text-text-muted leading-relaxed">
         Paste a doc that represents reviewed knowledge — your AGENTS.md, CLAUDE.md, .cursor/rules, or any
-        operating-principles doc. Each <code className="font-mono text-xs">##</code> section becomes one memory in{" "}
-        <code className="font-mono text-xs">{identity.namespace}</code>. The import bypasses the review queue but still
-        respects pinned memories: if a section contradicts a pinned memory it's rejected per-row.
+        operating-principles doc. Each <code className="code-inline text-xs">##</code> section becomes one memory in{" "}
+        <code className="code-inline text-xs">{identity.namespace}</code>. The import bypasses the review queue but
+        still respects pinned memories: if a section contradicts a pinned memory it's rejected per-row.
       </div>
       <div className="grid grid-cols-[1fr_auto] gap-2">
         <TextField

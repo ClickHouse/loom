@@ -1,142 +1,70 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
-import { Button } from "@clickhouse/click-ui/Button";
-import { Icon } from "@clickhouse/click-ui/Icon";
-import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Switch } from "@clickhouse/click-ui/Switch";
 import {
   searchConversations,
   listConversationThreads,
-  getConversationThread,
-  listConversationMessages,
   getNamespace,
   setConversationLogging,
-  listMemories,
+  THREADS_MAX_OFFSET,
   type ConversationHit,
-  type ConversationMessage,
   type ConversationThreadSummary,
-  type ConversationThreadDetail,
-  type MemoryListEntry,
 } from "../api";
-import { useStore, useIdentity } from "../lib/state";
+import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
-import { Skeleton } from "../components/Skeleton";
-import { Chip, ExternalLink, PageHeader, SectionHeading } from "../components/ui";
-import { Modal } from "../components/ui/Modal";
-import { EmptyState } from "../components/EmptyState";
+import { RowSkeleton, Skeleton } from "../components/Skeleton";
+import { ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../components/ui";
+import { ListPager } from "../components/ui/ListPager";
+import { ListState } from "../components/ui/ListState";
+import { ListTime } from "../components/ui/ListTime";
+import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
+import { DraftSearch } from "../components/ui/DraftSearch";
 import { toast } from "../components/Toast";
-import { absoluteTime, displayAgent, relativeTime, truncate, humanizeError, errorRequestId } from "../lib/format";
+import { AgentBadge } from "../components/AgentBadge";
+import { displayAgent, truncate, humanizeError, sentenceCase } from "../lib/format";
 import { useAbortableEffect, useKeyboard } from "../lib/hooks";
-import { CopyButton } from "../components/CopyButton";
+import { useRowNav } from "../lib/useRowNav";
+import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { IconButton } from "../components/IconButton";
-import { SessionBriefPanel } from "../components/SessionBriefPanel";
 import { SessionBriefsSection } from "../components/SessionBriefsSection";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
+import { ThreadReplayDialog, threadTitle, UNTITLED_THREAD, type ReplayThread } from "../components/ThreadReplayDialog";
+
+const THREADS_PAGE = 30;
 
 // The fields the Sessions list reads of a thread.
 const THREADS_FIELDS = ["thread_id", "agent", "msg_count", "title", "last_role", "last_seen", "last_content_excerpt"];
+// The hit lines a thread's search row shows; its match count says how many it has.
+const HIT_LINES = 3;
 
-// Role → visual treatment for the thread replay. Differentiating turns is the
-// single biggest readability win: a coding chat is otherwise an undifferentiated
-// wall of gray text with code indistinguishable from prose.
-const ROLE_META: Record<string, { label: string; rail: string; card: string; muted?: boolean }> = {
-  user: { label: "You", rail: "border-l-2 border-accent", card: "bg-surface" },
-  assistant: {
-    label: "Assistant",
-    rail: "border-l-2 border-border",
-    card: "bg-surface-2",
-  },
-  system: { label: "System", rail: "", card: "bg-transparent border border-dashed border-border", muted: true },
-  tool: { label: "Tool", rail: "border-l-2 border-warn/60", card: "bg-surface-2" },
-};
+/** A listed thread's name: its title, else the user's message the list carries (its last
+ *  turn, when that is the user's), else "" ("Untitled thread"). The list has no first
+ *  user message; the replay names the thread by it once its turns are read. */
+function listedTitle(t: ConversationThreadSummary): string {
+  return threadTitle(t.title, t.last_role === "user" ? t.last_content_excerpt : "");
+}
 
-function linkify(text: string) {
-  return text.split(/(https?:\/\/[^\s)]+)/g).map((p, i) =>
-    /^https?:\/\//.test(p) ? (
-      <ExternalLink key={i} href={p} className="break-all">
-        {p}
-      </ExternalLink>
+/** `text` with each word of the query that it holds in 600 weight: Click UI has no
+ *  highlight colour, so a match is set in bold, never coloured. */
+function emphasize(text: string, query: string) {
+  const words = query
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w.length > 1)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (words.length === 0) return text;
+  const re = new RegExp(`(${words.join("|")})`, "gi");
+  return text.split(re).map((part, i) =>
+    i % 2 === 1 ? (
+      <strong key={i} className="font-semibold">
+        {part}
+      </strong>
     ) : (
-      <span key={i}>{p}</span>
+      part
     ),
-  );
-}
-
-// A turn's element id: a msg_id is unique per agent only, and a thread read across
-// agents can hold two agents' turns under one id.
-function turnId(m: ConversationMessage): string {
-  return `msg-${m.agent ?? ""}-${m.msg_id}`;
-}
-
-// A fenced block in a transcript turn: the text as recorded, with a Copy button. Not Click
-// UI's CodeBlock, which highlights by language and would guess at agents' mixed output.
-function TranscriptCode({ code, lang }: { code: string; lang?: string }) {
-  return (
-    <div className="my-2 rounded-lg border border-border bg-surface-2">
-      <div className="flex items-center justify-between gap-2 px-3 pt-2">
-        <span className="text-xs text-text-muted">{lang}</span>
-        <CopyButton text={code} label="Copy" ariaLabel="Copy code" className="shrink-0" />
-      </div>
-      <pre className="text-xs font-mono whitespace-pre-wrap break-words p-3 overflow-x-auto">{code}</pre>
-    </div>
-  );
-}
-
-// Render message content: split on ``` fences (code blocks), and within prose
-// render inline `code` and linkify URLs. Zero deps — coding transcripts need
-// code legible, not buried in a gray paragraph.
-function MessageBody({ content, muted = false }: { content: string; muted?: boolean }) {
-  const segs = content.split(/```/);
-  return (
-    <div className={`text-sm leading-relaxed ${muted ? "text-text-muted" : "text-text"}`}>
-      {segs.map((seg, i) => {
-        if (i % 2 === 1) {
-          const nl = seg.indexOf("\n");
-          const firstLine = nl >= 0 ? seg.slice(0, nl).trim() : "";
-          const lang = /^[a-zA-Z0-9_+-]{1,20}$/.test(firstLine) ? firstLine : "";
-          const code = (lang ? seg.slice(nl + 1) : seg).replace(/\n$/, "");
-          return <TranscriptCode key={i} code={code} lang={lang || undefined} />;
-        }
-        return (
-          <span key={i} className="whitespace-pre-wrap break-words">
-            {seg.split(/(`[^`]+`)/g).map((piece, j) =>
-              piece.length > 1 && piece.startsWith("`") && piece.endsWith("`") ? (
-                <code key={j} className="text-xs font-mono px-1 rounded bg-surface-2">
-                  {piece.slice(1, -1)}
-                </code>
-              ) : (
-                <span key={j}>{linkify(piece)}</span>
-              ),
-            )}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
-function ReasoningDisclosure({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="mb-1">
-      <Button
-        type="empty"
-        htmlType="button"
-        iconLeft={open ? "chevron-down" : "chevron-right"}
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-      >
-        Thinking
-      </Button>
-      {open && (
-        <div className="mt-1 text-xs text-text-muted italic whitespace-pre-wrap break-words border-l-2 border-border pl-2">
-          {text}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -146,7 +74,10 @@ export function Conversations() {
   const roleHere = useNamespaceRole(identity.namespace);
   const pendingConversationThread = useStore((s) => s.pendingConversationThread);
   const clearPendingConversationThread = useStore((s) => s.clearPendingConversationThread);
+  // The search last sent (on Enter); the box keeps what is typed, so a keystroke does not
+  // render the threads. Clearing a search bumps `searchBox` to empty it.
   const [q, setQ] = useState("");
+  const [searchBox, setSearchBox] = useState(0);
   const [hits, setHits] = useState<ConversationHit[] | null>(null);
   const [busy, setBusy] = useState(false);
   // Filter the namespace-wide thread list down to one agent (claude-code,
@@ -161,33 +92,32 @@ export function Conversations() {
   // recovery path instead of just "try a different phrase."
   const [threads, setThreads] = useState<ConversationThreadSummary[] | null>(null);
   // Thread-list read failure, shown inline with a Retry.
-  const [threadsError, setThreadsError] = useState<string | null>(null);
+  const [threadsError, setThreadsError] = useState<unknown>(null);
+  // A failed search: said with a Retry, never as "no matches".
+  const [searchError, setSearchError] = useState<unknown>(null);
+  // The query the hits on screen answer, for the matched words' weight.
+  const [hitsFor, setHitsFor] = useState("");
   const [threadsRetry, setThreadsRetry] = useState(0);
+  // Threads come a page at a time, most recently active first, over the past year.
+  const [threadPage, setThreadPage] = useState(0);
+  // The page the threads on screen came from: the pager pages from it, so a second Next
+  // while a page loads asks for that same page again.
+  const [shownThreadPage, setShownThreadPage] = useState(0);
+  // The agent filter those threads were read for: under another, the pager pages from the
+  // page asked for instead.
+  const [shownThreadAgent, setShownThreadAgent] = useState<string | null>(null);
+  const [threadsReading, setThreadsReading] = useState(false);
+  const [threadsPaged, setThreadsPaged] = useState(true);
+  // Known only once the page after the last full one comes back empty (without a total the
+  // pager goes no further than the next page).
+  const [threadsTotal, setThreadsTotal] = useState<number | undefined>(undefined);
+  const [seenAgents, setSeenAgents] = useState<string[]>([]);
+  // The first page's threads: a new one on top makes a learned total out of date.
+  const firstPageRef = useRef<Set<string>>(new Set());
   // Selected thread for the message-replay dialog. Click a thread
-  // card OR a search-hit thread header → fetch full messages → show.
-  const [openThread, setOpenThread] = useState<{
-    thread_id: string;
-    namespace: string;
-  } | null>(null);
-  const [threadDetail, setThreadDetail] = useState<ConversationThreadDetail | null>(null);
-  const [threadLoading, setThreadLoading] = useState(false);
-  // Durable memories this thread produced (via source_trace=conversation:<id>).
-  const [threadMemories, setThreadMemories] = useState<MemoryListEntry[]>([]);
-  // When a thread is opened from a search hit, scroll to + highlight that message.
-  // The turn a search hit names: its id and the start of its text, since two agents' turns
-  // in one thread can share an id.
-  const [highlight, setHighlight] = useState<{ msgId: string; excerpt: string } | null>(null);
-  // Cursor for the next page of messages (conversation.list). Null
-  // means "no more" — either we've walked to the end or the initial
-  // fetch fit under the limit. The "Load more" button only renders
-  // when this is set.
-  const [moreCursor, setMoreCursor] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
+  // card OR a search-hit thread header → the dialog reads the full messages and shows them.
+  const [openThread, setOpenThread] = useState<ReplayThread | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  // The open thread's reads (detail, memories, "Load more"); aborted when another thread
-  // opens, the dialog closes or the view unmounts, so thread A's answers never land
-  // under thread B.
-  const threadReads = useRef<AbortController | null>(null);
   // Bumped per search and per namespace switch: only the latest search writes hits.
   const searchSeq = useRef(0);
   // Bumped per namespace switch: a logging write that fails after the switch must not
@@ -208,39 +138,89 @@ export function Conversations() {
   );
   useKeyboard(keys);
 
-  useEffect(() => () => threadReads.current?.abort(), []);
-
   // Hits, threads, the agent filter and the recording switch belong to the namespace
-  // they were read for; a switch clears them so B never shows A's rows or toggles A's
-  // value into B.
+  // they were read for; a switch clears them during render, so B's first read asks for its
+  // own first page under every agent, and B never shows A's rows or toggles A's value.
+  const namespaceKey = `${identity.org}/${identity.namespace}`;
+  const [stateFor, setStateFor] = useState(namespaceKey);
+  if (stateFor !== namespaceKey) {
+    setStateFor(namespaceKey);
+    setHits(null);
+    setSearchError(null);
+    setBusy(false);
+    setThreads(null);
+    setThreadPage(0);
+    setShownThreadPage(0);
+    setSeenAgents([]);
+    setThreadsPaged(true);
+    setThreadsTotal(undefined);
+    setAgentFilter("*");
+    setLoggingEnabled(null);
+  }
+  // Answers already in flight for the namespace left are dropped by their sequence numbers.
   useEffect(() => {
     searchSeq.current += 1;
     scopeGen.current += 1;
-    setHits(null);
-    setBusy(false);
-    setThreads(null);
-    setAgentFilter("*");
-    setLoggingEnabled(null);
   }, [identity.org, identity.namespace]);
 
   useAbortableEffect(
     (signal, live) => {
       setThreadsError(null);
+      setThreadsReading(true);
       listConversationThreads(
         { org: identity.org, namespace: identity.namespace },
-        { limit: 50, signal, fields: THREADS_FIELDS },
+        {
+          limit: THREADS_PAGE,
+          offset: threadPage * THREADS_PAGE,
+          window_days: 365,
+          agent: agentFilter,
+          signal,
+          fields: THREADS_FIELDS,
+        },
       )
         .then((r) => {
-          if (live()) setThreads(r.threads || []);
+          if (!live()) return;
+          setThreadsReading(false);
+          const rows = r.threads || [];
+          // A build that predates `offset` names it in ignored_args and answers the first
+          // page again: stay on it and offer no further page.
+          if (threadPage > 0 && (r.ignored_args ?? []).includes("offset")) {
+            setThreadsPaged(false);
+            setThreadPage(0);
+            return;
+          }
+          if (threadPage === 0) {
+            // New threads at the top: a total learned from an empty page past the end is
+            // out of date, and the pager pages on without one until it learns it again.
+            const before = firstPageRef.current;
+            if (before.size > 0 && rows.some((t) => !before.has(t.thread_id))) setThreadsTotal(undefined);
+            firstPageRef.current = new Set(rows.map((t) => t.thread_id));
+          } else if (rows.length === 0) {
+            // The pager reaches a page only from the full page before it, so this empty one
+            // says how many threads there are; the list stays on the page shown.
+            setThreadsTotal(threadPage * THREADS_PAGE);
+            setThreadPage(threadPage - 1);
+            return;
+          }
+          setShownThreadPage(threadPage);
+          setShownThreadAgent(agentFilter);
+          setThreads(rows);
+          setSeenAgents((prev) => Array.from(new Set([...prev, ...rows.map((t) => t.agent)])).sort());
         })
         .catch((e) => {
           if (!live()) return;
+          setThreadsReading(false);
           // An empty list that is really a failed read looked like "no
           // conversations yet".
-          const rid = errorRequestId(e);
-          setThreadsError(rid ? `${humanizeError(e)} (request id ${rid})` : humanizeError(e));
+          setThreadsError(e);
           setThreads([]);
         });
+    },
+    [identity.org, identity.namespace, threadsRetry, threadPage, agentFilter],
+  );
+  // The recording switch is the namespace's, read once per namespace, not per page.
+  useAbortableEffect(
+    (signal, live) => {
       getNamespace(identity, { signal })
         .then((n) => {
           if (live()) setLoggingEnabled(n?.conversation_logging_enabled ?? true);
@@ -249,38 +229,35 @@ export function Conversations() {
           if (live()) setLoggingEnabled(null);
         });
     },
-    [identity.org, identity.namespace, threadsRetry],
+    [identity.org, identity.namespace],
   );
 
-  const highlightedTurn = useMemo(() => {
-    if (!highlight || !threadDetail) return null;
-    const start = highlight.excerpt.replace(/…$/, "");
-    const m = threadDetail.messages.find((t) => t.msg_id === highlight.msgId && t.content.startsWith(start));
-    return m ? turnId(m) : null;
-  }, [highlight, threadDetail]);
+  // The threads come back in a transition, so the emptied box paints before a page of
+  // thread rows mounts (about 200 ms at 4x CPU). A search still in flight is dropped.
+  const clearSearch = () => {
+    searchSeq.current += 1;
+    setBusy(false);
+    startTransition(() => {
+      setQ("");
+      setHits(null);
+      setSearchError(null);
+    });
+  };
 
-  // Scroll to the turn a search hit pointed at, once the thread loads.
-  useEffect(() => {
-    if (!highlightedTurn) return;
-    const t = setTimeout(
-      () => document.getElementById(highlightedTurn)?.scrollIntoView({ block: "center", behavior: "smooth" }),
-      60,
-    );
-    return () => clearTimeout(t);
-  }, [highlightedTurn]);
-
-  const run = async () => {
-    if (!q.trim()) return;
+  const run = async (text: string) => {
+    if (!text.trim()) return;
     const seq = ++searchSeq.current;
     setBusy(true);
+    setSearchError(null);
     try {
-      const r = await searchConversations(identity, q, { top_k: 50, agent: agentFilter });
+      const r = await searchConversations(identity, text, { top_k: 50, agent: agentFilter });
       if (seq !== searchSeq.current) return;
       setHits(r.hits || []);
+      setHitsFor(text);
     } catch (e) {
       if (seq !== searchSeq.current) return;
-      toast(`Search failed: ${humanizeError(e)}`, "error");
-      setHits([]);
+      setSearchError(e);
+      setHits(null);
     } finally {
       if (seq === searchSeq.current) setBusy(false);
     }
@@ -301,83 +278,43 @@ export function Conversations() {
       arr.push(h);
       byThread.set(key, arr);
     }
-    const threadAgent = new Map((threads || []).map((t) => [t.thread_id, t.agent] as const));
+    const listed = new Map((threads || []).map((t) => [t.thread_id, t] as const));
     return Array.from(byThread.entries()).map(([key, items]) => {
       const { thread_id } = items[0];
       const namespace = items[0].namespace || identity.namespace;
-      const agent = namespace === identity.namespace ? threadAgent.get(thread_id) : undefined;
-      return { key, thread_id, namespace, agent, hits: items };
+      const known = namespace === identity.namespace ? listed.get(thread_id) : undefined;
+      // Named as the list names it, else by the earliest thing the user said among the hits.
+      const firstUser = [...items].sort((a, b) => a.ts.localeCompare(b.ts)).find((h) => h.role === "user");
+      const title = (known && listedTitle(known)) || threadTitle("", firstUser?.content_excerpt);
+      const newest = items.reduce((a, b) => (b.ts > a.ts ? b : a)).ts;
+      return { key, thread_id, namespace, agent: known?.agent, title, newest, hits: items };
     });
   }, [hits, threads, identity.namespace]);
 
-  const searchStatus = busy
-    ? "Searching…"
-    : groupedHits === null
+  const matchCount =
+    groupedHits === null
       ? ""
-      : groupedHits.length === 0
-        ? "No matches"
-        : `${hits?.length} match${hits?.length === 1 ? "" : "es"} in ${groupedHits.length} thread${groupedHits.length === 1 ? "" : "s"}`;
+      : `${hits?.length} match${hits?.length === 1 ? "" : "es"} in ${groupedHits.length} thread${groupedHits.length === 1 ? "" : "s"}`;
+  // The toolbar's status region says the count; this one says a search is under way.
+  const searchStatus = busy ? "Searching…" : "";
 
-  // Distinct agents for the filter; the displayed thread list is the
-  // namespace-wide set narrowed to the selected agent.
-  const agentOptions = useMemo(() => Array.from(new Set((threads || []).map((t) => t.agent))).sort(), [threads]);
-  const visibleThreads = useMemo(
-    () => (agentFilter === "*" ? threads : (threads || []).filter((t) => t.agent === agentFilter)),
-    [threads, agentFilter],
-  );
-
+  // The open thread is the page's URL (`?thread=`): a reload or Back reopens it.
   const openThreadDialog = useCallback(
-    async (thread_id: string, opts: { namespace?: string; hit?: ConversationHit } = {}) => {
-      threadReads.current?.abort();
-      const ctl = new AbortController();
-      threadReads.current = ctl;
-      const { signal } = ctl;
-      const namespace = opts.namespace || identity.namespace;
-      const target = opts.hit;
-      // Every read asks for "*", every agent's turns, however the thread was opened.
-      setOpenThread({ thread_id, namespace });
-      setThreadDetail(null);
-      setMoreCursor(null);
-      setLoadingMore(false);
-      setThreadMemories([]);
-      setHighlight(target ? { msgId: target.msg_id, excerpt: target.content_excerpt } : null);
-      setThreadLoading(true);
-      // What durable memories did this conversation produce? (provenance link)
-      listMemories({ ...identity, namespace }, 20, {
-        source_trace: `conversation:${thread_id}`,
-        include_profile: true,
-        signal,
-      })
-        .then((r) => {
-          if (!signal.aborted) setThreadMemories(r.entries);
-        })
-        .catch(() => {
-          if (!signal.aborted) setThreadMemories([]);
-        });
-      try {
-        const d = await getConversationThread({ org: identity.org, namespace }, "*", thread_id, {
-          limit: 200,
-          signal,
-        });
-        if (signal.aborted) return;
-        setThreadDetail(d);
-        // More turns follow: conversation.list pages on from the cursor get issued.
-        setMoreCursor(d.next_cursor ?? null);
-      } catch (e) {
-        if (signal.aborted) return;
-        toast(`Open thread failed: ${humanizeError(e)}`, "error");
-      } finally {
-        if (!signal.aborted) setThreadLoading(false);
-      }
+    (thread_id: string, opts: { namespace?: string; hit?: ConversationHit; knownTitle?: string } = {}) => {
+      setViewParam("thread", thread_id);
+      setOpenThread({
+        thread_id,
+        namespace: opts.namespace || identity.namespace,
+        hit: opts.hit,
+        knownTitle: opts.knownTitle,
+      });
     },
-    [identity],
+    [identity.namespace],
   );
 
   const closeThreadDialog = () => {
-    threadReads.current?.abort();
-    threadReads.current = null;
     setOpenThread(null);
-    setThreadDetail(null);
+    setViewParam("thread", null);
   };
 
   // Deep-link from a memory's "View source conversation" → open that thread.
@@ -386,49 +323,6 @@ export function Conversations() {
     void openThreadDialog(pendingConversationThread.threadId);
     clearPendingConversationThread();
   }, [pendingConversationThread, openThreadDialog, clearPendingConversationThread]);
-
-  const focusTurn = useRef<string | null>(null);
-  const transcriptRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    if (!focusTurn.current) return;
-    // The transcript takes focus, not the turn: a tabbable region, so Tab moves on from
-    // it inside the dialog; the first new turn is scrolled into view.
-    transcriptRef.current?.focus({ preventScroll: true });
-    document.getElementById(focusTurn.current)?.scrollIntoView?.({ block: "start" });
-    focusTurn.current = null;
-  }, [threadDetail]);
-
-  const loadMoreMessages = async () => {
-    const reads = threadReads.current;
-    if (!reads || !openThread || !threadDetail || !moreCursor || loadingMore) return;
-    const { signal } = reads;
-    const { thread_id, namespace } = openThread;
-    setLoadingMore(true);
-    try {
-      const r = await listConversationMessages({ org: identity.org, namespace }, "*", thread_id, {
-        cursor: moreCursor,
-        limit: 200,
-        signal,
-      });
-      if (signal.aborted) return;
-      // Merge into the detail as it is now, and only if it is still this thread's. New
-      // rows append (server returns chronological order; we render in-place).
-      setThreadDetail((prev) => {
-        if (!prev || prev.thread_id !== thread_id) return prev;
-        return { ...prev, messages: [...prev.messages, ...r.rows] };
-      });
-      const next = r.next_cursor;
-      setMoreCursor(next);
-      // The last page removes Load more; its focus moves to the transcript, at the first
-      // turn the page brought.
-      if (!next && r.rows.length > 0) focusTurn.current = turnId(r.rows[0]);
-    } catch (e) {
-      if (signal.aborted) return;
-      toast(`Load more failed: ${humanizeError(e)}`, "error");
-    } finally {
-      if (!signal.aborted) setLoadingMore(false);
-    }
-  };
 
   const canSetLogging = canCall("conversation.set_logging", roleHere, whoami);
 
@@ -446,324 +340,332 @@ export function Conversations() {
     }
   };
 
+  // One count, at the end of the toolbar: the matches of a search, the
+  // threads shown (the total is known only once the last page is read), the last one while
+  // a read is in flight, nothing on an error.
+  // Under another agent filter the threads on screen are not the new list's: the pager has
+  // nothing to page from until its first page answers.
+  const threadsCurrent = shownThreadAgent === agentFilter;
+  const pagerPage = threadsCurrent ? shownThreadPage : threadPage;
+  const pageStart = shownThreadPage * THREADS_PAGE;
+  const countText =
+    hits !== null
+      ? matchCount
+      : threadsError || !threads || threads.length === 0
+        ? ""
+        : threadsTotal !== undefined
+          ? `${(pageStart + 1).toLocaleString()}–${(pageStart + threads.length).toLocaleString()} of ${threadsTotal.toLocaleString()}`
+          : `${threads.length.toLocaleString()} shown`;
+  const loadingThreads = threads === null;
+  const lastCount = useRef("");
+  if (countText && !busy && !loadingThreads) lastCount.current = countText;
+  const countShown = busy || (loadingThreads && hits === null) ? lastCount.current : countText;
+
+  // One tab stop over each list's rows: arrows and j/k move, Enter opens.
+  const threadsNav = useRowNav({ enabled: openThread === null && !!threads?.length });
+  const hitsNav = useRowNav({ enabled: openThread === null && !!groupedHits?.length });
+
+  const agentSelect = (className: string) =>
+    seenAgents.length > 1 && (
+      <Select
+        value={agentFilter}
+        onSelect={(value) => {
+          setAgentFilter(value);
+          setThreadsTotal(undefined);
+          setThreadPage(0);
+        }}
+        triggerProps={{ "aria-label": "Agent" }}
+        className={className}
+      >
+        <Select.Item value="*">Every agent</Select.Item>
+        {seenAgents.map((a) => (
+          <Select.Item key={a} value={a}>
+            {displayAgent(a)}
+          </Select.Item>
+        ))}
+      </Select>
+    );
+
   const renderRecentThreads = (label = "Recent threads") => {
-    if (!visibleThreads || visibleThreads.length === 0) return null;
+    if (!threads || threads.length === 0) return null;
     return (
       <div className="space-y-2">
-        <SectionHeading level={2} label={label} count={visibleThreads.length} />
-        {visibleThreads.map((t) => (
-          <button
-            type="button"
-            key={t.thread_id}
-            onClick={() => openThreadDialog(t.thread_id)}
-            className="w-full text-left p-3 rounded-xl border border-border bg-surface hover:border-border-strong flex items-start gap-3"
-          >
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 mb-1 text-xs tabular">
-                <span className="font-mono text-xs text-text-muted">{displayAgent(t.agent)}</span>
-                <span className="text-text-muted">·</span>
-                <span className="text-text-muted">
-                  {t.msg_count} msg{t.msg_count === 1 ? "" : "s"}
-                </span>
-              </div>
-              {t.title ? <div className="text-sm font-medium text-text truncate">{t.title}</div> : null}
-              <div className={`text-sm truncate ${t.title ? "text-text-muted" : "text-text"}`}>
-                <span className="text-xs font-medium text-text-muted mr-1.5">{t.last_role}</span>
-                {truncate(t.last_content_excerpt, 140)}
-              </div>
-            </div>
-            <span className="text-xs tabular text-text-muted shrink-0 mt-0.5">{relativeTime(t.last_seen)}</span>
-          </button>
-        ))}
+        {/* A page change lands here; its ring shows where focus went. */}
+        <div id="threads-list" tabIndex={-1}>
+          <SectionHeading level={2} label={label} caption="active in the last year" />
+        </div>
+        <div ref={threadsNav} className="space-y-2">
+          {threads.map((t) => {
+            const title = listedTitle(t);
+            return (
+              <ListRow key={t.thread_id} data-thread-row="" data-focus-key={`thread:${t.thread_id}`}>
+                <button
+                  type="button"
+                  data-row-open=""
+                  onClick={() => openThreadDialog(t.thread_id, { knownTitle: title || UNTITLED_THREAD })}
+                  className="list-row-open block w-full"
+                >
+                  {/* Line 1: the thread; right, when it was last active. */}
+                  <span className="flex items-baseline gap-3">
+                    <span
+                      data-untitled={title ? undefined : ""}
+                      className="min-w-0 flex-1 truncate text-sm font-semibold text-text data-[untitled]:text-text-muted"
+                    >
+                      {title || UNTITLED_THREAD}
+                    </span>
+                    <span className="shrink-0 text-xs text-text-muted">
+                      <ListTime time={t.last_seen} quiet />
+                    </span>
+                  </span>
+                  {/* Line 2: the last turn; right, who and how long. Under 640 px the right
+                      part takes its own line. */}
+                  <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
+                    <span className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-0">
+                      <span className="inline-flex shrink-0">
+                        <Badge text={sentenceCase(t.last_role)} state="neutral" size="sm" />
+                      </span>{" "}
+                      <span className="min-w-0 flex-1 truncate">{truncate(t.last_content_excerpt, 140)}</span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2 tabular">
+                      {t.agent && <AgentBadge agent={t.agent} quiet />}
+                      <span>
+                        {t.msg_count.toLocaleString()} message{t.msg_count === 1 ? "" : "s"}
+                      </span>
+                    </span>
+                  </span>
+                </button>
+              </ListRow>
+            );
+          })}
+        </div>
+        {threadsPaged && hits === null && (
+          <ListPager
+            label="Thread pages"
+            page={pagerPage}
+            shown={threadsCurrent ? threads.length : 0}
+            busy={threadsReading}
+            resetKey={`${identity.org}\n${identity.namespace}\n${agentFilter}`}
+            pageSize={THREADS_PAGE}
+            total={threadsTotal}
+            maxOffset={THREADS_MAX_OFFSET}
+            onPage={setThreadPage}
+            topId="threads-list"
+          />
+        )}
       </div>
     );
   };
 
+  const phone = useMedia(PHONE_QUERY);
+  const recording = canSetLogging && loggingEnabled !== null && (
+    <span className="flex items-center gap-1">
+      <Switch
+        checked={loggingEnabled}
+        onCheckedChange={toggleLogging}
+        // "Record" on a phone, beside the title, so the switch keeps to the title's row; the
+        // name stays whole.
+        label={phone ? "Record" : "Record conversations"}
+        aria-label="Record conversations"
+        orientation="horizontal"
+        dir="start"
+      />
+      <IconButton
+        icon="info-in-circle"
+        size="xs"
+        label="About recording"
+        tooltip="When off, new conversation turns are not stored for this namespace"
+      />
+    </span>
+  );
+
   return (
     <PageContainer>
-      <div className="mb-6">
-        <PageHeader title="Conversations">
+      {/* Recording is the namespace's setting, not a filter: it sits with the title. */}
+      <PageHeader title="Conversations" actions={recording || undefined}>
+        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
+        <span className="hidden sm:contents">
           <ScopeBadge kind="namespace" value={identity.namespace} />
-        </PageHeader>
-        <p className="text-sm text-text-muted">
-          The raw chats your agents recorded. Search to find what was said; click any thread to replay the full
-          exchange.
-        </p>
-      </div>
-
-      <div className="mb-6">
-        <SearchField
-          ref={searchRef}
-          value={q}
-          onChange={(value) => {
-            setQ(value);
-            if (!value) setHits(null);
-          }}
-          onKeyDown={(e) => e.key === "Enter" && run()}
-          placeholder="Search transcripts (press / to focus)…"
-          aria-label="Search conversation transcripts"
+        </span>
+      </PageHeader>
+      {/* Left to the title on a phone, where the threads need the room. */}
+      <div className="mb-4 hidden items-center gap-1 text-sm text-text-muted sm:flex">
+        The raw chats your agents recorded.
+        <IconButton
+          icon="info-in-circle"
+          size="xs"
+          label="About conversations"
+          tooltip="Search to find what was said; open a thread to replay the full exchange."
         />
       </div>
 
-      {(agentOptions.length > 1 || (canSetLogging && loggingEnabled !== null)) && (
-        <div className="flex items-center gap-3 mb-5 -mt-3">
-          {agentOptions.length > 1 && (
-            <Select
-              label="Agent"
-              orientation="horizontal"
-              value={agentFilter}
-              onSelect={(value) => setAgentFilter(value)}
-              className="w-64"
-            >
-              <Select.Item value="*">All agents</Select.Item>
-              {agentOptions.map((a) => (
-                <Select.Item key={a} value={a}>
-                  {displayAgent(a)}
-                </Select.Item>
-              ))}
-            </Select>
-          )}
-          {canSetLogging && loggingEnabled !== null && (
-            <div className="ml-auto flex items-center gap-1">
-              <Switch
-                checked={loggingEnabled}
-                onCheckedChange={toggleLogging}
-                label="Record conversations"
-                orientation="horizontal"
-                dir="start"
-              />
-              <IconButton
-                icon="info-in-circle"
-                size="xs"
-                label="About recording"
-                tooltip="When off, new conversation turns are not stored for this namespace"
-              />
-            </div>
-          )}
-        </div>
-      )}
+      {/* The search and the agent filter, in the bar that stays at the top as the threads
+          scroll. */}
+      <ListToolbar
+        label="Search and filters"
+        count={countShown && <span aria-busy={busy || loadingThreads || undefined}>{countShown}</span>}
+      >
+        <ListToolbarSearch>
+          <DraftSearch
+            key={searchBox}
+            ref={searchRef}
+            settle="enter"
+            onSearch={(text) => {
+              if (text) {
+                setQ(text);
+                void run(text);
+              } else {
+                clearSearch();
+              }
+            }}
+            placeholder="Search transcripts"
+            aria-label="Search conversation transcripts"
+          />
+        </ListToolbarSearch>
+        {agentSelect("hidden w-48 shrink-0 sm:block")}
+      </ListToolbar>
+      {/* A phone's bar has room for the search and the count only; the agent filter sits under it. */}
+      {seenAgents.length > 1 && <div className="-mt-1 mb-3 sm:hidden">{agentSelect("w-48")}</div>}
 
       {/* Always mounted, so a screen reader announces each change of its text. */}
       <p role="status" className="sr-only">
         {searchStatus}
       </p>
-      {busy && <Skeleton className="h-20 w-full" />}
-
-      {hits === null && <SessionBriefsSection org={identity.org} namespace={identity.namespace} />}
-      {!busy && hits === null && threads === null && (
-        <div className="space-y-2">
-          <Skeleton className="h-14" />
-          <Skeleton className="h-14" />
-        </div>
+      {busy && (
+        <LoadingSkeleton label="Searching transcripts">
+          <Skeleton className="h-20 w-full" />
+        </LoadingSkeleton>
       )}
 
-      {!busy && hits === null && threads !== null && threads.length === 0 && threadsError && (
-        <EmptyState
-          icon="warning"
-          title="Couldn't load conversations"
-          description={threadsError}
-          action={{
-            label: "Retry",
-            onClick: () => {
-              setThreads(null);
-              setThreadsRetry((n) => n + 1);
-            },
+      {!busy && searchError !== null && (
+        <ListState kind="error" things="search results" error={searchError} onRetry={() => void run(q)} />
+      )}
+
+      {hits === null && searchError === null && (
+        <SessionBriefsSection org={identity.org} namespace={identity.namespace} />
+      )}
+      {!busy && hits === null && searchError === null && threads === null && (
+        <LoadingSkeleton label="Loading threads">
+          <div className="space-y-2">
+            <RowSkeleton />
+            <RowSkeleton />
+            <RowSkeleton />
+          </div>
+        </LoadingSkeleton>
+      )}
+
+      {!busy && hits === null && searchError === null && threads !== null && threadsError !== null && (
+        <ListState
+          kind="error"
+          things="conversations"
+          error={threadsError}
+          onRetry={() => {
+            setThreads(null);
+            setThreadsError(null);
+            setThreadsRetry((n) => n + 1);
           }}
         />
       )}
 
-      {!busy && hits === null && threads !== null && threads.length === 0 && !threadsError && (
-        <EmptyState
+      {!busy && hits === null && searchError === null && threads !== null && threads.length === 0 && !threadsError && (
+        <ListState
+          kind="empty"
           icon="chat"
           title="No conversations yet in this namespace"
           description="Once an AI agent connected to this namespace starts saving its chats, each thread shows up here."
           details={
             <>
-              The agent calls <code className="font-mono text-xs">conversation.append</code> once per chat turn (the MCP
-              tool description nudges it to).
+              The agent calls <code className="code-inline text-xs">conversation.append</code> once per chat turn (the
+              MCP tool description nudges it to).
             </>
           }
         />
       )}
 
-      {!busy && hits === null && threads !== null && threads.length > 0 && renderRecentThreads()}
+      {!busy &&
+        hits === null &&
+        searchError === null &&
+        threads !== null &&
+        threads.length > 0 &&
+        renderRecentThreads()}
 
       {!busy && hits !== null && hits.length === 0 && (
         <div className="space-y-6">
-          <div className="py-8 text-center">
-            <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
-              <Icon name="search" size="md" aria-hidden="true" />
-            </div>
-            <h2>No matches for "{q}"</h2>
-            <p className="mt-1 text-sm text-text-muted">Try a different phrase, or browse recent threads below.</p>
-          </div>
+          <ListState
+            kind="filtered"
+            things="conversations"
+            filter={`"${hitsFor}"`}
+            onClear={() => {
+              setSearchBox((n) => n + 1);
+              clearSearch();
+            }}
+          />
           {renderRecentThreads("Or, the most recent threads")}
         </div>
       )}
 
+      {/* One row per thread: its name, then up to three of its matching turns, each of which
+          opens the replay at that turn. */}
       {!busy && groupedHits !== null && groupedHits.length > 0 && (
-        <div className="space-y-3">
-          <div className="text-xs text-text-muted tabular" aria-hidden="true">
-            {searchStatus}
-          </div>
+        <div ref={hitsNav} className="space-y-2">
           {groupedHits.map((g) => (
-            <div key={g.key} className="rounded-xl border border-border bg-surface overflow-hidden">
+            <ListRow key={g.key} data-thread-row="" data-focus-key={`hit:${g.key}`}>
               <button
                 type="button"
-                onClick={() => openThreadDialog(g.thread_id, { namespace: g.namespace })}
-                className="w-full text-left px-3.5 py-2.5 flex items-center gap-2 text-xs tabular hover:bg-surface-2 border-b border-border"
+                data-row-open=""
+                onClick={() =>
+                  openThreadDialog(g.thread_id, {
+                    namespace: g.namespace,
+                    knownTitle: g.title || UNTITLED_THREAD,
+                  })
+                }
+                className="list-row-open block w-full"
               >
-                <span className="font-mono text-text truncate">{g.thread_id}</span>
-                {g.agent && (
-                  <>
-                    <span className="text-text-muted">·</span>
-                    <span className="font-mono text-text-muted">{displayAgent(g.agent)}</span>
-                  </>
-                )}
-                {g.namespace !== identity.namespace && (
-                  <>
-                    <span className="text-text-muted">·</span>
-                    <span className="font-mono text-text-muted truncate">{g.namespace}</span>
-                  </>
-                )}
-                <span className="ml-auto text-accent font-medium">
-                  {g.hits.length} match{g.hits.length === 1 ? "" : "es"} · open
+                <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span
+                    data-untitled={g.title ? undefined : ""}
+                    className="min-w-0 flex-1 truncate text-sm font-semibold text-text data-[untitled]:text-text-muted"
+                  >
+                    {g.title || UNTITLED_THREAD}
+                  </span>
+                  {g.namespace !== identity.namespace && (
+                    <span className="min-w-0 truncate font-mono text-xs text-text-muted">{g.namespace}</span>
+                  )}
+                  <span className="shrink-0 text-xs text-text-muted tabular">
+                    {g.hits.length} match{g.hits.length === 1 ? "" : "es"} · <ListTime time={g.newest} quiet />
+                  </span>
                 </span>
               </button>
-              <div className="divide-y divide-border">
-                {g.hits.map((h, i) => (
+              <div className="mt-1 space-y-0.5">
+                {g.hits.slice(0, HIT_LINES).map((h, i) => (
                   <button
                     type="button"
                     key={`${h.msg_id}-${i}`}
-                    onClick={() => openThreadDialog(g.thread_id, { namespace: g.namespace, hit: h })}
-                    className="w-full text-left px-3.5 py-2.5 hover:bg-surface-2"
+                    onClick={() =>
+                      openThreadDialog(g.thread_id, {
+                        namespace: g.namespace,
+                        hit: h,
+                        knownTitle: g.title || UNTITLED_THREAD,
+                      })
+                    }
+                    // The row's own hover is this tint already: a matching turn darkens its text.
+                    className="list-row-control -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left text-xs text-text-muted hover:text-text"
                   >
-                    <div className="flex items-center gap-2 mb-1 text-xs tabular">
-                      <Badge text={h.role} state="neutral" size="sm" />
-                      <span className="text-text-muted ml-auto">{relativeTime(h.ts)}</span>
-                    </div>
-                    <div className="text-sm text-text leading-snug">{truncate(h.content_excerpt || "", 280)}</div>
+                    <span className="inline-flex shrink-0">
+                      <Badge text={sentenceCase(h.role)} state="neutral" size="sm" />
+                    </span>
+                    {/* A space for the line's name ("user Are refunds…"); the flex gap draws it. */}{" "}
+                    <span className="min-w-0 flex-1 truncate">
+                      {emphasize(truncate(h.content_excerpt || "", 280), hitsFor)}
+                    </span>
                   </button>
                 ))}
               </div>
-            </div>
+            </ListRow>
           ))}
         </div>
       )}
 
-      {/* Thread replay dialog. conversation.get(include_messages=true)
-          returns the first 200 messages; we render them as a chat
-          transcript with role chips, and "Load more" walks the rest
-          via conversation.list. */}
-      <Modal
-        open={openThread !== null}
-        onOpenChange={(v) => {
-          if (!v) closeThreadDialog();
-        }}
-        title={threadDetail?.title || "Thread"}
-        className="max-w-[820px] w-full"
-        initialFocus="dialog"
-      >
-        <div className="text-xs text-text-muted font-mono truncate">{openThread?.thread_id}</div>
-        {openThread && openThread.namespace !== identity.namespace && (
-          <div className="mt-1">
-            <ScopeBadge kind="namespace" value={openThread.namespace} />
-          </div>
-        )}
-        {threadDetail?.found && (
-          <div className="text-xs text-text-muted mt-1 flex items-center gap-2 flex-wrap">
-            <span>
-              {threadDetail.msg_count} message{threadDetail.msg_count === 1 ? "" : "s"}
-            </span>
-            {threadDetail.agent && (
-              <>
-                <span>·</span>
-                <span className="font-mono">{displayAgent(threadDetail.agent)}</span>
-              </>
-            )}
-            {threadDetail.updated_at && (
-              <>
-                <span>·</span>
-                <span>updated {relativeTime(threadDetail.updated_at)}</span>
-              </>
-            )}
-          </div>
-        )}
-        <div className="mt-4">
-          {openThread && (
-            <SessionBriefPanel org={identity.org} namespace={openThread.namespace} sessionId={openThread.thread_id} />
-          )}
-          {threadMemories.length > 0 && (
-            <div className="mb-4 p-3 rounded-lg bg-surface-2 border border-border">
-              <SectionHeading label="Memories this thread produced" count={threadMemories.length} />
-              <div className="flex flex-wrap gap-1.5">
-                {threadMemories.map((m) => (
-                  <Chip key={m.memory_key} label={m.memory_key} mono />
-                ))}
-              </div>
-            </div>
-          )}
-          <p role="status" className="sr-only">
-            {threadLoading ? "Loading…" : ""}
-          </p>
-          {threadLoading && (
-            <div className="text-center text-sm text-text-muted py-12" aria-hidden="true">
-              Loading…
-            </div>
-          )}
-          {!threadLoading && threadDetail && !threadDetail.found && (
-            <div className="text-center text-sm text-text-muted py-12">Thread not found. It may have been deleted.</div>
-          )}
-          {!threadLoading && threadDetail && threadDetail.found && threadDetail.messages.length === 0 && (
-            <div className="text-center text-sm text-text-muted py-12">Thread exists but contains no messages.</div>
-          )}
-          {!threadLoading && threadDetail && threadDetail.messages.length > 0 && (
-            <section
-              ref={transcriptRef}
-              aria-label="Transcript"
-              // biome-ignore lint/a11y/noNoninteractiveTabindex: the last Load more hands focus here; Radix's focus trap wraps only from a tabbable element
-              tabIndex={0}
-              className="space-y-2.5"
-            >
-              {threadDetail.messages.map((m) => {
-                const meta = ROLE_META[m.role] || ROLE_META.assistant;
-                const label =
-                  m.role === "assistant" ? displayAgent(m.agent || threadDetail.agent || "assistant") : meta.label;
-                const highlighted = turnId(m) === highlightedTurn;
-                return (
-                  <div
-                    key={turnId(m)}
-                    id={turnId(m)}
-                    data-msg-id={m.msg_id}
-                    data-highlighted={highlighted || undefined}
-                    className={`rounded-lg px-3 py-2 ${meta.rail} ${meta.card} ${highlighted ? "ring-2 ring-accent" : ""}`}
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium text-text-muted">{label}</span>
-                      {typeof m.tokens === "number" && m.tokens > 0 && (
-                        <span className="text-xs text-text-muted">· {m.tokens} tok</span>
-                      )}
-                      <time dateTime={m.ts} className="text-xs text-text-muted ml-auto tabular">
-                        {relativeTime(m.ts)}
-                        <span className="sr-only"> ({absoluteTime(m.ts)})</span>
-                      </time>
-                    </div>
-                    {m.reasoning ? <ReasoningDisclosure text={m.reasoning} /> : null}
-                    <MessageBody content={m.content} muted={meta.muted} />
-                  </div>
-                );
-              })}
-              {moreCursor && (
-                <div className="pt-3 flex justify-center">
-                  <Button type="secondary" htmlType="button" loading={loadingMore} onClick={loadMoreMessages}>
-                    {`Load more (${threadDetail.msg_count - threadDetail.messages.length} remaining)`}
-                  </Button>
-                </div>
-              )}
-            </section>
-          )}
-        </div>
-      </Modal>
+      <ThreadReplayDialog identity={identity} thread={openThread} onClose={closeThreadDialog} />
     </PageContainer>
   );
 }

@@ -33,7 +33,10 @@ const entry = (key: string, tombstoned = false): MemoryListEntry => ({
   ...(tombstoned ? { tombstoned_at: new Date().toISOString() } : {}),
 });
 
-describe("Recently deleted toggle", () => {
+// Click UI's Select items carry no option role; they are addressed by value.
+const item = (value: string) => document.querySelector<HTMLElement>(`[cui-select-item][data-value="${value}"]`);
+
+describe("Recently deleted status", () => {
   beforeEach(() => {
     vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
       opts?.include_tombstoned
@@ -52,17 +55,91 @@ describe("Recently deleted toggle", () => {
     useStore.setState({ whoami: null, identity: null });
   });
 
-  it("is a choice between live and recently deleted that keeps focus through the reload", async () => {
+  // The Status select is Live, Pinned, Conflicted, Verified and Recently
+  // deleted, in the toolbar; it replaces the header's Live | Recently deleted toggle. The
+  // toolbar stays mounted through the reload, so the select keeps the focus.
+  it("is the Recently deleted status, and the select keeps focus through the reload", async () => {
     render(<Recent />);
-    const shown = await screen.findByRole("group", { name: "Memories shown" });
-    expect(within(shown).getByRole("button", { name: "Live" })).toHaveAttribute("aria-pressed", "true");
-    within(shown).getByRole("button", { name: "Recently deleted" }).focus();
-    await userEvent.keyboard("{Enter}");
+    await screen.findByText("live/key");
+    expect(screen.queryByRole("group", { name: "Memories shown" })).toBeNull();
+    const toolbar = screen.getByLabelText("Search and filters");
+    const status = within(toolbar).getByRole("button", { name: "Status" });
+    expect(status).toHaveTextContent("Live");
+    status.focus();
+    await userEvent.click(status);
+    await waitFor(() => expect(item("deleted")).not.toBeNull());
+    for (const value of ["live", "pinned", "verified"]) expect(item(value)).not.toBeNull();
+    await userEvent.click(item("deleted") as HTMLElement);
     await screen.findByText("gone/key");
-    const deleted = within(screen.getByRole("group", { name: "Memories shown" })).getByRole("button", {
-      name: "Recently deleted",
-    });
-    await waitFor(() => expect(deleted).toHaveFocus());
-    expect(deleted).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("live/key")).toBeNull();
+    expect(vi.mocked(listMemories).mock.calls.at(-1)?.[2]).toMatchObject({ include_tombstoned: true });
+    const after = within(screen.getByLabelText("Search and filters")).getByRole("button", { name: "Status" });
+    expect(after).toBe(status);
+    expect(after).toHaveTextContent("Recently deleted");
+    await waitFor(() => expect(after).toHaveFocus());
+    expect(screen.getByLabelText("Search and filters")).toHaveTextContent("1 match");
+  });
+
+  it("says so when nothing was deleted, and goes back to the live list", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.include_tombstoned
+        ? { entries: [], total: 0, truncated: false, today: 0 }
+        : { entries: [entry("live/key")], total: 1, truncated: false, today: 1 },
+    );
+    render(<Recent />);
+    await screen.findByText("live/key");
+    await userEvent.click(screen.getAllByRole("button", { name: "Status" })[0]);
+    await waitFor(() => expect(item("deleted")).not.toBeNull());
+    await userEvent.click(item("deleted") as HTMLElement);
+    expect(await screen.findByText("No recently deleted memories")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Show live memories" }));
+    expect(await screen.findByText("live/key")).toBeInTheDocument();
+  });
+
+  // The page reads the filter the cards follow: a `tag:` still being typed changes nothing
+  // until the typing delay has passed.
+  it("keeps the empty state while a tag is typed", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.include_tombstoned
+        ? { entries: [], total: 0, truncated: false, today: 0 }
+        : { entries: [entry("live/key")], total: 1, truncated: false, today: 1 },
+    );
+    render(<Recent />);
+    await screen.findByText("live/key");
+    await userEvent.click(screen.getAllByRole("button", { name: "Status" })[0]);
+    await waitFor(() => expect(item("deleted")).not.toBeNull());
+    await userEvent.click(item("deleted") as HTMLElement);
+    await screen.findByText("No recently deleted memories");
+    await userEvent.type(screen.getByLabelText("Search memories"), "tag:x");
+    expect(screen.getByText("No recently deleted memories")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("No recently deleted memories")).toBeNull());
+    // The status is a filter too, so the row names the filters in force, not the tag alone.
+    expect(await screen.findByText(/No memories match/)).toHaveTextContent("No memories match the filters in force");
+  });
+
+  // The UTC rule itself is daysLeftToRestore's (lib/format.test.ts).
+  it("a deleted row says how many days are left to restore it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-18T12:00:00Z"));
+    try {
+      vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+        opts?.include_tombstoned
+          ? {
+              entries: [{ ...entry("gone/key"), tombstoned_at: "2026-10-17 06:00:00" }],
+              total: 1,
+              truncated: false,
+              today: 0,
+            }
+          : { entries: [entry("live/key")], total: 1, truncated: false, today: 1 },
+      );
+      render(<Recent />);
+      await screen.findByText("live/key");
+      await userEvent.click(screen.getAllByRole("button", { name: "Status" })[0]);
+      await waitFor(() => expect(item("deleted")).not.toBeNull());
+      await userEvent.click(item("deleted") as HTMLElement);
+      expect(await screen.findByText(/13 days left to restore/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -1,10 +1,10 @@
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { useState } from "react";
-import { cleanup, render, screen, waitFor, within } from "../../test/rtl";
+import { act, cleanup, render, screen, waitFor, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Inbox, TaskEvent, TaskListRow, TaskRow, TaskStatus } from "../../api/tasks";
-import { TaskPanel } from "./TaskPanel";
+import { TaskPanel, actionTip } from "./TaskPanel";
 import { must } from "../../test/must";
 
 // The panel is a document, the footer is the verb. Sections come from the brief; the
@@ -169,8 +169,16 @@ describe("TaskPanel", () => {
     expect(within(panel).getByText("exception 36")).not.toHaveClass("font-mono");
     expect(within(panel).getByText(/The reproducer must not appear/)).toHaveClass("tq-constraint");
     expect(within(panel).getByText("from reporter-public")).toBeInTheDocument();
-    expect(within(panel).getByText("→ private-bot")).toBeInTheDocument();
-    expect(within(panel).getByText("01234567…")).toBeInTheDocument();
+    // The hand-off arrow is an icon; its text says "to".
+    const handed = within(panel).getByText((_, el) => el?.tagName === "SPAN" && el.textContent === "to private-bot");
+    expect(handed.querySelector("svg")).not.toBeNull();
+    // The id is in the More menu (Copy id), not a truncated string in the header.
+    expect(within(panel).queryByText("01234567…")).toBeNull();
+    expect(
+      within(panel)
+        .getByText(/· posted/)
+        .querySelector("time"),
+    ).toHaveTextContent("42m ago");
     expect(getTask).toHaveBeenCalledTimes(1);
     expect(taskHistory).toHaveBeenCalledTimes(1);
     expect(listPolicies).not.toHaveBeenCalled(); // only a triage task reads the rule
@@ -189,6 +197,8 @@ describe("TaskPanel", () => {
     expect(events).toEqual(["lease expired", "3 heartbeats", "claimed", "accepted", "posted"]);
     const kinds = [...items].map((li) => must(li.querySelector(".ic"), "event icon").getAttribute("data-kind"));
     expect(kinds).toEqual(["sweeper", "bot", "bot", "human", "bot"]);
+    // Click UI icons, not letters standing in for them.
+    for (const li of items) expect(must(li.querySelector(".ic"), "event icon").querySelector("svg")).not.toBeNull();
     expect(within(panel).getByText("lease of 'reporter' expired")).toBeInTheDocument();
   });
 
@@ -235,7 +245,9 @@ describe("TaskPanel", () => {
       .getAllByRole("button")
       .map((b) => b.getAttribute("aria-label") ?? b.textContent);
 
-  it("footer per status: triage accepts, todo starts/defers/blocks/won't do, in progress finishes, fails, blocks, defers or cancels", async () => {
+  // The action bar sits under the header, in view at any height: one primary, at most one
+  // secondary, every other move under More.
+  it("actions per status: triage accepts, todo starts or defers, in progress finishes or fails; the rest under More", async () => {
     const onAction = mount("triage");
     let f = await footerOf();
     expect(buttons(f)).toEqual(["More actions", "Won't do…", "Accept"]);
@@ -245,16 +257,33 @@ describe("TaskPanel", () => {
 
     mount("todo");
     f = await footerOf();
-    expect(buttons(f)).toEqual(["More actions", "Defer…", "Block…", "Won't do…", "Start"]);
+    expect(buttons(f)).toEqual(["More actions", "Defer…", "Start"]);
+    let user = userEvent.setup();
+    await user.click(within(f).getByRole("button", { name: "More actions" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Block…",
+      "Won't do…",
+      "Edit brief",
+      "Reassign…",
+      "Cancel task…",
+      "Copy id",
+    ]);
     cleanup();
 
     mount("in_progress", { owner: "reporter", lease_until: iso(-22) });
     f = await footerOf();
-    expect(buttons(f)).toEqual(["More actions", "Fail…", "Defer…", "Block…", "Won't do…", "Mark done…"]);
-    expect(f).toHaveTextContent("owned by reporter · lease ends in 22 min");
-    const user = userEvent.setup();
+    expect(buttons(f)).toEqual(["More actions", "Fail…", "Mark done…"]);
+    const panel = screen.getByRole("complementary", { name: "Task detail" });
+    expect(panel).toHaveTextContent("claimed by reporter · lease ends in 22m");
+    user = userEvent.setup();
     await user.click(within(f).getByRole("button", { name: "More actions" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Cancel task…", "Copy id"]);
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Block…",
+      "Defer…",
+      "Won't do…",
+      "Cancel task…",
+      "Copy id",
+    ]);
   });
 
   it("footer per status: blocked unblocks, deferred resumes now (task.resume) and says when the sweeper would, closed short of done reopens, done only copies", async () => {
@@ -262,14 +291,22 @@ describe("TaskPanel", () => {
     let f = await footerOf();
     expect(buttons(f)).toEqual(["More actions", "Won't do…", "Unblock"]);
     expect(screen.getByRole("heading", { name: "Blocked on sender" })).toBeInTheDocument();
+    // Why it waits comes first, then the brief; the actions sit above them both.
+    await screen.findByText(/Confirm and file/);
+    const order = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(order.slice(0, 2)).toEqual(["Blocked on sender", "Objective"]);
+    expect(
+      f.compareDocumentPosition(screen.getByRole("heading", { name: "Blocked on sender" })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.getByText("need the exact server flags")).toBeInTheDocument();
     cleanup();
 
     onAction = mount("deferred", { reason: "binary for merge SHA not built yet", resume_at: iso(-120) });
     f = await footerOf();
     expect(buttons(f)).toEqual(["More actions", "Won't do…", "Resume now"]);
-    expect(f).toHaveTextContent("otherwise resumes in 2 h");
-    expect(screen.getByRole("heading", { name: "Deferred · resumes in 2 h" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Task detail" })).toHaveTextContent("resumes in 2h");
+    expect(screen.getByRole("heading", { name: "Deferred · resumes in 2h" })).toBeInTheDocument();
     await userEvent.setup().click(within(f).getByRole("button", { name: "Resume now" }));
     expect(onAction).toHaveBeenCalledWith("resume", expect.anything());
     cleanup();
@@ -318,7 +355,11 @@ describe("TaskPanel", () => {
     );
     expect(await screen.findByRole("alert")).toHaveTextContent("This task is not visible to you, or no longer exists.");
     expect(screen.queryByRole("heading", { name: "Objective" })).toBeNull();
-    expect(screen.queryByText("Loading…")).toBeNull();
+    // Past the loader's 300 ms delay, so a brief loader would be showing by now.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    expect(screen.queryByText("Loading the brief")).toBeNull();
     expect(screen.queryByRole("group", { name: "Actions" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Accept" })).toBeNull();
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
@@ -402,5 +443,19 @@ describe("TaskPanel", () => {
     expect(screen.getByRole("button", { name: "row" })).toHaveFocus();
     expect(errors.mock.calls.flat().join(" ")).not.toMatch(/cannot be given refs/);
     errors.mockRestore();
+  });
+});
+
+describe("actionTip", () => {
+  it("names the key beside the panel, and keeps the explanation without the key in a sheet", () => {
+    const accept = { action: "accept", label: "Accept", key: "a" } as const;
+    const start = { action: "start", label: "Start", tip: "Claim it: to do → in progress", key: "s" } as const;
+    const done = { action: "complete", label: "Mark done…", key: "c" } as const;
+    expect(actionTip(accept, false)).toBe("Accept · A");
+    expect(actionTip(done, false)).toBe("Mark done · C");
+    expect(actionTip(start, false)).toBe("Claim it: to do → in progress · S");
+    expect(actionTip(start, true)).toBe("Claim it: to do → in progress");
+    expect(actionTip(accept, true)).toBe("");
+    expect(actionTip({ action: "unblock", label: "Unblock" }, false)).toBe("");
   });
 });

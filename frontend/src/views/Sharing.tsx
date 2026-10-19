@@ -15,7 +15,7 @@ import { EmptyState } from "../components/EmptyState";
 import { displayAgent, humanizeError, SENTINEL_AGENTS } from "../lib/format";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { PageHeader, Stat, TipTarget } from "../components/ui";
+import { LoadingSkeleton, PageHeader, Stat, TipTarget } from "../components/ui";
 
 export function Sharing() {
   // The summary itself spans every namespace the caller holds a grant on
@@ -99,12 +99,22 @@ export function Sharing() {
     return (
       <PageContainer>
         {heading}
-        <p className="text-sm text-text-muted mb-6">Loading activity…</p>
-        <div className="space-y-3">
-          <Skeleton className="h-20 w-full" />
-          <Skeleton className="h-40 w-full" />
-          <Skeleton className="h-40 w-full" />
-        </div>
+        <p className="text-sm text-text-muted mb-6">
+          Where your memories flow — which tools wrote, which read, and which namespaces you share with.
+        </p>
+        {/* Shaped like the page: the four totals, then the two lists. */}
+        <LoadingSkeleton label="Loading activity">
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+            </div>
+            <Skeleton className="h-40 w-full" />
+            <Skeleton className="h-40 w-full" />
+          </div>
+        </LoadingSkeleton>
       </PageContainer>
     );
   }
@@ -153,9 +163,9 @@ export function Sharing() {
         <p className="mt-2 text-xs text-text-muted leading-relaxed">
           Totals span the {totals.namespaces} namespace{totals.namespaces === 1 ? "" : "s"} you hold a grant on. A write
           is any operation that puts knowledge into a namespace — a memory, a captured observation, a seeded
-          conversation, a typed record. A recall is a <code className="font-mono">memory.search</code> or a code read. A
-          cross-namespace recall is a search that fanned out across your own namespaces (
-          <code className="font-mono">namespace_scope=all_mine</code>), not only the one it was addressed to.
+          conversation, a typed record. A recall is a <code className="code-inline">memory.search</code> or a code read.
+          A cross-namespace recall is a search that fanned out across your own namespaces (
+          <code className="code-inline">namespace_scope=all_mine</code>), not only the one it was addressed to.
         </p>
       </section>
 

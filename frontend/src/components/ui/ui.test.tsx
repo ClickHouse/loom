@@ -67,7 +67,7 @@ describe("Chip", () => {
     );
     const chip = screen.getByRole("button", { name: "semantic, 9518 in namespace" });
     expect(chip).toHaveAttribute("aria-pressed", "true");
-    expect(chip.className).toContain("min-h-6");
+    expect(chip).toHaveClass("chip", "chip-selected");
     await userEvent.click(chip);
     expect(onClick).toHaveBeenCalledOnce();
     expect(await axeViolations(container)).toEqual([]);
@@ -89,13 +89,51 @@ describe("Chip", () => {
   });
 });
 
+describe("Chip tones", () => {
+  // Each tone is a named class in styles.css on Click UI's tokens, so a chip's colours
+  // follow Click UI's theme rather than colour utilities.
+  it("draws a filter value filled, a tag outlined and a pressed toggle selected", () => {
+    render(
+      <>
+        <Chip label="semantic" onClick={() => undefined} selected={false} />
+        <Chip label="api" outline onClick={() => undefined} selected={false} />
+        <Chip label="beans" outline onClick={() => undefined} selected />
+        <Chip label="brew" onClick={() => undefined} onRemove={() => undefined} />
+      </>,
+    );
+    const semantic = screen.getByRole("button", { name: "semantic" });
+    expect(semantic).toHaveClass("chip-filled");
+    expect(semantic).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "api" })).toHaveClass("chip-outline");
+    const beans = screen.getByRole("button", { name: "beans" });
+    expect(beans).toHaveClass("chip-selected");
+    expect(beans).not.toHaveClass("chip-outline");
+    expect(screen.getByRole("button", { name: "Remove brew" })).toHaveClass("chip-filled");
+  });
+});
+
+describe("Chip under a coarse pointer", () => {
+  // A static chip is not a target: drawn 44 px tall on a phone it doubled a search result's
+  // height. Only a chip a finger presses grows to 44 px.
+  it("grows to a 44 px target only when it is a control", () => {
+    render(
+      <>
+        <Chip label="beans" outline />
+        <Chip label="brew" outline onClick={() => undefined} />
+      </>,
+    );
+    expect(screen.getByText("beans").parentElement?.className).not.toContain("pointer-coarse:min-h-11");
+    expect(screen.getByRole("button", { name: "brew" }).className).toContain("pointer-coarse:min-h-11");
+  });
+});
+
 describe("Chip with a tip", () => {
   it("a static chip is a TipTarget: a focusable note in the chip's own shape", async () => {
     const user = userEvent.setup();
     const { container } = render(<Chip label="restricted" tip="Only members read it" />);
     const chip = screen.getByRole("note");
     expect(chip).toHaveTextContent("restricted");
-    expect(chip.className).toContain("rounded-full");
+    expect(chip.className).toContain("chip");
     expect(chip.className).not.toMatch(/(^|\s)rounded(\s|$)/);
     await user.tab();
     expect(chip).toHaveFocus();
@@ -175,6 +213,8 @@ describe("Kbd and Tip", () => {
       </p>,
     );
     expect(container.querySelector("kbd")).toHaveTextContent("↵");
+    // The look is the .kbd rule in styles.css, on Click UI's tokens, not arbitrary values.
+    expect(container.querySelector("kbd")?.className).toBe("kbd");
     await user.tab();
     expect(screen.getByRole("button", { name: "Walk" })).toHaveFocus();
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Walk from this entity");

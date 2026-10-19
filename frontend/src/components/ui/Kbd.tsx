@@ -1,15 +1,10 @@
 import type { ReactNode } from "react";
 
 /**
- * Kbd — a keyboard hint: one key or a short chord in a mono cap at the 12 px floor, on
- * the page background with the border token, so it reads as a key and never as body text.
+ * Kbd — a key or a short chord. Click UI has no key component, so this is the one key
+ * style, on its tokens (the `.kbd` rule in styles.css). Shortcut hints live only in
+ * tooltips, the help dialog and the header search field.
  */
 export function Kbd({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return (
-    <kbd
-      className={`inline-flex items-center justify-center min-w-[1.6em] h-5 px-1 rounded-sm border border-border bg-bg font-mono text-xs text-text-muted leading-none ${className}`}
-    >
-      {children}
-    </kbd>
-  );
+  return <kbd className={className ? `kbd ${className}` : "kbd"}>{children}</kbd>;
 }
