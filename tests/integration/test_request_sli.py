@@ -252,7 +252,9 @@ def test_a_refresh_commits_in_one_part_across_a_month_boundary(ch_client) -> Non
     """Rows on both sides of a month boundary and the sentinel land in one
     part, which commits whole: a failed refresh leaves neither data without
     its mark (folded twice on retry) nor a mark without its data (never
-    folded)."""
+    folded). Three rows pin the partition key; that the refresh squashes any
+    number of rows into one block (its `min_insert_block_size_rows`) was
+    checked by hand on 1.5M rows, too many for this suite."""
     from datetime import UTC, datetime, timedelta
 
     db = f"sli_probe_{uuid.uuid4().hex[:8]}"

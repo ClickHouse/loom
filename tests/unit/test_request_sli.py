@@ -1586,9 +1586,10 @@ def test_the_member_scoped_org_rollups_mark_a_scope_emptied_by_a_failed_read(
 
 
 def test_a_call_served_on_its_default_namespace_counts_in_that_tenant(monkeypatch) -> None:
-    """A code op naming no org or namespace runs in the deployment's code
-    namespace; its ledger row names that tenant on both transports, so the
-    per-org rollup counts it there."""
+    """A code op naming no org or namespace (absent or empty) runs in the
+    deployment's code namespace; its ledger row names that tenant on both
+    transports, so the per-org rollup counts it there. One the gate refuses
+    is the token's own org's row."""
     import dataclasses
 
     from fastapi import FastAPI
@@ -1644,10 +1645,22 @@ def test_a_call_served_on_its_default_namespace_counts_in_that_tenant(monkeypatc
     monkeypatch.setattr("server.transport.gates._admitted", _noop)
     monkeypatch.setattr("server.auth.personal_namespace.ensure_personal_namespace_cached", _noop)
     eve = AuthInfo(
-        subject="eve", org="acme", namespaces=("*",), roles=(Role.VIEWER,), is_service_account=True
+        subject="eve",
+        org="eve-org",
+        namespaces=("*",),
+        roles=(Role.VIEWER,),
+        is_service_account=True,
     )
-    params = {"name": "loom_code_repos", "arguments": {}}
-    asyncio.run(mcp_call._call_tool(1, params, auth=eve))
-
-    assert len(rows) == 2, rows
+    for arguments in ({}, {"org": "", "namespace": ""}):
+        params = {"name": "loom_code_repos", "arguments": arguments}
+        asyncio.run(mcp_call._call_tool(1, params, auth=eve))
+    assert len(rows) == 3, rows
     assert all((row["org"], row["namespace"]) == ("acme", "code-acme") for row in rows), rows
+
+    async def _refuse(*a: Any, **k: Any) -> None:
+        raise PermissionError("no grant")
+
+    rows.clear()
+    monkeypatch.setattr(member_writes, "authorize_op", _refuse)
+    asyncio.run(mcp_call._call_tool(1, {"name": "loom_code_repos", "arguments": {}}, auth=eve))
+    assert [(row["org"], row["namespace"]) for row in rows] == [("eve-org", "-")]

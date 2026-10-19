@@ -32,8 +32,9 @@ Each request row also carries its service-level columns:
   forces violations) makes every successful request slow.
 
 A call that names no org or namespace is recorded under the ones the gate admitted it
-against (a code op's default is the deployment's code namespace), so it counts in that
-tenant's SLIs. A refusal before the gate is recorded under the token's org.
+against (a code op's default is the deployment's code namespace), so the row is that
+tenant's: its SLIs, the cost rollup, `subject_last_seen` and the history policy's counts
+all see it there. A call refused before the gate is recorded under the token's own org.
 
 What counts against the server:
 
