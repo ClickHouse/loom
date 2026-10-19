@@ -13,7 +13,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 
@@ -209,14 +209,18 @@ def _field(r: Any, name: str) -> Any:
     return r.get(name) if isinstance(r, Mapping) else getattr(r, name, None)
 
 
-async def _assertion_order(
-    org: str, namespace: str, rows: list[Any]
-) -> tuple[dict[str, tuple[int, int]], list[queue.Undo]]:
-    """{memory_id: (when its statement holds, when its value was first asserted)}, in
-    wall-clock ns, for rows (`MemoryRow`s or peer dicts), and the rows' Undos. Finer
-    than the second, and a metadata write (touch, pin, tags) keeps the hash, so it does
-    not move a row. An explicit valid_at earlier than the assertion moves it back: the
-    fact held then."""
+class Order(NamedTuple):
+    """`_assertion_order`'s answer: {memory_id: (when its statement holds, when its value
+    was first asserted)}, in wall-clock ns, and the rows' Undos."""
+
+    order: dict[str, tuple[int, int]]
+    undos: list[queue.Undo]
+
+
+async def _assertion_order(org: str, namespace: str, rows: list[Any]) -> Order:
+    """The `Order` of rows (`MemoryRow`s or peer dicts). Finer than the second, and a
+    metadata write (touch, pin, tags) keeps the hash, so it does not move a row. An
+    explicit valid_at earlier than the assertion moves it back: the fact held then."""
     keys = [(str(_field(r, "memory_id")), str(_field(r, "content_sha256") or "")) for r in rows]
     found = await queue.asserted_versions(org, namespace, keys)
     out: dict[str, tuple[int, int]] = {}
@@ -229,7 +233,7 @@ async def _assertion_order(
         if isinstance(valid, datetime):
             holds = min(holds, calendar.timegm(valid.utctimetuple()) * 1_000_000_000)
         out[mid] = (holds, asserted)
-    return out, found.undos
+    return Order(out, found.undos)
 
 
 @dataclass
@@ -507,8 +511,9 @@ async def _settle_locked_pair(
         # Read under the locks: a valid_at corrected during the call moves the order.
         # If this read fails the row stays unstamped and the next pass judges it again
         # (another LLM call).
-        order, undos = await _assertion_order(org, namespace, [row, head])
-        if _undone(row, head, order, undos):
+        found = await _assertion_order(org, namespace, [row, head])
+        order = found.order
+        if _undone(row, head, order, found.undos):
             counts.skipped_no_action += 1
             return None, None  # a person undid a retirement between them: that stands
         if action == cr.RETIRE and not order[str(head.memory_id)] < order[str(row.memory_id)]:
@@ -543,13 +548,14 @@ def _undone(
     """Whether a person undid a retirement of either row behind the other (the Undo's
     record): their decision stands while both rows' current statements began before the
     Undo's restore. A value restated since (or after a record whose restore failed) is a
-    new statement, judged as one."""
+    new statement, judged as one. Rows are `MemoryRow`s or peer dicts."""
     for loser, winner in ((head, row), (row, head)):
-        undone = (str(loser.memory_id), str(winner.memory_id), str(loser.content_sha256 or ""))
+        lost, won = str(_field(loser, "memory_id")), str(_field(winner, "memory_id"))
+        undone = (lost, won, str(_field(loser, "content_sha256") or ""))
         if any(
             (u.memory_id, u.superseded_by, u.content_sha256) == undone
-            and order[str(winner.memory_id)][1] < u.version
-            and order[str(loser.memory_id)][1] < u.version
+            and order[won][1] < u.version
+            and order[lost][1] < u.version
             for u in undos
         ):
             return True
@@ -750,8 +756,14 @@ async def _judge_and_act(
     intents: Intents,
 ) -> set[str]:
     """Judge the row and act on the answer; the ids of the peers it gave no verdict."""
-    order, _ = await _assertion_order(org, namespace, [row, *peers])
-    new, notes = notes_for(row, peers, {mid: when for mid, (when, _) in order.items()})
+    found = await _assertion_order(org, namespace, [row, *peers])
+    # A pair a person's Undo settled is not paid for; the check under the locks decides.
+    settled = [p for p in peers if _undone(row, p, found.order, found.undos)]
+    counts.skipped_no_action += len(settled)
+    peers = [p for p in peers if p not in settled]
+    if not peers:
+        return set()
+    new, notes = notes_for(row, peers, {mid: when for mid, (when, _) in found.order.items()})
     verdicts, model = await judge(new, notes)
     counts.judged += 1
     acting = asyncio.ensure_future(

@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import calendar
 import json
+import time
 from datetime import datetime
 from types import SimpleNamespace as NS
 from typing import Any
@@ -451,10 +452,16 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     # When each row's value was first asserted (ns): the peer a moment before the row.
     e.asserted = {"m1": 2_000, "m2": 1_000}
 
+    e.reads = 0
+    e.undone_from_read = 1  # the read (1-based) from which the Undos are seen
+
     async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> Any:
-        # An Undo restored after everything, of the value its row holds.
+        # An Undo restored now, after both statements, of the value its row holds.
+        e.reads += 1
         undos = [
-            queue.Undo(lo, w, str(e.heads[lo].content_sha256 or ""), 10**20) for lo, w in e.undone
+            queue.Undo(lo, w, str(e.heads[lo].content_sha256 or ""), time.time_ns())
+            for lo, w in e.undone
+            if e.reads >= e.undone_from_read
         ]
         return queue.Asserted({i: e.asserted[i] for i, _ in rows if i in e.asserted}, undos)
 
@@ -649,6 +656,16 @@ async def test_a_retirement_a_person_undid_is_not_made_again(row_env: NS) -> Non
     counts = await _resolve()
     assert row_env.acted == [] and counts.retired == counts.flagged == 0
     assert counts.skipped_no_action == 1 and row_env.stamped == ["office_city"]
+    assert row_env.llm_calls == 0, "a pair an Undo settled is not paid for"
+
+
+async def test_an_undo_made_during_the_call_is_honoured_under_the_locks(row_env: NS) -> None:
+    # The Undo lands after the read before the call: the re-read under the locks sees it.
+    row_env.undone = {("m2", "m1")}
+    row_env.undone_from_read = 2
+    counts = await _resolve()
+    assert row_env.llm_calls == 1 and row_env.acted == []
+    assert counts.skipped_no_action == 1
 
 
 async def test_a_failed_audit_read_after_a_failed_pair_raises_the_pairs_error(
@@ -1197,12 +1214,12 @@ async def test_the_order_is_finer_than_the_second_and_ignores_metadata_writes(
         )
 
     monkeypatch.setattr(queue, "asserted_versions", asserted)
-    order, _ = await resolver._assertion_order("o", "ns", [row, peer])
+    order = (await resolver._assertion_order("o", "ns", [row, peer])).order
     assert order["m2"] < order["m1"]
     # An explicit valid_at earlier than the assertion moves the row back.
     peer.valid_at = datetime(2020, 1, 1)
     row.valid_at = datetime(2019, 1, 1)
-    order, _ = await resolver._assertion_order("o", "ns", [row, peer])
+    order = (await resolver._assertion_order("o", "ns", [row, peer])).order
     assert order["m1"] < order["m2"]
 
 
@@ -1220,14 +1237,16 @@ async def test_the_order_reads_valid_time_in_utc_caps_it_at_the_assertion_and_fa
     monkeypatch.setattr(queue, "asserted_versions", asserted)
     # 01:00 at -07:00 is 08:00 UTC.
     row = _mem("m1", valid_at=datetime(2023, 5, 30, 1, 0, tzinfo=timezone(timedelta(hours=-7))))
-    order, _ = await resolver._assertion_order("o", "ns", [row])
+    order = (await resolver._assertion_order("o", "ns", [row])).order
     assert order["m1"][0] == calendar.timegm(datetime(2023, 5, 30, 8, 0).utctimetuple()) * ns
     # A valid time after the assertion (a fact dated ahead) holds from the assertion.
     row.valid_at = datetime(2030, 1, 1)
-    assert (await resolver._assertion_order("o", "ns", [row]))[0]["m1"] == (asserted_at["m1"],) * 2
+    assert (await resolver._assertion_order("o", "ns", [row])).order["m1"] == (
+        asserted_at["m1"],
+    ) * 2
     # A row the history does not hold: its current version.
     other = _mem("m9", version=42)
-    assert (await resolver._assertion_order("o", "ns", [other]))[0]["m9"] == (42, 42)
+    assert (await resolver._assertion_order("o", "ns", [other])).order["m9"] == (42, 42)
 
 
 async def test_a_row_with_a_newer_flagged_peer_is_judged_as_itself(row_env: NS) -> None:
