@@ -161,22 +161,11 @@ settings = Settings(_env_file=env_file_path())
 
 
 def log_unknown_env_keys() -> None:
-    """One boot WARN naming the LOOM_* keys no setting reads, and one when the
-    dotenv file names the settings file, which only the environment can."""
+    """One boot WARN naming the LOOM_* keys no setting reads."""
     log = logging.getLogger(__name__)
     unknown = unknown_env_keys(Settings.model_fields, env_file_path())
     if unknown:
         log.warning("LOOM_* variables that match no setting are ignored: %s", ", ".join(unknown))
-    path = env_file_path()
-    if path and os.path.isfile(path) and "LOOM_SETTINGS_FILE" not in os.environ:
-        from dotenv import dotenv_values
-
-        if "LOOM_SETTINGS_FILE" in dotenv_values(path):
-            log.warning(
-                "LOOM_SETTINGS_FILE in %s is ignored: set it in the environment "
-                "(the settings file is chosen before the dotenv file is read)",
-                path,
-            )
 
 
 __all__ = ["DEV_JWT_SECRET", "Settings", "log_unknown_env_keys", "settings"]

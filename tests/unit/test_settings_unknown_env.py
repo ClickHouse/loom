@@ -43,16 +43,24 @@ def test_the_warning_names_keys_never_values(
     assert "hunter2" not in caplog.text
 
 
-def test_the_settings_file_named_in_the_dotenv_file_is_called_out(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+def test_the_settings_file_is_named_by_the_environment_else_the_dotenv_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """A process that copies the dotenv file into its environment (the CLI, compose)
+    and one that does not (uvicorn) read the same settings file."""
+    from server.core.env_file import settings_file_path
+
+    yaml = tmp_path / "loom.yaml"
+    yaml.write_text("version: 1\nsettings:\n  memory_ask_recency_weight: 0.3\n")
     env = tmp_path / ".env"
-    env.write_text("LOOM_SETTINGS_FILE=/etc/loom.yaml\n")
+    env.write_text(f"LOOM_SETTINGS_FILE={yaml}\n")
     monkeypatch.setenv("LOOM_ENV_FILE", str(env))
     monkeypatch.delenv("LOOM_SETTINGS_FILE", raising=False)
-    with caplog.at_level(logging.WARNING, logger="server.settings"):
-        log_unknown_env_keys()
-    assert "LOOM_SETTINGS_FILE in" in caplog.text and "is ignored" in caplog.text
+    monkeypatch.delenv("LOOM_MEMORY_ASK_RECENCY_WEIGHT", raising=False)
+    assert settings_file_path() == str(yaml)
+    assert Settings(_env_file=str(env)).memory_ask_recency_weight == 0.3  # type: ignore[call-arg]
+    monkeypatch.setenv("LOOM_SETTINGS_FILE", "")  # the environment wins, even empty
+    assert settings_file_path() is None
 
 
 def test_no_known_variable_is_also_a_field() -> None:
