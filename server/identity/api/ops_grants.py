@@ -29,7 +29,6 @@ grants_create = Operation(
     output_model=GrantsCreateOutput,
     handler=handle_grants_create,
     idempotent=True,
-    budget_p99_ms=50,
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -40,7 +39,6 @@ grants_list = Operation(
     output_model=GrantsListOutput,
     handler=handle_grants_list,
     idempotent=True,
-    budget_p99_ms=80,
     # Any member of the namespace can see who else is in. Owners can
     # still revoke; knowing the member list doesn't leak content.
     # Non-members fall through check_authorized's grants-table lookup
@@ -56,7 +54,6 @@ grants_pending_for_me = Operation(
     output_model=GrantsPendingForMeOutput,
     handler=handle_grants_pending_for_me,
     idempotent=True,
-    budget_p99_ms=150,
     # Org-level: the caller's own admin grants decide which namespaces'
     # queues are read; the transport's role gate is the
     # floor, the query is the scope.
@@ -72,7 +69,6 @@ grants_revoke = Operation(
     output_model=GrantsRevokeOutput,
     handler=handle_grants_revoke,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -84,7 +80,6 @@ grants_approve = Operation(
     output_model=GrantsApproveOutput,
     handler=handle_grants_approve,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.ADMIN,
     audit=True,
 )

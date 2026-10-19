@@ -409,6 +409,7 @@
  "langfuse_span_denylist": "ch.query,ch.insert,GET /v1/health,POST /v1/health",
  "langfuse_url": "",
  "latency_budget_multiplier": 1.0,
+ "latency_budget_overrides": "",
  "latency_budget_overrides_by_consumer": "",
  "llm_anthropic_effort": "",
  "llm_fallback_model": "",

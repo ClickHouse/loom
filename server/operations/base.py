@@ -7,12 +7,14 @@ Adding an operation = creating one declaration; both transports auto-generate.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any, Literal, get_args
 
 from pydantic import BaseModel
 from pydantic.config import JsonDict
+
+from server.settings.catalog import OP_BUDGETS_P99_MS, OP_SHAPE_BUDGETS_P99_MS
 
 
 class Role(IntEnum):
@@ -70,15 +72,7 @@ class Operation:
         output_model: Pydantic output model.
         handler: async callable: input model → output model.
         idempotent: if true, safe to retry on transient failure.
-        budget_p99_ms: design-target latency budget. Exceeded by a successful
-            handler emits a `budget.violated` event on loom.events (LOOM_LATENCY_BUDGET_MULTIPLIER
-            scales the threshold for noisy / WAN deployments).
         required_role: minimum role required to call this operation.
-        shape_budgets_p99_ms: p99 budgets for request shapes the handler
-            declares at run time: ``{shape: ms}``. A handler
-            that notes a shape (``server.observability.budget_shape``) is held
-            to that shape's budget; the catalogue (``/v1/operations``) lists
-            them so a client can size its own timeouts per shape.
         audit: if true, success writes one row to audit_log.
         maturity: ``stable`` | ``experimental`` (MATURITIES).
             Declared per op; the reach census (scripts/codegen/op_reach_census.py,
@@ -91,7 +85,6 @@ class Operation:
     output_model: type[BaseModel]
     handler: HandlerFn
     idempotent: bool
-    budget_p99_ms: int
     required_role: Role
     audit: bool = False
     # Skip the transport-level namespace-access check. Used by self-service
@@ -116,7 +109,6 @@ class Operation:
     # such ops set it: a WRITER+ role or `audit=True` already says "writes".
     writes: bool = False
     maturity: Maturity = "stable"
-    shape_budgets_p99_ms: dict[str, int] = field(default_factory=dict)
     # The MCP tool name when it is not derived from `name`: an op MCP serves
     # through a hand-written synthetic descriptor under a name clients already
     # hold (`search.query` is the `loom_search` tool).
@@ -145,6 +137,21 @@ class Operation:
         from server.operations.reach import op_reach
 
         return op_reach(self.name)
+
+    @property
+    def budget_p99_ms(self) -> int:
+        """The design-target p99 latency, from the budgets table in
+        `server/settings/catalog.py`. A successful handler that runs longer emits a
+        `budget.violated` event; `effective_budget_ms` applies the deployment's
+        overrides and multiplier."""
+        return OP_BUDGETS_P99_MS[self.name]
+
+    @property
+    def shape_budgets_p99_ms(self) -> dict[str, int]:
+        """p99 budgets for the request shapes the handler notes at run time
+        (`server.observability.budget_shape`), `{shape: ms}`; the catalogue
+        (`/v1/operations`) lists them so a client can size its own timeouts."""
+        return dict(OP_SHAPE_BUDGETS_P99_MS.get(self.name, {}))
 
     @property
     def http_path(self) -> str:

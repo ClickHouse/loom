@@ -13,9 +13,6 @@ memory_move = Operation(
     handler=handle_memory_move,
     # A second move of the same from_key answers 409 ALREADY_REDIRECTED.
     idempotent=False,
-    # One memory.set (its budget is 200) plus the redirect version, its mirror
-    # restamp and the chunk tombstones.
-    budget_p99_ms=400,
     required_role=Role.WRITER,
     audit=True,
 )

@@ -2188,7 +2188,12 @@
         "latency_budget_multiplier": {
           "default": 1.0,
           "type": "number",
-          "description": "Scales every per-op `budget_p99_ms` (tuned for local CH) at the comparison site; set e.g. 20.0 on Cloud so SLO alerts don't fire on baseline RTT."
+          "description": "Scales every op's p99 budget (OP_BUDGETS_P99_MS below, tuned for local CH) at the comparison site; set e.g. 20.0 on Cloud so SLO alerts don't fire on baseline RTT."
+        },
+        "latency_budget_overrides": {
+          "default": "",
+          "type": "string",
+          "description": "JSON map {op: ms | \"<n>x\"} over the op budgets table (OP_BUDGETS_P99_MS below): an integer replaces that op's budget, \"3x\" multiplies it. Checked after the per-consumer overrides and `admin/budget.set`; malformed = logged once and ignored. '' = the table as declared."
         },
         "latency_budget_overrides_by_consumer": {
           "default": "",

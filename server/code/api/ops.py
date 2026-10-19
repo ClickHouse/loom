@@ -197,12 +197,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeSearchOutput,
         handler=handle_code_search,
         idempotent=True,
-        # Priced per shape with bench/code_search_stage_latency.py (`live --handler`, the
-        # whole op in process with the real embedder): a shape's budget is its sampled
-        # max x ~1.6. The base covers the exact symbol route and every answer before the
-        # legs; `hybrid` runs the legs without a model call, `hybrid_hyde` with one.
-        budget_p99_ms=400,
-        shape_budgets_p99_ms={"hybrid": 1500, "hybrid_hyde": 6000},
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -211,8 +205,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeAskOutput,
         handler=handle_code_ask,
         idempotent=True,
-        # Cache hits are ~ms; a synthesis miss pays retrieval + one LLM call.
-        budget_p99_ms=8000,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -221,11 +213,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeSymbolOutput,
         handler=handle_code_symbol,
         idempotent=True,
-        budget_p99_ms=250,
-        # A lookup ranked by the change at hand (near_paths / pr_number) reads the
-        # PR's files and the candidates' neighbourhoods; the compact uses block adds a
-        # mention leg. Each is priced from its served p99.
-        shape_budgets_p99_ms={"ranked": 3000, "uses_brief": 1500},
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -234,7 +221,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeCallersOutput,
         handler=handle_code_callers,
         idempotent=True,
-        budget_p99_ms=400,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -244,7 +230,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeCallersOutput,
         handler=handle_code_callees,
         idempotent=True,
-        budget_p99_ms=400,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -253,8 +238,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeImpactOutput,
         handler=handle_code_impact,
         idempotent=True,
-        # Two edge hops + test map + PR co-change.
-        budget_p99_ms=1500,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -264,8 +247,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeTestGateOutput,
         handler=handle_code_test_gate,
         idempotent=True,
-        # Up to three edge hops + test map; same ceiling as code.impact.
-        budget_p99_ms=1500,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -275,8 +256,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeTestHomeOutput,
         handler=handle_code_test_home,
         idempotent=True,
-        # up to ~30 prefix-scoped grep_files reads run together + the test map
-        budget_p99_ms=1500,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -286,8 +265,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeBisectCandidatesOutput,
         handler=handle_code_bisect_candidates,
         idempotent=True,
-        # ≤12 symbol lookups gathered + two bounded tracker reads (300 ms each)
-        budget_p99_ms=1500,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -297,11 +274,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeBackportGapOutput,
         handler=handle_code_backport_gap,
         idempotent=True,
-        # two bounded tracker reads + ≤ 9 ledger reads gathered, then ≤ 8 presence
-        # fan-outs over ≤ 8 branch namespaces under a 1.2 s wall; `history` (on request)
-        # adds git reads on the mirror under an 8 s wall — the nightly worker's shape,
-        # not the default's
-        budget_p99_ms=1500,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -311,8 +283,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeBackportGapsOutput,
         handler=handle_code_backport_gaps,
         idempotent=True,
-        # one range read on loom's own table plus one stats read
-        budget_p99_ms=500,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -322,10 +292,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeBlameRangeOutput,
         handler=handle_code_blame_range,
         idempotent=True,
-        # window refs (≤4 cheap git reads + ≤2 state reads), then one blame
-        # (≤400 lines, 5 s cap, cached 10 min) beside one rev-list and two
-        # ledger reads, gathered; optional bounded tracker reads
-        budget_p99_ms=6000,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -335,9 +301,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeSettingFactsOutput,
         handler=handle_code_setting_facts,
         idempotent=True,
-        # two regex greps over src/, one whole-file read (cached 10 min),
-        # one excerpt read, one grep count — gathered
-        budget_p99_ms=1200,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -347,11 +310,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeConventionsOutput,
         handler=handle_code_conventions,
         idempotent=True,
-        # one ledger point read + one bounded `git diff` on the mirror, then
-        # one gathered round: history chunks (cached), ≤4 docs greps, ≤30
-        # file reads, two code_files reads, ≤3 census reads (cached), and
-        # the wide-caller leg (functions, one edge read, ≤5 coverage greps)
-        budget_p99_ms=4000,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -361,9 +319,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeSymbolHistoryOutput,
         handler=handle_code_symbol_history,
         idempotent=True,
-        # symbol resolve + two loom reads gathered + items + up to three
-        # bounded tracker reads (300 ms each, two gathered)
-        budget_p99_ms=1800,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -373,9 +328,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeFirstBuildOutput,
         handler=handle_code_first_build,
         idempotent=True,
-        # one ledger point read beside two cheap git reads, then two bounded
-        # tracker reads gathered (900 ms each, cached), then ≤ 10 is-ancestor calls
-        budget_p99_ms=2500,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -385,7 +337,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeCoverageClaimOutput,
         handler=handle_code_coverage_claim,
         idempotent=True,
-        budget_p99_ms=1200,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -395,10 +346,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeReviewBriefOutput,
         handler=handle_code_review_brief,
         idempotent=True,
-        # one FINAL point read on the brief's sort-key prefix; a miss builds
-        # the brief (one impact read seeding ≤ 20 bounded op reads, gathered)
-        # and stores it — the build path is the ingest's, not the read's
-        budget_p99_ms=8000,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -407,11 +354,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeGrepOutput,
         handler=handle_code_grep,
         idempotent=True,
-        # Priced per mode (the handler notes the shape) with bench/code_grep_handler.py,
-        # real calls through handle_code_grep in process, caches warm and cold (the
-        # replica-restart worst case). `message` also ranks templates in Python.
-        budget_p99_ms=600,
-        shape_budgets_p99_ms={"files": 600, "message": 2000},
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -421,8 +363,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeTestsForOutput,
         handler=handle_code_tests_for,
         idempotent=True,
-        # one keyed range read over code_test_facets per (kind, name) prefix
-        budget_p99_ms=400,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -432,8 +372,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeFilesOutput,
         handler=handle_code_files,
         idempotent=True,
-        # one keyed read over code_files (~10k rows per namespace)
-        budget_p99_ms=400,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -442,8 +380,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeEnclosingOutput,
         handler=handle_code_enclosing,
         idempotent=True,
-        # <=200 locations -> <=10 batched symbol-table reads
-        budget_p99_ms=800,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -453,8 +389,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeOutlineOutput,
         handler=handle_code_outline,
         idempotent=True,
-        # one symbol-table read served by the path bloom index + as_of
-        budget_p99_ms=300,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -463,8 +397,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeVerifyOutput,
         handler=handle_code_verify,
         idempotent=True,
-        # calls/reaches run a bounded BFS (depth<=6, <=2000 nodes).
-        budget_p99_ms=1500,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -474,10 +406,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeVerifyCitationsOutput,
         handler=handle_code_verify_citations,
         idempotent=True,
-        # keyed reads: file rows + symbol spans + chunk spans per cited path
-        # (batched), items by number, one name lookup per qualified name
-        # (<=8 gathered); the optional mirror leg is capped at 20 calls / 5 s
-        budget_p99_ms=1500,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -487,9 +415,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodePathGuardsOutput,
         handler=handle_code_path_guards,
         idempotent=True,
-        # the verify(reaches) BFS (depth<=4) plus one keyed read of the
-        # guards of every hop and, on a miss, one namespace probe
-        budget_p99_ms=1500,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -498,8 +423,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeTraceOutput,
         handler=handle_code_trace,
         idempotent=True,
-        # Frame parse is local; one batched symbol resolve per frame set.
-        budget_p99_ms=800,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -508,9 +431,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeContextPackOutput,
         handler=handle_code_context_pack,
         idempotent=True,
-        # A task briefing is one code.search plus four bounded reads —
-        # 0.7-1.5 s cold; the PR and map paths stay ~0.2 s
-        budget_p99_ms=2000,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -520,7 +440,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeExamplesOutput,
         handler=handle_code_examples,
         idempotent=True,
-        budget_p99_ms=500,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -529,7 +448,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeHistoryOutput,
         handler=handle_code_history,
         idempotent=True,
-        budget_p99_ms=300,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -539,7 +457,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodePrCheckOutput,
         handler=handle_code_pr_check,
         idempotent=True,
-        budget_p99_ms=600,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -549,7 +466,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeMapOutput,
         handler=handle_code_map,
         idempotent=True,
-        budget_p99_ms=300,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -558,7 +474,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeOutcomeOutput,
         handler=handle_code_outcome,
         idempotent=True,
-        budget_p99_ms=150,
         required_role=Role.VIEWER,
         writes=True,
     ),
@@ -568,7 +483,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeIndexStatusOutput,
         handler=handle_code_index_status,
         idempotent=True,
-        budget_p99_ms=200,
         required_role=Role.VIEWER,
     ),
     # Org-level: the listing that says what a person may join cannot itself be
@@ -581,7 +495,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeReposOutput,
         handler=handle_code_repos,
         idempotent=True,
-        budget_p99_ms=800,
         required_role=Role.VIEWER,
         skip_namespace_authz=True,
         # A scoped token (ns_roles) has no single namespace to bind this
@@ -598,7 +511,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeRepoAddOutput,
         handler=handle_code_repo_add,
         idempotent=False,
-        budget_p99_ms=30000,
         required_role=Role.VIEWER,
         skip_namespace_authz=True,
         audit=True,
@@ -610,7 +522,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeRepoRemoteBranchesOutput,
         handler=handle_code_repo_remote_branches,
         idempotent=True,
-        budget_p99_ms=30000,
         required_role=Role.VIEWER,
         skip_namespace_authz=True,
     ),
@@ -620,7 +531,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeRepoAddOutput,
         handler=handle_code_repo_add_branch,
         idempotent=False,
-        budget_p99_ms=30000,
         required_role=Role.ADMIN,
         audit=True,
     ),
@@ -630,7 +540,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeRepoRemoveOutput,
         handler=handle_code_repo_remove,
         idempotent=True,
-        budget_p99_ms=30000,
         required_role=Role.ADMIN,
         audit=True,
     ),
@@ -641,7 +550,6 @@ OPERATIONS: list[Operation] = [
         handler=handle_code_repo_set_access,
         # Two directory writes and two cache refreshes
         idempotent=True,
-        budget_p99_ms=5000,
         required_role=Role.ADMIN,
         audit=True,
         maturity="experimental",
@@ -653,7 +561,6 @@ OPERATIONS: list[Operation] = [
         handler=handle_code_repo_set_source,
         # One state write and one cache refresh
         idempotent=True,
-        budget_p99_ms=3000,
         required_role=Role.ADMIN,
         audit=True,
         maturity="experimental",
@@ -664,7 +571,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeIndexErrorsOutput,
         handler=handle_code_index_errors,
         idempotent=True,
-        budget_p99_ms=400,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -673,7 +579,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeRecentCommitsOutput,
         handler=handle_code_recent_commits,
         idempotent=True,
-        budget_p99_ms=800,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -682,7 +587,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeCoverageOutput,
         handler=handle_code_coverage,
         idempotent=True,
-        budget_p99_ms=1500,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -691,7 +595,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeContextPacksOutput,
         handler=handle_code_context_packs,
         idempotent=True,
-        budget_p99_ms=300,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -700,9 +603,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeRefreshOutput,
         handler=handle_code_refresh,
         idempotent=False,
-        # Fire-and-forget default returns immediately; wait=True is bounded
-        # by its own timeout, not this budget.
-        budget_p99_ms=1000,
         required_role=Role.WRITER,
         audit=True,
     ),
@@ -712,7 +612,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeScipIngestOutput,
         handler=handle_code_scip_ingest,
         idempotent=True,  # re-upload of the same (batch_id, seq) converges
-        budget_p99_ms=2000,
         required_role=Role.WRITER,
         audit=True,
     ),
@@ -722,7 +621,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeScipStatusOutput,
         handler=handle_code_scip_status,
         idempotent=True,
-        budget_p99_ms=150,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -732,7 +630,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeReindexOutput,
         handler=handle_code_reindex,
         idempotent=False,
-        budget_p99_ms=500,
         required_role=Role.ADMIN,
         audit=True,
     ),
@@ -742,8 +639,6 @@ OPERATIONS: list[Operation] = [
         output_model=CodeCalibrateOutput,
         handler=handle_code_calibrate,
         idempotent=False,
-        # Probes the live embedder over the whole corpus: slow by design.
-        budget_p99_ms=30000,
         required_role=Role.ADMIN,
         audit=True,
     ),

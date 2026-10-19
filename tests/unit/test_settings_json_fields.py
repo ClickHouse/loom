@@ -16,6 +16,7 @@ _OBJECTS = [
     "ratelimit_class_fractions",
     "rerank_endpoints_json",
     "code_vector_tables",
+    "latency_budget_overrides",
     "latency_budget_overrides_by_consumer",
     "tracker_sources_json",
     "tracker_credentials_json",

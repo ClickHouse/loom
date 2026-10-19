@@ -1,6 +1,7 @@
 """Per-operation and per-consumer latency-budget overrides.
 
-Every Operation declares a `budget_p99_ms` — the p99 latency target.
+Every Operation has a `budget_p99_ms` — the p99 latency target, from the
+`OP_BUDGETS_P99_MS` table in `server/settings/catalog.py`.
 When a handler exceeds it, the transport emits a `budget.violated` event
 on `loom.events` (kind `budget_violation`) so ops can alert
 on SLO breaches through `memory.budget_violations`.
@@ -20,7 +21,8 @@ this order, first match wins:
     2. runtime override for (consumer, "*")       — admin budget.set {consumer, op: "*"}
     3. LOOM_LATENCY_BUDGET_OVERRIDES_BY_CONSUMER   — JSON {consumer: {op | "*": value}}
     4. runtime override for the op                 — admin budget.set {op}
-    5. the op's declared budget_p99_ms
+    5. LOOM_LATENCY_BUDGET_OVERRIDES               — JSON {op: value}
+    6. the op's declared budget_p99_ms
 
 A value is an integer (milliseconds) or a string multiplier such as "3x"
 (the op's declared budget times three), so one entry loosens every op for a
@@ -87,9 +89,11 @@ class BudgetOverrides:
         self._overrides: dict[str, int] = {}
         self._by_consumer: dict[tuple[str, str], int | float] = {}
         self._lock = threading.Lock()
-        # The settings map, parsed once per distinct raw string.
+        # The settings maps, each parsed once per distinct raw string.
         self._settings_raw: str | None = None
         self._settings_map: dict[str, dict[str, int | float]] = {}
+        self._op_settings_raw: str | None = None
+        self._op_settings_map: dict[str, int | float] = {}
 
     # -- per op (unchanged API) -------------------------------------------
 
@@ -211,7 +215,37 @@ class BudgetOverrides:
         op_override = self.get(op_name)
         if op_override is not None:
             return op_override
+        value = self.op_settings_map().get(op_name)
+        if value is not None:
+            return _apply(value, default_ms)
         return int(default_ms)
+
+    def op_settings_map(self) -> dict[str, int | float]:
+        """`latency_budget_overrides` parsed: {op: value}. Re-parsed only when the
+        raw string changes; a malformed map is logged once and treated as empty."""
+        from server.settings import settings
+
+        raw = str(settings.latency_budget_overrides)
+        with self._lock:
+            if raw == self._op_settings_raw:
+                return self._op_settings_map
+            parsed: dict[str, int | float] = {}
+            if raw.strip():
+                try:
+                    obj = json.loads(raw)
+                    if not isinstance(obj, dict):
+                        raise ValueError("not a JSON object")
+                    for op_name, value in obj.items():
+                        v = parse_value(value)
+                        if v is None:
+                            raise ValueError(f"{op_name!r}: {value!r} is not ms or '<n>x'")
+                        parsed[str(op_name)] = v
+                except (ValueError, TypeError) as exc:
+                    log.warning("LOOM_LATENCY_BUDGET_OVERRIDES ignored: %s", exc)
+                    parsed = {}
+            self._op_settings_raw = raw
+            self._op_settings_map = parsed
+            return parsed
 
 
 _overrides = BudgetOverrides()

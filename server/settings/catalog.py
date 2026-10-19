@@ -2795,10 +2795,15 @@ class ObservabilitySettings(BaseModel):
     # (/oauth/), which are always left out: their URLs carry codes.
     otel_excluded_urls: str = "/v1/health"
 
-    # Scales every per-op `budget_p99_ms` (tuned for local CH) at the
-    # comparison site; set e.g. 20.0 on Cloud so SLO alerts don't fire on
+    # Scales every op's p99 budget (OP_BUDGETS_P99_MS below, tuned for local CH) at
+    # the comparison site; set e.g. 20.0 on Cloud so SLO alerts don't fire on
     # baseline RTT.
     latency_budget_multiplier: float = 1.0
+    # JSON map {op: ms | "<n>x"} over the op budgets table (OP_BUDGETS_P99_MS below):
+    # an integer replaces that op's budget, "3x" multiplies it. Checked after the
+    # per-consumer overrides and `admin/budget.set`; malformed = logged once and
+    # ignored. '' = the table as declared.
+    latency_budget_overrides: Annotated[str, JsonObject] = ""
     # JSON map {consumer: {op | "*": ms | "<n>x"}}: an integer is a budget in
     # ms, "3x" multiplies the op's declared budget. Checked after runtime
     # `admin/budget.set` overrides, before per-op ones; malformed = logged once
@@ -3693,3 +3698,440 @@ class TrackerSettings(BaseModel):
     # The static smell leg reads at most this many chunks of the test's home
     # file(s) from the code plane (flaky-test smell tokens per category, counted).
     tracker_test_signal_smell_chunks: int = 6
+
+
+# ===== Operation latency budgets ===============================================
+#
+# Each operation's p99 latency target in milliseconds, keyed by op name: a request
+# that runs longer emits a `budget.violated` event (`memory.budget_violations`). Every
+# registered op has an entry (tests/unit/test_op_budgets.py). A deployment tunes them
+# without editing this table: `latency_budget_overrides` (one op, in ms or "<n>x"),
+# `latency_budget_overrides_by_consumer` (one consumer), `latency_budget_multiplier`
+# (all of them), and `POST /v1/admin/budget.set` while Loom runs.
+
+OP_BUDGETS_P99_MS: dict[str, int] = {
+    "admin.users": 300,
+    "agents.connected": 120,
+    "audit.list": 200,
+    "blacklist.add": 50,
+    "blacklist.list": 80,
+    "blacklist.remove": 80,
+    "blacklist.sweep": 5000,
+    "calibration.get": 60,
+    # Cache hits are ~ms; a synthesis miss pays retrieval + one LLM call.
+    "code.ask": 8000,
+    # two bounded tracker reads + ≤ 9 ledger reads gathered, then ≤ 8 presence
+    # fan-outs over ≤ 8 branch namespaces under a 1.2 s wall; `history` (on request)
+    # adds git reads on the mirror under an 8 s wall — the nightly worker's shape,
+    # not the default's
+    "code.backport_gap": 1500,
+    # one range read on loom's own table plus one stats read
+    "code.backport_gaps": 500,
+    # ≤12 symbol lookups gathered + two bounded tracker reads (300 ms each)
+    "code.bisect_candidates": 1500,
+    # window refs (≤4 cheap git reads + ≤2 state reads), then one blame
+    # (≤400 lines, 5 s cap, cached 10 min) beside one rev-list and two
+    # ledger reads, gathered; optional bounded tracker reads
+    "code.blame_range": 6000,
+    # Probes the live embedder over the whole corpus: slow by design.
+    "code.calibrate": 30000,
+    "code.callees": 400,
+    "code.callers": 400,
+    # A task briefing is one code.search plus four bounded reads —
+    # 0.7-1.5 s cold; the PR and map paths stay ~0.2 s
+    "code.context_pack": 2000,
+    "code.context_packs": 300,
+    # one ledger point read + one bounded `git diff` on the mirror, then
+    # one gathered round: history chunks (cached), ≤4 docs greps, ≤30
+    # file reads, two code_files reads, ≤3 census reads (cached), and
+    # the wide-caller leg (functions, one edge read, ≤5 coverage greps)
+    "code.conventions": 4000,
+    "code.coverage": 1500,
+    "code.coverage.unwatch": 500,
+    # an inbox read, a state read, a few git calls and up to three writes
+    "code.coverage.watch": 1500,
+    "code.coverage_claim": 1200,
+    # <=200 locations -> <=10 batched symbol-table reads
+    "code.enclosing": 800,
+    "code.examples": 500,
+    # one keyed read over code_files (~10k rows per namespace)
+    "code.files": 400,
+    # one ledger point read beside two cheap git reads, then two bounded
+    # tracker reads gathered (900 ms each, cached), then ≤ 10 is-ancestor calls
+    "code.first_build": 2500,
+    # Priced per mode (the handler notes the shape) with bench/code_grep_handler.py,
+    # real calls through handle_code_grep in process, caches warm and cold (the
+    # replica-restart worst case). `message` also ranks templates in Python.
+    "code.grep": 600,
+    "code.history": 300,
+    # Two edge hops + test map + PR co-change.
+    "code.impact": 1500,
+    "code.index_errors": 400,
+    "code.index_status": 200,
+    "code.map": 300,
+    "code.outcome": 150,
+    # one symbol-table read served by the path bloom index + as_of
+    "code.outline": 300,
+    # the verify(reaches) BFS (depth<=4) plus one keyed read of the
+    # guards of every hop and, on a miss, one namespace probe
+    "code.path_guards": 1500,
+    "code.pr_check": 600,
+    "code.recent_commits": 800,
+    # Fire-and-forget default returns immediately; wait=True is bounded
+    # by its own timeout, not this budget.
+    "code.refresh": 1000,
+    "code.reindex": 500,
+    "code.repo.add": 30000,
+    "code.repo.add_branch": 30000,
+    "code.repo.remote_branches": 30000,
+    "code.repo.remove": 30000,
+    "code.repo.set_access": 5000,
+    "code.repo.set_source": 3000,
+    "code.repos": 800,
+    # one FINAL point read on the brief's sort-key prefix; a miss builds
+    # the brief (one impact read seeding ≤ 20 bounded op reads, gathered)
+    # and stores it — the build path is the ingest's, not the read's
+    "code.review_brief": 8000,
+    "code.scip_ingest": 2000,
+    "code.scip_status": 150,
+    # Priced per shape with bench/code_search_stage_latency.py (`live --handler`, the
+    # whole op in process with the real embedder): a shape's budget is its sampled
+    # max x ~1.6. The base covers the exact symbol route and every answer before the
+    # legs; `hybrid` runs the legs without a model call, `hybrid_hyde` with one.
+    "code.search": 400,
+    # two regex greps over src/, one whole-file read (cached 10 min),
+    # one excerpt read, one grep count — gathered
+    "code.setting_facts": 1200,
+    "code.symbol": 250,
+    # symbol resolve + two loom reads gathered + items + up to three
+    # bounded tracker reads (300 ms each, two gathered)
+    "code.symbol_history": 1800,
+    # Up to three edge hops + test map; same ceiling as code.impact.
+    "code.test_gate": 1500,
+    # up to ~30 prefix-scoped grep_files reads run together + the test map
+    "code.test_home": 1500,
+    # one keyed range read over code_test_facets per (kind, name) prefix
+    "code.tests_for": 400,
+    # Frame parse is local; one batched symbol resolve per frame set.
+    "code.trace": 800,
+    # calls/reaches run a bounded BFS (depth<=6, <=2000 nodes).
+    "code.verify": 1500,
+    # keyed reads: file rows + symbol spans + chunk spans per cited path
+    # (batched), items by number, one name lookup per qualified name
+    # (<=8 gathered); the optional mirror leg is capped at 20 calls / 5 s
+    "code.verify_citations": 1500,
+    "conflicts.allowlist_list": 80,
+    "conflicts.allowlist_remove": 80,
+    "conflicts.list": 80,
+    "conflicts.propose_revision": 120,
+    "conflicts.resolve": 500,
+    "consolidations.list": 200,
+    "context.fetch": 150,
+    "context.offload": 300,
+    "context.pack": 600,
+    "conversation.append": 30,
+    "conversation.compact": 3500,
+    "conversation.create": 30,
+    "conversation.delete": 600,
+    "conversation.get": 100,
+    "conversation.list": 80,
+    "conversation.search": 120,
+    "conversation.set_logging": 200,
+    "conversation.threads": 120,
+    "conversation.update": 50,
+    "cost.agent_summary": 250,
+    "cost.budget_status": 120,
+    "cost.record_turns": 150,
+    "cost.summary": 200,
+    "decision.chain": 500,
+    "decision.outcome": 1500,
+    "decision.precedents": 800,
+    "decision.record": 1500,
+    "erasure.export": 2000,
+    "erasure.list": 150,
+    "erasure.request": 2000,
+    "erasure.status": 25,
+    "facts.expire_by_adapter": 500,
+    "facts.list": 80,
+    # One frontier query per hop, at most max_hops of them.
+    "facts.path": 250,
+    "facts.related": 60,
+    # Recursive CTE — heavier than a single hop.
+    "facts.traverse": 200,
+    "grants.approve": 80,
+    "grants.create": 50,
+    "grants.list": 80,
+    "grants.pending_for_me": 150,
+    "grants.revoke": 80,
+    "inbox.list": 800,
+    "inbox.policy_list": 800,
+    "inbox.policy_set": 800,
+    "inbox.principals": 1500,
+    "inbox.register": 800,
+    "knowledge.add": 50,
+    "knowledge.bulk_add": 2000,
+    "knowledge.bulk_delete": 500,
+    "knowledge.dedup_list": 400,
+    "knowledge.dedup_resolve": 400,
+    "knowledge.delete": 100,
+    "knowledge.get": 30,
+    "knowledge.list": 150,
+    "knowledge.outline": 80,
+    "knowledge.reads": 500,
+    "knowledge.search": 250,
+    # One LLM call per window plus the reduce; bounded by max_windows.
+    "knowledge.synthesize": 60000,
+    "knowledge.update_metadata": 60,
+    "knowledge.upsert": 100,
+    "learnings.list": 80,
+    "learnings.quality": 120,
+    "learnings.review": 150,
+    "memory.agents_list": 80,
+    # One JSONExtract query over loom.memory FINAL; budget covers large group-by
+    # cardinality.
+    "memory.aggregate": 250,
+    "memory.apply": 3000,
+    # Retrieval (memory.search's own budget) plus at most one LLM synthesis
+    # call; a retrieval_only / abstained call pays no LLM latency.
+    "memory.ask": 8000,
+    "memory.assign_category": 60,
+    "memory.backlinks": 200,
+    "memory.brief": 4000,
+    "memory.bulk_get": 80,
+    "memory.bulk_set": 300,
+    "memory.clear": 600,
+    "memory.consolidate": 15000,
+    "memory.copy_to": 400,
+    "memory.cross_promote": 400,
+    # Two keyed reads + one wide mirror read over ≤ `limit` keys; the re-emit
+    # is one insert.
+    "memory.dedup_collapse": 2000,
+    # GROUP BY scan + per-cluster canonical lookup, bounded by `limit`.
+    "memory.dedup_list": 300,
+    # 1-2 ALTER UPDATEs; mutations_sync=2.
+    "memory.dedup_resolve": 400,
+    "memory.delete": 30,
+    "memory.demonstrate": 400,
+    "memory.demote": 100,
+    "memory.digests": 120,
+    "memory.evidence": 150,
+    "memory.export_evidence": 800,
+    "memory.exposure_summary": 300,
+    "memory.extraction_status": 80,
+    # One FINAL scan filtered by array predicates;
+    # it sits on the PreToolUse path, so the hook bounds it at 3 s anyway.
+    "memory.for_file": 150,
+    "memory.get": 25,
+    "memory.get_by_id": 50,
+    "memory.health": 400,
+    "memory.history": 80,
+    # ~50 sections × per-section memory.set; embed-on-write dominates.
+    "memory.import_curated": 30000,
+    # one embed_many over ≤256 chunks + two synchronous inserts
+    "memory.import_evidence": 30000,
+    # Three bounded queries: shared point-lookup, audit by request_id, learnings_queue
+    # match.
+    "memory.lineage": 150,
+    "memory.link": 60,
+    # Covers both recency (ORDER BY memory_key) and the wider score path.
+    "memory.list": 150,
+    "memory.lock": 40,
+    # One memory.set (its budget is 200) plus the redirect version, its mirror
+    # restamp and the chunk tombstones.
+    "memory.move": 400,
+    "memory.outcome": 200,
+    "memory.outcome_run": 500,
+    "memory.outline": 250,
+    "memory.owner_report": 800,
+    "memory.pin": 30,
+    "memory.promote": 100,
+    "memory.proposal_decide": 800,
+    "memory.proposals": 400,
+    "memory.provenance": 100,
+    "memory.recall": 400,
+    "memory.record.conflicts": 150,
+    "memory.record.history": 150,
+    "memory.record.query": 150,
+    "memory.record.write": 150,
+    "memory.redact": 500,
+    "memory.reindex": 5000,
+    "memory.reject": 150,
+    # Two point-lookups + one bounded arrayIntersect scan (entities bloom index).
+    "memory.related": 120,
+    "memory.resolve_orphan_duplicates": 5000,
+    "memory.restore": 80,
+    # Covers semantic / hybrid / all_mine fan-out (auto_touch is async, no
+    # contribution). Reranker hop is EXCLUDED — the operator endpoint owns its
+    # own latency. Rerank usage surfaces as `loom.search.assist{kind="rerank"}`
+    # (read off `retrieval_work.inline_rerank_used` / `external_rerank_used`);
+    # there is no `loom.rerank_ms` metric.
+    "memory.search": 200,
+    "memory.search_trace": 200,
+    "memory.search_trace_log": 200,
+    # A set is five committed inserts plus the conflict and dedup reads: p50
+    # 1,062 ms and p99 3.7 s on ClickHouse Cloud. 200 ms at the x20 multiplier
+    # = 4 s sits at that p99, so a violation is a signal.
+    "memory.set": 200,
+    # LLM extraction dominates (~7K-token prompt); downstream bulk_set adds ~200ms.
+    "memory.set_from_messages": 2500,
+    # Profile + pinned + score-ordered recall (+ optional knowledge.search),
+    # each identity-scoped point-lookups.
+    "memory.stack": 200,
+    "memory.sweep_expired": 2000,
+    "memory.timeline": 120,
+    "memory.touch": 40,
+    "memory.unlock": 40,
+    "memory.unpin": 40,
+    "memory.update": 120,
+    "memory.update_by_id": 80,
+    "memory.verify": 80,
+    "memory_schema.approve": 120,
+    "memory_schema.list": 120,
+    "memory_schema.propose": 120,
+    "memory_schema.register": 120,
+    # One bounded ledger scan on the (org, namespace, agent)
+    # sort key, a handful of FINAL-scoped counts over the namespace, three of
+    # the audit's shape checks, and two adoption reads — cached an hour.
+    "mentor.brief": 3000,
+    # Three summary reads, ten FINAL-scoped aggregates over
+    # the namespace and one Python scan of up to 20k (key, clipped value)
+    # rows for the hand-rolled index check. Namespace-sized; the ledger
+    # reads are bounded by window_seconds.
+    "namespace.audit": 3000,
+    "namespace.browse": 120,
+    "namespace.cancel_request": 80,
+    "namespace.delete": 60,
+    "namespace.get": 30,
+    "namespace.join": 80,
+    "namespace.leave": 80,
+    "namespace.list": 80,
+    "namespace.list_categories": 80,
+    "namespace.list_mine": 120,
+    "namespace.list_ontology": 60,
+    "namespace.mark_seen": 50,
+    "namespace.register": 30,
+    "namespace.register_category": 400,
+    "namespace.register_ontology": 80,
+    "namespace.restore": 3000,
+    "namespace.rollback": 10000,
+    "namespace.search_categories": 150,
+    "namespace.snapshot": 2000,
+    "namespace.summary": 300,
+    "namespace.taxonomy": 120,
+    # Ten FINAL-scoped aggregates plus two identity joins; namespace-sized,
+    # not cluster-sized.
+    "namespace.validate": 1500,
+    "observe.crystallize": 2000,
+    "observe.record": 150,
+    "ops.capabilities": 100,
+    "ops.health": 500,
+    "ops.projection_failures.list": 300,
+    "ops.projection_failures.resolve": 500,
+    "ops.projection_failures.retry": 3000,
+    "policy.check": 500,
+    "policy.decisions": 300,
+    "policy.delete": 400,
+    "policy.list": 200,
+    "policy.set": 400,
+    "procedure.add": 120,
+    "procedure.evolve": 200,
+    "procedure.fork": 400,
+    "procedure.list": 100,
+    "procedure.locate": 150,
+    "procedure.match": 150,
+    "procedure.record_run": 150,
+    "procedure.revise": 300,
+    "profile.activity": 80,
+    "profile.append": 80,
+    "profile.render": 60,
+    "profile.replace": 80,
+    "profile.set": 30,
+    "run.begin": 150,
+    "run.complete": 800,
+    "run.get": 300,
+    "run.grade": 800,
+    "run.list": 200,
+    # The tracker leg is bounded at 3 s; the memory legs run beside it.
+    "search.query": 3500,
+    "session.brief_delete": 200,
+    "session.brief_get": 200,
+    "session.brief_list": 200,
+    # The deterministic builder and an agent-written overlay are one read and
+    # one insert; the `model` shape is up to `session_brief_max_windows`
+    # sequential model calls (about 47 s for four haiku windows).
+    "session.brief_save": 800,
+    "task.accept": 1500,
+    "task.block": 1500,
+    "task.cancel": 1500,
+    "task.claim": 1500,
+    "task.complete": 1500,
+    "task.counts": 800,
+    "task.create": 1500,
+    "task.defer": 1500,
+    "task.fail": 1500,
+    "task.get": 500,
+    "task.heartbeat": 1000,
+    "task.history": 800,
+    "task.list": 800,
+    "task.progress": 1000,
+    # A long poll holds up to MAX_WAIT_SECONDS (30 s, models_task.py) by design; the
+    # budget is that plus 3 s (test_op_budgets.py ties the two).
+    "task.pull": 33000,
+    "task.reassign": 2000,
+    "task.reopen": 1500,
+    "task.resume": 1500,
+    "task.unblock": 1500,
+    "task.update": 1500,
+    # A long poll holds up to MAX_WAIT_SECONDS (30 s, models_task.py) by design; the
+    # budget is that plus 3 s (test_op_budgets.py ties the two).
+    "task.updates": 33000,
+    "task.wont_do": 1500,
+    "tracker.answer": 1200,
+    "tracker.binding": 50,
+    "tracker.component": 300,
+    "tracker.contract": 50,
+    "tracker.duplicate_check": 2000,
+    "tracker.flaky": 300,
+    "tracker.item": 300,
+    "tracker.links": 300,
+    "tracker.release": 300,
+    "tracker.similar": 600,
+    "tracker.source.add": 30000,
+    "tracker.source.check": 10000,
+    "tracker.source.inspect": 30000,
+    "tracker.source.list": 4000,
+    "tracker.source.remove": 30000,
+    "tracker.source.rotate": 30000,
+    "tracker.source.set_mapping": 30000,
+    "tracker.test_signal": 8000,
+    "ui.vitals": 50,
+    "working_memory.append": 80,
+    "working_memory.delete": 40,
+    "working_memory.get": 40,
+    "working_memory.render": 60,
+    "working_memory.replace": 80,
+    "working_memory.set": 40,
+}
+
+# Budgets for the request shapes an op prices separately: a handler that notes a
+# shape (`server.observability.budget_shape`) is held to that shape's budget.
+OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
+    "code.grep": {
+        "files": 600,
+        "message": 2000,
+    },
+    "code.search": {
+        "hybrid": 1500,
+        "hybrid_hyde": 6000,
+    },
+    # A lookup ranked by the change at hand (near_paths / pr_number) reads the
+    # PR's files and the candidates' neighbourhoods; the compact uses block adds a
+    # mention leg. Each is priced from its served p99.
+    "code.symbol": {
+        "ranked": 3000,
+        "uses_brief": 1500,
+    },
+    "session.brief_save": {
+        "model": 90000,
+    },
+}
