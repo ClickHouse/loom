@@ -89,6 +89,14 @@ def _coded_statuses() -> dict[str, int]:
     return out
 
 
+def row_status(
+    success: bool, error_code: str, error: BaseException | str | None, *, server_fault: bool
+) -> str:
+    """The `status_class` a ledger row is written with: the server's when the
+    writer knows it was (`server_fault`), else `status_class`."""
+    return "server" if server_fault else status_class(success, error_code, error)
+
+
 def status_class(success: bool, error_code: str, error: BaseException | str | None) -> str:
     """`ok`, `client` (a 4xx, or a retried idempotency key still running) or `server`.
     A failure whose status is unknown counts against the server."""

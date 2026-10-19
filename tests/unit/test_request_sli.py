@@ -996,7 +996,7 @@ def test_inside_a_batch_a_call_s_refusal_is_ledgered_once_but_each_handler_failu
 
     rows: list[str] = []
     record = lambda name, args, ms, **k: rows.append(k["error_code"])  # noqa: E731
-    monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, "loom_test_batch_rows", op)
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, "loom_test_batch_rows", op)
     monkeypatch.setattr(mcp_call, "_caller_defaults", _noop)
     monkeypatch.setattr(member_writes, "authorize_op", _noop)
     monkeypatch.setattr("server.transport.gates._admitted", _noop)
@@ -1079,7 +1079,7 @@ def test_an_mcp_call_that_hid_a_row_unverified_is_the_server_s_and_the_next_star
     )
     monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
     monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: _Emitter())
-    monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, "loom_test_hidden_lookup", op)
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, "loom_test_hidden_lookup", op)
     monkeypatch.setattr(mcp_call, "_caller_defaults", _noop)
     monkeypatch.setattr(member_writes, "authorize_op", _noop)
     monkeypatch.setattr("server.transport.gates._admitted", _noop)
@@ -1221,6 +1221,7 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
         ("server/memory/app/code_grounding.py", "_authorized_code_target", never),
         ("server/knowledge/app/repo_docs.py", "readable_docs_namespace", never),
         ("server/tracker/app/dupcheck_fanout.py", "readable_tracker_namespaces", never),
+        ("server/tracker/app/common.py", "linked_trackers", never),
         # A code answer the linked tracker only enriches.
         ("server/code/app/bisect_scan.py", "_linked_scan", never),
         ("server/code/app/blame.py", "_tracker_side", never),
@@ -1317,10 +1318,17 @@ def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
             )
         )  # fmt: skip
 
-    async def _cancel_as_poster() -> bool:
+    async def _cancel_as_poster() -> tuple[bool, bool]:
         _as("poster")
-        assert (await transitions._load_for_reason_op(reason))["from_subject"] == "poster"
-        return answered_unverified()
+        _row, owner_side = await transitions._load_for_reason_op(reason)
+        return owner_side, answered_unverified()
+
+    async def _wont_do_as_poster() -> tuple[bool, bool]:
+        # Only the owner side may finish it: the handler 404s the poster, and
+        # the owner check that decided it marks.
+        _as("poster")
+        _row, owner_side = await transitions._load_for_reason_op(reason, poster_may=False)
+        return owner_side, answered_unverified()
 
     async def _refused(subject: str, **k: Any) -> bool:
         _as(subject)
@@ -1332,9 +1340,9 @@ def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
         _as("poster")
         return await common._readable(await _task("o", "t")), answered_unverified()
 
-    assert asyncio.run(_cancel_as_poster()) is False
+    assert asyncio.run(_cancel_as_poster()) == (False, False)
+    assert asyncio.run(_wont_do_as_poster()) == (False, True)
     assert asyncio.run(_read_as_poster()) == (True, False)
     assert asyncio.run(_refused("someone-else")) is True
-    assert asyncio.run(_refused("poster", poster_may=False)) is True  # task.wont_do
     status["value"] = "in_progress"
     assert asyncio.run(_refused("poster")) is True  # only the owner side may act

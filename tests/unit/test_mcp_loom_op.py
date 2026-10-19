@@ -79,13 +79,13 @@ def test_loom_op_runs_the_target_through_the_listed_tool_path(
 ) -> None:
     seen: list[Any] = []
     tool = "loom_tracker_flaky"
-    op = mcp_call._TOOLS_BY_NAME[tool]
+    op = mcp_call.TOOLS_BY_NAME[tool]
 
     async def _handler(inp: Any) -> Any:
         seen.append(inp)
         return op.output_model(test_name=inp.test_name, verdict="no_flaky_signal")
 
-    monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, tool, dataclasses.replace(op, handler=_handler))
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, tool, dataclasses.replace(op, handler=_handler))
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
         return {"org": "o", "namespace": "n", "agent": "claude-code"}

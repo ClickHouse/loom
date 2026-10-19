@@ -4,7 +4,7 @@ A refusal before dispatch has no bound caller, so its row is the token's:
 its org (or the one the screen authorized), subject and consumer, `-` for
 the rest, no arguments (`emit_token_refusal`). Within one JSON-RPC batch, a
 caller's refusal before a handler runs (these, and `mcp_call`'s argument,
-gate, read-scope, policy and rate-limit refusals, through `first_in_batch`)
+gate, read-scope, policy and rate-limit refusals, through `batch_allows_row`)
 is written once per (op, code, org), and a server fault at most
 `_SERVER_FAULT_ROWS` times: they are written before or by the rate limiter
 and a batch has no length cap, so one POST of many refused entries could
@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from server.core.naming import SENTINEL
-from server.observability.sli import status_class
+from server.observability.sli import row_status
 from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
 
@@ -48,7 +48,7 @@ def one_refusal_row_each() -> Iterator[None]:
         _batch_refusals.reset(token)
 
 
-def first_in_batch(op_name: str, code: str, org: str, status: str) -> bool:
+def batch_allows_row(op_name: str, code: str, org: str, status: str) -> bool:
     """Whether to write this refusal: False once the batch has written it
     (a caller's) or `_SERVER_FAULT_ROWS` of it (the server's)."""
     seen = _batch_refusals.get()
@@ -72,8 +72,8 @@ def emit_token_refusal(
     org = org or str(getattr(auth, "org", "") or "")
     if org in ("", "*"):
         org = SENTINEL
-    status = "server" if server_fault else status_class(False, error_code, None)
-    if not first_in_batch(op_name, error_code, org, status):
+    status = row_status(False, error_code, None, server_fault=server_fault)
+    if not batch_allows_row(op_name, error_code, org, status):
         return
     contextvars.copy_context().run(
         _emit_token_refusal, op_name, auth, error_code, org, server_fault

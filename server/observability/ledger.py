@@ -260,7 +260,7 @@ def emit_agent_event(
         traffic_class=attribution["traffic_class"],
         transport=transport,
         slo_class=slo_class,
-        status_class="server" if server_fault else sli.status_class(success, error_code, error),
+        status_class=sli.row_status(success, error_code, error, server_fault=server_fault),
         budget_ms=budget_ms,
     )
     if _event_hold is None or not _event_hold(event):

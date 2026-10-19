@@ -217,7 +217,7 @@ def _patched_app(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Env]:
     monkeypatch.setattr(bearer_mod, "verify_token", _verify)
     monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)
     for op in ops:
-        monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, op.mcp_tool_name, op)
+        monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, op.mcp_tool_name, op)
     monkeypatch.setattr(mcp_call, "_caller_defaults", _none)
     monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
     monkeypatch.setattr(mcp_outcome, "_emit_mcp_event", lambda *a, **k: None)

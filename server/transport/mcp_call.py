@@ -37,8 +37,7 @@ from server.transport.mcp_config import (
 )
 from server.transport.mcp_defaults import coerce_search_arguments, mcp_default_arguments
 from server.transport.mcp_identity import _caller_defaults, note_default_namespace
-from server.transport.mcp_ledger import TOOLS_BY_NAME as _TOOLS_BY_NAME
-from server.transport.mcp_ledger import emit_token_refusal, first_in_batch
+from server.transport.mcp_ledger import TOOLS_BY_NAME, batch_allows_row, emit_token_refusal
 from server.transport.mcp_op import UNKNOWN_OP
 from server.transport.mcp_outcome import (
     _emit_success,
@@ -382,7 +381,7 @@ async def _resolve_tool(
             },
         )
 
-    op = _TOOLS_BY_NAME.get(name)
+    op = TOOLS_BY_NAME.get(name)
     if op is None or op.name in _MCP_HIDDEN_OPS:
         # Return a result-with-isError, not a JSON-RPC error frame: some
         # clients drop conversation state on JSON-RPC errors (surfaces as
@@ -652,12 +651,12 @@ def _emit_refused(
     False when the batch already wrote it, so the caller skips its other
     rows too."""
     from server.auth.fail_closed import answered_unverified
-    from server.observability.sli import status_class
+    from server.observability.sli import row_status
     from server.transport._common import ledger_identity
 
     org = str(ledger_identity(arguments).get("org") or "")
-    status = "server" if answered_unverified() else status_class(False, error_code, error)
-    first = first_in_batch(op_name, error_code, org, status)
+    status = row_status(False, error_code, error, server_fault=answered_unverified())
+    first = batch_allows_row(op_name, error_code, org, status)
     if first:
         _emit_mcp_event(
             op_name,

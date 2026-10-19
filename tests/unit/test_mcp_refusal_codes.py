@@ -108,8 +108,8 @@ def probe(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(http_mod, "_record_failure", lambda *a, **k: None)
     app = FastAPI()
     app.include_router(http_mod.build_router())
-    monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, TOOL, op)
-    monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, FLAT_TOOL, flat)
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, TOOL, op)
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, FLAT_TOOL, flat)
 
     async def _no_defaults(auth: Any, client_name: str | None = None) -> None:
         return None

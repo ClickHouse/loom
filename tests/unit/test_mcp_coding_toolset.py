@@ -147,14 +147,14 @@ def test_coding_listing_is_twenty_tools_with_the_code_tools_regardless_of_the_fl
     # … and every one of those stays callable by name (the transport reads the
     # registry, not the roster)
     assert all(
-        n in mcp_call._TOOLS_BY_NAME and TOOL_TO_OP[n] not in _MCP_HIDDEN_OPS
+        n in mcp_call.TOOLS_BY_NAME and TOOL_TO_OP[n] not in _MCP_HIDDEN_OPS
         for n in core_only
         if n in TOOL_TO_OP
     )
     # The unlisted verbs are core-only — listed under
     # core, absent from coding, still callable by name
     for dropped in ("loom_memory_pin", "loom_blacklist_add", "loom_working_memory_append"):
-        assert dropped not in names and dropped in core_only and dropped in mcp_call._TOOLS_BY_NAME
+        assert dropped not in names and dropped in core_only and dropped in mcp_call.TOOLS_BY_NAME
 
 
 def test_core_and_atomic_listings_are_unchanged_by_the_new_tier():

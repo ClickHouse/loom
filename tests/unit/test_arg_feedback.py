@@ -144,9 +144,9 @@ def _patched(monkeypatch: pytest.MonkeyPatch, tool: str, ran: list[Any]) -> None
         return {}
 
     monkeypatch.setitem(
-        mcp_call._TOOLS_BY_NAME,
+        mcp_call.TOOLS_BY_NAME,
         tool,
-        dataclasses.replace(mcp_call._TOOLS_BY_NAME[tool], handler=_handler),
+        dataclasses.replace(mcp_call.TOOLS_BY_NAME[tool], handler=_handler),
     )
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
