@@ -867,7 +867,7 @@ textarea[aria-invalid="true"]:focus-visible {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
-    margin: 0 0 16px;
+    margin: 0 0 var(--spaces-4);
   }
   .tq-tile {
     display: flex;
@@ -984,7 +984,7 @@ textarea[aria-invalid="true"]:focus-visible {
     grid-template-areas:
       "pri title meta"
       ". sub sub";
-    gap: 4px 12px;
+    gap: var(--spaces-1) var(--spaces-3);
     align-items: center;
     width: 100%;
     padding: var(--click-table-body-cell-space-sm-y) var(--click-table-body-cell-space-sm-x);
@@ -1048,7 +1048,7 @@ textarea[aria-invalid="true"]:focus-visible {
   }
   .tq-sub {
     display: flex;
-    gap: 8px;
+    gap: var(--spaces-2);
     align-items: center;
     font-size: var(--text-xs);
     color: var(--color-text-muted);
@@ -1066,7 +1066,7 @@ textarea[aria-invalid="true"]:focus-visible {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 12px;
+    gap: var(--spaces-3);
     font-size: var(--text-xs);
     color: var(--color-text-muted);
     white-space: nowrap;
@@ -1272,7 +1272,7 @@ textarea[aria-invalid="true"]:focus-visible {
     border-radius: var(--click-card-horizontal-radii-all);
     background: var(--click-card-horizontal-default-color-background-default);
     /* Room for the row's focus ring (2 px out, 2 px wide) when it is scrolled to an edge. */
-    scroll-margin-block: 8px;
+    scroll-margin-block: var(--spaces-2);
     /* The browser lays out and paints only the rows in view; a row not drawn yet holds its
        list's measured height: a thread 76 px, a document 101, a memory 129, and under 640 px,
        where a row's meta takes its own line, 105, 123 and 151 (below). */
@@ -1435,7 +1435,7 @@ textarea[aria-invalid="true"]:focus-visible {
     }
     .list-pager > [data-testid="container"] {
       flex-wrap: wrap;
-      row-gap: 8px;
+      row-gap: var(--spaces-2);
     }
   }
 }

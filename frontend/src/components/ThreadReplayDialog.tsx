@@ -240,7 +240,6 @@ export function ThreadReplayDialog({
     })();
     return () => ctl.abort();
     // `identity` is read for the namespace's org; a new thread object is the trigger.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread, retries]);
 
   const highlightedTurn = useMemo(() => {

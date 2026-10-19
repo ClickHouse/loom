@@ -52,7 +52,7 @@ export function parseIso(iso: string): Date | null {
 }
 
 export function dayLabel(iso: string): string {
-  const d = parseIso(iso);
+  const d = parseChTime(iso);
   if (!d) return "Unknown";
   const today = new Date();
   today.setHours(0, 0, 0, 0);

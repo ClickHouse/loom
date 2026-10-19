@@ -116,9 +116,5 @@ export async function listRuns(id: { org: string; namespace: string }, opts: Run
 }
 
 export async function getRun(id: { org: string; namespace: string }, runId: string): Promise<RunGetResponse> {
-  return post<RunGetResponse>("/v1/run.get", {
-    org: id.org,
-    namespace: id.namespace,
-    run_id: runId,
-  });
+  return post<RunGetResponse>("/v1/run.get", { org: id.org, namespace: id.namespace, run_id: runId });
 }

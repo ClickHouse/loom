@@ -212,6 +212,8 @@ describe("dayLabel", () => {
     expect(dayLabel(new Date(2026, 9, 16, 9).toISOString())).toBe("Yesterday · Oct 16");
     expect(dayLabel(new Date(2026, 9, 15, 9).toISOString())).toBe("Oct 15");
     expect(dayLabel(new Date(2025, 11, 31, 9).toISOString())).toBe("Dec 31, 2025");
+    // A ClickHouse time: no zone (UTC), a space, nine fraction digits.
+    expect(dayLabel("2026-10-16 12:00:00.123456789")).toBe("Yesterday · Oct 16");
   });
 });
 

@@ -41,7 +41,7 @@ const entry = (key: string, over: Partial<MemoryListEntry> = {}): MemoryListEntr
 describe("a high row on the Memories page", () => {
   beforeEach(() => {
     vi.mocked(listMemories).mockResolvedValue({
-      entries: [entry("plain/key"), entry("vault/key", { value: null, value_truncated: true, sensitivity: "high" })],
+      entries: [entry("plain/key"), entry("vault/key", { value: null, sensitivity: "high" })],
       total: 2,
       truncated: false,
       today: 2,
@@ -77,7 +77,7 @@ describe("a high row on the Memories page", () => {
     vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
       opts?.contains
         ? {
-            entries: [entry("vault/key", { value: null, value_truncated: true, sensitivity: "high" })],
+            entries: [entry("vault/key", { value: null, sensitivity: "high" })],
             total: 1,
             truncated: false,
             today: 1,

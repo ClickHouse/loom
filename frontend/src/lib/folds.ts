@@ -1,7 +1,6 @@
 import { useState } from "react";
 
-// Panels that start folded to their title row (the memories page's usage audit and
-// mentor) remember, per browser, that someone opened them.
+// Panels that start folded to their title row remember, per browser, that someone opened them.
 const key = (name: string) => `loom_fold_${name}_v1`;
 
 export function foldOpen(name: string): boolean {
