@@ -11,12 +11,13 @@ admin runtime overrides (`loom.runtime_overrides`) included. Two things sit outs
 
 ## Choosing a backup
 
-| Method                                                                  | Covers                                                    | Consistent snapshot          | Use for                                                 |
-| ----------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------- | ------------------------------------------------------- |
-| ClickHouse Cloud backups                                                | every table of the service                                | yes (service-level)          | disaster recovery on Cloud                              |
-| `BACKUP DATABASE loom TO Disk(...)` / `S3(...)`, or `clickhouse-backup` | every `loom.*` table                                      | yes                          | disaster recovery on self-managed OSS                   |
-| `dev/backup_loom.py` portable dump                                      | every Loom table (below)                                  | per table, not across tables | moving a deployment, an org or a namespace; cold copies |
-| `namespace.snapshot`                                                    | one namespace's curated memory, types, grants, audit tail | one call                     | copying or freezing a namespace through the API         |
+| Method                                                                  | Covers                                                    | Consistent snapshot          | Use for                                                              |
+| ----------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------- | -------------------------------------------------------------------- |
+| ClickHouse Cloud backups                                                | every table of the service                                | yes (service-level)          | disaster recovery on Cloud                                           |
+| `BACKUP DATABASE loom TO Disk(...)` / `S3(...)`, or `clickhouse-backup` | every `loom.*` table                                      | yes                          | disaster recovery on self-managed OSS                                |
+| `BACKUP DATABASE loom_telemetry TO ...`                                 | the SLI rollup (`loom_telemetry.sli_minute`)              | yes                          | keeping SLO history past the 31 days a refold of the ledger recovers |
+| `dev/backup_loom.py` portable dump                                      | every Loom table (below)                                  | per table, not across tables | moving a deployment, an org or a namespace; cold copies              |
+| `namespace.snapshot`                                                    | one namespace's curated memory, types, grants, audit tail | one call                     | copying or freezing a namespace through the API                      |
 
 ## The portable dump
 

@@ -36,8 +36,24 @@ Retention is in [Partitioning and TTL](#partitioning-and-ttl).
 | Runs, tasks, briefs          | `agent_runs`, `agent_turn_usage`, `session_outcomes_by_user`, `procedure_runs`, `tasks`, `task_events`, `task_leases`, `agent_run_claims`, `task_inboxes`, `session_briefs`, `context_blobs` and neighbours                                                                                            | `run.*`, `task.*` / `inbox.*`, `session.brief_*`, `context.offload`, `reflection_distill`                              |
 | Namespaces, auth, governance | `namespaces`, `namespace_grants`, `namespace_policies`, `namespace_types`, `namespace_snapshots`, `namespace_calibration_*`, `service_accounts`, `user_state`, `revoked_tokens`, `signing_keys`, `auth_attempts`, `runtime_overrides`, `oauth_state`, `idempotency`, `policy_decisions` and neighbours | `namespace.*`, `grants.*`, sign-up and claim flows, `recalibration`, the idempotency cache                             |
 | Telemetry, audit, cost       | `events`, `agent_events`, `agent_cost_rollup_daily`, `audit_log`, `audit_checkpoints`, `search_trace_log`, `memory_exposures`, `memory_usage_events`, `memory_usage_totals`, `code_search_trace`, `worker_status` and neighbours                                                                       | The events stream, the op ledger, `observability/audit.py`, `audit_verifier`, the supervisor                           |
+| Service levels               | `loom_telemetry.sli_minute` (its own database: telemetry Loom derives from its tables lives outside `loom`)                                                                                                                                                                                            | `sli_minute_refresh`, once a minute over the `agent_events` request rows with an SLO class                             |
 | Erasure                      | `erasure_requests`, `erasure_reversals`                                                                                                                                                                                                                                                                | `erasure.request`, `erasure_recovery`, `memory.restore`                                                                |
 | Provider caches              | `embedding_cache`, `llm_response_cache`                                                                                                                                                                                                                                                                | The embedder and LLM client wrappers                                                                                   |
+
+**Why the SLI rollup has its own database.** `loom` holds what Loom serves; derived
+operational telemetry stays outside it, so a dashboard or alert user gets `SELECT ON
+loom_telemetry.*` without any grant on the database that holds memory, and the rollup can
+be paused (`SYSTEM STOP VIEW` / `SYSTEM START VIEW` on its refresh), truncated and
+refolded, or given its own retention without touching `loom`. A refold is `SYSTEM STOP
+VIEW loom_telemetry.sli_minute_refresh`, `TRUNCATE TABLE loom_telemetry.sli_minute` (its
+sentinel goes with it), then `SYSTEM START VIEW`; stopping first matters, since a refresh
+that commits after the truncate writes a new sentinel and the refold never starts. It
+reads the last 31 days of the ledger only, an hour per refresh, so it takes about 12 hours
+and `loom.sli.rollup_lag_s` shows how far it is; a deployment that wants the longer
+history backs `loom_telemetry` up too. Do not drop the view: migration 045 is journaled as
+applied, so nothing recreates it. The cost is one more database: the setup SQL grants the
+migrating user `CURRENT GRANTS ON loom_telemetry.*`, and preflight names that grant when
+it is missing.
 
 **State outside ClickHouse.** Uploaded document originals are rows of `document_blobs`,
 addressed per namespace by SHA-256 (`server/knowledge/store/blobs.py`). The token signing
@@ -88,15 +104,15 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
 
 ## Engines and why
 
-| Engine                                             | Used for                                                                                                                                                                                                | Why                                                                                   |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `ReplacingMergeTree(version)`                      | Mutable rows: `memory`, `memory_embeddings`, `shared`, `working_memory`, the `code_*` index, tasks, config                                                                                              | An update is an INSERT of a whole row; `FINAL` keeps the newest per key. No locks.    |
-| `ReplacingMergeTree(created_at)` or `(updated_at)` | Rows written once per key: `memory_evidence`, `memory_chunks`, caches, `idempotency`, `namespaces`                                                                                                      | The same collapse, versioned by the row's own timestamp.                              |
-| `ReplacingMergeTree` with no version               | `memory_versions`, `code_symbol_ids`, `code_symbol_names`                                                                                                                                               | `version` or the full identity is in the sort key, so only exact re-inserts collapse. |
-| `MergeTree`                                        | Append-only logs: `events`, `agent_events`, `audit_log`, `conversations`, `task_events`, `entity_edges`, traces                                                                                         | Rows are facts about a moment.                                                        |
-| `SummingMergeTree`                                 | Counters: `entity_degree`, `memory_usage_totals`, `code_unit_signal`                                                                                                                                    | A counter is an INSERT of a delta, never a read-modify-write.                         |
-| `AggregatingMergeTree`                             | Non-additive rollups: `memory_term_freq`, `chunk_term_freq`, `code_term_freq`, `agent_cost_rollup_daily`, `memory_exposure_breadth_hourly`, `query_nodes`, `namespace_write_marks`, `subject_last_seen` | Partial aggregate states (a distinct count cannot be summed), finished with `-Merge`. |
-| `KeeperMap`                                        | `task_leases`, `agent_run_claims`, `oauth_signin_state` and the migration lock `loom._migration_lock` (also the `workers_supervisor` lease, the claims and the compiler-tier `scip_entry:*` keys)       | Linearizable compare-and-swap across processes.                                       |
+| Engine                                             | Used for                                                                                                                                                                                                                             | Why                                                                                   |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `ReplacingMergeTree(version)`                      | Mutable rows: `memory`, `memory_embeddings`, `shared`, `working_memory`, the `code_*` index, tasks, config                                                                                                                           | An update is an INSERT of a whole row; `FINAL` keeps the newest per key. No locks.    |
+| `ReplacingMergeTree(created_at)` or `(updated_at)` | Rows written once per key: `memory_evidence`, `memory_chunks`, caches, `idempotency`, `namespaces`                                                                                                                                   | The same collapse, versioned by the row's own timestamp.                              |
+| `ReplacingMergeTree` with no version               | `memory_versions`, `code_symbol_ids`, `code_symbol_names`                                                                                                                                                                            | `version` or the full identity is in the sort key, so only exact re-inserts collapse. |
+| `MergeTree`                                        | Append-only logs: `events`, `agent_events`, `audit_log`, `conversations`, `task_events`, `entity_edges`, traces                                                                                                                      | Rows are facts about a moment.                                                        |
+| `SummingMergeTree`                                 | Counters: `entity_degree`, `memory_usage_totals`, `code_unit_signal`                                                                                                                                                                 | A counter is an INSERT of a delta, never a read-modify-write.                         |
+| `AggregatingMergeTree`                             | Non-additive rollups: `memory_term_freq`, `chunk_term_freq`, `code_term_freq`, `agent_cost_rollup_daily`, `memory_exposure_breadth_hourly`, `query_nodes`, `namespace_write_marks`, `subject_last_seen`, `loom_telemetry.sli_minute` | Partial aggregate states (a distinct count cannot be summed), finished with `-Merge`. |
+| `KeeperMap`                                        | `task_leases`, `agent_run_claims`, `oauth_signin_state` and the migration lock `loom._migration_lock` (also the `workers_supervisor` lease, the claims and the compiler-tier `scip_entry:*` keys)                                    | Linearizable compare-and-swap across processes.                                       |
 
 **One `keeper_map_path_prefix` per deployment.** The KeeperMap paths are fixed in the
 migrations (`/loom/migration_lock`, `/loom/instances`, `/loom/task_leases`,
@@ -208,6 +224,7 @@ writer-set expiry (`ttl_seconds`, applied by `memory_expiry_sweep` per the row's
 | 30 days    | `events`, `embedding_cache`, `memory_drops`, `memory_extraction_queue`, `memory_ask_precedents`, `worker_status`, `code_scip_batches`      |
 | 90 days    | `erasure_requests`, `oauth_state`, `policy_decisions`                                                                                      |
 | 180 days   | `search_trace_log`, `memory_exposures`, `memory_exposure_breadth_hourly`, `consolidation_runs`, `code_search_trace`, `code_search_outcome` |
+| 400 days   | `loom_telemetry.sli_minute`                                                                                                                |
 | 5 years    | `erasure_reversals`                                                                                                                        |
 | other      | `idempotency` (at `expires_at`), `revoked_tokens` (10 days past token expiry), `context_blobs` (1 day past `expires_at`)                   |
 
@@ -241,7 +258,9 @@ of three mechanisms:
    `entity_degree_mv` fold their source rows into totals.
 2. **Refreshable materialized views** (`REFRESH EVERY 1 MINUTE APPEND`) append rows newer
    than their high-water mark: BM25 statistics, the daily cost rollup, hourly exposure
-   breadth, last seen per subject.
+   breadth, last seen per subject, the request SLIs per minute. The SLI rollup's mark is
+   `agent_events.ingested_at`, when ClickHouse took the row, so a delayed flush is not
+   skipped.
 3. **Workers** poll for rows that need work and write new versions: stub embeddings
    (`embedding_worker`, `code_embed_recovery`), entities (`entity_extractor`), usage folds
    (`usage_fold`), deferred extraction (`extraction_queue`, `observe_extract`), failed
@@ -301,6 +320,7 @@ read it; the erasure saga deletes from it. A new `memory` column goes into
 | `agent_cost_rollup_refresh`                                                                                  | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `agent_cost_rollup_daily`            |
 | `memory_exposure_breadth_hourly_refresh`                                                                     | `REFRESH EVERY 1 MINUTE APPEND` | `memory_exposures` → `memory_exposure_breadth_hourly` |
 | `subject_last_seen_refresh`                                                                                  | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `subject_last_seen`                  |
+| `loom_telemetry.sli_minute_refresh`                                                                          | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `loom_telemetry.sli_minute`          |
 
 **Insert-time or refreshable.** An insert-time view writes one part per source insert. That
 suits a low-rate source or a target read back in the same request (`memory_versions`). A

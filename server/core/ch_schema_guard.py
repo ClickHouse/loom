@@ -77,8 +77,15 @@ async def pending_tables(*, now: float | None = None) -> dict[str, str]:
     return tables
 
 
+def _qualified(table: str) -> str:
+    """`table` as a statement names it: a bare name is a `loom` table."""
+    return table if "." in table else f"loom.{table}"
+
+
 def _statement_names_table(sql: str, table: str) -> bool:
-    return re.search(rf"\bloom\.`?{re.escape(table)}`?(?![A-Za-z0-9_])", sql or "") is not None
+    database, _, name = _qualified(table).partition(".")
+    pattern = rf"\b{re.escape(database)}\.`?{re.escape(name)}`?(?![A-Za-z0-9_])"
+    return re.search(pattern, sql or "") is not None
 
 
 def pending_table_named(
@@ -88,8 +95,8 @@ def pending_table_named(
     if not tables:
         return None
     if insert_table is not None:
-        bare = insert_table.split(".", 1)[-1].strip("`")
-        return bare if bare in tables else None
+        named = insert_table.replace("`", "").removeprefix("loom.")
+        return named if named in tables else None
     for table in tables:
         if _statement_names_table(sql, table):
             return table
@@ -110,10 +117,10 @@ async def guard_pending_schema(
     if hit not in _SCHEMA_GUARD_WARNED:
         _SCHEMA_GUARD_WARNED.add(hit)
         log.warning(
-            "ch %s: loom.%s is created by pending migration %s on this service; refusing "
+            "ch %s: %s is created by pending migration %s on this service; refusing "
             "statements that name it until the migration runs (one line per table)",
             op_name,
-            hit,
+            _qualified(hit),
             migration,
         )
     try:
@@ -123,7 +130,8 @@ async def guard_pending_schema(
     from server.core.errors import SchemaPendingError
 
     raise SchemaPendingError(
-        f"loom.{hit} is created by pending migration {migration}; the service has not applied it",
+        f"{_qualified(hit)} is created by pending migration {migration}; "
+        "the service has not applied it",
         table=hit,
         migration=migration,
     )

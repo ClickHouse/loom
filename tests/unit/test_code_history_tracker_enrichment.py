@@ -45,7 +45,7 @@ class _Repo:
 
 @pytest.fixture
 def qa(monkeypatch):
-    async def _authorized(org, code_ns):
+    async def _authorized(org, code_ns, *, hides_answer=True):
         return "tracker-clickhouse" if code_ns.startswith("code-clickhouse") else ""
 
     async def _facts(org, tracker_ns, nums):

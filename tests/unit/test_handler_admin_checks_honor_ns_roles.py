@@ -95,7 +95,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         effects["writes"].append(a)
 
     monkeypatch.setattr(authz, "_lookup_grant", _admin_grant)
-    monkeypatch.setattr(authz, "_is_restricted", _plain)
+    monkeypatch.setattr(authz, "may_be_restricted", _plain)
     monkeypatch.setattr(memory_repo, "insert_memory_versions", _record)
     monkeypatch.setattr(memory_repo, "get_by_id", _record)
     monkeypatch.setattr(memory_repo, "get_by_key", _record)

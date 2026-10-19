@@ -24,20 +24,24 @@ if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
 
 
-async def _may_read(auth: AuthInfo, org: str, ns: str) -> bool:
-    """Whether the gate admits `auth` to read (org, ns): the claim, a grant
-    (or an inheriting service account's creator's), the org-readable code
-    rule and the restricted two-factor check, decided by `check_authorized`
-    alone."""
+async def _may_read(auth: AuthInfo, org: str, ns: str) -> tuple[bool, bool]:
+    """(allowed, unverified): whether the gate admits `auth` to read (org, ns)
+    — the claim, a grant (or an inheriting service account's creator's), the
+    org-readable code rule and the restricted two-factor check, decided by
+    `check_authorized` alone — and, for a refusal, whether it was made
+    because a read it needed failed (server.auth.fail_closed): still
+    refused, but the server's failure."""
     from server.auth.authz import check_authorized
     from server.core.errors import IdentityIncompleteError
     from server.operations.base import Role
 
     try:
         await check_authorized(auth, Role.VIEWER, org=org, namespace=ns)
-    except (PermissionError, IdentityIncompleteError):
-        return False
-    return True
+    except PermissionError as e:
+        return False, bool(getattr(e, "unverified", False))
+    except IdentityIncompleteError:
+        return False, False
+    return True, False
 
 
 def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]:
@@ -57,28 +61,43 @@ def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}
 
 
-async def _plane_namespace(tool_name: Any, auth: Any, ns: str) -> str | dict[str, Any] | None:
+def _ledger_refusal(
+    tool_name: Any, auth: AuthInfo, *, error_code: str, org: str = "", server_fault: bool = False
+) -> None:
+    from server.transport.mcp_ledger import emit_token_refusal
+    from server.transport.mcp_tools import TOOLS_BY_NAME
+
+    op = TOOLS_BY_NAME.get(str(tool_name or ""))
+    if op is not None:
+        emit_token_refusal(op.name, auth, error_code=error_code, org=org, server_fault=server_fault)
+
+
+async def _plane_namespace(
+    tool_name: Any, auth: Any, ns: str
+) -> tuple[str | dict[str, Any] | None, bool]:
     """For a code/tracker tool's inaccessible `namespace`: the namespace it
     resolves to (and the resolution noted for the result),
     the UNKNOWN_NAMESPACE result when it names nothing, or None when it
     exists (the caller refuses as before). A resolution the caller cannot
-    read either is refused on the real namespace."""
+    read either is refused on the real namespace. Beside it, whether that
+    refusal was made because a read it needed failed."""
     from server.transport import access_refusal as ar
     from server.transport import namespace_resolve as nr
 
     if not ar.is_plane_tool(str(tool_name or "")):
-        return None
+        return None, False
     org = str(getattr(auth, "org", "") or "")
     known = nr.known_namespaces(org)
     if ns in known:
-        return None
+        return None, False
     to = nr.match(ns, known, default_branch=nr.default_branches(org))
     if to and to != ns:
-        if not await _may_read(auth, org, to):
-            return _not_accessible_result(tool_name, auth, to)
+        allowed, unverified = await _may_read(auth, org, to)
+        if not allowed:
+            return _not_accessible_result(tool_name, auth, to), unverified
         nr.RESOLVED.set({"from": ns, "to": to})
-        return to
-    return nr.unknown_result(ns, nr.suggest(ns, nr.suggestable(org, auth.can_access)))
+        return to, False
+    return nr.unknown_result(ns, nr.suggest(ns, nr.suggestable(org, auth.can_access))), False
 
 
 def _verify_bearer(request: Request) -> AuthInfo | None:
@@ -202,6 +221,10 @@ def _reject_unauthenticated(
     spec has invalid or expired tokens answered with 401 — and does not depend
     on whether this deployment runs an authorization server.
     """
+    if invalid_token_reason is None:  # a refused token was counted by _token_refused
+        from server.observability.metrics import record_auth_refusal
+
+        record_auth_refusal(None, transport="mcp")
     response.status_code = 401
     response.headers["WWW-Authenticate"] = _bearer_challenge(
         request, invalid_token_reason=invalid_token_reason
@@ -216,7 +239,9 @@ def _token_refused(
     not loaded yet is a 503 + Retry-After: the token may be good, and a 401 would
     make the client discard it and re-authenticate."""
     from server.auth.jwt import AuthUnavailable
+    from server.observability.metrics import record_auth_refusal
 
+    record_auth_refusal(error, transport="mcp")
     if isinstance(error, AuthUnavailable):
         response.status_code = 503
         response.headers["Retry-After"] = "5"
@@ -262,7 +287,9 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
     if req_org and not may_act_in_org(auth, str(req_org)):
         # result-with-isError, not a JSON-RPC error frame (clients
         # drop conversation state on those) — so the agent reads
-        # the message and can recover.
+        # the message and can recover. Ledgered in the token's org, never
+        # the one the call named.
+        _ledger_refusal(tool_name, auth, error_code="ORG_MISMATCH")
         msg = f"token org {auth.org!r} != request org {req_org!r}"
         return _ok(
             req.get("id"),
@@ -273,14 +300,46 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
             },
         )
     target_org = str(req_org or auth.org)
-    if req_ns and not await _may_read(auth, target_org, str(req_ns)):
+    if not req_ns:
+        return None
+    from server.core.errors import LoomServerError
+
+    try:
+        return await _screen_namespace(req, tool_name, args, auth, target_org, str(req_ns))
+    except LoomServerError as e:
+        # A read the check could not make past its cache (a 503): counted
+        # against the server, then raised.
+        _ledger_refusal(tool_name, auth, error_code=e.code, org=target_org)
+        raise
+
+
+async def _screen_namespace(
+    req: dict[str, Any],
+    tool_name: Any,
+    args: dict[str, Any],
+    auth: AuthInfo,
+    target_org: str,
+    req_ns: str,
+) -> dict[str, Any] | None:
+    """The screen's namespace check: None when the caller may read `req_ns`
+    (or the code/tracker index it resolves to, written into `args`), else
+    the refusal, ledgered."""
+    allowed, given_unverified = await _may_read(auth, target_org, req_ns)
+    if not allowed:
         # A code/tracker tool's `namespace` that is not a namespace resolves
         # to one or says so — never the claim text meant for a real refusal.
-        fixed = await _plane_namespace(tool_name, auth, req_ns)
-        if isinstance(fixed, dict):
-            return _ok(req.get("id"), fixed)
-        if not fixed:
-            return _ok(req.get("id"), _not_accessible_result(tool_name, auth, req_ns))
-        args["namespace"] = fixed
+        resolved, resolved_unverified = await _plane_namespace(tool_name, auth, req_ns)
+        if isinstance(resolved, str):  # a namespace the caller may read
+            args["namespace"] = resolved
+            return None
+        # The refusal to answer, and whether the check that made it was unverified.
+        if isinstance(resolved, dict):  # on the name it resolved to, or an unknown name
+            refusal, unverified = resolved, resolved_unverified
+        else:  # on the name given
+            refusal, unverified = _not_accessible_result(tool_name, auth, req_ns), given_unverified
+        # The org the token may act in, as HTTP records the same refusal.
+        code = str(refusal["structuredContent"]["code"])
+        _ledger_refusal(tool_name, auth, error_code=code, org=target_org, server_fault=unverified)
+        return _ok(req.get("id"), refusal)
     # Readable: the op's own gate enforces the role it requires.
     return None

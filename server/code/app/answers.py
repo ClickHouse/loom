@@ -431,7 +431,7 @@ async def _inject_memory_context(question: str) -> list[str]:
         from server.auth.authz import row_in_scope
         from server.operations.base import Role
 
-        if not await row_in_scope(mem_org, mem_ns, Role.VIEWER):
+        if not await row_in_scope(mem_org, mem_ns, Role.VIEWER, hides_answer=False):
             return []
     except Exception as e:  # noqa: BLE001 — fail closed
         logger.debug("code.ask memory enrichment authorization failed: %s", e)

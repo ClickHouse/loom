@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter
 from fastapi.responses import Response
@@ -111,6 +111,12 @@ def _health_provider_fields(
         "providers": provider_status["providers"],
         "problems": [p.as_dict() for p in problems],
     }
+
+
+def health_problems() -> list[dict[str, object]]:
+    """This process's `/v1/health` problems without a ClickHouse round trip,
+    for the `loom.health.problems` gauge."""
+    return cast("list[dict[str, object]]", _health_provider_fields(ch_ok=True)["problems"])
 
 
 async def _ping_clickhouse() -> tuple[bool, str | None]:

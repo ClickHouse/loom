@@ -32,6 +32,20 @@ def test_object_ddl_reads_creates_and_drops_in_order() -> None:
     assert created_objects(sql) == ("a", "a_mv", "b")
 
 
+def test_an_object_in_another_database_keeps_its_qualifier() -> None:
+    sql = (
+        "CREATE TABLE IF NOT EXISTS loom_telemetry.sli_minute (x UInt8) ENGINE = Memory;\n"
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS loom_telemetry.sli_mv TO loom_telemetry.sli_minute "
+        "AS SELECT 1 FROM loom.agent_events;\n"
+        "CREATE TABLE IF NOT EXISTS `loom`.`kept` (x UInt8) ENGINE = Memory;\n"
+    )
+    assert list(object_ddl(sql)) == [
+        ("create", "loom_telemetry.sli_minute"),
+        ("create", "loom_telemetry.sli_mv"),
+        ("create", "kept"),
+    ]
+
+
 def test_status_and_table_rebuild_do_not_import_the_runner() -> None:
     probe = (
         "import sys\n"

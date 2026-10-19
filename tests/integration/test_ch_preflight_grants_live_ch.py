@@ -38,3 +38,19 @@ def loom_scoped_user() -> Any:
 @pytest.mark.parametrize("grants", [*preflight.GRANTS.values(), preflight.REFRESH_GRANT])
 def test_a_user_with_everything_on_loom_passes(loom_scoped_user: Any, grants: str) -> None:
     assert str(loom_scoped_user.command(f"CHECK GRANT {grants} ON loom.*")) == "1"
+
+
+def test_the_telemetry_grants_need_their_own_grant_and_it_covers_them(
+    loom_scoped_user: Any,
+) -> None:
+    check = f"CHECK GRANT {preflight.TELEMETRY_GRANTS} ON {preflight.TELEMETRY_DATABASE}.*"
+    # Everything on loom.* is not enough: the migration that creates the
+    # database would fail halfway.
+    assert str(loom_scoped_user.command(check)) == "0"
+    admin = ch_client_from_env()
+    try:
+        name = str(loom_scoped_user.command("SELECT currentUser()"))
+        admin.command(f"GRANT CURRENT GRANTS ON {preflight.TELEMETRY_DATABASE}.* TO {name}")
+    finally:
+        admin.close()
+    assert str(loom_scoped_user.command(check)) == "1"

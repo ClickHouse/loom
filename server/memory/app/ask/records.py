@@ -26,7 +26,7 @@ async def _append_tracker_facts(
         from server.tracker.app.binding import authorized_tracker_namespace
         from server.tracker.app.facts import tracker_fact_line, tracker_facts_for_numbers
 
-        tracker_ns = await authorized_tracker_namespace(code_org, code_ns)
+        tracker_ns = await authorized_tracker_namespace(code_org, code_ns, hides_answer=False)
         facts = await tracker_facts_for_numbers(code_org, tracker_ns, numbers) if tracker_ns else {}
         for num in numbers:
             line = tracker_fact_line(num, facts.get(num) or {})

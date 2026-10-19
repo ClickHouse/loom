@@ -13,7 +13,7 @@ def _call(op: str, arguments: dict | None = None) -> dict:
         "method": "tools/call",
         "params": {"name": "loom_op", "arguments": {"op": op, "arguments": arguments or {}}},
     }
-    _, resp = mcp_op.route(req, toolset=None)
+    _, resp = mcp_op.route(req, toolset=None, auth=None)
     assert resp is not None
     return resp["result"]
 

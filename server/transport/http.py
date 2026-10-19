@@ -23,7 +23,8 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from pydantic import ValidationError
 
-from server.auth.bearer import verify_bearer_header
+from server.auth.bearer import missing_bearer, verify_bearer_header
+from server.auth.fail_closed import answered_unverified
 from server.auth.jwt import AuthInfo
 from server.code.app.common import (
     schedule_code_trace_validation_failure,
@@ -37,6 +38,7 @@ from server.observability.consumer import (
 )
 from server.observability.ledger import current_trace_id, emit_agent_event, set_hint_context
 from server.observability.traffic_class import (
+    bind_claimed_class,
     current_traffic_class,
     header_value,
     set_current_traffic_class,
@@ -52,6 +54,7 @@ from server.transport._common import (
     bind_request,
     ledger_identity,
     request_identity,
+    sli_columns,
     validation_errors,
     validation_note,
 )
@@ -120,13 +123,10 @@ def _extract_auth(request: Request) -> AuthInfo | None:
     Raises HTTPException(401) on present-but-invalid tokens, or on missing
     tokens when auth_required=True.
     """
-    auth = verify_bearer_header(request.headers.get("Authorization"))
+    auth = verify_bearer_header(request.headers.get("Authorization"))  # counts its own refusals
     if auth is None:
         if settings.auth_actually_required():
-            raise HTTPException(
-                status_code=401,
-                detail={"code": "AUTH_INVALID", "message": "missing bearer token"},
-            )
+            raise missing_bearer()
         return None
 
     # Trusted-caller impersonation: a subject on LOOM_TRUSTED_CALLERS carrying
@@ -209,7 +209,9 @@ def _begin_request(op: Operation, request: Request, response: Response) -> str:
     return request_id
 
 
-async def _read_body(op: Operation, request: Request, request_id: str) -> dict[str, Any]:
+async def _read_body(
+    op: Operation, request: Request, request_id: str, auth: AuthInfo | None
+) -> dict[str, Any]:
     """The JSON object body, or a 400 (not JSON); JSON that is not an object
     is the op's validation 422, and a field removed from the wire is a named
     422."""
@@ -224,7 +226,7 @@ async def _read_body(op: Operation, request: Request, request_id: str) -> dict[s
     if not isinstance(parsed, dict):
         # Every op's input is an object, so the model refuses it; the ledger
         # and identity readers here and below read the body as a dict.
-        _validate_payload(op, request_id, parsed)
+        _validate_payload(op, request_id, parsed, auth)
     raw_body: dict[str, Any] = parsed
 
     set_current_consumer(explicit_consumer(raw_body))
@@ -234,7 +236,7 @@ async def _read_body(op: Operation, request: Request, request_id: str) -> dict[s
         _emit_event(
             op,
             request_id,
-            raw_body,
+            _refused_body(raw_body, auth),
             0,
             success=False,
             error_code=refused.error_detail()["code"],
@@ -256,6 +258,7 @@ async def _idempotency_gate(
     whose first request still runs a retryable 503; a stored answer replays
     with its headers."""
     request_id, raw_body = call.request_id, call.raw_body
+    start = time.perf_counter()
     replay = await gates.idempotency_check(
         op, call.auth, target, request.headers.get("Idempotency-Key") or "", payload
     )
@@ -281,19 +284,23 @@ async def _idempotency_gate(
         for hk, hv in replay.hit.headers.items():
             response.headers[hk] = hv
         response.headers["X-Idempotent-Replay"] = "true"
-        _emit_event(op, request_id, raw_body, 0, success=True, error_code="")
+        # The lookup that answered it, as a handler's run is timed.
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        _emit_event(op, request_id, raw_body, elapsed_ms, success=True, error_code="")
     return replay
 
 
-def _validate_payload(op: Operation, request_id: str, raw_body: Any) -> Any:
-    """The body as the op's input model, or a 422 naming the failing field."""
+def _validate_payload(op: Operation, request_id: str, raw_body: Any, auth: AuthInfo | None) -> Any:
+    """The body as the op's input model, or a 422 naming the failing field.
+    `auth` is the verified token: a refusal naming another org is recorded,
+    and traced, in the token's org."""
     try:
         payload = op.input_model.model_validate(raw_body)
     except ValidationError as e:
         # The row names the failing field, and a code.*
         # request leaves a trace row with error_code / error_text.
         errors = validation_errors(e)
-        body = raw_body if isinstance(raw_body, dict) else {}
+        body = _refused_body(raw_body, auth) if isinstance(raw_body, dict) else {}
         _emit_event(
             op,
             request_id,
@@ -315,17 +322,31 @@ def _validate_payload(op: Operation, request_id: str, raw_body: Any) -> Any:
     return payload
 
 
+def _refused_body(raw_body: dict[str, Any], auth: AuthInfo | None) -> dict[str, Any]:
+    """The body a refusal before authorization is ledgered with: one naming an
+    org the token may not act in is recorded in the token's org with
+    namespace `-`, never the named one."""
+    from server.auth.authz import may_act_in_org
+
+    named = gates.present(raw_body.get("org"))
+    if auth is not None and named is not None and not may_act_in_org(auth, named):
+        return {**raw_body, "org": auth.org, "namespace": SENTINEL}
+    return raw_body
+
+
 def _refuse(
     op: Operation,
     call: _HttpCall,
     status: int,
-    code: str,
+    *,
+    error_code: str,
     e: BaseException | None = None,
     **extra: Any,
 ) -> HTTPException:
     """Record a gate's refusal on the ledger and build its HTTP error."""
-    _emit_event(op, call.request_id, call.raw_body, 0, success=False, error_code=code, error=e)
-    detail: dict[str, Any] = {"code": code, "message": str(e) if e is not None else ""}
+    body = _refused_body(call.raw_body, call.auth)
+    _emit_event(op, call.request_id, body, 0, success=False, error_code=error_code, error=e)
+    detail: dict[str, Any] = {"code": error_code, "message": str(e) if e is not None else ""}
     detail.update(extra.pop("detail", {}))
     return HTTPException(status_code=status, detail=detail, **extra)
 
@@ -353,12 +374,18 @@ async def _authorize(
     except IdentityIncompleteError as e:
         # NOT a permissions failure — the request did not say which
         # namespace or org it is for.
-        raise _refuse(op, call, 400, "IDENTITY_INCOMPLETE", e) from e
+        raise _refuse(op, call, 400, error_code="IDENTITY_INCOMPLETE", e=e) from e
     except PermissionError as e:
         # A code/tracker index says why, as MCP's refusal does.
         ns = target.namespace
         why: dict[str, object] = ar.reason_fields(ns) if ns and ar.is_plane_op(op.name) else {}
-        raise _refuse(op, call, 403, gates.ROLE_REFUSAL_CODE, e, detail=why) from e
+        raise _refuse(op, call, 403, error_code=gates.ROLE_REFUSAL_CODE, e=e, detail=why) from e
+    except LoomServerError as e:
+        # A read the gate could not make past its cache (a 503): counted
+        # against the server, then answered as raised.
+        body = _refused_body(call.raw_body, auth)
+        _emit_event(op, call.request_id, body, 0, success=False, error_code=e.code, error=e)
+        raise
     await gates.traffic_class(op, auth, target, call.raw_body)
     response.headers["X-Loom-Traffic-Class"] = header_value()
     return target
@@ -385,7 +412,7 @@ def _rate_limit(op: Operation, response: Response, call: _HttpCall, target: gate
             op,
             call,
             429,
-            "RATE_LIMITED",
+            error_code="RATE_LIMITED",
             detail={
                 "message": f"namespace {target.named_namespace!r} exceeded {op.name} rate limit",
                 "retry_after_s": wait,
@@ -397,16 +424,12 @@ def _rate_limit(op: Operation, response: Response, call: _HttpCall, target: gate
 async def _bind_context_and_policy(
     op: Operation, request: Request, call: _HttpCall, target: gates.Target, payload: Any
 ) -> Any:
-    """The verified caller and the ambient run id on the request context,
+    """The verified caller on `request.state` and the ambient run id,
     then the read scope, then the history policy gate (a structured 403 when
     it denies) on the scoped input. Returns the input the handler runs with."""
     request_id, raw_body, auth = call.request_id, call.raw_body, call.auth
-    # Make auth visible to handlers via request.state and a ContextVar
-    # (so handlers can read the caller's identity without taking Request).
+    # For handlers that take Request; the ContextVar is bound at verification.
     request.state.auth = auth
-    from server.auth.context import set_current_auth
-
-    set_current_auth(auth)
     # The SDK's ambient run labels reads through a header rather than the
     # body's `run_id` (which would filter the read to the run's own rows).
     # Bound to this request's context; the ledger rows (agent_events,
@@ -420,9 +443,9 @@ async def _bind_context_and_policy(
     try:
         payload = gates.read_scope(op, auth, payload)
     except IdentityIncompleteError as e:
-        raise _refuse(op, call, 400, "IDENTITY_INCOMPLETE", e) from e
+        raise _refuse(op, call, 400, error_code="IDENTITY_INCOMPLETE", e=e) from e
     except AuthInsufficientError as e:
-        raise _refuse(op, call, 403, gates.ROLE_REFUSAL_CODE, e) from e
+        raise _refuse(op, call, 403, error_code=gates.ROLE_REFUSAL_CODE, e=e) from e
     # History policy: after the role check, before the
     # handler. No-op when LOOM_POLICY_MODE=off or no rule applies; in
     # shadow it only records; in enforce a denial is a structured 403
@@ -439,6 +462,7 @@ async def _bind_context_and_policy(
             0,
             success=False,
             error_code="POLICY_FORBIDDEN",
+            error=e,
         )
         raise HTTPException(status_code=403, detail=e.to_detail()) from e
     return payload
@@ -682,9 +706,15 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # learns no field errors, and never touches a tenant's rate-limit
         # bucket by naming its namespace.
         call.auth = auth = _extract_auth(request)
-        call.raw_body = raw_body = await _read_body(op, request, request_id)
+        # Bound before the body is read, as MCP binds it before validation:
+        # a refusal's ledger row reads the token's org and pins from it.
+        from server.auth.context import set_current_auth
 
-        payload = _validate_payload(op, request_id, raw_body)
+        set_current_auth(auth)
+        bind_claimed_class(auth)
+        call.raw_body = raw_body = await _read_body(op, request, request_id, auth)
+
+        payload = _validate_payload(op, request_id, raw_body, auth)
 
         # The token is verified: its `consumer` claim, else the body's field, else its class.
         bind_current_consumer(raw_body, auth)
@@ -756,7 +786,9 @@ def _http_exception_note(he: HTTPException) -> HTTPException:
     detail = he.detail
     code = detail.get("code") if isinstance(detail, dict) else None
     text = str(code) if code else " ".join(str(detail or "").split())[:80]
-    return HTTPException(status_code=he.status_code, detail=text)
+    note = HTTPException(status_code=he.status_code, detail=text)
+    note.__cause__ = he  # status_class reads an unverified refusal through the chain
+    return note
 
 
 def _emit_event(
@@ -790,6 +822,8 @@ def _emit_event(
         raw_args=raw_body,
         result=result,
         error=error,
+        server_fault=answered_unverified(),
+        **sli_columns(op.name, "http"),
     )
 
 

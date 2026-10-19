@@ -28,7 +28,7 @@ def bound(monkeypatch):
         lambda org, ns: object() if ns.startswith(("tracker-", "qa-")) else None,
     )
 
-    async def _authorized(org, code_ns):
+    async def _authorized(org, code_ns, *, hides_answer=True):
         return (
             "tracker-clickhouse"
             if code_ns.startswith("code-clickhouse") and "private" not in code_ns

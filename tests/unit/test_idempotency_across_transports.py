@@ -109,7 +109,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", [op])
     monkeypatch.setattr(bearer_mod, "verify_token", _verify)
     monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)
-    monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, TOOL, op)
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, TOOL, op)
     monkeypatch.setattr(mcp_call, "_caller_defaults", _no_defaults)
     monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
     monkeypatch.setattr(mcp_outcome, "_emit_mcp_event", lambda *a, **k: None)
@@ -211,3 +211,35 @@ def test_a_read_only_op_keeps_no_replay(
     assert _mcp(env, BODY, "k6")["isError"] is False
     assert env["checked"] == [] and env["owners"] == []
     assert env["ran"] == ["hi", "hi"]
+
+
+def test_a_replay_is_ledgered_with_the_time_its_lookup_took(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Not 0 ms: a replay's latency is among the SLI's successful ones."""
+    import time
+
+    from server.transport import http as http_mod
+
+    check = idempotency.check
+
+    async def _slow_check(key: str, body_hash: str) -> idempotency.CacheResult:
+        await asyncio.sleep(0.02)
+        return await check(key, body_hash)
+
+    latencies: list[int] = []
+    monkeypatch.setattr(idempotency, "check", _slow_check)
+    monkeypatch.setattr(
+        http_mod, "_emit_event", lambda op, rid, body, ms, **k: latencies.append(ms)
+    )
+    monkeypatch.setattr(
+        mcp_call, "_emit_mcp_event", lambda name, args, ms, **k: latencies.append(ms)
+    )
+    start = time.perf_counter()
+    assert _http(env, BODY, "k-latency").status_code == 200
+    latencies.clear()  # the first call ran its handler
+    assert _http(env, BODY, "k-latency").headers.get("X-Idempotent-Replay") == "true"
+    assert _mcp(env, BODY, "k-latency")["_meta"]["idempotentReplay"] is True
+    assert len(latencies) == 2 and all(
+        20 <= ms <= (time.perf_counter() - start) * 1000 for ms in latencies
+    )

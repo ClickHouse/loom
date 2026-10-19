@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from server.auth.directory import ClassificationUnavailable, directory
+from server.auth.fail_closed import note_answered_unverified, refused_unverified, reset
 from server.core.ch import set_quota_key
 
 if TYPE_CHECKING:
@@ -236,10 +237,16 @@ async def restricted_namespaces_hidden_from(org: str) -> list[str]:
         names |= set(await directory().restricted_set(org))
     except ClassificationUnavailable:
         # Cannot tell which are restricted: the rollup gets no filter it can
-        # trust, so the caller must see nothing of the org's namespaces.
+        # trust, so the caller must see nothing of the org's namespaces, and
+        # the request that hid it all is the server's (fail_closed).
+        note_answered_unverified()
         return ["*"]
-    hidden = [ns for ns in sorted(names) if not await restricted_allows(auth, Role.VIEWER, org, ns)]
-    return hidden
+    # A listing the caller did not scope: a namespace left out does not mark.
+    return [
+        ns
+        for ns in sorted(names)
+        if not await restricted_allows(auth, Role.VIEWER, org, ns, hides_answer=False)
+    ]
 
 
 @dataclass(frozen=True)
@@ -253,6 +260,17 @@ class OrgScopeFilter:
     accessible: bool
     where: str
     params: dict[str, list[str]]
+
+
+async def rollup_member_namespaces(org: str) -> list[str]:
+    """`resolve_my_namespaces`, sorted, for an org-wide rollup's scope. One that
+    comes back empty because a read failed is the request's answer refused, so
+    it marks the request the server's, as an admin's `*` scope does."""
+    reset()
+    ns_list = sorted(await resolve_my_namespaces(org))
+    if not ns_list:
+        refused_unverified()
+    return ns_list
 
 
 async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeFilter:
@@ -287,7 +305,7 @@ async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeF
             where=f" AND {column} NOT IN {{ns_hidden:Array(String)}}",
             params={"ns_hidden": hidden},
         )
-    ns_list = sorted(await resolve_my_namespaces(org))
+    ns_list = await rollup_member_namespaces(org)
     if not ns_list:
         return OrgScopeFilter(accessible=False, where="", params={})
     return OrgScopeFilter(
@@ -307,5 +325,6 @@ __all__ = [
     "resolve_my_namespaces",
     "resolve_org_scope",
     "restricted_namespaces_hidden_from",
+    "rollup_member_namespaces",
     "set_current_auth",
 ]

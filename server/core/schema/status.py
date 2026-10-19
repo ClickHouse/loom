@@ -87,8 +87,9 @@ _created_cache: dict[str, tuple[str, ...]] = {}
 
 
 def created_tables(filename: str, mig_dir: Path | None = None) -> tuple[str, ...]:
-    """The bare table names one migration file creates (parsed once per
-    process); () for a file that cannot be read."""
+    """The table names one migration file creates, bare for `loom` and
+    qualified for another database (parsed once per process); () for a file
+    that cannot be read."""
     hit = _created_cache.get(filename)
     if hit is not None:
         return hit

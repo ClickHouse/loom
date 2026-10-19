@@ -796,6 +796,49 @@ def test_every_process_needs_what_the_workers_run() -> None:
     assert "is missing OPTIMIZE, TRUNCATE on loom.*" in str(e.value)
 
 
+class _NoTelemetryGrants(FakeCH):
+    """Every grant on loom.*, none on loom_telemetry.*."""
+
+    def command(self, sql: str, **kwargs: Any) -> Any:
+        if sql.startswith("CHECK GRANT ") and sql.endswith(" ON loom_telemetry.*"):
+            self.ran.append(sql)
+            return 0
+        return super().command(sql, **kwargs)
+
+
+def test_a_migrating_boot_without_the_telemetry_grants_stops_naming_them() -> None:
+    with pytest.raises(preflight.PreflightError) as e:
+        preflight.check(_NoTelemetryGrants(), need="server")
+    assert e.value.needs_admin
+    assert "is missing CREATE DATABASE, CREATE TABLE" in str(e.value)
+    assert "GRANT CURRENT GRANTS ON loom_telemetry.* TO `loom`" in str(e.value)
+
+
+def test_the_telemetry_grants_warn_with_nothing_pending_and_are_not_a_reader_s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Only a migration writes loom_telemetry; the serving process never does.
+    monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: False)
+    server = preflight.check(_NoTelemetryGrants(), need="server")
+    assert "on loom_telemetry.*" in preflight.warnings(server)
+    ch = _NoTelemetryGrants()
+    preflight.check(ch, need="read")
+    assert not any(sql.endswith(" ON loom_telemetry.*") for sql in ch.ran)
+
+
+def test_a_server_that_does_not_migrate_warns_when_it_cannot_read_the_telemetry() -> None:
+    server = preflight.check(_NoTelemetryGrants(), need="server", migrates=False)
+    assert server.no_telemetry_read
+    assert "may not SELECT on loom_telemetry.*" in preflight.warnings(server)
+    assert not preflight.check(FakeCH(), need="server", migrates=False).no_telemetry_read
+
+
+def test_the_setup_sql_grants_the_telemetry_database_but_not_to_the_reader() -> None:
+    sql = ch_setup.admin_sql("loom_app", "loom_reader")
+    assert "GRANT CURRENT GRANTS ON loom_telemetry.* TO `loom_app`" in sql
+    assert not any("loom_telemetry" in line and "loom_reader" in line for line in sql)
+
+
 def test_a_process_that_does_not_migrate_never_creates_the_database() -> None:
     ch = FakeCH(database=False)
     with pytest.raises(preflight.PreflightError, match="cannot see a database loom"):

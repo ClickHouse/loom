@@ -1,10 +1,10 @@
-"""MCP transport — tool descriptors + the `loom_search` rendering.
+"""MCP transport — tool descriptors, the `loom_search` rendering and the
+per-call ledger rows.
 
-Leaf module: builds the `tools/list` descriptors (registry-derived +
-synthetic) and renders the `search.query` op's result as the `loom_search`
-tool answers it (a text summary plus the lean sections). Imports from
-``mcp_config`` / ``mcp_schemas`` / ``mcp_identity`` / ``mcp_descriptions``
-and the operations registry — never back into ``server.transport.mcp``.
+Builds the `tools/list` descriptors (registry-derived + synthetic), renders
+the `search.query` op's result as the `loom_search` tool answers it (a text
+summary plus the lean sections), and writes a call's ledger row
+(`_emit_mcp_event`). Never imports ``mcp_call`` or ``server.transport.mcp``.
 """
 
 from __future__ import annotations
@@ -57,6 +57,9 @@ log = logging.getLogger(__name__)
 # ============================================================
 # Tool descriptors (from operation registry)
 # ============================================================
+
+# Tool name → op: how a `tools/call` resolves its op, and its refusal rows name it.
+TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
 
 
 def _synthetic_tool_descriptors(toolset: str = "core") -> list[dict[str, Any]]:
@@ -426,8 +429,9 @@ def _emit_mcp_event(
 
     # Shared with the HTTP transport. MCP passes no memory_key /
     # impersonated_by; they default to "" — preserves the MCP event shape.
+    from server.auth.fail_closed import answered_unverified
     from server.observability.ledger import emit_agent_event
-    from server.transport._common import ledger_identity
+    from server.transport._common import ledger_identity, sli_columns
 
     emit_agent_event(
         op_name=op_name,
@@ -439,6 +443,8 @@ def _emit_mcp_event(
         raw_args=raw_args,
         result=result,
         error=error,
+        server_fault=answered_unverified(),
+        **sli_columns(op_name, "mcp"),
     )
 
 

@@ -335,7 +335,7 @@ async def test_symbol_history_adds_file_incidents_only_when_restricted(monkeypat
 
     monkeypatch.setattr(cs, "_resolve_symbols", _resolve)
 
-    async def _authorized(org, code_ns):
+    async def _authorized(org, code_ns, *, hides_answer=True):
         return PRIV
 
     monkeypatch.setattr(binding, "authorized_tracker_namespace", _authorized)
