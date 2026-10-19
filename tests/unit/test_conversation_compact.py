@@ -541,9 +541,18 @@ def test_the_compaction_window(
 
 
 @pytest.mark.parametrize(
-    ("metadata", "summary"),
-    [('{"compacted_from": ["m1"]}', True), ('{"compacted_from": "m1"}', False), ("{}", False)],
+    ("role", "metadata", "summary"),
+    [
+        ("system", '{"compacted_from": ["m1"]}', True),
+        ("system", '{"compacted_from": []}', False),
+        ("system", '{"compacted_from": "m1"}', False),
+        ("system", "{}", False),
+        ("assistant", '{"compacted_from": ["m1"]}', False),
+    ],
 )
-def test_only_a_compacted_from_list_marks_a_summary(metadata: str, summary: bool) -> None:
-    """The same test `_PEER_COPIES` applies in SQL: a non-empty `compacted_from` list."""
-    assert bool(ch_mod._compacted_from({"role": "system", "metadata": metadata})) is summary
+def test_only_a_system_turn_with_a_compacted_from_list_is_a_summary(
+    role: str, metadata: str, summary: bool
+) -> None:
+    """The same test `_PEER_COPIES` applies in SQL: a system turn with a non-empty
+    `compacted_from` list."""
+    assert bool(ch_mod._compacted_from({"role": role, "metadata": metadata})) is summary

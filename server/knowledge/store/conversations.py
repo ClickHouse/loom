@@ -886,8 +886,7 @@ async def tombstone_embeddings(
         "embedded": EMBEDDED_EXCERPT_CHARS,
         "short": _SHORT_EXCERPT_CHARS,
     }
-    # Named turns: compaction's are its own live turns; its repair pass names whatever
-    # its live summaries list. A row a peer still holds survives either way.
+    # Named turns bind in byte-bounded slices.
     parts: list[tuple[str, dict[str, Any]]] = (
         [(_THREAD_TURNS, params)]
         if msg_ids is None

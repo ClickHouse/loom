@@ -741,8 +741,8 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         input.org, input.namespace, input.agent, input.thread_id
     )
     # A run that failed after tombstoning its turns leaves their embeddings to a retry,
-    # whose window no longer holds those turns: the turns live summaries name that are
-    # not live for this agent get an embeddings pass first. A replaced turn still live
+    # whose window no longer holds those turns: the turns this agent's live summaries
+    # name that are not live for it get an embeddings pass first. A replaced turn still live
     # (a run that failed before the messages mutation) keeps its embedding, and a row a
     # peer still holds survives.
     live_ids = {str(r["msg_id"]) for r in rows}
