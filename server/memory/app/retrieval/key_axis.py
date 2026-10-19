@@ -20,14 +20,28 @@ def key_axis_from_reuse(reused_share: float, threshold: float) -> bool:
     return float(reused_share) >= float(threshold)
 
 
-# (org, namespace) -> (decided_at_monotonic, key_axis_on, reused_share)
-_KEY_AXIS_AUTO: dict[tuple[str, str], tuple[float, bool, float]] = {}
+# (org, namespace) -> (probed_at_monotonic, reused_share; None when the probe failed).
+# The share is cached, not the decision, so a changed threshold applies at once.
+_KEY_AXIS_AUTO: dict[tuple[str, str], tuple[float, float | None]] = {}
 
 
-def key_axis_auto_cached(org: str, namespace: str) -> tuple[bool, float] | None:
+def _decide(share: float | None, settings_obj: Any) -> bool:
+    if share is None:
+        return False  # a failed probe reads as off, the cheaper side
+    return key_axis_from_reuse(share, float(settings_obj.memory_search_key_axis_auto_reuse_share))
+
+
+def key_axis_auto_cached(
+    org: str, namespace: str, settings_obj: Any | None = None
+) -> tuple[bool, float] | None:
     """The last auto decision for a namespace, for the handler's ledger."""
+    from server.settings import settings as _default_settings
+
     hit = _KEY_AXIS_AUTO.get((str(org), str(namespace)))
-    return (hit[1], hit[2]) if hit else None
+    if hit is None:
+        return None
+    _s = _default_settings if settings_obj is None else settings_obj
+    return _decide(hit[1], _s), hit[1] or 0.0
 
 
 async def key_axis_auto(
@@ -42,12 +56,11 @@ async def key_axis_auto(
 
     _s = _default_settings if settings_obj is None else settings_obj
     ttl = float(_s.memory_search_key_axis_auto_ttl_seconds or 600)
-    threshold = float(_s.memory_search_key_axis_auto_reuse_share or 0.08)
     now = _time.monotonic()
     key = (str(org), str(namespace))
     hit = _KEY_AXIS_AUTO.get(key)
     if hit is not None and now - hit[0] < ttl:
-        return hit[1]
+        return _decide(hit[1], _s)
     share = 0.0
     try:
         rows = await ch.query_all(
@@ -67,11 +80,10 @@ async def key_axis_auto(
             share = float((rows[0] or {}).get("reused_share") or 0.0)
     except Exception as e:  # noqa: BLE001 — a probe, never a failure; off is the cheaper side
         log.warning("memory.search: key-axis auto probe failed for %s/%s: %s", org, namespace, e)
-        _KEY_AXIS_AUTO[key] = (now, False, 0.0)
+        _KEY_AXIS_AUTO[key] = (now, None)
         return False
-    on = key_axis_from_reuse(share, threshold)
-    _KEY_AXIS_AUTO[key] = (now, on, share)
-    return on
+    _KEY_AXIS_AUTO[key] = (now, share)
+    return _decide(share, _s)
 
 
 async def resolve_key_axis(q: SearchQuery, *, ch: Any, settings_obj: Any | None = None) -> bool:

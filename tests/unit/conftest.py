@@ -668,7 +668,7 @@ def _deferred_ledgers_left_empty() -> Iterator[None]:
 def _identity_caches_left_cold() -> Iterator[None]:
     """Leave the search plane's per-namespace caches empty after every test.
 
-    `memory_search._KEY_AXIS_AUTO` remembers the key-axis decision per
+    `memory_search._KEY_AXIS_AUTO` remembers the key-reuse probe per
     (org, namespace) for ten minutes, and `_SUMMARY_ENTITY_CACHE` the summary
     vocabulary per (org, namespaces) for one minute. A cold entry costs the
     search one extra `query_all` (the probe), which in a stub client with a

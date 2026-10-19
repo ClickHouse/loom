@@ -74,7 +74,7 @@ async def test_auto_decides_per_namespace_and_caches() -> None:
     assert ch.calls == 1  # cached
     ch2 = _CH(0.03)  # extractor keys
     assert await resolve_key_axis(_q("kcurve"), ch=ch2, settings_obj=s) is False
-    assert ms.key_axis_auto_cached("clickhouse", "kcurve") == (False, 0.03)
+    assert ms.key_axis_auto_cached("clickhouse", "kcurve", s) == (False, 0.03)
     # the request wins over auto both ways
     assert await resolve_key_axis(_q("kcurve", key_axis=True), ch=ch2, settings_obj=s) is True
     assert await resolve_key_axis(_q("supportbot", key_axis=False), ch=ch, settings_obj=s) is False
@@ -98,4 +98,27 @@ async def test_failed_probe_reads_off_and_is_cached() -> None:
     ch = _CH(None, fail=True)
     assert await key_axis_auto("clickhouse", "bad", ch=ch, settings_obj=s) is False
     assert await key_axis_auto("clickhouse", "bad", ch=ch, settings_obj=s) is False
+    assert ch.calls == 1
+    # A threshold every share meets still leaves a failed probe off.
+    s.memory_search_key_axis_auto_reuse_share = 0.0
+    assert await key_axis_auto("clickhouse", "bad", ch=ch, settings_obj=s) is False
+    assert ms.key_axis_auto_cached("clickhouse", "bad", s) == (False, 0.0)
+
+
+@pytest.mark.asyncio
+async def test_a_changed_threshold_applies_to_the_cached_share() -> None:
+    """The probe's share is cached, not its decision: a live threshold change
+    moves the key axis without waiting out the TTL or probing again."""
+    from types import SimpleNamespace
+
+    s = SimpleNamespace(
+        memory_search_key_axis="auto",
+        memory_search_key_axis_auto_reuse_share=0.08,
+        memory_search_key_axis_auto_ttl_seconds=600,
+    )
+    ch = _CH(0.06)
+    assert await key_axis_auto("clickhouse", "ns", ch=ch, settings_obj=s) is False
+    s.memory_search_key_axis_auto_reuse_share = 0.05
+    assert await key_axis_auto("clickhouse", "ns", ch=ch, settings_obj=s) is True
+    assert ms.key_axis_auto_cached("clickhouse", "ns", s) == (True, 0.06)
     assert ch.calls == 1
