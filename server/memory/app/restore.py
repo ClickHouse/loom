@@ -73,6 +73,7 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
         if await _landed_late(input, existing):
             # A retry of an Undo whose restore landed after its 503: finish that one.
             version, status = int(existing.version), str(existing.status)
+            # Versions are time_ns: the restore's version is when it was made.
             restored_at = datetime.fromtimestamp(version / 1e9, UTC).replace(tzinfo=None)
         elif (
             existing.tombstoned_at is not None
@@ -96,16 +97,19 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
 
 
 async def _landed_late(input: MemoryRestoreInput, head: MemoryRow) -> bool:
-    """Whether `head` is the restore of an Undo whose insert landed after its 503: a
-    guarded Undo finds the row served again, at the version its newest record names."""
-    from server.memory.store.conflict_resolver import newest_undo_version
+    """Whether `head` is an Undo's restore (one whose answer may have been lost): served,
+    at a version an Undo record names, behind the memory the request names if any."""
+    from server.memory.store.conflict_resolver import undo_recorded
 
-    if not input.if_superseded_by or head.tombstoned_at is not None:
+    if head.tombstoned_at is not None or str(head.status) == "superseded":
         return False
-    if str(head.status) == "superseded":
-        return False
-    undone = await newest_undo_version(input.org, input.namespace, str(head.memory_id))
-    return undone == int(head.version)
+    return await undo_recorded(
+        input.org,
+        input.namespace,
+        str(head.memory_id),
+        int(head.version),
+        input.if_superseded_by,
+    )
 
 
 async def _write_restore(
@@ -402,7 +406,9 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
     retired behind that memory) and `only_if_superseded` (still retired, never a delete
     since). Either one routes here.
 
-    Idempotent: an already-live row returns restored=False.
+    Idempotent: an already-live row returns restored=False, unless it is an Undo's restore
+    (whose answer may have been lost): the call finishes it, again if need be, and answers
+    restored.
     """
     import server.memory.store as memory_repo
 
@@ -432,20 +438,10 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
     )
     if row is None:
         return MemoryRestoreOutput(restored=False)
-    if (
-        input.if_superseded_by
-        or input.only_if_superseded
-        or (row.get("tombstoned_at") is None and str(row.get("status") or "") == "superseded")
-    ):
-        # Undo of an automatic retirement; `_restore_superseded` rechecks on the strong head.
+    if input.if_superseded_by or input.only_if_superseded or row.get("tombstoned_at") is None:
+        # Undo of an automatic retirement, or of a live row: `_restore_superseded` rechecks
+        # on the strong head, finishes an Undo whose answer was lost, else is a no-op.
         return await _restore_superseded(input, ch)
-    if row.get("tombstoned_at") is None:
-        # Already live — idempotent no-op.
-        return MemoryRestoreOutput(
-            restored=False,
-            memory_id=str(row.get("memory_id") or ""),
-            version=int(row.get("version") or 0),
-        )
 
     # Past the retention TTL the data is gone — report expired explicitly
     # so the UI shows "outside the grace window" not a generic 404.

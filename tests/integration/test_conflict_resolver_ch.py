@@ -3031,3 +3031,113 @@ async def test_a_retried_undo_finishes_a_restore_that_landed_after_its_503(
         params={"o": org},
     )
     assert search and {r["status"] for r in search} == {"active"}
+
+
+async def _versions_of(ch: Any, org: str, key: str) -> int:
+    rows = await ch.query_all(
+        "SELECT count() AS n FROM loom.memory_versions WHERE org = {o:String}"
+        " AND memory_key = {k:String} SETTINGS select_sequential_consistency = 1",
+        params={"o": org, "k": key},
+    )
+    return int(rows[0]["n"])
+
+
+async def test_an_undo_naming_another_memory_after_a_restore_changes_nothing(ch, wired) -> None:
+    """A row an Undo restored, undone again behind a memory it never retired behind:
+    no Undo of that names this restore, so nothing is written and nothing restored."""
+    import uuid
+
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 2195)
+    assert (await run_pass())["retired"] == 1
+    winner = (await _rows(ch, org))["office_location"]["id"]
+    assert (await _undo(org, "office_city", winner)).restored
+    before = await _versions_of(ch, org, "office_city")
+    assert not (await _undo(org, "office_city", str(uuid.uuid4()))).restored
+    assert (await _undo(org, "office_city", winner)).restored, "the same Undo again"
+    assert await _versions_of(ch, org, "office_city") == before
+
+
+async def _late_undo(org: str, winner: str, monkeypatch: Any) -> tuple[Any, dict[str, Any]]:
+    """An Undo whose insert is held back (its answer lost): the rows and kwargs to land."""
+    from server.core.errors import BackendUnavailableError
+    from server.memory.app import restore
+
+    held: list[Any] = []
+
+    async def lost(rows: Any, **kw: Any) -> None:
+        held.append((rows, kw))
+        raise TimeoutError("answer lost")
+
+    with monkeypatch.context() as m:
+        m.setattr(restore, "insert_memory_versions", lost)
+        with pytest.raises(BackendUnavailableError):
+            await _undo(org, "office_city", winner)
+    return held[0]
+
+
+async def _search_status(ch: Any, org: str, key: str) -> set[str]:
+    rows = await ch.query_all(
+        "SELECT status FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+        " AND memory_key = {k:String} AND tombstoned_at IS NULL"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"o": org, "k": key},
+    )
+    return {r["status"] for r in rows}
+
+
+async def test_two_lost_undos_landing_out_of_order_finish_on_retry(ch, wired, monkeypatch) -> None:
+    """Two Undo attempts both answered 503; the later one's insert lands first. The head
+    is the later restore, which its own record names: the retry finishes it."""
+    from server.memory.app import restore
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 2196)
+    assert (await run_pass())["retired"] == 1
+    winner = (await _rows(ch, org))["office_location"]["id"]
+    first = await _late_undo(org, winner, monkeypatch)
+    second = await _late_undo(org, winner, monkeypatch)
+    for rows, kw in (second, first):
+        await restore.insert_memory_versions(rows, **kw)
+    out = await _undo(org, "office_city", winner)
+    assert out.restored and out.version == second[0][0]["version"]
+    assert await _search_status(ch, org, "office_city") == {"active"}
+
+
+async def test_an_unguarded_retry_finishes_an_undo_that_landed_late(ch, wired, monkeypatch) -> None:
+    """The retry names no memory: the head is an Undo's restore all the same, so it is
+    finished (search row served, facts reopened) and answers restored."""
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 2197)
+    assert (await run_pass())["retired"] == 1
+    winner = (await _rows(ch, org))["office_location"]["id"]
+    rows, kw = await _late_undo(org, winner, monkeypatch)
+    await restore.insert_memory_versions(rows, **kw)
+    reopened: list[str] = []
+    real = restore._reopen_facts
+
+    async def spy(input: Any, existing: Any, *a: Any, **k: Any) -> None:
+        reopened.append(str(existing.memory_id))
+        await real(input, existing, *a, **k)
+
+    monkeypatch.setattr(restore, "_reopen_facts", spy)
+    out = await restore.handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key="office_city",
+        )
+    )
+    assert out.restored
+    assert await _search_status(ch, org, "office_city") == {"active"}
+    assert reopened == [str(rows[0]["memory_id"])]

@@ -477,25 +477,38 @@ _UNDOS_SQL = """
         """
 
 
-# The restore version the newest Undo record of one row names (0 when none does).
-_NEWEST_UNDO_SQL = """
-        SELECT argMax(JSONExtractUInt(subject, 'version'), ts) AS version
+# Whether an Undo record names this row's restore at this version (and, when given, the
+# memory it was retired behind).
+_UNDO_RECORDED_SQL = """
+        SELECT count() > 0 AS recorded
         FROM loom.audit_log
         WHERE org = {org:String} AND namespace = {ns:String}
           AND event_type = 'memory.unsupersede'
           AND JSONExtractString(subject, 'memory_id') = {id:String}
+          AND JSONExtractUInt(subject, 'version') = {v:UInt64}%s
         SETTINGS select_sequential_consistency = 1
         """
 
 
-async def newest_undo_version(
-    org: str, namespace: str, memory_id: str, *, ch: _CHClient | None = None
-) -> int:
-    """The restore version the newest `memory.unsupersede` record of `memory_id` names;
-    0 when there is none (or it names no version)."""
+async def undo_recorded(
+    org: str,
+    namespace: str,
+    memory_id: str,
+    version: int,
+    superseded_by: str = "",
+    *,
+    ch: _CHClient | None = None,
+) -> bool:
+    """Whether a `memory.unsupersede` record names `memory_id` restored at `version`
+    (behind `superseded_by`, when given): that version is that Undo's restore."""
     ch = ch or _default_client()
-    rows = await ch.query_all(_NEWEST_UNDO_SQL, {"org": org, "ns": namespace, "id": memory_id})
-    return int(rows[0]["version"] or 0) if rows else 0
+    params: dict[str, Any] = {"org": org, "ns": namespace, "id": memory_id, "v": int(version)}
+    behind = ""
+    if superseded_by:
+        behind = "\n          AND JSONExtractString(subject, 'superseded_by') = {by:String}"
+        params["by"] = superseded_by
+    rows = await ch.query_all(_UNDO_RECORDED_SQL % behind, params)
+    return bool(rows and rows[0]["recorded"])
 
 
 class Undo(NamedTuple):
@@ -587,11 +600,11 @@ __all__ = [
     "cluster_peers",
     "dead_flags",
     "key_identity",
-    "newest_undo_version",
     "owed_rows",
     "protected_ids",
     "queued_namespaces",
     "stamp_judged",
     "under_erasure",
+    "undo_recorded",
     "unjudged_conflicted_rows",
 ]
