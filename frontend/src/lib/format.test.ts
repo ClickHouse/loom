@@ -250,7 +250,7 @@ describe("restoreText", () => {
   afterEach(() => vi.useRealTimers());
 
   it("says the days left, one day in the singular, and the grace window for no time", () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(Date.parse("2026-10-18T12:00:00Z"));
     expect(restoreText("2026-10-05 11:00:00")).toBe("1 day left to restore");
     expect(restoreText("2026-10-17 06:00:00")).toBe("13 days left to restore");
