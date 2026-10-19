@@ -1081,6 +1081,10 @@ _PRUNE_SKIPPED = (
 )
 
 
+# What prune reads of a candidate before it deletes it.
+_PRUNE_FIELDS = ["agent", "actor", "version", "lock_mode"]
+
+
 async def _prune(
     client: _Client,
     org: str,
@@ -1109,21 +1113,16 @@ async def _prune(
             "session_id": session_id,
             "memory_key": key,
         }
-        if key.startswith("chunk:"):
-            # memory.get reads such a key from the chunk table, so prune cannot check the row
-            # before a delete; it keeps the copy and says so.
-            n["prune_failed"] += 1
-            print(
-                f"  ✗ prune {key}: memory.get reads a key starting with 'chunk:' as a search "
-                "chunk, so the copy cannot be checked; delete it with memory.delete",
-                file=sys.stderr,
-            )
-            continue
         try:
-            got = await client.post(
-                "memory.get", {**ident, "fields": ["agent", "actor", "version", "lock_mode"]}
+            # memory.bulk_get reads the row stored under the key itself, a key shaped like a
+            # search chunk's id too (memory.get reads those from the chunk table).
+            read = {k: v for k, v in ident.items() if k != "memory_key"}
+            answer = await client.post(
+                "memory.bulk_get", {**read, "memory_keys": [key], "fields": _PRUNE_FIELDS}
             )
-            if not got.get("found") or got.get("agent") != args.agent:
+            got = (answer.get("results") or {}).get(key) or {}
+            # Gone, or answered by a chunk's parent fact rather than a row under the key.
+            if not got or got.get("resolved_from") or got.get("agent") != args.agent:
                 continue
             listed = live[(session_id, key)].get("version")
             # Another writer's row, a copy someone locked to keep it, or one rewritten since

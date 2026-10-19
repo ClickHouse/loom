@@ -71,9 +71,7 @@ prune guard, a path that is not a directory, or a missing `--agent`, token or or
   that row is under its `--agent`, was written by its own token (the agent name alone is
   the caller's choice), is still the version the import's listing saw with an `okf:`
   trace, and has no `memory.lock`: anything else is counted as kept, and a row that is
-  gone or under another agent by then is not counted. A copy whose key starts with
-  `chunk:` is counted as failed: `memory.get` reads such a key as a search chunk, so prune
-  cannot check it; delete it with `memory.delete`. It deletes with
+  gone or under another agent by then is not counted. It deletes with
   `memory.delete_version`, which removes only that version, under that exact identity, and
   never another agent's row. A `memory.set` or `memory.bulk_set` of the key that is in
   flight when the delete lands keeps its row; the exceptions are in the [memory
@@ -104,7 +102,7 @@ A run that finds nothing to change sends only reads. For a namespace of N rows:
 | Side                 | Requests                                                                                                                                                                                                                                                                                                                     |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Export, private Loom | `memory.list` pages of 100 rows (`LOOM_MEMORY_LIST_VIEWER_LIMIT` caps a viewer token's page), one `memory.keys`, one `GET /v1/health` for the build commit, one `memory.bulk_get` per 500 rows of each (agent, user, session), and one `memory.export_evidence` page per 2,000 typed edges                                   |
-| Import, public Loom  | `memory.list` pages of 1,000 rows, one `memory.bulk_get` per 500 rows, and the edge pages again; then one `memory.set` per changed row, one `memory.link` per new edge, a `memory.get` per prune candidate (a row with an `okf:` trace whose key left the bundle, kept or not), and a `memory.delete_version` per pruned row |
+| Import, public Loom  | `memory.list` pages of 1,000 rows, one `memory.bulk_get` per 500 rows, and the edge pages again; then one `memory.set` per changed row, one `memory.link` per new edge, a `memory.bulk_get` per prune candidate (a row with an `okf:` trace whose key left the bundle, kept or not), and a `memory.delete_version` per pruned row |
 
 A 501-row namespace with one writer takes 15 requests in all (6 `memory.list` calls, 1
 `memory.keys`, 1 health read, 2 `memory.bulk_get` and 1 edge page on the export side; 1, 2

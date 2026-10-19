@@ -91,7 +91,11 @@ class _FakeLoom:
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((op, body))
         # The server refuses a field its answer does not have (422).
-        served = {"memory.get": MemoryGetOutput, "memory.list": _MemoryListEntry}.get(op)
+        served = {
+            "memory.get": MemoryGetOutput,
+            "memory.bulk_get": MemoryGetOutput,
+            "memory.list": _MemoryListEntry,
+        }.get(op)
         if served is not None and not set(body.get("fields") or []) <= set(served.model_fields):
             raise RuntimeError(f"{op} → HTTP 422 VALIDATION_FAILED: fields")
         if op == "memory.keys":
@@ -210,6 +214,11 @@ class _FakeLoom:
             for op, _ in self.calls
             if op in ("memory.set", "memory.link", "memory.delete_version")
         ]
+
+
+def _prune_read(op: str, body: dict[str, Any]) -> bool:
+    """Whether a call is prune's read of a candidate (the import's listing uses bulk_get too)."""
+    return op == "memory.bulk_get" and body.get("fields") == cli_okf._PRUNE_FIELDS
 
 
 def _project(row: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
@@ -637,7 +646,7 @@ def test_prune_keeps_a_row_replaced_between_its_read_and_the_delete(
 
     async def replace_after_read(op: str, body: dict[str, Any]) -> dict[str, Any]:
         res = await post(op, body)
-        if op == "memory.get":  # another writer lands between prune's read and delete
+        if _prune_read(op, body):  # another writer lands between prune's read and delete
             loom.put("okf-sync", "gone", source_trace="okf:b/x.md", tags=[], actor="human:bob")
         return res
 
@@ -673,20 +682,35 @@ def test_prune_keeps_a_row_read_without_a_version(tmp_path: Path, loom: _FakeLoo
     assert ("okf-sync", "-", "gone") in loom.rows
 
 
-def test_prune_reports_a_copy_whose_key_reads_as_a_chunk(
-    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
+def test_prune_deletes_a_copy_whose_key_is_shaped_like_a_chunk_id(
+    tmp_path: Path, loom: _FakeLoom
 ) -> None:
-    # memory.get answers a `chunk:` key from the chunk table, never the row: prune cannot
-    # check it, so it keeps the copy and counts the failure instead of skipping it silently.
+    # memory.get reads a `chunk:` key from the chunk table; prune reads with bulk_get, which
+    # answers the row stored under the key itself, so such a copy is pruned like any other.
     key = "chunk:memory.set:x:0"
     assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry(key)])) == 0
-    capsys.readouterr()
-    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 1
-    out = capsys.readouterr()
-    assert "memory.get reads a key starting with 'chunk:'" in out.err
-    assert "0 pruned (1 failed)" in out.out
-    assert ("okf-sync", "-", key) in loom.rows
-    assert not any(op == "memory.get" and b["memory_key"] == key for op, b in loom.calls)
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
+    assert ("okf-sync", "-", key) not in loom.rows
+    assert not any(op == "memory.get" for op, _ in loom.calls)
+
+
+def test_prune_keeps_a_copy_bulk_get_answered_with_a_parent(
+    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A chunk-shaped key no row holds any more reads its parent fact: not this copy.
+    key = "chunk:memory.set:x:0"
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry(key)])) == 0
+    post = loom.post
+
+    async def parent_answers(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        out = await post(op, body)
+        if _prune_read(op, body):
+            out["results"][key]["resolved_from"] = key
+        return out
+
+    monkeypatch.setattr(loom, "post", parent_answers)
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
+    assert "memory.delete_version" not in loom.writes()
 
 
 def test_only_an_export_that_read_every_row_is_marked_complete(
@@ -981,7 +1005,7 @@ def test_prune_keeps_a_row_its_writer_rewrote_without_the_import_trace(
     post = loom.post
 
     async def rewritten_before_the_read(op: str, body: dict[str, Any]) -> dict[str, Any]:
-        if op == "memory.get" and body["memory_key"] == "gone":
+        if _prune_read(op, body) and body["memory_keys"] == ["gone"]:
             loom.put("okf-sync", "gone", source_trace="", tags=[], actor=_ACTOR)
         return await post(op, body)
 
