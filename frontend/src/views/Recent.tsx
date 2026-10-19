@@ -66,7 +66,6 @@ const MEMORIES_LIST_FIELDS = [
   "tombstoned_at",
   "verified_by",
   "verification",
-  "sensitivity",
 ];
 const MEMORIES_PREVIEW_CHARS = 160;
 

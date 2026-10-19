@@ -94,7 +94,7 @@ def test_empty_fields_means_no_projection() -> None:
     assert read_projection.resolve(MemoryGetOutput, None, always=read_projection.GET_ALWAYS) is None
 
 
-def test_list_entry_projection_always_keeps_memory_key() -> None:
+def test_list_entry_projection_always_keeps_memory_key_and_sensitivity() -> None:
     e = _MemoryListEntry(
         memory_key="lesson_1",
         memory_type="semantic",
@@ -108,14 +108,17 @@ def test_list_entry_projection_always_keeps_memory_key() -> None:
     e._projection = read_projection.resolve(
         _MemoryListEntry, ["value", "tags"], always=read_projection.LIST_ENTRY_ALWAYS
     )
+    # `sensitivity` too: a reader never names it, so it never 422s on an older replica
     assert e.model_dump(mode="json") == {
         "memory_key": "lesson_1",
+        "sensitivity": "",
         "tags": ["kind:false_positive"],
         "value": "never flag X",
     }
     # through the envelope too
     out = MemoryListOutput(entries=[e], truncated=False)
-    assert set(out.model_dump(mode="json")["entries"][0]) == {"memory_key", "tags", "value"}
+    entry = out.model_dump(mode="json")["entries"][0]
+    assert set(entry) == {"memory_key", "sensitivity", "tags", "value"}
 
 
 # ------------------------------------------------------------- handlers
@@ -351,7 +354,9 @@ async def test_list_tags_filter_is_searchs_predicate_on_both_paths(monkeypatch) 
     score = [(s, p) for s, p in ch.calls if "FROM loom.memory FINAL" in s]
     assert len(score) == 2 and all("hasAny(tags, {tags:Array(String)})" in s for s, _ in score)
     dumped = out.model_dump(mode="json")
-    assert dumped["entries"] == [{"memory_key": "lesson_1", "value": "never flag X"}]
+    assert dumped["entries"] == [
+        {"memory_key": "lesson_1", "value": "never flag X", "sensitivity": ""}
+    ]
 
     # no tags, no fields: no predicate, the whole entry
     ch.calls.clear()

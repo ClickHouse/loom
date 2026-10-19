@@ -501,3 +501,23 @@ async def test_a_key_read_without_high_still_answers_one_row_per_key() -> None:
         ident, ["p:deploy"], scope=WHOLE_NAMESPACE, ch=ch, exclude_high_sensitivity=True
     )
     assert [r.value for r in rows] == ["new"]
+
+
+@pytest.mark.asyncio
+async def test_a_user_bounded_token_still_reads_one_row_per_key() -> None:
+    # The token's scope adds a predicate, which must not count as a pinned session: with the
+    # session open, the newest of the user's rows answers, not every session's.
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory.store import Identity, get_many_by_keys
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version) VALUES "
+        f"('o', 'n', 'a', 'u', 's1', '{_A}', 'note', 'semantic', 'old', 'active', '', 1), "
+        f"('o', 'n', 'a', 'u', 's2', '{_B}', 'note', 'semantic', 'new', 'active', '', 2)",
+    )
+    own_user = ReadFilters(scope="own_user", user_id="u", session_id=None)
+    ident = Identity(org="o", namespace="n", agent="a", user_id="u", session_id="*")
+    rows = await get_many_by_keys(ident, ["note"], scope=own_user, ch=ch)
+    assert [r.value for r in rows] == ["new"]

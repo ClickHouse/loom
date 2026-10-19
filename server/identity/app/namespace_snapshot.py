@@ -51,19 +51,6 @@ async def handle_namespace_snapshot(
     # Memories — active, non-tombstoned.
     memory_rows = await memory_snapshot.read_namespace(ch, org=input.org, namespace=input.namespace)
     memories = [snapshot_memory_row(r) for r in memory_rows]
-    # The snapshot carries high rows on purpose, for a restore; each one is audited.
-    await audit.emit_many(
-        "memory.sensitive_read",
-        org=input.org,
-        namespace=input.namespace,
-        actor=writer_actor("-"),
-        subjects=[
-            {"memory_key": r["memory_key"], "memory_id": r["memory_id"]}
-            for r in memory_rows
-            if r["sensitivity"] == "high"
-        ],
-    )
-
     # Per-type configs.
     type_dicts = await list_type_configs(input.org, input.namespace)
     types = [_SnapshotTypeRow(**t) for t in type_dicts]
@@ -133,6 +120,20 @@ async def handle_namespace_snapshot(
             }
         ],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
+    )
+
+    # The snapshot carries high rows on purpose, for a restore; each one is audited once the
+    # payload is built, so a failed snapshot records no read.
+    await audit.emit_many(
+        "memory.sensitive_read",
+        org=input.org,
+        namespace=input.namespace,
+        actor=writer_actor("-"),
+        subjects=[
+            {"memory_key": r["memory_key"], "memory_id": r["memory_id"]}
+            for r in memory_rows
+            if r["sensitivity"] == "high"
+        ],
     )
 
     return NamespaceSnapshotOutput(

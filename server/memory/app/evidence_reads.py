@@ -132,15 +132,6 @@ async def handle_memory_evidence(input: MemoryEvidenceInput) -> MemoryEvidenceOu
             sensitivity = str(hit[0].get("sensitivity") or "")
     if row is None and not memory_id:
         return MemoryEvidenceOutput(found=False)
-    if sensitivity == "high":
-        # A key read of a 'high' row is audited, as memory.get audits it.
-        await _audit.emit(
-            "memory.sensitive_read",
-            org=input.org,
-            namespace=input.namespace,
-            actor=writer_actor(input.agent),
-            subject={"memory_key": input.memory_key, "memory_id": memory_id},
-        )
     links = await _belief_links(ch, input, memory_id, scope)
     n_links = len(links)
     counts = {"cited": 0, "lexical": 0, "window": 0, "derived": 0}
@@ -219,6 +210,16 @@ async def handle_memory_evidence(input: MemoryEvidenceInput) -> MemoryEvidenceOu
         key=lambda it: (it.observed_at is None, it.observed_at or datetime.min, it.evidence_id)
     )
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    if sensitivity == "high":
+        # A key read of a 'high' row is audited, as memory.get audits it,
+        # once the answer is built.
+        await _audit.emit(
+            "memory.sensitive_read",
+            org=input.org,
+            namespace=input.namespace,
+            actor=writer_actor(input.agent),
+            subject={"memory_key": input.memory_key, "memory_id": memory_id},
+        )
     return MemoryEvidenceOutput(
         found=True,
         memory_key=input.memory_key,

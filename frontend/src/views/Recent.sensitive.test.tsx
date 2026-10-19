@@ -4,8 +4,9 @@ import type { MemoryListEntry } from "../api";
 import { useStore } from "../lib/state";
 import { Recent } from "./Recent";
 
-// A high row's value is readable by key only, through an audited read: the page asks the
-// list for `sensitivity`, shows the row as sensitive, and reads nothing while it scrolls.
+// A high row's value is readable by key only, through an audited read: the page shows a
+// listed row the list labels `sensitivity: high` as sensitive, and reads nothing while it
+// scrolls.
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -59,8 +60,10 @@ describe("a high row on the Memories page", () => {
     render(<Recent />);
     expect(await screen.findByText("Sensitive: open it to read")).toBeTruthy();
     expect(screen.getByText("value of plain/key")).toBeTruthy();
+    // The list serves `sensitivity` with every entry; asking for it by name would 422 on an
+    // older replica during a rolling upgrade.
     const fields = vi.mocked(listMemories).mock.calls[0]?.[2]?.fields ?? [];
-    expect(fields).toContain("sensitivity");
+    expect(fields).not.toContain("sensitivity");
     expect(getMemory).not.toHaveBeenCalled();
     const asked = vi.mocked(bulkGetMemories).mock.calls.flatMap((c) => c[1] as string[]);
     expect(asked).not.toContain("vault/key");

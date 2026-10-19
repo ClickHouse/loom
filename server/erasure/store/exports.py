@@ -45,8 +45,7 @@ async def export_memory(
         """,
         params={"org": org, "scope": scope_value, "lim": int(limit)},
     )
-    # memory_id is read bare, not aliased over its own name: a later filter on it would
-    # compare a String alias against UUIDs.
+    # memory_id is a UUID column; the export carries it as a string.
     return cast("list[MemoryExportRow]", [{**r, "memory_id": str(r["memory_id"])} for r in rows])
 
 

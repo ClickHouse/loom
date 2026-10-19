@@ -318,7 +318,8 @@ export function RecallLab() {
         search.catch(() => {}); // awaited below; a rejection before then is not unhandled
         const kw = await listMemories(identity, KEYWORD_PAGE, {
           contains: q,
-          fields: ["memory_key", "memory_type", "value", "sensitivity"],
+          // `sensitivity` comes with every entry; naming it would 422 on an older replica
+          fields: ["memory_key", "memory_type", "value"],
           previewChars: 200,
           signal: ac.signal,
         }).catch(() => null);

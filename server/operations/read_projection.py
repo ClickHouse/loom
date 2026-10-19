@@ -20,7 +20,9 @@ from server.core.errors import ValidationError
 
 # The keys a projected payload always carries, per response model.
 GET_ALWAYS: frozenset[str] = frozenset({"found", "unchanged"})
-LIST_ENTRY_ALWAYS: frozenset[str] = frozenset({"memory_key"})
+# `sensitivity` comes with every list entry rather than by name: a reader that asked for it
+# by name would get a 422 from a replica still on a build without the field.
+LIST_ENTRY_ALWAYS: frozenset[str] = frozenset({"memory_key", "sensitivity"})
 
 
 def resolve(
