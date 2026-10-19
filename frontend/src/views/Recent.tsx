@@ -175,14 +175,15 @@ function MemoryList() {
   //
   // A tag or agent filter narrows the read on the server (every tag, in any case); the
   // list applies the same filters to a search's hits, which the server ranks unfiltered.
-  const rawQuery = useMemo(() => parseSearchQuery(query).text, [query]);
+  const parsed = useMemo(() => parseSearchQuery(query), [query]);
+  const rawQuery = parsed.text;
   // A filter covers the whole namespace, not the page on screen. A tag or agent filter is
   // asked of the server, which returns the rows carrying every tag, in any case (a server a
   // release behind matches any one tag exactly, and the list then requires every tag
   // itself). Pinned, Conflicted and Verified have no server filter: the list reads the
   // newest 1,000 and keeps the matching ones. What is typed is debounced, so `tag:…` sends
   // one read, not one per key; a chip applies at once.
-  const typedNow = useSameFilter(filterOf(query));
+  const typedNow = useSameFilter({ tags: parsed.tags, agent: parsed.agent ?? "" });
   const [typed, setTyped] = useState(typedNow);
   // A tag chosen on a card or elsewhere in the app, or Clear filters, applies at once.
   const applyQuery = useCallback((next: string) => {

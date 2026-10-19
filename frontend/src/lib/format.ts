@@ -19,8 +19,8 @@ export function _formatterCacheSize(): number {
   return _fmt.size;
 }
 
-export function relativeTime(iso: string | null | undefined): string {
-  const d = parseChTime(iso);
+export function relativeTime(time: string | null | undefined): string {
+  const d = parseChTime(time);
   if (!d) return "";
   const s = Math.floor((Date.now() - d.getTime()) / 1000);
   // Future timestamps: render "in Xh / in Xd". Used for expires_at, which
@@ -42,16 +42,8 @@ export function relativeTime(iso: string | null | undefined): string {
   return fmt("date").format(d);
 }
 
-function parseIso(iso: string): Date | null {
-  if (!iso) return null;
-  // CH datetimes come back without timezone — treat them as UTC.
-  const hasOffset = /[+-]\d{2}:?\d{2}$|Z$/.test(iso);
-  const d = new Date(hasOffset ? iso : iso + "Z");
-  return isNaN(d.getTime()) ? null : d;
-}
-
-export function dayLabel(iso: string): string {
-  const d = parseChTime(iso);
+export function dayLabel(time: string): string {
+  const d = parseChTime(time);
   if (!d) return "Unknown";
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -76,7 +68,9 @@ export function parseChTime(s: string | null | undefined): Date | null {
   t = t.replace(/^(\d{4}-\d{2}-\d{2}) (\d)/, "$1T$2");
   // DateTime64(6|9): Date reads three fraction digits at most.
   t = t.replace(/(\.\d{3})\d+/, "$1");
-  return parseIso(t);
+  // No zone: UTC.
+  const d = new Date(/[+-]\d{2}:?\d{2}$|Z$/.test(t) ? t : t + "Z");
+  return isNaN(d.getTime()) ? null : d;
 }
 
 /** The whole days left of the 14-day grace window for a memory deleted at `tombstonedAt`, a
@@ -99,8 +93,8 @@ export function restoreText(tombstonedAt: string | null | undefined): string {
 /** A list row's time (one rule for every list): "just now", "12m ago", "3h ago", "3d ago"
  *  within the week, then "Sep 20", or "Sep 20, 2025" in another year. `ui/ListTime`
  *  renders it with the absolute time in a tooltip. */
-export function listTime(iso: string | null | undefined): string {
-  const d = parseChTime(iso);
+export function listTime(time: string | null | undefined): string {
+  const d = parseChTime(time);
   if (!d) return "";
   const s = Math.floor((Date.now() - d.getTime()) / 1000);
   if (s > -60 && s < 60) return "just now";
@@ -113,8 +107,8 @@ export function listTime(iso: string | null | undefined): string {
 }
 
 /** The absolute time behind a `listTime`, in UTC: "Sep 20, 2026, 14:32 UTC". */
-export function listTimeTitle(iso: string | null | undefined): string {
-  const d = parseChTime(iso);
+export function listTimeTitle(time: string | null | undefined): string {
+  const d = parseChTime(time);
   if (!d) return "";
   const f = fmt("utc-minute", {
     month: "short",
@@ -254,8 +248,8 @@ export function errorRequestId(err: unknown): string {
   return err instanceof ApiError ? err.requestId : "";
 }
 
-export function timeOfDay(iso: string): string {
-  const d = parseChTime(iso);
+export function timeOfDay(time: string): string {
+  const d = parseChTime(time);
   if (!d) return "";
   return fmt("time", { hour: "2-digit", minute: "2-digit" }).format(d);
 }
@@ -317,9 +311,9 @@ export function fmtInt(n: number | null | undefined): string {
 
 /** A full local date and time for tooltips: the cached formatter, not a
  *  `Date.toLocaleString()` that builds one per row. */
-export function absoluteTime(iso: string | null | undefined): string {
-  const d = parseChTime(iso);
-  return d ? fmt("abs", { dateStyle: "medium", timeStyle: "short" }).format(d) : (iso ?? "");
+export function absoluteTime(time: string | null | undefined): string {
+  const d = parseChTime(time);
+  return d ? fmt("abs", { dateStyle: "medium", timeStyle: "short" }).format(d) : (time ?? "");
 }
 
 /** A `code.refresh` caller line without the fields the caller left empty (`expected_head=`). */

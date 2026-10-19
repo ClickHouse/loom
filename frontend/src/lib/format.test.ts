@@ -219,21 +219,21 @@ describe("dayLabel", () => {
 });
 
 // Some ops answer a ClickHouse time as it prints ("2026-10-16 12:00:00.123456789": UTC, no
-// zone); each formatter reads it as the same instant as its ISO spelling.
+// zone). West of UTC, a time read as local would be seven hours later than its ISO spelling.
 describe("ClickHouse times", () => {
   const ch = "2026-10-16 12:00:00.123456789";
   const iso = "2026-10-16T12:00:00.123Z";
-  afterEach(() => vi.useRealTimers());
-  it("relativeTime", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+  it("reads a ClickHouse time as the UTC instant it names, in Los Angeles too", () => {
+    vi.stubEnv("TZ", "America/Los_Angeles");
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-16T14:00:00Z"));
     expect(relativeTime(ch)).toBe("1h ago");
-  });
-  it("timeOfDay", () => {
     expect(timeOfDay(ch)).toBe(timeOfDay(iso));
     expect(timeOfDay(ch)).not.toBe("");
-  });
-  it("absoluteTime", () => {
     expect(absoluteTime(ch)).toBe(absoluteTime(iso));
     expect(absoluteTime(ch)).not.toBe(ch);
   });

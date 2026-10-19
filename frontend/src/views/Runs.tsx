@@ -582,17 +582,15 @@ export function Runs() {
   };
 
   const scope = `${identity.org}\n${identity.namespace}`;
-  // Another namespace is another list, from its first page with nothing on screen: the old
-  // one's rows and agents go during render, before the new one's first read or paint can use
-  // them. It may be another server's answer, so it is asked for a page first, and its agents
-  // are not this one's, so the agent filter goes too.
+  // Another namespace is another list: its first page, every agent, nothing on screen,
+  // before its first read or paint.
   const [shownFor, setShownFor] = useState(scope);
   if (shownFor !== scope) {
     setShownFor(scope);
     setShown(null);
     setAgents([]);
     setPage(0);
-    setLocal(false);
+    setLocal(false); // another namespace may be a server that pages
     setAgent("");
   }
   // What the list holds (a change starts it again from page 1), and what one read asked for.

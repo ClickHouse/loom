@@ -850,10 +850,11 @@ textarea[aria-invalid="true"]:focus-visible {
      layout, the row grid and the breakpoints live here because they are
      one component's shape, not a utility; type sizes are the tokens above.
      ============================================================ */
+  /* Measured hand sizes: a 208 px rail and a 440 px panel beside the list. */
   .tq-body {
     display: grid;
     grid-template-columns: 208px minmax(0, 1fr);
-    gap: 16px;
+    gap: var(--spaces-4);
     align-items: start;
   }
   .tq-body[data-panel="true"] {
@@ -956,7 +957,8 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-ghead {
     display: flex;
     align-items: center;
-    gap: var(--spaces-2);
+    /* 10 px between the caret, the label and the count: a measured hand size. */
+    gap: 10px;
     width: 100%;
     padding: var(--click-table-header-cell-space-sm-y) var(--click-table-header-cell-space-sm-x);
     text-align: left;
@@ -1077,13 +1079,14 @@ textarea[aria-invalid="true"]:focus-visible {
   /* A lane's "Show all" row: a task row's cell padding across; down, the empty Button's own
      height and 4 px for its focus ring, which the lane would clip. */
   .tq-more {
-    padding: var(--spacing) var(--click-table-body-cell-space-sm-x);
+    padding: var(--spaces-1) var(--click-table-body-cell-space-sm-x);
     border-top: 1px solid var(--color-border);
   }
+  /* A 56 × 4 px bar: a measured hand size. */
   .tq-lease {
     width: 56px;
     height: 4px;
-    border-radius: 2px;
+    border-radius: var(--radius-xs);
     background: var(--color-surface-3);
     overflow: hidden;
   }
@@ -1194,6 +1197,7 @@ textarea[aria-invalid="true"]:focus-visible {
     margin: 0;
     padding: 0;
   }
+  /* A 20 px circle round the xs actor icon, 10 px to the text, 5 px rows: measured hand sizes. */
   .tq-tl li {
     display: grid;
     grid-template-columns: 20px minmax(0, 1fr) auto;
@@ -1316,7 +1320,7 @@ textarea[aria-invalid="true"]:focus-visible {
   .list-row[data-card] {
     contain-intrinsic-size: auto 129px;
   }
-  /* ui/RowSkeleton: the same heights, so a list's rows land without moving it. */
+  /* ui/RowSkeleton: the rows' measured heights, so a list's rows land without moving it. */
   .list-row-skeleton {
     height: 76px;
     pointer-events: none;
@@ -1410,8 +1414,8 @@ textarea[aria-invalid="true"]:focus-visible {
   }
 }
 
-/* AgentBadge: a long agent name is cut at 180 px with an ellipsis (the whole name is in
-   its tooltip); every box inside Click UI's Badge may shrink to it. */
+/* AgentBadge: a long agent name is cut at 180 px, a measured hand size, with an ellipsis
+   (the whole name is in its tooltip); every box inside Click UI's Badge may shrink to it. */
 @layer components {
   .agent-badge {
     max-width: 180px;
@@ -1666,10 +1670,11 @@ textarea[aria-invalid="true"]:focus-visible {
   }
   /* Recall Lab: a score cell's bar is Click UI's table bar chart, its width the score
      against the top ranked hit; it darkens with the row's hover. */
+  /* A 4 px bar 2 px under the score: measured hand sizes. */
   .recall-bar {
     display: block;
     height: 4px;
-    margin-top: var(--spaces-1);
+    margin-top: 2px;
     border-radius: var(--radius-xs);
     overflow: hidden;
   }
