@@ -134,6 +134,57 @@ async def _plain_restore_finishes_an_undo(
         return False
 
 
+async def _restore_live(
+    input: MemoryRestoreInput, row: dict[str, Any], *, ch: Any
+) -> MemoryRestoreOutput:
+    """A restore of a live row with no Undo to finish: a no-op, unless an undelete whose
+    answer and re-read were both lost left its search row deleted, which comes back now
+    as the undelete would have brought it (the mirror is idempotent)."""
+    memory_id, version = str(row.get("memory_id") or ""), int(row.get("version") or 0)
+    if await _undelete_left_unmirrored(input, ch=ch):
+        existing = await _read_restorable(input)
+        if existing is not None and existing.tombstoned_at is None:
+            await _restore_embedding_mirror(ch, input, existing, row["memory_type"])
+            return MemoryRestoreOutput(
+                restored=True,
+                memory_id=memory_id,
+                version=int(existing.version),
+                from_status="tombstoned",
+            )
+    return MemoryRestoreOutput(restored=False, memory_id=memory_id, version=version)
+
+
+async def _undelete_left_unmirrored(input: MemoryRestoreInput, *, ch: Any) -> bool:
+    """Whether the key's newest version is an undelete (the one before it deleted) while
+    its newest search row is still deleted."""
+    params = {
+        "org": input.org,
+        "ns": input.namespace,
+        "a": input.agent,
+        "u": input.user_id,
+        "s": input.session_id,
+        "k": input.memory_key,
+    }
+    identity = """org = {org:String} AND namespace = {ns:String} AND agent = {a:String}
+          AND user_id = {u:String} AND session_id = {s:String} AND memory_key = {k:String}"""
+    found = await ch.query_all(
+        f"""
+        SELECT
+            (SELECT arraySort(x -> -x.1, groupArray((version, tombstoned_at IS NOT NULL)))
+             FROM loom.memory_versions WHERE {identity}) AS history,
+            (SELECT argMax(tombstoned_at IS NOT NULL, version)
+             FROM loom.memory_embeddings WHERE {identity}) AS search_deleted
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params,
+    )
+    if not found:
+        return False
+    history = found[0]["history"] or []
+    undeleted = len(history) >= 2 and not history[0][1] and bool(history[1][1])
+    return undeleted and bool(found[0]["search_deleted"])
+
+
 async def _write_restore(
     input: MemoryRestoreInput, existing: MemoryRow, *, ch: Any
 ) -> tuple[int, str]:
@@ -475,8 +526,7 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
         # `_restore_superseded` rechecks on the strong head, under the key's lock.
         return await _restore_superseded(input, ch)
     if live:
-        # Already live, and no Undo's restore: an idempotent no-op.
-        return MemoryRestoreOutput(restored=False, memory_id=memory_id, version=version)
+        return await _restore_live(input, row, ch=ch)
 
     # Past the retention TTL the data is gone — report expired explicitly
     # so the UI shows "outside the grace window" not a generic 404.

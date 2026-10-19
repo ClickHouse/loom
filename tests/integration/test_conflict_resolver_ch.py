@@ -3521,3 +3521,47 @@ async def test_a_provider_outage_stops_the_pass_and_pauses_the_worker(
     before = down.calls
     await worker.run_pass()
     assert down.calls == before, "paused"
+
+
+async def test_an_undelete_whose_answer_and_reread_were_lost_finishes_on_retry(
+    ch, wired, monkeypatch
+) -> None:
+    """The undelete's insert lands with its answer lost and the re-read fails too (503):
+    the retry finds the row live but its search row deleted, and brings that back."""
+    import asyncio
+
+    from server.core.errors import BackendUnavailableError
+    from server.memory.api.models_crud import MemoryDeleteInput, MemoryRestoreInput
+    from server.memory.app import restore
+    from server.memory.app.handlers import handle_memory_delete
+
+    org, _ = wired
+    key = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s1"}
+    await _set(org, "s1", "home3", "Ana lives in Braga")
+    await asyncio.sleep(1.0)
+    await handle_memory_delete(MemoryDeleteInput(**key, memory_key="home3"))
+    await asyncio.sleep(1.0)
+    real = restore.insert_memory_versions
+
+    async def lands_then_fails(rows: Any, **kw: Any) -> None:
+        await real(rows, **kw)
+        raise RuntimeError("answer lost")
+
+    async def unread(*a: Any, **kw: Any) -> bool:
+        return False
+
+    with monkeypatch.context() as m:
+        m.setattr(restore, "insert_memory_versions", lands_then_fails)
+        m.setattr(restore, "_restore_landed", unread)
+        with pytest.raises(BackendUnavailableError):
+            await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="home3"))
+    out = await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="home3"))
+    assert out.restored and out.from_status == "tombstoned"
+    search = await ch.query_all(
+        "SELECT tombstoned_at FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+        " AND memory_key = 'home3' SETTINGS select_sequential_consistency = 1",
+        params={"o": org},
+    )
+    assert search and all(r["tombstoned_at"] is None for r in search)
+    again = await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="home3"))
+    assert not again.restored, "finished: a plain no-op now"
