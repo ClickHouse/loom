@@ -187,6 +187,10 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             if _streak(p, (org, namespace), e):
                 p.stopped.add((org, namespace))
                 _state.paused_namespaces[(org, namespace)] = time.monotonic() + PAUSE_AFTER_STOP_S
+            # An answer with nothing usable was paid for: it counts an attempt, so a row
+            # that never gets one ends; a refused request (a 4xx) was not, and does not.
+            if isinstance(e, resolver.Unanswered) and await _out_of_attempts(r):
+                p.errors.append(f"{namespace}/{r.get('memory_key')}: stamped after {MAX_ATTEMPTS}")
         except (httpx.HTTPError, TimeoutError) as e:
             # A provider outage (5xx, 429, a timeout, no connection): the row stays owed,
             # no attempt; the same outage row after row stops the pass.

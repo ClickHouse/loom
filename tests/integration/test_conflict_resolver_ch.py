@@ -3274,9 +3274,45 @@ class _Garbage:
         return SimpleNamespace(text="I cannot answer in JSON today.")
 
 
-async def test_a_refusal_every_pass_stamps_nothing(ch, wired, monkeypatch) -> None:
-    """Unusable answers for every row, pass after pass: the request is at fault, not the
-    rows, so the streak stops the namespace each pass and no row is stamped judged."""
+async def test_a_refused_request_every_pass_stamps_nothing(ch, wired, monkeypatch) -> None:
+    """The provider refuses every request (a 400, not billed), pass after pass: the
+    request is at fault, not the rows, so no row counts an attempt or is stamped."""
+    import httpx
+
+    import server.llm.client as llm_client
+    from server.memory.workers import conflict_resolver as worker
+
+    org, _ = wired
+    await _seed(ch, org, monkeypatch)
+
+    class _Refuses:
+        provider, model = "fake", "refuses"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, system: str, user: str, **kw: Any) -> Any:
+            self.calls += 1
+            request = httpx.Request("POST", "https://provider.invalid/v1")
+            response = httpx.Response(400, request=request)
+            raise httpx.HTTPStatusError("400 Bad Request", request=request, response=response)
+
+    refuses = _Refuses()
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: refuses)
+    monkeypatch.setattr(worker.settings, "memory_conflict_resolver_concurrency", 1)
+    monkeypatch.setattr(worker, "PAUSE_AFTER_STOP_S", 0.0)
+    for _ in range(5):
+        await worker.run_pass()
+    assert refuses.calls > 0
+    marks = await _marks(ch, org)
+    assert marks["office_location"] == 1 and marks["budget_next"] == 1, marks
+
+
+async def test_an_unusable_answer_every_pass_ends_after_three_attempts(
+    ch, wired, monkeypatch
+) -> None:
+    """Answers with nothing usable were paid for: each counts an attempt, so after three
+    a row is stamped and the passes come to pay nothing."""
     import server.llm.client as llm_client
     from server.memory.workers import conflict_resolver as worker
 
@@ -3286,11 +3322,13 @@ async def test_a_refusal_every_pass_stamps_nothing(ch, wired, monkeypatch) -> No
     monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: garbage)
     monkeypatch.setattr(worker.settings, "memory_conflict_resolver_concurrency", 1)
     monkeypatch.setattr(worker, "PAUSE_AFTER_STOP_S", 0.0)
-    for _ in range(5):
+    per_pass = []
+    for _ in range(8):
+        before = garbage.calls
         await worker.run_pass()
-    assert garbage.calls > 0
-    marks = await _marks(ch, org)
-    assert marks["office_location"] == 1 and marks["budget_next"] == 1, marks
+        per_pass.append(garbage.calls - before)
+    assert per_pass[0] > 0 and per_pass[-2:] == [0, 0], per_pass
+    assert (await _marks(ch, org))["office_location"] != 1, "stamped"
 
 
 async def test_one_namespaces_refusals_do_not_pause_another(ch, wired, monkeypatch) -> None:

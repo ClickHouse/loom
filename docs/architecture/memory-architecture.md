@@ -343,8 +343,9 @@ actions, verdicts and confidences, never the text.
   before it is stamped `errored`. A refused row is stamped when its pass ends. The same
   refusal (its kind and HTTP status) three rows of one namespace in a row with no answer
   between is the request's fault, not the rows': that namespace stops for the pass and waits
-  five minutes, every row of it, the refused ones too, staying owed with no attempt
-  counted; the other namespaces go on. The keys' write locks unavailable (Keeper down) stop
+  five minutes, every row of it, the refused ones too, staying owed; the other namespaces
+  go on. A refused request (a 4xx, not billed) counts no attempt; an answer with nothing
+  usable was paid for and counts one, so such a row ends after three. The keys' write locks unavailable (Keeper down) stop
   the pass after that call; the rows stay owed. A pass stopped by the model, the locks or
   an outage pauses the whole worker for five minutes: the next passes would pay for the
   same answer.
