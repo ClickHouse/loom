@@ -959,9 +959,9 @@ Source: `server/settings/_memory_search.py`
 | `LOOM_MEMORY_SEARCH_ENTITY_SUMMARIES_TOP_N` | `int` | `5` | live | Pre-built entity summaries fetched per namespace on that leg. |
 | `LOOM_MEMORY_SEARCH_TOP_K_CEILING_VIEWER` | `int` | `0` | live | Per-token top_k ceiling by the token's role on the namespace: viewer and writer each have one, admin and above are uncapped. 0 = no ceiling. The applied ceiling rides the response as `top_k_ceiling` and the ledger as `out_top_k_ceiling`. |
 | `LOOM_MEMORY_SEARCH_TOP_K_CEILING_WRITER` | `int` | `0` | live | top_k ceiling for a writer token on the namespace; 0 = no ceiling. |
-| `LOOM_MEMORY_RRF_CODE_SHAPE_LO` | `float` | `0.2` | live | RRF adaptive lexical weight: code/path-shaped queries (CamelCase, extensions, separators, digit runs) down-weight the lexical leg so fusion leans semantic; prose keeps full weight. |
-| `LOOM_MEMORY_RRF_CODE_SHAPE_HI` | `float` | `0.3` | live |  |
-| `LOOM_MEMORY_RRF_LEXICAL_WEIGHT_FLOOR` | `float` | `0.1` | live |  |
+| `LOOM_MEMORY_RRF_CODE_SHAPE_LO` | `float` | `0.2` | live | RRF adaptive lexical weight: code/path-shaped queries (CamelCase, extensions, separators, digit runs) down-weight the lexical leg so fusion leans semantic; prose keeps full weight. Shape at/below which w_lex == 1.0 (prose). |
+| `LOOM_MEMORY_RRF_CODE_SHAPE_HI` | `float` | `0.3` | live | Shape at/above which w_lex == floor (code). |
+| `LOOM_MEMORY_RRF_LEXICAL_WEIGHT_FLOOR` | `float` | `0.1` | live | Never fully zero the lexical leg. |
 | `LOOM_MEMORY_SEARCH_CHUNK_MIN_SHARE` | `float` | `0.0` | live | Smallest window share verbatim chunks keep when the pool has them. 0.0 = off. |
 | `LOOM_MEMORY_SEARCH_ABSTAIN_TOP_SIM_SCOPE` | `str` | `'first'` | live | Which cosine the abstain gate reads: "first" = the fused rank-1 row, "window" = the best cosine among returned rows. |
 | `LOOM_MEMORY_SEARCH_FACT_CODES_FIRST` | `'auto' \| 'on' \| 'off'` | `'auto'` | live | Codes-first main fact leg (`vector_search_use_quantized_codes = 1`), safe only while loom.memory_embeddings has no patch part (ClickHouse skips the lazy rescore under patch parts). "auto" follows a 60 s system.parts probe (gauge loom.memory_embeddings.patch_parts); "on" / "off" pin it. The setting ships only where the replica probe finds it. |

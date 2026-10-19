@@ -3069,16 +3069,18 @@
         },
         "memory_rrf_code_shape_hi": {
           "default": 0.3,
-          "type": "number"
+          "type": "number",
+          "description": "Shape at/above which w_lex == floor (code)."
         },
         "memory_rrf_code_shape_lo": {
           "default": 0.2,
           "type": "number",
-          "description": "RRF adaptive lexical weight: code/path-shaped queries (CamelCase, extensions, separators, digit runs) down-weight the lexical leg so fusion leans semantic; prose keeps full weight."
+          "description": "RRF adaptive lexical weight: code/path-shaped queries (CamelCase, extensions, separators, digit runs) down-weight the lexical leg so fusion leans semantic; prose keeps full weight. Shape at/below which w_lex == 1.0 (prose)."
         },
         "memory_rrf_lexical_weight_floor": {
           "default": 0.1,
-          "type": "number"
+          "type": "number",
+          "description": "Never fully zero the lexical leg."
         },
         "memory_run_complete_expire_days": {
           "default": 7,

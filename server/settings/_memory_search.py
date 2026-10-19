@@ -269,15 +269,12 @@ class MemorySearchSettings(BaseModel):
     # RRF adaptive lexical weight: code/path-shaped queries (CamelCase,
     # extensions, separators, digit runs) down-weight the lexical leg so
     # fusion leans semantic; prose keeps full weight.
-    memory_rrf_code_shape_lo: Annotated[float, LIVE] = (
-        0.20  # shape at/below which w_lex == 1.0 (prose)
-    )
-    memory_rrf_code_shape_hi: Annotated[float, LIVE] = (
-        0.30  # shape at/above which w_lex == floor (code)
-    )
-    memory_rrf_lexical_weight_floor: Annotated[float, LIVE] = (
-        0.1  # never fully zero the lexical leg
-    )
+    # Shape at/below which w_lex == 1.0 (prose).
+    memory_rrf_code_shape_lo: Annotated[float, LIVE] = 0.20
+    # Shape at/above which w_lex == floor (code).
+    memory_rrf_code_shape_hi: Annotated[float, LIVE] = 0.30
+    # Never fully zero the lexical leg.
+    memory_rrf_lexical_weight_floor: Annotated[float, LIVE] = 0.1
 
     # Smallest window share verbatim chunks keep when the pool has them.
     # 0.0 = off.

@@ -198,6 +198,9 @@ first applies pending migrations ([upgrades](./upgrades.md#how-migrations-run)).
 - Every setting is an environment variable `LOOM_<FIELD>`. Provider keys keep their own
   names (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`). The server reads them
   once at startup; a change needs a restart.
+- A setting marked live also takes a deployment-wide override (`loom settings set`, the
+  dashboard), which wins over the environment and every file and applies within seconds
+  without a restart ([runtime settings](./runtime-settings.md)).
 - `.env` in the working directory is read by default. `LOOM_ENV_FILE` names another
   file; an empty value reads none. `.env.example` is the commented template.
 - Settings that are not secrets can also go in a YAML settings file, the path

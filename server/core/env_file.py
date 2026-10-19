@@ -1,4 +1,4 @@
-"""The dotenv file configuration loads from.
+"""The files configuration loads from: the dotenv file and the YAML settings file.
 
 Lives in core, not settings, so the CLI can load the file into os.environ
 before anything imports `server.settings` (whose load reads provider keys
