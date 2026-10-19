@@ -470,13 +470,6 @@ _UNDOS_SQL = """
         FROM loom.audit_log
         WHERE org = {org:String} AND namespace = {ns:String}
           AND event_type = 'memory.unsupersede'
-          -- No Undo predates the rows' first versions (an hour's slack for clock skew):
-          -- the bound keeps the read to the ts range, not the namespace's every Undo.
-          AND ts >= (
-              SELECT fromUnixTimestamp64Nano(toInt64(min(version))) - INTERVAL 1 HOUR
-              FROM loom.memory_versions
-              PREWHERE org = {org:String} AND namespace = {ns:String}
-              WHERE memory_id IN arrayMap(x -> toUUID(x), {ids:Array(String)}))
           AND JSONExtractString(subject, 'memory_id') IN {ids:Array(String)}
           AND JSONExtractString(subject, 'content_sha256') != ''
           AND JSONExtractUInt(subject, 'version') > 0
