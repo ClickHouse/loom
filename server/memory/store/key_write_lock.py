@@ -1,5 +1,5 @@
 """Per-key lock for conditional memory writes (`memory.set`'s `if_match_sha256`,
-`memory.delete`'s `if_version`).
+`memory.delete_version`).
 
 The check runs before the insert (for a set, before the embed too), so two writers could
 both pass it. Writers of one key are serialized per process, and across processes by a

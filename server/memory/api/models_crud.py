@@ -13,6 +13,7 @@ from pydantic import (
     BaseModel,
     Field,
     SerializerFunctionWrapHandler,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -366,28 +367,27 @@ class MemorySetOutput(BaseModel):
 
 class MemoryDeleteInput(_Identity):
     # The key to delete: tried under this identity, then the same user's row under
-    # any agent (only this identity with `if_version`).
+    # any agent.
     memory_key: str
-    # Delete only if the row under this exact identity still has this version
-    # (from memory.get); otherwise nothing is deleted and `reason` is
-    # "version_changed". Needs a concrete agent, not "*" (a 422). None = no check.
-    # A decimal string is accepted, as for `known_version`: a nanosecond version is above
-    # 2^53, which a JavaScript number rounds. Hidden from MCP: import-okf --prune sends it.
-    if_version: int | str | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
 
-    @model_validator(mode="after")
-    def _shape(self) -> MemoryDeleteInput:
-        if self.if_version is None:
-            return self
-        # The wildcard read answers any agent's row of the key; a version check is
-        # ownership only under one identity.
-        if self.agent == "*":
-            raise ValueError("`if_version` needs a concrete agent, not '*'")
-        if isinstance(self.if_version, str):
-            if not self.if_version.isdigit():
-                raise ValueError("`if_version` is a version number")
-            self.if_version = int(self.if_version)
-        return self
+
+class MemoryDeleteVersionInput(_Identity):
+    # The key to delete, under this exact identity: another agent's row of it is never read.
+    # `agent` must be concrete, not "*".
+    memory_key: str
+    # The version to delete, as memory.get answered it. A row rewritten since is kept. A
+    # decimal string is accepted: a nanosecond version is above 2^53, which a JavaScript
+    # number rounds.
+    version: int | str
+
+    @field_validator("version")
+    @classmethod
+    def _decimal(cls, v: int | str) -> int:
+        if isinstance(v, str):
+            if not v.isdigit():
+                raise ValueError("`version` is a version number")
+            return int(v)
+        return v
 
 
 class MemoryUnpinInput(_Identity):
@@ -421,11 +421,26 @@ class MemoryDeleteOutput(BaseModel):
     # Nanosecond version of the tombstone row; when nothing was found, a fresh
     # number that no row carries.
     version: int
-    # False when no live row of this key exists under the identities the delete reads: the
-    # caller's own (agent, user, session), then (without `if_version`) the same user's under
-    # any agent. Already deleted, or never written.
+    # False when no live row of this key exists in the
+    # namespace under ANY identity — already deleted, or never written. The
+    # delete looked past the caller's own (agent, user, session) first.
     found: bool = True
-    # "version_changed" when the live row no longer carries `if_version`.
+    # Consolidated summaries built from this row (tag `src:<key>`): retired
+    # when none of their sources survive, else downgraded to `conflicted`.
+    dependents_tombstoned: int = 0
+    # Summaries built from this row that keep a live source: set to `conflicted`.
+    dependents_downgraded: int = 0
+
+
+class MemoryDeleteVersionOutput(BaseModel):
+    # True when the row still had `version` and a tombstone was written over it.
+    tombstoned: bool
+    # The tombstone's version: one above the deleted version, so a write that lands during
+    # the delete still wins. 0 when nothing was deleted.
+    version: int = 0
+    # False when no live row of this key exists under this identity.
+    found: bool = True
+    # "version_changed" when the live row no longer carries `version`.
     reason: str = ""
     # Consolidated summaries built from this row (tag `src:<key>`): retired
     # when none of their sources survive, else downgraded to `conflicted`.
@@ -679,6 +694,33 @@ class MemoryListOutput(BaseModel):
 # ============================================================
 # memory.get_by_id / memory.update_by_id — opaque-UUID addressing
 # ============================================================
+
+
+# The most keys one memory.keys answer carries.
+MEMORY_KEYS_MAX = 100_000
+
+
+class MemoryKeysInput(BaseModel):
+    org: str
+    namespace: str
+    # The most keys to answer; `truncated` says when the namespace holds more.
+    limit: int = Field(default=MEMORY_KEYS_MAX, ge=1, le=MEMORY_KEYS_MAX)
+
+
+class MemoryKeyRef(BaseModel):
+    agent: str
+    user_id: str
+    session_id: str
+    memory_key: str
+
+
+class MemoryKeysOutput(BaseModel):
+    # Every live row's identity and key, read by one statement, so the set is the
+    # namespace at one moment (memory.list's pages are read one at a time). The rows
+    # memory.list serves with every identity at "*", superseded and duplicate rows included.
+    keys: list[MemoryKeyRef]
+    # True when the namespace holds more than `limit` live rows.
+    truncated: bool = False
 
 
 class MemoryGetByIdInput(BaseModel):

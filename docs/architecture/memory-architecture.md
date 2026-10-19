@@ -322,6 +322,17 @@ is the one op that edits a stored version. Status flips over many rows (the usag
 `memory.reject` quarantine) are batched lightweight updates; see
 [ClickHouse](clickhouse.md#deletes-and-mutations).
 
+A version is a wall-clock nanosecond drawn before a write's slow work (the embed), so a
+write can land after another that drew a higher version. `memory.delete` tombstones at the
+time of the delete and wins over every write drawn before it. `memory.delete_version`
+removes one version a caller read: its tombstone carries that version plus one, so it
+hides that version and every one below, and any write drawn after the read still wins.
+Plain writes take no lock and still cannot be lost to it; the key lock that
+`if_match_sha256` takes orders it against other conditional writes. Its vector retire sits
+a millisecond above the version, above the metadata copies of the row's vectors (each
+writes read + 1). An `as_of` read between the deleted version and the delete itself sees
+the row as deleted.
+
 Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace's
 `retention_days`, or `LOOM_MEMORY_SENSITIVE_RETENTION_DAYS` set `expires_at` and
 `on_expire`. Reads hide an expired row at once. `memory_expiry_sweep` (or

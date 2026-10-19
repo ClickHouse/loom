@@ -757,15 +757,8 @@ def _is_reserved(concept_id: str) -> bool:
 
 
 def _dedupe_slugs(concepts: list[Concept]) -> None:
-    """Give each concept an id no other concept has, compared case-insensitively. The first
-    concept (in sorted order) with a name keeps it; another that shares it, and a key named
-    like the bundle's own `index` or `log` file or a Windows device (`nul`, `con`), gets
-    `-<hash of its key and row id>`. A lost file would leave a live key out of a bundle that
-    still says complete, and prune would delete its copy. The suffix does not depend on the
-    other keys, so a suffixed file moves only when the concept holding the bare name changes
-    (a key that sorts before it arrives, or the holder leaves), and then once. A key already
-    named like the suffixed name takes it first only when it sorts first (`a-<h>.b` before
-    `a.b`, since `-` sorts before `.`); the next attempt's hash is then used."""
+    """Give each concept an id no other concept has, compared case-insensitively. A taken or
+    reserved name gets `-<hash of its key and row id>`, which no other key changes."""
     used: set[str] = set()
     for c in concepts:
         if c.id.casefold() in used or _is_reserved(c.id):

@@ -20,6 +20,9 @@ from server.identity.domain.read_scope import scope_where
 from server.memory.api.models_bulk import MemoryBulkGetInput, MemoryBulkGetOutput
 from server.memory.api.models_crud import (
     MemoryGetOutput,
+    MemoryKeyRef,
+    MemoryKeysInput,
+    MemoryKeysOutput,
     MemoryListInput,
     MemoryListOutput,
     _MemoryListEntry,
@@ -872,3 +875,17 @@ async def handle_memory_bulk_get(
     )
     missing = [k for k in input.memory_keys if k not in results]
     return MemoryBulkGetOutput(results=results, missing=missing)
+
+
+async def handle_memory_keys(input: MemoryKeysInput) -> MemoryKeysOutput:
+    """Every live row's identity and key in one read: a set an exporter can check its paged
+    listing against, since a row that moves while pages are read can be skipped."""
+    import server.memory.store as memory_repo
+
+    rows = await memory_repo.live_keys(
+        input.org, input.namespace, scope=request_scope(), limit=input.limit
+    )
+    return MemoryKeysOutput(
+        keys=[MemoryKeyRef(**r) for r in rows[: input.limit]],
+        truncated=len(rows) > input.limit,
+    )

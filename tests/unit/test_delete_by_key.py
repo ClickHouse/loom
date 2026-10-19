@@ -159,18 +159,18 @@ def test_delete_says_when_no_live_row_exists_anywhere(world, monkeypatch) -> Non
     assert world["ch"].inserts == []
 
 
-def _delete_at(version: int, agent: str = "claude-code") -> Any:
-    from server.memory.api.models_crud import MemoryDeleteInput
+def _delete_at(version: int | str, agent: str = "claude-code") -> Any:
+    from server.memory.api.models_crud import MemoryDeleteVersionInput
 
     return asyncio.run(
-        hm.handle_memory_delete(
-            MemoryDeleteInput(
+        hm.handle_memory_delete_version(
+            MemoryDeleteVersionInput(
                 org="clickhouse",
                 namespace="jdoe",
                 agent=agent,
                 session_id="sess-65187490",
                 memory_key="user_home_location",
-                if_version=version,
+                version=version,
             )
         )
     )
@@ -267,28 +267,36 @@ def test_delete_does_not_tombstone_another_users_row(world) -> None:
     assert world["ch"].inserts == []
 
 
-def test_a_versioned_delete_needs_a_concrete_agent() -> None:
-    import pydantic
+def test_a_versioned_delete_needs_a_concrete_agent(world) -> None:
+    from server.core.errors import ValidationError
 
-    from server.memory.api.models_crud import MemoryDeleteInput
-
-    ident = {"org": "o", "namespace": "n", "memory_key": "k"}
-    with pytest.raises(pydantic.ValidationError, match="concrete agent"):
-        MemoryDeleteInput(**ident, agent="*", if_version=1)
-    assert MemoryDeleteInput(**ident, agent="*").if_version is None
+    with pytest.raises(ValidationError, match="concrete agent"):
+        _delete_at(1, agent="*")
+    assert world["ch"].inserts == []
 
 
 def test_a_versioned_delete_takes_the_version_as_a_decimal_string() -> None:
     # A nanosecond version is above 2^53: a JavaScript caller sends it as a string.
     import pydantic
 
-    from server.memory.api.models_crud import MemoryDeleteInput
+    from server.memory.api.models_crud import MemoryDeleteVersionInput
 
     ident = {"org": "o", "namespace": "n", "agent": "a", "memory_key": "k"}
     big = 1_760_000_000_000_000_001
-    assert MemoryDeleteInput(**ident, if_version=str(big)).if_version == big
+    assert MemoryDeleteVersionInput(**ident, version=str(big)).version == big
     with pytest.raises(pydantic.ValidationError, match="version number"):
-        MemoryDeleteInput(**ident, if_version="latest")
+        MemoryDeleteVersionInput(**ident, version="latest")
+
+
+def test_a_versioned_delete_tombstones_right_above_the_version_it_read(world, monkeypatch) -> None:
+    async def _get_by_key(identity: Any, key: str, **kw: Any) -> Any:
+        return world["row"]
+
+    monkeypatch.setattr(memory_repo, "get_by_key", _get_by_key)
+    out = _delete_at(world["row"].version)
+    assert out.tombstoned is True and out.version == world["row"].version + 1
+    memory_rows = [r for t, rows in world["ch"].inserts if t == "loom.memory" for r in rows]
+    assert [r["version"] for r in memory_rows] == [world["row"].version + 1]
 
 
 def test_a_versioned_delete_checks_and_tombstones_under_the_key_lock(world, monkeypatch) -> None:

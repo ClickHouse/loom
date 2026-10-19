@@ -59,29 +59,24 @@ guard, a path that is not a directory, or a missing `--agent`, token or org.
 - The export carries the source's superseded and duplicate rows as `status: deprecated`,
   so a key the source folds into another stays in the copy instead of being pruned.
 - Export pages the source by offset, so a write to the source mid-listing can shift the
-  pages and skip a live row. Export calls a listing whole only when every page carries the
-  same `namespace_version` (every write, delete and restore moves it) and `total` (a page
-  from a lagging replica reports its own), the unique rows it read equal that total, and a
-  `memory.list` with `known_version` after the last page still answers `unchanged` (a page
-  reads the version before its rows). It lists up to three times in all, and otherwise
-  leaves `loom.complete` off, so that run copies without pruning and a later, quieter run
-  prunes.
+  pages and skip a live row. After the pages it reads `memory.keys`, every live row's
+  identity and key in one statement (the namespace at one moment), and calls the listing
+  whole only when each of those rows was listed. A row written after that moment is a
+  later change, which the next run carries. It lists up to three times in all, and
+  otherwise leaves `loom.complete` off, so that run copies without pruning and a later,
+  quieter run prunes. A source too old to answer `memory.keys`, or one with more than
+  100,000 live rows, is never marked complete.
 - Before each delete it reads the row under its own identity again, and goes on only if
   that row is under its `--agent`, was written by its own token (the agent name alone is
-  the caller's choice) and carries no `memory.lock`: a locked copy is counted as kept. The
-  delete passes `memory.delete`'s `if_version`, which the server checks against a strong
-  read under that exact identity: a row rewritten before that check is kept, and the
-  delete does not fall back to another agent's row. The server holds the key's write lock
-  across the check and the tombstone, the lock a conditional `memory.set` takes, so a
-  conditional write cannot land between them; a plain `memory.set` takes no lock.
-- The target server must have `memory.delete`'s `if_version`. Prune reads the target's
-  `ops.capabilities` first and deletes nothing when the field is missing. During a
-  rolling upgrade a delete can still reach a replica on the older build, which ignores
-  the field and names it in `ignored_args`: that one delete runs without the version
-  check, and when the row is gone under the import's agent it falls back to the same
-  user's row under any agent. Prune stops at the first such answer, reports it as failed
-  and the import exits 1. Suspend the CronJob while the target rolls out a new build
-  (`kubectl patch cronjob okf-sync -p '{"spec":{"suspend":true}}'`, then `false`).
+  the caller's choice), is still the version the import's listing saw with an `okf:`
+  trace, and has no `memory.lock`: anything else is counted as kept. It deletes with
+  `memory.delete_version`, which removes only that version, under that exact identity, and
+  never another agent's row. Its
+  tombstone sits right above that version, so a write that lands while the delete runs,
+  conditional or not, keeps its row.
+- A target replica too old to know `memory.delete_version` answers 404 and deletes
+  nothing; the prune counts the failure and the import exits 1. A rolling upgrade of
+  either Loom needs no pause.
 - The import runs only when the export exited 0 (`sh -e`), and each run writes its bundle
   to a fresh `emptyDir`, so a bundle left by an earlier run is never imported.
 - `--dry-run` lists what would be written and deleted, after the same checks, and writes
@@ -102,17 +97,17 @@ row: its `memory_id` changes. `memory.restore` brings back the original row inst
 
 A run that finds nothing to change sends only reads. For a namespace of N rows:
 
-| Side                 | Requests                                                                                                                                                                                                                                                                                                    |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Export, private Loom | `memory.list` pages of 100 rows (`LOOM_MEMORY_LIST_VIEWER_LIMIT` caps a viewer token's page) and one more to check nothing moved, one `GET /v1/health` for the build commit, one `memory.bulk_get` per 500 rows of each (agent, user, session), and one `memory.export_evidence` page per 2,000 typed edges |
-| Import, public Loom  | `memory.list` pages of 1,000 rows, one `memory.bulk_get` per 500 rows, and the edge pages again; then one `memory.set` per changed row, one `memory.link` per new edge, a `memory.get` and a `memory.delete` per pruned row, and one `ops.capabilities` before the first                                    |
+| Side                 | Requests                                                                                                                                                                                                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Export, private Loom | `memory.list` pages of 100 rows (`LOOM_MEMORY_LIST_VIEWER_LIMIT` caps a viewer token's page), one `memory.keys`, one `GET /v1/health` for the build commit, one `memory.bulk_get` per 500 rows of each (agent, user, session), and one `memory.export_evidence` page per 2,000 typed edges |
+| Import, public Loom  | `memory.list` pages of 1,000 rows, one `memory.bulk_get` per 500 rows, and the edge pages again; then one `memory.set` per changed row, one `memory.link` per new edge, and a `memory.get` and a `memory.delete_version` per pruned row                                                    |
 
-A 501-row namespace with one writer took 15 requests in all (7 `memory.list` calls, 1
-health read, 2 `memory.bulk_get` and 1 edge page on the export side; 1, 2 and 1 on the
-import side). At 50,000 rows under one identity a run is about 750 requests, under one a
-second over a 15-minute schedule; a namespace spread over many sessions, as hooks write
-it, takes one `memory.bulk_get` per session instead, and the export lists the source up to
-three times in all when it changed while it was paged.
+A 501-row namespace with one writer takes 15 requests in all (6 `memory.list` calls, 1
+`memory.keys`, 1 health read, 2 `memory.bulk_get` and 1 edge page on the export side; 1, 2
+and 1 on the import side). At 50,000 rows under one identity a run is about 750 requests,
+under one a second over a 15-minute schedule; a namespace spread over many sessions, as
+hooks write it, takes one `memory.bulk_get` per session instead, and the export lists the
+source up to three times in all when it changed while it was paged.
 
 ## Tokens
 
@@ -155,7 +150,9 @@ Everything in the namespace reaches the public Loom within one schedule interval
 write to it on the private side as publishing: keep anything confidential in another
 namespace. Rows marked `sensitivity: high` stay on the private side (the export leaves
 them out unless `--include-high`), and a row that becomes `high` is pruned from the
-public side on the next run. The export knows a `high` row by its `sensitivity`, which it
+public side on the next run, unless it was the last row the export would carry: the
+bundle then has no concepts, the import refuses it, and the public copies stay. Delete
+them on the public Loom with `memory.delete`, or through erasure when the content must go. The export knows a `high` row by its `sensitivity`, which it
 reads through `memory.bulk_get`, or by the `sensitivity:high` tag `memory.set` and
 `memory.update` add. Against a private Loom whose `memory.bulk_get` does not return
 `sensitivity`, only the tag keeps a row home, and a `high` row without the tag travels.

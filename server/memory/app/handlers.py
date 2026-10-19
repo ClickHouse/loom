@@ -19,6 +19,7 @@ from server.auth.context import current_auth
 from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.errors import ValidationError
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
@@ -28,6 +29,8 @@ from server.memory.api.models_crud import (
     MemoryClearOutput,
     MemoryDeleteInput,
     MemoryDeleteOutput,
+    MemoryDeleteVersionInput,
+    MemoryDeleteVersionOutput,
     MemoryGetByIdInput,
     MemoryGetByIdOutput,
     MemoryGetInput,
@@ -52,6 +55,9 @@ from server.memory.store.rows import next_version
 from server.settings import settings
 
 log = logging.getLogger(__name__)
+
+# How far above the deleted version memory.delete_version retires the key's vectors.
+_VECTOR_RETIRE_GAP_NS = 1_000_000
 
 
 # Leaf module (no internal imports) shared with memory.app.retrieval to
@@ -556,31 +562,12 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
 
 
 async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
-    if input.if_version is None:
-        return await _memory_delete(input)
-    # The check and the tombstone are one step, as memory.set's if_match_sha256 is: a
-    # conditional write to the key waits for the lease instead of landing between them.
-    async with key_write_lock.key_write_locks.hold(
-        input.org,
-        input.namespace,
-        input.agent,
-        input.user_id,
-        input.session_id,
-        input.memory_key,
-    ):
-        return await _memory_delete(input)
-
-
-async def _memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     """Soft-delete: write a tombstone row with a higher version, so RMT
     collapse picks it and `memory.get`'s `tombstoned_at IS NULL` filter
     excludes it. Copies the live row's columns forward. Preserves the row
     for the grace window; avoids expensive CH mutations."""
     import server.memory.store as memory_repo
     from server.observability.otel import traced
-
-    ch = get_client()
-    now = datetime.now(UTC)
 
     identity = memory_repo.Identity(
         org=input.org,
@@ -594,7 +581,7 @@ async def _memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
         existing = await memory_repo.get_by_key(
             identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
         )
-    if existing is None and identity.agent != "*" and input.if_version is None:
+    if existing is None and identity.agent != "*":
         # A delete names a key, not the identity that wrote it (hooks write under their own
         # agent/session; a chat client deleting the key holds another), and an exact-identity
         # miss would read as success. Look namespace-wide.
@@ -613,18 +600,83 @@ async def _memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     if existing is None:
         # Idempotent: deleting a non-existent row is a no-op — and says so.
         return MemoryDeleteOutput(tombstoned=False, found=False, version=next_version())
-    if input.if_version is not None and existing.version != input.if_version:
-        return MemoryDeleteOutput(
-            tombstoned=False, version=next_version(), reason="version_changed"
-        )
     _lock.assert_unlocked(existing, "delete", op="memory.delete")
     assert_own_row(existing, op="memory.delete")
-
-    # build_memory_version_row carries every live column forward (avoiding
-    # silent column loss); only the tombstone deltas override. The version is drawn
-    # here, right before the insert: the vector retire below skips rows at or above
-    # it, so the later it is drawn the fewer late vector writes it leaves live.
+    # The version is drawn here, right before the insert: the vector retire skips rows at
+    # or above it, so the later it is drawn the fewer late vector writes it leaves live.
     version = next_version()
+    tombstoned, downgraded = await _tombstone(existing, version=version, vector_version=version)
+    return MemoryDeleteOutput(
+        tombstoned=True,
+        version=version,
+        dependents_tombstoned=tombstoned,
+        dependents_downgraded=downgraded,
+    )
+
+
+async def handle_memory_delete_version(
+    input: MemoryDeleteVersionInput,
+) -> MemoryDeleteVersionOutput:
+    """Tombstone one version of a key under this exact identity, or nothing when the row
+    under it has moved on. The tombstone sits right above that version rather than at
+    the current time: a write drawn after it (a nanosecond wall-clock version) still
+    wins, whatever lock it took, so the row of a write that lands during the delete is
+    never tombstoned. The key's chunks and dependent summaries are retired key-wide, as
+    memory.delete retires them. Conditional writes of the key wait for the key lock."""
+    import server.memory.store as memory_repo
+
+    if input.agent == "*":
+        raise ValidationError("memory.delete_version needs a concrete agent, not '*'")
+    identity = memory_repo.Identity(
+        org=input.org,
+        namespace=input.namespace,
+        agent=input.agent,
+        user_id=input.user_id,
+        session_id=input.session_id,
+    )
+    async with key_write_lock.key_write_locks.hold(
+        input.org,
+        input.namespace,
+        input.agent,
+        input.user_id,
+        input.session_id,
+        input.memory_key,
+    ):
+        existing = await memory_repo.get_by_key(
+            identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
+        )
+        if existing is None:
+            return MemoryDeleteVersionOutput(tombstoned=False, found=False)
+        if existing.version != input.version:
+            return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
+        _lock.assert_unlocked(existing, "delete", op="memory.delete_version")
+        assert_own_row(existing, op="memory.delete_version")
+        version = int(input.version) + 1
+        # The vectors retire a millisecond above the version: above every metadata copy of
+        # its vectors (each writes read + 1, server.memory.store.rows.reemit_version), and
+        # below the vectors of a write drawn after it.
+        tombstoned, downgraded = await _tombstone(
+            existing, version=version, vector_version=int(input.version) + _VECTOR_RETIRE_GAP_NS
+        )
+    return MemoryDeleteVersionOutput(
+        tombstoned=True,
+        version=version,
+        dependents_tombstoned=tombstoned,
+        dependents_downgraded=downgraded,
+    )
+
+
+async def _tombstone(existing: Any, *, version: int, vector_version: int) -> tuple[int, int]:
+    """Write the tombstone of `existing` at `version` and retire what was derived from it:
+    its vectors (at `vector_version`), its chunks, a procedure's run ledger, and the
+    summaries built from it. The consolidated summaries tombstoned and downgraded."""
+    import server.memory.store as memory_repo
+    from server.observability.otel import traced
+
+    ch = get_client()
+    now = datetime.now(UTC)
+    # build_memory_version_row carries every live column forward (avoiding
+    # silent column loss); only the tombstone deltas override.
     tombstone_row = memory_repo.build_memory_version_row(
         existing,
         version=version,
@@ -644,14 +696,14 @@ async def _memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     # (dim-0 stubs, rows other paths wrote). A key with no live row writes nothing.
     try:
         await memory_repo.tombstone_embeddings_for_key(
-            input.org,
-            input.namespace,
+            existing.org,
+            existing.namespace,
             existing.agent,  # the row's own identity, which may differ from the caller's
             existing.user_id,
             existing.session_id,
-            input.memory_key,
+            existing.memory_key,
             ts=now.replace(tzinfo=None) if now.tzinfo else now,
-            version=version,
+            version=vector_version,
             ch=ch,
         )
     except Exception as e:  # noqa: BLE001 — the memory row tombstone already landed; mirror is best-effort
@@ -673,11 +725,11 @@ async def _memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     if getattr(existing, "memory_type", "") == "procedural":
         try:
             await memory_repo.delete_procedure_runs_by_key(
-                input.org, input.namespace, input.memory_key
+                existing.org, existing.namespace, existing.memory_key
             )
         except Exception as e:  # noqa: BLE001 — the tombstone stands
             log.warning(
-                "memory.delete: procedure_runs cascade failed for %s: %s", input.memory_key, e
+                "memory.delete: procedure_runs cascade failed for %s: %s", existing.memory_key, e
             )
     # A summary built from this row now says something its evidence no
     # longer supports. If none of its sources survive it goes too; otherwise
@@ -686,23 +738,18 @@ async def _memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     dep_tomb = dep_down = 0
     try:
         dep_tomb, dep_down = await memory_repo.downgrade_consolidated_dependents(
-            input.org,
-            input.namespace,
-            input.memory_key,
+            existing.org,
+            existing.namespace,
+            existing.memory_key,
             ch=ch,
         )
     except Exception as e:  # noqa: BLE001 — the tombstone stands
         log.warning(
             "memory.delete: dependent summaries not downgraded for %s: %s",
-            input.memory_key,
+            existing.memory_key,
             e,
         )
-    return MemoryDeleteOutput(
-        tombstoned=True,
-        version=version,
-        dependents_tombstoned=dep_tomb,
-        dependents_downgraded=dep_down,
-    )
+    return dep_tomb, dep_down
 
 
 async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:

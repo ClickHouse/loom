@@ -85,6 +85,8 @@ _LIVE_FIELDS = [
     "content_sha256",
     "verification",
     "expires_at",
+    # prune deletes only the version this listing saw with the import's trace
+    "version",
 ]
 # What memory.list does not return; read with memory.bulk_get.
 _BULK_FIELDS = ["valid_to", "source_class"]
@@ -163,23 +165,24 @@ async def _fetch_namespace(
     include_tombstoned: bool,
     include_high: bool = False,
     limit: int | None = None,
-) -> tuple[list[dict[str, Any]], list[str], bool, bool]:
+) -> tuple[list[dict[str, Any]], list[str], str, bool]:
     """Every live row of `namespace` (all agents, users and sessions), full
     values, as memory_to_concept dicts; the keys left out because bulk_get did not
-    answer them; whether the listing is known to hold every row; and whether it
-    stopped at `limit`, which caps the rows for smoke runs."""
-    entries, whole, capped = await _list_namespace(
-        client, org, namespace, include_tombstoned=include_tombstoned, limit=limit
-    )
+    answer them; why the rows are not known to be every row ('' when they are); and
+    whether the listing stopped at `limit`, which caps the rows for smoke runs."""
     # Offset pages shift when the namespace changes mid-listing, which can skip a live row;
     # a bundle that says complete without it would let --prune delete its copy. An export
     # that stopped at --limit, or keeps deleted rows, is never complete, so it is listed once.
-    attempts = 1
-    while not whole and not capped and not include_tombstoned and attempts < _LIST_ATTEMPTS:
-        entries, whole, capped = await _list_namespace(
+    for _ in range(_LIST_ATTEMPTS):
+        entries, capped = await _list_namespace(
             client, org, namespace, include_tombstoned=include_tombstoned, limit=limit
         )
-        attempts += 1
+        if capped or include_tombstoned:
+            why = ""
+            break
+        why = await _not_listed(client, org, namespace, entries)
+        if why != _SHIFTED:
+            break
     rows, unreadable = await _with_full_values(
         client,
         org,
@@ -188,9 +191,13 @@ async def _fetch_namespace(
         include_tombstoned=include_tombstoned,
         include_high=include_high,
     )
-    # A row deleted between the listing and its full read is left out, and the bundle is
-    # not called complete: its absence says nothing about the rows around it.
-    return rows, unreadable, whole and not unreadable, capped
+    if unreadable and not why:
+        # Its absence says nothing about the rows around it.
+        why = "a listed row was deleted before its full read"
+    return rows, unreadable, why, capped
+
+
+_SHIFTED = "the source changed while it was read (a row was written while it was listed)"
 
 
 async def _list_namespace(
@@ -200,11 +207,8 @@ async def _list_namespace(
     *,
     include_tombstoned: bool,
     limit: int | None = None,
-) -> tuple[list[dict[str, Any]], bool, bool]:
-    """The `memory.list` entries of every row; whether they are known to be every row (every
-    page reported the same `namespace_version`, which every write, delete and restore moves,
-    and total, the rows add up to that total, and the version still held after the last
-    page was read); and whether the listing stopped at `limit`."""
+) -> tuple[list[dict[str, Any]], bool]:
+    """The `memory.list` entries of every row, and whether the listing stopped at `limit`."""
     query: dict[str, Any] = {
         "org": org,
         "namespace": namespace,
@@ -224,41 +228,45 @@ async def _list_namespace(
     # A row a shifted page served twice counts once, as the pages arrive: a repeat must not
     # count toward --limit.
     seen: dict[tuple[Any, ...], dict[str, Any]] = {}
-    totals: list[int] = []
-    versions: list[str] = []
     offset = 0
-    capped = False
     while True:
         page_size = _PAGE if limit is None else max(1, min(_PAGE, limit - len(seen)))
         page = await client.post("memory.list", {**query, "limit": page_size, "offset": offset})
         rows = page.get("entries") or []
         for r in rows:
             seen.setdefault(_entry_id(r), r)
-        totals.append(int(page.get("total") or 0))
-        versions.append(str(page.get("namespace_version") or ""))
         if not page.get("truncated") or not rows:
-            break
+            return list(seen.values()), False
         # Stopped at the limit only when the server said more rows remain: a namespace of
         # exactly `limit` rows was read whole.
         if limit is not None and len(seen) >= limit:
-            capped = True
-            break
+            return list(seen.values())[:limit], True
         offset += len(rows)
-    unique = list(seen.values())
-    if capped:
-        return unique[:limit], False, True
-    # Every page must agree, not only the ends: a page answered by a lagging replica reports
-    # its own total and version.
-    whole = len(set(versions)) == 1 and len(set(totals)) == 1 and totals[0] == len(unique)
-    if whole and unique:
-        # A page reads the version before its rows, so a write during the last page's read
-        # shows only now: the version must still be the one every page reported. An empty
-        # listing has nothing to check, and prune refuses its empty bundle anyway.
-        after = await client.post(
-            "memory.list", {**query, "limit": 1, "offset": 0, "known_version": versions[-1]}
-        )
-        whole = after.get("unchanged") is True
-    return unique, whole, False
+
+
+async def _not_listed(
+    client: _Client, org: str, namespace: str, entries: list[dict[str, Any]]
+) -> str:
+    """Why `entries` may miss a live row, or '' when every row memory.keys reads (one
+    statement, so the namespace at one moment) is among them. A row written after that
+    moment is a later change, which the next export carries."""
+    try:
+        got = await client.post("memory.keys", {"org": org, "namespace": namespace})
+    except RuntimeError as e:
+        return f"the source did not answer memory.keys ({e})"
+    keys = got.get("keys") or []
+    if got.get("truncated"):
+        return f"the source holds more live rows than one memory.keys answer ({len(keys)})"
+    listed = {_entry_id(r) for r in entries}
+    for k in keys:
+        if (
+            k.get("agent"),
+            k.get("user_id"),
+            k.get("session_id"),
+            k.get("memory_key"),
+        ) not in listed:
+            return _SHIFTED
+    return ""
 
 
 def _entry_id(r: dict[str, Any]) -> tuple[Any, ...]:
@@ -314,6 +322,10 @@ async def _with_full_values(
                 # A key shaped like a chunk id that bulk_get answered with its parent's row
                 # (no row held the key when it read): that is not this row's value.
                 g = None
+            if g is None and r["memory_key"] not in held and _past_retention(r):
+                # bulk_get never serves a high row past its retention window; the list still
+                # does until the expiry sweep. It has left the source, as the bundle says.
+                continue
             kept_deleted = include_tombstoned and r.get("tombstoned_at")
             if (
                 g is None
@@ -334,6 +346,14 @@ async def _with_full_values(
             merged["agent"] = agent if agent != "*" else (r.get("agent") or "")
             out.append(merged)
     return out, unreadable
+
+
+def _past_retention(r: dict[str, Any]) -> bool:
+    """A high row whose `expires_at` has passed: memory.bulk_get no longer serves it."""
+    expires = _when(r.get("expires_at"))
+    if not isinstance(expires, datetime) or not is_high(r.get("sensitivity"), r.get("tags")):
+        return False
+    return expires <= _now()
 
 
 def _answered_by_parent(
@@ -527,7 +547,7 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
         edges: list[dict[str, Any]] = []
         held_evidence = 0
         async with _Client(args.server_url, token) as client:
-            entries, unreadable, whole, capped = await _fetch_namespace(
+            entries, unreadable, why, capped = await _fetch_namespace(
                 client,
                 org,
                 args.namespace,
@@ -558,7 +578,7 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             include_high=bool(args.include_high),
             server_url=args.server_url,
             # A bundle that keeps deleted rows says nothing about which keys left the source.
-            complete=whole and not args.include_tombstoned,
+            complete=not why and not capped and not args.include_tombstoned,
         )
         n_concepts = len(entries) - skipped_high
         evidence_note = (
@@ -606,11 +626,10 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             )
         elif capped:
             print(f"  not marked complete: it stopped at --limit {args.limit}")
-        elif not whole:
+        elif why:
             print(
-                "  not marked complete: the source changed while it was read (a write while "
-                "it was listed, or a row deleted before its full read); an import with "
-                "--prune writes it and skips the prune"
+                f"  not marked complete: {why}; an import with --prune writes it and skips "
+                "the prune"
             )
         if orphans:
             print(
@@ -1056,7 +1075,7 @@ def _marked_complete(files: dict[str, str]) -> bool:
 
 _PRUNE_SKIPPED = (
     "not pruning this run: index.md does not mark the export complete (it stopped at "
-    "--limit, ran with --include-tombstoned, the source changed while it was read, or an "
+    "--limit, ran with --include-tombstoned, could not tell it read every row, or an "
     "older release wrote it); "
     "the writes go ahead"
 )
@@ -1070,22 +1089,17 @@ async def _prune(
     keep: set[tuple[str, str]],
     actor: str,
 ) -> Counter[str]:
-    """memory.delete each row an earlier import wrote whose key has left the bundle. Only
-    rows under the import's identity with its source_trace stamp, whose live version this
-    token wrote and nobody locked, qualify, and the delete names that version: a row
-    rewritten before the server's check is kept, and a conditional write waits for the key
-    lock. A plain memory.set landing between the check and the tombstone takes no lock."""
+    """Delete each row an earlier import wrote whose key has left the bundle. Only rows
+    under the import's identity that this token wrote and nobody locked, still at the
+    version the listing saw with the import's source_trace, qualify. memory.delete_version
+    removes exactly that version: a row rewritten since is kept, and an older server,
+    which does not know the op, deletes nothing."""
     gone = sorted(
         k
         for k, r in live.items()
         if k not in keep and str(r.get("source_trace") or "").startswith(_TRACE_PREFIX)
     )
     n: Counter[str] = Counter()
-    refused = await _versioned_delete_refusal(client, org) if gone else ""
-    if refused:
-        n["prune_failed"] += 1  # the refusal; none of the candidates was read
-        print(f"  ✗ prune deletes nothing: {refused}", file=sys.stderr)
-        return n
     for session_id, key in gone:
         ident = {
             "org": org,
@@ -1101,59 +1115,36 @@ async def _prune(
             )
             if not got.get("found") or got.get("agent") != args.agent:
                 continue
-            # Another writer's row, or a copy someone locked to keep it.
-            if got.get("actor") != actor or got.get("lock_mode"):
-                n["prune_kept"] += 1
-                continue
-            if got.get("version") is None:  # without it the delete would run unchecked
+            listed = live[(session_id, key)].get("version")
+            if listed is None or got.get("version") is None:
                 n["prune_failed"] += 1
-                print(f"  ✗ prune {key}: memory.get answered without a version", file=sys.stderr)
+                print(f"  ✗ prune {key}: no version to delete it by", file=sys.stderr)
+                continue
+            # Another writer's row, a copy someone locked to keep it, or one rewritten since
+            # the listing that saw its import trace.
+            if (
+                got.get("actor") != actor
+                or got.get("lock_mode")
+                or str(got["version"]) != str(listed)
+            ):
+                n["prune_kept"] += 1
                 continue
             if args.dry_run:
                 where = f" (session {session_id})" if session_id != "-" else ""
                 print(f"  would delete {key}{where}")
                 n["pruned"] += 1
                 continue
-            # The server deletes only the version read above, under this exact identity.
-            res = await client.post("memory.delete", {**ident, "if_version": got["version"]})
+            res = await client.post("memory.delete_version", {**ident, "version": str(listed)})
         except RuntimeError as e:
             n["prune_failed"] += 1
             print(f"  ✗ prune {key}: {e}", file=sys.stderr)
             continue
-        if "if_version" in res.get("ignored_args", []):
-            # A replica still on the older build ran the delete without the check (a
-            # rolling upgrade), whatever it answered; stop before it does that again.
-            n["pruned"] += int(bool(res.get("tombstoned")))
-            done = "deleted" if res.get("tombstoned") else "found nothing to delete"
-            print(
-                f"  ✗ prune {key}: the server ignored if_version and {done}; it is older "
-                "than this CLI, so prune stops here. Upgrade it before pruning.",
-                file=sys.stderr,
-            )
-            n["prune_failed"] += 1
-            break
-        # Rewritten, or gone, since prune's read: nothing of ours was deleted.
-        if res.get("reason") == "version_changed" or res.get("found") is False:
-            n["prune_kept"] += 1
-            continue
         if res.get("tombstoned"):
             n["pruned"] += 1
+        else:
+            # Rewritten, or gone, since prune's read: nothing of ours was deleted.
+            n["prune_kept"] += 1
     return n
-
-
-async def _versioned_delete_refusal(client: _Client, org: str) -> str:
-    """Why prune must not delete on this target, or '' when its memory.delete takes
-    `if_version`. An unreadable catalogue refuses too."""
-    try:
-        caps = await client.post("ops.capabilities", {"org": org})
-    except RuntimeError as e:
-        return f"cannot read the target's ops.capabilities ({e})"
-    delete: dict[str, Any] = next(
-        (o for o in caps.get("ops") or [] if o.get("name") == "memory.delete"), {}
-    )
-    if "if_version" not in (delete.get("request_fields") or []):
-        return "the target's memory.delete does not take if_version; upgrade it before pruning"
-    return ""
 
 
 def _print_import_summary(

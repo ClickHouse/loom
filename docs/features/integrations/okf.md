@@ -119,27 +119,24 @@ The bundle's `evidence/` and `digests/` are written back through `memory.import_
 (`--no-evidence` skips them) and re-embedded by the importing server on every import,
 changed or not: a scheduled import passes `--no-evidence`.
 
-| Flag              | Effect                                                                                                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--verify`        | re-attest concepts whose frontmatter carries a `human:` verification, through `memory.verify`, **as the importing caller**                                                      |
-| `--keep-sessions` | write each concept under the session in its `loom.session_id`, so a key that lived under several sessions stays several rows; `--session-id` is the fallback                    |
-| `--dry-run`       | plan the writes against the target's live rows (it reads them) without sending any write                                                                                        |
-| `--prune`         | delete the rows an earlier import with this `--agent` and token wrote (an `okf:` `source_trace`) whose key is no longer in the bundle, through `memory.delete`; needs `--agent` |
+| Flag              | Effect                                                                                                                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--verify`        | re-attest concepts whose frontmatter carries a `human:` verification, through `memory.verify`, **as the importing caller**                                                              |
+| `--keep-sessions` | write each concept under the session in its `loom.session_id`, so a key that lived under several sessions stays several rows; `--session-id` is the fallback                            |
+| `--dry-run`       | plan the writes against the target's live rows (it reads them) without sending any write                                                                                                |
+| `--prune`         | delete the rows an earlier import with this `--agent` and token wrote (an `okf:` `source_trace`) whose key is no longer in the bundle, through `memory.delete_version`; needs `--agent` |
 
 Each bundle imported into a namespace with `--prune` needs an `--agent` of its own: prune
 deletes the rows of that agent with an `okf:` trace, written by its token, that the bundle
 lacks. `--prune` refuses a bundle with no concepts and one whose concept files do not hash
 to the root index's `loom.corpus_digest`, so a hand-edited bundle never drives deletes. A
 bundle whose root index does not carry `loom.complete: true` is written but not pruned.
-Export writes the marker only when it read every row: not when it stopped at `--limit`,
-not with `--include-tombstoned` (which keeps deleted rows in the bundle), not from an
-older release, and not when the source changed while it was read (a write while it paged,
-or a row deleted before its full read). Each delete passes `memory.delete`'s `if_version`
-with the version prune just read: the server checks it against a strong read of the row
-under that exact identity and keeps a row rewritten before that check; it holds the key's
-write lock, so a conditional write to the key cannot land between the check and the
-tombstone. A copy someone locked with `memory.lock` is kept, and prune deletes nothing on
-a target whose `ops.capabilities` lacks `if_version`. Export into an empty directory for a
+Export writes the marker only when it read every row: every row `memory.keys` reads in
+one statement after the listing was listed, and every listed row came back from
+`memory.bulk_get`. Never when it stopped at `--limit`, with `--include-tombstoned` (which
+keeps deleted rows in the bundle), or from an older release. Each delete goes through
+`memory.delete_version` with the version the import's listing saw with an `okf:` trace,
+under that exact identity: a row rewritten since, or locked with `memory.lock`, is kept, and a target too old to know the op deletes nothing. Export into an empty directory for a
 prune: export overwrites concept files but never removes the file of a key that left the
 namespace, so a reused `--out` directory no longer matches its digest. [Copying a
 namespace to another Loom](../../operations/okf-sync.md) runs export and import on a

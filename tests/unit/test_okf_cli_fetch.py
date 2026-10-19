@@ -10,6 +10,8 @@ import pytest
 
 from server.cli import okf as cli_okf
 
+_DELETED = "2026-09-01T00:00:00"
+
 
 class _FakeClient:
     def __init__(self) -> None:
@@ -17,8 +19,12 @@ class _FakeClient:
 
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((op, body))
-        if op == "memory.list" and body.get("known_version") == "7":
-            return {"entries": [], "unchanged": True, "namespace_version": "7"}
+        if op == "memory.keys":
+            keys = [
+                {"agent": "a", "user_id": "-", "session_id": "-", "memory_key": k}
+                for k in ("new", "old")
+            ]
+            return {"keys": keys, "truncated": False}
         if op == "memory.list":
             return {
                 "entries": [
@@ -38,8 +44,6 @@ class _FakeClient:
                     },
                 ],
                 "truncated": False,
-                "total": 2,
-                "namespace_version": "7",
             }
         if op == "memory.bulk_get":
             return {
@@ -87,10 +91,10 @@ class _FakeClient:
 @pytest.mark.asyncio
 async def test_export_keeps_superseded_rows_and_pages_edges() -> None:
     client = _FakeClient()
-    rows, unreadable, _, _ = await cli_okf._fetch_namespace(
+    rows, unreadable, why, _ = await cli_okf._fetch_namespace(
         client, "o", "ns", include_tombstoned=False
     )  # type: ignore[arg-type]
-    assert unreadable == []
+    assert unreadable == [] and why == ""
     list_call = next(b for op, b in client.calls if op == "memory.list")
     assert list_call["include_superseded"] is True
     assert sorted(r["memory_key"] for r in rows) == ["new", "old"]
@@ -122,49 +126,45 @@ async def test_export_keeps_superseded_rows_and_pages_edges() -> None:
     assert datetime.now(UTC).date().isoformat() in files["log.md"]
 
 
-class _ShiftingClient:
-    """Pages of one row. The first page's row leaves the namespace before the second
-    page is read on the first `shifts` listings, so that listing skips a live row. With
-    `restore`, a row restored below the offset keeps the total the same."""
+def _entries(keys: list[str], **over: Any) -> list[dict[str, Any]]:
+    return [
+        {"memory_key": k, "agent": "x", "user_id": "-", "session_id": "-", **over} for k in keys
+    ]
 
-    def __init__(self, shifts: int, *, restore: bool = False) -> None:
+
+def _keys(keys: list[str]) -> dict[str, Any]:
+    return {"keys": _entries(keys), "truncated": False}
+
+
+class _ShiftingClient:
+    """Pages of one row. On the first `shifts` listings "a" is deleted after the first page
+    is read, so the next offset serves "c" and skips "b"; memory.keys then reads b and c."""
+
+    def __init__(self, shifts: int) -> None:
         self.shifts = shifts
-        self.restore = restore
         self.listings = 0
+        self.live = ["a", "b", "c"]
 
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         if op == "memory.bulk_get":
-            return {"results": {k: {"value": k} for k in body["memory_keys"]}}
+            return {"results": {k: {"value": k, "sensitivity": ""} for k in body["memory_keys"]}}
+        if op == "memory.keys":
+            return _keys(self.live)
         assert op == "memory.list"
-        if "known_version" in body:  # the check after the last page
-            now = "2" if self.listings <= self.shifts else "1"
-            if self.restore and self.listings <= self.shifts:
-                now = "3"
-            return {"entries": [], "unchanged": body["known_version"] == now}
         if body["offset"] == 0:
             self.listings += 1
-        keys, version = ["a", "b", "c"], "1"
-        if body["offset"] > 0 and self.listings <= self.shifts:
-            # "a" was deleted: "b" moved up to offset 0 and is skipped
-            keys, version = ["b", "c"], "2"
-            if self.restore:
-                keys, version = ["b", "c", "r"], "3"  # "r" restored at its old place
-        page = keys[body["offset"] : body["offset"] + 1]
-        return {
-            "entries": [
-                {"memory_key": k, "agent": "x", "user_id": "-", "session_id": "-"} for k in page
-            ],
-            "truncated": body["offset"] + 1 < len(keys),
-            "total": len(keys),
-            "namespace_version": version,
-        }
+            self.live = ["a", "b", "c"]
+        elif self.listings <= self.shifts:
+            self.live = ["b", "c"]
+        page = self.live[body["offset"] : body["offset"] + 1]
+        return {"entries": _entries(page), "truncated": body["offset"] + 1 < len(self.live)}
 
 
 @pytest.mark.asyncio
 async def test_a_listing_that_skipped_a_row_is_read_again() -> None:
     client = _ShiftingClient(shifts=1)
-    rows, _, whole, _ = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
-    assert whole and client.listings == 2
+    rows, _, why, _ = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    assert why == "" and client.listings == 2
     assert [r["memory_key"] for r in rows] == ["a", "b", "c"]
 
 
@@ -172,205 +172,145 @@ async def test_a_listing_that_skipped_a_row_is_read_again() -> None:
 async def test_a_namespace_that_keeps_shifting_is_not_called_complete() -> None:
     # The bundle then carries no completeness marker: it is written, and not pruned.
     client = _ShiftingClient(shifts=99)
-    rows, _, whole, _ = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
-    assert not whole and client.listings == cli_okf._LIST_ATTEMPTS
+    rows, _, why, _ = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    assert why == cli_okf._SHIFTED and client.listings == cli_okf._LIST_ATTEMPTS
     assert [r["memory_key"] for r in rows] == ["a", "c"]
 
 
-@pytest.mark.asyncio
-async def test_a_delete_and_a_restore_mid_listing_are_not_called_complete() -> None:
-    # The skipped row and the restored one cancel out in the count; the version does not.
-    client = _ShiftingClient(shifts=99, restore=True)
-    rows, _, whole, _ = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
-    assert [r["memory_key"] for r in rows] == ["a", "c", "r"]
-    assert not whole
+class _LateCommitClient:
+    """Two pages of two rows. A write whose version was drawn before the newest one lands
+    between the pages and sorts first, so the second page repeats "b" and "n" is never
+    listed; no version or total moves. memory.keys reads it."""
 
-
-class _LaggingMiddleClient:
-    """Three pages of one row. The middle page comes from a replica that still holds a row
-    deleted moments ago, so it serves that row and the last page skips a live one; the
-    ends agree on total and version."""
+    def __init__(self) -> None:
+        self.listings = 0
 
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         if op == "memory.bulk_get":
-            return {"results": {k: {"value": k} for k in body["memory_keys"]}}
-        if "known_version" in body:
-            return {"entries": [], "unchanged": body["known_version"] == "2"}
-        lagging = body["offset"] == 1
-        keys = ["a", "x", "b", "c"] if lagging else ["a", "b", "c"]
-        page = keys[body["offset"] : body["offset"] + 1]
-        return {
-            "entries": [
-                {"memory_key": k, "agent": "x", "user_id": "-", "session_id": "-"} for k in page
-            ],
-            "truncated": body["offset"] + 1 < 3,
-            "total": len(keys),
-            "namespace_version": "1" if lagging else "2",
-        }
+            return {"results": {k: {"value": k, "sensitivity": ""} for k in body["memory_keys"]}}
+        if op == "memory.keys":
+            return _keys(["a", "b", "c", "n"])
+        if body["offset"] == 0:
+            self.listings += 1
+        late = self.listings > 1 or body["offset"] > 0
+        live = ["n", "a", "b", "c"] if late else ["a", "b", "c"]
+        page = live[body["offset"] : body["offset"] + 2]
+        return {"entries": _entries(page), "truncated": body["offset"] + 2 < len(live)}
 
 
 @pytest.mark.asyncio
-async def test_a_page_from_a_lagging_replica_is_not_called_complete() -> None:
-    rows, _, whole, _ = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
-        _LaggingMiddleClient(), "o", "ns", include_tombstoned=False
-    )
-    assert [r["memory_key"] for r in rows] == ["a", "x", "c"]  # "b" was skipped
-    assert not whole
-
-
-class _LateDeleteClient:
-    """Three pages of one row. A row of page 1 is deleted after the last page read its
-    version but before it read its rows, so that page skips the live row that moved up.
-    Every page reports the same version and a total the rows add up to (a cached count, a
-    replica that already counted the delete): only a read after the last page sees it."""
-
-    async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
-        if op == "memory.bulk_get":
-            return {"results": {k: {"value": k} for k in body["memory_keys"]}}
-        if "known_version" in body:
-            return {"entries": [], "unchanged": body["known_version"] == "2"}
-        offset = body["offset"]
-        keys = ["a", "b", "c", "d"] if offset < 2 else ["b", "c", "d"]  # "a" deleted
-        page = keys[offset : offset + 1]
-        return {
-            "entries": [
-                {"memory_key": k, "agent": "x", "user_id": "-", "session_id": "-"} for k in page
-            ],
-            "truncated": offset + 1 < 3,
-            "total": 3,
-            "namespace_version": "1",
-        }
+async def test_a_row_that_commits_late_below_the_newest_version_is_caught() -> None:
+    client = _LateCommitClient()
+    rows, _, why, _ = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    assert why == "" and client.listings == 2
+    assert sorted(r["memory_key"] for r in rows) == ["a", "b", "c", "n"]
 
 
 @pytest.mark.asyncio
-async def test_a_delete_during_the_last_pages_read_is_caught_after_it() -> None:
-    client = _LateDeleteClient()
-    rows, _, whole, _ = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
-    assert [r["memory_key"] for r in rows] == ["a", "b", "d"]  # "c" was skipped
-    assert not whole
+async def test_a_source_without_memory_keys_is_listed_once_and_not_called_complete() -> None:
+    calls: list[str] = []
+
+    class _Older(_ShiftingClient):
+        async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+            calls.append(op)
+            if op == "memory.keys":
+                raise RuntimeError("memory.keys → HTTP 404 Not Found")
+            return await super().post(op, body)
+
+    rows, _, why, _ = await cli_okf._fetch_namespace(_Older(0), "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    assert "did not answer memory.keys" in why and calls.count("memory.keys") == 1
+    assert [r["memory_key"] for r in rows] == ["a", "b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_a_namespace_larger_than_one_keys_answer_is_not_called_complete() -> None:
+    class _Large(_ShiftingClient):
+        async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+            if op == "memory.keys":
+                return {**_keys(["a", "b", "c"]), "truncated": True}
+            return await super().post(op, body)
+
+    _rows, _, why, _ = await cli_okf._fetch_namespace(
+        _Large(0), "o", "ns", include_tombstoned=False
+    )  # type: ignore[arg-type]
+    assert "more live rows than one memory.keys answer" in why
 
 
 class _DeletedBeforeTheFullRead:
-    """One page of rows, every check unchanged; `gone` was deleted before bulk_get, and
+    """One page of rows, every key listed; `gone` was deleted before bulk_get, and
     `old` was already deleted (listed only with include_tombstoned). bulk_get never answers
     a tombstoned row."""
 
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         if op == "memory.bulk_get":
             keys = [k for k in body["memory_keys"] if k not in ("gone", "old")]
-            return {"results": {k: {"value": k} for k in keys}}
-        if "known_version" in body:
-            return {"entries": [], "unchanged": True}
+            return {"results": {k: {"value": k, "sensitivity": ""} for k in keys}}
+        if op == "memory.keys":
+            return _keys(["kept", "gone"])
         keys = ["kept", "gone", "old"] if body.get("include_tombstoned") else ["kept", "gone"]
-        return {
-            "entries": [
-                {
-                    "memory_key": k,
-                    "agent": "x",
-                    "user_id": "-",
-                    "session_id": "-",
-                    "value": "cut…",
-                    "tombstoned_at": "2026-09-01T00:00:00" if k == "old" else None,
-                }
-                for k in keys
-            ],
-            "truncated": False,
-            "total": len(keys),
-            "namespace_version": "1",
-        }
+        entries = [
+            {**e, "value": "cut…", "tombstoned_at": _DELETED if e["memory_key"] == "old" else None}
+            for e in _entries(keys)
+        ]
+        return {"entries": entries, "truncated": False}
 
 
 @pytest.mark.asyncio
 async def test_a_row_deleted_before_its_full_read_is_left_out_and_the_bundle_not_complete() -> None:
     # Its list preview is a cut value, and its absence says nothing about the rows around it.
-    rows, _, whole, _ = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+    rows, unreadable, why, _ = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
         _DeletedBeforeTheFullRead(), "o", "ns", include_tombstoned=False
     )
-    assert [r["memory_key"] for r in rows] == ["kept"] and not whole
+    assert [r["memory_key"] for r in rows] == ["kept"] and unreadable == ["gone"]
+    assert why == "a listed row was deleted before its full read"
 
 
 @pytest.mark.asyncio
 async def test_include_tombstoned_keeps_a_deleted_row_but_not_one_deleted_mid_export() -> None:
-    rows, _, whole, _ = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+    rows, unreadable, _, _ = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
         _DeletedBeforeTheFullRead(), "o", "ns", include_tombstoned=True
     )
-    assert sorted(r["memory_key"] for r in rows) == ["kept", "old"] and not whole
+    assert sorted(r["memory_key"] for r in rows) == ["kept", "old"] and unreadable == ["gone"]
 
 
 @pytest.mark.asyncio
 async def test_a_limit_the_namespace_never_reached_is_listed_again_like_a_whole_export() -> None:
     # --limit 100 on a three-row namespace read every row: a shifted listing is retried.
     client = _ShiftingClient(shifts=1)
-    rows, _, whole, _ = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+    rows, _, why, capped = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
         client, "o", "ns", include_tombstoned=False, limit=100
     )
-    assert whole and client.listings == 2
+    assert why == "" and not capped and client.listings == 2
     assert [r["memory_key"] for r in rows] == ["a", "b", "c"]
 
 
 @pytest.mark.asyncio
 async def test_a_repeated_row_never_counts_toward_the_limit() -> None:
-    # Three rows under --limit 4, paged two at a time. After the first page a new row "n"
-    # lands at the top, so the next offset serves "b" again: the repeat must not make the
-    # listing look cut, and the moved total keeps it from being called complete.
-    class _Repeating:
-        async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
-            if op == "memory.bulk_get":
-                return {"results": {k: {"value": k} for k in body["memory_keys"]}}
-            if "known_version" in body:
-                return {"entries": [], "unchanged": False}
-            first = body["offset"] == 0
-            rows = ["a", "b", "c"] if first else ["n", "a", "b", "c"]
-            page = rows[body["offset"] : body["offset"] + min(2, body["limit"])]
-            return {
-                "entries": [
-                    {"memory_key": k, "agent": "x", "user_id": "-", "session_id": "-"} for k in page
-                ],
-                "truncated": body["offset"] + len(page) < len(rows),
-                "total": len(rows),
-                "namespace_version": "1" if first else "2",
-            }
-
-    rows, _, whole, capped = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
-        _Repeating(), "o", "ns", include_tombstoned=False, limit=4
+    # Three rows under --limit 4, paged two at a time: the late row "n" makes the second
+    # page serve "b" again, and the repeat must not make the listing look cut.
+    rows, _, why, capped = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        _LateCommitClient(), "o", "ns", include_tombstoned=False, limit=4
     )
-    assert not capped and not whole
-    assert sorted(r["memory_key"] for r in rows) == ["a", "b", "c"]
+    assert not capped and why == ""
+    assert sorted(r["memory_key"] for r in rows) == ["a", "b", "c", "n"]
 
 
 @pytest.mark.asyncio
-async def test_an_empty_namespace_is_read_whole_in_one_listing() -> None:
-    # No version to check after the page: an empty namespace is not "changed while read".
-    calls: list[dict[str, Any]] = []
+async def test_an_empty_namespace_is_read_whole() -> None:
+    calls: list[str] = []
 
     class _Empty:
         async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
-            calls.append(body)
-            return {"entries": [], "truncated": False, "total": 0, "namespace_version": ""}
+            calls.append(op)
+            if op == "memory.keys":
+                return _keys([])
+            return {"entries": [], "truncated": False}
 
-    rows, _, whole, capped = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+    rows, unreadable, why, capped = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
         _Empty(), "o", "ns", include_tombstoned=False
     )
-    assert (rows, whole, capped) == ([], True, False) and len(calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_rows_with_no_version_are_not_called_whole() -> None:
-    # A just-emptied namespace refilled between a page's version read and its rows: the
-    # version is "" yet rows came back, so the check after the last page still runs.
-    class _Refilled:
-        async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
-            if op == "memory.bulk_get":
-                return {"results": {k: {"value": k} for k in body["memory_keys"]}}
-            if "known_version" in body:
-                return {"entries": [], "unchanged": False}
-            row = {"memory_key": "k", "agent": "x", "user_id": "-", "session_id": "-"}
-            return {"entries": [row], "truncated": False, "total": 1, "namespace_version": ""}
-
-    _rows, _, whole, _capped = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
-        _Refilled(), "o", "ns", include_tombstoned=False
-    )
-    assert not whole
+    assert (rows, unreadable, why, capped) == ([], [], "", False)
+    assert calls == ["memory.list", "memory.keys"]
 
 
 @pytest.mark.asyncio
@@ -379,9 +319,6 @@ async def test_an_include_tombstoned_export_lists_the_namespace_once() -> None:
     client = _ShiftingClient(shifts=99)
     await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=True)  # type: ignore[arg-type]
     assert client.listings == 1
-
-
-_DELETED = "2026-09-01T00:00:00"
 
 
 class _MixedClient:
@@ -416,6 +353,8 @@ class _MixedClient:
                 ],
                 "truncated": False,
             }
+        if op == "memory.keys":
+            return {"keys": [entry(k) for k in ("plain", "split", "secret")], "truncated": False}
         if op == "memory.bulk_get":
             return {
                 "results": {
@@ -557,6 +496,9 @@ class _AliasClient:
                 "entries": [{**row, "value": "cut…", "value_truncated": True}],
                 "truncated": False,
             }
+        if op == "memory.keys":
+            row = {"memory_key": key, "agent": "a", "user_id": "-", "session_id": "-"}
+            return {"keys": [row], "truncated": False}
         if op == "memory.bulk_get":
             return {
                 "results": {
@@ -598,3 +540,49 @@ def test_a_chunk_shaped_rows_own_answer_is_told_apart_from_its_parents() -> None
     assert not cli_okf._answered_by_parent(
         "chunk:memory.set:notes:0", {**older, "duplicate_of": "m-1"}, 5
     )
+
+
+class _HeldHighClient:
+    """Two live rows: a plain one, and a high one whose retention window has passed (the
+    list serves it until the expiry sweep; bulk_get no longer does)."""
+
+    async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == "memory.keys":
+            return _keys(["plain", "secret"])
+        if op == "memory.list":
+            return {
+                "entries": [
+                    *_entries(["plain"], sensitivity="", value="plain text"),
+                    *_entries(
+                        ["secret"],
+                        sensitivity="high",
+                        value=None,
+                        value_truncated=True,
+                        expires_at="2026-01-01T00:00:00",
+                    ),
+                ],
+                "truncated": False,
+            }
+        if op == "memory.bulk_get":
+            got = {"plain": {"value": "plain text", "sensitivity": ""}}
+            return {"results": {k: got[k] for k in body["memory_keys"] if k in got}}
+        raise AssertionError(op)
+
+
+@pytest.mark.asyncio
+async def test_a_high_row_kept_home_leaves_the_export_complete() -> None:
+    rows, unreadable, why, _ = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        _HeldHighClient(), "o", "ns", include_tombstoned=False
+    )
+    assert why == "" and unreadable == []
+    assert {r["memory_key"] for r in rows} == {"plain", "secret"}  # listed, kept home
+
+
+@pytest.mark.asyncio
+async def test_a_high_row_past_its_retention_leaves_an_include_high_export_complete() -> None:
+    # bulk_get will never serve it again: it has left the source, which the bundle says.
+    rows, unreadable, why, _ = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        _HeldHighClient(), "o", "ns", include_tombstoned=False, include_high=True
+    )
+    assert why == "" and unreadable == []
+    assert [r["memory_key"] for r in rows] == ["plain"]

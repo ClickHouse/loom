@@ -157,7 +157,8 @@ def test_every_write_feeding_head_read_is_strong() -> None:
         _mw._set_fetch_existing,
         _mw._set_check_if_match,
         set_commit._set_merge,
-        memory._memory_delete,  # handle_memory_delete holds the key lock around it
+        memory.handle_memory_delete,
+        memory.handle_memory_delete_version,
         memory.handle_memory_touch,
         update_mod.handle_memory_update,
         update_mod.handle_memory_update_by_id,

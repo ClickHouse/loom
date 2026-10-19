@@ -179,6 +179,7 @@ OpName = Literal[
     "memory.dedup_list",
     "memory.dedup_resolve",
     "memory.delete",
+    "memory.delete_version",
     "memory.demonstrate",
     "memory.demote",
     "memory.digests",
@@ -193,6 +194,7 @@ OpName = Literal[
     "memory.history",
     "memory.import_curated",
     "memory.import_evidence",
+    "memory.keys",
     "memory.lineage",
     "memory.link",
     "memory.list",
@@ -484,6 +486,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.dedup_list",
     "memory.dedup_resolve",
     "memory.delete",
+    "memory.delete_version",
     "memory.demonstrate",
     "memory.demote",
     "memory.digests",
@@ -498,6 +501,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.history",
     "memory.import_curated",
     "memory.import_evidence",
+    "memory.keys",
     "memory.lineage",
     "memory.link",
     "memory.list",
@@ -2329,6 +2333,18 @@ OPS: dict[str, OpSpec] = {
         True,
         False,
     ),
+    "memory.delete_version": OpSpec(
+        "memory.delete_version",
+        "MemoryDeleteVersionInput",
+        "MemoryDeleteVersionBody",
+        "MemoryDeleteVersionOutput",
+        True,
+        "writer",
+        "experimental",
+        30,
+        True,
+        False,
+    ),
     "memory.demonstrate": OpSpec(
         "memory.demonstrate",
         "MemoryDemonstrateInput",
@@ -2496,6 +2512,18 @@ OPS: dict[str, OpSpec] = {
         30000,
         True,
         False,
+    ),
+    "memory.keys": OpSpec(
+        "memory.keys",
+        "MemoryKeysInput",
+        "MemoryKeysBody",
+        "MemoryKeysOutput",
+        True,
+        "viewer",
+        "experimental",
+        2000,
+        False,
+        True,
     ),
     "memory.lineage": OpSpec(
         "memory.lineage",
@@ -10343,7 +10371,6 @@ class MemoryDeleteInput(TypedDict, total=False):
     session_id: NotRequired[str]
     run_id: NotRequired[str]
     memory_key: Required[str]
-    if_version: NotRequired[Union[int, str, None]]
 
 
 class MemoryDeleteBody(TypedDict, total=False):
@@ -10354,7 +10381,6 @@ class MemoryDeleteBody(TypedDict, total=False):
     session_id: NotRequired[str]
     run_id: NotRequired[str]
     memory_key: Required[str]
-    if_version: NotRequired[Union[int, str, None]]
 
 
 class MemoryDeleteOutput(TypedDict, total=False):
@@ -10362,6 +10388,36 @@ class MemoryDeleteOutput(TypedDict, total=False):
 
     tombstoned: Required[bool]
     version: Required[int]
+    found: NotRequired[bool]
+    dependents_tombstoned: NotRequired[int]
+    dependents_downgraded: NotRequired[int]
+
+
+class MemoryDeleteVersionInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    memory_key: Required[str]
+    version: Required[Union[int, str]]
+
+
+class MemoryDeleteVersionBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    memory_key: Required[str]
+    version: Required[Union[int, str]]
+
+
+class MemoryDeleteVersionOutput(TypedDict, total=False):
+    tombstoned: Required[bool]
+    version: NotRequired[int]
     found: NotRequired[bool]
     reason: NotRequired[str]
     dependents_tombstoned: NotRequired[int]
@@ -10995,6 +11051,30 @@ class MemoryImportEvidenceOutput(TypedDict, total=False):
     embedding_dim: NotRequired[int]
     edited: NotRequired[list[str]]
     skipped: NotRequired[int]
+
+
+class MemoryKeysInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    limit: NotRequired[int]
+
+
+class MemoryKeysBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    limit: NotRequired[int]
+
+
+class MemoryKeysOutput(TypedDict, total=False):
+    keys: Required[list["MemoryKeyRef"]]
+    truncated: NotRequired[bool]
+
+
+class MemoryKeyRef(TypedDict, total=False):
+    agent: Required[str]
+    user_id: Required[str]
+    session_id: Required[str]
+    memory_key: Required[str]
 
 
 class MemoryLineageInput(TypedDict, total=False):

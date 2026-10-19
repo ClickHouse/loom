@@ -533,15 +533,39 @@ WHAT: Tombstone a memory by key (14-day recovery in the dashboard).
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `memory_key` | `str` | required | The key to delete: tried under this identity, then the same user's row under any agent (only this identity with `if_version`). |
-| `if_version` | `int \| str \| None` | `None` | Delete only if the row under this exact identity still has this version (from memory.get); otherwise nothing is deleted and `reason` is "version_changed". |
+| `memory_key` | `str` | required | The key to delete: tried under this identity, then the same user's row under any agent. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `tombstoned` | `bool` | True when a live row was found and a tombstone version written over it. |
 | `version` | `int` | Nanosecond version of the tombstone row; when nothing was found, a fresh number that no row carries. |
-| `found` | `bool` | False when no live row of this key exists under the identities the delete reads: the caller's own (agent, user, session), then (without `if_version`) the same user's under any agent. |
-| `reason` | `str` | "version_changed" when the live row no longer carries `if_version`. |
+| `found` | `bool` | False when no live row of this key exists in the namespace under ANY identity — already deleted, or never written. |
+| `dependents_tombstoned` | `int` | Consolidated summaries built from this row (tag `src:<key>`): retired when none of their sources survive, else downgraded to `conflicted`. |
+| `dependents_downgraded` | `int` | Summaries built from this row that keep a live source: set to `conflicted`. |
+
+## `memory.delete_version`
+
+Tombstone one version of a key under this exact identity, or nothing when the row under it has moved on.
+
+`POST /v1/memory.delete_version` · MCP `loom_memory_delete_version` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
+| `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
+| `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
+| `memory_key` | `str` | required | The key to delete, under this exact identity: another agent's row of it is never read. |
+| `version` | `int \| str` | required | The version to delete, as memory.get answered it. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `tombstoned` | `bool` | True when the row still had `version` and a tombstone was written over it. |
+| `version` | `int` | The tombstone's version: one above the deleted version, so a write that lands during the delete still wins. 0 when nothing was deleted. |
+| `found` | `bool` | False when no live row of this key exists under this identity. |
+| `reason` | `str` | "version_changed" when the live row no longer carries `version`. |
 | `dependents_tombstoned` | `int` | Consolidated summaries built from this row (tag `src:<key>`): retired when none of their sources survive, else downgraded to `conflicted`. |
 | `dependents_downgraded` | `int` | Summaries built from this row that keep a live source: set to `conflicted`. |
 
@@ -951,6 +975,23 @@ Write exported evidence chunks and digests into a namespace, re-embedded here an
 | `embedding_dim` | `int` | Vector length of the written embeddings; 0 when nothing was embedded. |
 | `edited` | `list[str]` | Chunks whose body did not hash to the content_sha256 they arrived with. |
 | `skipped` | `int` | Items not written: empty, unembeddable, or refused by a blacklist pattern (Refuse). |
+
+## `memory.keys`
+
+Every live row's identity and key in one read: a set an exporter can check its paged listing against, since a row that moves while pages are read can be skipped.
+
+`POST /v1/memory.keys` · MCP `loom_memory_keys` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `limit` | `int` | `100000` | The most keys to answer; `truncated` says when the namespace holds more. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `keys` | `list[MemoryKeyRef]` | Every live row's identity and key, read by one statement, so the set is the namespace at one moment (memory.list's pages are read one at a time). |
+| `truncated` | `bool` | True when the namespace holds more than `limit` live rows. |
 
 ## `memory.lineage`
 

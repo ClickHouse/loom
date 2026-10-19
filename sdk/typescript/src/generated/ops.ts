@@ -4037,12 +4037,30 @@ export interface MemoryDeleteInput {
   session_id?: string;
   run_id?: string;
   memory_key: string;
-  if_version?: number | string | null;
 }
 
 export interface MemoryDeleteOutput {
   tombstoned: boolean;
   version: number;
+  found?: boolean;
+  dependents_tombstoned?: number;
+  dependents_downgraded?: number;
+}
+
+export interface MemoryDeleteVersionInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id?: string;
+  session_id?: string;
+  run_id?: string;
+  memory_key: string;
+  version: number | string;
+}
+
+export interface MemoryDeleteVersionOutput {
+  tombstoned: boolean;
+  version?: number;
   found?: boolean;
   reason?: string;
   dependents_tombstoned?: number;
@@ -4502,6 +4520,24 @@ export interface MemoryImportEvidenceOutput {
   embedding_dim?: number;
   edited?: string[];
   skipped?: number;
+}
+
+export interface MemoryKeysInput {
+  org: string;
+  namespace: string;
+  limit?: number;
+}
+
+export interface MemoryKeyRef {
+  agent: string;
+  user_id: string;
+  session_id: string;
+  memory_key: string;
+}
+
+export interface MemoryKeysOutput {
+  keys: MemoryKeyRef[];
+  truncated?: boolean;
 }
 
 export interface MemoryLineageInput {
@@ -8490,6 +8526,7 @@ export type OpName =
   | "memory.dedup_list"
   | "memory.dedup_resolve"
   | "memory.delete"
+  | "memory.delete_version"
   | "memory.demonstrate"
   | "memory.demote"
   | "memory.digests"
@@ -8504,6 +8541,7 @@ export type OpName =
   | "memory.history"
   | "memory.import_curated"
   | "memory.import_evidence"
+  | "memory.keys"
   | "memory.lineage"
   | "memory.link"
   | "memory.list"
@@ -8795,6 +8833,7 @@ export interface OpMap {
   "memory.dedup_list": { input: MemoryDedupListInput; output: MemoryDedupListOutput };
   "memory.dedup_resolve": { input: MemoryDedupResolveInput; output: MemoryDedupResolveOutput };
   "memory.delete": { input: MemoryDeleteInput; output: MemoryDeleteOutput };
+  "memory.delete_version": { input: MemoryDeleteVersionInput; output: MemoryDeleteVersionOutput };
   "memory.demonstrate": { input: MemoryDemonstrateInput; output: MemoryDemonstrateOutput };
   "memory.demote": { input: MemoryDemoteInput; output: MemoryDemoteOutput };
   "memory.digests": { input: MemoryDigestsInput; output: MemoryDigestsOutput };
@@ -8809,6 +8848,7 @@ export interface OpMap {
   "memory.history": { input: MemoryHistoryInput; output: MemoryHistoryOutput };
   "memory.import_curated": { input: MemoryImportCuratedInput; output: MemoryImportCuratedOutput };
   "memory.import_evidence": { input: MemoryImportEvidenceInput; output: MemoryImportEvidenceOutput };
+  "memory.keys": { input: MemoryKeysInput; output: MemoryKeysOutput };
   "memory.lineage": { input: MemoryLineageInput; output: MemoryLineageOutput };
   "memory.link": { input: MemoryLinkInput; output: MemoryLinkOutput };
   "memory.list": { input: MemoryListInput; output: MemoryListOutput };
@@ -9100,6 +9140,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.dedup_list", group: "memory", method: "dedupList", idempotent: true, role: "admin", maturity: "stable", budgetP99Ms: 300, audit: false, readOnly: false },
   { name: "memory.dedup_resolve", group: "memory", method: "dedupResolve", idempotent: true, role: "admin", maturity: "stable", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "memory.delete", group: "memory", method: "delete", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 30, audit: true, readOnly: false },
+  { name: "memory.delete_version", group: "memory", method: "deleteVersion", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 30, audit: true, readOnly: false },
   { name: "memory.demonstrate", group: "memory", method: "demonstrate", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "memory.demote", group: "memory", method: "demote", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "memory.digests", group: "memory", method: "digests", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
@@ -9114,6 +9155,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.history", group: "memory", method: "history", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "memory.import_curated", group: "memory", method: "importCurated", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "memory.import_evidence", group: "memory", method: "importEvidence", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "memory.keys", group: "memory", method: "keys", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 2000, audit: false, readOnly: true },
   { name: "memory.lineage", group: "memory", method: "lineage", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "memory.link", group: "memory", method: "link", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 60, audit: true, readOnly: false },
   { name: "memory.list", group: "memory", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: true },
@@ -9268,4 +9310,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 302;
+export const GENERATED_OP_COUNT = 304;

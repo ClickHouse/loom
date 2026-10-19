@@ -891,6 +891,37 @@ async def _locate_then_preview(
     return out
 
 
+async def live_keys(
+    org: str,
+    namespace: str,
+    *,
+    scope: ReadFilters,
+    limit: int,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """The identity and key of every live row of the namespace, as one statement reads
+    them: the rows memory.list serves with every identity at "*" and superseded and
+    duplicate rows included. At most `limit` + 1, so a caller can tell it was cut."""
+    ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "limit": int(limit) + 1}
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "tombstoned_at IS NULL",
+        *scope_where(scope, params),
+    ]
+    return await ch.query_all(
+        f"""
+        SELECT agent, user_id, session_id, memory_key
+        FROM loom.memory FINAL
+        WHERE {" AND ".join(where)}
+        ORDER BY agent, user_id, session_id, memory_key
+        LIMIT {{limit:UInt32}}
+        """,
+        params=params,
+    )
+
+
 async def namespace_version(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
     """The namespace's newest memory version — the change watermark for
     pollers. Every write path inserts a row with a
