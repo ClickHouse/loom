@@ -43,7 +43,6 @@
 0775de50682c	SELECT max(updated_at) AS updated_at FROM loom.blacklist_version
 079b92892a64	ALTER TABLE loom.documents DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 07d1d2be2038	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
-07de51ca89e8	SELECT toString(memory_id) AS id, argMax(status, version) AS status, argMax(superseded_by, version) AS superseded_by, -- On the flag: argMax skips a NULL, so a restored row would read deleted. argMax(
 07f0130e01ef	SELECT count() AS n FROM ( SELECT evidence_id, tombstoned_at FROM loom.memory_evidence WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND user_id = {uid:String} AND se
 0819b14c399c	SELECT scope_path AS path, summary, pagerank, cosineDistance(embedding, {q:Array(Float32)}) AS distance FROM loom.code_summaries FINAL WHERE org = {org:String} AND namespace = {ns:String} AND embeddin
 0874603d8218	SELECT duplicate_of AS canonical_id, count() AS dup_count, groupArray(?)((memory_id, memory_key, agent, created_at)) AS dups FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String}
@@ -1409,6 +1408,7 @@ d6f86512c787	ALTER TABLE loom.memory_record_fields UPDATE tombstoned_at = {now:D
 d72c59703717	ALTER TABLE loom.context_blobs DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 d734505c48d8	SELECT embedding, embedding_dim, embedding_model FROM loom.qa_item_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String} AND kind = {kind:String} AND number = {n:UInt64} AND tombstoned
 d7395b365f80	SELECT count() AS n FROM loom.entity_triple_memories WHERE org = {org:String} AND (namespace, memory_key) IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id = {uid:
+d749ae65d41a	SELECT toString(memory_id) AS id, argMax(status, version) AS status, argMax(superseded_by, version) AS superseded_by, -- argMax skips NULLs: take it over the flag, or a restored row reads deleted. arg
 d7794951d874	SELECT count() AS n FROM loom.code_search_trace WHERE org = {org:String} AND namespace = {ns:String}
 d78701376383	SELECT memory_key, memory_type, content_excerpt, toString(created_at) AS created_at FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String} AND scope = {scope:String} AN
 d7910d2f944e	SELECT agent, user_id, session_id, memory_key, cosineDistance(embedding, {emb:Array(Float32)}) AS dist FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String} AND memory

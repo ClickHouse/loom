@@ -162,7 +162,7 @@ _STATUSES_SQL = """
         SELECT toString(memory_id) AS id,
                argMax(status, version) AS status,
                argMax(superseded_by, version) AS superseded_by,
-               -- On the flag: argMax skips a NULL, so a restored row would read deleted.
+               -- argMax skips NULLs: take it over the flag, or a restored row reads deleted.
                argMax(tombstoned_at IS NOT NULL, version) AS deleted
         FROM loom.memory
         PREWHERE org = {org:String} AND namespace = {ns:String}

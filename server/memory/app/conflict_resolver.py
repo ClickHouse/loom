@@ -513,11 +513,12 @@ async def _settle_locked_pair(
         # If this read fails the row stays unstamped and the next pass judges it again
         # (another LLM call).
         found = await _assertion_order(org, namespace, [row, head])
-        order = found.when
-        if _undone(row, head, order, found.undos):
+        if _undone(row, head, found.when, found.undos):
             counts.skipped_no_action += 1
             return None, None  # a person undid a retirement between them: that stands
-        if action == cr.RETIRE and not order[str(head.memory_id)] < order[str(row.memory_id)]:
+        if action == cr.RETIRE and not (
+            found.when[str(head.memory_id)] < found.when[str(row.memory_id)]
+        ):
             action = cr.FLAG  # the order does not show the judged row is newer: a person decides
     retired = None
     if action == cr.RETIRE:
