@@ -83,11 +83,11 @@ def _stub(
         seen.append(inp)
         return NS(results=[NS(namespace="ns", memory_key=k, similarity=sims[k]) for k in order])
 
-    async def _bulk(inp: Any) -> Any:
-        return NS(results={k: NS(value=rows[k]) for k in inp.memory_keys if k in rows})
+    async def _rows(_ident: Any, keys: list[str], **_k: Any) -> list[Any]:
+        return [NS(memory_key=k, value=rows[k]) for k in keys if k in rows]
 
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
-    monkeypatch.setattr("server.memory.app.query.handle_memory_bulk_get", _bulk)
+    monkeypatch.setattr("server.memory.store.get_many_by_keys", _rows)
     return seen
 
 

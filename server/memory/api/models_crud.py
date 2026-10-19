@@ -40,7 +40,8 @@ class MemoryGetInput(_Identity):
     as_of: datetime | None = None
     # A whitelist of output field names (`value`, `tags`,
     # `status`, `memory_type`, `recall_count`, `created_at`, …). The response
-    # carries only those plus `found` / `unchanged`; an unknown name is a 422.
+    # carries only those plus `found` / `unchanged` (and `resolved_from` when set);
+    # an unknown name is a 422.
     # Empty (the default) = every field.
     fields: list[str] = Field(default_factory=list, max_length=64)
     # Serve the live canonical a `status='duplicate'` row
@@ -80,8 +81,8 @@ class CodeLink(BaseModel):
 
 class MemoryGetOutput(ProjectedRow):
     # `_projection` (a ProjectedRow) is the requested field
-    # whitelist (plus `found` / `unchanged`), or None = every field. This
-    # row's own serializer drops two unset optionals first.
+    # whitelist (plus `found` / `unchanged`, and `resolved_from` when set), or None =
+    # every field. This row's own serializer drops two unset optionals first.
     @model_serializer(mode="wrap")
     def _omit_unset_canonical_and_project(
         self, handler: SerializerFunctionWrapHandler
@@ -91,7 +92,7 @@ class MemoryGetOutput(ProjectedRow):
         data: dict[str, Any] = handler(self)
         if self.canonical_key is None:
             data.pop("canonical_key", None)
-        # `resolved_from` only on a followed read.
+        # `resolved_from` only on an answer given by another row.
         if self.resolved_from is None:
             data.pop("resolved_from", None)
         # Then the caller's field whitelist, when one was sent.
@@ -116,7 +117,8 @@ class MemoryGetOutput(ProjectedRow):
     created_at: datetime | None = None
     # Last write to this key; distinct from created_at, which is preserved across updates.
     updated_at: datetime | None = None
-    # When the row expires (reads hide it after that); None = no expiry.
+    # When the row expires (memory.get hides it after that; memory.list serves it until the
+    # expiry sweep, and memory.bulk_get does too, except a high one); None = no expiry.
     expires_at: datetime | None = None
     # Post-action on expiry ('' = tombstone) and its reason.
     on_expire: str = ""
@@ -170,8 +172,9 @@ class MemoryGetOutput(ProjectedRow):
     # from the payload for every other status. On a `follow: true` read that
     # served the canonical it is the key served.
     canonical_key: str | None = None
-    # On a `follow: true` read that served a duplicate's
-    # canonical, the memory_key the caller asked for. Absent otherwise.
+    # On an answer given by another row, the memory_key the caller asked for: a
+    # `follow: true` read that served a duplicate's canonical, or a memory.bulk_get
+    # chunk id answered by its parent fact. Absent otherwise.
     resolved_from: str | None = None
     # Surfaced so an in-place tag edit can preserve existing tags/entities
     # rather than clobbering them.
@@ -560,14 +563,14 @@ class MemoryListInput(_Identity):
     # Require every one of `tags` instead of any one; default off. Not in the MCP listing:
     # the dashboard's stacked tag chips set it.
     tags_every: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
-    # Only rows whose value or key holds this text, any case — the keyword
-    # filter of a browse page's search box, which must find every row that
-    # names a word (a ranked search returns its top k and misses the rest).
+    # Only rows whose value or key holds this text, any case (a high row by its key
+    # only) — the keyword filter of a browse page's search box, which must find every
+    # row that names a word (a ranked search returns its top k and misses the rest).
     # A scan of the namespace's values; None or '' = no filter. Hidden from
     # the MCP listing: agents search with memory.search.
     contains: str | None = Field(default=None, max_length=200, json_schema_extra=MCP_HIDDEN)
     # Whitelist of entry field names; every entry carries only
-    # those plus `memory_key`. Empty = every field. See
+    # those plus `memory_key` and `sensitivity`. Empty = every field. See
     # MemoryGetInput.fields.
     fields: list[str] = Field(default_factory=list, max_length=64)
     # The `namespace_version` a previous answer
@@ -615,9 +618,12 @@ class _MemoryListEntry(ProjectedRow):
     # The row's value is longer than the `value`
     # sent (the preview was cut), so a caller that needs the whole value
     # reads the row; the stored hash and cap ride so it need not otherwise.
+    # A high row comes with no value, no hash and no entities: read it by key.
     value_truncated: bool = False
     content_sha256: str = ""
     char_limit: int | None = None
+    # Sensitivity tier ('' | low | medium | high); the server withholds a high row's value.
+    sensitivity: str = ""
 
 
 class MemoryListOutput(BaseModel):

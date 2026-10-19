@@ -75,6 +75,8 @@ async def find_unentitied_keys(
         GROUP BY org, namespace, agent, user_id, session_id, memory_key
         HAVING argMax(empty(m.entities), version) = 1
            AND argMax(m.tombstoned_at IS NULL, version) = 1
+           -- a high value is never sent to the extractor's model
+           AND argMax(m.sensitivity, version) != 'high'
         ORDER BY argMax(m.created_at, version) {order}
         {per_ns_sql}
         LIMIT {{lim:UInt32}}
@@ -113,6 +115,7 @@ async def read_unentitied_rows(
                  IN {keys:Array(Tuple(String, String, String, String, String, String))}
         WHERE tombstoned_at IS NULL
           AND empty(entities)
+          AND sensitivity != 'high'
           AND memory_type IN ('semantic', 'procedural', 'preference')
         ORDER BY created_at DESC
         """,

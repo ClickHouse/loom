@@ -11,11 +11,7 @@ production table definition.
 from __future__ import annotations
 
 import asyncio
-import re
-import shutil
-import subprocess
 from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,9 +19,8 @@ import pytest
 from server.auth import aliases, authz, context
 from server.auth.jwt import AuthInfo
 from server.operations.base import Role
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
-ROOT = Path(__file__).resolve().parents[2]
-CLICKHOUSE = shutil.which("clickhouse")
 # The fixture below stubs the alias lookup; one test reads the real one.
 _REAL_ALIASES = aliases.subject_aliases
 # `claim_cap`: the gate reads the real grant rows through the grant cache.
@@ -49,46 +44,17 @@ INSERT INTO loom.namespaces (org, namespace, owner_email, contact_email) VALUES
 ('o', 'home-frank', 'frank', 'f@x.com')"""
 
 
-def _ddl(table: str) -> str:
-    schema = (ROOT / "schemas" / "schema.sql").read_text()
-    body = schema.split(f"CREATE TABLE IF NOT EXISTS loom.{table}\n", 1)[1]
-    return f"CREATE TABLE loom.{table}\n" + body.split(";", 1)[0]
-
-
-def _render(sql: str, params: dict[str, Any]) -> str:
-    def lit(m: re.Match[str]) -> str:
-        v = params[m.group(1)]
-        if isinstance(v, bool):
-            return "true" if v else "false"
-        return "[" + ",".join(f"'{x}'" for x in v) + "]" if isinstance(v, list) else f"'{v}'"
-
-    return re.sub(r"\{(\w+):[^}]+\}", lit, sql)
-
-
 class _LocalCH:
     """Runs each query on clickhouse-local over the fixture rows."""
 
     def _run(self, sql: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
-        script = ";\n".join(
-            [
-                "CREATE DATABASE loom",
-                _ddl("namespace_grants"),
-                # Each namespace's classification and the accounts that tie a
-                # person's spellings.
-                _ddl("namespaces"),
-                _ROWS,
-                _render(sql, params or {}) + " FORMAT JSONEachRow",
-            ]
+        return run(
+            # Each namespace's classification and the accounts that tie a
+            # person's spellings.
+            [ddl("namespace_grants"), ddl("namespaces"), _ROWS],
+            sql,
+            params,
         )
-        out = subprocess.run(
-            [CLICKHOUSE or "clickhouse", "local", "--multiquery", "-q", script],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
-        import json
-
-        return [json.loads(line) for line in out.splitlines() if line.strip()]
 
     async def query_all(
         self, sql: str, params: dict[str, Any] | None = None

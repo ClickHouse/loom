@@ -76,6 +76,8 @@ async def _prepend_tier(hits: list[Any], input: Any, tier: str) -> list[Any]:
             # The request's hard filter, matched exactly as every memory.search leg does.
             tag_filter=TagFilter(tuple(hard_tags), "exact_any") if hard_tags else None,
             scope=request_scope(),
+            # A 'high' row is never in a search leg; it is readable by key only.
+            exclude_high_sensitivity=True,
         )
     except Exception as e:  # noqa: BLE001 — a tier never fails a search
         log.debug("%s tier read failed: %s", tier, e)

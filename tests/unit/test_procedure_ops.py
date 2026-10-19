@@ -5,6 +5,7 @@ graph logic itself is covered in test_procedure_graph.py."""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace as NS
 from typing import Any
 
@@ -36,8 +37,14 @@ def _value(
     }
 
 
+_SCOPE = object()  # the token's read scope, as request_scope() answers it
+
+
 def _stub_search_and_bulk(
-    monkeypatch: pytest.MonkeyPatch, rows: dict[str, dict[str, Any]], order: list[str]
+    monkeypatch: pytest.MonkeyPatch,
+    rows: dict[str, dict[str, Any]],
+    order: list[str],
+    high: frozenset[str] = frozenset(),
 ) -> None:
     async def _search(inp: Any) -> Any:
         return NS(
@@ -47,11 +54,22 @@ def _stub_search_and_bulk(
             ]
         )
 
-    async def _bulk(inp: Any) -> Any:
-        return NS(results={k: NS(value=rows[k]) for k in inp.memory_keys if k in rows})
+    async def _rows(
+        _ident: Any, keys: list[str], *, scope: Any, exclude_high_sensitivity: bool
+    ) -> list[Any]:
+        # the token's read scope bounds the candidates, as it bounds memory.bulk_get
+        assert scope is _SCOPE
+        hidden = high if exclude_high_sensitivity else frozenset()
+        return [
+            NS(memory_key=k, value=rows[k], expires_at=None)
+            for k in keys
+            if k in rows and k not in hidden
+        ]
+
+    monkeypatch.setattr("server.memory.app.procedure.request_scope", lambda: _SCOPE)
 
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
-    monkeypatch.setattr("server.memory.app.query.handle_memory_bulk_get", _bulk)
+    monkeypatch.setattr("server.memory.store.get_many_by_keys", _rows)
 
 
 def test_match_labels_status_and_lists_candidates_last(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -78,6 +96,19 @@ def test_match_labels_status_and_lists_candidates_last(monkeypatch: pytest.Monke
         )
     )
     assert "p:mined" not in {m.memory_key for m in out.matches}
+
+
+def test_match_never_returns_a_high_procedure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The wildcard read can answer another agent's row of a hit key, labelled high.
+    from server.memory.api.models_procedure import ProcedureMatchInput
+    from server.memory.app.procedure import handle_procedure_match
+
+    rows = {"p:auth": _value("auth"), "p:vault": _value("vault")}
+    _stub_search_and_bulk(monkeypatch, rows, ["p:vault", "p:auth"], high=frozenset({"p:vault"}))
+    out = asyncio.run(
+        handle_procedure_match(ProcedureMatchInput(org="o", namespace="ns", situation="x"))
+    )
+    assert [m.memory_key for m in out.matches] == ["p:auth"]
 
 
 def test_match_surfaces_fail_prone_steps_as_pitfalls(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -730,3 +761,61 @@ def test_names_without_an_ascii_slug_get_distinct_keys() -> None:
     keys = {_procedure_memory_key(n) for n in ("日本の手順", "中文流程", "!!!")}
     assert len(keys) == 3 and "procedure_" not in keys
     assert _procedure_memory_key("日本の手順") == _procedure_memory_key(" 日本の手順 ")
+
+
+def test_list_never_reads_a_high_procedures_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.memory.api.models_procedure import ProcedureListInput
+    from server.memory.app.procedure import handle_procedure_list
+
+    rows = {"procedure_auth": _value("auth"), "procedure_vault": _value("vault")}
+    # a fake that would serve the high body if asked for it
+    _stub_search_and_bulk(monkeypatch, rows, [])
+    created = datetime(2026, 9, 1)
+
+    async def _list(_inp: Any) -> Any:
+        return NS(
+            entries=[
+                NS(memory_key="procedure_auth", sensitivity="", tags=[], created_at=created),
+                NS(
+                    memory_key="procedure_vault",
+                    sensitivity="high",
+                    tags=["procedure", "prod", "sensitivity:high"],
+                    created_at=created,
+                ),
+            ]
+        )
+
+    monkeypatch.setattr("server.memory.app.query.handle_memory_list", _list)
+    out = asyncio.run(handle_procedure_list(ProcedureListInput(org="o", namespace="ns")))
+    by_key = {p.memory_key: p for p in out.procedures}
+    assert by_key["procedure_auth"].situation == "when auth"
+    vault = by_key["procedure_vault"]
+    assert (vault.name, vault.situation, vault.tags) == ("vault", "", ["prod"])
+    # the caller's tags still filter it, read off the row
+    tagged = asyncio.run(
+        handle_procedure_list(ProcedureListInput(org="o", namespace="ns", tags=["prod"]))
+    )
+    assert [p.memory_key for p in tagged.procedures] == ["procedure_vault"]
+
+
+def test_list_leaves_out_an_expired_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.memory.api.models_procedure import ProcedureListInput
+    from server.memory.app.procedure import handle_procedure_list
+
+    async def _rows(_ident: Any, keys: list[str], **_k: Any) -> list[Any]:
+        past = datetime(2026, 1, 1)
+        return [NS(memory_key="procedure_old", value=_value("old"), expires_at=past)]
+
+    async def _list(_inp: Any) -> Any:
+        entry = NS(
+            memory_key="procedure_old",
+            sensitivity="",
+            tags=["procedure", "ops"],
+            created_at=datetime(2025, 9, 1),
+        )
+        return NS(entries=[entry])
+
+    monkeypatch.setattr("server.memory.store.get_many_by_keys", _rows)
+    monkeypatch.setattr("server.memory.app.query.handle_memory_list", _list)
+    out = asyncio.run(handle_procedure_list(ProcedureListInput(org="o", namespace="ns")))
+    assert [(p.situation, p.tags) for p in out.procedures] == [("", ["ops"])]

@@ -1,8 +1,8 @@
 """Daily sensitivity sweep.
 
-`resolve_sensitivity` runs on `memory.set` and the extractor's entries
-only. `observe.record`, `copy_to`, `namespace.restore` and the imports write
-`sensitivity = ''` whatever the value holds, so a credential or a contact
+`resolve_sensitivity` runs on `memory.set`, `memory.bulk_set`, `memory.update`
+and the extractor's entries only. `observe.record`, `copy_to`, `namespace.restore`
+and the imports write `sensitivity = ''` whatever the value holds, so a credential or a contact
 detail that entered by one of those paths is embedded and searchable. This
 pass runs the detector late over rows created in the trailing window
 (`sensitivity_sweep_window_days`, 2) and labels what it finds the way the

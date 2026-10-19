@@ -94,9 +94,10 @@ async def handle_namespace_taxonomy(
 
 def taxonomy_state_key(input: NamespaceTaxonomyInput, nsv: int) -> str:
     """The `code_index_state` key of one namespace version's taxonomy answer for one shape of
-    request."""
+    request. `v2`: an answer an earlier build published still counted high rows' entities,
+    so this build never reads one."""
     return (
-        f"taxonomy@{int(nsv)}:{int(input.top_n_tags)}:{int(input.top_n_entities)}"
+        f"taxonomy.v2@{int(nsv)}:{int(input.top_n_tags)}:{int(input.top_n_entities)}"
         f":{int(input.top_n_communities)}"
     )
 
@@ -165,6 +166,8 @@ async def _compute_taxonomy(ch: Any, input: NamespaceTaxonomyInput) -> Namespace
             WHERE org = {org:String} AND namespace = {ns:String}
               AND tombstoned_at IS NULL
               AND length(entities) > 0
+              -- a 'high' row's entities may be mined from its value
+              AND sensitivity != 'high'
             GROUP BY value
             ORDER BY total DESC
             LIMIT {nent:UInt32}

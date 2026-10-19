@@ -119,6 +119,20 @@ describe("Recall Lab and the Memories list", () => {
     expect(screen.getAllByText("semantic +0.60")).toHaveLength(2);
   });
 
+  it("shows a high keyword match as sensitive, not as an empty row", async () => {
+    vi.mocked(listMemories).mockResolvedValueOnce({
+      entries: [{ ...entry("vault_azure"), value: null, value_truncated: true, sensitivity: "high" }],
+      total: 1,
+      today: 0,
+      truncated: false,
+    });
+    vi.mocked(searchMemory).mockResolvedValueOnce({ results: [], embedding_model: "m" });
+    useStore.setState({ view: "recall" });
+    render(<RecallLab />);
+    await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
+    expect(await screen.findByText("Sensitive: open it to read", {}, { timeout: 3000 })).toBeTruthy();
+  });
+
   it("keep the keyword rows when the ranked search fails", async () => {
     vi.mocked(searchMemory).mockRejectedValueOnce(new Error("search down"));
     useStore.setState({ view: "recall" });

@@ -131,3 +131,15 @@ async def test_a_scoped_read_serves_its_own_users_passage_not_the_oldest_link(mo
     assert served == 1 and hits[0].content_excerpt == "mine"
     ev_sql, _ = ch.sql[1]
     assert "user_id = {uid:String}" in ev_sql and "session_id = {sid:String}" in ev_sql
+
+
+@pytest.mark.asyncio
+async def test_a_passage_holding_a_credential_is_not_served(monkeypatch):
+    # One turn can be the source of a plain fact and of a high one; the passage has no
+    # sensitivity of its own, so the detector memory.set runs decides.
+    links = [{"namespace": "ns", "memory_key": "a", "evidence_id": "e1"}]
+    passages = [{"eid": "e1", "body": "deploy with sk-proj-" + "a" * 40 + " and oat milk"}]
+    monkeypatch.setattr(h, "get_client", lambda: _FakeCH(links, passages))
+    hits = [_hit("a")]
+    served, _ = await h._expand_source_bodies(hits, _inp())
+    assert served == 0 and hits[0].content_excerpt == "fact a"
