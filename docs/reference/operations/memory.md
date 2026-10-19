@@ -565,7 +565,7 @@ Tombstone one version of a key under this exact identity, or nothing when the ro
 | `tombstoned` | `bool` | True when the row still had `version` and a tombstone was written over it. |
 | `version` | `int` | Nanosecond version of the tombstone row; 0 when nothing was deleted. |
 | `found` | `bool` | False when no live row of this key exists under this identity. |
-| `reason` | `str` | "version_changed" when the live row no longer carries `version`. |
+| `reason` | `str` | "version_changed" when the live row no longer carries `version`, or moved on while the delete ran (its tombstone then stays in the key's history, under the newer row). |
 | `dependents_tombstoned` | `int` | Consolidated summaries built from this row (tag `src:<key>`): retired when none of their sources survive, else downgraded to `conflicted`. |
 | `dependents_downgraded` | `int` | Summaries built from this row that keep a live source: set to `conflicted`. |
 

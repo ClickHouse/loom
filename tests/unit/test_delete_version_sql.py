@@ -695,3 +695,177 @@ async def test_a_batch_keeps_a_row_already_above_the_tombstone_where_it_is(
     await ch.insert("loom.memory", [earlier, later, _row("Thursdays", delete_at + 500_000)])
     got = await _read_back(ch)
     assert got is not None and got.value == "Fridays"
+
+
+@pytest.mark.asyncio
+async def test_a_plain_delete_between_the_check_and_the_tombstone_is_not_undone(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A set lands, then a plain memory.delete removes it, both after delete_version's check:
+    # every serial order ends deleted, so the put-back writes nothing.
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    w = _in_flight_set(time.time_ns() - 1_000_000)
+    write_row = hm._write_tombstone_row
+
+    landed: list[bool] = []
+
+    async def set_then_delete_land_first(existing: Any, **kw: Any) -> None:
+        # memory.delete writes its tombstone through this function too: only the first call,
+        # delete_version's, lets the set and the plain delete land.
+        if not landed:
+            landed.append(True)
+            await set_commit._set_plain_insert(w, ch)
+            await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
+        await write_row(existing, **kw)
+
+    monkeypatch.setattr(hm, "_write_tombstone_row", set_then_delete_land_first)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is False and out.reason == "version_changed"
+    assert await _read_back(ch) is None
+
+
+@pytest.mark.asyncio
+async def test_a_put_back_that_cannot_read_the_row_is_not_reported_as_one(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The version list saw a later write that the row read then missed: the delete does not
+    # answer version_changed for a row it never wrote back; it retires as a delete does.
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    w = _in_flight_set(time.time_ns() - 1_000_000)
+    write_row = hm._write_tombstone_row
+
+    async def set_lands_first(existing: Any, **kw: Any) -> None:
+        await set_commit._set_plain_insert(w, ch)
+        await write_row(existing, **kw)
+
+    async def nothing(*_a: Any, **_k: Any) -> list[Any]:
+        return []
+
+    monkeypatch.setattr(hm, "_write_tombstone_row", set_lands_first)
+    monkeypatch.setattr(memory_repo, "fetch_version_rows", nothing)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is True
+
+
+@pytest.mark.asyncio
+async def test_a_batch_whose_fence_read_missed_a_conditional_delete_lands_with_its_vectors(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two entries of the key, a delete_version landing between the batch's fence read and
+    # its insert: after the insert both entries move above the tombstone, in order, with
+    # their vectors and result versions.
+    from server.memory.api.models_bulk import _BulkSetResult
+    from server.memory.app import bulk_set
+    from server.memory.app.bulk_rows import _BulkWriteState
+
+    async def _noop(*_a: Any, **_k: Any) -> int:
+        return 0
+
+    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_embeddings")]
+    for name in ("index_late_rows", "retire_vectors_for_keys"):
+        monkeypatch.setattr(memory_repo, name, _noop)
+    monkeypatch.setattr(bulk_set, "fence_high", _noop)
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    state = _BulkWriteState()
+    for i, value in enumerate(("Wednesdays", "Thursdays")):
+        v = head + 1_000 + i
+        state.memory_rows.append({**_row(value, v), "memory_type": "semantic"})
+        state.embedding_rows.append(
+            memory_repo.build_embedding_row(
+                **_ID,
+                memory_key=_KEY,
+                memory_type="semantic",
+                content_excerpt=value,
+                version=v,
+                embedding=[0.0] * 3072,
+                embedding_dim=3072,
+                memory_key_embedding=[0.0] * 3072,
+            )
+        )
+        state.results.append(_BulkSetResult(memory_key=_KEY, version=v))
+    insert = memory_repo.insert_memory_versions
+    answers: list[Any] = []
+
+    async def delete_then_insert(rows: list[dict[str, Any]], **kw: Any) -> int:
+        if not answers:
+            answers.append(
+                await hm.handle_memory_delete_version(
+                    MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+                )
+            )
+        return await insert(rows, **kw)
+
+    monkeypatch.setattr(memory_repo, "insert_memory_versions", delete_then_insert)
+    await bulk_set._bulk_insert(ch, state)
+    assert answers[0].tombstoned is True
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays"
+    first, second = (r.version for r in state.results)
+    assert answers[0].version < first < second == got.version
+    vectors = await ch.query_all(
+        "SELECT content_excerpt, version FROM loom.memory_embeddings FINAL "
+        "WHERE tombstoned_at IS NULL"
+    )
+    assert [(v["content_excerpt"], int(v["version"])) for v in vectors] == [("Thursdays", second)]
+
+
+@pytest.mark.asyncio
+async def test_an_embedded_set_whose_fence_read_missed_a_conditional_delete_keeps_its_vector(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    async def _noop(*_a: Any, **_k: Any) -> int:
+        return 0
+
+    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_embeddings")]
+    monkeypatch.setattr(memory_repo, "index_late_rows", _noop)
+    monkeypatch.setattr(set_commit._cd, "schedule_settle", lambda *_a, **_k: None)
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    w = _in_flight_set(head + 5_000_000)
+    w.input = w.input.model_copy(update={"memory_type": "semantic"})
+    w.memory_row["memory_type"] = "semantic"
+    w.embedder = SimpleNamespace(dim=3072, model_name="m")
+    w.excerpt, w.embedding = "Thursdays", [0.0] * 3072
+    w.key_embedding, w.key_text = [0.0] * 3072, "deploy window"
+    insert = set_commit.insert_memory_versions
+    answers: list[Any] = []
+
+    async def delete_then_insert(rows: list[dict[str, Any]], **kw: Any) -> int:
+        if not answers:
+            answers.append(
+                await hm.handle_memory_delete_version(
+                    MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+                )
+            )
+        return await insert(rows, **kw)
+
+    monkeypatch.setattr(set_commit, "insert_memory_versions", delete_then_insert)
+    verdict = SimpleNamespace(verdict="", peers=[], refined_peers=[])
+    await set_commit._set_dual_write(w, ch, None, verdict)
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays" and got.version == w.version
+    assert w.version > answers[0].version
+    vectors = await ch.query_all(
+        "SELECT version FROM loom.memory_embeddings FINAL WHERE tombstoned_at IS NULL"
+    )
+    assert w.version in [int(v["version"]) for v in vectors]
+
+
+def test_no_caller_writes_a_delete_version_trace() -> None:
+    import pydantic
+
+    from server.memory.api.models_bulk import _BulkSetEntry
+
+    with pytest.raises(pydantic.ValidationError, match="may not start with"):
+        MemorySetInput(**_ID, memory_key=_KEY, value="v", source_trace="memory.delete_version:1")
+    with pytest.raises(pydantic.ValidationError, match="may not start with"):
+        _BulkSetEntry(memory_key=_KEY, value="v", source_trace="memory.delete_version:1")

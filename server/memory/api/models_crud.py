@@ -20,6 +20,7 @@ from pydantic import (
 
 from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
 from server.memory.domain.code_change import CodeState
+from server.memory.domain.delete_marks import caller_trace
 from server.memory.domain.expire_reasons import caller_reason
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
@@ -308,6 +309,11 @@ class MemorySetInput(_Identity):
     def _expire_reason(cls, v: str) -> str:
         return caller_reason(v)
 
+    @field_validator("source_trace")
+    @classmethod
+    def _source_trace(cls, v: str) -> str:
+        return caller_trace(v)
+
 
 class MemorySetOutput(BaseModel):
     version: int  # nanosecond version assigned by the server
@@ -446,7 +452,8 @@ class MemoryDeleteVersionOutput(BaseModel):
     version: int = 0
     # False when no live row of this key exists under this identity.
     found: bool = True
-    # "version_changed" when the live row no longer carries `version`.
+    # "version_changed" when the live row no longer carries `version`, or moved on while
+    # the delete ran (its tombstone then stays in the key's history, under the newer row).
     reason: str = ""
     # Consolidated summaries built from this row (tag `src:<key>`): retired
     # when none of their sources survive, else downgraded to `conflicted`.

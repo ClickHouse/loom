@@ -143,7 +143,9 @@ async def lift_after_insert(
         by_key.setdefault(_key(row), []).append(row)
     for key, rows in by_key.items():
         lowest = min(int(r["version"]) for r in rows)
-        above = [(v, d, t) for v, d, t in committed.get(key, []) if v > lowest]
+        # The batch's own rows are in by now: the key's other versions decide.
+        own = {int(r["version"]) for r in rows}
+        above = [(v, d, t) for v, d, t in committed.get(key, []) if v > lowest and v not in own]
         if above and all(d and 0 < t < lowest for _v, d, t in above):
             _lift(rows, embedding_rows, above[0][0], lifted)
     if not lifted:

@@ -53,6 +53,7 @@ from server.memory.domain.delete_marks import delete_version_trace
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
+from server.observability import degradations
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -655,7 +656,15 @@ async def handle_memory_delete_version(
         # A plain write takes no key lock: one that committed after the check above sits
         # under the tombstone now. It came after the version this delete names, so it
         # stays: its row goes back above the tombstone, and nothing derived is retired.
-        if await _put_back_a_later_write(existing, checked=int(input.version), tombstone=version):
+        try:
+            moved_on = await _put_back_a_later_write(
+                existing, checked=int(input.version), tombstone=version
+            )
+        except Exception as e:  # noqa: BLE001 — the tombstone is in: what it removed still retires
+            degradations.note("memory.delete_version", "later_write_unchecked", e)
+            log.warning("memory.delete_version: the read after the tombstone failed: %s", e)
+            moved_on = False
+        if moved_on:
             return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
         tombstoned, downgraded = await _retire_derived(
             existing, version=version, op="memory.delete_version"
@@ -669,9 +678,12 @@ async def handle_memory_delete_version(
 
 
 async def _put_back_a_later_write(existing: Any, *, checked: int, tombstone: int) -> bool:
-    """Whether a write of the key committed between the version check (`checked`) and the
-    tombstone; if so its row is written again above the tombstone. A write still in flight
-    lifts itself when it lands (`write_fence.lift_after_insert`)."""
+    """Whether the key moved on after the version check (`checked`): its newest version
+    other than this delete's own `tombstone`, read with sequential consistency. Above the
+    tombstone, that version already decides the key and nothing is written. Below it, a
+    live row (a plain write) is written again above the tombstone, and another delete's
+    tombstone is left as it is. A write still in flight lifts itself when it lands
+    (`write_fence.lift_after_insert`)."""
     import server.memory.store as memory_repo
 
     key = {
@@ -685,21 +697,29 @@ async def _put_back_a_later_write(existing: Any, *, checked: int, tombstone: int
     above = committed.get(
         (existing.agent, existing.user_id, existing.session_id, existing.memory_key), []
     )
-    later = [v for v, deleted, _target in above if not deleted and v != tombstone]
-    if not later:
+    others = [v for v, _deleted, _target in above if v != tombstone]
+    if not others:
         return False
+    newest = max(others)
+    if newest > tombstone:
+        return True
     rows = await memory_repo.fetch_version_rows(
-        existing.org, existing.namespace, [(existing.memory_key, max(later))]
+        existing.org, existing.namespace, [(existing.memory_key, newest)], sequential=True
     )
-    rows = [
-        r
-        for r in rows
-        if (r.agent, r.user_id, r.session_id)
-        == (existing.agent, existing.user_id, existing.session_id)
-    ]
-    if rows:
+    row = next(
+        (
+            r
+            for r in rows
+            if (r.agent, r.user_id, r.session_id)
+            == (existing.agent, existing.user_id, existing.session_id)
+        ),
+        None,
+    )
+    if row is None:
+        raise RuntimeError(f"version {newest} of {existing.memory_key!r} was listed, not read")
+    if row.tombstoned_at is None:
         back = memory_repo.build_memory_version_row(
-            rows[0], version=next_version(), updated_at=memory_repo.written_now()
+            row, version=next_version(), updated_at=memory_repo.written_now()
         )
         await insert_memory_versions([back], ch=get_client())
     return True
