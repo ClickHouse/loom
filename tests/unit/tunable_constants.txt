@@ -381,8 +381,6 @@ server/insights/store/provider_participants.py::STALE_AFTER_S
 server/insights/workers/audit_verifier.py::MAX_BREAK_KEYS
 server/insights/workers/audit_verifier.py::VERIFY_MAX_ROWS
 server/knowledge/app/bm25.py::_CORPUS_CACHE_TTL_S
-server/knowledge/app/conversations.py::_EMBED_EXCERPT_LIMIT
-server/knowledge/app/conversations.py::_EXCERPT_LIMIT
 server/knowledge/app/download_routes.py::_BUFFER_MAX_BYTES
 server/knowledge/app/repo_docs.py::DOCS_SECTION_MAX_DOCS
 server/knowledge/app/repo_docs.py::DOCS_SECTION_MAX_TOKENS
