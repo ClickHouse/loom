@@ -1110,3 +1110,31 @@ async def test_only_the_entries_whose_record_failed_are_owed(monkeypatch) -> Non
     ids = [e["memory_id"] for e in kw["payload"]["retired"]]
     assert ids == [f"m{i}" for i in range(ar.MAX_ENTRIES, 2 * ar.MAX_ENTRIES)]
     assert scope.agent == "bot"
+
+
+async def test_an_anonymous_point_write_is_owed_nothing_for_a_key_another_session_holds(
+    monkeypatch,
+) -> None:
+    """The anonymous user's other sessions are other tasks: the resolver could only
+    clear a flag between them, and a fresh write has none, so no mark and no read."""
+    from server.memory.app import conflicts, key_supersession
+    from server.memory.domain.conflicts import ConflictResult
+    from server.settings import settings
+
+    reads: list[str] = []
+
+    async def keys_held_elsewhere(**kw: Any) -> set[str]:
+        reads.append("read")
+        return {"user_city"}
+
+    monkeypatch.setattr(settings, "memory_conflict_resolver_enabled", True)
+    monkeypatch.setattr(key_supersession, "keys_held_elsewhere", keys_held_elsewhere)
+    monkeypatch.setattr(conflicts, "get_client", lambda: object())
+    mark = await conflicts.same_key_mark(
+        ConflictResult(verdict="clear", peers=[]),
+        org="o",
+        namespace="ns",
+        memory_row={**_live("n1"), "user_id": "-"},
+        policy="auto_reinforce",
+    )
+    assert mark is None and reads == []
