@@ -123,20 +123,20 @@ _FILTER = re.compile(
 
 def parse_filter(text: str) -> tuple[str, str]:
     """What a served filter compares and its value: ("userName", v) or ("email", v)."""
-    m = _FILTER.fullmatch(text)
-    if m:
-        try:
-            value = json.loads(f'"{m.group(2)}"')
-        except ValueError:
-            value = None
-        if isinstance(value, str):
-            return ("userName" if m.group(1).lower() == "username" else "email"), value
-    raise ScimError(
+    refused = ScimError(
         400,
         'the filters served are userName eq "<v>", and emails[type eq "work"].value eq '
         '"<email>" or emails.value eq "<email>"',
         "invalidFilter",
     )
+    m = _FILTER.fullmatch(text)
+    if not m:
+        raise refused
+    try:
+        value: str = json.loads(f'"{m.group(2)}"')  # a quoted capture decodes to a string
+    except ValueError:  # a bad escape or a control character
+        raise refused from None
+    return ("userName" if m.group(1).lower() == "username" else "email"), value
 
 
 def parse_active(value: Any) -> bool:
