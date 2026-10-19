@@ -121,7 +121,7 @@ async def _recorded_checks(ch: _StatefulCH) -> list[dict[str, Any]]:
     )
 
 
-async def _read_fails(*_a: Any, **_k: Any) -> Any:
+async def _times_out(*_a: Any, **_k: Any) -> Any:
     raise RuntimeError("timeout")
 
 
@@ -1112,7 +1112,7 @@ async def test_a_check_that_fails_after_the_tombstone_is_finished_by_the_worker(
     monkeypatch.setattr(hm, "_write_tombstone_row", set_lands_first)
     monkeypatch.setattr(hm, "_retire_derived", count_retire)
     key_moved_on = hm._key_moved_on
-    monkeypatch.setattr(hm, "_key_moved_on", _read_fails)
+    monkeypatch.setattr(hm, "_key_moved_on", _times_out)
     with pytest.raises(BackendUnavailableError):
         await hm.handle_memory_delete_version(
             MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
@@ -1135,10 +1135,7 @@ async def test_a_delete_that_cannot_record_its_check_deletes_nothing(
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
 
-    async def record_fails(*_a: Any, **_k: Any) -> None:
-        raise RuntimeError("timeout")
-
-    monkeypatch.setattr(memory_repo, "record_delete_check", record_fails)
+    monkeypatch.setattr(memory_repo, "record_delete_check", _times_out)
     with pytest.raises(RuntimeError):
         await hm.handle_memory_delete_version(
             MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
@@ -1229,7 +1226,6 @@ async def _owed_after_a_failed_check(ch: _StatefulCH, monkeypatch: pytest.Monkey
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
     w = _in_flight_set(time.time_ns() - 1_000_000)
     write_row = hm._write_tombstone_row
-    key_moved_on = hm._key_moved_on
 
     async def set_lands_first(existing: Any, **kw: Any) -> None:
         await set_commit._set_plain_insert(w, ch)
@@ -1237,12 +1233,11 @@ async def _owed_after_a_failed_check(ch: _StatefulCH, monkeypatch: pytest.Monkey
 
     with monkeypatch.context() as m:
         m.setattr(hm, "_write_tombstone_row", set_lands_first)
-        m.setattr(hm, "_key_moved_on", _read_fails)
+        m.setattr(hm, "_key_moved_on", _times_out)
         with pytest.raises(BackendUnavailableError):
             await hm.handle_memory_delete_version(
                 MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
             )
-    assert hm._key_moved_on is key_moved_on
     assert await _read_back(ch) is None
     return head
 
@@ -1296,10 +1291,7 @@ async def test_the_worker_closes_a_check_whose_tombstone_never_landed(
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
 
-    async def insert_fails(*_a: Any, **_k: Any) -> None:
-        raise RuntimeError("timeout")
-
-    monkeypatch.setattr(hm, "_write_tombstone_row", insert_fails)
+    monkeypatch.setattr(hm, "_write_tombstone_row", _times_out)
     with pytest.raises(RuntimeError):
         await hm.handle_memory_delete_version(
             MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
@@ -1337,7 +1329,7 @@ async def test_a_retry_after_the_503_of_a_delete_that_stands_retires_its_version
     head, removed, newer = await _seed_long_value_with_chunks(ch)
 
     with monkeypatch.context() as m:
-        m.setattr(hm, "_key_moved_on", _read_fails)
+        m.setattr(hm, "_key_moved_on", _times_out)
         with pytest.raises(BackendUnavailableError):
             await hm.handle_memory_delete_version(
                 MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
@@ -1366,7 +1358,7 @@ async def test_a_retry_whose_check_fails_again_answers_503_and_leaves_it_owed(
 
     head = await _owed_after_a_failed_check(ch, monkeypatch)
 
-    monkeypatch.setattr(hm, "_key_moved_on", _read_fails)
+    monkeypatch.setattr(hm, "_key_moved_on", _times_out)
     with pytest.raises(BackendUnavailableError):
         await hm.handle_memory_delete_version(
             MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)

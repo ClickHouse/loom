@@ -216,8 +216,8 @@ class _SetWrite:
     key_text: str = ""
 
 
-async def _lift_above_deletes(w: _SetWrite, ch: Any) -> int:
-    """The row's version, moved just above a delete of the key that committed while it was
+async def _lift_above_deletes(w: _SetWrite, ch: Any) -> None:
+    """Move the row's version just above a delete of the key that committed while it was
     in flight (`write_fence`); the embedding row is built from it afterwards. A write with
     `if_match_sha256` checked the row the delete removed, so it is refused."""
     await lift_above_deletes(
@@ -229,7 +229,6 @@ async def _lift_above_deletes(w: _SetWrite, ch: Any) -> int:
         ch=ch,
     )
     w.version = int(w.memory_row["version"])
-    return w.version
 
 
 async def _lift_after_insert(

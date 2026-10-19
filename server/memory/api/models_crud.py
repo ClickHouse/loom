@@ -407,9 +407,11 @@ class MemoryDeleteVersionInput(_Identity):
     @classmethod
     def _decimal(cls, v: int | str) -> int:
         if isinstance(v, str):
-            if not v.isdigit():
+            if not (v.isascii() and v.isdigit()):
                 raise ValueError("`version` is a version number")
-            return int(v)
+            v = int(v)
+        if not 0 <= v < 2**64:
+            raise ValueError("`version` is a version number")
         return v
 
 

@@ -9142,7 +9142,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.dedup_list", group: "memory", method: "dedupList", idempotent: true, role: "admin", maturity: "stable", budgetP99Ms: 300, audit: false, readOnly: false },
   { name: "memory.dedup_resolve", group: "memory", method: "dedupResolve", idempotent: true, role: "admin", maturity: "stable", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "memory.delete", group: "memory", method: "delete", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 30, audit: true, readOnly: false },
-  { name: "memory.delete_version", group: "memory", method: "deleteVersion", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 30, audit: true, readOnly: false },
+  { name: "memory.delete_version", group: "memory", method: "deleteVersion", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "memory.demonstrate", group: "memory", method: "demonstrate", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "memory.demote", group: "memory", method: "demote", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "memory.digests", group: "memory", method: "digests", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },

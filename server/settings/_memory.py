@@ -235,7 +235,6 @@ class MemorySettings(BaseModel):
     memory_expiry_sweep_interval_seconds: int = 300
     # Expired rows one sweep pass applies.
     memory_expiry_sweep_batch_size: int = 500
-
     # `demote` multiplies confidence by this factor, never below the floor.
     memory_expiry_demote_factor: float = 0.5
     # Lowest confidence a `demote` (expiry or run.complete) leaves on a row.

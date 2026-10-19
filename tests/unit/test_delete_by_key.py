@@ -299,8 +299,10 @@ def test_a_versioned_delete_takes_the_version_as_a_decimal_string() -> None:
     ident = {"org": "o", "namespace": "n", "agent": "a", "memory_key": "k"}
     big = 1_760_000_000_000_000_001
     assert MemoryDeleteVersionInput(**ident, version=str(big)).version == big
-    with pytest.raises(pydantic.ValidationError, match="version number"):
-        MemoryDeleteVersionInput(**ident, version="latest")
+    # Anything a UInt64 cannot hold, or digits outside ASCII, is refused before a read.
+    for bad in ("latest", -1, 2**64, str(2**64), "١٢٣"):
+        with pytest.raises(pydantic.ValidationError, match="version number"):
+            MemoryDeleteVersionInput(**ident, version=bad)
 
 
 def test_a_versioned_delete_tombstones_the_version_it_read(world, monkeypatch) -> None:

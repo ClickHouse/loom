@@ -132,7 +132,9 @@ memory_delete_version = Operation(
     output_model=MemoryDeleteVersionOutput,
     handler=handle_memory_delete_version,
     idempotent=True,
-    budget_p99_ms=30,
+    # memory.delete's work plus two committed check inserts and the read after the
+    # tombstone: about 2.6x memory.delete's p99 on one server.
+    budget_p99_ms=80,
     required_role=Role.WRITER,
     audit=True,
 )
