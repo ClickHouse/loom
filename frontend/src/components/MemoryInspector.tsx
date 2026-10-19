@@ -1839,7 +1839,7 @@ function EntitySummary({
     <div
       ref={rootRef}
       tabIndex={-1}
-      className="space-y-3 text-sm outline-none"
+      className="space-y-3 text-sm"
       data-entity-summary=""
       data-testid="entity-popover"
     >

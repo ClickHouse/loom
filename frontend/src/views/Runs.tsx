@@ -939,7 +939,7 @@ export function Runs() {
       )}
 
       {/* A new page scrolls here and takes focus. */}
-      <div id="runs-list" ref={nav} tabIndex={-1} className="outline-none">
+      <div id="runs-list" ref={nav} tabIndex={-1}>
         {error === null && rows.length > 0 && !groupBy && list({ label: "Runs", rows, busy })}
 
         {/* Grouped: a heading per session, its runs under it. */}

@@ -695,7 +695,7 @@ function RepositoriesHome({
       {loaded && visible.length > 0 && (
         // Folded rows, so the list is a compact stack; a row grows only when opened. A new
         // page scrolls here and takes focus.
-        <div ref={repoList} id="repositories-list" tabIndex={-1} className="space-y-2 outline-none">
+        <div ref={repoList} id="repositories-list" tabIndex={-1} className="space-y-2">
           {pageCards.map((c) => (
             <RepositoryCard
               key={c.repo}
@@ -2794,7 +2794,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
           rather than a table. The pager moves focus here, and the empty state sits inside,
           so focus stays when a page steps back to an empty first page. */}
       {error === null && rows !== null && (
-        <div id="packs-list" tabIndex={-1} className="outline-none" aria-busy={refreshing || undefined}>
+        <div id="packs-list" tabIndex={-1} aria-busy={refreshing || undefined}>
           {rows.length === 0 && pagerOffset === 0 && rowsCurrent && !refreshing && (
             <EmptyState
               icon="cards"
