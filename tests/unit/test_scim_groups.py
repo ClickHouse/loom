@@ -155,3 +155,17 @@ def test_the_group_routes_served() -> None:
         ("PATCH", "/scim/v2/Groups/{group_id}"),
         ("DELETE", "/scim/v2/Groups/{group_id}"),
     }
+
+
+def test_a_delete_whose_revoke_fails_leaves_the_group_to_retry(
+    store: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = _client()
+    c.post("/scim/v2/Groups", json={"externalId": "ops", "members": [{"value": "bob"}]})
+
+    async def _down(org: str, subject: str) -> int:
+        raise RuntimeError("replica away")
+
+    monkeypatch.setattr("server.identity.app.grants.revoke_subject", _down)
+    assert c.delete("/scim/v2/Groups/ops").status_code == 503
+    assert c.get("/scim/v2/Groups/ops").status_code == 200, "still there for the retry"

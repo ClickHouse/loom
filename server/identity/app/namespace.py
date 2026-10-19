@@ -437,8 +437,12 @@ async def handle_namespace_register(
 
 
 async def handle_namespace_list(input: NamespaceListInput) -> NamespaceListOutput:
-    where = ["org = {org:String}"]
-    params: dict[str, Any] = {"org": input.org, "lim": input.limit}
+    from server.auth.context import collection_clause
+
+    # Collections show only to whom their grants reach, org admins included.
+    collections_where, params = await collection_clause(input.org)
+    where = ["org = {org:String}" + collections_where]
+    params.update({"org": input.org, "lim": input.limit})
     if input.active_only:
         where.append("active = true")
     if input.tags:

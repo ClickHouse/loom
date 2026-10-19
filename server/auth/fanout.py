@@ -39,42 +39,51 @@ class Fanout:
     # The public ones, which the cap drops before any private one, unless the
     # order is a priority. Not fetched when every namespace fits under the cap.
     public: frozenset[str] = frozenset()
+    # The namespace kinds it spans when a search named them (knowledge.search).
+    kinds: str | None = None
 
-    def split(self, namespace: str, cap: int | None = None) -> Split:
+    def split(self, namespace: str) -> Split:
         """A search addressed to `namespace` reads it first, then up to `cap`
-        (the fan-out's own by default) of the others in their own order. When
-        the cap cuts, it drops public namespaces before private ones."""
+        of the others in their own order. When the cap cuts, it drops public
+        namespaces before private ones."""
         others = [ns for ns in self.namespaces if ns != namespace]
         ranked = others
         if not self.ordered:
             ranked = [ns for ns in others if ns not in self.public]
             ranked += [ns for ns in others if ns in self.public]
-        keep = set(ranked[: self.cap if cap is None else cap])
+        keep = set(ranked[: self.cap])
         read = [ns for ns in others if ns in keep]
         return Split([namespace, *read], [ns for ns in others if ns not in keep])
 
 
 async def namespaces_to_search(
-    org: str, namespace: str, namespace_scope: str | None, *, cap: int | None = None
+    org: str,
+    namespace: str,
+    namespace_scope: str | None,
+    *,
+    cap: int | None = None,
+    kinds: str | None = None,
 ) -> Split:
     """What one search leg reads: the addressed `namespace`, and under
-    `all_mine` the caller's fan-out besides, up to `cap` of them (the
-    fan-out setting's by default)."""
+    `all_mine` the caller's fan-out besides: up to `cap` of them, of `kinds`
+    (the memory fan-out's settings by default)."""
     if namespace_scope != "all_mine":
         return Split([namespace], [])
-    fanout = await (resolve_fanout(org) if cap is None else resolve_fanout(org, cap))
-    return fanout.split(namespace, cap)
+    if cap is None and kinds is None:
+        return (await resolve_fanout(org)).split(namespace)
+    return (await resolve_fanout(org, cap, kinds)).split(namespace)
 
 
-async def resolve_fanout(org: str, cap: int | None = None) -> Fanout:
+async def resolve_fanout(org: str, cap: int | None = None, kinds: str | None = None) -> Fanout:
     """The caller's namespaces of the fan-out kinds, in their order, which is a
     priority only when `ordered` (a scoped token). `cap`: the most a search
     will read (the fan-out setting by default), so the public ones are fetched
-    only when it would cut. Memoised per org and cap for the request: binding a
-    principal clears the memo."""
+    only when it would cut. `kinds`: the namespace kinds it spans (the memory
+    fan-out's by default). Memoised per org, cap and kinds for the request:
+    binding a principal clears the memo."""
     cap = settings.memory_search_fanout_max_namespaces if cap is None else cap
     cached = context.fanout_memo.get()
-    if cached is not None and cached.org == org and cached.cap == cap:
+    if cached is not None and (cached.org, cached.cap, cached.kinds) == (org, cap, kinds):
         return cached
     # With auth off there is no token, but the single user's grants still say
     # which namespaces are theirs. With auth on, no token means no namespaces.
@@ -82,7 +91,12 @@ async def resolve_fanout(org: str, cap: int | None = None) -> Fanout:
     subject = auth_off_subject() if auth is None else None
     readable = await context.resolve_my_namespaces(org, subject)
     # A scoped or delegated claim may repeat a namespace; it is read once.
-    mine = list(dict.fromkeys(await directory().fanout_namespaces(org, readable)))
+    of_kinds = (
+        directory().fanout_namespaces(org, readable)
+        if kinds is None
+        else directory().fanout_namespaces(org, readable, kinds)
+    )
+    mine = list(dict.fromkeys(await of_kinds))
     ordered = auth is not None and auth.has_ns_roles()
     public: set[str] = set()
     if len(mine) > cap and not ordered:
@@ -92,7 +106,12 @@ async def resolve_fanout(org: str, cap: int | None = None) -> Fanout:
         # fetch visibility when nothing ends up cut.
         public = await directory().public_namespaces(org, mine)
     fanout = Fanout(
-        org=org, namespaces=tuple(mine), cap=cap, ordered=ordered, public=frozenset(public)
+        org=org,
+        namespaces=tuple(mine),
+        cap=cap,
+        ordered=ordered,
+        public=frozenset(public),
+        kinds=kinds,
     )
     context.fanout_memo.set(fanout)
     return fanout

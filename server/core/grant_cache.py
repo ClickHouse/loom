@@ -109,6 +109,8 @@ def _may_stand_in(hit: _Entry, org: str, writes: int | None) -> bool:
 # Per-org values that change with the org's grants (`org_value`): its
 # collection tree and its group members. (kind, org) -> (when stored, mark, value).
 _org_values: OrderedDict[tuple[str, str], tuple[float, int | None, Any]] = OrderedDict()
+# The load in flight per (kind, org), and the org's mark when it began.
+_org_loading: dict[tuple[str, str], tuple[asyncio.Task[Any], int | None]] = {}
 
 
 async def org_value[T](kind: str, org: str, load: Callable[[str], Awaitable[T]]) -> T:
@@ -124,6 +126,26 @@ async def org_value[T](kind: str, org: str, load: Callable[[str], Awaitable[T]])
     ):
         _org_values.move_to_end(key)
         return hit[2]  # type: ignore[no-any-return]
+    # Concurrent misses share one load, as grant maps do.
+    loading = _org_loading.get(key)
+    if loading is not None and (loading[1] == writes or (_unread(writes) and _unread(loading[1]))):
+        task = loading[0]
+    else:
+        task = asyncio.ensure_future(_load_org_value(key, load, writes))
+        _org_loading[key] = (task, writes)
+
+        def _done(t: asyncio.Task[Any]) -> None:
+            if _org_loading.get(key, (None, None))[0] is t:
+                del _org_loading[key]
+
+        task.add_done_callback(_done)
+    return await asyncio.shield(task)
+
+
+async def _load_org_value(
+    key: tuple[str, str], load: Callable[[str], Awaitable[Any]], writes: int | None
+) -> Any:
+    org = key[1]
     generation = _generation[org]
     value = await load(org)
     if _generation[org] == generation and not _unread(writes):
@@ -141,6 +163,8 @@ def invalidate(org: str, subjects: Iterable[str] | None = None) -> None:
     _generation[org] += 1
     for key in [k for k in _org_values if k[1] == org]:
         del _org_values[key]
+    for key in [k for k in _org_loading if k[1] == org]:
+        del _org_loading[key]
     lowered = None if subjects is None else {s.lower() for s in subjects}
     for key, entry in list(_entries.items()):
         if key[0] == org and (lowered is None or lowered & (entry[2].spellings | {key[1]})):
@@ -167,34 +191,30 @@ async def changed(org: str, subjects: Iterable[str] | None = None) -> None:
 
 
 def watermark_row(org: str) -> dict[str, Any]:
-    """One whole loom.acl_versions row: a fresh version for `org`."""
-    return {
-        "org": org,
-        "version": time.time_ns(),
-        "updated_at": datetime.now(UTC).replace(tzinfo=None),
-    }
+    """One whole loom.acl_versions row: one more change for `org`."""
+    return {"org": org, "changes": 1, "updated_at": datetime.now(UTC).replace(tzinfo=None)}
 
 
 def clear() -> None:
-    global _watching, _polled_at, _total
+    global _watching, _polled_at
     _entries.clear()
     _loading.clear()
     _org_values.clear()
+    _org_loading.clear()
     _watching = False
     _polled_at = None
-    _total = None
     _seen.clear()
     _marks.clear()
 
 
-# Every process polls the watermark rows in `loom.acl_versions` and keeps a mark
-# per org: a count that moves when the org's watermark moved. An entry, or a read
-# in flight, is served only while its org's mark is the one its read began at. A
-# process that never polls (the CLI, a unit test) keeps no marks and lives on the TTL.
+# Every process polls the change counts in `loom.acl_versions` and keeps a mark
+# per org: a count that moves when the org's change count moved. An entry, or a
+# read in flight, is served only while its org's mark is the one its read began
+# at. A process that never polls (the CLI, a unit test) keeps no marks and lives
+# on the TTL.
 _watching = False
 _polled_at: float | None = None  # monotonic, the last poll that succeeded
-_total: tuple[int, int] | None = None  # (rows, sum of versions) over every org, last read
-_seen: dict[str, tuple[int, int]] = {}  # org -> (rows, sum of versions) last read
+_seen: dict[str, int] = {}  # org -> its change count, last read
 _marks: dict[str, int] = {}
 _unreadable = itertools.count(-1, -1)
 _warned: set[str] = set()
@@ -224,31 +244,25 @@ def fresh() -> bool:
 
 
 async def poll() -> None:
-    """Read the watermark once: the total over every org, and each org's pair
-    only when the total moved. Moves the mark of each org whose pair moved. A
-    failure keeps the marks; `_writes` stops trusting them past the stale bound."""
-    global _watching, _polled_at, _total
+    """Read every org's change count once; move the mark of each org whose count
+    moved. A failure keeps the marks; `_writes` stops trusting them past the
+    stale bound."""
+    global _watching, _polled_at
     from server.core.ch import get_client, sequential_reads
 
     _watching = True
     try:
-        # Sequential, so a process whose reads alternate between a lagging
-        # replica and a current one does not see the total move back and forth.
+        # Sequential: a lagging replica would hide a change, and reads that
+        # alternate between replicas would see counts move back and forth.
         with sequential_reads():
-            row = await get_client().query_one(
-                "SELECT count() AS n, sum(version) AS s FROM loom.acl_versions"
-            )
-        total = (int((row or {}).get("n") or 0), int((row or {}).get("s") or 0))
-        if total != _total:
             rows = await get_client().query_all(
-                "SELECT org, count() AS n, sum(version) AS s FROM loom.acl_versions GROUP BY org"
+                "SELECT org, sum(changes) AS n FROM loom.acl_versions GROUP BY org"
             )
-            for r in rows:
-                org, pair = str(r["org"]), (int(r["n"]), int(r["s"]))
-                if _seen.get(org) != pair:
-                    _seen[org] = pair
-                    _marks[org] = _marks.get(org, 0) + 1
-            _total = total
+        for r in rows:
+            org, count = str(r["org"]), int(r["n"])
+            if _seen.get(org) != count:
+                _seen[org] = count
+                _marks[org] = _marks.get(org, 0) + 1
     except Exception as e:  # noqa: BLE001 — a failed poll keeps the marks; staleness refuses the cache
         _warn_once("poll", "cannot read the grant watermark; cached grants expire: %s", e)
         return

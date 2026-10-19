@@ -143,7 +143,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 
 | Table | Engine | ORDER BY | PARTITION BY | TTL | Indexes |
 | --- | --- | --- | --- | --- | --- |
-| `acl_versions` | `ReplacingMergeTree(version)` | `org` |  |  |  |
+| `acl_versions` | `SummingMergeTree(changes)` | `org` |  |  |  |
 | `agent_cost_rollup_daily` | `AggregatingMergeTree` | `(org, namespace, agent, day, operation)` | `toYYYYMM(day)` |  |  |
 | `agent_events` | `MergeTree` | `(org, namespace, agent, ts)` | `toYYYYMM(ts)` |  | 2 skip index (bloom_filter, minmax) |
 | `agent_run_claims` | `KeeperMap('/loom/agent_run_claims')` |  |  |  |  |

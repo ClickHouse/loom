@@ -30,6 +30,7 @@ from server.auth.fail_closed import (
     unreadable,
 )
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
+from server.core.principals import USER, principal_id
 
 # Re-export from operations.base so there's one canonical Role definition.
 from server.operations.base import GRANT_ROLES, Role, grant_rank
@@ -142,6 +143,8 @@ async def check_authorized(
         and org is not None
         and namespace is not None
         and (auth.org == org or auth.has_role(Role.PLATFORM_ADMIN))
+        # A service's end user is no member of the org's code.
+        and not principal_id(auth.subject, USER)
         and await _is_org_readable_code_namespace(org, namespace)
     ):
         return

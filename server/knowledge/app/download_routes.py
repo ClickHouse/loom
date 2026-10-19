@@ -14,8 +14,9 @@ from fastapi.responses import Response, StreamingResponse
 from server.auth.authz import check_authorized
 from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.gateway import effective_auth, is_end_user
-from server.auth.sharing import PERSONAL_ALIAS, personal_name
+from server.auth.sharing import PERSONAL_ALIAS
 from server.core.ch import sequential_reads
+from server.core.principals import personal_name
 from server.knowledge.domain.documents import text_download_filename
 from server.knowledge.store import documents as documents_repo
 from server.operations.base import Role

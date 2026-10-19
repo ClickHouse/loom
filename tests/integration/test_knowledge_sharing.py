@@ -156,7 +156,7 @@ def test_cycles_and_depth_are_refused(gw: Gateway) -> None:
 def test_no_request_field_makes_a_saved_item_or_widens_a_grant(
     gw: Gateway, control_plane_url: str, mint_test_token: Any
 ) -> None:
-    from server.auth.sharing import personal_name as name_for
+    from server.core.principals import personal_name as name_for
 
     nonce = _nonce()
     gw.ok(
@@ -333,7 +333,7 @@ def test_a_create_cut_short_is_finished_by_its_creator_alone(gw: Gateway, ch_cli
 def test_a_grant_row_on_a_personal_collection_opens_nothing(gw: Gateway, ch_client: Any) -> None:
     import time
 
-    from server.auth.sharing import personal_name
+    from server.core.principals import personal_name
 
     nonce = _nonce()
     gw.ok(
@@ -376,3 +376,36 @@ def test_a_deleted_collection_leaves_its_children_top_level(gw: Gateway) -> None
     listed = {c["namespace"]: c for c in gw.ok("bob", "collection.list", {})["collections"]}
     assert listed[child]["parent"] == "", "the child keeps its own grant, at the top"
     assert gw.call("bob", "collection.delete", {"namespace": child}).status_code == 403
+
+
+def test_a_grant_planted_on_a_name_keeps_it_from_becoming_a_collection(
+    gw: Gateway, ch_client: Any
+) -> None:
+    import time
+
+    name = f"col-planted-{uuid.uuid4().hex[:6]}"
+    ch_client.insert(
+        "loom.namespace_grants",
+        [[gw.org, name, "user:mallory", "admin", "test", time.time_ns(), "active"]],
+        column_names=["org", "namespace", "subject", "role", "granted_by", "version", "status"],
+    )
+    assert gw.call("alice", "collection.create", {"namespace": name}).status_code == 409
+    assert (
+        gw.call("mallory", "knowledge.search", {"namespace": name, "query": "q"}).status_code == 403
+    )
+
+
+def test_a_malformed_collection_name_is_refused_not_crashed(gw: Gateway) -> None:
+    for name in ("col-Bad_Name", "col-me-0123", "notacollection"):
+        assert gw.call("alice", "collection.create", {"namespace": name}).status_code == 422, name
+
+
+def test_a_deleted_collection_is_closed_even_by_name(gw: Gateway) -> None:
+    col = _collection(gw, "alice", f"col-closed-{uuid.uuid4().hex[:6]}")
+    gw.ok("alice", "grants.create", {"namespace": col, "subject": "user:bob", "role": "writer"})
+    nonce = _nonce()
+    _add(gw, "alice", col, f"before the delete {nonce}")
+    gw.ok("alice", "collection.delete", {"namespace": col})
+    assert gw.call("bob", "knowledge.search", {"namespace": col, "query": nonce}).status_code == 403
+    r = gw.call("bob", "knowledge.add", {"namespace": col, "source_uri": "x", "content": "y"})
+    assert r.status_code == 403

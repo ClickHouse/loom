@@ -64,8 +64,11 @@ class NamespaceDirectory(Protocol):
         """The configured code-plane entries of `org` classified restricted. No I/O."""
         ...
 
-    async def fanout_namespaces(self, org: str, namespaces: list[str]) -> list[str]:
-        """`namespaces` in order, narrowed to the kinds a fan-out spans."""
+    async def fanout_namespaces(
+        self, org: str, namespaces: list[str], kinds: str | None = None
+    ) -> list[str]:
+        """`namespaces` in order, narrowed to `kinds` (a comma list; the
+        memory fan-out's by default)."""
         ...
 
     async def public_namespaces(self, org: str, namespaces: list[str]) -> set[str]:

@@ -31,6 +31,7 @@ from server.identity.app.namespace import (
     resolve_subject,
 )
 from server.identity.store import collections as collections_repo
+from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
 from server.operations.base import Role
 
@@ -59,7 +60,10 @@ def check_placement(tree: sharing.Tree, child: str, parent: str) -> None:
 
 
 def _check_name(namespace: str) -> None:
-    validate_namespace_name(namespace)
+    try:
+        validate_namespace_name(namespace)
+    except ValueError as e:
+        raise ValidationError(str(e)) from e
     if not sharing.is_collection(namespace) or sharing.is_personal(namespace):
         raise ValidationError(f"a collection's name starts with {sharing.COLLECTION_PREFIX!r}")
 
@@ -78,6 +82,12 @@ async def handle_collection_create(input: CollectionCreateInput) -> CollectionCr
         if current is None and directory_row is not None:
             raise taken  # some other namespace
         if current is not None and current["owner"] != caller:
+            raise taken
+        # A grant someone else holds on the name would open the new collection.
+        others = [
+            g for g in await grants_repo.list_active(org, namespace) if g["subject"] != caller
+        ]
+        if others:
             raise taken
         if current is not None and directory_row is not None:
             if current["parent"] != parent:
@@ -141,15 +151,19 @@ async def handle_collection_list(input: CollectionListInput) -> CollectionListOu
     names = await sharing.readable(auth, input.org) if auth is not None else sorted(tree.parent)
     names = [ns for ns in names if ns > (input.cursor or "")]
     page = names[: input.limit]
-    roles = await sharing.roles(auth, input.org, page) if auth is not None else {}
+    if auth is None:
+        roles: dict[str, Role | None] = dict.fromkeys(page, Role.ADMIN)
+    else:
+        roles = await sharing.roles(auth, input.org, page)
     entries = [
         _CollectionEntry(
             namespace=ns,
             parent=tree.parent.get(ns, ""),
             personal=sharing.is_personal(ns),
-            role=(roles.get(ns) or Role.ADMIN).name.lower(),
+            role=role.name.lower(),
         )
         for ns in page
+        if (role := roles.get(ns)) is not None
     ]
     more = len(names) > input.limit
     return CollectionListOutput(collections=entries, next_cursor=page[-1] if more else None)

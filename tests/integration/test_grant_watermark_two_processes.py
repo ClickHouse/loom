@@ -103,7 +103,7 @@ def _run_change(kind: str, org: str, step: str) -> None:
         row = scim_groups.group_row(
             org, "readers", display_name="Readers", external_id="", members=members
         )
-        await scim_groups._write(row, event="scim.group_changed")
+        await scim_groups._write(row, event="scim.group_changed", actor="sa:test")
 
     asyncio.run(_connected(_work))
 

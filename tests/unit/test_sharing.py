@@ -13,6 +13,7 @@ from server.auth import gateway, sharing
 from server.auth.jwt import AuthInfo, TokenError, mint_token, verify_token
 from server.core import grant_cache
 from server.core.grant_cache import GrantMap, watermark_row
+from server.core.principals import personal_name
 from server.identity.app.collections import check_placement
 from server.identity.app.scim_groups import COLUMNS as GROUP_COLUMNS
 from server.identity.app.scim_groups import group_row
@@ -261,11 +262,13 @@ def test_a_knowledge_search_reads_up_to_its_own_cap(monkeypatch: pytest.MonkeyPa
     from server.auth import fanout
     from server.settings import settings
 
-    many = fanout.Fanout(org=ORG, namespaces=tuple(f"col-{i}" for i in range(50)), cap=32)
+    names = tuple(f"col-{i}" for i in range(50))
     monkeypatch.setattr(settings, "knowledge_search_max_namespaces", 40)
-    read, skipped = many.split("col-0", settings.knowledge_search_max_namespaces)
+    wide = fanout.Fanout(org=ORG, namespaces=names, cap=settings.knowledge_search_max_namespaces)
+    read, skipped = wide.split("col-0")
     assert len(read) == 41 and len(skipped) == 9
-    assert len(many.split("col-0").read) == 33, "memory search keeps the fan-out's cap"
+    assert settings.memory_search_fanout_kinds == "memory", "memory search sweeps no collection"
+    assert {"collection", "personal"} <= set(settings.knowledge_search_fanout_kinds.split(","))
 
 
 # ── personal collections, scoped and delegated tokens ─────────────────────
@@ -274,13 +277,13 @@ def test_a_knowledge_search_reads_up_to_its_own_cap(monkeypatch: pytest.MonkeyPa
 def test_a_personal_collection_is_its_users_alone_and_takes_no_grant(
     org_state: dict[str, Any],
 ) -> None:
-    alices = sharing.personal_name(ORG, "user:alice")
+    alices = personal_name(ORG, "user:alice")
     org_state["grants"] = {"user:bob": {alices: 3}, "group:finance": {alices: 3}}
     assert _role(_user("alice"), alices) is Role.ADMIN
     assert _role(_user("bob"), alices) is None, "a stray grant row opens nothing"
     assert alices in asyncio.run(sharing.readable(_user("alice"), ORG))
     assert alices not in asyncio.run(sharing.readable(_user("bob"), ORG))
-    assert sharing.personal_name(ORG, "user:alice") != sharing.personal_name("globex", "user:alice")
+    assert personal_name(ORG, "user:alice") != personal_name("globex", "user:alice")
 
 
 def _person(**kw: Any) -> AuthInfo:
@@ -345,3 +348,75 @@ def test_an_erasure_rewrite_outranks_a_row_versioned_by_a_faster_clock() -> None
     from server.erasure.store import steps_principals
 
     assert steps_principals._NEW_VERSION.startswith("greatest(version + 1,")
+
+
+# ── a third review's cases ────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("header", ["User:alice", "GROUP:finance", "Agent:helper"])
+def test_a_principal_spelled_in_another_case_is_still_refused(
+    monkeypatch: pytest.MonkeyPatch, header: str
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "trusted_callers", "sa:proxy")
+    proxy = _person(subject="sa:proxy", namespaces=("*",), roles=(Role.WRITER,))
+    with pytest.raises(PermissionError):
+        gateway.effective_auth(proxy, header)
+    with pytest.raises(ValueError, match="grant principal"):
+        mint_token(header, ORG, ["team"], ["viewer"], secret=SECRET)
+
+
+def test_a_token_whose_subject_is_a_principal_does_not_verify() -> None:
+    import jwt as pyjwt
+
+    from server.settings import settings
+
+    forged = pyjwt.encode(
+        {
+            "sub": "user:alice",
+            "org": ORG,
+            "iss": settings.jwt_issuer,
+            "aud": settings.jwt_audience,
+            "iat": 1,
+        },
+        SECRET,
+        algorithm="HS256",
+        headers={"kid": "override"},
+    )
+    with pytest.raises(TokenError, match="grant principal"):
+        verify_token(forged, secret=SECRET)
+
+
+def test_a_collection_outside_the_tree_admits_no_one(org_state: dict[str, Any]) -> None:
+    org_state["grants"] = {"user:alice": {"col-gone": 3, "col-q3": 3}}
+    assert _role(_user("alice"), "col-gone") is None, "deleted, or a grant planted on a name"
+    assert _role(_user("alice"), "col-q3") is Role.ADMIN
+    roles = asyncio.run(sharing.roles(_user("alice"), ORG, ["col-gone", "col-q3"]))
+    assert roles == {"col-gone": None, "col-q3": Role.ADMIN}
+
+
+def test_a_collection_is_never_adopted() -> None:
+    from server.identity.app.grants import adopt_namespace
+
+    with pytest.raises(Exception, match="not adopted"):
+        asyncio.run(adopt_namespace(ORG, "col-hr", "root@acme.io", actor="root@acme.io"))
+
+
+def test_an_end_user_does_not_read_an_org_readable_code_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import authz
+
+    async def _readable(org: str, namespace: str) -> bool:
+        return True
+
+    async def _not_restricted(org: str, namespace: str) -> bool:
+        return False
+
+    monkeypatch.setattr(authz, "_is_org_readable_code_namespace", _readable)
+    monkeypatch.setattr(authz, "may_be_restricted", _not_restricted)
+    member = _person(subject="ann@acme.io", is_service_account=False, roles=(Role.VIEWER,))
+    asyncio.run(authz.check_authorized(member, Role.VIEWER, ORG, "code-acme"))
+    with pytest.raises(PermissionError):
+        asyncio.run(authz.check_authorized(_user("alice"), Role.VIEWER, ORG, "code-acme"))

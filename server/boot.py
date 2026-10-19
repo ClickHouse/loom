@@ -117,8 +117,8 @@ def require_safe_bind(
 
 async def warn_collection_named_namespaces() -> list[str]:
     """Log one WARNING naming active namespaces that use a collection's reserved
-    prefix (`col-`) without being one: only grants open such a name now, so a
-    token claim or an org admin role no longer reaches it. Returns the names."""
+    prefix (`col-`) without being one: such a name now admits only a platform
+    admin. Returns the names."""
     from server.auth.sharing import COLLECTION_PREFIX
     from server.core.ch import get_client
 
@@ -139,8 +139,8 @@ async def warn_collection_named_namespaces() -> list[str]:
     names = [str(r["namespace"]) for r in rows]
     if names:
         logging.getLogger(__name__).warning(
-            "namespaces named like collections are now opened only by grants: %s "
-            "(grant their members, or rename them)",
+            "namespaces named like collections now admit only a platform admin: %s "
+            "(move their data to a new name, or recreate them with collection.create)",
             ", ".join(names),
         )
     return names

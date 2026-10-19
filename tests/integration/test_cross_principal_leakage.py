@@ -1430,7 +1430,7 @@ def _post_as(base: str, token: str, user: str, op: str, payload: dict[str, Any])
 class _Shared:
     def __init__(self, base: str, org: str) -> None:
         from server.auth.jwt import mint_token
-        from server.auth.sharing import personal_name as name_for
+        from server.core.principals import personal_name as name_for
 
         self.org = org
         self.token = mint_token("sa:leak-chat", org, [], [], gateway=True, ttl_seconds=900)

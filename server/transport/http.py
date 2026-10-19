@@ -156,8 +156,9 @@ def _resolve_personal(
     only the server names (no read: the name is derived from the user); any
     other caller is refused. The gate then authorizes it as any namespace."""
     from server.auth.gateway import is_end_user
-    from server.auth.sharing import PERSONAL_ALIAS, personal_name
+    from server.auth.sharing import PERSONAL_ALIAS
     from server.core.errors import ValidationError as RequestInvalid
+    from server.core.principals import personal_name
 
     if getattr(payload, "namespace", None) != PERSONAL_ALIAS:
         return payload, raw_body

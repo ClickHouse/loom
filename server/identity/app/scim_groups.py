@@ -19,6 +19,7 @@ import hmac
 import re
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -62,9 +63,17 @@ COLUMNS = (
 )
 
 
-async def _org(request: Request) -> str:
-    """The org a request's gateway token belongs to; '' for the deployment's
-    SCIM token, which names none."""
+@dataclass(frozen=True)
+class _Caller:
+    """Who pushes: the gateway token's org and subject ('' for the deployment's
+    SCIM token, which names no org)."""
+
+    org: str
+    actor: str
+
+
+async def _caller(request: Request) -> _Caller:
+    """The SCIM client of this request."""
     set_query_tag(f"scim.groups.{request.method.lower()}")
     message = "a gateway token, or the SCIM bearer token, is required"
     try:
@@ -77,7 +86,7 @@ async def _org(request: Request) -> str:
         raise ScimError(401, message)
     presented = token.encode()
     if any([hmac.compare_digest(presented, t.encode()) for t in scim.tokens(settings.scim_token)]):
-        return ""
+        return _Caller(org="", actor="scim")
     try:
         auth: AuthInfo = verify_token(token)
     except AuthUnavailable as e:  # the revocation list or keyring is not loaded yet
@@ -87,10 +96,12 @@ async def _org(request: Request) -> str:
         raise ScimError(401, message) from None
     if not auth.gateway:
         raise ScimError(403, "groups are pushed with the org's gateway token")
-    return auth.org
+    return _Caller(org=auth.org, actor=auth.subject)
 
 
 router = APIRouter(prefix="/scim/v2", route_class=_ScimRoute)
+# The SCIM client of each request, as a route dependency.
+_CALLER = Depends(_caller)
 
 
 def group_row(
@@ -129,7 +140,7 @@ async def _fetch(org: str, group_id: str) -> dict[str, Any] | None:
         )
 
 
-async def _write(row: dict[str, Any], *, event: str) -> None:
+async def _write(row: dict[str, Any], *, event: str, actor: str) -> None:
     await get_client().insert(
         "loom.principal_groups", [row], settings={"async_insert": 0, "wait_for_async_insert": 1}
     )
@@ -138,7 +149,7 @@ async def _write(row: dict[str, Any], *, event: str) -> None:
         event,
         org=row["org"],
         namespace="-",
-        actor="scim",
+        actor=actor,
         subject={"group": row["group_id"], "members": len(row["members"])},
     )
 
@@ -175,10 +186,11 @@ def _answer(body: dict[str, Any], status: int = 200, **headers: str) -> JSONResp
     return JSONResponse(body, status_code=status, media_type=SCIM_JSON, headers=headers or None)
 
 
-def _writable(org: str) -> str:
-    if not org:
+def _gateway_org(caller: _Caller) -> str:
+    """The org a group request reads or writes; the deployment's SCIM token names none."""
+    if not caller.org:
         raise ScimError(403, "groups are pushed with the org's gateway token")
-    return org
+    return caller.org
 
 
 async def _existing(org: str, group_id: str) -> dict[str, Any]:
@@ -189,11 +201,12 @@ async def _existing(org: str, group_id: str) -> dict[str, Any]:
 
 
 @router.get("/Groups")
-async def list_groups(request: Request, org: str = Depends(_org)) -> JSONResponse:
+async def list_groups(request: Request, caller: _Caller = _CALLER) -> JSONResponse:
     start = max(1, _int_param(request, "startIndex", 1))
     count = min(_MAX_RESULTS, max(0, _int_param(request, "count", _MAX_RESULTS)))
     rows: list[dict[str, Any]] = []
     total = 0
+    org = caller.org
     if org:
         where = "org = {org:String} AND NOT deleted"
         params: dict[str, Any] = {"org": org}
@@ -234,15 +247,15 @@ async def list_groups(request: Request, org: str = Depends(_org)) -> JSONRespons
 
 
 @router.get("/Groups/{group_id}")
-async def get_group(group_id: str, request: Request, org: str = Depends(_org)) -> JSONResponse:
-    return _answer(_resource(request, await _existing(_writable(org), group_id)))
+async def get_group(group_id: str, request: Request, caller: _Caller = _CALLER) -> JSONResponse:
+    return _answer(_resource(request, await _existing(_gateway_org(caller), group_id)))
 
 
 @router.post("/Groups")
-async def create_group(request: Request, org: str = Depends(_org)) -> JSONResponse:
+async def create_group(request: Request, caller: _Caller = _CALLER) -> JSONResponse:
     """The group's id is its externalId when that is a well-formed id, so a
     client can address and grant it by its own id; else a new one."""
-    org = _writable(org)
+    org = _gateway_org(caller)
     body = await _body(request)
     external = str(body.get("externalId") or "")
     group_id = external if principal_id(USER + external, USER) else uuid.uuid4().hex
@@ -257,14 +270,14 @@ async def create_group(request: Request, org: str = Depends(_org)) -> JSONRespon
             external_id=external,
             members=members,
         )
-        await _write(row, event="scim.group_created")
+        await _write(row, event="scim.group_created", actor=caller.actor)
     resource = _resource(request, row)
     return _answer(resource, 201, Location=resource["meta"]["location"])
 
 
 @router.put("/Groups/{group_id}")
-async def replace_group(group_id: str, request: Request, org: str = Depends(_org)) -> JSONResponse:
-    org = _writable(org)
+async def replace_group(group_id: str, request: Request, caller: _Caller = _CALLER) -> JSONResponse:
+    org = _gateway_org(caller)
     body = await _body(request)
     members = _members(body.get("members"))
     async with group_change(org, group_id):
@@ -277,7 +290,7 @@ async def replace_group(group_id: str, request: Request, org: str = Depends(_org
             members=members,
             created_at=current["created_at"],
         )
-        await _write(row, event="scim.group_replaced")
+        await _write(row, event="scim.group_replaced", actor=caller.actor)
     return _answer(_resource(request, row))
 
 
@@ -306,9 +319,9 @@ def _patched(name: str, members: set[str], operations: list[Any]) -> tuple[str, 
 
 
 @router.patch("/Groups/{group_id}")
-async def patch_group(group_id: str, request: Request, org: str = Depends(_org)) -> JSONResponse:
+async def patch_group(group_id: str, request: Request, caller: _Caller = _CALLER) -> JSONResponse:
     """`add` / `remove` / `replace` on `members`, and `replace` on `displayName`."""
-    org = _writable(org)
+    org = _gateway_org(caller)
     body = await _body(request)
     async with group_change(org, group_id):
         current = await _existing(org, group_id)
@@ -323,17 +336,17 @@ async def patch_group(group_id: str, request: Request, org: str = Depends(_org))
             members=sorted(members),
             created_at=current["created_at"],
         )
-        await _write(row, event="scim.group_changed")
+        await _write(row, event="scim.group_changed", actor=caller.actor)
     return _answer(_resource(request, row))
 
 
 @router.delete("/Groups/{group_id}")
-async def delete_group(group_id: str, org: str = Depends(_org)) -> Response:
+async def delete_group(group_id: str, caller: _Caller = _CALLER) -> Response:
     """The group goes, and so do the grants that named it: a group made later
     under the same id starts with none."""
     from server.identity.app.grants import revoke_subject
 
-    org = _writable(org)
+    org = _gateway_org(caller)
     async with group_change(org, group_id):
         current = await _existing(org, group_id)
         row = group_row(
@@ -345,8 +358,9 @@ async def delete_group(group_id: str, org: str = Depends(_org)) -> Response:
             created_at=current["created_at"],
             deleted=True,
         )
-        await _write(row, event="scim.group_deleted")
+        # The grants first: a delete cut short is retried, and finds the group still there.
         await revoke_subject(org, f"group:{group_id}")
+        await _write(row, event="scim.group_deleted", actor=caller.actor)
     return Response(status_code=204)
 
 

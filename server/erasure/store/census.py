@@ -391,6 +391,7 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "grants.revoke": ("loom.namespace_grants",),
     "groups.remove_member": ("loom.principal_groups",),
     "personal.retire": ("loom.namespaces",),
+    "collections.forget_owner": ("loom.collections", "loom.namespaces"),
 }
 
 # Every other `loom.*` table in schemas/schema.sql, with the reason it holds
@@ -461,7 +462,6 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.audit_checkpoints": "hash-chain checkpoints over the audit log; digests only.",
     "loom.blacklist_version": "singleton version counter for the blacklist cache.",
     "loom.acl_versions": "per-org version counter for the grant cache; an org name and a number.",
-    "loom.collections": "the collection tree: names, parents and each creator; no content.",
     "loom.worker_status": (
         "worker health per pass: worker name, launcher label, status, "
         "counters and a bounded error text; `namespace` is the label of the namespace "

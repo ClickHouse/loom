@@ -52,18 +52,11 @@ class _CH:
         if "loom.acl_versions" in sql:
             orgs = {org for org, _ in self.acl_versions}
             return [
-                {
-                    "org": org,
-                    "n": sum(1 for o, _ in self.acl_versions if o == org),
-                    "s": sum(v for o, v in self.acl_versions if o == org),
-                }
-                for org in orgs
+                {"org": org, "n": sum(c for o, c in self.acl_versions if o == org)} for org in orgs
             ]
         return []
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> dict | None:
-        if "loom.acl_versions" in sql:  # the watermark total
-            return {"n": len(self.acl_versions), "s": sum(v for _, v in self.acl_versions)}
         if "groupArray((namespace, rank))" in sql:  # the cap's grant read
             self.grant_reads += 1
             grants = [(ns, grant_rank(self._live(ns))) for ns in self.grants]
@@ -74,7 +67,7 @@ class _CH:
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_k: Any) -> None:
         if table == "loom.acl_versions":
-            self.acl_versions += [(r["org"], r["version"]) for r in rows]
+            self.acl_versions += [(r["org"], r["changes"]) for r in rows]
             return
         for r in rows:
             status = r.get("status") or "active"
@@ -441,7 +434,7 @@ def _watching(ch: _CH) -> Any:
     asyncio.run(grant_cache.poll())
 
     def _other_writes(org: str) -> None:
-        ch.acl_versions.append((org, len(ch.acl_versions) + 1))
+        ch.acl_versions.append((org, 1))
         asyncio.run(grant_cache.poll())
 
     return _other_writes
@@ -478,24 +471,18 @@ def test_a_grant_write_returns_after_its_watermark_row_is_written(ch: _CH) -> No
     assert [org for org, _ in ch.acl_versions] == [ORG]
 
 
-def test_an_unchanged_total_reads_no_org_s_watermark(
-    ch: _CH, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _watching(ch)
-    per_org: list[str] = []
-    real = ch.query_all
-
-    async def _query_all(sql: str, params: dict[str, Any] | None = None) -> list[dict]:
-        if "GROUP BY org" in sql:
-            per_org.append(sql)
-        return await real(sql, params)
-
-    monkeypatch.setattr(ch, "query_all", _query_all)
+def test_a_merge_cannot_hide_a_change(ch: _CH) -> None:
+    """Counts only grow: two changes merged into one row still sum to two."""
+    other_writes = _watching(ch)
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    reads = ch.grant_reads
+    other_writes(ORG)
+    ch.acl_versions = [(ORG, sum(c for _, c in ch.acl_versions))]  # a merge
     asyncio.run(grant_cache.poll())
-    assert per_org == []
-    ch.acl_versions.append((ORG, 7))
-    asyncio.run(grant_cache.poll())
-    assert len(per_org) == 1
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    assert ch.grant_reads == reads + 1, "the change was seen once"
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    assert ch.grant_reads == reads + 1, "and the merge moved nothing"
 
 
 def test_a_read_begun_before_another_process_s_write_is_not_joined(

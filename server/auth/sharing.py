@@ -10,7 +10,9 @@ role) there. A child only adds to what its parents grant: to narrow, it is
 detached.
 
 A personal collection belongs to the one end user its name is derived from;
-it takes no grant and sits in no tree.
+it takes no grant and sits in no tree. A `col-` name that is in no tree (deleted,
+never created) admits no one. A service account reaches a collection only by its
+own grants: unlike an ordinary namespace, never through an inheriting creator.
 """
 
 from __future__ import annotations
@@ -40,8 +42,6 @@ COLLECTION_PREFIX = "col-"
 PERSONAL_ALIAS = "@me"
 
 _ROLE_BY_RANK = {1: Role.VIEWER, 2: Role.WRITER, 3: Role.ADMIN}
-
-__all__ = ["COLLECTION_PREFIX", "PERSONAL_ALIAS", "PERSONAL_PREFIX", "personal_name"]
 
 
 def is_collection(namespace: str) -> bool:
@@ -171,7 +171,10 @@ async def role(auth: AuthInfo, org: str, namespace: str) -> Role | None:
     """The request's role on the collection `namespace`."""
     if is_personal(namespace):
         return Role.ADMIN if owns_personal(auth, org, namespace) else None
-    lineage = (await tree(org)).lineage(namespace)
+    collections = await tree(org)
+    if namespace not in collections.parent:
+        return None  # deleted, never created, or a `col-` name from before collections
+    lineage = collections.lineage(namespace)
     granted = await _best_role(org, lineage, await principals(auth, org))
     if granted is None or not (auth.has_ns_roles() or auth.creator):
         return granted
@@ -188,10 +191,9 @@ async def role(auth: AuthInfo, org: str, namespace: str) -> Role | None:
     ceilings = [granted, own]
     if auth.creator:
         ceilings.append(await _best_role(org, lineage, [auth.creator]))
-    known = [c for c in ceilings if c is not None]
-    if len(known) < len(ceilings):
+    if None in ceilings:
         return None
-    return min(known, key=lambda r: r.value)
+    return min(ceilings, key=lambda r: r.value)  # type: ignore[union-attr]
 
 
 async def roles(auth: AuthInfo, org: str, namespaces: list[str]) -> dict[str, Role | None]:
@@ -205,6 +207,9 @@ async def roles(auth: AuthInfo, org: str, namespaces: list[str]) -> dict[str, Ro
     for ns in namespaces:
         if is_personal(ns):
             out[ns] = Role.ADMIN if owns_personal(auth, org, ns) else None
+            continue
+        if ns not in collections.parent:
+            out[ns] = None
             continue
         lineage = collections.lineage(ns)
         out[ns] = _ROLE_BY_RANK.get(max((m.rank(n) or 0 for m in maps for n in lineage), default=0))
@@ -256,7 +261,7 @@ async def check(auth: AuthInfo, required_role: Role, org: str, namespace: str) -
         raise refusal
     try:
         granted = await role(auth, org, namespace)
-    except Exception as e:
+    except Exception as e:  # a tree or grant that cannot be read admits nothing: refused
         note_unreadable()
         raise refusal from e
     if granted is None or granted.value < required_role.value:

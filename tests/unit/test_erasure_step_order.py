@@ -177,6 +177,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("grants.revoke", ()),  # no grant names the user here
     ("groups.remove_member", (("OTHER", "INSERT"),)),
     ("personal.retire", (("OTHER", "INSERT"),)),
+    ("collections.forget_owner", (("OTHER", "INSERT"), ("OTHER", "INSERT"))),
     (
         "conversations.tombstone",
         (

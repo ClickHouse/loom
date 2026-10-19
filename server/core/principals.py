@@ -22,6 +22,12 @@ def principal_id(value: str, prefix: str) -> str:
     return ident if _ID.fullmatch(ident) else ""
 
 
+def is_reserved_subject(subject: str) -> bool:
+    """True for anything spelled like a grant principal, in any case: only a
+    gateway's assertion may produce one (not a token, not a trusted caller)."""
+    return subject.lower().startswith(PRINCIPAL_PREFIXES)
+
+
 def is_principal(subject: str) -> bool:
     """True for a `user:`, `group:` or `agent:` subject with a well-formed id."""
     return any(principal_id(subject, p) for p in PRINCIPAL_PREFIXES)

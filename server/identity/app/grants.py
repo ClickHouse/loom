@@ -44,9 +44,14 @@ async def adopt_namespace(
 ) -> datetime | None:
     """Install `new_admin` as admin on a namespace with no active admin grant
     (the recovery path for an orphaned namespace). Returns the grant time, or
-    None, writing nothing, when the namespace still has an active admin."""
+    None, writing nothing, when the namespace still has an active admin. A
+    collection is never adopted: only grants open one, and a platform admin
+    already reaches it."""
+    from server.auth.sharing import is_collection
     from server.core.ch import get_client
 
+    if is_collection(namespace):
+        raise ValidationError("a collection is not adopted; a platform admin can grant on it")
     ch = get_client()
     if await grants_repo.count_active_admins(org, namespace, ch=ch) > 0:
         return None

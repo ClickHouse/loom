@@ -46,6 +46,7 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
         input.namespace,
         input.namespace_scope,
         cap=settings.knowledge_search_max_namespaces,
+        kinds=settings.knowledge_search_fanout_kinds,
     )
     results_per_ns = await _search_private_first(input, namespaces, search)
     all_hits = _as_search_hits(results_per_ns)

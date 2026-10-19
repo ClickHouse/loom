@@ -203,6 +203,7 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("grants.revoke", _step_revoke_grants_by_user),
     ("groups.remove_member", principal_steps.remove_from_groups_by_user),
     ("personal.retire", principal_steps.retire_personal_collection_by_user),
+    ("collections.forget_owner", principal_steps.forget_collection_owner_by_user),
     *_UNCOUNTED_STEPS_USER,
 )
 

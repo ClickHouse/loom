@@ -18,7 +18,7 @@ from typing import Any
 import jwt
 
 from server.auth.authz import Role, grant_role
-from server.core.principals import PRINCIPAL_PREFIXES
+from server.core.principals import is_reserved_subject
 from server.settings import settings
 
 
@@ -286,7 +286,7 @@ def mint_token(
     if "\x00" in subject:
         # Reserved: revocation keys an operator's cutoffs by a NUL a subject never has.
         raise ValueError("a token subject may not contain a NUL character")
-    if subject.startswith(PRINCIPAL_PREFIXES):
+    if is_reserved_subject(subject):
         # Those name a gateway's end users, whose identity only a gateway asserts.
         raise ValueError(f"a token subject may not be a grant principal: {subject!r}")
     now = int(time.time()) if issued_at is None else issued_at
@@ -422,6 +422,8 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         raise TokenError("claim 'org' must be a string")
     if "\x00" in str(decoded["sub"]):
         raise TokenError("claim 'sub' may not contain a NUL character")
+    if is_reserved_subject(str(decoded["sub"])):
+        raise TokenError("claim 'sub' may not be a grant principal (user:, group:, agent:)")
     exp = decoded.get("exp")
 
     return AuthInfo(

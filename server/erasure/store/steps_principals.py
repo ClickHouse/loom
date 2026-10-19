@@ -62,7 +62,32 @@ async def retire_personal_collection_by_user(
     return await _rewrite(
         "loom.namespaces",
         "org = {org:String} AND namespace = {ns:String} AND active",
-        "false AS active, toDateTime(now()) AS updated_at",
+        # `updated_at` is the directory's version: newer than the row's own.
+        "false AS active, greatest(updated_at + 1, toDateTime(now())) AS updated_at",
         {"org": org, "ns": personal_name(org, "user:" + user_id)},
         ch,
     )
+
+
+async def forget_collection_owner_by_user(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    """Blank the user as the creator of the collections they made: in the tree
+    and in the directory. The collections and other writers' documents stay."""
+    ch = ch or _default_client()
+    params = {"org": org, "p": "user:" + user_id}
+    n = await _rewrite(
+        "loom.collections",
+        "org = {org:String} AND owner = {p:String}",
+        f"'' AS owner, {_NEW_VERSION} AS version",
+        params,
+        ch,
+    )
+    await _rewrite(
+        "loom.namespaces",
+        "org = {org:String} AND kind = 'collection' AND owner_email = {p:String}",
+        "'' AS owner_email, greatest(updated_at + 1, toDateTime(now())) AS updated_at",
+        params,
+        ch,
+    )
+    return n

@@ -24,12 +24,14 @@ flowchart LR
   `collection.list` lists the ones the caller can read, and `collection.delete` takes one
   out of the directory and the tree (its children become top-level). A document lives in
   one collection and follows its grants from the moment it is written.
-- **Only grants open a collection.** A collection is known by its name (`col-…`; the
-  prefix is reserved), so `check_authorized` hands it to `server/auth/sharing.py` before
-  any other rule, with no read. A token's namespace claim, an org admin role and the
-  code-namespace rules reach no collection; a scoped or delegated token reaches one no
-  further than its own claim names it, and a delegated one no further than its creator's
-  role there. A platform admin passes, for operator erasure and export.
+- **Only grants open a collection**, and only one in the tree: a `col-` name that was
+  deleted, or never created, admits no one but a platform admin. A collection is known by
+  its name (`col-…`; the prefix is reserved), so `check_authorized` hands it to
+  `server/auth/sharing.py` before any other rule, with no read. A token's namespace claim,
+  an org admin role and the code-namespace rules reach no collection; a scoped or
+  delegated token reaches one no further than its own claim names it, and a delegated one
+  no further than its creator's role there. A platform admin passes, for operator erasure
+  and export.
 - **Principals.** A request holds its subject, every group whose members include it, and
   the agent a gateway asserted. A grant names any of them: a login handle or email, an
   `sa:` service account, `user:<id>`, `group:<id>` or `agent:<id>`. Groups and agents hold
@@ -65,12 +67,14 @@ to the gateway's own account.
 |                                              | another user's personal collection      |
 |                                              | directory self-service (register, join) |
 
-Ids are lowercase (`server/core/principals.py`), so two spellings never name one user.
-Of the org-level ops (those that name no namespace to gate), an end user may call only
-`collection.create` and `collection.list`. A trusted caller (`LOOM_TRUSTED_CALLERS`) acts
-for Loom subjects only and cannot assert a `user:`, `group:` or `agent:` principal.
-Revoking the gateway token cuts off all its users; one user is cut off by revoking their
-grants and removing them from groups, or by erasing them.
+Ids are lowercase (`server/core/principals.py`), so two spellings never name one user; a
+SCIM member is the gateway's own lowercase user id, not an identity provider's. Of the
+org-level ops (those that name no namespace to gate), an end user may call only
+`collection.create`, `collection.list`, `namespace.list_mine` and `grants.pending_for_me`.
+A trusted caller (`LOOM_TRUSTED_CALLERS`) acts for Loom subjects only and cannot assert a
+`user:`, `group:` or `agent:` principal. Revoking the gateway token cuts off all its
+users; one user is cut off by revoking their grants and removing them from groups, or by
+erasing them.
 
 The gateway authenticates its users and already holds their data, so Loom cannot make it
 less trusted than that; what Loom enforces is the org boundary and the shape of the
@@ -87,10 +91,11 @@ member takes effect within the consistency window below.
 
 Every change to a grant, a group or the tree writes a row to `loom.acl_versions` for its
 org (`grant_cache.changed`) before it returns. Each process polls the watermark every
-`LOOM_ACL_WATERMARK_POLL_SECONDS` (1 s): one statement for the total, and the per-org
-pairs only when it moved. It drops the org's cached grant maps, groups and tree when the
-org's pair moves. So a revoke, a removed member, a move or a detach is enforced on every
-replica within about one poll interval, and at once on the replica that made it.
+`LOOM_ACL_WATERMARK_POLL_SECONDS` (1 s), one sequential statement for every org's change
+count (`sum(changes)`; a sum only grows, whatever merges or clocks do), and drops the org's
+cached grant maps, groups and tree when its count moves. So a revoke, a removed member, a
+move or a detach is enforced on every replica within about one poll interval, and at once
+on the replica that made it.
 
 A process whose last poll is older than `LOOM_ACL_WATERMARK_MAX_STALE_SECONDS` (10 s)
 serves no cached grant and reads per request; a failed read then falls back only to an
@@ -98,9 +103,9 @@ entry read at the last watermark it saw. The 10 s grant-cache TTL stays as a bac
 for a watermark row that was never written, and for grant changes made by a build that
 predates the table during a rolling upgrade.
 
-A collection's name, not a lookup, decides that it is one, so every namespace that
-already uses the `col-` prefix is opened only by grants after the upgrade; the server logs
-the active ones at boot.
+A collection's name, not a lookup, decides that it is one, so a namespace that already
+used the `col-` prefix admits only a platform admin after the upgrade; the server logs the
+active ones at boot.
 
 ## Read cost
 
@@ -126,13 +131,13 @@ were 6–8 times slower at 1,000, so the default granule stays.
 ## Erasure
 
 Every document carries who wrote it (`agent`, `user_id`, `actor`, `source_class`), for
-provenance and for erasure; access never reads these columns. A user erasure
-(`scope_type = user_id`) supersedes the documents and chunks that user wrote in any
-collection of the org, deletes their uploaded originals that no other writer's document
-shares, revokes every grant naming `user:<id>`, removes them from every group, and
-retires their personal collection's directory row. Deleting a SCIM group revokes the
-grants that named it, so a group made later under the same id starts with none. Collections that hold other writers' documents stay:
-Loom deletes only what its writer asked to delete.
+provenance and for erasure; access never reads these columns. A user erasure (`scope_type
+= user_id`) supersedes the documents and chunks that user wrote in any collection of the
+org, deletes their uploaded originals that no other writer's document shares, revokes
+every grant naming `user:<id>`, removes them from every group, and retires their personal
+collection's directory row. Deleting a SCIM group revokes the grants that named it, so a
+group made later under the same id starts with none. Collections that hold other writers'
+documents stay: Loom deletes only what its writer asked to delete.
 
 ## Alternatives not taken
 

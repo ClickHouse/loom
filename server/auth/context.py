@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from server.auth.directory import ClassificationUnavailable, directory
 from server.auth.fail_closed import note_answered_unverified, refused_unverified, reset
@@ -259,9 +259,7 @@ async def hidden_namespaces(org: str) -> list[str]:
     ]
 
 
-async def collection_clause(
-    org: str, column: str = "namespace"
-) -> tuple[str, dict[str, list[str]]]:
+async def collection_clause(org: str, column: str = "namespace") -> tuple[str, dict[str, Any]]:
     """A WHERE fragment that leaves out every collection of `org` the current
     caller cannot read: by prefix, so it names only the readable ones."""
     from server.auth import sharing
@@ -270,7 +268,7 @@ async def collection_clause(
     return (
         f" AND (NOT startsWith({column}, {{col_prefix:String}})"
         f" OR {column} IN {{col_readable:Array(String)}})",
-        {"col_prefix": sharing.COLLECTION_PREFIX, "col_readable": readable},  # type: ignore[dict-item]
+        {"col_prefix": sharing.COLLECTION_PREFIX, "col_readable": readable},
     )
 
 

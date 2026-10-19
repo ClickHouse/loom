@@ -32,9 +32,13 @@ class IdentityDirectory:
             if cfg.org == org and cfg.classification == "restricted"
         }
 
-    async def fanout_namespaces(self, org: str, namespaces: list[str]) -> list[str]:
+    async def fanout_namespaces(
+        self, org: str, namespaces: list[str], kinds: str | None = None
+    ) -> list[str]:
         """Unknown kinds stay: the kind directory can only narrow, never widen."""
-        keep = namespace_kinds.fanout_kinds()
+        keep = (
+            namespace_kinds.fanout_kinds() if kinds is None else namespace_kinds.fanout_kinds(kinds)
+        )
         if not namespaces or not keep:
             return namespaces
         return namespace_kinds.keep_kinds(namespaces, await namespace_kinds.kind_map(org), keep)

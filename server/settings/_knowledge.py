@@ -29,6 +29,9 @@ class KnowledgeSettings(BaseModel):
     # at most; the rest come back in `namespaces_skipped`. Each search leg is
     # one statement over all of them (measured 110 ms at 10,000 collections).
     knowledge_search_max_namespaces: int = Field(default=10_000, ge=1)
+    # Namespace kinds an all_mine knowledge.search spans (comma list over
+    # loom.namespaces.kind): the memory fan-out's, and the caller's collections.
+    knowledge_search_fanout_kinds: str = "memory,collection,personal"
 
     # ---- chunking ----
     # Sliding-window chunking on knowledge.add/upsert, in characters.
