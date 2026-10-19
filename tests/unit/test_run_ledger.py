@@ -512,6 +512,7 @@ def test_get_missing_run(env) -> None:
 def test_list_filters_and_orders_newest_first(env) -> None:
     fake, _, h = env
     fake.all.append([_run_row(run_id="r2"), _run_row(run_id="r1")])
+    fake.one.append({"n": 2})
     out = asyncio.run(
         h.handle_run_list(
             RunListInput(org="o", namespace="n", agent="claude", status="active", limit=2)
@@ -522,7 +523,14 @@ def test_list_filters_and_orders_newest_first(env) -> None:
     assert "FROM loom.agent_runs FINAL" in sql and "ORDER BY started_at DESC" in sql
     assert "agent = {agent:String}" in sql and "status = {status:String}" in sql
     assert "session_id" not in sql.split("WHERE", 1)[1]
-    assert params == {"org": "o", "ns": "n", "lim": 2, "agent": "claude", "status": "active"}
+    assert params == {
+        "org": "o",
+        "ns": "n",
+        "lim": 2,
+        "off": 0,
+        "agent": "claude",
+        "status": "active",
+    }
     # default: no memory-activity clause
     assert "memories_used" not in sql.split("WHERE", 1)[1].split("ORDER BY", 1)[0]
 
@@ -532,18 +540,24 @@ def test_list_memory_activity_is_a_where_clause_not_a_client_slice(env) -> None:
     runs — otherwise the newest 100 of a chatty consumer can all be hollow."""
     fake, _, h = env
     fake.all.append([_run_row(run_id="r9", memories_used=["k"])])
+    fake.one.append({"n": 1})
     out = asyncio.run(
         h.handle_run_list(RunListInput(org="o", namespace="n", memory_activity="with", limit=100))
     )
     assert [r.run_id for r in out.runs] == ["r9"]
-    _, sql, params = fake.calls[0]
+    # The page and its count run side by side; the page is the statement with an ORDER BY.
+    pages = [(sql, params) for _, sql, params in fake.calls if "ORDER BY" in sql]
+    sql, params = pages[0]
     clause = sql.split("WHERE", 1)[1].split("ORDER BY", 1)[0]
     assert "(notEmpty(memories_used) OR notEmpty(memories_written))" in clause
-    assert params == {"org": "o", "ns": "n", "lim": 100}
+    assert params == {"org": "o", "ns": "n", "lim": 100, "off": 0}
 
     fake.all.append([])
+    fake.one.append({"n": 0})
     asyncio.run(h.handle_run_list(RunListInput(org="o", namespace="n", memory_activity="without")))
-    _, sql, _ = fake.calls[1]
+    pages = [sql for _, sql, _ in fake.calls if "ORDER BY" in sql]
+    assert len(pages) == 2
+    sql = pages[1]
     assert "(empty(memories_used) AND empty(memories_written))" in sql.split("WHERE", 1)[1]
 
     with pytest.raises(ValidationError):

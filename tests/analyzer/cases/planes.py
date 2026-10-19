@@ -19,6 +19,7 @@ import typing
 from typing import Any
 
 from server.auth.context import current_auth
+from server.core.tag_sql import TagFilter
 from server.identity.domain.read_scope import (
     WHOLE_NAMESPACE,
     ReadFilters,
@@ -499,7 +500,7 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
         ORG,
         NS,
         include_superseded=f,
-        tags=["t"] if f else None,
+        tag_filter=TagFilter(("t",), "folded_any") if f else None,
         uri_prefixes=["doc://"] if f else None,
         cursor=(_DT, "doc://a") if f else None,
         ch=ch,
@@ -661,12 +662,14 @@ async def _list_score(ch: RecordingCH, c: dict[str, Any]) -> None:
         prefix="lesson_",
         memory_type="semantic" if not w else None,
         quotas={"semantic": 3} if w else None,
-        tags=["ops"] if w else [],
+        tags=["ops", "infra"] if w else [],
+        # Every tag, both sides lowercased.
+        tags_every=w,
     )
     # The served-set flags, as the handler builds them
     await _list_by_score(
         inp,
-        ["ops"] if w else None,
+        TagFilter(("ops", "infra"), "folded_all") if w else None,
         {"include_duplicates": w, "include_superseded": w, "include_proposed": w},
     )
 

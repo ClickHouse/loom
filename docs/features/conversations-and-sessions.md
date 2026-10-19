@@ -47,13 +47,13 @@ up front.
 
 ### Reading and searching
 
-| Operation              | Role   | Does                                                                                               |
-| ---------------------- | ------ | -------------------------------------------------------------------------------------------------- |
-| `conversation.threads` | viewer | Recent threads of a namespace, newest first (`window_days`, `limit`; `agent="*"` for every agent). |
-| `conversation.get`     | viewer | One thread's metadata; `include_messages=true` pages its turns (`order="desc"` for the tail).      |
-| `conversation.list`    | viewer | A thread's turns, cursor-paginated, optionally by `run_id`.                                        |
-| `conversation.search`  | viewer | Vector search over embedded turns, optionally by thread, run or role.                              |
-| `conversation.update`  | writer | Change a thread's `title`, `metadata` or `run_id`.                                                 |
+| Operation              | Role   | Does                                                                                                                       |
+| ---------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `conversation.threads` | viewer | Recent threads of a namespace, newest first (`window_days`, `limit`, `offset` up to 100,000; `agent="*"` for every agent). |
+| `conversation.get`     | viewer | One thread's metadata; `include_messages=true` pages its turns (`order="desc"` for the tail).                              |
+| `conversation.list`    | viewer | A thread's turns, cursor-paginated, optionally by `run_id`.                                                                |
+| `conversation.search`  | viewer | Vector search over embedded turns, optionally by thread, run or role.                                                      |
+| `conversation.update`  | writer | Change a thread's `title`, `metadata` or `run_id`.                                                                         |
 
 `conversation.search` ranks turns by cosine similarity, drops any below
 `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY` (0.30) and fans out over the caller's namespaces by default

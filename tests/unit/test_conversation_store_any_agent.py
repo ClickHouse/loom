@@ -225,3 +225,18 @@ async def test_the_thread_list_counts_one_agents_rows_as_its_opened_thread_does(
     counted = ch.calls[1][0]
     assert "count() AS n" in counted
     assert "uniqExact" not in counted
+
+
+@pytest.mark.asyncio
+async def test_the_thread_list_pages_past_its_first_page() -> None:
+    """`offset` skips the threads earlier pages showed, in the same most-recent-first
+    order, so a namespace's every thread in the window can be listed page by page."""
+    ch = StubCH([[{"thread_id": "t-3", "msg_count": 1}], [{"thread_id": "t-3", "n": 1}]])
+    rows = await conversation_repo.recent_threads(
+        "o", "ns", window_days=30, limit=2, offset=2, ch=ch
+    )
+    ranked, params = ch.calls[0]
+    assert "ORDER BY last_seen DESC, thread_id ASC" in ranked
+    assert "LIMIT {lim:UInt32} OFFSET {off:UInt32}" in ranked
+    assert (params["lim"], params["off"]) == (2, 2)
+    assert [r["thread_id"] for r in rows] == ["t-3"]

@@ -209,6 +209,7 @@ Recent conversation threads of a namespace, newest first.
 | `agent` | `str` | `'*'` | "*" or "-" lists every agent's threads |
 | `window_days` | `int` | `30` | Only threads with a live message in the last this many days (1-365). |
 | `limit` | `int` | `30` | At most this many threads (1-200). |
+| `offset` | `int` | `0` | Threads to skip before the page (0-100,000); default 0, the first page. |
 | `fields` | `list[str] \| None` | `None` | The output fields the caller reads (a whitelist resolved against the row model; an unknown name is a 422); unset, every field. |
 
 | Output field | Type | Meaning |

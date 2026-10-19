@@ -675,3 +675,19 @@ async def test_a_delete_keeps_another_models_row_a_peer_holds(
         (False, f"marten peer {nonce}", True),  # the peer's turn, current model: live
         (True, f"lynx mine {nonce}", False),  # this agent's text, old model: tombstoned
     ]
+
+
+@pytest.mark.asyncio
+async def test_threads_offset_pages_neither_repeat_nor_drop_a_thread(agent) -> None:
+    """Five threads walked two at a time: every thread appears on exactly one page."""
+    tids = [f"thr-{uuid.uuid4().hex[:6]}" for _ in range(5)]
+    for tid in tids:
+        await agent.conversations.append(tid, uuid.uuid4().hex, "user", f"hello from {tid}")
+
+    seen: list[str] = []
+    for offset in range(0, 8, 2):
+        page = await agent.call("conversation.threads", limit=2, offset=offset, agent="*")
+        assert len(page["threads"]) <= 2
+        seen.extend(t["thread_id"] for t in page["threads"])
+
+    assert sorted(seen) == sorted(tids)
