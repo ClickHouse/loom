@@ -112,18 +112,23 @@ class _PassThrough:
 
 
 class _AfterFirstPass(_PassThrough):
-    """Runs `then` once the first embeddings pass is done, before the messages
-    mutation."""
+    """Runs `then` once the first embeddings pass is done: before the messages
+    mutation, or after it with `after_mutation`."""
 
-    def __init__(self, ch: Any, then: Any) -> None:
+    def __init__(self, ch: Any, then: Any, *, after_mutation: bool = False) -> None:
         super().__init__(ch)
-        self.then = then
+        self.then, self.after_mutation = then, after_mutation
 
     async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
-        if self.then and "ALTER TABLE loom.conversations\n" in sql:
-            then, self.then = self.then, None
+        if not (self.then and "ALTER TABLE loom.conversations\n" in sql):
+            return await super().execute(sql, params, **kw)
+        then, self.then = self.then, None
+        if not self.after_mutation:
             await then()
-        return await super().execute(sql, params, **kw)
+        out = await super().execute(sql, params, **kw)
+        if self.after_mutation:
+            await then()
+        return out
 
 
 class _FailOnce(_PassThrough):
@@ -178,6 +183,32 @@ async def test_a_turn_appended_during_the_delete_leaves_search(ch, scope) -> Non
     assert out["loom.conversations"] == 2  # the mid-delete turn's message was caught too
     assert out["loom.conversation_embeddings"] == 2
     assert await _rows(ch, scope) == [("1", "first", False), ("2", "second", False)]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_appended_after_the_messages_mutation_stays_out_of_search(ch, scope) -> None:
+    """The agent's own turn whose message lands after the delete's messages mutation
+    stays live, but its embedding, landing before the last pass, is tombstoned: a turn
+    of a deleted thread does not come back through search."""
+    await _message(ch, scope, "a", "1", "first", T0)
+
+    async def append() -> None:
+        later = T0 + timedelta(seconds=5)
+        await _message(ch, scope, "a", "2", "second", later)
+        await _embedding(ch, scope, "a", "2", "second", later)
+
+    when = datetime.now(UTC).replace(tzinfo=None)
+    await repo.tombstone_thread(
+        scope["org"],
+        scope["ns"],
+        "a",
+        scope["tid"],
+        when=when,
+        ch=_AfterFirstPass(ch, append, after_mutation=True),
+    )
+    live = await repo.live_messages(scope["org"], scope["ns"], "a", scope["tid"], ch=ch)
+    assert [m["msg_id"] for m in live] == ["2"]
+    assert await _rows(ch, scope) == [("2", "second", False)]
 
 
 @pytest.mark.asyncio

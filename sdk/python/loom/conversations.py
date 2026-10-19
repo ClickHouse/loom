@@ -171,7 +171,8 @@ class ConversationsClient:
         """Soft-delete one thread (ADMIN role).
 
         Tombstones the thread row, its messages, and the embeddings no other
-        agent of the thread still holds with the same text. Read paths filter
+        agent of the thread still holds with the same text, as a user, assistant
+        or summary turn. Read paths filter
         tombstoned rows out, and the retention TTL on the messages table, when
         set, hard-deletes the messages.
 

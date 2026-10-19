@@ -29,7 +29,8 @@ class _FakeCH:
         self.sql.append(sql)
         # ClickHouse answers FINAL on a plain MergeTree with code 181.
         assert "loom.conversations FINAL" not in sql, "FINAL on plain MergeTree"
-        return self.rows
+        # The embeddings reconcile's re-read finds no row left to reconcile.
+        return [] if "FROM loom.conversation_embeddings FINAL" in sql else self.rows
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None):
         return None  # the shared embedding cache reads it as a miss

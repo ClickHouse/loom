@@ -268,8 +268,8 @@ async def test_named_turns_are_tombstoned_in_byte_bounded_slices() -> None:
     executed: list[tuple[str, dict[str, Any]]] = []
 
     class _CH:
-        async def query_one(self, sql: str, params: dict[str, Any] | None = None):
-            return None
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            return []
 
         async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
             executed.append((sql, params or {}))
@@ -294,9 +294,9 @@ async def test_the_tombstone_reads_with_sequential_consistency() -> None:
     seen: list[bool] = []
 
     class _CH:
-        async def query_one(self, sql: str, params: dict[str, Any] | None = None):
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
             seen.append(query_settings().get("select_sequential_consistency") == 1)
-            return None
+            return []
 
         async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
             # The settings the client attaches to the statement it sends.
@@ -312,19 +312,20 @@ async def test_the_tombstone_reads_with_sequential_consistency() -> None:
 @pytest.mark.asyncio
 async def test_a_reconcile_that_never_settles_fails_instead_of_looping() -> None:
     """A re-read that keeps finding unheld rows stops after a fixed number of rounds and
-    fails the call, which the caller retries."""
+    answers OVERLOADED, which the client retries."""
+    from server.core.errors import OverloadedError
     from server.knowledge.store import conversations as repo
 
     class _CH:
         rounds = 0
 
-        async def query_one(self, sql: str, params: dict[str, Any] | None = None):
-            return {"n": 1}
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            return [{"1": 1}]
 
         async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
             _CH.rounds += 1
 
-    with pytest.raises(RuntimeError, match="still unheld"):
+    with pytest.raises(OverloadedError, match="kept changing"):
         await repo._tombstone_embeddings(
             "o", "n", "a", "t", msg_ids=None, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
         )
@@ -344,8 +345,10 @@ async def test_the_delete_counts_embeddings_with_sequential_consistency() -> Non
         async def query_one(self, sql: str, params: dict[str, Any] | None = None):
             table = "embeddings" if "conversation_embeddings" in sql else "messages"
             seen[table] = query_settings().get("select_sequential_consistency") == 1
-            # The reconcile's re-read finds no unheld row; the counts find one turn.
-            return {"n": 0 if sql.startswith("SELECT count() AS n FROM (") else 1}
+            return {"n": 1}
+
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            return []
 
         async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
             return None

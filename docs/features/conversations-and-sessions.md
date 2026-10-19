@@ -73,7 +73,8 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   the summary as one embedded `system` turn whose `metadata.compacted_from` lists the
   summarised `msg_id`s, and tombstones the originals and their embeddings:
   `conversation.search` then finds the summary in their place. A turn another agent of
-  the thread still holds live with the same text keeps its embedding. A window of
+  the thread still holds live with the same text, as a turn search indexes, keeps its
+  embedding (see delete below). A window of
   fewer than `min_to_compact` (default 4) new turns is left alone; earlier summaries
   fold into the prompt without counting, and one too long to fold in whole stays live.
   A summary that cannot be embedded compacts nothing (`reason: "embed-failed"`).
@@ -82,7 +83,8 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   logged in the thread keeps its embedding while that agent holds a live copy with the
   same text that search indexes (a user or assistant turn, or a summary), since the
   two copies share one embedding row; the row takes that copy's agent, role, run and
-  user, so the deleting agent's own search drops it (compaction does the same). For a person's or a namespace's data everywhere, use
+  user, so the deleting agent's own search drops it (compaction does the same). For a
+  person's or a namespace's data everywhere, use
   [`erasure.request`](./memory/retention-and-erasure.md).
 
 Tombstoned turns are filtered from every read. They are removed from disk only if the

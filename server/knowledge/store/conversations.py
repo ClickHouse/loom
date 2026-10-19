@@ -13,6 +13,7 @@ from typing import Any, NotRequired, TypedDict, cast
 from pydantic import BaseModel, ConfigDict
 
 from server.core.ch import sequential_reads
+from server.core.errors import OverloadedError
 from server.core.repo_base import _CHClient, _default_client, param_slices
 from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS, ConversationRole
 
@@ -768,8 +769,10 @@ async def tombstone_embedding_if_message_gone(
     Those tombstone the messages, then run their last embeddings pass; the writer
     stores the embedding, then calls this. So for a message the messages mutation
     covered, either that last pass sees the embedding or this read sees the tombstone.
-    A message that lands after the mutation began is not covered: it stays live, and so
-    does its embedding."""
+    A message that lands after the mutation began is not covered and stays live. After
+    a compaction its embedding stays live too; a delete's last pass tombstones every
+    embedding of this agent's in the thread, so it takes one that landed before that
+    pass and leaves one that lands after it."""
     ch = ch or _default_client()
     with sequential_reads():
         row = await ch.query_one(
@@ -871,8 +874,8 @@ async def _tombstone_embeddings(
 
     The embeddings key has no agent, so a turn several agents logged is one row. It
     stays while another agent holds a live copy with the row's text, and passes to that
-    copy when its own agent holds none. Both writes copy the row with its `ts`, so they
-    replace it in its partition (the later insert wins a `ts` tie)."""
+    copy when its own agent holds none. The reconcile copies the row with its `ts`, so
+    the copy replaces it in its partition (the later insert wins a `ts` tie)."""
     params: dict[str, Any] = {
         "now": when,
         "org": org,
@@ -896,17 +899,18 @@ async def _tombstone_embeddings(
         for turns, bound in parts:
             # A reconcile can read a peer's copy as live and land after that peer's whole
             # delete. So it repeats until a read taken after its last write finds no
-            # unheld row: each round moves rows off agents that no longer hold them, and
-            # needs another agent's whole delete inside the last one to go again.
+            # unheld row; a round goes again only when a write landed on these turns
+            # between its reconcile and that read.
             for _ in range(_RECONCILE_ROUNDS):
                 await ch.execute(_reconcile_sql(turns), bound)
-                left = await ch.query_one(
-                    "SELECT count() AS n FROM (" + _unheld_embeddings(turns) + ")", params=bound
-                )
-                if not left or not left["n"]:
+                if not await ch.query_all(
+                    "SELECT 1 FROM (" + _unheld_embeddings(turns) + ") LIMIT 1", params=bound
+                ):
                     break
             else:
-                raise RuntimeError(f"embeddings of thread {thread_id} still unheld")
+                raise OverloadedError(
+                    f"embeddings of thread {thread_id} kept changing; retry", retry_after_s=1
+                )
 
 
 async def titler_candidates(

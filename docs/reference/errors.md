@@ -539,7 +539,7 @@ Raised in `server/transport/mcp_auth.py`.
 
 #### `OVERLOADED`
 
-HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: every pooled ClickHouse connection was busy past `ch_pool_wait_ms`, or a sibling held an override's lock past its wait. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: every pooled ClickHouse connection was busy past `ch_pool_wait_ms`, a sibling held an override's lock past its wait, or a conversation delete or compaction kept meeting writes… What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `OVERRIDE_NOT_STORED`
 

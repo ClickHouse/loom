@@ -139,8 +139,8 @@ class ConversationDeleteInput(BaseModel):
 
     Sets `tombstoned_at`: read paths filter tombstoned rows, and the retention TTL
     on `loom.conversations`, when set, hard-deletes the messages. A turn another
-    agent of the thread holds live with the same text keeps its embedding, which the
-    two copies share.
+    agent of the thread holds live with the same text, as a turn search indexes (user,
+    assistant or a summary), keeps its embedding, which the two copies share.
 
     `confirm_thread_id` must equal `thread_id` — guards against UI-dropdown
     accidents. Single-thread scope; for user/namespace-wide erasure use
@@ -330,7 +330,8 @@ class ConversationCompactInput(BaseModel):
 
     The turns are the oldest ones before the last `keep_recent` that fit the
     summarizer's prompt; their embeddings are tombstoned too, except a turn another
-    agent of the thread still holds live with the same text.
+    agent of the thread still holds live with the same text, as a turn search indexes
+    (user, assistant or a summary).
     The summary carries metadata.compacted_from=[msg_ids]; when its embed fails,
     nothing is written (`reason="embed-failed"`).
 
