@@ -2172,6 +2172,12 @@ def test_an_attribute_named_twice_in_two_cases_is_refused(
     ("method", "body"),
     [
         ("put", {"userName": "lee@example.com", "UserName": "x", "active": False}),
+        ("put", {"userName": "lee@example.com", "Active": True, "active": False}),
+        ("put", {"userName": "lee@example.com", "active": False, "Active": "no"}),
+        (
+            "patch",
+            {"Operations": [{"op": "replace", "value": {"active": False, f"{_URN}active": True}}]},
+        ),
         ("patch", {"Operations": [], "operations": [_OFF]}),
         ("patch", {"Operations": [{**_OFF, "Value": True}]}),
         ("patch", {"Operations": [{"op": "replace", "value": {"active": False, "Active": True}}]}),

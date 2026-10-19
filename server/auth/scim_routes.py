@@ -183,9 +183,10 @@ def _attributes(op: Any) -> list[tuple[str, Any]]:
     if not isinstance(op, dict):
         raise ScimError(400, "each operation must be an object", "invalidSyntax")
     path, value = str(op.get("path") or ""), op.get("value")
-    if not path and isinstance(value, dict):
-        _lowered(value)  # refuses a name sent twice
-    return _pairs(path, value)
+    pairs = _pairs(path, value)
+    if len({attr for attr, _ in pairs}) < len(pairs):  # in two cases, or with the schema prefix
+        raise ScimError(400, "an attribute is named twice", "invalidSyntax")
+    return pairs
 
 
 def _pairs(path: str, value: Any) -> list[tuple[str, Any]]:
@@ -618,8 +619,11 @@ async def replace_user(uid: str, request: Request) -> JSONResponse:
         raise ScimError(400, "the body names another user", "invalidValue")
     # Read in every spelling: a body refused for an attribute named twice
     # still deactivates when one of them says false.
-    actives = [parse_active(a) for a in _every(body, "active") if a is not None]
-    active = False if False in actives else (actives[0] if actives else None)
+    spellings = [a for a in _every(body, "active") if a is not None]
+    if any(_is_false(a) for a in spellings):
+        active: bool | None = False
+    else:
+        active = parse_active(spellings[0]) if spellings else None
     row = await scim.get(uid)
     if row is None:
         raise _not_found()
