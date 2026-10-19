@@ -213,7 +213,12 @@ async def owe_retirements(
             source_operation=reason,
             source_resource_id=f"{reason}:{pairs[0][1]}",
             error=f"retirement to record: {len(pairs)} row(s)",
-            payload={"pairs": pairs, "retired": [dict(v) for v in victims], "reason": reason},
+            # Entries as the record holds them: ids, keys and identity, never the value.
+            payload={
+                "pairs": pairs,
+                "retired": [retired_entry(v) for v in victims],
+                "reason": reason,
+            },
         )
     except Exception as e:  # noqa: BLE001 — the write goes on; its record is owed after it
         log.warning("auto_resolution: retirement intent not written: %s", e)

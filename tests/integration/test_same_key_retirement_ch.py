@@ -6734,3 +6734,57 @@ async def test_a_point_write_owes_its_retirement_before_the_supersede(
             params={"org": org, "i": intent["id"]},
         )
         assert int(named[0]["n"]) == 1, "the record names its intent"
+
+
+async def test_a_retirement_intent_holds_no_value_and_leaves_with_its_user(
+    ch, org, monkeypatch
+) -> None:
+    """The intent a newest_wins same-key retirement owes holds the retired row's ids and
+    identity, not its value, and a user erasure deletes it."""
+    from server.erasure.store import steps_ledgers
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, conflicts
+    from server.memory.app.write import handle_memory_set
+    from server.memory.domain.conflicts import ConflictResult
+
+    async def _clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    monkeypatch.setattr(conflicts, "check_on_commit", _clear)
+    now = datetime.now(UTC)
+    await ch.insert(
+        "loom.namespaces",
+        [
+            {
+                "org": org,
+                "namespace": NS,
+                "created_at": now,
+                "updated_at": now,
+                "active": True,
+                "default_conflict_policy": "newest_wins",
+            }
+        ],
+    )
+    secret = "The office door code is 4417"
+    for session, value in (("s1", secret), ("s2", "The office door code changed")):
+        await handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                session_id=session,
+                memory_key="door_code",
+                value=value,
+            )
+        )
+        await after_write.drain()
+    intents = await _owed(ch, org, "active")
+    assert intents and all("4417" not in i["payload"] for i in intents)
+    await steps_ledgers.delete_projection_failures_by_user(org, USER, ch=ch)
+    left = await ch.query_all(
+        "SELECT count() AS n FROM loom.memory_projection_failures WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert int(left[0]["n"]) == 0
