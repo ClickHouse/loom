@@ -151,7 +151,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             judged = await resolver.resolve_row(
                 r, policy=policy, counts=p.counts, shown=shown, intents=p.done_intents
             )
-            if judged is not None and await _out_of_attempts(r, shown | judged):
+            if judged is not None and await _out_of_attempts(r, judged):
                 p.counts.errored += 1
                 p.errors.append(f"{namespace}/{r.get('memory_key')}: a flagged peer never judged")
         except (resolver.ModelUnavailable, LeaseUnavailable) as e:
@@ -181,8 +181,8 @@ def _attempt_key(r: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 async def _out_of_attempts(r: Mapping[str, Any], shown: frozenset[str] = frozenset()) -> bool:
-    """One more attempt that left the row owed (`shown`: the peers judged so far); True,
-    and the row stamped, on the last."""
+    """One more attempt that left the row owed (`shown`: the peers it judged, kept with
+    those judged before); True, and the row stamped, on the last."""
     key = _attempt_key(r)
     attempts = _state.attempts
     if len(attempts) > 10_000:
