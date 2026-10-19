@@ -156,7 +156,7 @@ async def _write_restore(
         ) from e
     try:
         await insert_memory_versions([restore_row], ch=ch)
-    except Exception as e:  # an insert whose answer was lost may still have landed
+    except Exception as e:  # an insert whose answer was lost may have landed
         if not await _restore_landed(input, new_version):
             raise BackendUnavailableError(
                 "the Undo may not have landed; retry the Undo",
@@ -181,7 +181,7 @@ async def _unsupersede_embeddings(input: MemoryRestoreInput, status: str, *, ch:
             status=status,
             ch=ch,
         )
-    except Exception:
+    except Exception:  # the restore landed; the search row is best effort
         log.warning(
             "memory.restore: embeddings re-emit failed for %s",
             input.memory_key,

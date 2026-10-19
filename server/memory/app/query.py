@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from typing import Any
 
 from fastapi import HTTPException
@@ -838,8 +839,6 @@ async def handle_memory_statuses(input: MemoryStatusesInput) -> MemoryStatusesOu
     """memory.statuses: each id's current status in the namespace, inside the request's
     read scope. An id that is not a UUID, or that the namespace does not hold, is left
     out, as one the caller may not read is."""
-    import uuid
-
     import server.memory.store as memory_repo
 
     ids = []
