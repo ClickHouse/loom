@@ -27,7 +27,7 @@ from server.memory.app.projections import (
     resolved_entity_list,
 )
 from server.memory.app.provenance import writer_actor
-from server.memory.app.set_commit import _set_next, _set_peers
+from server.memory.app.set_commit import set_next, set_peers
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
@@ -582,12 +582,12 @@ def land_restated_merges(
         src, res = state.results[src_i], state.results[res_i]
         # The row landed as the restatement's write: it met the new value, so no peer.
         res.version, res.memory_id = src.version, src.memory_id
-        res.conflict_verdict, res.peers, res.next = "clear", [], _set_next("clear", [])
+        res.conflict_verdict, res.peers, res.next = "clear", [], set_next("clear", [])
         # The earlier entry answers its merge with the peers it was judged against (the
         # merge target among them): stamped as a stale clear, it named none.
         src.version, src.memory_id = 0, ""
-        src.peers = _set_peers(verdict_of.get(id(row)))
-        src.conflict_verdict, src.next = "merge", _set_next("merge", src.peers)
+        src.peers = set_peers(verdict_of.get(id(row)))
+        src.conflict_verdict, src.next = "merge", set_next("merge", src.peers)
         plan.merged.append(src.memory_key)
         plan.reinforce_ids.append(target)
         # A copy of this merge reinforces the same target.

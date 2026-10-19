@@ -350,14 +350,14 @@ def test_peers_are_closest_first_and_capped_at_five() -> None:
     peers = [
         _peer(memory_id=f"id{i}", memory_key=f"k{i}", similarity=0.85 + i / 100) for i in range(7)
     ]
-    out = set_commit._set_peers(NS(verdict="conflict", peers=peers, refined_peers=[]))
+    out = set_commit.set_peers(NS(verdict="conflict", peers=peers, refined_peers=[]))
     assert len(out) == 5
     assert [p.memory_key for p in out] == ["k6", "k5", "k4", "k3", "k2"]
 
 
 def test_refined_peers_are_listed_once() -> None:
     p = _peer()
-    out = set_commit._set_peers(NS(verdict="refines", peers=[p], refined_peers=[p]))
+    out = set_commit.set_peers(NS(verdict="refines", peers=[p], refined_peers=[p]))
     assert [x.memory_id for x in out] == [_PEER_ID]
 
 

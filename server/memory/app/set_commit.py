@@ -109,7 +109,7 @@ def _peer_id_in_read_scope(conflict_result: Any, memory_id: str) -> str:
     return memory_id if memory_id and _peer_in_read_scope(peer) else ""
 
 
-def _set_peers(conflict_result: Any) -> list[Any]:
+def set_peers(conflict_result: Any) -> list[Any]:
     """The rows a verdict was reached against, as the wire shape memory.set
     returns: closest first, at most SET_PEERS_MAX, the value
     clipped to an excerpt, only those inside the read scope. `refines` lists
@@ -143,7 +143,7 @@ def _set_peers(conflict_result: Any) -> list[Any]:
     return out
 
 
-def _set_next(
+def set_next(
     verdict: str,
     peers: list[Any],
     *,
@@ -388,7 +388,7 @@ async def _set_conflict_verdict(
         )
     # The rows the verdict was reached against ride the response so the caller can act on
     # the verdict without a second read.
-    peers_out = _set_peers(conflict_result)
+    peers_out = set_peers(conflict_result)
     if conflict_result.verdict == "rejected" and input.dry_run:
         # A dry run answers the question it was asked — "what would happen?"
         # — as a verdict, not as the 409 the real write would raise. Nothing
@@ -408,7 +408,7 @@ async def _set_conflict_verdict(
                 degraded=_degradations.current(),
                 conflict_verdict="rejected",
                 peers=peers_out,
-                next=_set_next("rejected", peers_out),
+                next=set_next("rejected", peers_out),
                 noop=True,
                 dry_run=True,
             ),
@@ -508,7 +508,7 @@ async def _set_merge(
     # The facts named are the merged row's only when it is the writer's own: another's
     # row would hold them open for as long as it lives.
     own_row = existing if existing is not None and _writers_own(existing, input) else None
-    hint = _set_next(
+    hint = set_next(
         "merge",
         merge_peers,
         repeated_merge=repeated_merge,
@@ -590,7 +590,7 @@ def _set_dry_run_answer(
         degraded=_degradations.current(),
         conflict_verdict=conflict_result.verdict,
         peers=peers_out,
-        next=_set_next(conflict_result.verdict, peers_out),
+        next=set_next(conflict_result.verdict, peers_out),
         noop=True,
         dry_run=True,
     )
@@ -797,7 +797,7 @@ async def _set_after_write(
         degraded=_degradations.current(),
         conflict_verdict=conflict_result.verdict,
         peers=peers_out,
-        next=_set_next(conflict_result.verdict, peers_out),
+        next=set_next(conflict_result.verdict, peers_out),
         chunks_written=chunks_written,
         status=str(w.memory_row.get("status") or "active"),
     )

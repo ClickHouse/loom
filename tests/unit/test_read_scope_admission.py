@@ -502,7 +502,7 @@ async def test_the_conversation_leg_answers_nothing_under_a_bounded_scope(monkey
 
 
 def test_a_conflict_verdict_names_only_peers_inside_the_scope() -> None:
-    from server.memory.app.set_commit import _set_peers
+    from server.memory.app.set_commit import set_peers
 
     _bind(PINNED, U1)
 
@@ -512,10 +512,10 @@ def test_a_conflict_verdict_names_only_peers_inside_the_scope() -> None:
         )
 
     result = SimpleNamespace(peers=[peer("1", "u1"), peer("2", "u2")], refined_peers=[])
-    assert [p.memory_id for p in _set_peers(result)] == ["1"]
+    assert [p.memory_id for p in set_peers(result)] == ["1"]
     # A write whose scope cannot be resolved names no peer at all.
     _bind(PINNED, AuthInsufficientError("pinned to u1"))
-    assert _set_peers(result) == []
+    assert set_peers(result) == []
 
 
 # --------------------------------------------------------------------------

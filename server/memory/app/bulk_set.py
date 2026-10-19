@@ -59,7 +59,7 @@ from server.memory.app.projections import (
     write_entity_vectors,
 )
 from server.memory.app.provenance import writer_actor
-from server.memory.app.set_commit import _set_next
+from server.memory.app.set_commit import set_next
 from server.memory.domain.conflicts import kept_versions
 from server.memory.domain.memory_types import is_embedded
 
@@ -386,7 +386,7 @@ def _settle_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
         )
         if cleared:
             res.conflict_verdict = "clear"
-            res.next = _set_next(res.conflict_verdict, res.peers)
+            res.next = set_next(res.conflict_verdict, res.peers)
 
 
 async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
