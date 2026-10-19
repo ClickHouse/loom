@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
@@ -35,18 +35,22 @@ import {
   conflictKeys,
   getProvenance,
   moveMemory,
+  relatedFacts,
 } from "../api";
 import { useStore } from "../lib/state";
-import { graphSeedHref, onGraphLinkClick } from "../lib/graphLink";
+import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
-import { SkeletonText } from "./Skeleton";
 import { DiffView } from "./DiffView";
 import { toast } from "./Toast";
 import { IconButton } from "./IconButton";
-import { Chip, ExternalLink, Tip } from "./ui";
+import { SkeletonText } from "./Skeleton";
+import { Chip, ExternalLink, Loading, LoadingSkeleton, Tip } from "./ui";
+import { AnchoredPopover } from "./ui/AnchoredPopover";
+import { CHIP_OUTLINE_CLASS } from "./ui/Chip";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
-import { relativeTime, formatValue, humanizeError, SENTINEL_AGENTS } from "../lib/format";
+import { ThreadReplayDialog, type ReplayThread } from "./ThreadReplayDialog";
+import { relativeTime, formatValue, humanizeError, parseChTime, SENTINEL_AGENTS } from "../lib/format";
 import { detectEncodedValue } from "../lib/encoded";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
@@ -103,12 +107,18 @@ interface InspectorProps {
   memoryKey: string;
   onClose: () => void;
   onChanged: () => void;
+  /** "Open in Graph" on an entity, where the drawer already sits on the Graph: walk from
+   *  it there. Elsewhere the Graph opens as a new history entry (`openGraphAt`). */
+  onWalkEntity?: (entity: string) => void;
+  /** Open another memory in this drawer, where the drawer is the page's own (the Graph's):
+   *  elsewhere it is the store's `inspect`, which drives the app's drawer. */
+  onInspectMemory?: (key: string) => void;
 }
 
 /**
  * Right-edge drawer showing one memory: value, metadata, tags, provenance,
- * related rows, history and lineage, with edit / pin / verify / copy /
- * delete in a sticky footer.
+ * related rows, history and lineage. The footer is one row: Edit and Delete, and a More
+ * menu with Pin, Verify, Copy to…, Rename and Copy.
  *
  * The shell is a Radix `Dialog`: portal, overlay, focus trap, Escape, body scroll lock;
  * focus returns to the card that opened it on close (captured here — a triggerless Radix
@@ -120,7 +130,14 @@ interface InspectorProps {
  * instantly.
  */
 
-export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: InspectorProps) {
+export function MemoryInspector({
+  identity,
+  memoryKey,
+  onClose,
+  onChanged,
+  onWalkEntity,
+  onInspectMemory,
+}: InspectorProps) {
   const [detail, setDetail] = useState<MemoryDetail | null>(null);
   const [history, setHistory] = useState<MemoryHistoryEntry[] | null>(null);
   const [related, setRelated] = useState<RelatedMemoryRow[] | null>(null);
@@ -133,6 +150,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
   const [diffVersion, setDiffVersion] = useState<number | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
+  // The source conversation, replayed in a dialog over the drawer.
+  const [sourceThread, setSourceThread] = useState<ReplayThread | null>(null);
+  const menuHandsOff = useRef(false);
   // The "Rename (keep redirect)" form — open, the draft destination key, whether the old
   // key stays readable, the last dry-run.
   const [renaming, setRenaming] = useState(false);
@@ -165,8 +185,36 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
     return el instanceof HTMLElement ? el : null;
   });
   const inspect = useStore((s) => s.inspect);
+  const openMemory = onInspectMemory ?? inspect;
   const searchByTag = useStore((s) => s.searchByTag);
   const openConversationThread = useStore((s) => s.openConversationThread);
+  // A dialog over the drawer (Copy to…, the source conversation) owns the keys and the
+  // outside clicks while it is open.
+  const dialogOver = copyOpen || sourceThread !== null;
+  // An entity popover's memory link swaps the drawer in place; the focus goes to the
+  // drawer, as on any open, since the chip that had it is about to go.
+  const inspectInPlace = (key: string) => {
+    openMemory(key);
+    contentRef.current?.focus();
+  };
+  const walkEntity = (entity: string) => {
+    if (onWalkEntity) onWalkEntity(entity);
+    else openGraphAt(entity, { from: `memory ${memoryKey}`, focusKey: entityFocusKey(entity) });
+  };
+  // The rows sharing an entity with this memory, read once for it: every entity popover
+  // keeps the ones that share its entity. A failed read is asked again on the next open.
+  const mentionsRead = useRef<{ key: string; read: Promise<RelatedMemoryRow[]> } | null>(null);
+  const readMentions = useCallback(() => {
+    const key = `${identity.org}/${identity.namespace}/${memoryKey}`;
+    if (mentionsRead.current?.key !== key) {
+      const read = memoryRelated(identity, memoryKey, MENTION_READ).then((r) => r.results ?? []);
+      read.catch(() => {
+        if (mentionsRead.current?.read === read) mentionsRead.current = null;
+      });
+      mentionsRead.current = { key, read };
+    }
+    return mentionsRead.current.read;
+  }, [identity, memoryKey]);
 
   // Escape: cancels an active edit first; while a field has focus it is
   // left to the field; otherwise it closes the drawer. Radix only delivers
@@ -204,7 +252,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
       setExpanded(false);
       return;
     }
-    if (editing || renaming || copyOpen) e.preventDefault();
+    if (editing || renaming || dialogOver) e.preventDefault();
   };
 
   // e/d/p drive edit/delete/pin, ⌘/Ctrl+Enter saves an edit. Bound to the
@@ -212,7 +260,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
   // portals bubble React events through the tree, so the Copy-to dialog's
   // keystrokes are skipped explicitly.
   const onContentKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (copyOpen) return;
+    if (dialogOver) return;
     const t = e.target;
     const typing =
       t instanceof HTMLElement && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable);
@@ -294,7 +342,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
     want("related", () =>
       memoryRelated(identity, k, 5)
         .then((r) => {
-          if (fresh()) setRelated(r.rows || []);
+          if (fresh()) setRelated(r.results ?? []);
         })
         .catch(() => {
           if (fresh()) setRelated([]);
@@ -527,7 +575,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
         toast(`Reload failed: ${humanizeError(e)}`, "error");
       }
     } else {
-      inspect(r.to_key);
+      openMemory(r.to_key);
     }
   };
 
@@ -593,7 +641,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
               </Dialog.Title>
               <LifecycleBadge status={detail?.status} pinned={!!detail?.pinned} />
               {detail?.status === "duplicate" && detail.canonical_key && (
-                <RedirectBadge canonicalKey={detail.canonical_key} onFollow={inspect} />
+                <RedirectBadge canonicalKey={detail.canonical_key} onFollow={openMemory} />
               )}
             </div>
             <div className="flex items-center gap-1 shrink-0">
@@ -608,8 +656,12 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
           </header>
 
           {/* Body */}
-          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6 pb-[80px]">
-            {loading && <SkeletonText lines={5} />}
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 space-y-6">
+            {loading && (
+              <LoadingSkeleton label="Loading memory">
+                <SkeletonText lines={5} />
+              </LoadingSkeleton>
+            )}
 
             {!loading && detail && !detail.found && (
               <div className="text-sm text-text-muted">Memory not found. It may have been deleted.</div>
@@ -715,7 +767,6 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                       <Chip
                         key={t}
                         label={t}
-                        icon="#"
                         tip={`Show all memories tagged ${t}`}
                         onClick={() => searchByTag(t)}
                         onRemove={() => onRemoveTag(t)}
@@ -772,7 +823,14 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                     </Title>
                     <div className="flex flex-wrap gap-1.5 items-center">
                       {(detail.entities || []).map((en) => (
-                        <EntityChip key={en} entity={en} />
+                        <EntityChip
+                          key={en}
+                          entity={en}
+                          identity={identity}
+                          readMentions={readMentions}
+                          onInspect={inspectInPlace}
+                          onWalk={walkEntity}
+                        />
                       ))}
                     </div>
                   </section>
@@ -786,12 +844,16 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                   onToggle={toggleSection}
                 >
                   {!done.has("provenance") ? (
-                    <SkeletonText lines={2} />
+                    <LoadingSkeleton label="Loading provenance">
+                      <SkeletonText lines={2} />
+                    </LoadingSkeleton>
                   ) : provenance && provenance.found ? (
                     <ProvenanceSection
                       provenance={provenance}
-                      onInspect={inspect}
-                      onOpenThread={openConversationThread}
+                      onInspect={openMemory}
+                      onOpenThread={(threadId) =>
+                        setSourceThread({ thread_id: threadId, namespace: identity.namespace })
+                      }
                       embedded
                     />
                   ) : (
@@ -808,7 +870,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                   count={related ? related.length : undefined}
                 >
                   {!done.has("related") || related === null ? (
-                    <SkeletonText lines={2} />
+                    <LoadingSkeleton label="Loading related memories">
+                      <SkeletonText lines={2} />
+                    </LoadingSkeleton>
                   ) : related.length === 0 ? (
                     <SectionEmpty>No memory shares an entity with this one.</SectionEmpty>
                   ) : (
@@ -820,7 +884,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                         >
                           <button
                             type="button"
-                            onClick={() => inspect(r.memory_key)}
+                            onClick={() => openMemory(r.memory_key)}
                             className="w-full text-left font-mono text-xs text-text truncate group-hover:text-accent"
                           >
                             {r.memory_key}
@@ -828,7 +892,14 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                           {r.shared_entities.length > 0 && (
                             <div className="mt-1 flex flex-wrap gap-1">
                               {r.shared_entities.slice(0, 6).map((en) => (
-                                <EntityChip key={en} entity={en} small />
+                                <EntityChip
+                                  key={en}
+                                  entity={en}
+                                  identity={identity}
+                                  readMentions={readMentions}
+                                  onInspect={inspectInPlace}
+                                  onWalk={walkEntity}
+                                />
                               ))}
                             </div>
                           )}
@@ -847,7 +918,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                   count={history && history.length > 1 ? `${history.length} versions` : undefined}
                 >
                   {!done.has("history") || history === null ? (
-                    <SkeletonText lines={2} />
+                    <LoadingSkeleton label="Loading history">
+                      <SkeletonText lines={2} />
+                    </LoadingSkeleton>
                   ) : history.length <= 1 ? (
                     <SectionEmpty>Only this version.</SectionEmpty>
                   ) : (
@@ -924,7 +997,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                   onToggle={toggleSection}
                 >
                   {!done.has("lineage") || lineage === null ? (
-                    <SkeletonText lines={2} />
+                    <LoadingSkeleton label="Loading lineage">
+                      <SkeletonText lines={2} />
+                    </LoadingSkeleton>
                   ) : lineage.length === 0 ? (
                     <SectionEmpty>No lineage steps.</SectionEmpty>
                   ) : (
@@ -947,73 +1022,107 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
             )}
           </div>
 
-          {/* Sticky footer actions */}
+          {/* The actions are the drawer's last row, below the scrolling body, never over it:
+              they wrap to two rows on a narrow drawer. */}
           {detail && detail.found && (
-            <footer className="absolute bottom-0 left-0 right-0 px-5 py-3 border-t border-border bg-surface flex flex-wrap items-center gap-2 shrink-0">
+            <footer className="px-5 py-3 border-t border-border bg-surface flex items-center gap-2 shrink-0">
               {!editing && (
                 <Button type="secondary" htmlType="button" iconLeft="pencil" onClick={onStartEdit}>
                   Edit
                 </Button>
               )}
-              {canTogglePin && (
-                <Button type="secondary" htmlType="button" iconLeft={detail.pinned ? "unpin" : "pin"} onClick={onPin}>
-                  {detail.pinned ? "Unpin" : "Pin"}
-                </Button>
-              )}
-              <Tip
-                content={
-                  detail.verification === "stale"
-                    ? `Verified by ${detail.verified_by}, then edited — re-verify to confirm the current content`
-                    : verified
-                      ? `Verified by ${detail.verified_by}${detail.verified_at ? " · " + relativeTime(detail.verified_at) : ""} — click to remove`
-                      : "Attest that this memory is true, as you"
-                }
-              >
-                <Button
-                  type="secondary"
-                  htmlType="button"
-                  iconLeft={detail.verification === "stale" ? "warning" : verified ? "check-in-circle" : "secure"}
-                  onClick={onVerify}
+              <Dropdown modal={false}>
+                <MenuTrigger>
+                  <IconButton icon="dots-horizontal" label="More actions" tooltip="More" />
+                </MenuTrigger>
+                {/* Radix names the menu after its trigger; the label names it instead. */}
+                <Dropdown.Content
+                  align="start"
+                  side="top"
+                  aria-label="More actions"
+                  aria-labelledby={undefined}
+                  // An item that opens a form or a dialog keeps the focus there, not on the
+                  // trigger.
+                  onCloseAutoFocus={(e) => {
+                    if (menuHandsOff.current) e.preventDefault();
+                    menuHandsOff.current = false;
+                  }}
                 >
-                  {verified ? "Verified" : detail.verification === "stale" ? "Re-verify" : "Verify"}
-                </Button>
-              </Tip>
-              <Tip content="Copy to another namespace">
-                <Button type="secondary" htmlType="button" iconLeft="folder-open" onClick={() => setCopyOpen(true)}>
-                  Copy to…
-                </Button>
-              </Tip>
-              {canMove && !editing && (
-                <Tip content="Move this memory to a new key; the old key keeps answering with a redirect">
-                  <Button
-                    type="secondary"
-                    htmlType="button"
-                    iconLeft="arrow-right"
-                    onClick={() => setRenaming((v) => !v)}
-                    aria-expanded={renaming}
-                    aria-label="Rename (keep redirect)"
+                  {canTogglePin && (
+                    <Dropdown.Item onSelect={onPin}>
+                      <MenuLabel icon={detail.pinned ? "unpin" : "pin"}>{detail.pinned ? "Unpin" : "Pin"}</MenuLabel>
+                    </Dropdown.Item>
+                  )}
+                  <Dropdown.Item onSelect={onVerify}>
+                    <MenuLabel
+                      icon={detail.verification === "stale" ? "warning" : verified ? "check-in-circle" : "secure"}
+                    >
+                      {detail.verification === "stale" ? "Re-verify" : verified ? "Remove verification" : "Verify"}
+                    </MenuLabel>
+                  </Dropdown.Item>
+                  <Dropdown.Item
+                    onSelect={() => {
+                      menuHandsOff.current = true;
+                      setCopyOpen(true);
+                    }}
                   >
-                    Rename
-                  </Button>
-                </Tip>
+                    <MenuLabel icon="folder-open">Copy to…</MenuLabel>
+                  </Dropdown.Item>
+                  {canMove && !editing && (
+                    <Dropdown.Item
+                      onSelect={() => {
+                        menuHandsOff.current = true;
+                        setRenaming(true);
+                      }}
+                    >
+                      <MenuLabel icon="arrow-right">Rename</MenuLabel>
+                    </Dropdown.Item>
+                  )}
+                  <Dropdown.Item onSelect={onCopyAll}>
+                    <MenuLabel icon="copy">Copy</MenuLabel>
+                  </Dropdown.Item>
+                </Dropdown.Content>
+              </Dropdown>
+              {/* Verify sits in More; who attested stays in view. */}
+              {(verified || detail.verification === "stale") && (
+                <span className="min-w-0 inline-flex items-center gap-1 text-xs text-text-muted">
+                  <Icon name={verified ? "check-in-circle" : "warning"} size="sm" aria-hidden="true" />
+                  <span className="truncate">
+                    {verified ? `Verified by ${detail.verified_by}` : "Edited since verified"}
+                  </span>
+                </span>
               )}
-              <Tip content="Copy the whole memory — key, value, metadata and tags — to the clipboard">
-                <Button type="secondary" htmlType="button" iconLeft="copy" onClick={onCopyAll}>
-                  Copy
-                </Button>
-              </Tip>
               <div className="flex-1" />
               <Button type="danger" htmlType="button" iconLeft="trash" onClick={onDelete}>
                 Delete
               </Button>
             </footer>
           )}
-          <CopyToNamespaceDialog
-            open={copyOpen}
-            onOpenChange={setCopyOpen}
-            source={identity}
-            memoryKey={memoryKey}
-            onCopied={onChanged}
+          <CopyToNamespaceDialog open={copyOpen} onOpenChange={setCopyOpen} source={identity} memoryKey={memoryKey} />
+          {/* Reading the source conversation keeps the drawer: the replay opens over it, and
+              Conversations is one link away. */}
+          <ThreadReplayDialog
+            identity={identity}
+            thread={sourceThread}
+            onClose={() => setSourceThread(null)}
+            actions={
+              sourceThread && (
+                <Link
+                  href={`/conversations?thread=${encodeURIComponent(sourceThread.thread_id)}`}
+                  size="sm"
+                  onClick={(e: React.MouseEvent) => {
+                    if (isModifiedClick(e)) return;
+                    e.preventDefault();
+                    const { thread_id } = sourceThread;
+                    setSourceThread(null);
+                    openConversationThread(thread_id);
+                  }}
+                >
+                  Open in Conversations
+                  <Icon name="arrow-right" size="sm" aria-hidden="true" />
+                </Link>
+              )
+            }
           />
         </Dialog.Content>
       </Dialog.Portal>
@@ -1150,7 +1259,8 @@ function ProvenanceSection({
               className="w-full text-left px-2 py-1.5 rounded-md hover:bg-surface-2 transition-colors group"
             >
               <div className="flex items-center gap-1.5 text-xs text-text-muted mb-0.5">
-                <span>{lk.direction === "out" ? "→" : "←"}</span>
+                <Icon name={lk.direction === "out" ? "arrow-right" : "arrow-left"} size="xs" aria-hidden="true" />
+                <span className="sr-only">{lk.direction === "out" ? "Links to" : "Linked from"}</span>
                 <span>{lk.relation || "linked"}</span>
                 {lk.label && <span className="text-text-muted">· {lk.label}</span>}
               </div>
@@ -1168,7 +1278,8 @@ function ProvenanceSection({
  *  never — the sentinel is truthy, so a plain `? :` would print "01/01/1970". */
 function recalledLabel(recallCount: number | undefined, lastRecalledAt: string | null | undefined): string {
   const n = recallCount ?? 0;
-  if (n === 0 || !lastRecalledAt || new Date(lastRecalledAt).getFullYear() <= 1970) return "Never recalled";
+  const last = parseChTime(lastRecalledAt);
+  if (n === 0 || !last || last.getFullYear() <= 1970) return "Never recalled";
   return `${n}× · ${relativeTime(lastRecalledAt)}`;
 }
 
@@ -1337,7 +1448,8 @@ function ExpiryEditor({
   onChange: (ttlSeconds: number | null) => void;
 }) {
   const current = expiresAt ? `Expires ${relativeTime(expiresAt)}` : "Never expires";
-  const isExpired = expiresAt ? new Date(expiresAt).getTime() < Date.now() : false;
+  const expiry = parseChTime(expiresAt);
+  const isExpired = !!expiry && expiry.getTime() < Date.now();
 
   return (
     <div className="inline-flex items-center gap-2">
@@ -1567,23 +1679,238 @@ function LifecycleBadge({ status, pinned }: { status?: string; pinned: boolean }
   return (
     <span className="inline-flex items-center gap-0.5">
       <Badge size="sm" state={info.state} text={info.text} />
-      <IconButton icon="info-in-circle" size="xs" label={`About ${info.text.toLowerCase()}`} tooltip={info.about} />
+      <IconButton icon="info-in-circle" size="sm" label={`About ${info.text.toLowerCase()}`} tooltip={info.about} />
     </span>
   );
 }
 
-/** An entity on the memory, as a link into the Graph walked from it. An anchor, so
- * cmd-click opens the walk in a new tab. */
-function EntityChip({ entity, small = false }: { entity: string; small?: boolean }) {
+/** A menu item's icon and label. Not Dropdown.Item's `icon`: Click UI names that svg
+ *  after the icon, so the item's spoken name would carry it (as in layout/Header.tsx). */
+function MenuLabel({ icon, children }: { icon: IconName; children: React.ReactNode }) {
   return (
-    <a
-      href={graphSeedHref(entity)}
-      onClick={onGraphLinkClick(entity)}
-      className={`inline-flex items-center gap-1 rounded-md bg-surface-2 text-text no-underline hover:text-accent transition-colors ${small ? "text-xs px-1.5 py-px" : "text-xs px-2 py-0.5"}`}
+    <span className="inline-flex items-center gap-2">
+      <Icon name={icon} size="sm" aria-hidden="true" />
+      {children}
+    </span>
+  );
+}
+
+/** The history focus key of an entity chip: Back from the Graph focuses it again. */
+function entityFocusKey(entity: string): string {
+  return `entity:${entity}`;
+}
+
+// `memory.related` is asked for this many rows to count the memories that share an entity.
+const MENTION_READ = 100;
+const POPOVER_LIST = 5;
+
+/**
+ * An entity on the memory. A plain click opens a popover in the drawer (reading it keeps
+ * the person where they are): the memories that also mention it, which swap the drawer in
+ * place, its first neighbours, and "Open in Graph". The chip stays an anchor to the walk,
+ * so a cmd- or ctrl-click opens the Graph in a new tab. The popover takes the focus to its
+ * first link; Escape closes it and gives the focus back to the chip, the drawer open.
+ */
+function EntityChip({
+  entity,
+  identity,
+  readMentions,
+  onInspect,
+  onWalk,
+}: {
+  entity: string;
+  identity: Identity;
+  readMentions: () => Promise<RelatedMemoryRow[]>;
+  onInspect: (key: string) => void;
+  onWalk: (entity: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const chipRef = useRef<HTMLAnchorElement | null>(null);
+  // A pick that leaves the chip (a memory link, Open in Graph) does not hand focus back.
+  const leaving = useRef(false);
+  const leave = (go: () => void) => {
+    leaving.current = true;
+    setOpen(false);
+    go();
+  };
+  return (
+    <AnchoredPopover
+      open={open}
+      onOpenChange={setOpen}
+      anchor={
+        <a
+          ref={chipRef}
+          href={graphSeedHref(entity)}
+          data-focus-key={entityFocusKey(entity)}
+          aria-label={`Entity ${entity}`}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          onClick={(e) => {
+            if (isModifiedClick(e)) return;
+            e.preventDefault();
+            leaving.current = false;
+            setOpen((v) => !v);
+          }}
+          className={`${CHIP_OUTLINE_CLASS} no-underline transition-colors`}
+        >
+          <Icon name="share-network" size="xs" aria-hidden="true" />
+          {entity}
+        </a>
+      }
+      aria-label={`Entity ${entity}`}
+      // The summary takes the focus and hands it to its first link once the links have
+      // loaded (Radix would focus the one link drawn before they arrive).
+      onOpenAutoFocus={(e) => {
+        e.preventDefault();
+        if (e.currentTarget instanceof HTMLElement)
+          e.currentTarget.querySelector<HTMLElement>("[data-entity-summary]")?.focus();
+      }}
+      onCloseAutoFocus={(e) => {
+        e.preventDefault();
+        if (!leaving.current) chipRef.current?.focus();
+      }}
     >
-      <Icon name="share-network" size="xs" aria-hidden="true" />
-      <span className="sr-only">Open the graph around </span>
-      {entity}
-    </a>
+      {open && (
+        <EntitySummary
+          entity={entity}
+          identity={identity}
+          readMentions={readMentions}
+          onInspect={(key) => leave(() => onInspect(key))}
+          onWalk={() => leave(() => onWalk(entity))}
+        />
+      )}
+    </AnchoredPopover>
+  );
+}
+
+/** The popover's body: what the entity is and where else it appears. Reads when opened —
+ *  the memory's `memory.related` rows (read once per memory, kept to the ones sharing
+ *  this entity) and one hop of `facts.related`. */
+function EntitySummary({
+  entity,
+  identity,
+  readMentions,
+  onInspect,
+  onWalk,
+}: {
+  entity: string;
+  identity: Identity;
+  readMentions: () => Promise<RelatedMemoryRow[]>;
+  onInspect: (key: string) => void;
+  onWalk: () => void;
+}) {
+  const [mentions, setMentions] = useState<{ keys: string[]; capped: boolean } | null | "failed">(null);
+  const [neighbours, setNeighbours] = useState<string[] | null | "failed">(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // The focus moves to the first link once the mentions are in, unless the person has
+  // already moved it.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (mentions && root && document.activeElement === root) root.querySelector<HTMLElement>("button, a")?.focus();
+  }, [mentions]);
+  useEffect(() => {
+    let live = true;
+    const want = entity.toLowerCase();
+    readMentions()
+      .then((rows) => {
+        if (!live) return;
+        const keys = rows
+          .filter((row) => row.shared_entities.some((e) => e.toLowerCase() === want))
+          .map((row) => row.memory_key);
+        setMentions({ keys, capped: rows.length >= MENTION_READ });
+      })
+      .catch(() => {
+        // A failed read says so: "mentioned only in this memory" would be a claim.
+        if (live) setMentions("failed");
+      });
+    relatedFacts({ org: identity.org, namespace: identity.namespace }, want, { top_k: POPOVER_LIST })
+      .then((r) => {
+        if (live) setNeighbours((r.related || []).map((n) => n.entity).slice(0, POPOVER_LIST));
+      })
+      .catch(() => {
+        if (live) setNeighbours("failed");
+      });
+    return () => {
+      live = false;
+    };
+  }, [entity, identity, readMentions]);
+
+  // This memory mentions it too.
+  const total = mentions && mentions !== "failed" ? mentions.keys.length + 1 : 0;
+  return (
+    <div ref={rootRef} tabIndex={-1} className="space-y-3 text-sm" data-entity-summary="" data-testid="entity-popover">
+      <div>
+        <div className="font-medium text-text break-words">{entity}</div>
+        <div className="text-xs text-text-muted">Entity</div>
+      </div>
+      <section aria-label="Memories that mention it">
+        {mentions === null ? (
+          <Loading layout="inline" label="Loading memories" />
+        ) : mentions === "failed" ? (
+          <div className="text-xs text-text-muted">Couldn't load the memories that mention it.</div>
+        ) : (
+          <>
+            <div className="text-xs text-text-muted mb-1">
+              {/* A cut-off read (rows ranked by all the entities they share) may miss rows
+                  that share only this one: it says "at least", never "only". */}
+              {mentions.capped
+                ? `Mentioned in at least ${total} ${total === 1 ? "memory" : "memories"}`
+                : total === 1
+                  ? "Mentioned only in this memory"
+                  : `Mentioned in ${total} memories`}
+            </div>
+            {mentions.keys.length > 0 && (
+              <ul className="space-y-1">
+                {mentions.keys.slice(0, POPOVER_LIST).map((key) => (
+                  <li key={key} className="min-w-0">
+                    <Link
+                      component="button"
+                      type="button"
+                      size="sm"
+                      onClick={() => onInspect(key)}
+                      className="max-w-full font-mono text-left break-all"
+                    >
+                      {key}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+      </section>
+      <section aria-label="Neighbours">
+        <div className="text-xs text-text-muted mb-1">Neighbours</div>
+        {neighbours === null ? (
+          <Loading layout="inline" label="Loading neighbours" />
+        ) : neighbours === "failed" ? (
+          <div className="text-xs text-text-muted">Couldn't load neighbours.</div>
+        ) : neighbours.length === 0 ? (
+          <div className="text-xs text-text-muted">None recorded</div>
+        ) : (
+          <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-text">
+            {neighbours.map((n) => (
+              <li key={n} className="break-all">
+                {n}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <div className="border-t border-border pt-2">
+        <Link
+          href={graphSeedHref(entity)}
+          size="sm"
+          onClick={(e: React.MouseEvent) => {
+            if (isModifiedClick(e)) return;
+            e.preventDefault();
+            onWalk();
+          }}
+        >
+          Open in Graph
+          <Icon name="arrow-right" size="sm" aria-hidden="true" />
+        </Link>
+      </div>
+    </div>
   );
 }

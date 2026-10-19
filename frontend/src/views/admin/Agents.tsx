@@ -1,15 +1,20 @@
 import { useState } from "react";
 import { useAbortableEffect } from "../../lib/hooks";
-import { Button } from "@clickhouse/click-ui/Button";
+import { Badge } from "@clickhouse/click-ui/Badge";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Table } from "@clickhouse/click-ui/Table";
 import { useStore } from "../../lib/state";
 import { listConnectedAgents, type ConnectedAgentRow } from "../../api";
-import { relativeTime } from "../../lib/format";
-import { Skeleton } from "../../components/Skeleton";
-import { EmptyState } from "../../components/EmptyState";
+import { parseChTime } from "../../lib/format";
+import { AgentBadge } from "../../components/AgentBadge";
+import { ListState } from "../../components/ui/ListState";
+import { ListTime } from "../../components/ui/ListTime";
+import { ListToolbar } from "../../components/ui/ListToolbar";
+import { BusyButton } from "../../components/ui/BusyButton";
+import { IconButton } from "../../components/IconButton";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
+import { TableSkeleton } from "../../components/Skeleton";
 import { PageHeader } from "../../components/ui";
 
 /**
@@ -21,6 +26,15 @@ import { PageHeader } from "../../components/ui";
  * connection works. Troubleshooting copy lives in the rendered
  * description / empty states below.
  */
+const HEADERS = [
+  { label: "Client" },
+  { label: "Ops" },
+  { label: "Namespaces" },
+  { label: "Primary" },
+  { label: "LLM cost" },
+  { label: "Last seen" },
+];
+
 const WINDOWS = [
   { value: "1", label: "1 hour" },
   { value: "24", label: "24 hours" },
@@ -31,57 +45,96 @@ const WINDOWS = [
 export function Agents() {
   const identity = useStore((s) => s.identity);
   const [windowHours, setWindowHours] = useState<number>(24);
-  const [rows, setRows] = useState<ConnectedAgentRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // The rows read, with the org and window they were read for: another's are not shown.
+  const readFor = `${identity?.org}/${windowHours}`;
+  const [read, setRead] = useState<{ key: string; rows: ConnectedAgentRow[] } | null>(null);
+  const rows = read && read.key === readFor ? read.rows : null;
+  const [error, setError] = useState<unknown>(null);
+  // A refresh keeps the table on screen, marked busy, until it answers; a new window reads
+  // as loading.
+  const [refreshing, setRefreshing] = useState(false);
 
-  const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
+  // Refresh and Retry read again through the effect, so a newer read drops an older one.
+  const [reads, setReads] = useState(0);
+  const load = (signal: AbortSignal, live: () => boolean) => {
     if (!identity) return;
     setError(null);
+    setRefreshing(true);
+    const key = readFor;
     listConnectedAgents({ org: identity.org, window_hours: windowHours }, { signal })
       .then((r) => {
-        if (live()) setRows(r.rows || []);
+        if (live()) setRead({ key, rows: r.rows || [] });
       })
       .catch((e) => {
-        if (live()) setError(String(e?.message || e));
+        if (live()) setError(e);
+      })
+      .finally(() => {
+        if (live()) setRefreshing(false);
       });
   };
-  useAbortableEffect(load, [identity?.org, windowHours]);
+  useAbortableEffect(load, [identity?.org, windowHours, reads]);
 
   if (!identity) return null;
 
   return (
     <PageContainer>
-      <PageHeader title="Agents">
+      <PageHeader
+        title="Agents"
+        actions={
+          <BusyButton
+            type="secondary"
+            htmlType="button"
+            iconLeft="refresh"
+            onClick={() => setReads((n) => n + 1)}
+            busy={refreshing}
+          >
+            Refresh
+          </BusyButton>
+        }
+      >
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
-      <div className="text-sm text-text-muted mb-6 max-w-2xl">
-        Every AI client that writes to Loom identifies itself in the request. This page rolls those requests up so you
-        can see which clients are connected, when each was last active, and how much they're writing. If a client you
-        expect isn't here within seconds of an action, check the config and restart the client.
+      <div className="text-sm text-text-muted mb-4 max-w-[72ch]">
+        The AI clients that write to Loom, when each was last active and how much it writes.{" "}
+        <span className="inline-flex align-middle">
+          <IconButton
+            icon="info-in-circle"
+            size="xs"
+            label="About agents"
+            tooltip="Every client names itself in its requests, and this page rolls them up. If a client you expect is not here within seconds of an action, check its config and restart it."
+          />
+        </span>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+      <ListToolbar
+        label="Time window and count"
+        search={false}
+        count={!error && rows !== null ? `${rows.length} client${rows.length === 1 ? "" : "s"}` : undefined}
+      >
         <ButtonGroup
           aria-label="Time window"
           options={WINDOWS}
           selected={String(windowHours)}
           onClick={(value) => setWindowHours(Number(value))}
         />
-        <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => load()}>
-          Refresh
-        </Button>
-      </div>
+      </ListToolbar>
 
-      {error && <EmptyState icon="plug" title="Couldn't load" description={error} />}
+      {!!error && (
+        <ListState kind="error" things="connected clients" error={error} onRetry={() => setReads((n) => n + 1)} />
+      )}
       {!error && rows === null && (
-        <div className="space-y-2">
-          <Skeleton className="h-12" />
-          <Skeleton className="h-12" />
-          <Skeleton className="h-12" />
-        </div>
+        <Table
+          aria-label="Connected clients"
+          aria-busy
+          size="sm"
+          headers={HEADERS}
+          rows={[]}
+          noDataMessage={<TableSkeleton label="Loading connected clients" />}
+        />
       )}
       {!error && rows !== null && rows.length === 0 && (
-        <EmptyState
+        <ListState
+          kind="empty"
           icon="plug"
           title="No client has written in this window"
           description={
@@ -92,37 +145,36 @@ export function Agents() {
         />
       )}
       {!error && rows !== null && rows.length > 0 && (
-        <Table
-          size="sm"
-          headers={[
-            { label: "Client" },
-            { label: "Ops" },
-            { label: "Namespaces" },
-            { label: "Primary" },
-            { label: "LLM $" },
-            { label: "Last seen" },
-          ]}
-          rows={rows.map((r) => {
-            const stale = Date.now() - new Date(r.last_seen).getTime() > 24 * 3600 * 1000;
-            return {
-              id: r.agent,
-              items: [
-                { label: <span className="font-mono">{r.agent}</span> },
-                { label: <span className="tabular">{r.ops.toLocaleString()}</span> },
-                { label: <span className="tabular">{r.namespaces_touched}</span> },
-                { label: <span className="font-mono text-xs text-text-muted">{r.primary_namespace}</span> },
-                { label: <span className="tabular">{r.cost_usd > 0 ? `$${r.cost_usd.toFixed(4)}` : "—"}</span> },
-                {
-                  label: (
-                    <span className={`tabular ${stale ? "text-warn" : "text-text-muted"}`}>
-                      {relativeTime(r.last_seen)}
-                    </span>
-                  ),
-                },
-              ],
-            };
-          })}
-        />
+        <div data-testid="agents-table" aria-busy={refreshing || undefined}>
+          <Table
+            aria-label="Connected clients"
+            size="sm"
+            headers={HEADERS}
+            rows={rows.map((r) => {
+              const seen = parseChTime(r.last_seen);
+              const stale = !seen || Date.now() - seen.getTime() > 24 * 3600 * 1000;
+              return {
+                id: r.agent,
+                items: [
+                  { label: <AgentBadge agent={r.agent} /> },
+                  { label: <span className="tabular">{r.ops.toLocaleString()}</span> },
+                  { label: <span className="tabular">{r.namespaces_touched}</span> },
+                  { label: <span className="font-mono text-xs text-text-muted">{r.primary_namespace}</span> },
+                  { label: <span className="tabular">{r.cost_usd > 0 ? `$${r.cost_usd.toFixed(4)}` : "—"}</span> },
+                  {
+                    label: (
+                      // Not seen for a day: said by a badge, not by the colour of the time alone.
+                      <span className="inline-flex items-center gap-1.5">
+                        <ListTime time={r.last_seen} quiet className="text-text-muted" />
+                        {stale && <Badge text="Stale" state="warning" size="sm" />}
+                      </span>
+                    ),
+                  },
+                ],
+              };
+            })}
+          />
+        </div>
       )}
     </PageContainer>
   );

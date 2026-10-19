@@ -110,9 +110,7 @@ export function ProblemsBanner() {
                     className="mr-1.5"
                   />
                   <span className="text-text">{p.message}</span> <span className="text-text-muted">Fix: </span>
-                  <code className="font-mono text-xs bg-surface-2 px-1 py-0.5 rounded-sm break-words text-text">
-                    {p.fix}
-                  </code>
+                  <code className="code-inline text-xs break-words">{p.fix}</code>
                 </li>
               ))}
             </ul>

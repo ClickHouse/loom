@@ -32,21 +32,14 @@ export function MemoryScopeMissing({ view }: { view: View }) {
   const namespace = useStore((s) => s.identity?.namespace ?? "");
   const mine = useStore((s) => s.myNamespaces);
   const setView = useStore((s) => s.setView);
+  const navigate = useStore((s) => s.navigate);
   const openNamespacePicker = useStore((s) => s.openNamespacePicker);
   const title = VIEW_TITLE[view] ?? "Memories";
   const kind = kindOf(namespace, mine);
 
-  /** Open the Graph view in Patterns mode on this tracker namespace: the mode key is
-   *  written into the current entry first so the navigation carries it (`navigationHref`
-   *  keeps `mode` for graph). */
-  const openPatterns = () => {
-    try {
-      history.replaceState(null, "", `${window.location.pathname}?mode=patterns`);
-    } catch {
-      /* history unavailable */
-    }
-    setView("graph");
-  };
+  /** Open the Graph view in Patterns mode on this tracker namespace, as a new history
+   *  entry: Back returns here. */
+  const openPatterns = () => navigate("graph", { query: { mode: "patterns" } });
 
   let body;
   if (!namespace) {

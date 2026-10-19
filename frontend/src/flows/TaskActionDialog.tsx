@@ -22,7 +22,7 @@ import {
   type TaskListRow,
   type TaskRow,
 } from "../api/tasks";
-import { ACTION_LABEL, PRIORITY_LABEL, isoFromLocal, type TaskAction } from "../lib/tasks";
+import { ACTION_LABEL, PRIORITY_LABEL, actionDone, isoFromLocal, type TaskAction } from "../lib/tasks";
 import { humanizeError } from "../lib/format";
 import { toast } from "../components/Toast";
 import { CancelButton, DateTimeField, DialogFrame, ErrorNote } from "./TaskDialogFrame";
@@ -47,6 +47,8 @@ interface Props {
    *  read or post into — the ones a blind post can reach. */
   inboxes?: Inbox[];
   onDone: (task: TaskRow, replacement?: TaskRow) => void;
+  /** Where the focus goes as the dialog closes; without it, back to the control that opened it. */
+  onCloseAutoFocus?: (e: Event) => void;
 }
 
 const BLOCKED_ON: ReadonlyArray<{ value: BlockedOn; label: string }> = [
@@ -78,11 +80,22 @@ const NEEDS_REASON: ReadonlySet<ReasonAction> = new Set([
   "reassign",
   "reopen",
 ]);
-const DESTRUCTIVE: ReadonlySet<ReasonAction> = new Set(["fail", "wont_do", "cancel"]);
+// The danger button for a move that throws work away. Won't do is a decision with a reason,
+// undone by Reopen: the primary.
+const DESTRUCTIVE: ReadonlySet<ReasonAction> = new Set(["fail", "cancel"]);
 /** The owner writes a task in progress must fence with its current lease. */
 const FENCED: ReadonlySet<ReasonAction> = new Set(["complete", "fail", "defer", "block"]);
 
-export function TaskActionDialog({ open, onOpenChange, identity, action, task, inboxes = [], onDone }: Props) {
+export function TaskActionDialog({
+  open,
+  onOpenChange,
+  identity,
+  action,
+  task,
+  inboxes = [],
+  onDone,
+  onCloseAutoFocus,
+}: Props) {
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
   const [priority, setPriority] = useState<number>(task.priority);
@@ -159,7 +172,7 @@ export function TaskActionDialog({ open, onOpenChange, identity, action, task, i
           result = await reassignTask(identity, id, toInbox, r);
           break;
       }
-      toast(`${ACTION_LABEL[action]}: done`, "ok");
+      toast(actionDone(action, task.title), "ok");
       onDone(result.task, result.replacement);
       onOpenChange(false);
     } catch (e) {
@@ -174,6 +187,7 @@ export function TaskActionDialog({ open, onOpenChange, identity, action, task, i
       onOpenChange={onOpenChange}
       title={ACTION_LABEL[action]}
       description={DESCRIPTION[action]}
+      onCloseAutoFocus={onCloseAutoFocus}
       footer={
         <>
           <CancelButton label="Back" />

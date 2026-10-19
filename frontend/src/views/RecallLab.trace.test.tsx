@@ -5,7 +5,7 @@ import { useStore } from "../lib/state";
 import { RecallLab } from "./RecallLab";
 
 // A scored query whose answer lands after the reader typed the next one is dropped: the
-// hits on screen always belong to the query in the box, and "Scoring…" stays up until the
+// hits on screen always belong to the query in the box, and "Loading scores" stays up until the
 // current query answers.
 
 const searchMemory = vi.fn();
@@ -75,7 +75,7 @@ describe("Recall Lab: score a query", () => {
     expect(screen.getByText("excerpt of rollback_runbook")).toBeInTheDocument();
   });
 
-  it("keeps Scoring… up while the current query is in flight, even when the superseded one answers", async () => {
+  it("keeps Loading scores up while the current query is in flight, even when the superseded one answers", async () => {
     const first = deferred();
     const second = deferred();
     searchMemory.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
@@ -87,23 +87,23 @@ describe("Recall Lab: score a query", () => {
     await waitFor(() => expect(searchMemory).toHaveBeenCalledTimes(2));
     first.resolve({ results: [hit("deploy_note")], embedding_model: "m" });
     await new Promise((r) => setTimeout(r, 0));
-    expect(screen.getByText("Scoring…")).toBeInTheDocument();
+    expect(await screen.findByText("Loading scores")).toBeInTheDocument();
     expect(screen.queryByText("excerpt of deploy_note")).toBeNull();
     second.resolve({ results: [hit("rollback_runbook")], embedding_model: "m" });
     expect(await screen.findByText("excerpt of rollback_runbook")).toBeInTheDocument();
-    expect(screen.queryByText("Scoring…")).toBeNull();
+    expect(screen.queryByText("Loading scores")).toBeNull();
   });
 
-  it("clearing the box mid-flight ends Scoring… and shows no late hits", async () => {
+  it("clearing the box mid-flight ends Loading scores and shows no late hits", async () => {
     const first = deferred();
     searchMemory.mockReturnValueOnce(first.promise);
     render(<RecallLab />);
     const box = screen.getByLabelText("Recall query");
     fireEvent.change(box, { target: { value: "deploy" } });
     await waitFor(() => expect(searchMemory).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("Scoring…")).toBeInTheDocument();
+    expect(await screen.findByText("Loading scores")).toBeInTheDocument();
     fireEvent.change(box, { target: { value: "" } });
-    await waitFor(() => expect(screen.queryByText("Scoring…")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("Loading scores")).toBeNull());
     first.resolve({ results: [hit("deploy_note")], embedding_model: "m" });
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.queryByText("excerpt of deploy_note")).toBeNull();
@@ -121,7 +121,8 @@ describe("Recall Lab: score a query", () => {
     expect(await screen.findByText("excerpt of finding_1")).toBeInTheDocument();
     expect(searchMemory.mock.calls[0][2]).toMatchObject({ explain: true, legs: ["memory"] });
     expect(screen.getByText("key match +0.85")).toBeInTheDocument();
-    expect(screen.getByText("sim 0.330")).toBeInTheDocument();
+    // Similarity is its own column.
+    expect(screen.getByText("0.330")).toBeInTheDocument();
   });
 
   it("folds a result set the search abstained on until the reader asks", async () => {

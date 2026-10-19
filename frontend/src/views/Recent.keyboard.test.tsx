@@ -17,7 +17,7 @@ vi.mock("../api", async (importOriginal) => {
     listMemories: vi.fn(),
     getMemory: vi.fn(),
     memoryHistory: vi.fn(async () => ({ rows: [] })),
-    memoryRelated: vi.fn(async () => ({ rows: [] })),
+    memoryRelated: vi.fn(async () => ({ results: [] })),
     memoryLineage: vi.fn(async () => ({ steps: [] })),
     getProvenance: vi.fn(async () => ({ found: false })),
     conflictKeys: vi.fn(async (): Promise<string[]> => []),

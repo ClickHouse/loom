@@ -1,3 +1,4 @@
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { Title } from "@clickhouse/click-ui/Title";
 import type { ReactNode } from "react";
 import { IconButton } from "../IconButton";
@@ -14,6 +15,9 @@ import { IconButton } from "../IconButton";
  * real; the visual is the same at every level. The (i) is Click UI's sm icon button, the
  * size Click UI gives its own inline icon actions (a popover's or a file row's close).
  * A label over a group inside a list or menu is `.section-label`, not this.
+ *
+ * With `fold`, the label is a disclosure button inside the heading (the WAI-ARIA pattern):
+ * Click UI's Accordion would name its chevron "accordion icon" in the button's name.
  */
 export interface SectionHeadingProps {
   label: string;
@@ -28,6 +32,8 @@ export interface SectionHeadingProps {
   actions?: ReactNode;
   id?: string;
   className?: string;
+  /** Make the label fold the section: `controls` is the id of the body it shows. */
+  fold?: { open: boolean; onToggle: () => void; controls: string };
 }
 
 export function SectionHeading({
@@ -39,11 +45,27 @@ export function SectionHeading({
   actions,
   id,
   className = "",
+  fold,
 }: SectionHeadingProps) {
   return (
-    <div className={`flex flex-wrap items-center gap-x-inline gap-y-0.5 min-w-0 mb-1.5 ${className}`}>
+    <div
+      className={`flex flex-wrap items-center gap-x-inline gap-y-0.5 min-w-0 ${fold && !fold.open ? "" : "mb-1.5"} ${className}`}
+    >
       <Title type={`h${level}`} size="sm" id={id} className="whitespace-nowrap">
-        {label}
+        {fold ? (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 cursor-pointer"
+            aria-expanded={fold.open}
+            aria-controls={fold.controls}
+            onClick={fold.onToggle}
+          >
+            <Icon name="chevron-right" size="sm" aria-hidden="true" className={fold.open ? "rotate-90" : ""} />
+            {label}
+          </button>
+        ) : (
+          label
+        )}
       </Title>
       {count !== undefined && (
         <span className="text-sm tabular-nums text-text-muted">

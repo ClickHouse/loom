@@ -1,6 +1,8 @@
 import { cleanup, render, screen } from "../test/rtl";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryListEntry } from "../api";
+import { SENSITIVE_LABEL } from "../lib/format";
 import { useStore } from "../lib/state";
 import { Recent } from "./Recent";
 
@@ -15,6 +17,7 @@ vi.mock("../api", async (importOriginal) => {
     listMemories: vi.fn(),
     getMemory: vi.fn(),
     bulkGetMemories: vi.fn(async () => ({ results: {}, missing: [] })),
+    searchMemory: vi.fn(async () => ({ results: [], embedding_model: "fake" })),
     conflictKeys: vi.fn(async (): Promise<string[]> => []),
     listMine: vi.fn(async () => []),
     isAuthDisabled: () => false,
@@ -38,7 +41,7 @@ const entry = (key: string, over: Partial<MemoryListEntry> = {}): MemoryListEntr
 describe("a high row on the Memories page", () => {
   beforeEach(() => {
     vi.mocked(listMemories).mockResolvedValue({
-      entries: [entry("plain/key"), entry("vault/key", { value: null, value_truncated: true, sensitivity: "high" })],
+      entries: [entry("plain/key"), entry("vault/key", { value: null, sensitivity: "high" })],
       total: 2,
       truncated: false,
       today: 2,
@@ -64,6 +67,28 @@ describe("a high row on the Memories page", () => {
     // older replica during a rolling upgrade.
     const fields = vi.mocked(listMemories).mock.calls[0]?.[2]?.fields ?? [];
     expect(fields).not.toContain("sensitivity");
+    expect(getMemory).not.toHaveBeenCalled();
+    const asked = vi.mocked(bulkGetMemories).mock.calls.flatMap((c) => c[1] as string[]);
+    expect(asked).not.toContain("vault/key");
+  });
+
+  it("found by a search is shown as sensitive and its value is never read", async () => {
+    // The page holds the plain row only; the keyword half of the search finds the high one.
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? {
+            entries: [entry("vault/key", { value: null, sensitivity: "high" })],
+            total: 1,
+            truncated: false,
+            today: 1,
+          }
+        : { entries: [entry("plain/key")], total: 1, truncated: false, today: 1 },
+    );
+    render(<Recent />);
+    await screen.findByText("plain/key");
+    await userEvent.type(screen.getByLabelText("Search memories"), "vault");
+    expect(await screen.findByText("vault/key")).toBeTruthy();
+    expect(screen.getByText(SENSITIVE_LABEL)).toBeTruthy();
     expect(getMemory).not.toHaveBeenCalled();
     const asked = vi.mocked(bulkGetMemories).mock.calls.flatMap((c) => c[1] as string[]);
     expect(asked).not.toContain("vault/key");

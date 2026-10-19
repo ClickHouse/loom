@@ -16,7 +16,11 @@ vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    listRuns: (...args: Parameters<typeof actual.listRuns>) => listRuns(...args),
+    // The page reads run.list a page at a time; these tests answer with the rows alone.
+    listRunsPage: async (...args: Parameters<typeof actual.listRunsPage>) => {
+      const runs = await listRuns(...args);
+      return { runs, total: runs.length, paged: true };
+    },
     getRun: (...args: unknown[]) => getRun(...args),
     listMine: vi.fn(async () => []),
     isAuthDisabled: () => false,
@@ -113,7 +117,7 @@ describe("Runs page", () => {
 
   it("asks run.list to fold runs with no memory activity, and refetches everything on the toggle", async () => {
     // The fold is the server's WHERE, so the page never sees the hollow rows until the
-    // reader asks — the newest 100 of a chatty consumer can all be hollow, and slicing
+    // reader asks — the newest page of a chatty consumer can all be hollow, and slicing
     // after LIMIT would leave the page empty.
     listRuns.mockImplementation(async (_id, opts) => (opts?.memoryActivity === "with" ? [full] : [row(), full]));
     render(<Runs />);
@@ -121,16 +125,16 @@ describe("Runs page", () => {
     expect(screen.queryByText("ISSUE_TRIAGE issue_114194")).toBeNull();
     const [, first] = listRuns.mock.calls[0];
     expect(first?.memoryActivity).toBe("with");
-    expect(first?.limit).toBe(100);
+    expect(first?.limit).toBe(50);
     fireEvent.click(screen.getByText("Show runs with no memory activity"));
     await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(2));
     const [, second] = listRuns.mock.calls[1];
     expect(second?.memoryActivity).toBe("");
     expect(await screen.findByText("ISSUE_TRIAGE issue_114194")).toBeInTheDocument();
     expect(screen.getByText("no memory activity")).toBeInTheDocument();
-    // The label stays put; the pressed state says the folded runs are shown.
-    const toggle = screen.getByRole("button", { name: "Show runs with no memory activity" });
-    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    // The label stays put; the checked state says the folded runs are shown.
+    const toggle = screen.getByRole("checkbox", { name: "Show runs with no memory activity" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByText("Hide runs with no memory activity")).toBeNull();
   });
 
@@ -157,6 +161,21 @@ describe("Runs page", () => {
     expect(opts?.agent).toBe("reporter");
   });
 
+  it("another namespace reads its runs for every agent, not the agent picked in the last", async () => {
+    listRuns.mockResolvedValue([row(), full]);
+    render(<Runs />);
+    await screen.findByText("fix the thing");
+    await userEvent.click(await screen.findByRole("button", { name: "Agent" }));
+    await userEvent.click(
+      must(document.querySelector<HTMLElement>('[cui-select-item][data-value="reporter"]'), "reporter item"),
+    );
+    await waitFor(() => expect(listRuns.mock.calls.at(-1)?.[1]?.agent).toBe("reporter"));
+    const before = useStore.getState().identity!;
+    act(() => useStore.setState({ identity: { ...before, namespace: `${before.namespace}-2` } }));
+    await waitFor(() => expect(listRuns.mock.calls.at(-1)?.[0]).toMatchObject({ namespace: `${before.namespace}-2` }));
+    expect(listRuns.mock.calls.at(-1)?.[1]?.agent).toBe("");
+  });
+
   it("the replay of a hollow run says what each empty field would have needed", async () => {
     listRuns.mockResolvedValue([row()]);
     render(<Runs />);
@@ -167,12 +186,12 @@ describe("Runs page", () => {
     expect(within(dialog).getByText(/reported no memory activity/)).toBeInTheDocument();
     expect(within(dialog).getByText(EMPTY_WHY.used)).toBeInTheDocument();
     expect(within(dialog).getByText(EMPTY_WHY.written)).toBeInTheDocument();
-    expect(await stat(dialog, "recalled")).toHaveTextContent("0");
-    expect(await helpOf(dialog, "recalled")).toContain(EMPTY_WHY.recalledZero);
+    expect(await stat(dialog, "Recalled")).toHaveTextContent("0");
+    expect(await helpOf(dialog, "Recalled")).toContain(EMPTY_WHY.recalledZero);
     // No top-level session: turns and cost cannot be joined, and the page says so.
     expect(within(dialog).getAllByText("no session")).toHaveLength(2);
-    expect(await helpOf(dialog, "turns")).toContain(EMPTY_WHY.noSession);
-    expect(await helpOf(dialog, "cost")).toContain(EMPTY_WHY.noSession);
+    expect(await helpOf(dialog, "Turns")).toContain(EMPTY_WHY.noSession);
+    expect(await helpOf(dialog, "Cost")).toContain(EMPTY_WHY.noSession);
     expect(within(dialog).queryByText(/inferred from a connection/)).toBeNull();
   });
 
@@ -198,7 +217,7 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    const budget = await stat(dialog, "budget");
+    const budget = await stat(dialog, "Budget");
     expect(budget).toHaveTextContent("$1.00 · 30m 0s · 42s elapsed · over cost");
   });
 
@@ -210,7 +229,7 @@ describe("Runs page", () => {
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText("$1.000004")).toBeInTheDocument();
-    expect(await stat(dialog, "budget")).toHaveTextContent("$1.00 · over cost");
+    expect(await stat(dialog, "Budget")).toHaveTextContent("$1.00 · over cost");
   });
 
   it("spells a large spend with thousands separators, as the hint does", async () => {
@@ -229,7 +248,7 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await stat(dialog, "budget")).toHaveTextContent("60s · 0s elapsed");
+    expect(await stat(dialog, "Budget")).toHaveTextContent("60s · 0s elapsed");
   });
 
   it("names the turns it could not price", async () => {
@@ -238,8 +257,8 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await stat(dialog, "turns")).toHaveTextContent("(2 unpriced)");
-    expect(await helpOf(dialog, "turns")).toContain(EMPTY_WHY.unpriced);
+    expect(await stat(dialog, "Turns")).toHaveTextContent("(2 unpriced)");
+    expect(await helpOf(dialog, "Turns")).toContain(EMPTY_WHY.unpriced);
   });
 
   it("a run without a budget shows a dash", async () => {
@@ -247,7 +266,7 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await stat(dialog, "budget")).toHaveTextContent("—");
+    expect(await stat(dialog, "Budget")).toHaveTextContent("—");
   });
 
   it("drops a run.list answer that lands after the status filter changed", async () => {
@@ -299,8 +318,8 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await stat(dialog, "recalled")).toHaveTextContent("n/a");
-    expect(await helpOf(dialog, "recalled")).toContain(EMPTY_WHY.recalledOff);
+    expect(await stat(dialog, "Recalled")).toHaveTextContent("n/a");
+    expect(await helpOf(dialog, "Recalled")).toContain(EMPTY_WHY.recalledOff);
     expect(within(dialog).queryByRole("button", { name: /Recall history for this run/ })).toBeNull();
   });
 });

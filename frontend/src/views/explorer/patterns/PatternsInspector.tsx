@@ -1,8 +1,19 @@
 import { useState } from "react";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import type { TrackerItem, TrackerSection } from "../../../api";
 import { IconButton } from "../../../components/IconButton";
-import { Chip, ExternalLink, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../../components/ui";
+import {
+  Chip,
+  ExternalLink,
+  Loading,
+  MetaList,
+  MetaRow,
+  Panel,
+  SectionHeading,
+  TextClamp,
+  Tip,
+} from "../../../components/ui";
 import { shorten } from "../model";
 import { areaClass, type AreaClass, type Cell, type DuplicateRow, type Issue } from "./model";
 
@@ -233,7 +244,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           </MetaRow>
           {p.itemStatus === "loading" && (
             <MetaRow label="tracker" tone="muted">
-              reading the record…
+              <Loading layout="inline" label="Loading the record" />
             </MetaRow>
           )}
           {p.itemStatus === "unknown" && (
@@ -257,14 +268,16 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                 {q.caused_by?.length ? (
                   <span className="flex flex-col gap-0.5">
                     {q.caused_by.map((n) => (
-                      <button
+                      <Link
                         key={n}
+                        component="button"
                         type="button"
-                        className="text-left underline decoration-dotted hover:text-text break-words"
+                        size="sm"
+                        className="text-left break-words"
                         onClick={() => p.onPickIssue(n)}
                       >
                         {titled(n)} <span className="text-danger text-xs">named by graph</span>
-                      </button>
+                      </Link>
                     ))}
                   </span>
                 ) : (
@@ -275,14 +288,16 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                 {q.fixed_by?.length ? (
                   <span className="flex flex-col gap-0.5">
                     {q.fixed_by.map((n) => (
-                      <button
+                      <Link
                         key={n}
+                        component="button"
                         type="button"
-                        className="text-left underline decoration-dotted hover:text-text break-words"
+                        size="sm"
+                        className="text-left break-words"
                         onClick={() => p.onPickIssue(n)}
                       >
                         {titled(n)}
-                      </button>
+                      </Link>
                     ))}
                   </span>
                 ) : (
@@ -379,7 +394,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
               caption="by title"
               hint="similar_bugs: issues whose title or body carries the tokens of this issue's title, newest first; partial when only some tokens matched."
             />
-            {p.similarBusy && <p className="text-xs text-text-muted">Searching…</p>}
+            {p.similarBusy && <Loading layout="inline" label="Loading similar issues" />}
             {p.similar && p.similar.length === 0 && !p.similarBusy && (
               <p className="text-xs text-text-muted">No other issue carries these words.</p>
             )}
@@ -488,7 +503,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           caption={p.issues && c && p.issues.length !== c.open ? `of ${c.open}` : undefined}
           hint={`area_open_issues reads the open ${cell.severity} issues of ${cell.label} — the cell the board counted, filtered on the server, up to ${p.issuesRead || 300} rows, most severe then newest first; the flag chips narrow the list here. When the ceiling is reached the list says so.`}
         />
-        {p.issuesStatus === "loading" && <p className="text-xs text-text-muted">Reading…</p>}
+        {p.issuesStatus === "loading" && <Loading layout="inline" label="Loading issues" />}
         {p.issuesStatus === "error" && (
           <p className="text-xs text-danger">{p.issuesError || "The issue list did not answer."}</p>
         )}

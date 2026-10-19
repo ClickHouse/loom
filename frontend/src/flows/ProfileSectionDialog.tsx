@@ -6,6 +6,7 @@ import { useStore } from "../lib/state";
 import { Skeleton } from "../components/Skeleton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Tip } from "../components/ui/Tooltip";
+import { LoadingSkeleton } from "../components/ui/Loading";
 import { relativeTime } from "../lib/format";
 
 // Read-only preview of a Profile section; editing lives on /profile
@@ -87,11 +88,13 @@ export function ProfileSectionDialog() {
       )}
       <div>
         {loading && (
-          <div className="space-y-3">
-            <Skeleton className="h-4 w-3/4" />
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-2/3" />
-          </div>
+          <LoadingSkeleton label="Loading the profile section">
+            <div className="space-y-3">
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-2/3" />
+            </div>
+          </LoadingSkeleton>
         )}
         {error && <Alert role="alert" state="danger" text={error} />}
         {!loading && !error && section && (

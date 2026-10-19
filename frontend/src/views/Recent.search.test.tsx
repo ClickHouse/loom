@@ -1,15 +1,16 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MemoryListEntry, MyNamespaceEntry, WhoAmI } from "../api";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import type { MemoryDetail, MemoryListEntry, MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { Recent } from "./Recent";
 import { must } from "../test/must";
 
 // While a search is active the Memories view asks memory.search with `explain: true` (so
-// the per-hit evidence rides above the excerpt k) and renders a why-line under each
-// ranked card.
+// the per-hit evidence rides above the excerpt k) and puts a "Why this result" button in
+// each ranked row's meta slot, whose popover holds the scoring. The count
+// is the toolbar's alone: no summary line, no "Results" heading.
 
 const entry = (memory_key: string): MemoryListEntry => ({
   memory_key,
@@ -58,7 +59,7 @@ vi.mock("../api", async (importOriginal) => {
     })),
   };
 });
-import { listMemories, searchMemory } from "../api";
+import { bulkGetMemories, conflictKeys, listMemories, searchMemory } from "../api";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace,
@@ -107,13 +108,490 @@ describe("Recent search why-line", () => {
     expect(query).toBe("milk");
     expect(opts).toMatchObject({ top_k: 50, explain: true, legs: ["memory"] }); // Memory legs only
 
+    // The hit that did not match carries no button; the scoring stays out of the row.
+    const button = await screen.findByRole("button", { name: "Why this result" });
+    expect(screen.getAllByRole("button", { name: "Why this result" })).toHaveLength(1);
+    expect(screen.queryByTestId("search-why")).toBeNull();
+    expect(button.closest("[data-memory-key]")).toHaveAttribute("data-memory-key", "coffee_pref");
+    await userEvent.click(button);
     const why = await screen.findByTestId("search-why");
     expect(why).toHaveTextContent("#1");
     expect(why).toHaveTextContent("similarity 0.70");
     expect(why).toHaveTextContent("semantic +0.70");
     expect(why).toHaveTextContent("key match +0.10");
-    // The hit that did not match carries no line.
-    expect(screen.getAllByTestId("search-why")).toHaveLength(1);
+    // One count, in the toolbar; no summary line or Results heading on screen.
+    expect(screen.getByLabelText("Search and filters")).toHaveTextContent("1 match");
+    expect(screen.queryByRole("heading", { name: /Results/ })).toBeNull();
+  });
+});
+
+describe("Recent search under a tag filter", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetNamespaceRoleCache();
+    useStore.setState({
+      authed: true,
+      whoami: admin,
+      myNamespaces: [row("alice", "admin")],
+      identity: { org: "dev", namespace: "alice", agent: "loom-ui" },
+      view: "memories",
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+  });
+
+  it("asks the keyword half for the rows that pass the tag filter too", async () => {
+    vi.mocked(listMemories).mockImplementation(async () => ({
+      entries: [entry("coffee_pref")],
+      total: 1,
+      today: 0,
+      truncated: false,
+    }));
+    render(<Recent />);
+    await screen.findByText("coffee_pref");
+    await userEvent.type(screen.getByLabelText("Search memories"), "tag:work coffee");
+    await waitFor(
+      () =>
+        expect(
+          vi.mocked(listMemories).mock.calls.some(([, , o]) => o?.contains === "coffee" && o.tags?.[0] === "work"),
+        ).toBe(true),
+      { timeout: 3000 },
+    );
+    // One ranked search for the query: the filter landing a moment later re-sends only the
+    // keyword read, whose last call carries the tag.
+    await new Promise((r) => setTimeout(r, 400));
+    expect(vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "coffee")).toHaveLength(1);
+    const keyword = vi.mocked(listMemories).mock.calls.filter(([, , o]) => o?.contains === "coffee");
+    expect(keyword.at(-1)?.[2]?.tags).toEqual(["work"]);
+  });
+});
+
+describe("Recent search after a local write", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetNamespaceRoleCache();
+    useStore.setState({
+      authed: true,
+      whoami: admin,
+      myNamespaces: [row("alice", "admin")],
+      identity: { org: "dev", namespace: "alice", agent: "loom-ui" },
+      view: "memories",
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+  });
+
+  it("keeps the ranked hits on screen while a write ranks again, then shows the hits as they now are", async () => {
+    let written = false;
+    let answerRanked: (v: unknown) => void = () => {};
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? { entries: [entry("milk_note")], total: 1, today: 0, truncated: false }
+        : { entries: [entry("milk_note"), entry("oat_pref"), entry("old_pref")], total: 3, today: 0, truncated: false },
+    );
+    const hit = (memory_key: string) => ({
+      memory_key,
+      memory_type: "semantic",
+      content_excerpt: memory_key,
+      distance: 0.3,
+      similarity: 0.7,
+      rank_score: 0.8,
+      confidence: 0.9,
+    });
+    vi.mocked(searchMemory).mockImplementation(async () => {
+      if (!written) return { results: [hit("oat_pref"), hit("old_pref")], embedding_model: "m" } as never;
+      return new Promise((r) => (answerRanked = r)) as never;
+    });
+    render(<Recent />);
+    await screen.findByText("old_pref");
+    await userEvent.type(screen.getByLabelText("Search memories"), "milk");
+    await waitFor(() => expect(screen.getByLabelText("Search and filters")).toHaveTextContent("3 matches"), {
+      timeout: 3000,
+    });
+    // A write here (old_pref deleted): the search runs again and its ranking is in flight.
+    written = true;
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "milk")).toHaveLength(2), {
+      timeout: 3000,
+    });
+    expect(screen.getByText("oat_pref")).toBeInTheDocument();
+    // Its scoring stays while the new ranking reads.
+    expect(screen.getAllByRole("button", { name: "Why this result" }).length).toBeGreaterThan(0);
+    await act(async () => answerRanked({ results: [hit("oat_pref")], embedding_model: "m" }));
+    await waitFor(() => expect(screen.queryByText("old_pref")).toBeNull());
+    expect(screen.getByText("oat_pref")).toBeInTheDocument();
+  });
+
+  it("while a write ranks again, keeps no hit read from outside the page before the write", async () => {
+    let written = false;
+    vi.mocked(listMemories).mockResolvedValue({ entries: [entry("milk_note")], total: 1, today: 0, truncated: false });
+    onTestFinished(() => {
+      vi.mocked(bulkGetMemories).mockImplementation(async () => ({ results: {}, missing: [] }));
+    });
+    vi.mocked(bulkGetMemories).mockImplementation(async (_id, keys) => ({
+      results: Object.fromEntries(keys.map((k) => [k, { ...entry(k), value: k } as unknown as MemoryDetail])),
+      missing: [],
+    }));
+    vi.mocked(searchMemory).mockImplementation(async () => {
+      if (written) return new Promise(() => {}) as never;
+      return {
+        results: [
+          {
+            memory_key: "far_pref",
+            memory_type: "semantic",
+            content_excerpt: "far_pref",
+            distance: 0.3,
+            similarity: 0.7,
+          },
+        ],
+        embedding_model: "m",
+      } as never;
+    });
+    render(<Recent />);
+    await screen.findByText("milk_note");
+    await userEvent.type(screen.getByLabelText("Search memories"), "milk");
+    expect((await screen.findAllByText("far_pref", {}, { timeout: 3000 })).length).toBeGreaterThan(0);
+    // A write (far_pref may be gone): its copy from before the write is not drawn again.
+    written = true;
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "milk")).toHaveLength(2), {
+      timeout: 3000,
+    });
+    await waitFor(() => expect(screen.queryAllByText("far_pref")).toHaveLength(0));
+    expect(screen.getAllByText("milk_note").length).toBeGreaterThan(0);
+  });
+
+  it("a failed re-rank that kept nothing still forgets its ranking for the next run", async () => {
+    let phase = 0;
+    onTestFinished(() => {
+      vi.mocked(bulkGetMemories).mockImplementation(async () => ({ results: {}, missing: [] }));
+    });
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains || phase < 2
+        ? { entries: [entry("milk_note")], total: 1, today: 0, truncated: false }
+        : { entries: [entry("milk_note"), entry("far_pref")], total: 2, today: 0, truncated: false },
+    );
+    vi.mocked(bulkGetMemories).mockImplementation(async (_id, keys) => ({
+      results: Object.fromEntries(keys.map((k) => [k, { ...entry(k), value: k } as unknown as MemoryDetail])),
+      missing: [],
+    }));
+    vi.mocked(searchMemory).mockImplementation(async () => {
+      if (phase === 1) throw new Error("search down");
+      if (phase === 2) return new Promise(() => {}) as never;
+      return {
+        results: [
+          {
+            memory_key: "far_pref",
+            memory_type: "semantic",
+            content_excerpt: "far_pref",
+            distance: 0.3,
+            similarity: 0.7,
+          },
+        ],
+        embedding_model: "m",
+      } as never;
+    });
+    render(<Recent />);
+    await screen.findByText("milk_note");
+    await userEvent.type(screen.getByLabelText("Search memories"), "milk");
+    expect((await screen.findAllByText("far_pref", {}, { timeout: 3000 })).length).toBeGreaterThan(0);
+    const runs = () => vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "milk").length;
+    // A write; the ranking fails, and far_pref (outside the page) is not kept.
+    phase = 1;
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(runs()).toBe(2), { timeout: 3000 });
+    await waitFor(() => expect(screen.queryAllByText("far_pref")).toHaveLength(0));
+    // far_pref joins the page; another write ranks again and is still reading.
+    phase = 2;
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(runs()).toBe(3), { timeout: 3000 });
+    // The run's keyword read answers at once; let it draw before the negative check.
+    await act(async () => {});
+    expect(screen.queryAllByText("far_pref")).toHaveLength(0);
+    expect(screen.getAllByText("milk_note").length).toBeGreaterThan(0);
+  });
+
+  it("says no memory matches the typed words, bare", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? { entries: [], total: 0, today: 0, truncated: false }
+        : { entries: [entry("milk_note")], total: 1, today: 0, truncated: false },
+    );
+    vi.mocked(searchMemory).mockResolvedValue({ results: [], embedding_model: "m" } as never);
+    render(<Recent />);
+    await screen.findByText("milk_note");
+    await userEvent.type(screen.getByLabelText("Search memories"), "zebra");
+    expect(
+      await screen.findByText((_, el) => el?.textContent === "No memories match zebra", {}, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    // Its Clear takes the words too.
+    await userEvent.click(screen.getAllByRole("button", { name: "Clear filters" }).at(-1) as HTMLElement);
+    expect(screen.getByLabelText("Search memories")).toHaveValue("");
+    expect(await screen.findByText("milk_note")).toBeInTheDocument();
+  });
+
+  // The row names the words the results were read for, not a retype whose search has not run.
+  it("names the searched words until the retyped search answers", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? { entries: [], total: 0, today: 0, truncated: false }
+        : { entries: [entry("milk_note")], total: 1, today: 0, truncated: false },
+    );
+    vi.mocked(searchMemory).mockResolvedValue({ results: [], embedding_model: "m" } as never);
+    render(<Recent />);
+    await screen.findByText("milk_note");
+    const box = screen.getByLabelText("Search memories");
+    await userEvent.type(box, "zebra");
+    const noMatch = (words: string) => (_: string, el: Element | null) =>
+      el?.textContent === `No memories match ${words}`;
+    expect(await screen.findByText(noMatch("zebra"), {}, { timeout: 3000 })).toBeInTheDocument();
+    fireEvent.change(box, { target: { value: "zzq" } });
+    expect(screen.getByText(noMatch("zebra"))).toBeInTheDocument();
+    expect(await screen.findByText(noMatch("zzq"), {}, { timeout: 3000 })).toBeInTheDocument();
+  });
+
+  it("names the searched words in the low-confidence note until the retyped search answers", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? { entries: [], total: 0, today: 0, truncated: false }
+        : { entries: [entry("milk_note")], total: 1, today: 0, truncated: false },
+    );
+    vi.mocked(searchMemory).mockResolvedValue({
+      results: [{ memory_key: "milk_note", memory_type: "semantic", similarity: 0.1, rank_score: 0.1 }],
+      abstain: true,
+      embedding_model: "m",
+    } as never);
+    render(<Recent />);
+    await screen.findByText("milk_note");
+    const box = screen.getByLabelText("Search memories");
+    await userEvent.type(box, "zebra");
+    const note = (words: string) => (_: string, el: Element | null) =>
+      el?.tagName !== "STRONG" && (el?.textContent ?? "").startsWith(`Low confidence. No strong match for "${words}"`);
+    expect((await screen.findAllByText(note("zebra"), {}, { timeout: 3000 })).length).toBeGreaterThan(0);
+    fireEvent.change(box, { target: { value: "zzq" } });
+    expect(screen.getAllByText(note("zebra")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(note("zzq"), {}, { timeout: 3000 })).length).toBeGreaterThan(0);
+  });
+
+  it("a search that failed outright brings none of its earlier ranked hits back on the next run", async () => {
+    let phase = 0;
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? phase === 1
+          ? { entries: [], total: 0, today: 0, truncated: false }
+          : { entries: [entry("milk_note")], total: 1, today: 0, truncated: false }
+        : { entries: [entry("milk_note"), entry("oat_pref")], total: 2, today: 0, truncated: false },
+    );
+    const hit = (memory_key: string) => ({
+      memory_key,
+      memory_type: "semantic",
+      content_excerpt: memory_key,
+      distance: 0.3,
+      similarity: 0.7,
+      rank_score: 0.8,
+      confidence: 0.9,
+    });
+    vi.mocked(searchMemory).mockImplementation(async () => {
+      if (phase === 1) throw new Error("search down");
+      if (phase === 2) return new Promise(() => {}) as never;
+      return { results: [hit("oat_pref")], embedding_model: "m" } as never;
+    });
+    render(<Recent />);
+    await screen.findByText("oat_pref");
+    await userEvent.type(screen.getByLabelText("Search memories"), "milk");
+    await waitFor(() => expect(screen.getByLabelText("Search and filters")).toHaveTextContent("2 matches"), {
+      timeout: 3000,
+    });
+    const runs = () => vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "milk").length;
+    // A write; no keyword rows and the ranking fails: the search fails as a whole.
+    phase = 1;
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(runs()).toBe(2), { timeout: 3000 });
+    await waitFor(() => expect(screen.queryByText("milk_note")).toBeNull());
+    // Another write: keyword rows again, the ranking still reading.
+    phase = 2;
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(runs()).toBe(3), { timeout: 3000 });
+    expect(await screen.findByText("milk_note")).toBeInTheDocument();
+    expect(screen.queryByText("oat_pref")).toBeNull();
+  });
+
+  it("goes back to the keyword rows when the ranking after a write fails", async () => {
+    let written = false;
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? { entries: [entry("milk_note")], total: 1, today: 0, truncated: false }
+        : { entries: [entry("milk_note"), entry("oat_pref")], total: 2, today: 0, truncated: false },
+    );
+    const hit = (memory_key: string) => ({
+      memory_key,
+      memory_type: "semantic",
+      content_excerpt: memory_key,
+      distance: 0.3,
+      similarity: 0.7,
+      rank_score: 0.8,
+      confidence: 0.9,
+      score_components: { semantic: 0.7 },
+    });
+    vi.mocked(searchMemory).mockImplementation(async () => {
+      if (written) throw new Error("search down");
+      return { results: [hit("oat_pref")], embedding_model: "m" } as never;
+    });
+    render(<Recent />);
+    await screen.findByText("oat_pref");
+    await userEvent.type(screen.getByLabelText("Search memories"), "milk");
+    await waitFor(() => expect(screen.getByLabelText("Search and filters")).toHaveTextContent("2 matches"), {
+      timeout: 3000,
+    });
+    written = true;
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "milk")).toHaveLength(2), {
+      timeout: 3000,
+    });
+    await waitFor(() => expect(screen.queryByText("oat_pref")).toBeNull());
+    expect(screen.getByText("milk_note")).toBeInTheDocument();
+  });
+
+  it("searches again after a write here, so a deleted or pinned hit shows as it now is", async () => {
+    vi.mocked(listMemories).mockImplementation(async () => ({
+      entries: [entry("coffee_pref")],
+      total: 1,
+      today: 0,
+      truncated: false,
+    }));
+    render(<Recent />);
+    await screen.findByText("coffee_pref");
+    await userEvent.type(screen.getByLabelText("Search memories"), "milk");
+    await waitFor(() => expect(vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "milk")).toHaveLength(1), {
+      timeout: 3000,
+    });
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "milk")).toHaveLength(2), {
+      timeout: 3000,
+    });
+  });
+});
+
+describe("Recent across a namespace switch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetNamespaceRoleCache();
+    useStore.setState({
+      authed: true,
+      whoami: admin,
+      myNamespaces: [row("alice", "admin")],
+      identity: { org: "dev", namespace: "alice", agent: "loom-ui" },
+      view: "memories",
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+  });
+
+  it("drops the old namespace's search results while the new one's search reads", async () => {
+    const pending = new Promise<never>(() => {});
+    vi.mocked(listMemories).mockImplementation(async (id, _limit, opts) => {
+      const bob = (id as { namespace: string }).namespace === "bob";
+      if (opts?.contains)
+        return bob ? pending : { entries: [entry("alice_only")], total: 1, today: 0, truncated: false };
+      return {
+        entries: bob ? [entry("bob_row")] : [entry("coffee_pref"), entry("tea_pref")],
+        total: 2,
+        today: 0,
+        truncated: false,
+      };
+    });
+    vi.mocked(searchMemory).mockImplementation(async (id) => {
+      if ((id as { namespace: string }).namespace === "bob") return pending;
+      return { results: [], embedding_model: "fake" } as never;
+    });
+    render(<Recent />);
+    await screen.findByText("coffee_pref");
+    await userEvent.type(screen.getByLabelText("Search memories"), "milk");
+    expect(await screen.findByText("alice_only", {}, { timeout: 3000 })).toBeInTheDocument();
+    act(() =>
+      useStore.setState({
+        identity: { org: "dev", namespace: "bob", agent: "loom-ui" },
+        myNamespaces: [row("bob", "admin")],
+      }),
+    );
+    await waitFor(() => expect(screen.queryByText("alice_only")).toBeNull());
+  });
+
+  // The agents seen in alice are not bob's: bob's first read sends the agent as typed.
+  it("sends a typed agent as typed in the new namespace's first read", async () => {
+    vi.mocked(listMemories).mockImplementation(async (id) => ({
+      entries: (id as { namespace: string }).namespace === "bob" ? [] : [{ ...entry("bot_row"), agent: "bot" }],
+      total: 1,
+      today: 0,
+      truncated: false,
+    }));
+    render(<Recent />);
+    await screen.findByText("bot_row");
+    await userEvent.type(screen.getByLabelText("Search memories"), "agent:Bot");
+    const reads = (ns: string) =>
+      vi
+        .mocked(listMemories)
+        .mock.calls.filter(([id, , o]) => (id as { namespace: string }).namespace === ns && !o?.contains);
+    await waitFor(() => expect(reads("alice").at(-1)?.[2]?.agent).toBe("bot"));
+    act(() =>
+      useStore.setState({
+        identity: { org: "dev", namespace: "bob", agent: "loom-ui" },
+        myNamespaces: [row("bob", "admin")],
+      }),
+    );
+    await waitFor(() => expect(reads("bob").length).toBeGreaterThan(0));
+    expect(reads("bob")[0][2]?.agent).toBe("Bot");
+  });
+
+  it("clearing the box while a search reads gives the count back", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? new Promise<never>(() => {})
+        : { entries: [entry("coffee_pref"), entry("tea_pref")], total: 2, today: 2, truncated: false },
+    );
+    render(<Recent />);
+    await screen.findByText("coffee_pref");
+    const box = screen.getByLabelText("Search memories");
+    await userEvent.type(box, "milk");
+    await waitFor(
+      () => expect(vi.mocked(listMemories).mock.calls.some(([, , o]) => o?.contains === "milk")).toBe(true),
+      { timeout: 3000 },
+    );
+    await userEvent.clear(box);
+    const bar = screen.getByLabelText("Search and filters");
+    await waitFor(() => expect(bar.querySelector("[aria-busy]")).toBeNull());
+    expect(bar).toHaveTextContent("1–2 of 2");
+  });
+
+  it("shows no conflict chip from the old namespace while the new one's conflicts read", async () => {
+    // Both namespaces hold the same keys (the mock's implementation outlives each test).
+    vi.mocked(listMemories).mockImplementation(async () => ({
+      entries: [entry("coffee_pref"), entry("tea_pref")],
+      total: 2,
+      today: 0,
+      truncated: false,
+    }));
+    vi.mocked(conflictKeys).mockImplementation(async (id) =>
+      (id as { namespace: string }).namespace === "bob" ? new Promise<string[]>(() => {}) : ["tea_pref"],
+    );
+    render(<Recent />);
+    await screen.findByText("tea_pref");
+    await waitFor(() => expect(screen.getAllByText("Conflicted").length).toBeGreaterThan(0));
+    // bob holds a row of the same key; its conflict read has not answered.
+    act(() =>
+      useStore.setState({
+        identity: { org: "dev", namespace: "bob", agent: "loom-ui" },
+        myNamespaces: [row("bob", "admin")],
+      }),
+    );
+    await screen.findByText("tea_pref");
+    expect(screen.queryByText("Conflicted")).toBeNull();
   });
 });
 
@@ -222,9 +700,11 @@ describe("Recent search finds every row that names the word", () => {
       "keyword list call",
     );
     expect(kw[2]).toMatchObject({ contains: "Azure" });
-    const lines = await screen.findAllByTestId("search-why");
-    expect(lines.map((l) => l.textContent)).toEqual(['contains "Azure"', 'contains "Azure"']);
-    expect(screen.getByText(/146 contain the text \(newest 2 of 146\)/)).toBeInTheDocument();
+    expect(await screen.findAllByRole("button", { name: "Why this result" })).toHaveLength(2);
+    await userEvent.click(screen.getAllByRole("button", { name: "Why this result" })[0]);
+    expect(await screen.findByTestId("search-why")).toHaveTextContent('Contains "Azure"');
+    // The toolbar's count says the keyword rows are the newest of more.
+    expect(screen.getByText(/· the newest 2 of 146 holding "Azure"/).closest("[aria-live]")).not.toBeNull();
     // The keyword rows lead: the newest match is the first card.
     const keys = screen.getAllByText(/^(azure_new|coffee_pref|tea_pref)$/).map((n) => n.textContent);
     expect(keys[0]).toBe("azure_new");
@@ -303,8 +783,9 @@ describe("Recent search finds every row that names the word", () => {
 
     await userEvent.type(screen.getByLabelText("Search memories"), "milk");
 
-    const why = await screen.findByTestId("search-why");
-    expect(why).toHaveTextContent("similarity 0.70");
-    expect(screen.getByText(/ranked by relevance/)).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Why this result" }));
+    expect(await screen.findByTestId("search-why")).toHaveTextContent("similarity 0.70");
+    // No row holds the word: the count is the ranked matches alone.
+    expect(screen.getByText(/^\d+ match(es)?$/).closest("[aria-live]")).not.toBeNull();
   });
 });

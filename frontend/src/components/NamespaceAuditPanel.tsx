@@ -13,7 +13,8 @@ import { useStore } from "../lib/state";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
 import { humanizeError } from "../lib/format";
-import { Panel, SectionHeading } from "./ui";
+import { Loading, Panel, SectionHeading } from "./ui";
+import { useFold } from "../lib/folds";
 import { toast } from "./Toast";
 import { IconButton } from "./IconButton";
 
@@ -104,6 +105,7 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
   const inspect = useStore((s) => s.inspect);
   const role = useNamespaceRole(identity.namespace);
   const allowed = canCall("namespace.audit", role, whoami);
+  const [shown, toggleShown] = useFold("usage-audit");
   const [windowSeconds, setWindowSeconds] = useState(WINDOWS[1].seconds);
   const [result, setResult] = useState<NamespaceAuditResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -158,139 +160,139 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
   const s = result?.summary;
 
   return (
-    <Panel as="section" aria-labelledby="usage-audit-heading" className="mb-5" padding="md" data-testid="usage-audit">
+    <Panel
+      as="section"
+      aria-labelledby="usage-audit-heading"
+      className="mb-5"
+      padding="none"
+      bodyClassName={shown ? "p-4" : "px-4 py-2"}
+      data-testid="usage-audit"
+    >
       <SectionHeading
         id="usage-audit-heading"
         level={2}
         label="Usage audit"
         hint="Reads the ledger and the memory tables for this namespace and names the anti-patterns it finds — an exact-key store, double-encoded values, version churn. Read-only; nothing here rewrites a row."
+        fold={{ open: shown, onToggle: toggleShown, controls: "usage-audit-body" }}
       />
-      {/* The caption is its own line, so the title row stays label + (i) at any width. */}
-      <p className="caption mb-3">How this namespace is being used</p>
-      {/* The controls sit in a toolbar row under the title: Click UI's Select fills its
+      <div id="usage-audit-body" hidden={!shown}>
+        {/* The caption is its own line, so the title row stays label + (i) at any width. */}
+        <p className="caption mb-3">How this namespace is being used</p>
+        {/* The controls sit in a toolbar row under the title: Click UI's Select fills its
           container, so in the heading's action slot it took a line of its own. */}
-      <div className="mb-3 flex flex-wrap items-end gap-3">
-        <div className="w-40">
-          <Select
-            label="Window"
-            triggerProps={{ "aria-label": "Audit window" }}
-            value={String(windowSeconds)}
-            onSelect={(v) => setWindowSeconds(Number(v))}
-            disabled={running}
-            options={WINDOWS.map((w) => ({ value: String(w.seconds), label: w.label }))}
-          />
+        <div className="mb-3 flex flex-wrap items-end gap-3">
+          <div className="w-40">
+            <Select
+              label="Window"
+              triggerProps={{ "aria-label": "Audit window" }}
+              value={String(windowSeconds)}
+              onSelect={(v) => setWindowSeconds(Number(v))}
+              disabled={running}
+              options={WINDOWS.map((w) => ({ value: String(w.seconds), label: w.label }))}
+            />
+          </div>
+          <Button type="secondary" htmlType="button" iconLeft="activity" onClick={run} loading={running}>
+            {result ? "Run again" : "Run audit"}
+          </Button>
         </div>
-        <Button type="secondary" htmlType="button" iconLeft="activity" onClick={run} loading={running}>
-          {result ? "Run again" : "Run audit"}
-        </Button>
+
+        {!result && !running && !error && (
+          <p className="text-sm text-text-muted leading-relaxed max-w-2xl">
+            Is this namespace being used as a memory, or as an object store? Run the audit to see reads against searches
+            over the window, what the values look like, and which keys are read the most.
+          </p>
+        )}
+
+        {running && !result && <Loading layout="inline" label="Loading the audit" />}
+
+        {error && (
+          <p role="alert" className="text-sm text-danger">
+            Audit failed: {error}
+          </p>
+        )}
+
+        {result && s && (
+          <div className="space-y-3" aria-busy={running || undefined}>
+            <p className="text-sm text-text leading-relaxed" data-testid="audit-summary">
+              <span className={`font-semibold ${result.healthy ? "text-success" : "text-danger"}`}>
+                {result.healthy ? "Healthy" : "Needs attention"}
+              </span>
+              <span className="text-text-muted">
+                {" "}
+                · {result.criticals} critical, {result.warnings} warning, {result.infos} info over{" "}
+                {Math.round(result.window_seconds / 86_400)}d
+              </span>
+              <br />
+              <span className="tabular">
+                live {s.live_rows.toLocaleString()} rows / {formatBytes(s.live_bytes)} · versions{" "}
+                {s.version_rows.toLocaleString()} rows / {formatBytes(s.version_bytes)} · unembedded{" "}
+                {s.unembedded_rows.toLocaleString()} · gets {s.gets.toLocaleString()} / searches{" "}
+                {s.searches.toLocaleString()} / sets {s.sets.toLocaleString()} (ratio{" "}
+                {s.get_search_ratio.toLocaleString(undefined, { maximumFractionDigits: 1 })})
+              </span>
+            </p>
+
+            {findings.length === 0 ? (
+              <p className="text-sm text-text-muted" role="status">
+                Nothing to flag in this window.
+              </p>
+            ) : (
+              <div className="overflow-x-auto -mx-1 px-1">
+                <table className="native-table text-sm" aria-label="Audit findings">
+                  <thead>
+                    <tr>
+                      <th scope="col" className="w-9">
+                        <span className="sr-only">Details</span>
+                      </th>
+                      <th scope="col">Finding</th>
+                      <th scope="col">Severity</th>
+                      <th scope="col" className="text-right">
+                        Count
+                      </th>
+                      <th scope="col" className="text-right">
+                        Share
+                      </th>
+                      <th scope="col">First sample</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {findings.map((f) => {
+                      const isOpen = open.has(f.code);
+                      const first = f.samples[0];
+                      const firstKey = first ? sampleKey(first) : null;
+                      const label = humanizeAuditCode(f.code);
+                      return (
+                        <FindingRows
+                          key={f.code}
+                          finding={f}
+                          label={label}
+                          isOpen={isOpen}
+                          firstKey={firstKey}
+                          firstText={first ? sampleText(first) : "—"}
+                          onToggle={() => toggle(f.code)}
+                          onInspect={inspect}
+                        />
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {result.skipped.length > 0 && (
+              <p className="text-xs text-text-muted leading-relaxed" data-testid="audit-skipped">
+                Skipped: {result.skipped.join("; ")}
+              </p>
+            )}
+
+            <p className="text-xs text-text-muted leading-relaxed max-w-2xl">
+              To fix what the audit names, run loom-optimize with your agent — it plans the moves and applies them with
+              your approval (<span className="font-mono">docs/guides/optimize-namespace.md</span>). The dashboard shows;
+              it does not rewrite.
+            </p>
+          </div>
+        )}
       </div>
-
-      {!result && !running && !error && (
-        <p className="text-sm text-text-muted leading-relaxed max-w-2xl">
-          Is this namespace being used as a memory, or as an object store? Run the audit to see reads against searches
-          over the window, what the values look like, and which keys are read the most.
-        </p>
-      )}
-
-      {running && !result && (
-        <p role="status" className="text-sm text-text-muted">
-          Reading the ledger and the memory tables…
-        </p>
-      )}
-
-      {error && (
-        <p role="alert" className="text-sm text-danger">
-          Audit failed: {error}
-        </p>
-      )}
-
-      {result && s && (
-        <div className="space-y-3" aria-busy={running}>
-          <p className="text-sm text-text leading-relaxed" data-testid="audit-summary">
-            <span className={`font-semibold ${result.healthy ? "text-success" : "text-danger"}`}>
-              {result.healthy ? "Healthy" : "Needs attention"}
-            </span>
-            <span className="text-text-muted">
-              {" "}
-              · {result.criticals} critical, {result.warnings} warning, {result.infos} info over{" "}
-              {Math.round(result.window_seconds / 86_400)}d
-            </span>
-            <br />
-            <span className="tabular">
-              live {s.live_rows.toLocaleString()} rows / {formatBytes(s.live_bytes)} · versions{" "}
-              {s.version_rows.toLocaleString()} rows / {formatBytes(s.version_bytes)} · unembedded{" "}
-              {s.unembedded_rows.toLocaleString()} · gets {s.gets.toLocaleString()} / searches{" "}
-              {s.searches.toLocaleString()} / sets {s.sets.toLocaleString()} (ratio{" "}
-              {s.get_search_ratio.toLocaleString(undefined, { maximumFractionDigits: 1 })})
-            </span>
-          </p>
-
-          {findings.length === 0 ? (
-            <p className="text-sm text-text-muted" role="status">
-              Nothing to flag in this window.
-            </p>
-          ) : (
-            <div className="overflow-x-auto -mx-1 px-1">
-              <table className="w-full text-sm border-collapse" aria-label="Audit findings">
-                <thead>
-                  <tr className="text-left text-xs text-text-muted">
-                    <th scope="col" className="py-1.5 pr-2 w-9">
-                      <span className="sr-only">Details</span>
-                    </th>
-                    <th scope="col" className="py-1.5 pr-3">
-                      Finding
-                    </th>
-                    <th scope="col" className="py-1.5 pr-3">
-                      Severity
-                    </th>
-                    <th scope="col" className="py-1.5 pr-3 text-right">
-                      Count
-                    </th>
-                    <th scope="col" className="py-1.5 pr-3 text-right">
-                      Share
-                    </th>
-                    <th scope="col" className="py-1.5">
-                      First sample
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {findings.map((f) => {
-                    const isOpen = open.has(f.code);
-                    const first = f.samples[0];
-                    const firstKey = first ? sampleKey(first) : null;
-                    const label = humanizeAuditCode(f.code);
-                    return (
-                      <FindingRows
-                        key={f.code}
-                        finding={f}
-                        label={label}
-                        isOpen={isOpen}
-                        firstKey={firstKey}
-                        firstText={first ? sampleText(first) : "—"}
-                        onToggle={() => toggle(f.code)}
-                        onInspect={inspect}
-                      />
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {result.skipped.length > 0 && (
-            <p className="text-xs text-text-muted leading-relaxed" data-testid="audit-skipped">
-              Skipped: {result.skipped.join("; ")}
-            </p>
-          )}
-
-          <p className="text-xs text-text-muted leading-relaxed max-w-2xl">
-            To fix what the audit names, run loom-optimize with your agent — it plans the moves and applies them with
-            your approval (<span className="font-mono">docs/guides/optimize-namespace.md</span>). The dashboard shows;
-            it does not rewrite.
-          </p>
-        </div>
-      )}
     </Panel>
   );
 }
@@ -344,7 +346,7 @@ function FindingRows({
         data-code={f.code}
         data-severity={f.severity}
       >
-        <td className="py-1 pr-2">
+        <td>
           <IconButton
             icon={isOpen ? "chevron-down" : "chevron-right"}
             size="sm"
@@ -354,13 +356,13 @@ function FindingRows({
             aria-controls={detailId}
           />
         </td>
-        <td className="py-2 pr-3 font-medium text-text whitespace-nowrap">{label}</td>
-        <td className="py-2 pr-3">
+        <td className="font-medium text-text whitespace-nowrap">{label}</td>
+        <td>
           <SeverityBadge severity={f.severity} />
         </td>
-        <td className="py-2 pr-3 text-right tabular">{f.count.toLocaleString()}</td>
-        <td className="py-2 pr-3 text-right tabular">{pct(f.share)}</td>
-        <td className="py-1 min-w-0">
+        <td className="text-right tabular">{f.count.toLocaleString()}</td>
+        <td className="text-right tabular">{pct(f.share)}</td>
+        <td className="min-w-0">
           {firstKey ? (
             <KeyButton memoryKey={firstKey} onInspect={onInspect} />
           ) : (
@@ -371,7 +373,7 @@ function FindingRows({
       {isOpen && (
         <tr id={detailId} className="bg-surface-2/60" data-testid="audit-finding-detail">
           <td />
-          <td colSpan={5} className="py-3 pr-3 text-sm leading-relaxed">
+          <td colSpan={5} className="text-sm leading-relaxed">
             <p className="text-text">{f.detail}</p>
             <p className="mt-1.5 text-text-muted">
               <span className="font-medium text-text">Remedy:</span> {f.remedy}

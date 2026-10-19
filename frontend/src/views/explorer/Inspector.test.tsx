@@ -1,6 +1,8 @@
-import { render, screen } from "../../test/rtl";
+import { render, screen, waitFor } from "../../test/rtl";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../../test/axe";
+import { listFacts, searchMemory } from "../../api";
 import { Inspector } from "./Inspector";
 import { fromTraverse } from "./model";
 import { expandNotice } from "./notices";
@@ -10,11 +12,12 @@ import { expandNotice } from "./notices";
 // about, it names the node when another is selected, and the pane passes axe with it
 // showing.
 
+const facts: { rows: unknown[] } = { rows: [] };
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
   return {
     ...actual,
-    listFacts: vi.fn(async () => ({ rows: [] })),
+    listFacts: vi.fn(async () => facts),
     searchMemory: vi.fn(async () => ({ results: [], embedding_model: "test" })),
   };
 });
@@ -48,8 +51,8 @@ const model = fromTraverse({
   ],
 });
 
-function mount(props: Partial<Parameters<typeof Inspector>[0]> = {}) {
-  return render(
+function inspector(props: Partial<Parameters<typeof Inspector>[0]> = {}) {
+  return (
     <Inspector
       identity={identity}
       model={model}
@@ -75,22 +78,33 @@ function mount(props: Partial<Parameters<typeof Inspector>[0]> = {}) {
       onCollapse={() => undefined}
       onOpenMemory={() => undefined}
       {...props}
-    />,
+    />
   );
+}
+
+function mount(props: Partial<Parameters<typeof Inspector>[0]> = {}) {
+  return render(inspector(props));
+}
+
+/** The notice region: the pane's loaders are status regions too, but not polite live ones. */
+function noticeRegion() {
+  const region = screen.getAllByRole("status").find((el) => el.getAttribute("aria-live") === "polite");
+  if (!region) throw new Error("no notice region");
+  return region;
 }
 
 describe("Inspector notice region", () => {
   it("exists, empty, before any expand", () => {
     mount();
-    const region = screen.getByRole("status");
+    const region = noticeRegion();
     expect(region).toHaveAttribute("aria-live", "polite");
     expect(region).toHaveTextContent("");
   });
 
   it("reads a result that changed nothing under the selected node, and passes axe", async () => {
     const { container } = mount({ notice: expandNotice({ entity: "mergetree", added: 0, known: 3, capped: false }) });
-    expect(screen.getByRole("status")).toHaveTextContent("Expanded: 0 new within one hop · 3 already shown");
-    expect(screen.getByRole("status").textContent).not.toContain("mergetree");
+    expect(noticeRegion()).toHaveTextContent("Expanded: 0 new within one hop · 3 already shown");
+    expect(noticeRegion().textContent).not.toContain("mergetree");
     expect(screen.getByRole("complementary", { name: "Inspector" })).toBeInTheDocument();
     expect(await axeViolations(container)).toEqual([]);
   });
@@ -98,18 +112,18 @@ describe("Inspector notice region", () => {
   it("names the node when the selection is elsewhere or empty", async () => {
     const notice = expandNotice({ entity: "keeper", added: 7, known: 0, capped: false });
     const { container, unmount } = mount({ notice });
-    expect(screen.getByRole("status")).toHaveTextContent("keeper — Expanded: +7");
+    expect(noticeRegion()).toHaveTextContent("keeper — Expanded: +7");
     expect(await axeViolations(container)).toEqual([]);
     unmount();
     const empty = mount({ notice, selection: null });
-    expect(screen.getByRole("status")).toHaveTextContent("keeper — Expanded: +7");
+    expect(noticeRegion()).toHaveTextContent("keeper — Expanded: +7");
     expect(screen.getByRole("heading", { name: "Reading the graph" })).toBeInTheDocument();
     expect(await axeViolations(empty.container)).toEqual([]);
   });
 
   it("a failed expand is read in the danger tone", () => {
     mount({ notice: { entity: "mergetree", line: "Expand failed: offline", toast: "x", tone: "error" } });
-    const region = screen.getByRole("status");
+    const region = noticeRegion();
     expect(region).toHaveTextContent("Expand failed: offline");
     expect(region.className).toContain("text-danger");
   });
@@ -123,5 +137,104 @@ describe("Inspector links", () => {
     for (const b of reached) expect(b.className).toMatch(/\blink_size_sm/);
     reached[0].click();
     expect(onSelect).toHaveBeenCalled();
+  });
+});
+
+// A list of more than 20 shows the first 20 and "Show all N": an edge reads
+// its rows in both directions, up to 24.
+describe("Inspector lists", () => {
+  it("an edge's rows over 20 show the first 20 and Show all N", async () => {
+    // Each direction answers its own rows, as the server does, so no row is drawn twice under
+    // one key.
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(listFacts).mockImplementation(async (_id, opts = {}) => ({
+      rows: Array.from({ length: 12 }, (_, i) => ({
+        subject: opts.subject ?? "logical",
+        relation: "mentions",
+        object: `${opts.object ?? "mergetree"}-${i}`,
+        co_occur: 1,
+        provenance: "",
+        last_seen: "",
+        stale: false,
+        source_keys: [],
+        sources: [],
+      })),
+      truncated: false,
+    }));
+    const view = mount({ selection: { kind: "edge", parent: "logical", child: "mergetree" } });
+    // Both directions: 24 rows.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Show all 24" })).toBeInTheDocument(), {
+      timeout: 2000,
+    });
+    const list = () => screen.getAllByRole("listitem").filter((li) => li.textContent?.includes("mentions"));
+    expect(list()).toHaveLength(20);
+    await userEvent.click(screen.getByRole("button", { name: "Show all 24" }));
+    expect(list()).toHaveLength(24);
+    // The button went with the cap: focus is in the first row it hid.
+    await waitFor(() => expect(list()[20].contains(document.activeElement)).toBe(true));
+    // Another edge starts capped again.
+    view.rerender(inspector({ selection: { kind: "edge", parent: "logical", child: "keeper" } }));
+    await waitFor(() => expect(screen.getByText(/keeper-0/)).toBeInTheDocument(), { timeout: 2000 });
+    expect(list()).toHaveLength(20);
+    expect(screen.getByRole("button", { name: "Show all 24" })).toBeInTheDocument();
+    expect(error.mock.calls.filter((c) => String(c[0]).includes("same key"))).toEqual([]);
+    error.mockRestore();
+    vi.mocked(listFacts).mockImplementation(async () => facts as never);
+  });
+});
+
+describe("Inspector failed reads", () => {
+  it("says the facts and the memories failed to load, never that there are none, and Retry reads again", async () => {
+    vi.mocked(listFacts).mockRejectedValueOnce(new Error("down"));
+    vi.mocked(searchMemory).mockRejectedValueOnce(new Error("down"));
+    mount();
+    expect(await screen.findByText("Couldn't load the facts", {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.getByText("Couldn't load the memories")).toBeInTheDocument();
+    expect(screen.queryByText(/No typed triple names this entity/)).toBeNull();
+    const before = vi.mocked(listFacts).mock.calls.length;
+    screen.getAllByRole("button", { name: "Retry" })[0].click();
+    await waitFor(() => expect(vi.mocked(listFacts).mock.calls.length).toBeGreaterThan(before), { timeout: 2000 });
+    await waitFor(() => expect(screen.queryByText("Couldn't load the facts")).toBeNull());
+  });
+
+  it("reads the selection again in another namespace, keeping nothing from the last one", async () => {
+    const before = vi.mocked(listFacts).mock.calls.length;
+    const view = mount();
+    // This mount's own read, settled, before the switch.
+    await waitFor(() => expect(vi.mocked(listFacts).mock.calls.length).toBeGreaterThan(before), { timeout: 2000 });
+    expect(vi.mocked(listFacts).mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "bench" });
+    expect(await screen.findByText(/No typed triple names this entity/)).toBeInTheDocument();
+    const read = vi.mocked(listFacts).mock.calls.length;
+    view.rerender(inspector({ identity: { ...identity, namespace: "other" } }));
+    // The last namespace's answer goes; the panel reads the new one.
+    await waitFor(() => expect(screen.queryByText(/No typed triple names this entity/)).toBeNull());
+    await waitFor(() => expect(vi.mocked(listFacts).mock.calls.length).toBeGreaterThan(read), { timeout: 2000 });
+    expect(vi.mocked(listFacts).mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "other" });
+  });
+
+  it("reads again when a new model lands while the selection's read is out", async () => {
+    vi.mocked(listFacts).mockImplementationOnce(
+      (_id, opts) =>
+        new Promise((_, reject) =>
+          opts?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))),
+        ),
+    );
+    const before = vi.mocked(listFacts).mock.calls.length;
+    const view = mount();
+    await waitFor(() => expect(vi.mocked(listFacts).mock.calls.length).toBe(before + 1), { timeout: 2000 });
+    view.rerender(inspector({ model: { ...model, nodes: new Map(model.nodes) } }));
+    expect(await screen.findByText(/No typed triple names this entity/, {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.queryByText("Loading facts")).toBeNull();
+  });
+
+  it("keeps a failed read's error when an Expand or a re-walk hands it a new model for the same selection", async () => {
+    vi.mocked(listFacts).mockRejectedValueOnce(new Error("down"));
+    const view = mount();
+    expect(await screen.findByText("Couldn't load the facts", {}, { timeout: 2000 })).toBeInTheDocument();
+    view.rerender(inspector({ model: { ...model, nodes: new Map(model.nodes) } }));
+    // Past the panel's 250 ms beat before a read, so a read it started would have begun.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(screen.getByText("Couldn't load the facts")).toBeInTheDocument();
+    expect(screen.queryByText("Loading facts")).toBeNull();
   });
 });

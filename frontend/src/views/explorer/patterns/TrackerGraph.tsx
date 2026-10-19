@@ -7,8 +7,10 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { EmptyState } from "../../../components/EmptyState";
 import { Skeleton } from "../../../components/Skeleton";
+import { LoadingSkeleton } from "../../../components/ui";
 import { shorten } from "../model";
 import type { TrackerEdge, TrackerGraph as TrackerGraphModel, TrackerNode } from "./model";
 
@@ -384,12 +386,12 @@ export function TrackerGraph({ graph, loading, error, hint, selected, onSelect, 
       className="relative rounded-xl border border-border bg-surface overflow-hidden aspect-[820/560] max-h-[560px] w-full"
     >
       {loading && (
-        <div className="absolute inset-0 grid place-items-center" role="status" aria-label="Reading the tracker graph">
+        <LoadingSkeleton label="Loading the tracker graph" className="absolute inset-0 grid place-items-center">
           <div className="flex flex-col items-center gap-3">
             <Skeleton className="w-40 h-40 rounded-full" />
             <Skeleton className="h-3 w-32" />
           </div>
-        </div>
+        </LoadingSkeleton>
       )}
       {error && <div className="absolute inset-0 grid place-items-center p-6 text-sm text-danger">{error}</div>}
       {!loading && !error && !placed && (
@@ -440,10 +442,17 @@ export function TrackerGraph({ graph, loading, error, hint, selected, onSelect, 
             selected={selected === placed.seed.number}
             sel={selChain ? selChain.has(placed.seed.id) : false}
           />
-          <text x={12} y={H - 14} fill="var(--color-text-muted)">
-            ← caused by · fixed by → · duplicates and related below
-          </text>
         </svg>
+      )}
+      {/* The picture's key, over its bottom edge; hidden from a screen reader like the picture. */}
+      {show && (
+        <div
+          className="absolute left-3 bottom-2 inline-flex flex-wrap items-center gap-1 text-xs text-text-muted pointer-events-none"
+          aria-hidden="true"
+        >
+          <Icon name="arrow-left" size="xs" /> caused by · fixed by <Icon name="arrow-right" size="xs" /> · duplicates
+          and related below
+        </div>
       )}
       {show && <div ref={readoutRef} hidden className="graph-readout" aria-hidden="true" />}
     </div>

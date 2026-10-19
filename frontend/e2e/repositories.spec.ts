@@ -10,15 +10,16 @@ import {
   trackerSourcesFixture,
   TRACKER_PRIVATE_NS,
   TRACKER_PUBLIC_NS,
+  MIN_TARGET_PX,
 } from "./fixtures";
 
-// A repository is one card with two facets: `code.repos` and `tracker.source.list` join
-// by repository into one card; the Code facet keeps the branch chips; the Issues & PRs
-// facet is the tracker namespace(s) whose `repos` name the repository, chips named by
-// scope; five verbs on both facets; the page lives at /repositories;
-// at 400 px nothing truncates and every control is 44 px under a coarse pointer. A card
-// is folded by default — one row with the standing, a one-line summary and the primary
-// verb — and its heading is the disclosure that opens the facets.
+// A repository is one list row with two facets: `code.repos` and `tracker.source.list`
+// join by repository into one row; line 1 is the name and the worst branch's health,
+// line 2 a muted summary, and the one inline action a split button (Open / Join /
+// Request access, its menu naming the branches). Opened, the row shows a table of its
+// branches (a menu per branch), the tracker line with the scope chips, and a folded
+// Settings for maintainers. Five verbs on both facets; the page lives at /repositories;
+// at 400 px nothing truncates and every control is 44 px under a coarse pointer.
 
 const SHOTS = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../e2e-screenshots");
 
@@ -53,7 +54,7 @@ async function noOverflow(el: Locator): Promise<void> {
 test.describe("desktop 1360", () => {
   test.use({ viewport: { width: 1360, height: 900 } });
 
-  test("one card for ClickHouse/ClickHouse with both facets; five verbs; joins call namespace.join once each; diagnostics only for a maintainer", async ({
+  test("one row for ClickHouse/ClickHouse with both facets; five verbs; joins call namespace.join once each; diagnostics only for a maintainer", async ({
     page,
   }) => {
     const calls = await installApi(page, { codeRepos: codeReposFixture(), trackerSources: trackerSourcesFixture() });
@@ -64,70 +65,69 @@ test.describe("desktop 1360", () => {
     // No "tracker sources" heading; the plane is named by its contents.
     await expect(page.getByRole("heading", { name: "tracker sources" })).toHaveCount(0);
     await expect(page.getByRole("region", { name: /^tracker source/ })).toHaveCount(0);
+    // The toolbar: the filter leads, the count at its end.
+    const bar = page.getByRole("search", { name: "Search and filters" });
+    await expect(bar.getByRole("textbox", { name: "Filter repositories" })).toBeVisible();
+    await expect(bar.getByText("3 repositories · 3 branches")).toBeVisible();
 
     const c = card(page);
     await expect(c).toHaveCount(1);
     await expect(c.getByRole("heading", { level: 2, name: CODE_REPO })).toBeVisible();
-    await expect(c.getByText("not joined", { exact: true })).toBeVisible();
-    // Folded: the row carries the summary and the primary verb, no facet rows yet.
-    await expect(c.getByText("3 branches · 31,539 files · 22,579 issues · 65,328 PRs")).toBeVisible();
-    await expect(c.getByRole("button", { name: "Join · master" })).toBeVisible();
-    await expect(c.getByRole("group", { name: "Code" })).toHaveCount(0);
-    await expect(c.getByRole("group", { name: "Tracker" })).toHaveCount(0);
+    // Folded: health, the summary and the one inline action; no branch table yet.
+    await expect(c.getByText("Up to date", { exact: true })).toBeVisible();
+    await expect(c.getByText("open", { exact: true })).toHaveCount(0);
+    await expect(c.getByText("3 branches · 31,539 files · indexed 2h ago · not joined")).toBeVisible();
+    await expect(c.getByRole("button", { name: "Join", exact: true })).toBeVisible();
+    await expect(c.getByRole("table")).toHaveCount(0);
     await shot(page, "14-repositories-desktop-folded");
     await unfold(c, CODE_REPO);
-    await expect(c.getByText("3 branches · 31,539 files · 22,579 issues · 65,328 PRs")).toHaveCount(0);
-    const code = c.getByRole("group", { name: "Code" });
-    await expect(code.getByText("3 branches", { exact: true })).toBeVisible();
-    await expect(code.getByText(/31,539 files · 412,000 symbols at master/)).toBeVisible();
-    await expect(code.getByText(/indexed 2h ago/)).toBeVisible();
-    await expect(code.getByRole("button", { name: "master: not joined, join" })).toBeVisible();
-    await expect(code.getByRole("button", { name: "25.8: not joined, join" })).toBeVisible();
-    await expect(code.getByRole("button", { name: "25.7: not joined, request access" })).toBeVisible();
+    const table = c.getByRole("table", { name: `${CODE_REPO} branches` });
+    await expect(table.getByRole("row")).toHaveCount(4);
+    await expect(table.getByRole("row", { name: /master/ })).toContainText("31,539");
+    await expect(table.getByRole("row", { name: /master/ })).toContainText("412,000");
     const rec = c.getByRole("group", { name: "Tracker" });
     await expect(rec.getByText("22,579 issues · 65,328 PRs")).toBeVisible();
     await expect(rec.getByText(/refreshed/)).toBeVisible();
     await expect(rec.getByRole("button", { name: "Public: not joined, join" })).toBeVisible();
     // The fixture's private namespace declares ClickHouse/example-private only, so its
-    // chip sits on that record-only card, not here.
+    // chip sits on that record-only row, not here.
     await expect(rec.getByRole("button", { name: /Private/ })).toHaveCount(0);
-    // Diagnostics are not on a reader's card; no slug in any button.
+    // Diagnostics are not on a reader's row; no slug or branch in any button label.
     await expect(c.getByText("qa.example:9440")).toHaveCount(0);
     await expect(c.getByText(/contract/)).toHaveCount(0);
-    await expect(c.getByText("Details")).toHaveCount(0);
+    await expect(c.getByText("Settings")).toHaveCount(0);
     await expect(c.getByRole("button", { name: /tracker-clickhouse/ })).toHaveCount(0);
-    await expect(c.getByRole("button", { name: /Ask to maintain/ })).toHaveCount(0);
-    // The private namespace declares ClickHouse/example-private, and clickstack
-    // names ClickHouse/clickstack: each gets a record-only card headed by that repository.
+    await expect(c.getByRole("button", { name: /· master|· 25\.8/ })).toHaveCount(0);
+    // The private namespace declares ClickHouse/example-private, and clickstack names
+    // ClickHouse/clickstack: each gets a record-only row headed by that repository.
     const priv = page.getByRole("region", { name: "ClickHouse/example-private", exact: true });
     await expect(priv).toBeVisible();
-    await expect(priv.getByText("restricted", { exact: true })).toBeVisible();
+    await expect(priv.getByText("Restricted", { exact: true })).toBeVisible();
+    await expect(priv.getByRole("button", { name: "Request access", exact: true })).toBeVisible();
     await unfold(priv, "ClickHouse/example-private");
-    await expect(priv.getByRole("group", { name: "Code" })).toHaveCount(0);
+    await expect(priv.getByRole("table")).toHaveCount(0);
     const privRec = priv.getByRole("group", { name: "Tracker" });
     await expect(
       privRec.getByRole("button", { name: "Private (restricted): not joined, request access" }),
     ).toBeVisible();
-    await expect(priv.getByRole("button", { name: "Request access · tracker" })).toBeVisible();
     const cs = page.getByRole("region", { name: "ClickHouse/clickstack", exact: true });
-    await expect(cs.getByText("tracker: no credential")).toBeVisible();
+    await expect(cs.getByText("tracker: no credential · not joined")).toBeVisible();
     await unfold(cs, "ClickHouse/clickstack");
-    await expect(cs.getByText("no credential", { exact: true })).toBeVisible();
+    await expect(cs.getByText("No credential", { exact: true })).toBeVisible();
     await expect(cs.getByText("Public · registering…")).toBeVisible();
     await expect(cs.getByRole("button", { name: /^Join/ })).toHaveCount(0);
     expect(calls.trackerSources).toBe(1);
     expect(calls.join).toEqual([]);
     await shot(page, "15-repositories-desktop-before-join");
 
-    // Header: Join the open trunk directly — one namespace.join.
-    await c.getByRole("button", { name: "Join · master" }).click();
-    await expect(code.getByRole("button", { name: "master: reading" })).toBeVisible();
+    // The row's Join joins the open trunk directly — one namespace.join.
+    await c.getByRole("button", { name: "Join", exact: true }).click();
+    await expect(table.getByRole("row", { name: /master/ })).toContainText("Reading");
     expect(calls.join).toEqual([{ op: "join", org: "dev", namespace: "code-clickhouse", role: "viewer" }]);
-    await expect(c.getByRole("button", { name: "Open · master" })).toBeVisible();
-    await expect(c.getByRole("button", { name: "Leave · master" })).toBeVisible();
-    await expect(c.getByText("you read 1 of 3 branches · tracker: not joined")).toBeVisible();
+    await expect(c.getByRole("button", { name: "Open", exact: true })).toBeVisible();
+    await expect(c.getByText("3 branches · 31,539 files · indexed 2h ago · you read 1 of 3")).toBeVisible();
 
-    // Issues & PRs facet: the Public chip confirms, then one namespace.join with the tracker namespace.
+    // The tracker line: the Public chip confirms, then one namespace.join with the tracker namespace.
     await rec.getByRole("button", { name: "Public: not joined, join" }).click();
     let dialog = page.getByRole("dialog");
     await expect(dialog.getByText("Join the tracker?")).toBeVisible();
@@ -137,34 +137,36 @@ test.describe("desktop 1360", () => {
     await expect(page.locator("[data-toast-viewport]")).toContainText(
       `Joined ${TRACKER_PUBLIC_NS} (${CODE_REPO}) · read-only`,
     );
-    await expect(c.getByText("you read 1 of 3 branches · tracker: reading")).toBeVisible();
-    // Two things read: the header's quiet Leave gives way to one per facet.
-    await expect(c.getByRole("button", { name: "Leave · master" })).toBeVisible();
     await expect(rec.getByRole("button", { name: "Leave · tracker" })).toBeVisible();
 
-    // Request access on the restricted record facet (the record-only card).
+    // Request access on the restricted record facet (the record-only row).
     await privRec.getByRole("button", { name: "Private (restricted): not joined, request access" }).click();
     dialog = page.getByRole("dialog");
     await expect(dialog.getByText("Request access to the tracker?")).toBeVisible();
     await expect(dialog.getByText(/Private tracker\./)).toBeVisible();
     await dialog.getByRole("button", { name: "Request access" }).click();
     await expect(privRec.getByRole("button", { name: "Private (restricted): requested" })).toBeVisible();
-    await expect(priv.getByRole("button", { name: "Withdraw request · tracker" })).toBeVisible();
+    await expect(priv.getByText("Requested", { exact: true })).toBeVisible();
     expect(calls.join[2]).toEqual({ op: "join", org: "dev", namespace: TRACKER_PRIVATE_NS, role: "viewer" });
     await expect(page.locator("[data-toast-viewport]")).toContainText("Access requested");
 
-    // Request access on the restricted branch chip: the request dialog with its role choice.
-    await code.getByRole("button", { name: "25.7: not joined, request access" }).click();
+    // Request access on the restricted branch from its row's menu: the request dialog with its role choice.
+    await table.getByRole("button", { name: `Actions for ${CODE_REPO} @ 25.7` }).click();
+    await page.getByRole("menuitem", { name: "Request access" }).click();
     dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("radio", { name: /Reader/ })).toBeChecked();
     await expect(dialog.getByRole("radio", { name: /Maintainer/ })).toBeVisible();
     await dialog.getByRole("button", { name: "Request access" }).click();
-    await expect(code.getByRole("button", { name: "25.7: requested" })).toBeVisible();
+    await expect(table.getByRole("row", { name: /25\.7/ })).toContainText("Requested");
     expect(calls.join[3]).toEqual({ op: "join", org: "dev", namespace: "code-clickhouse-25-7", role: "viewer" });
-    await expect(c.getByText("you read 1 of 3 branches · tracker: reading")).toBeVisible();
-    // The branch verbs on a partly joined card.
-    await expect(code.getByRole("button", { name: "Choose branches…" })).toBeVisible();
-    await expect(code.getByRole("button", { name: "Request maintainer access" })).toHaveCount(0); // a request is pending
+    // A request waiting on a maintainer is information, not a warning.
+    await expect(page.getByText("Waiting for a maintainer.")).toBeVisible();
+    // The repository's verbs sit in the split button's menu.
+    await c.getByRole("button", { name: `More actions for ${CODE_REPO}` }).click();
+    await expect(page.getByRole("menuitem", { name: "Choose branches…" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Open master" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Request maintainer access" })).toHaveCount(0); // a request is pending
+    await page.keyboard.press("Escape");
     await shot(page, "16-repositories-desktop-joined-requested");
 
     // Open the record: the picker on the tracker namespace, the Graph view in Patterns mode.
@@ -173,6 +175,36 @@ test.describe("desktop 1360", () => {
     await expect(page.getByRole("button", { name: `Namespace: ${TRACKER_PUBLIC_NS}` })).toBeVisible();
     await expect(page.getByRole("button", { name: "Patterns" })).toHaveAttribute("aria-pressed", "true");
     expect(errors).toEqual([]);
+  });
+
+  test("a failed read says so with Retry, and Retry reads again", async ({ page }) => {
+    await installApi(page, { codeRepos: codeReposFixture() });
+    let fail = true;
+    await page.route("**/v1/code.repos", (r) =>
+      fail
+        ? r.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({ detail: { code: "INTERNAL", message: "ClickHouse timed out" } }),
+          })
+        : r.fallback(),
+    );
+    await page.goto("/repositories");
+    await expect(page.getByRole("heading", { name: "Couldn't load repositories" })).toBeVisible();
+    await expect(page.getByText("No repositories yet")).toHaveCount(0);
+    fail = false;
+    await page.getByRole("button", { name: "Retry" }).click();
+    await expect(card(page)).toBeVisible();
+  });
+
+  test("nothing indexed: the onboarding steps and one Add repository", async ({ page }) => {
+    await installApi(page, { codeRepos: [] });
+    await page.goto("/repositories");
+    await expect(page.getByRole("heading", { name: "Index your first repository" })).toBeVisible();
+    await expect(page.getByText("Add a Git remote and a branch")).toBeVisible();
+    await expect(page.getByText("Loom indexes it in the background")).toBeVisible();
+    await expect(page.getByText("Agents search it with code.search")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add repository" })).toHaveCount(1);
   });
 
   test("the sidebar link says Repositories and points to /repositories", async ({ page }) => {
@@ -184,15 +216,19 @@ test.describe("desktop 1360", () => {
     await expect(link).toHaveAttribute("href", "/repositories");
   });
 
-  test("a server without tracker.source.list: the cards render, one stated line, no error banner", async ({ page }) => {
+  test("a server without tracker.source.list: the rows render, the tracker line says so, no error banner", async ({
+    page,
+  }) => {
     const calls = await installApi(page, { codeRepos: codeReposFixture() });
     await page.goto("/repositories");
     await expect(card(page)).toBeVisible();
-    await expect(page.getByText("Trackers are not available on this deployment yet.")).toBeVisible();
     await expect(page.getByRole("alert")).toHaveCount(0);
     await unfold(card(page), CODE_REPO);
-    await expect(card(page).getByRole("group", { name: "Code" })).toBeVisible();
-    await expect(card(page).getByRole("group", { name: "Tracker" })).toHaveCount(0);
+    await expect(card(page).getByRole("table", { name: `${CODE_REPO} branches` })).toBeVisible();
+    await expect(card(page).getByRole("group", { name: "Tracker" })).toContainText(
+      "Trackers are not available on this deployment yet.",
+    );
+    await expect(page.getByText("Trackers are not available on this deployment yet.")).toHaveCount(1);
     await page.waitForTimeout(300);
     expect(calls.trackerSources).toBe(1);
   });
@@ -218,14 +254,14 @@ test.describe("desktop 1360", () => {
     expect(calls.join).toEqual([]);
     expect(calls.trackerSources).toBe(1);
     await expect(page.getByRole("button", { name: /rotate|retire|remove|check now/i })).toHaveCount(0);
-    await expect(page.getByText("Details")).toHaveCount(0);
+    await expect(page.locator("#main").getByText("Settings", { exact: true })).toHaveCount(0);
   });
 });
 
 test.describe("phone 400, coarse pointer", () => {
   test.use({ viewport: { width: 400, height: 860 }, hasTouch: true, isMobile: true });
 
-  test("nothing truncates: the card and its title fit, the actions stack under the header, every chip and verb is 44 px", async ({
+  test("nothing truncates: the row and its title fit, the split button takes the width under the summary, every control is 44 px", async ({
     page,
   }) => {
     await installApi(page, { codeRepos: codeReposFixture(), trackerSources: trackerSourcesFixture() });
@@ -243,34 +279,39 @@ test.describe("phone 400, coarse pointer", () => {
       cw: document.documentElement.clientWidth,
     }));
     expect(doc.sw).toBeLessThanOrEqual(doc.cw);
-    // The action column sits under the header: the primary button starts below the title.
-    const tb = await boxOf(title);
-    const pb = await boxOf(c.getByRole("button", { name: "Join · master" }));
-    expect(pb.y).toBeGreaterThan(tb.y + tb.height - 1);
-    // Folded, the row is short: three stacked lines and the verb, and the disclosure
-    // itself is a 44 px target.
-    const folded = await boxOf(c);
-    expect(folded.height).toBeLessThan(260);
+    // The action sits under the summary line and takes the row's width.
+    const summary = c.getByText("3 branches · 31,539 files · indexed 2h ago · not joined");
+    const sb = await boxOf(summary);
+    const join = c.getByRole("button", { name: "Join", exact: true });
+    const jb = await boxOf(join);
+    expect(jb.y).toBeGreaterThan(sb.y + sb.height - 1);
+    const more = await boxOf(c.getByRole("button", { name: `More actions for ${CODE_REPO}` }));
+    const row = await boxOf(c.locator(".list-row"));
+    expect(more.x + more.width - jb.x).toBeGreaterThan(row.width - 40);
+    // Folded, the row is short, and the disclosure itself is a 44 px target.
+    expect(row.height).toBeLessThan(200);
     const toggle = c.getByRole("button", { name: CODE_REPO, exact: true });
-    expect((await boxOf(toggle)).height).toBeGreaterThanOrEqual(44);
+    expect((await boxOf(toggle)).height).toBeGreaterThanOrEqual(MIN_TARGET_PX);
     await shot(page, "17-repositories-phone-folded");
     await unfold(c, CODE_REPO);
     await noOverflow(c);
-    // Every control on the card is a 44 px target under a coarse pointer.
+    // The branch table stacks: each branch is a card of Branch · Health · Last indexed.
+    const table = c.getByRole("table", { name: `${CODE_REPO} branches` });
+    await expect(table.getByRole("row", { name: /master/ }).getByText("Up to date")).toBeVisible();
+    await expect(table.getByRole("row", { name: /master/ }).getByText("31,539")).toBeHidden();
+    // Every control on the row is a 44 px target under a coarse pointer.
     const buttons = c.getByRole("button");
     const n = await buttons.count();
     expect(n).toBeGreaterThanOrEqual(6);
     for (let i = 0; i < n; i++) {
       const b = buttons.nth(i);
+      if (!(await b.isVisible())) continue;
       const box = await boxOf(b);
       const name = (await b.getAttribute("aria-label")) ?? (await b.innerText());
-      expect(box.height, `${name} height`).toBeGreaterThanOrEqual(44);
-      expect(box.width, `${name} width`).toBeGreaterThanOrEqual(44);
+      expect(box.height, `${name} height`).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+      expect(box.width, `${name} width`).toBeGreaterThanOrEqual(MIN_TARGET_PX);
     }
-    // The open/restricted pill and the standing phrase are whole.
-    await expect(c.getByText("open", { exact: true })).toBeVisible();
-    await noOverflow(c.getByText("open", { exact: true }));
-    await expect(c.getByText("not joined", { exact: true })).toBeVisible();
+    await expect(c.getByText("Up to date", { exact: true }).first()).toBeVisible();
     await shot(page, "17-repositories-phone");
     expect(errors).toEqual([]);
   });

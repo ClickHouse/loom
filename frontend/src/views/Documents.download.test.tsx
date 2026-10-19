@@ -1,7 +1,8 @@
-// A Library row's download button fetches the document under the viewer's scope with the
+// A Library row's More menu's download fetches the document under the viewer's scope with the
 // original filename (or the Markdown name for a text-only document), and a failed call —
 // download or delete — raises an error toast that carries the request id.
-import { act, cleanup, fireEvent, render, screen } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { ApiError } from "../lib/errors";
@@ -46,10 +47,10 @@ async function settle() {
     });
 }
 
-function hoverRow(title: string) {
-  const row = screen.getByText(title).closest("[class*='rounded-xl']");
-  if (!row) throw new Error(`no row for ${title}`);
-  fireEvent.mouseEnter(row);
+/** Pick an item from a row's More menu. */
+async function pick(title: string, item: string) {
+  await userEvent.click(screen.getByRole("button", { name: `Actions for ${title}` }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: item }));
 }
 
 const failure = () => new ApiError({ status: 500, code: "INTERNAL", message: "boom", requestId: "rid-123" });
@@ -70,16 +71,14 @@ describe("Library download", () => {
     render(<Documents />);
     await settle();
 
-    hoverRow("Handbook");
-    fireEvent.click(screen.getByRole("button", { name: "Download original file" }));
+    await pick("Handbook", "Download PDF");
     expect(api.downloadKnowledge).toHaveBeenLastCalledWith(
       { org: ORG, namespace: NS },
       "docs/handbook.pdf",
       "handbook.pdf",
     );
 
-    hoverRow("Text only");
-    fireEvent.click(screen.getByRole("button", { name: "Download text (.md)" }));
+    await pick("Text only", "Download text (.md)");
     expect(api.downloadKnowledge).toHaveBeenLastCalledWith(
       { org: ORG, namespace: NS },
       "notes/text-only",
@@ -96,8 +95,7 @@ describe("Library download", () => {
       </>,
     );
     await settle();
-    hoverRow("Handbook");
-    fireEvent.click(screen.getByRole("button", { name: "Download original file" }));
+    await pick("Handbook", "Download PDF");
     await settle();
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("Download failed");
@@ -113,13 +111,26 @@ describe("Library download", () => {
       </>,
     );
     await settle();
-    hoverRow("Handbook");
-    fireEvent.click(screen.getByRole("button", { name: "Delete document" }));
+    await pick("Handbook", "Delete");
     await settle();
     expect(api.deleteKnowledge).toHaveBeenCalledWith({ org: ORG, namespace: NS }, "docs/handbook.pdf");
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("Delete failed");
     expect(alert.textContent).toContain("request id rid-123");
+  });
+
+  // The deleted row took its menu and the focus with it: focus lands on the search field.
+  it("hands focus to the search field after a row's delete", async () => {
+    api.deleteKnowledge.mockImplementation(async () => {
+      const rest = ROWS.filter((r) => r.source_uri !== "docs/handbook.pdf");
+      api.listKnowledge.mockResolvedValue({ rows: rest, total: rest.length, next_cursor: null });
+      return {};
+    });
+    render(<Documents />);
+    await settle();
+    await pick("Handbook", "Delete");
+    await waitFor(() => expect(screen.queryByText("Handbook")).toBeNull());
+    expect(screen.getByLabelText("Search library")).toHaveFocus();
   });
 });
 

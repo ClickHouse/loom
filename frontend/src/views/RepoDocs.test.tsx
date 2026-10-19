@@ -99,6 +99,19 @@ describe("RepoDocsList", () => {
     expect(await axeViolations(document.body)).toEqual([]);
   });
 
+  // A document's "added" time is the list's one time format, quiet in the row (no tab stop of
+  // its own).
+  it("draws each document's added time with ListTime, without a tab stop", async () => {
+    vi.mocked(listKnowledge).mockResolvedValue({ rows: [DOC], next_cursor: null });
+    mount();
+    await screen.findByRole("button", { name: "On-call runbook" });
+    const time = within(screen.getByRole("list", { name: "Repository documents" })).getByText(
+      (_, el) => el?.tagName === "TIME",
+    );
+    expect(time).toHaveAttribute("dateTime", "2026-09-20T10:00:00.000Z");
+    expect(time).not.toHaveAttribute("tabindex");
+  });
+
   it("a failed read-count call shows the list without them", async () => {
     vi.mocked(listKnowledge).mockResolvedValue({ rows: [DOC], next_cursor: null });
     vi.mocked(knowledgeReads).mockRejectedValue(new ApiError({ status: 500, code: "INTERNAL", message: "no" }));
