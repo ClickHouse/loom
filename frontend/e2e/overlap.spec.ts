@@ -2,8 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { installApi } from "./fixtures";
 
 // Nothing on screen sits over content it hides: a drawer's last section scrolls clear of
-// its actions, and a bar that stays at the top while a list scrolls is opaque, so the
-// rows passing under it never show through.
+// its actions, a menu opened in a drawer draws over it, and a bar that stays at the top
+// while a list scrolls is opaque, so the rows passing under it never show through.
 
 async function memories(page: Page) {
   await installApi(page, { memoryRows: 30, knowledgeRows: 30 });
@@ -27,6 +27,23 @@ for (const width of [1400, 375]) {
       const last = body.locator(":scope > *").last();
       const [lastBox, footerBox] = [await last.boundingBox(), await footer.boundingBox()];
       expect(lastBox && footerBox && lastBox.y + lastBox.height <= footerBox.y + 1).toBe(true);
+    });
+
+    // A menu is lifted over the drawer (styles.css `[data-radix-popper-content-wrapper]`).
+    test("a menu opened in the memory drawer draws over it", async ({ page }) => {
+      await memories(page);
+      await page.locator("[data-memory-key] [data-memory-open]").first().click();
+      await page.getByRole("dialog").getByRole("button", { name: "More actions" }).click();
+      const menu = page.getByRole("menu", { name: "More actions" });
+      await expect(menu).toBeVisible();
+      const items = menu.getByRole("menuitem");
+      for (let i = 0; i < (await items.count()); i++) {
+        const onTop = await items.nth(i).evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          return el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+        });
+        expect(onTop, await items.nth(i).innerText()).toBe(true);
+      }
     });
 
     for (const path of ["/memories", "/library"]) {

@@ -415,9 +415,12 @@ body {
 
 /* Popovers, menus, selects and tooltips: Click UI gives them z-index 1–2 and
    Radix copies that onto the popper wrapper inline; lift them over Loom's
-   dialogs (z-50/60) and toasts (z-[65]). */
-[data-radix-popper-content-wrapper] {
-  z-index: 70 !important;
+   dialogs (z-50/60) and toasts (z-[65]). An !important declaration in a layer still
+   beats that inline one, which is not important. */
+@layer components {
+  [data-radix-popper-content-wrapper] {
+    z-index: 70 !important;
+  }
 }
 
 /* ============================================================
