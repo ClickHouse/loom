@@ -921,7 +921,10 @@ async def project_stated_relations(
                 revised = True
     if revised:
         scope = SimpleNamespace(
-            org=row["org"], namespace=row["namespace"], agent=row["agent"], user_id=row["user_id"]
+            org=row["org"],
+            namespace=row["namespace"],
+            agent=row["agent"],
+            user_id=str(row.get("user_id") or ""),
         )
         await reconcile_row_facts(scope, [str(row["memory_id"])], reopen=False, op=op, ch=ch)
 
