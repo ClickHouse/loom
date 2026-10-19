@@ -34,6 +34,7 @@ from server.erasure.app.saga import audit_namespace, begin_erasure, run_saga
 from server.erasure.store import exports as erasure_exports
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store.rows import RequestStatusRow
+from server.memory.app.provenance import writer_actor
 from server.observability import audit
 from server.operations.base import Role
 
@@ -97,6 +98,28 @@ async def _export_memory(
         org, scope_type, scope_value, include_tombstoned=include_tombstoned, limit=limit + 1
     )
     return _page(rows, limit)
+
+
+async def _audit_high_rows(org: str, rows: list[dict[str, object]]) -> None:
+    """The export serves high rows on purpose; each one it serves is audited as a key read is."""
+    by_ns: dict[str, list[dict[str, object]]] = {}
+    for r in rows:
+        if r.get("sensitivity") == "high":
+            by_ns.setdefault(str(r["namespace"]), []).append(
+                {
+                    "memory_key": r["memory_key"],
+                    "memory_id": r["memory_id"],
+                    "version": r["version"],
+                }
+            )
+    for ns, subjects in by_ns.items():
+        await audit.emit_many(
+            "memory.sensitive_read",
+            org=org,
+            namespace=ns,
+            actor=writer_actor("-"),
+            subjects=subjects,
+        )
 
 
 async def _export_knowledge(
@@ -191,6 +214,7 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         limit=input.section_limit,
     )
     mem_rows, mem_count = _visible(mem_rows, mem_count)
+    await _audit_high_rows(input.org, mem_rows)
     know_rows, know_count = _visible(know_rows, know_count)
     evt_rows, evt_count = _visible(evt_rows, evt_count)
     aud_rows, aud_count = _visible(aud_rows, aud_count)

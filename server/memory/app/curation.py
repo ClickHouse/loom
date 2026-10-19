@@ -52,8 +52,11 @@ from server.memory.api.models_temporal import (
     _OutlineHub,
     _OutlineSession,
 )
+from server.memory.app.provenance import writer_actor
+from server.memory.domain.sensitivity import value_reads_high
 from server.memory.domain.temporal_sql import status_predicate
 from server.memory.store.rows import MemoryRow
+from server.observability import audit as _audit
 
 _CURATED_KEY_SLUG = re.compile(r"[^a-z0-9]+")
 
@@ -140,7 +143,8 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
             _DigestRow(
                 session_id=str(r.get("session_id") or ""),
                 summary_text=str(r.get("summary_text") or ""),
-                key_facts=[str(k) for k in (r.get("key_facts") or [])],
+                # a digest an earlier build wrote may still hold a credential as a key fact
+                key_facts=[str(k) for k in (r.get("key_facts") or []) if not value_reads_high(k)],
                 derived_from=[str(k) for k in (r.get("derived_from") or [])],
                 valid_at=r.get("valid_at"),
                 created_at=r.get("created_at"),
@@ -406,6 +410,25 @@ async def handle_memory_history(input: MemoryHistoryInput) -> MemoryHistoryOutpu
         )
         for r in rows
     ]
+    # Every served version of a row with any 'high' version is audited, as memory.get audits
+    # the head: the version before a sweep labelled the row holds the same value unlabelled.
+    high_ids = {str(r.memory_id) for r in rows if r.sensitivity == "high"}
+    plain_ids = {str(r.memory_id) for r in rows} - high_ids
+    high_ids |= await memory_repo.high_memory_ids(
+        input.org, input.namespace, input.memory_key, sorted(plain_ids)
+    )
+    await _audit.emit_many(
+        "memory.sensitive_read",
+        org=input.org,
+        namespace=input.namespace,
+        actor=writer_actor(input.agent),
+        subjects=[
+            {"memory_key": input.memory_key, "memory_id": str(r.memory_id), "version": r.version}
+            for r in rows
+            # a redacted version served no value
+            if str(r.memory_id) in high_ids and r.redacted_at is None
+        ],
+    )
     return MemoryHistoryOutput(rows=out_rows)
 
 

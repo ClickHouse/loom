@@ -330,3 +330,8 @@ export function refreshDetail(detail: string): string {
     .filter((part) => part && !part.endsWith("="))
     .join(" ");
 }
+
+/** What a card shows for a high row, which the list sends without its value. */
+export const SENSITIVE_LABEL = "Sensitive: open it to read";
+/** The same, where the view cannot open the row itself. */
+export const SENSITIVE_READ_BY_KEY = "Sensitive: read it by key in Memories";

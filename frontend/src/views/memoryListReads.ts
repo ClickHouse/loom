@@ -14,7 +14,8 @@ import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { KEYWORD_PAGE, keywordThenRanked } from "../lib/memoriesSearch";
 
 // The fields the page and its cards read. Field names are a quarter of a row, so a field
-// the page does not read costs on every row.
+// the page does not read costs on every row. `sensitivity`, which marks a high row sent
+// without its value, comes with every entry, so it is not named.
 const MEMORIES_LIST_FIELDS = [
   "memory_key",
   "memory_type",

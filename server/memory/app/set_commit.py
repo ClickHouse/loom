@@ -34,6 +34,7 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app import conflict_deferred as _cd
 from server.memory.app.drops import record_drop
+from server.memory.app.entity_projections import declared_entities
 from server.memory.app.high_fence import fence_high
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.trust import attests
@@ -253,7 +254,9 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
             await fence_high(
                 [(memory_repo.embedding_key(memory_row), int(memory_row["version"]))], ch=ch
             )
-    await _project_set_entities_fail_open(input)
+    # A high value is never mined into graph nodes; the caller's own entities still project.
+    ents = declared_entities(input) if memory_row.get("sensitivity") == "high" else None
+    await _project_set_entities_fail_open(input, ents=ents)
     # Non-searchable types skip the conflict check entirely, so there is no
     # verdict to map: the insert always happened.
     _count_write(input.namespace, "updated" if had_existing_row else "created")

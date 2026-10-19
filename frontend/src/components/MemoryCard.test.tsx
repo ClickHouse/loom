@@ -5,6 +5,9 @@ import type { MemoryListEntry } from "../api";
 import { axeViolations } from "../test/axe";
 import { MemoryCard, valuePairs } from "./MemoryCard";
 
+const getMemory = vi.hoisted(() => vi.fn());
+vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), getMemory }));
+
 const entry: MemoryListEntry = {
   memory_key: "prefs/coffee",
   memory_type: "semantic",
@@ -94,6 +97,19 @@ describe("MemoryCard", () => {
     );
     const open = screen.getByRole("button", { name: /prefs\/coffee/ });
     expect(open).not.toContainElement(screen.getByRole("button", { name: "Why this result" }));
+  });
+
+  it("says a high row is sensitive and leaves its read to the inspector", () => {
+    render(
+      <MemoryCard
+        identity={identity}
+        entry={{ ...entry, sensitivity: "high", value_truncated: true }}
+        onSelect={vi.fn()}
+        active={false}
+      />,
+    );
+    expect(screen.getByText("Sensitive: open it to read")).toBeTruthy();
+    expect(getMemory).not.toHaveBeenCalled();
   });
 });
 

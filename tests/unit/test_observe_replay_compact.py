@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -99,3 +100,65 @@ def test_the_worker_replays_under_suppression() -> None:
     assert src.index("with suppress_chunk_layer():") < src.index(
         "handle_memory_set_from_messages(extract_in)"
     )
+
+
+async def test_a_high_observation_is_never_sent_to_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The sweep labels an observation holding a credential 'high'; the distill pass replays
+    # and summarises only the others, and still marks every one DONE.
+    import server.memory.store as memory_repo
+
+    plain = SimpleNamespace(
+        value={"narrative": "ran the tests"}, sensitivity="", tags=[], valid_at=None
+    )
+    high = SimpleNamespace(
+        value={"narrative": "token sk-123"}, sensitivity="high", tags=[], valid_at=None
+    )
+    # capture writes an observation unlabelled; the sweep labels it later
+    unlabelled = SimpleNamespace(
+        value={"narrative": "export GITHUB_TOKEN=ghp_" + "a" * 36},
+        sensitivity="",
+        tags=[],
+        valid_at=None,
+    )
+    seen: dict[str, Any] = {}
+
+    def _replay(obs: list[Any], **_k: Any) -> list[Any]:
+        seen["replayed"] = obs
+        return []
+
+    async def _extras(_s: Any, obs: list[Any], **_k: Any) -> Any:
+        seen["summarised"] = obs
+        return SimpleNamespace(events_written=0, procedure_written=0, hint_written=0, failures=[])
+
+    async def _context(*_a: Any, **_k: Any) -> list[Any]:
+        return []
+
+    async def _insert(rows: list[Any], **_k: Any) -> None:
+        seen["done"] = rows
+
+    monkeypatch.setattr(ox, "replay_messages", _replay)
+    monkeypatch.setattr(ox, "_distill_extras", _extras)
+    monkeypatch.setattr(ox, "_load_session_context", _context)
+    monkeypatch.setattr(ox, "get_client_for_context", lambda: None)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: None)
+    monkeypatch.setattr(memory_repo, "build_memory_version_row", lambda o, **_k: o)
+    monkeypatch.setattr(memory_repo, "insert_memory_versions", _insert)
+    session = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "s"}
+    # a token on its own line, and a quoted password: JSON-escaped, neither reads as one
+    own_line = SimpleNamespace(
+        value={"narrative": "[command_run] tool=Bash\noutput:\nghp_" + "b" * 36},
+        sensitivity="",
+        tags=[],
+        valid_at=None,
+    )
+    quoted = SimpleNamespace(
+        value={"narrative": 'config: password: "hunter2secret"'},
+        sensitivity="",
+        tags=[],
+        valid_at=None,
+    )
+    await ox._distill_session(session, [plain, high, unlabelled, own_line, quoted])
+    assert seen["replayed"] == [plain] and seen["summarised"] == [plain]
+    assert seen["done"] == [plain, high, unlabelled, own_line, quoted]

@@ -393,12 +393,23 @@ async def _source_memories(ch: Any, period: Period) -> tuple[list[str], list[str
         return [], []
     rows = await ch.query_all(
         """
-        SELECT toString(memory_id) AS memory_id, entities FROM loom.memory FINAL
+        SELECT toString(memory_id) AS memory_id,
+               -- a 'high' row's entities were mined from its value; the period row is
+               -- plain and embedded, so it never carries them (the id stays, for lineage)
+               if(sensitivity = 'high', [], entities) AS entities
+        FROM loom.memory FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
+          AND agent = {agent:String} AND user_id = {uid:String}
           AND memory_key IN {keys:Array(String)}
           AND status = 'active' AND tombstoned_at IS NULL
         """,
-        params={"org": period.org, "ns": period.namespace, "keys": keys},
+        params={
+            "org": period.org,
+            "ns": period.namespace,
+            "agent": period.agent,
+            "uid": period.user_id,
+            "keys": keys,
+        },
     )
     ids = [str(r.get("memory_id")) for r in (rows or []) if r.get("memory_id")]
     ents = sorted(

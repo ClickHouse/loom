@@ -13,6 +13,7 @@ from server.identity.app.request_scope import request_scope
 from server.memory.app.search.request import _apply_explain_default
 from server.memory.app.search.tiers import _reader_user_id
 from server.memory.app.search_tag_filter import read_row_tags as _read_row_tags
+from server.memory.domain.sensitivity import reads_high
 
 log = logging.getLogger(__package__)
 
@@ -288,6 +289,7 @@ async def _expand_unit_bodies(
                 ),
                 [str(h.memory_key) for h in group],
                 scope=request_scope(),
+                exclude_high_sensitivity=True,
             )
         except Exception as e:  # noqa: BLE001 — a body read never fails a search
             log.debug("unit bodies read failed for %s/%s: %s", ns, sid, e)
@@ -295,6 +297,8 @@ async def _expand_unit_bodies(
 
     # one read per (namespace, session) the hits span, overlapped
     reads = await asyncio.gather(*(_read(ns, sid, group) for (ns, sid), group in by_scope.items()))
+    # The read leaves 'high' rows out before it picks one per key, so the plain row the
+    # search matched answers.
     values: dict[tuple[str, str], Any] = {
         (ns, str(r.memory_key)): r.value
         for (ns, _), rows in zip(by_scope, reads, strict=True)
@@ -440,7 +444,12 @@ async def _expand_source_bodies(
             """,
             params,
         )
-        passages = {str(r["eid"]): str(r["body"] or "") for r in rows}
+        # A passage has no sensitivity of its own; one that reads as a credential is not served.
+        passages = {
+            str(r["eid"]): str(r["body"] or "")
+            for r in rows
+            if not reads_high(str(r["body"] or ""))
+        }
         by_key: dict[tuple[str, str], str] = {}
         spans: dict[tuple[str, str], tuple[int, int]] = {}
         for k, ls in linked.items():

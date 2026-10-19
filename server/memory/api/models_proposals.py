@@ -38,7 +38,10 @@ class MemoryProposal(BaseModel):
     memory_id: str
     agent: str = ""
     memory_type: str = ""
+    # The first 400 characters of the value; "" for a high row, read by key (memory.get).
     value_preview: str = ""
+    # Sensitivity tier ('' | low | medium | high).
+    sensitivity: str = ""
     tags: list[str] = Field(default_factory=list)
     created_at: str = ""
     # Graded runs that relied on it (run.complete memories_used + run.grade).

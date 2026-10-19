@@ -11,8 +11,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.core.ch import own_write_reads
+from server.core.datetimes import naive_utc_now
 from server.core.errors import NotFoundError
-from server.memory.api.models_bulk import MemoryBulkGetInput
+from server.identity.app.request_scope import request_scope
 from server.memory.api.models_crud import MemoryGetInput, MemoryListInput, MemorySetInput
 from server.memory.api.models_procedure import (
     ProcedureAddInput,
@@ -32,6 +34,7 @@ from server.memory.api.models_procedure import (
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.domain.procedure_evidence import two_axis_score
 from server.memory.domain.procedure_graph import utility_from_stats
+from server.memory.domain.sensitivity import ATTRIBUTE_TAG_PREFIX, SENSITIVITY_TAG_PREFIX
 
 log = logging.getLogger(__name__)
 _REJECTED_PUBLIC_KEYS = ("revision", "digest", "reason", "before", "after", "steps")
@@ -64,6 +67,7 @@ def _procedure_status(value: dict[str, Any]) -> ProcedureStatus:
 
 
 _PROCEDURE_KEY_PREFIX = "procedure_"
+_PROCEDURE_TAG = "procedure"
 
 
 def _procedure_memory_key(name: str) -> str:
@@ -117,7 +121,7 @@ async def handle_procedure_add(input: ProcedureAddInput) -> ProcedureAddOutput:
         memory_key=memory_key,
         value=value,
         memory_type="procedural",
-        tags=["procedure", *input.tags],
+        tags=[_PROCEDURE_TAG, *input.tags],
     )
     result = await handle_memory_set(set_in)
     return ProcedureAddOutput(
@@ -186,29 +190,32 @@ async def _goal_similarities(
 
 
 async def _procedure_rows(
-    input: ProcedureMatchInput, keys_by_ns: dict[str, list[str]]
+    input: ProcedureMatchInput | ProcedureListInput, keys_by_ns: dict[str, list[str]]
 ) -> dict[tuple[str, str], Any]:
-    """The live rows of the candidate keys whose value is a dict, by (namespace, key)."""
-    from server.memory.app import query as _query
+    """The live rows of the candidate keys whose value is a dict, by (namespace, key).
+
+    A 'high' row is never a candidate: the locate leaves it out, so under the wildcard
+    agent the plain row the search matched answers, and no key read is audited."""
+    import server.memory.store as memory_repo
 
     rows: dict[tuple[str, str], Any] = {}
     for ns, keys in keys_by_ns.items():
+        identity = memory_repo.Identity(
+            org=input.org,
+            namespace=ns,
+            agent=input.agent,
+            user_id=input.user_id,
+            session_id=input.session_id,
+        )
         try:
-            bulk = await _query.handle_memory_bulk_get(
-                MemoryBulkGetInput(
-                    org=input.org,
-                    namespace=ns,
-                    agent=input.agent,
-                    user_id=input.user_id,
-                    session_id=input.session_id,
-                    memory_keys=keys,
-                )
+            found = await memory_repo.get_many_by_keys(
+                identity, keys, scope=request_scope(), exclude_high_sensitivity=True
             )
         except Exception:  # noqa: BLE001 — an unreadable namespace drops its candidates, not the match
             continue
-        for key, row in bulk.results.items():
+        for row in found:
             if isinstance(row.value, dict):
-                rows[(ns, key)] = row
+                rows[(ns, row.memory_key)] = row
     return rows
 
 
@@ -382,32 +389,29 @@ async def handle_procedure_list(input: ProcedureListInput) -> ProcedureListOutpu
         limit=input.limit,
     )
     list_out = await handle_memory_list(list_in)
+    # One read of the listed bodies. A list never reads a 'high' body: such a procedure is
+    # listed by its key and the tags on its row.
+    readable = [row.memory_key for row in list_out.entries if row.sensitivity != "high"]
+    with own_write_reads():  # the body a procedure.add just revised, as memory.get read it
+        bodies = await _procedure_rows(input, {input.namespace: readable})
+    now = naive_utc_now()
     summaries: list[_ProcedureSummary] = []
     for row in list_out.entries:
-        from server.memory.api.models_crud import MemoryGetInput
-        from server.memory.app.handlers import handle_memory_get
-
-        try:
-            get_out = await handle_memory_get(
-                MemoryGetInput(
-                    org=input.org,
-                    namespace=input.namespace,
-                    agent=input.agent,
-                    user_id=input.user_id,
-                    session_id=input.session_id,
-                    memory_key=row.memory_key,
-                )
-            )
-            value = get_out.value if isinstance(get_out.value, dict) else {}
-        except Exception:  # noqa: BLE001 — an unreadable body still lists the procedure by key
-            value = {}
-        if not isinstance(value, dict):
-            value = {}
+        body = bodies.get((input.namespace, row.memory_key))
+        expired = body is not None and body.expires_at is not None and body.expires_at <= now
+        value: dict[str, Any] = body.value if body is not None and not expired else {}
+        # The caller's tags, without the ones procedure.add and memory.set add themselves.
+        row_tags = [
+            t
+            for t in row.tags
+            if t != _PROCEDURE_TAG
+            and not t.startswith((SENSITIVITY_TAG_PREFIX, ATTRIBUTE_TAG_PREFIX))
+        ]
         summaries.append(
             _ProcedureSummary(
                 name=str(value.get("name", row.memory_key.replace(_PROCEDURE_KEY_PREFIX, ""))),
                 situation=str(value.get("situation", "")),
-                tags=list(value.get("tags", [])),
+                tags=list(value.get("tags", row_tags)),
                 memory_key=row.memory_key,
                 created_at=row.created_at,
             )
