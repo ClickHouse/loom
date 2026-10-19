@@ -241,7 +241,16 @@ export function Sidebar() {
   const visibleAdmin: NavItem[] = !canAdmin
     ? []
     : openConflicts || autoResolved
-      ? [{ id: "admin:review_queue", label: "Review queue", icon: "warning", badge: reviewBadge }, ...adminWithBadges]
+      ? [
+          // Open conflicts warn; recent auto-resolutions alone use the Auto-resolved tab's icon.
+          {
+            id: "admin:review_queue",
+            label: "Review queue",
+            icon: openConflicts ? "warning" : "flash",
+            badge: reviewBadge,
+          },
+          ...adminWithBadges,
+        ]
       : adminWithBadges;
 
   // Fetch conflict count + recent auto-resolutions + budget + agents activity on identity
@@ -293,7 +302,8 @@ export function Sidebar() {
       }
       if (canCall("audit.list", roleHere, whoami)) {
         tasks.push(
-          // The newest auto-resolve record: enough to know the Auto-resolved tab is not empty.
+          // The five newest auto-resolve records (the newest may list nothing the tab shows):
+          // enough to know the Auto-resolved tab is not empty.
           // Shared with the Review queue page, which asks the same question.
           sharedHasAutoResolved({ org: identity.org, namespace: identity.namespace })
             .then((found) => {
