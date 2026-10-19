@@ -444,13 +444,6 @@ async def _index_quality(
     return candidates, warnings
 
 
-# While an entry is still building, its chunk counts move
-# without a watermark moving, so the count cache is held for a minute rather
-# than the steady ten; the operator's namespaces keep the long ceiling.
-_BUILDING_COUNTS_MAX_AGE_S = 60.0
-_STEADY_COUNTS_MAX_AGE_S = 600.0
-
-
 def published_clone_head(state: IndexState, branch: str) -> str:
     """The `clone_head` row's sha when the pass published one for `branch`; '' when there is
     no row or it names another branch, and the caller asks git."""
@@ -465,7 +458,11 @@ def _counts_max_age_s(state: IndexState) -> float:
     from server.code.app.index.bootstrap import BUILDING_STAGES, STAGE_KEY
 
     stage = _s((state.get(STAGE_KEY) or {}).get("value"))
-    return _BUILDING_COUNTS_MAX_AGE_S if stage in BUILDING_STAGES else _STEADY_COUNTS_MAX_AGE_S
+    return (
+        settings.code_status_building_counts_ttl_s
+        if stage in BUILDING_STAGES
+        else settings.code_status_steady_counts_ttl_s
+    )
 
 
 def coverage_fields(counts: dict[str, int]) -> dict[str, Any]:

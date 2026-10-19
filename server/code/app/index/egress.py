@@ -25,11 +25,11 @@ import logging
 import time
 
 from server.core.hosts import vet_host
+from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.egress")
 
 ALLOWED_PORTS = frozenset({443, 22})
-_CONNECT_TIMEOUT_S = 15.0
 _IDLE_TIMEOUT_S = 300.0
 _SLOT_WAIT_S = 5.0
 MAX_TUNNELS = 32
@@ -123,7 +123,8 @@ class EgressProxy:
             return
         try:
             up_reader, up_writer = await asyncio.wait_for(
-                asyncio.open_connection(address, port), timeout=_CONNECT_TIMEOUT_S
+                asyncio.open_connection(address, port),
+                timeout=settings.code_egress_connect_timeout_s,
             )
         except (OSError, TimeoutError) as e:
             writer.write(f"HTTP/1.1 502 Bad Gateway\r\n\r\n{type(e).__name__}\n".encode())

@@ -322,6 +322,12 @@ class AuthSettings(BaseModel):
     # change within it.
     policy_cache_ttl_seconds: int = 30
 
+    # ---- timeouts, budgets and caches ----
+    # Seconds a machine issuer's discovery document (its JWKS URL) is cached.
+    auth_machine_discovery_ttl_s: Annotated[int, LIVE] = Field(default=3600, gt=0)
+    # Seconds the identity provider's OpenID configuration is cached.
+    auth_oidc_discovery_ttl_s: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
+
 
 # ===== ClickHouse =============================================================
 
@@ -1282,6 +1288,53 @@ class CodeSettings(BaseModel):
         """`code_bot_authors` as a set of lower-cased logins."""
         return frozenset(a.strip().lower() for a in self.code_bot_authors.split(",") if a.strip())
 
+    # ---- timeouts, budgets and caches ----
+    # Seconds the fix-blame stage of code.bisect_candidates may run.
+    code_bisect_fix_blame_budget_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
+    # Seconds the commit-graph read of code.blame_range may run.
+    code_blame_graph_timeout_s: Annotated[float, LIVE] = Field(default=5.0, gt=0)
+    # Seconds one `git diff` of the introduced-by test may run.
+    code_blame_introduced_diff_timeout_s: Annotated[float, LIVE] = Field(default=5.0, gt=0)
+    # Most commits code.blame_range's window graph reads; a longer history is a caller
+    # asking for everything, which blame cannot rank.
+    code_blame_max_graph_commits: Annotated[int, LIVE] = Field(default=200000, ge=0)
+    # Seconds one `git blame` of code.blame_range may run.
+    code_blame_timeout_s: Annotated[float, LIVE] = Field(default=5.0, gt=0)
+    # Longest wait, in seconds, before a mirror fetches again for a commit no fetch has
+    # brought.
+    code_bootstrap_backoff_max_s: Annotated[float, LIVE] = Field(default=3600.0, ge=0)
+    # Seconds of git time code.verify_citations may spend per request.
+    code_citations_git_budget_s: Annotated[float, LIVE] = Field(default=5.0, gt=0)
+    # Seconds one git call of code.verify_citations may run, within its request budget.
+    code_citations_git_call_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
+    # Seconds the git diff behind code.conventions may run.
+    code_conventions_diff_timeout_s: Annotated[float, LIVE] = Field(default=25.0, gt=0)
+    # Seconds a repository job's egress tunnel waits to connect to its upstream host.
+    code_egress_connect_timeout_s: Annotated[float, LIVE] = Field(default=15.0, gt=0)
+    # Seconds one enrichment of a code result may take before it is left empty.
+    code_enrich_timeout_s: Annotated[float, LIVE] = Field(default=0.5, gt=0)
+    # A full pass waits this long for a delta on its entry (past any delta's harness
+    # timeout).
+    code_entry_lock_wait_s: Annotated[float, LIVE] = Field(default=4 * 3600.0, gt=0)
+    # Seconds a failed fork-upstream lookup is remembered as "not a known fork".
+    code_fork_upstream_miss_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
+    # Seconds the mirror's git log may run when it searches for merge commits.
+    code_merge_shas_log_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
+    # Most commits the mirror's git log prints when it searches for merge commits.
+    code_merge_shas_max_log_commits: Annotated[int, LIVE] = Field(default=5000, ge=0)
+    # The longest a history read waits for a clone it started; less when its op's budget
+    # is.
+    code_mirror_clone_wait_s: Annotated[float, LIVE] = Field(default=10.0, gt=0)
+    # Seconds one `git gc` of a mirror may run.
+    code_mirror_gc_timeout_s: Annotated[float, LIVE] = Field(default=4 * 3600.0, gt=0)
+    # Seconds before a failed compiler-tier full re-index of an entry is tried again.
+    code_scip_full_retry_s: Annotated[int, LIVE] = Field(default=6 * 3600, ge=0)
+    # Seconds an entry's chunk counts are cached while it is still building: they move
+    # then without a watermark moving.
+    code_status_building_counts_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # Seconds an indexed entry's chunk counts are cached once it is no longer building.
+    code_status_steady_counts_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
+
 
 # ===== Context ================================================================
 
@@ -1534,6 +1587,12 @@ class KnowledgeSettings(BaseModel):
     # Characters between chunk starts: below chunk_size the chunks overlap; above it
     # the step is chunk_size, so no text falls between chunks.
     knowledge_chunk_stride: Annotated[int, LIVE] = 1230
+
+    # ---- timeouts, budgets and caches ----
+    # Seconds the BM25 corpus statistics of a knowledge namespace are cached.
+    knowledge_bm25_corpus_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
+    # Seconds a repository's document list is cached for the docs section of a brief.
+    knowledge_repo_docs_list_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
 
 
 # ===== Mcp ====================================================================
@@ -1979,6 +2038,35 @@ class MemorySettings(BaseModel):
     # loom.memory_embeddings (server/core/vectors/patch_parts.py); the fact leg
     # reads quantized codes only while the count is zero.
     memory_embeddings_patch_parts_probe_seconds: int = 60
+
+    # ---- timeouts, budgets and caches ----
+    # Most unresolved conflicts one conflict-sweep pass re-judges.
+    memory_conflict_sweep_max_rows_per_pass: Annotated[int, LIVE] = Field(default=50, ge=0)
+    # Seconds a namespace's open-conflict count is cached between reads.
+    memory_conflicts_count_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # Seconds a namespace's coverage-sweep override is cached.
+    memory_coverage_sweep_gate_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # Seconds a facts.traverse result is reused for the same walk.
+    memory_facts_traverse_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # Seconds a namespace's retrieval defaults are cached; a change reaches search
+    # within it.
+    memory_namespace_retrieval_defaults_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # The most observations a session's notes read: the notes prompt is bounded by
+    # characters anyway; this bounds the read.
+    memory_observe_extract_session_context_limit: Annotated[int, LIVE] = Field(default=400, ge=0)
+    # Seconds the pending-extraction count a read discloses is cached.
+    memory_pending_disclosure_ttl_s: Annotated[float, LIVE] = Field(default=5.0, gt=0)
+    # Attempts a profile write makes when a concurrent write moved the profile under it.
+    memory_profile_cas_max_retries: Annotated[int, LIVE] = Field(default=3, ge=0)
+    # Seconds a namespace's proposal policy is cached; a change applies within it.
+    memory_proposals_policy_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # A listing reads at most this many proposals before `only` / `limit` — the graded
+    # counts are one statement over them; a namespace holding more on trial than this is a
+    # queue nobody is deciding, not a page.
+    memory_proposals_scan_cap: Annotated[int, LIVE] = Field(default=2000, ge=0)
+    # Seconds the entity vocabulary of a namespace's summaries is cached for the summary
+    # read leg.
+    memory_summary_entity_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
 
 
 # ===== MemoryAsk ==============================================================
@@ -2567,6 +2655,11 @@ class MemorySearchSettings(BaseModel):
     # CPU and peak memory per statement.
     memory_search_fact_leg_max_threads: Annotated[int, LIVE] = 0
 
+    # ---- timeouts, budgets and caches ----
+    # Seconds the BM25 corpus statistics (document count, mean length) of a namespace
+    # are cached.
+    memory_search_bm25_cache_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
+
 
 # ===== Model ==================================================================
 
@@ -2701,6 +2794,20 @@ class NamespaceSettings(BaseModel):
     namespace_gc_batch: int = Field(default=200, ge=1)
     # Erasure sagas one GC pass submits (at least 1).
     namespace_gc_sagas_per_pass: int = Field(default=1, ge=1)
+
+    # ---- timeouts, budgets and caches ----
+    # Most live rows the namespace audit's value scan reads (it is O(total value
+    # bytes)); above it that check is skipped and says so.
+    namespace_audit_index_row_scan_cap: Annotated[int, LIVE] = Field(default=20000, ge=0)
+    # Seconds a namespace's relation cardinalities (one or many) are cached for the
+    # triple writer.
+    namespace_ontology_cardinality_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # A taxonomy is four FINAL scans of the namespace (~20 MB per Graph open on a large
+    # namespace) and changes only when the namespace does. It is remembered per (org,
+    # namespace, namespace version, top-N arguments) for up to five minutes — the version
+    # watermark is `max(version)` over the namespace, one 90 kB read; the five minutes
+    # bound the communities, which come from their own table.
+    namespace_taxonomy_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
 
 
 # ===== Observability ==========================================================
@@ -2875,6 +2982,13 @@ class ObservabilitySettings(BaseModel):
     # shares no state with retrieval). 0.0 = off: it costs money per search;
     # a few percent (e.g. 0.05) suits production.
     retrieval_judge_sample_rate: float = 0.0
+
+    # ---- timeouts, budgets and caches ----
+    # The sidebar badge asks agents.connected every 30 s per tab, and the answer is a 24 h
+    # scan of agent_events. One answer per (org, namespace, window, caller scope) serves
+    # every asker for 60 s — "a new agent in the last day" does not change faster than
+    # that.
+    insights_agents_connected_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
 
 
 # ===== Provider ===============================================================
@@ -3318,6 +3432,18 @@ class RuntimeSettings(BaseModel):
             return "off"
         return self.background_workers
 
+    # ---- timeouts, budgets and caches ----
+    # First wait, in seconds, after a worker's pass fails; it doubles per failure up to
+    # worker_backoff_cap_s.
+    worker_backoff_base_s: Annotated[float, LIVE] = Field(default=1.0, ge=0)
+    # Longest wait, in seconds, between a failing worker's passes (the wait doubles from
+    # worker_backoff_base_s).
+    worker_backoff_cap_s: Annotated[float, LIVE] = Field(default=60.0, ge=0)
+    # A pass with a failed leg on a worker whose interval is longer than this retries
+    # after this long, doubling with each further such pass, up to the interval: a weekly
+    # pass must not leave one namespace's transient failure standing for a week.
+    worker_partial_retry_s: Annotated[float, LIVE] = Field(default=3600.0, ge=0)
+
 
 # ===== Storage ================================================================
 
@@ -3387,6 +3513,11 @@ class StorageSettings(BaseModel):
     # Volume named in tiering TTL clauses; must match a volume in the
     # cluster's storage_policies.
     tiering_warm_volume_name: str = "warm"
+
+    # ---- timeouts, budgets and caches ----
+    # Longest wait, in seconds, between retries of a failed dashboard-asset publish (the
+    # wait doubles from storage_frontend_assets_retry_s).
+    storage_frontend_assets_retry_max_s: Annotated[float, LIVE] = Field(default=60.0, ge=0)
 
 
 # ===== Task ===================================================================
@@ -3740,6 +3871,27 @@ class TrackerSettings(BaseModel):
     # The static smell leg reads at most this many chunks of the test's home
     # file(s) from the code plane (flaky-test smell tokens per category, counted).
     tracker_test_signal_smell_chunks: int = 6
+
+    # ---- timeouts, budgets and caches ----
+    # Seconds the tracker source contract check may take when a listing reports it.
+    tracker_contract_check_budget_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
+    # Seconds a namespace's stored duplicate-check fit is cached.
+    tracker_dupcheck_fit_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
+    # Seconds the duplicate check's links and release reads may take together (measured
+    # p50 about 0.3 s).
+    tracker_dupcheck_links_budget_s: Annotated[float, LIVE] = Field(default=1.5, gt=0)
+    # Seconds the duplicate check waits for its related-PR search, which starts with the
+    # checks, once they finish.
+    tracker_dupcheck_pr_wait_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
+    # Seconds a duplicate-check answer is served again to the same caller for the same
+    # question.
+    tracker_dupcheck_recent_ttl_s: Annotated[float, LIVE] = Field(default=1800.0, gt=0)
+    # Seconds a namespace's error-name to code map is cached.
+    tracker_error_names_ttl_s: Annotated[float, LIVE] = Field(default=6 * 3600.0, gt=0)
+    # Seconds the item-count read behind a tracker source's freshness may take.
+    tracker_freshness_budget_s: Annotated[float, LIVE] = Field(default=2.0, gt=0)
+    # Seconds the test-signal candidate read may take; it never holds up the answer.
+    tracker_test_candidates_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
 
 
 # ===== Operation latency budgets ===============================================

@@ -348,7 +348,6 @@ class _Undiscovered(Exception):
     """The issuer's discovery document could not be read, or does not name it."""
 
 
-_DISCOVERY_TTL_S = 3600
 _discovered: dict[str, tuple[str, float]] = {}  # issuer -> (jwks_uri, read at)
 
 
@@ -357,7 +356,7 @@ async def _jwks_uri(issuer: str) -> str:
     from server.settings import settings
 
     cached = _discovered.get(issuer)
-    if cached and time.monotonic() - cached[1] < _DISCOVERY_TTL_S:
+    if cached and time.monotonic() - cached[1] < settings.auth_machine_discovery_ttl_s:
         return cached[0]
     try:
         r = await http().get(

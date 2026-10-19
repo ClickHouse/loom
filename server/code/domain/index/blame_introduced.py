@@ -54,7 +54,6 @@ INTRODUCED_UNKNOWN = "introduced_unknown"
 # first, then ledger-only by recency — each one `git diff -w -U0 <merge>^1 <merge> --
 # <path>`, cached like the blame.
 MAX_DIFF_CALLS = 10
-DIFF_TIMEOUT_S = 5.0
 # how many candidates the first stage hands to the second before the caller's
 # limit cuts the list (a promoted PR may sit past `limit` in last-touched order)
 STAGE_POOL = 25
@@ -834,7 +833,6 @@ NOTE_INTRODUCED = (
 
 
 __all__ = [
-    "DIFF_TIMEOUT_S",
     "INTRODUCED_UNKNOWN",
     "MAX_DIFF_CALLS",
     "NOTE_INTRODUCED",

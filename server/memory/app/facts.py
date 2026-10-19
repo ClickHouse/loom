@@ -324,7 +324,6 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
     return FactsRelatedOutput(entity=entity, related=related)
 
 
-_TRAVERSE_TTL_S = 60.0
 # How long a walk waits for the graph projections of its namespace in flight when it
 # starts, its own process's and the server's other processes' together.
 _OWN_PROJECTION_WAIT_S = 3.0
@@ -381,7 +380,7 @@ class _WalkMemo:
             return out
         if len(self.cache) > 512:
             self.cache.clear()
-        expires = started + timedelta(seconds=_TRAVERSE_TTL_S)
+        expires = started + timedelta(seconds=settings.memory_facts_traverse_ttl_s)
         self.cache[key] = (expires, started, out.model_copy(deep=True))
         return out
 

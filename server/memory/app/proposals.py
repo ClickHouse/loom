@@ -28,6 +28,7 @@ from typing import Any, Literal
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain.proposal_policy import ProposalPolicy, parse_policy
 from server.memory.store.inserts import insert_memory_versions
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +36,6 @@ PROPOSED = "proposed"
 Decision = Literal["accept", "reject"]
 
 
-_POLICY_TTL_S = 60.0
 _POLICY_CACHE: dict[tuple[str, str], tuple[float, ProposalPolicy]] = {}
 
 
@@ -47,7 +47,7 @@ async def policy_for(
     key = (org, namespace)
     hit = _POLICY_CACHE.get(key)
     now = time.monotonic()
-    if hit is not None and not fresh and now - hit[0] < _POLICY_TTL_S:
+    if hit is not None and not fresh and now - hit[0] < settings.memory_proposals_policy_ttl_s:
         return hit[1]
     if ch is None:
         from server.core.ch import get_client

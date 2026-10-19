@@ -283,9 +283,9 @@ _MIRROR_AGAIN_S = 5.0
 # Indexed heads a mirror is known to hold (checked once).
 _HAVE: set[tuple[str, str]] = set()
 # (git_dir, sha) a mirror lacks → (no fetch for it before, fetches made for it). A
-# sha no fetch brings waits _MIRROR_RETRY_S, doubled per fetch up to an hour.
+# sha no fetch brings waits _MIRROR_RETRY_S, doubled per fetch up to
+# `code_bootstrap_backoff_max_s`.
 _FOREIGN: dict[tuple[str, str], tuple[float, int]] = {}
-_BACKOFF_MAX_S = 3600.0
 
 
 async def _logged(name: str, run: Any, cfg: Any) -> str:
@@ -408,7 +408,11 @@ async def holds(cfg: Any, want: str, *, fetchable: Any = None) -> bool:
             return False
         if tries and not until:
             # The fetch made for it ended without it (the remote lost it): back off.
-            _FOREIGN[key] = (now + min(_MIRROR_RETRY_S * 2 ** (tries - 1), _BACKOFF_MAX_S), tries)
+            _FOREIGN[key] = (
+                now
+                + min(_MIRROR_RETRY_S * 2 ** (tries - 1), settings.code_bootstrap_backoff_max_s),
+                tries,
+            )
             return False
         _FOREIGN[key] = (0.0, tries + 1)
         await mirror_job("fetch", fetch_mirror, cfg, 0)

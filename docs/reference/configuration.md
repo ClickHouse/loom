@@ -91,6 +91,13 @@ Authentication, tokens and identity providers.
 | `LOOM_POLICY_MAX_WINDOW_SECONDS` | `int` | `86400` |  | Cap on any rule's look-back window, in seconds. |
 | `LOOM_POLICY_CACHE_TTL_SECONDS` | `int` | `30` |  | Per-(org, namespace) rule cache TTL, seconds; other replicas see a rule change within it. |
 
+### Timeouts, budgets and caches
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_AUTH_MACHINE_DISCOVERY_TTL_S` | `int` | `3600` | live | Seconds a machine issuer's discovery document (its JWKS URL) is cached. |
+| `LOOM_AUTH_OIDC_DISCOVERY_TTL_S` | `float` | `3600.0` | live | Seconds the identity provider's OpenID configuration is cached. |
+
 ## ClickHouse
 
 ClickHouse connection, query shaping and vector storage.
@@ -490,6 +497,31 @@ The code plane: ingest, indexes, search, ask, review.
 | `LOOM_CODE_COVERAGE_IMPORT_INTERVAL_SECONDS` | `float` | `86400.0` |  | Seconds between import passes, and the pass's hard deadline. |
 | `LOOM_CODE_COVERAGE_IMPORT_MAX_PASS_SECONDS` | `float` | `7200.0` |  |  |
 
+### Timeouts, budgets and caches
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_CODE_BISECT_FIX_BLAME_BUDGET_S` | `float` | `8.0` | live | Seconds the fix-blame stage of code.bisect_candidates may run. |
+| `LOOM_CODE_BLAME_GRAPH_TIMEOUT_S` | `float` | `5.0` | live | Seconds the commit-graph read of code.blame_range may run. |
+| `LOOM_CODE_BLAME_INTRODUCED_DIFF_TIMEOUT_S` | `float` | `5.0` | live | Seconds one `git diff` of the introduced-by test may run. |
+| `LOOM_CODE_BLAME_MAX_GRAPH_COMMITS` | `int` | `200000` | live | Most commits code.blame_range's window graph reads; a longer history is a caller asking for everything, which blame cannot rank. |
+| `LOOM_CODE_BLAME_TIMEOUT_S` | `float` | `5.0` | live | Seconds one `git blame` of code.blame_range may run. |
+| `LOOM_CODE_BOOTSTRAP_BACKOFF_MAX_S` | `float` | `3600.0` | live | Longest wait, in seconds, before a mirror fetches again for a commit no fetch has brought. |
+| `LOOM_CODE_CITATIONS_GIT_BUDGET_S` | `float` | `5.0` | live | Seconds of git time code.verify_citations may spend per request. |
+| `LOOM_CODE_CITATIONS_GIT_CALL_TIMEOUT_S` | `float` | `3.0` | live | Seconds one git call of code.verify_citations may run, within its request budget. |
+| `LOOM_CODE_CONVENTIONS_DIFF_TIMEOUT_S` | `float` | `25.0` | live | Seconds the git diff behind code.conventions may run. |
+| `LOOM_CODE_EGRESS_CONNECT_TIMEOUT_S` | `float` | `15.0` | live | Seconds a repository job's egress tunnel waits to connect to its upstream host. |
+| `LOOM_CODE_ENRICH_TIMEOUT_S` | `float` | `0.5` | live | Seconds one enrichment of a code result may take before it is left empty. |
+| `LOOM_CODE_ENTRY_LOCK_WAIT_S` | `float` | `14400.0` | live | A full pass waits this long for a delta on its entry (past any delta's harness timeout). |
+| `LOOM_CODE_FORK_UPSTREAM_MISS_TTL_S` | `float` | `600.0` | live | Seconds a failed fork-upstream lookup is remembered as "not a known fork". |
+| `LOOM_CODE_MERGE_SHAS_LOG_TIMEOUT_S` | `float` | `8.0` | live | Seconds the mirror's git log may run when it searches for merge commits. |
+| `LOOM_CODE_MERGE_SHAS_MAX_LOG_COMMITS` | `int` | `5000` | live | Most commits the mirror's git log prints when it searches for merge commits. |
+| `LOOM_CODE_MIRROR_CLONE_WAIT_S` | `float` | `10.0` | live | The longest a history read waits for a clone it started; less when its op's budget is. |
+| `LOOM_CODE_MIRROR_GC_TIMEOUT_S` | `float` | `14400.0` | live | Seconds one `git gc` of a mirror may run. |
+| `LOOM_CODE_SCIP_FULL_RETRY_S` | `int` | `21600` | live | Seconds before a failed compiler-tier full re-index of an entry is tried again. |
+| `LOOM_CODE_STATUS_BUILDING_COUNTS_TTL_S` | `float` | `60.0` | live | Seconds an entry's chunk counts are cached while it is still building: they move then without a watermark moving. |
+| `LOOM_CODE_STATUS_STEADY_COUNTS_TTL_S` | `float` | `600.0` | live | Seconds an indexed entry's chunk counts are cached once it is no longer building. |
+
 ## Context
 
 context.pack, context offload, session briefs and the mentor's hints.
@@ -591,6 +623,13 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | --- | --- | --- | --- | --- |
 | `LOOM_KNOWLEDGE_CHUNK_SIZE` | `int` | `1500` | live | Sliding-window chunking on knowledge.add/upsert, in characters. chunk_size 0 = one chunk per doc (hurts long-form retrieval). Smaller chunks mean more embed calls; 1500/1230 stays well under the text-embedding-3 context. |
 | `LOOM_KNOWLEDGE_CHUNK_STRIDE` | `int` | `1230` | live | Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks. |
+
+### Timeouts, budgets and caches
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_BM25_CORPUS_TTL_S` | `float` | `300.0` | live | Seconds the BM25 corpus statistics of a knowledge namespace are cached. |
+| `LOOM_KNOWLEDGE_REPO_DOCS_LIST_TTL_S` | `float` | `60.0` | live | Seconds a repository's document list is cached for the docs section of a brief. |
 
 ## Mcp
 
@@ -794,6 +833,22 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_EMBEDDINGS_PATCH_PARTS_PROBE_SECONDS` | `int` | `60` |  | Seconds a process caches its count of patch parts on loom.memory_embeddings (server/core/vectors/patch_parts.py); the fact leg reads quantized codes only while the count is zero. |
 
+### Timeouts, budgets and caches
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_CONFLICT_SWEEP_MAX_ROWS_PER_PASS` | `int` | `50` | live | Most unresolved conflicts one conflict-sweep pass re-judges. |
+| `LOOM_MEMORY_CONFLICTS_COUNT_TTL_S` | `float` | `60.0` | live | Seconds a namespace's open-conflict count is cached between reads. |
+| `LOOM_MEMORY_COVERAGE_SWEEP_GATE_TTL_S` | `float` | `60.0` | live | Seconds a namespace's coverage-sweep override is cached. |
+| `LOOM_MEMORY_FACTS_TRAVERSE_TTL_S` | `float` | `60.0` | live | Seconds a facts.traverse result is reused for the same walk. |
+| `LOOM_MEMORY_NAMESPACE_RETRIEVAL_DEFAULTS_TTL_S` | `float` | `60.0` | live | Seconds a namespace's retrieval defaults are cached; a change reaches search within it. |
+| `LOOM_MEMORY_OBSERVE_EXTRACT_SESSION_CONTEXT_LIMIT` | `int` | `400` | live | The most observations a session's notes read: the notes prompt is bounded by characters anyway; this bounds the read. |
+| `LOOM_MEMORY_PENDING_DISCLOSURE_TTL_S` | `float` | `5.0` | live | Seconds the pending-extraction count a read discloses is cached. |
+| `LOOM_MEMORY_PROFILE_CAS_MAX_RETRIES` | `int` | `3` | live | Attempts a profile write makes when a concurrent write moved the profile under it. |
+| `LOOM_MEMORY_PROPOSALS_POLICY_TTL_S` | `float` | `60.0` | live | Seconds a namespace's proposal policy is cached; a change applies within it. |
+| `LOOM_MEMORY_PROPOSALS_SCAN_CAP` | `int` | `2000` | live | A listing reads at most this many proposals before `only` / `limit` — the graded counts are one statement over them; a namespace holding more on trial than this is a queue nobody is deciding, not a page. |
+| `LOOM_MEMORY_SUMMARY_ENTITY_TTL_S` | `float` | `60.0` | live | Seconds the entity vocabulary of a namespace's summaries is cached for the summary read leg. |
+
 ## MemoryAsk
 
 memory.ask: evidence assembly and answer synthesis.
@@ -954,6 +1009,12 @@ memory.search: legs, fusion, ranking and gates.
 | `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER` | `float` | `3.0` | live | Over-fetch of the codes pass on the main leg; x1 is too low (it changes the top-10 on a quarter of queries). |
 | `LOOM_MEMORY_SEARCH_FACT_LEG_MAX_THREADS` | `int` | `0` | live | `max_threads` pin on the main fact statement; 0 = no pin (threads follow the marks); 4 bounds each statement to four threads. Unpinned costs more CPU and peak memory per statement. |
 
+### Timeouts, budgets and caches
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_SEARCH_BM25_CACHE_TTL_S` | `float` | `300.0` | live | Seconds the BM25 corpus statistics (document count, mean length) of a namespace are cached. |
+
 ## Model
 
 Models: which model does each job.
@@ -1027,6 +1088,14 @@ Namespace registration, write marks and bench-namespace GC.
 | `LOOM_NAMESPACE_GC_BATCH` | `int` | `200` |  | Namespaces one erasure saga purges, oldest write first (at least 1). |
 | `LOOM_NAMESPACE_GC_SAGAS_PER_PASS` | `int` | `1` |  | Erasure sagas one GC pass submits (at least 1). |
 
+### Timeouts, budgets and caches
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_NAMESPACE_AUDIT_INDEX_ROW_SCAN_CAP` | `int` | `20000` | live | Most live rows the namespace audit's value scan reads (it is O(total value bytes)); above it that check is skipped and says so. |
+| `LOOM_NAMESPACE_ONTOLOGY_CARDINALITY_TTL_S` | `float` | `60.0` | live | Seconds a namespace's relation cardinalities (one or many) are cached for the triple writer. |
+| `LOOM_NAMESPACE_TAXONOMY_TTL_S` | `float` | `300.0` | live | A taxonomy is four FINAL scans of the namespace (~20 MB per Graph open on a large namespace) and changes only when the namespace does. It is remembered per (org, namespace, namespace version, top-N arguments) for up to five minutes — the version watermark is `max(version)` over the namespace, one 90 kB read; the five minutes bound the communities, which come from their own table. |
+
 ## Observability
 
 Telemetry, audit, tracing and the ops surface.
@@ -1079,6 +1148,12 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_LANGFUSE_CAPTURE_IO_LEVEL` | `'off' \| 'query' \| 'all'` | `'off'` |  | How much LLM prompt/completion text is recorded, by what the prompt holds: "off"   — none (default; consent is given, not withdrawn). "query" — only legs whose prompt is the user's own search text (hyde, query_rewrite, enrichment, …). "all"   — also legs carrying retrieved memories or conversation turns (inline_rerank, iterative_judge, extract, session_summary, …). A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token counts, cost, latency and quality scores are never gated. |
 | `LOOM_LANGFUSE_GENERATION_IO_MAX_CHARS` | `int` | `2000` |  | Per-field cap on recorded prompt/completion text; truncation adds an explicit marker. |
 | `LOOM_RETRIEVAL_JUDGE_SAMPLE_RATE` | `float` | `0.0` |  | Fraction of searches sent to an independent LLM judge, written back as a `retrieval_relevance` score (unlike loom's own confidence scores, it shares no state with retrieval). 0.0 = off: it costs money per search; a few percent (e.g. 0.05) suits production. |
+
+### Timeouts, budgets and caches
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_INSIGHTS_AGENTS_CONNECTED_TTL_S` | `float` | `60.0` | live | The sidebar badge asks agents.connected every 30 s per tab, and the answer is a 24 h scan of agent_events. One answer per (org, namespace, window, caller scope) serves every asker for 60 s — "a new agent in the last day" does not change faster than that. |
 
 ## Provider
 
@@ -1169,6 +1244,14 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_TRUSTED_PROXIES` | `str` | `'127.0.0.1'` |  | Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto headers uvicorn applies; any other peer's are ignored. "*" trusts all. Required behind a load balancer: at the default every client counts as the balancer's address for the sign-in and sign-up limits. |
 | `LOOM_ALLOW_INSECURE` | `bool` | `False` |  | True lets a non-loopback bind start with the dev signing secret or with auth off. Only for a port that is not actually reachable by others. |
 
+### Timeouts, budgets and caches
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_WORKER_BACKOFF_BASE_S` | `float` | `1.0` | live | First wait, in seconds, after a worker's pass fails; it doubles per failure up to worker_backoff_cap_s. |
+| `LOOM_WORKER_BACKOFF_CAP_S` | `float` | `60.0` | live | Longest wait, in seconds, between a failing worker's passes (the wait doubles from worker_backoff_base_s). |
+| `LOOM_WORKER_PARTIAL_RETRY_S` | `float` | `3600.0` | live | A pass with a failed leg on a worker whose interval is longer than this retries after this long, doubling with each further such pass, up to the interval: a weekly pass must not leave one namespace's transient failure standing for a week. |
+
 ## Storage
 
 Storage: document originals, per-table retention and warm-tier moves.
@@ -1208,6 +1291,12 @@ Storage: document originals, per-table retention and warm-tier moves.
 | `LOOM_TIERING_CHUNKS_WARM_DAYS` | `int` | `0` |  | Days before `loom.chunks` rows move to the warm volume; 0 = never. |
 | `LOOM_TIERING_DOCUMENTS_WARM_DAYS` | `int` | `0` |  | Days before `loom.documents` rows move to the warm volume; 0 = never. |
 | `LOOM_TIERING_WARM_VOLUME_NAME` | `str` | `'warm'` |  | Volume named in tiering TTL clauses; must match a volume in the cluster's storage_policies. |
+
+### Timeouts, budgets and caches
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_STORAGE_FRONTEND_ASSETS_RETRY_MAX_S` | `float` | `60.0` | live | Longest wait, in seconds, between retries of a failed dashboard-asset publish (the wait doubles from storage_frontend_assets_retry_s). |
 
 ## Task
 
@@ -1385,3 +1474,16 @@ The tracker plane: records, duplicate checks, bisect.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_TRACKER_TEST_SIGNAL_SMELL_CHUNKS` | `int` | `6` |  | The static smell leg reads at most this many chunks of the test's home file(s) from the code plane (flaky-test smell tokens per category, counted). |
+
+### Timeouts, budgets and caches
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_TRACKER_CONTRACT_CHECK_BUDGET_S` | `float` | `3.0` | live | Seconds the tracker source contract check may take when a listing reports it. |
+| `LOOM_TRACKER_DUPCHECK_FIT_TTL_S` | `float` | `300.0` | live | Seconds a namespace's stored duplicate-check fit is cached. |
+| `LOOM_TRACKER_DUPCHECK_LINKS_BUDGET_S` | `float` | `1.5` | live | Seconds the duplicate check's links and release reads may take together (measured p50 about 0.3 s). |
+| `LOOM_TRACKER_DUPCHECK_PR_WAIT_S` | `float` | `3.0` | live | Seconds the duplicate check waits for its related-PR search, which starts with the checks, once they finish. |
+| `LOOM_TRACKER_DUPCHECK_RECENT_TTL_S` | `float` | `1800.0` | live | Seconds a duplicate-check answer is served again to the same caller for the same question. |
+| `LOOM_TRACKER_ERROR_NAMES_TTL_S` | `float` | `21600.0` | live | Seconds a namespace's error-name to code map is cached. |
+| `LOOM_TRACKER_FRESHNESS_BUDGET_S` | `float` | `2.0` | live | Seconds the item-count read behind a tracker source's freshness may take. |
+| `LOOM_TRACKER_TEST_CANDIDATES_TIMEOUT_S` | `float` | `3.0` | live | Seconds the test-signal candidate read may take; it never holds up the answer. |

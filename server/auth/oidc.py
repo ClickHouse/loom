@@ -30,7 +30,6 @@ from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-_DISCOVERY_TTL = 3600.0
 # issuer -> (expiry_epoch, openid-configuration document)
 _discovery_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _jwk_clients: dict[str, PyJWKClient] = {}
@@ -54,7 +53,7 @@ async def _discover() -> dict[str, Any]:
         doc: dict[str, Any] = r.json()
     if str(doc.get("issuer") or "").rstrip("/") != issuer:
         raise ValueError(f"discovery issuer {doc.get('issuer')!r} is not {issuer!r}")
-    _discovery_cache[issuer] = (now + _DISCOVERY_TTL, doc)
+    _discovery_cache[issuer] = (now + settings.auth_oidc_discovery_ttl_s, doc)
     return doc
 
 

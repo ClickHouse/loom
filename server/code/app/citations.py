@@ -56,8 +56,6 @@ from server.settings import settings
 logger = logging.getLogger(__name__)
 
 GIT_CALL_CAP = 20
-GIT_BUDGET_S = 5.0
-GIT_CALL_TIMEOUT_S = 3.0
 NAME_CONCURRENCY = 8
 MAX_CANDIDATES = 5
 EPISTEMIC: dict[str, str] = {
@@ -414,7 +412,8 @@ def _pending(cits: list[cit.Citation]) -> list[cit.Citation]:
 
 
 class _GitBudget:
-    """At most GIT_CALL_CAP subprocesses and GIT_BUDGET_S wall per request."""
+    """At most `code_citations_git_call_cap` subprocesses and `code_citations_git_budget_s`
+    of wall time per request."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -422,14 +421,23 @@ class _GitBudget:
         self.capped = False
 
     def take(self) -> bool:
-        if self.calls >= GIT_CALL_CAP or time.monotonic() - self.t0 > GIT_BUDGET_S:
+        if (
+            self.calls >= GIT_CALL_CAP
+            or time.monotonic() - self.t0 > settings.code_citations_git_budget_s
+        ):
             self.capped = True
             return False
         self.calls += 1
         return True
 
     def remaining_s(self) -> float:
-        return max(0.2, min(GIT_CALL_TIMEOUT_S, GIT_BUDGET_S - (time.monotonic() - self.t0)))
+        return max(
+            0.2,
+            min(
+                settings.code_citations_git_call_timeout_s,
+                settings.code_citations_git_budget_s - (time.monotonic() - self.t0),
+            ),
+        )
 
 
 def _count_lines(blob: bytes) -> int:
@@ -574,7 +582,8 @@ def _note(ex: cit.Extraction, at: dict[str, Any], pr: dict[str, Any] | None = No
         )
     if at.get("capped"):
         parts.append(
-            f"mirror leg capped at {GIT_CALL_CAP} calls / {GIT_BUDGET_S:.0f} s; "
+            f"mirror leg capped at {GIT_CALL_CAP} calls / "
+            f"{settings.code_citations_git_budget_s:.0f} s; "
             "unchecked paths say checked: false"
         )
     if ex.truncated:

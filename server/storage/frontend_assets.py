@@ -29,6 +29,7 @@ from typing import Any
 from starlette.responses import Response
 
 from server.core.datetimes import naive_utc_now
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -40,9 +41,8 @@ MAX_ASSET_BYTES = 5 * 1024 * 1024
 _FRESH = timedelta(hours=6)
 # How often a running replica republishes, so a live build never ages out.
 _REPUBLISH_S = 12 * 3600.0
-# A round that failed is retried after this, doubling up to `_RETRY_MAX_S`.
+# A round that failed is retried after this, doubling up to `storage_frontend_assets_retry_max_s`.
 _RETRY_S = 2.0
-_RETRY_MAX_S = 60.0
 # Vite's `[name]-[hash].[ext]`: the hash makes the name a version.
 _HASHED = re.compile(r"-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$")
 # Fetched bodies, by path (content-addressed, so never stale).
@@ -152,7 +152,7 @@ async def publish_loop(
     first_done: asyncio.Event | None = None,
 ) -> None:
     """Publish now, then every `_REPUBLISH_S` while the replica runs; a failed
-    round is retried within `_RETRY_MAX_S`. `first_done` is set once a round
+    round is retried within `storage_frontend_assets_retry_max_s`. `first_done` is set once a round
     has found every file in the table or written it there."""
     from server.core.ch import set_query_tag
 
@@ -162,7 +162,7 @@ async def publish_loop(
         n = await publish(assets_dir, published_by=published_by, ch=ch)
         if n is None:
             await asyncio.sleep(retry)
-            retry = min(retry * 2, _RETRY_MAX_S)
+            retry = min(retry * 2, settings.storage_frontend_assets_retry_max_s)
             continue
         retry = _RETRY_S
         if n:

@@ -51,14 +51,11 @@ from server.settings import settings
 logger = logging.getLogger("loom.code_index.mirrors")
 
 NO_GIT_HISTORY = "no_git_history: this host keeps no git mirrors (LOOM_GIT_HISTORY=none)"
-# The longest a history read waits for a clone it started; less when its op's budget is.
-_CLONE_WAIT_S = 10.0
 # The random wait before each warm-up clone, so replicas booting together spread out.
 _JITTER_S = 30.0
 # A mirror, checkout or lock file younger than this is never swept (an entry added a
 # moment ago).
 _SWEEP_MIN_AGE_S = 600.0
-_GC_TIMEOUT_S = 4 * 3600.0
 _GC_MARK = "loom-gc-at"
 _LOCK_SUFFIXES = (".clone-lock", ".fetch-lock", ".gc-lock")
 
@@ -107,7 +104,7 @@ async def present_dir(cfg: Any) -> str:
 async def history_dir(cfg: Any, *, op: str = "", head: str = "") -> tuple[str, str]:
     """(git_dir, '') when this host's mirror of `cfg` can serve a history read, else
     ('', what the read answers instead). A missing mirror's clone starts here; with
-    `op` the read waits for it up to `_CLONE_WAIT_S` or what is left of the op's
+    `op` the read waits for it up to `code_mirror_clone_wait_s` or what is left of the op's
     budget. A present mirror that lacks `head` serves as it is and fetches its branch
     in the background."""
     if cfg is None:
@@ -120,7 +117,7 @@ async def history_dir(cfg: Any, *, op: str = "", head: str = "") -> tuple[str, s
         return cfg.git_dir, ""
     if why := _absent_reason(cfg):
         return "", f"no_git_mirror: {cfg.label} {why}"
-    wait_s = min(_CLONE_WAIT_S, request_time_left_s(op)) if op else 0.0
+    wait_s = min(settings.code_mirror_clone_wait_s, request_time_left_s(op)) if op else 0.0
     if await mirror_ready(cfg, wait_s=wait_s):
         return cfg.git_dir, ""
     state, reason = job_state(cfg.git_dir)
@@ -388,7 +385,7 @@ async def gc_if_due(git_dir: str) -> None:
     )
     rc = -1
     try:
-        rc = await asyncio.wait_for(proc.wait(), _GC_TIMEOUT_S)
+        rc = await asyncio.wait_for(proc.wait(), settings.code_mirror_gc_timeout_s)
     except TimeoutError:
         pass
     finally:

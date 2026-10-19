@@ -71,6 +71,18 @@
           "type": "integer",
           "description": "Sign-ins and sign-ups one process checks at once (each costs ClickHouse statements and a password hash); past it a caller waits up to a second, then gets 429, so a burst cannot take the shared connection pool."
         },
+        "auth_machine_discovery_ttl_s": {
+          "default": 3600,
+          "exclusiveMinimum": 0,
+          "type": "integer",
+          "description": "Seconds a machine issuer's discovery document (its JWKS URL) is cached."
+        },
+        "auth_oidc_discovery_ttl_s": {
+          "default": 3600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the identity provider's OpenID configuration is cached."
+        },
         "auth_required": {
           "default": true,
           "type": "boolean",
@@ -362,6 +374,12 @@
           "type": "number",
           "description": "The dupcheck's budget inside a bisect, from the call's start; it runs beside the resolve, the scan and the fusion reads and is awaited only before the ranking stages. Past it the bisect answers without it (`dupcheck_fix.status: timeout`)."
         },
+        "code_bisect_fix_blame_budget_s": {
+          "default": 8.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the fix-blame stage of code.bisect_candidates may run."
+        },
         "code_bisect_history_days": {
           "default": 90,
           "maximum": 3650,
@@ -402,6 +420,36 @@
           "type": "integer",
           "description": "Merge-time window (days) for a report naming no release."
         },
+        "code_blame_graph_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the commit-graph read of code.blame_range may run."
+        },
+        "code_blame_introduced_diff_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one `git diff` of the introduced-by test may run."
+        },
+        "code_blame_max_graph_commits": {
+          "default": 200000,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Most commits code.blame_range's window graph reads; a longer history is a caller asking for everything, which blame cannot rank."
+        },
+        "code_blame_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one `git blame` of code.blame_range may run."
+        },
+        "code_bootstrap_backoff_max_s": {
+          "default": 3600.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Longest wait, in seconds, before a mirror fetches again for a commit no fetch has brought."
+        },
         "code_bootstrap_clone_timeout_s": {
           "default": 1800.0,
           "type": "number",
@@ -431,6 +479,18 @@
           "default": 6000,
           "type": "integer",
           "description": "Chunking: whole AST units; functions larger than this split at top-level statement boundaries, each piece re-prefixed with the signature header."
+        },
+        "code_citations_git_budget_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds of git time code.verify_citations may spend per request."
+        },
+        "code_citations_git_call_timeout_s": {
+          "default": 3.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one git call of code.verify_citations may run, within its request budget."
         },
         "code_closure_repair_enabled": {
           "default": true,
@@ -476,6 +536,12 @@
           "default": 1500000,
           "type": "integer",
           "description": "Max bytes of a PR patch code.conventions reads from the mirror; a longer patch is cut at a file boundary and flagged `diff_truncated`."
+        },
+        "code_conventions_diff_timeout_s": {
+          "default": 25.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the git diff behind code.conventions may run."
         },
         "code_conventions_wide_caller_dirs": {
           "default": 5,
@@ -592,6 +658,12 @@
           "type": "integer",
           "description": "A file's chunk descriptions in flight at once; 1 = serial."
         },
+        "code_egress_connect_timeout_s": {
+          "default": 15.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a repository job's egress tunnel waits to connect to its upstream host."
+        },
         "code_embed_max_attempts": {
           "default": 8,
           "type": "integer",
@@ -622,6 +694,18 @@
           "type": "integer",
           "description": "Seconds between recovery passes while stubs are pending."
         },
+        "code_enrich_timeout_s": {
+          "default": 0.5,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one enrichment of a code result may take before it is left empty."
+        },
+        "code_entry_lock_wait_s": {
+          "default": 14400.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "A full pass waits this long for a delta on its entry (past any delta's harness timeout)."
+        },
         "code_extractor_rechunk_concurrency": {
           "default": 4,
           "type": "integer",
@@ -646,6 +730,12 @@
           "default": 3600,
           "type": "integer",
           "description": "as_of.stale is also true when the mirror has not fetched for this many seconds (lag is counted against the local mirror). 0 = off."
+        },
+        "code_fork_upstream_miss_ttl_s": {
+          "default": 600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a failed fork-upstream lookup is remembered as \"not a known fork\"."
         },
         "code_fusion_signals": {
           "default": true,
@@ -904,6 +994,24 @@
           "type": "string",
           "description": "The code-link `revise` judge: does a memory's claim still hold for its code's new text."
         },
+        "code_merge_shas_log_timeout_s": {
+          "default": 8.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the mirror's git log may run when it searches for merge commits."
+        },
+        "code_merge_shas_max_log_commits": {
+          "default": 5000,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Most commits the mirror's git log prints when it searches for merge commits."
+        },
+        "code_mirror_clone_wait_s": {
+          "default": 10.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "The longest a history read waits for a clone it started; less when its op's budget is."
+        },
         "code_mirror_fetch_interval_s": {
           "default": 300.0,
           "type": "number",
@@ -918,6 +1026,12 @@
           "default": 5.0,
           "type": "number",
           "description": "Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without it the gc waits another interval."
+        },
+        "code_mirror_gc_timeout_s": {
+          "default": 14400.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one `git gc` of a mirror may run."
         },
         "code_mirror_warmup": {
           "default": true,
@@ -1133,6 +1247,12 @@
           "default": 900,
           "type": "integer",
           "description": "Seconds between checks for an entry that is due."
+        },
+        "code_scip_full_retry_s": {
+          "default": 21600,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Seconds before a failed compiler-tier full re-index of an entry is tried again."
         },
         "code_scip_full_timeout_seconds": {
           "default": 28800,
@@ -1598,6 +1718,18 @@
           "default": 5,
           "type": "integer",
           "description": "as_of.stale is true when the fast tier is more than this many first-parent commits behind the fetched branch tip (60 s cache)."
+        },
+        "code_status_building_counts_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds an entry's chunk counts are cached while it is still building: they move then without a watermark moving."
+        },
+        "code_status_steady_counts_ttl_s": {
+          "default": 600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds an indexed entry's chunk counts are cached once it is no longer building."
         },
         "code_summary_churn_days": {
           "default": 365,
@@ -2104,6 +2236,12 @@
           "type": "string",
           "description": "The workload's OIDC token, as a file its platform rotates (a projected service-account token on Kubernetes). With inference_token_url, this or inference_token_audience."
         },
+        "insights_agents_connected_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "The sidebar badge asks agents.connected every 30 s per tab, and the answer is a 24 h scan of agent_events. One answer per (org, namespace, window, caller scope) serves every asker for 60 s — \"a new agent in the last day\" does not change faster than that."
+        },
         "instance_heartbeat_seconds": {
           "default": 10.0,
           "minimum": 1.0,
@@ -2157,6 +2295,12 @@
           "type": "number",
           "description": "Seconds between passes of the always-on sweep that deletes the KeeperMap keys (leases, claims, graph slots) a stopped process left behind."
         },
+        "knowledge_bm25_corpus_ttl_s": {
+          "default": 300.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the BM25 corpus statistics of a knowledge namespace are cached."
+        },
         "knowledge_chunk_size": {
           "default": 1500,
           "type": "integer",
@@ -2166,6 +2310,12 @@
           "default": 1230,
           "type": "integer",
           "description": "Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks."
+        },
+        "knowledge_repo_docs_list_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a repository's document list is cached for the docs section of a brief."
         },
         "langfuse_capture_io_level": {
           "default": "off",
@@ -2951,6 +3101,24 @@
           "type": "number",
           "description": "With the judge on, peers down to this cosine are judged too (never flagged on cosine alone), catching knowledge updates filed under a different key."
         },
+        "memory_conflict_sweep_max_rows_per_pass": {
+          "default": 50,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Most unresolved conflicts one conflict-sweep pass re-judges."
+        },
+        "memory_conflicts_count_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a namespace's open-conflict count is cached between reads."
+        },
+        "memory_coverage_sweep_gate_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a namespace's coverage-sweep override is cached."
+        },
         "memory_embed_answer_topic": {
           "default": true,
           "type": "boolean",
@@ -3091,6 +3259,12 @@
           "type": "number",
           "description": "Per verifier call; a timeout keeps every fact."
         },
+        "memory_facts_traverse_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a facts.traverse result is reused for the same walk."
+        },
         "memory_harm_reinforcement_weight": {
           "anyOf": [
             {
@@ -3108,15 +3282,51 @@
           "type": "integer",
           "description": "memory.list rows per call for a token below writer on the namespace; it pages with `offset` (wire cap stays 1000). 0 = no viewer cap."
         },
+        "memory_namespace_retrieval_defaults_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a namespace's retrieval defaults are cached; a change reaches search within it."
+        },
         "memory_negative_demote_threshold": {
           "default": 0,
           "type": "integer",
           "description": "Negative memory.outcome signals after which a memory is quarantined (status 'rejected', excluded from search). 0 = off: negatives stay audit-only."
         },
+        "memory_observe_extract_session_context_limit": {
+          "default": 400,
+          "minimum": 0,
+          "type": "integer",
+          "description": "The most observations a session's notes read: the notes prompt is bounded by characters anyway; this bounds the read."
+        },
+        "memory_pending_disclosure_ttl_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the pending-extraction count a read discloses is cached."
+        },
         "memory_prior_cap": {
           "default": 0.08,
           "type": "number",
           "description": "Cap on memory.search's metadata priors (confidence, soft tag/category) so they break ties instead of re-ranking. 0.0 = uncapped; a request's `prior_cap` overrides it."
+        },
+        "memory_profile_cas_max_retries": {
+          "default": 3,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Attempts a profile write makes when a concurrent write moved the profile under it."
+        },
+        "memory_proposals_policy_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a namespace's proposal policy is cached; a change applies within it."
+        },
+        "memory_proposals_scan_cap": {
+          "default": 2000,
+          "minimum": 0,
+          "type": "integer",
+          "description": "A listing reads at most this many proposals before `only` / `limit` — the graded counts are one statement over them; a namespace holding more on trial than this is a queue nobody is deciding, not a page."
         },
         "memory_quality_actor_names": {
           "default": "",
@@ -3193,6 +3403,12 @@
           "default": 0.03,
           "type": "number",
           "description": "Tie-break boost (cosine units) for a hand-asserted fact row (source_class 'asserted', not a hint:/procedure/summary:/obs: row) against derived rows; never a lever over a stronger match. 0 disables."
+        },
+        "memory_search_bm25_cache_ttl_s": {
+          "default": 300.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the BM25 corpus statistics (document count, mean length) of a namespace are cached."
         },
         "memory_search_bm25_live_tail": {
           "default": true,
@@ -3591,6 +3807,12 @@
           "type": "integer",
           "description": "content_excerpt ceiling for answer-bearing facts (question_topic set) when memory_capture_structured_answers is on, so an enumerated answer is not clipped mid-list; every other fact keeps EXCERPT_LIMIT (1,200 chars)."
         },
+        "memory_summary_entity_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the entity vocabulary of a namespace's summaries is cached for the summary read leg."
+        },
         "memory_used_cited_reinforcement_weight": {
           "anyOf": [
             {
@@ -3632,6 +3854,12 @@
           "default": 600,
           "type": "integer",
           "description": "Seconds a migration file waits for the mutations it started (MATERIALIZE, UPDATE, a column type change) to finish on every replica; past it the file fails unrecorded."
+        },
+        "namespace_audit_index_row_scan_cap": {
+          "default": 20000,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Most live rows the namespace audit's value scan reads (it is O(total value bytes)); above it that check is skipped and says so."
         },
         "namespace_autoregister_enabled": {
           "default": true,
@@ -3679,6 +3907,18 @@
           "default": 3600,
           "type": "integer",
           "description": "Seconds a namespace's health summary is cached per process (a failed lookup at most 300 s). 0 disables the summary and its pack section."
+        },
+        "namespace_ontology_cardinality_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a namespace's relation cardinalities (one or many) are cached for the triple writer."
+        },
+        "namespace_taxonomy_ttl_s": {
+          "default": 300.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "A taxonomy is four FINAL scans of the namespace (~20 MB per Graph open on a large namespace) and changes only when the namespace does. It is remembered per (org, namespace, namespace version, top-N arguments) for up to five minutes — the version watermark is `max(version)` over the namespace, one 90 kB read; the five minutes bound the communities, which come from their own table."
         },
         "namespace_write_marks_flush_interval_s": {
           "default": 5.0,
@@ -4281,6 +4521,12 @@
           "type": "number",
           "description": "Seconds a process keeps serving after SIGTERM while /v1/health/ready answers 503, so the load balancer stops routing to it before its port closes. Size it to the LB's probe interval × failure threshold. 0 = stop at once."
         },
+        "storage_frontend_assets_retry_max_s": {
+          "default": 60.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Longest wait, in seconds, between retries of a failed dashboard-asset publish (the wait doubles from storage_frontend_assets_retry_s)."
+        },
         "supervisor_lease_ttl_s": {
           "default": 30,
           "minimum": 24,
@@ -4415,6 +4661,12 @@
           "type": "string",
           "description": "Which tracker namespace a code namespace reads its facts from: glob keys → namespace, e.g. {\"code-myrepo*\": \"tracker-myrepo\"}. Numbers are repository-global, so every branch namespace binds to its repository's one tracker namespace. '' = no QA facts anywhere."
         },
+        "tracker_contract_check_budget_s": {
+          "default": 3.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the tracker source contract check may take when a listing reports it."
+        },
         "tracker_contract_ttl_s": {
           "default": 3600.0,
           "minimum": 1.0,
@@ -4446,6 +4698,12 @@
           "default": 400,
           "type": "integer",
           "description": "the negatives sampled per fit"
+        },
+        "tracker_dupcheck_fit_ttl_s": {
+          "default": 300.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a namespace's stored duplicate-check fit is cached."
         },
         "tracker_dupcheck_fix_path_days": {
           "default": 365,
@@ -4501,6 +4759,24 @@
           "default": 300,
           "type": "integer",
           "description": "What the retry leaves of the op budget for the steps after the legs (hydrate, fit, judge), ms."
+        },
+        "tracker_dupcheck_links_budget_s": {
+          "default": 1.5,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the duplicate check's links and release reads may take together (measured p50 about 0.3 s)."
+        },
+        "tracker_dupcheck_pr_wait_s": {
+          "default": 3.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the duplicate check waits for its related-PR search, which starts with the checks, once they finish."
+        },
+        "tracker_dupcheck_recent_ttl_s": {
+          "default": 1800.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a duplicate-check answer is served again to the same caller for the same question."
         },
         "tracker_dupcheck_refit_enabled": {
           "default": true,
@@ -4596,6 +4872,18 @@
           "exclusiveMinimum": 0,
           "type": "number",
           "description": "Seconds a tracker-embed pass may run before the supervisor abandons it."
+        },
+        "tracker_error_names_ttl_s": {
+          "default": 21600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a namespace's error-name to code map is cached."
+        },
+        "tracker_freshness_budget_s": {
+          "default": 2.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the item-count read behind a tracker source's freshness may take."
         },
         "tracker_links_enabled": {
           "default": true,
@@ -4738,6 +5026,12 @@
           "default": 60.0,
           "type": "number",
           "description": "How often a process re-reads loom.qa_sources (seconds); a write in this process refreshes at once."
+        },
+        "tracker_test_candidates_timeout_s": {
+          "default": 3.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the test-signal candidate read may take; it never holds up the answer."
         },
         "tracker_test_daily_backfill_days": {
           "default": 30,
@@ -4883,10 +5177,28 @@
           "type": "integer",
           "description": "uvicorn processes per container (the image's default: server.core.web_workers); the rate limiter counts N workers as N replicas."
         },
+        "worker_backoff_base_s": {
+          "default": 1.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "First wait, in seconds, after a worker's pass fails; it doubles per failure up to worker_backoff_cap_s."
+        },
+        "worker_backoff_cap_s": {
+          "default": 60.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Longest wait, in seconds, between a failing worker's passes (the wait doubles from worker_backoff_base_s)."
+        },
         "worker_ledger_rows": {
           "default": true,
           "type": "boolean",
           "description": "One agent_events row per worker pass that spent something or failed (operation worker.<name>.pass, kind='worker'); loom.worker_status records every pass."
+        },
+        "worker_partial_retry_s": {
+          "default": 3600.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "A pass with a failed leg on a worker whose interval is longer than this retries after this long, doubling with each further such pass, up to the interval: a weekly pass must not leave one namespace's transient failure standing for a week."
         },
         "workers_process": {
           "default": "child",

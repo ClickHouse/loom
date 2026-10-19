@@ -348,7 +348,7 @@ def class_timeout_s(cls: str) -> float:
     return float(settings.ch_timeout_read_s)
 
 
-_DRIVER_DEFAULT_READ_TIMEOUT_S = 300
+_DRIVER_DEFAULT_READ_TIMEOUT_S = 300  # not a setting: clickhouse-connect's own default
 
 
 def _driver_read_timeout_s() -> int:

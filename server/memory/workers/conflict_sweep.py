@@ -21,11 +21,10 @@ from types import SimpleNamespace
 from typing import Any
 
 from server.core.repo_base import _CHClient
+from server.settings import settings
 from server.workers.status import log_pass_errors, record_pass
 
 log = logging.getLogger(__name__)
-
-MAX_ROWS_PER_PASS = 50
 
 
 def _key(r: Any) -> tuple[str, str, str, str, str, str]:
@@ -126,7 +125,7 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
         rows = await conflict_marks.stale_pending_marks(
             grace_s=conflict_marks.GRACE_SECONDS,
             lookback_s=conflict_marks.LOOKBACK_SECONDS,
-            limit=MAX_ROWS_PER_PASS,
+            limit=settings.memory_conflict_sweep_max_rows_per_pass,
             ch=ch,
         )
         verdicts: dict[str, int] = {}
@@ -146,4 +145,4 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
     return outcome
 
 
-__all__ = ["MAX_ROWS_PER_PASS", "rejudge", "run_pass"]
+__all__ = ["rejudge", "run_pass"]

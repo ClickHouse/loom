@@ -26,6 +26,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeSearchOutput,
     _SearchHit,
 )
+from server.settings import settings
 
 log = logging.getLogger("loom.repo_docs")
 
@@ -141,7 +142,6 @@ class RepoDoc(TypedDict):
 
 DOCS_SECTION_MAX_TOKENS = 300
 DOCS_SECTION_MAX_DOCS = 12
-LIST_CACHE_TTL_S = 60.0
 _LIST_CACHE: dict[tuple[str, str, int], tuple[float, list[RepoDoc]]] = {}
 
 
@@ -183,7 +183,10 @@ async def list_repo_docs(
     docs = [
         RepoDoc(source_uri=r.source_uri, title=r.title, description=r.description) for r in out.rows
     ]
-    _LIST_CACHE[(org, ns, limit)] = (time.monotonic() + LIST_CACHE_TTL_S, docs)
+    _LIST_CACHE[(org, ns, limit)] = (
+        time.monotonic() + settings.knowledge_repo_docs_list_ttl_s,
+        docs,
+    )
     return ns, list(docs)
 
 

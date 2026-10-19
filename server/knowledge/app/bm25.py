@@ -16,6 +16,7 @@ from typing import Any, Protocol
 
 from server.core import bm25
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+from server.settings import settings
 
 
 class _StatsClient(Protocol):
@@ -30,7 +31,6 @@ class _StatsClient(Protocol):
 
 MIN_TOKEN_LEN = bm25.MIN_TERM_LEN
 _CORPUS_CACHE: dict[tuple[str, str, str], tuple[float, int, float]] = {}
-_CORPUS_CACHE_TTL_S = 300.0
 
 
 def tokenize(text: str) -> list[str]:
@@ -47,7 +47,7 @@ async def corpus_stats(
     key = (org, namespace, embedding_model)
     cached = _CORPUS_CACHE.get(key)
     now = time.time()
-    if cached and now - cached[0] < _CORPUS_CACHE_TTL_S:
+    if cached and now - cached[0] < settings.knowledge_bm25_corpus_ttl_s:
         return cached[1], cached[2]
     row = await ch.query_one(
         """

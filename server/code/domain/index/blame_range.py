@@ -26,19 +26,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from server.settings import settings
+
 CANDIDATES = "candidates"
 NO_CANDIDATES = "no_candidates"
 UNKNOWN = "unknown"
 
-# Bounds: one blame per call, at most this many lines, the subprocess killed after this
-# long, both cached this long per key.
+# Bounds: one blame per call, at most this many lines, cached this long per key; the git
+# calls are bounded by `code_blame_timeout_s` and `code_blame_graph_timeout_s`.
 MAX_LINES = 400
-BLAME_TIMEOUT_S = 5.0
-GRAPH_TIMEOUT_S = 5.0
 CACHE_TTL_S = 600.0
-# The window graph is read once per (base, to); a history this long is a
-# caller asking for "everything since 2019", which blame cannot rank anyway.
-MAX_GRAPH_COMMITS = 200_000
 # The side-branch commits one blamed commit's merge search may visit (off the
 # first-parent chain only). 431 was the most any of 2,613 blamed commits over five
 # ClickHouse files needed.
@@ -264,7 +261,7 @@ def parse_graph(rev_list: str, to_sha: str) -> WindowGraph:
                 subject = raw
             g.subjects[pending] = subject.strip()
             pending = None
-    g.truncated = len(g.parents) >= MAX_GRAPH_COMMITS
+    g.truncated = len(g.parents) >= settings.code_blame_max_graph_commits
     g.chain = _first_parent_chain(g.parents, to_sha)
     return g
 
@@ -315,7 +312,9 @@ def merge_graphs(wide: WindowGraph, newer: WindowGraph, to_sha: str) -> WindowGr
         subjects={**wide.subjects, **newer.subjects},
         times={**wide.times, **newer.times},
         chain=_first_parent_chain(parents, to_sha),
-        truncated=wide.truncated or newer.truncated or len(parents) >= MAX_GRAPH_COMMITS,
+        truncated=wide.truncated
+        or newer.truncated
+        or len(parents) >= settings.code_blame_max_graph_commits,
     )
 
 
@@ -708,11 +707,8 @@ def _iso_from_unix(ts: int) -> str:
 
 
 __all__ = [
-    "BLAME_TIMEOUT_S",
     "CACHE_TTL_S",
     "CANDIDATES",
-    "GRAPH_TIMEOUT_S",
-    "MAX_GRAPH_COMMITS",
     "MAX_LINES",
     "NOTE",
     "NO_CANDIDATES",

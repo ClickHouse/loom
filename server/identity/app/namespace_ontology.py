@@ -20,6 +20,7 @@ from server.identity.api.models_namespace_catalog import (
     NamespaceRegisterOntologyOutput,
     _OntologyEntry,
 )
+from server.settings import settings
 
 
 async def handle_namespace_register_ontology(
@@ -137,7 +138,6 @@ async def load_namespace_ontology(org: str, namespace: str) -> dict[str, list[st
 # Relation cardinality — read by the triple writer.
 # ------------------------------------------------------------------
 
-_CARDINALITY_TTL_S = 60.0
 # (org, namespace) -> (loaded_at_monotonic, {lemma_relation: "one"|"many"})
 _cardinality_cache: dict[tuple[str, str], tuple[float, dict[str, str]]] = {}
 
@@ -154,7 +154,7 @@ async def load_relation_cardinality(org: str, namespace: str) -> dict[str, str]:
     key = (org, namespace)
     now = time.monotonic()
     hit = _cardinality_cache.get(key)
-    if hit is not None and now - hit[0] < _CARDINALITY_TTL_S:
+    if hit is not None and now - hit[0] < settings.namespace_ontology_cardinality_ttl_s:
         return hit[1]
     from server.memory.domain.graph_quality import declared_cardinality
 
