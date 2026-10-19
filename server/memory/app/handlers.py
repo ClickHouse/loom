@@ -660,7 +660,7 @@ async def handle_memory_delete_version(
 async def _tombstone(existing: Any, *, version: int, op: str) -> tuple[int, int]:
     """Write the tombstone of `existing` at `version` and retire what was derived from it:
     its vectors, its chunks, a procedure's run ledger, and the summaries built from it.
-    The consolidated summaries tombstoned and downgraded."""
+    Returns how many consolidated summaries it tombstoned and downgraded."""
     import server.memory.store as memory_repo
     from server.observability.otel import traced
 
