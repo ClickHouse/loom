@@ -36,6 +36,7 @@ from server.memory.app import conflict_deferred as _cd
 from server.memory.app.drops import record_drop
 from server.memory.app.entity_projections import declared_entities
 from server.memory.app.high_fence import fence_high
+from server.memory.app.write_fence import lift_above_tombstones
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.trust import attests
 from server.memory.store.inserts import insert_memory_versions
@@ -215,6 +216,14 @@ class _SetWrite:
     key_text: str = ""
 
 
+async def _lift_above_tombstones(w: _SetWrite, ch: Any) -> int:
+    """The row's version, drawn again when a delete of the key committed while it was in
+    flight (`write_fence`); the embedding row is built from it afterwards."""
+    await lift_above_tombstones(w.input.org, w.input.namespace, [w.memory_row], [], ch=ch)
+    w.version = int(w.memory_row["version"])
+    return w.version
+
+
 async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     """Phase 7 of memory.set: the non-embedded write — one loom.memory row, no peers.
 
@@ -244,6 +253,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
             noop=True,
             dry_run=True,
         )
+    version = await _lift_above_tombstones(w, ch)
     with traced("ch.insert.memory", table="loom.memory"):
         await insert_memory_versions([memory_row], ch=ch)
     # The version this replaces may have been embedded (re-set as 'high', or retyped).
@@ -562,6 +572,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
 
     import server.memory.store as memory_repo
 
+    await _lift_above_tombstones(w, ch)
     # build_embedding_row fills every persisted column so a later RMT version
     # can't resurrect a default over a real value. Denormalized columns let
     # memory.search read them without a join back to loom.memory.

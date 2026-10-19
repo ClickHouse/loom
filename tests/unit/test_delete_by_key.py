@@ -288,15 +288,17 @@ def test_a_versioned_delete_takes_the_version_as_a_decimal_string() -> None:
         MemoryDeleteVersionInput(**ident, version="latest")
 
 
-def test_a_versioned_delete_tombstones_right_above_the_version_it_read(world, monkeypatch) -> None:
+def test_a_versioned_delete_tombstones_the_version_it_read(world, monkeypatch) -> None:
     async def _get_by_key(identity: Any, key: str, **kw: Any) -> Any:
         return world["row"]
 
     monkeypatch.setattr(memory_repo, "get_by_key", _get_by_key)
     out = _delete_at(world["row"].version)
-    assert out.tombstoned is True and out.version == world["row"].version + 1
+    assert out.tombstoned is True and out.version > world["row"].version
     memory_rows = [r for t, rows in world["ch"].inserts if t == "loom.memory" for r in rows]
-    assert [r["version"] for r in memory_rows] == [world["row"].version + 1]
+    assert [(r["version"], r["tombstoned_at"] is not None) for r in memory_rows] == [
+        (out.version, True)
+    ]
 
 
 def test_a_versioned_delete_checks_and_tombstones_under_the_key_lock(world, monkeypatch) -> None:

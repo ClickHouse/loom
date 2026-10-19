@@ -891,6 +891,46 @@ async def _locate_then_preview(
     return out
 
 
+async def tombstones_above(
+    org: str,
+    namespace: str,
+    rows: list[dict[str, Any]],
+    *,
+    ch: _CHClient | None = None,
+) -> dict[tuple[str, str, str, str], int]:
+    """For each row about to be inserted, the newest tombstone of its key (agent, user_id,
+    session_id, memory_key) above the row's version, when one has committed: a delete that
+    landed while the write was in flight. Read with sequential consistency, since the
+    answer feeds the write."""
+    if not rows:
+        return {}
+    ch = ch or _default_client()
+    keys = sorted({(r["agent"], r["user_id"], r["session_id"], r["memory_key"]) for r in rows})
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "keys": keys,
+        "v": min(int(r["version"]) for r in rows),
+    }
+    found = await ch.query_all(
+        f"""
+        SELECT agent, user_id, session_id, memory_key, max(version) AS v
+        FROM loom.memory
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND (agent, user_id, session_id, memory_key)
+              IN {{keys:Array(Tuple(String, String, String, String))}}
+          AND version > {{v:UInt64}}
+          AND tombstoned_at IS NOT NULL
+        GROUP BY agent, user_id, session_id, memory_key
+        {_SEQUENTIAL if read_your_writes_enabled() else ""}
+        """,
+        params=params,
+    )
+    return {
+        (f["agent"], f["user_id"], f["session_id"], f["memory_key"]): int(f["v"]) for f in found
+    }
+
+
 async def live_keys(
     org: str,
     namespace: str,
@@ -901,13 +941,15 @@ async def live_keys(
 ) -> list[dict[str, Any]]:
     """The identity and key of every live row of the namespace, as one statement reads
     them: the rows memory.list serves with every identity at "*" and superseded and
-    duplicate rows included. At most `limit` + 1, so a caller can tell it was cut."""
+    duplicate rows included (a proposed row, on trial, is not). At most `limit` + 1, so a
+    caller can tell it was cut."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"org": org, "ns": namespace, "limit": int(limit) + 1}
     where = [
         "org = {org:String}",
         "namespace = {ns:String}",
         "tombstoned_at IS NULL",
+        "status != 'proposed'",
         *scope_where(scope, params),
     ]
     return await ch.query_all(

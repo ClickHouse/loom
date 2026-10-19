@@ -435,8 +435,7 @@ class MemoryDeleteOutput(BaseModel):
 class MemoryDeleteVersionOutput(BaseModel):
     # True when the row still had `version` and a tombstone was written over it.
     tombstoned: bool
-    # The tombstone's version: one above the deleted version, so a write that lands during
-    # the delete still wins. 0 when nothing was deleted.
+    # Nanosecond version of the tombstone row; 0 when nothing was deleted.
     version: int = 0
     # False when no live row of this key exists under this identity.
     found: bool = True
@@ -717,7 +716,8 @@ class MemoryKeyRef(BaseModel):
 class MemoryKeysOutput(BaseModel):
     # Every live row's identity and key, read by one statement, so the set is the
     # namespace at one moment (memory.list's pages are read one at a time). The rows
-    # memory.list serves with every identity at "*", superseded and duplicate rows included.
+    # memory.list serves with every identity at "*", superseded and duplicate rows included
+    # and proposed rows left out.
     keys: list[MemoryKeyRef]
     # True when the namespace holds more than `limit` live rows.
     truncated: bool = False

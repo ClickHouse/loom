@@ -140,6 +140,8 @@ def catalog(
 _INSTEAD: dict[str, str] = {
     "memory.bulk_set": "call loom_memory_set once per fact; a batch saves no round trip here",
     "memory.bulk_get": "call loom_memory_get per key, or loom_memory_list with a key prefix",
+    "memory.keys": "call loom_memory_list, which pages the namespace",
+    "memory.delete_version": "call loom_memory_delete",
     # An owner-only op names the person, never a route: naming the SDK/HTTP
     # op sends a model probing env vars and token files for a way around it.
     "memory.unlock": (

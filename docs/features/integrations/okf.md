@@ -136,7 +136,8 @@ one statement after the listing was listed, and every listed row came back from
 `memory.bulk_get`. Never when it stopped at `--limit`, with `--include-tombstoned` (which
 keeps deleted rows in the bundle), or from an older release. Each delete goes through
 `memory.delete_version` with the version the import's listing saw with an `okf:` trace,
-under that exact identity: a row rewritten since, or locked with `memory.lock`, is kept, and a target too old to know the op deletes nothing. Export into an empty directory for a
+under that exact identity: a row rewritten since, or locked with `memory.lock`, is kept,
+and a target too old to know the op deletes nothing. Export into an empty directory for a
 prune: export overwrites concept files but never removes the file of a key that left the
 namespace, so a reused `--out` directory no longer matches its digest. [Copying a
 namespace to another Loom](../../operations/okf-sync.md) runs export and import on a

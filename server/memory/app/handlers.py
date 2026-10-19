@@ -56,9 +56,6 @@ from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-# How far above the deleted version memory.delete_version retires the key's vectors.
-_VECTOR_RETIRE_GAP_NS = 1_000_000
-
 
 # Leaf module (no internal imports) shared with memory.app.retrieval to
 # avoid a circular import.
@@ -605,7 +602,7 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     # The version is drawn here, right before the insert: the vector retire skips rows at
     # or above it, so the later it is drawn the fewer late vector writes it leaves live.
     version = next_version()
-    tombstoned, downgraded = await _tombstone(existing, version=version, vector_version=version)
+    tombstoned, downgraded = await _tombstone(existing, version=version, op="memory.delete")
     return MemoryDeleteOutput(
         tombstoned=True,
         version=version,
@@ -618,11 +615,8 @@ async def handle_memory_delete_version(
     input: MemoryDeleteVersionInput,
 ) -> MemoryDeleteVersionOutput:
     """Tombstone one version of a key under this exact identity, or nothing when the row
-    under it has moved on. The tombstone sits right above that version rather than at
-    the current time: a write drawn after it (a nanosecond wall-clock version) still
-    wins, whatever lock it took, so the row of a write that lands during the delete is
-    never tombstoned. The key's chunks and dependent summaries are retired key-wide, as
-    memory.delete retires them. Conditional writes of the key wait for the key lock."""
+    under it has moved on. Conditional writes of the key wait for the key lock; a plain
+    write that lands after the tombstone is lifted above it (`write_fence`)."""
     import server.memory.store as memory_repo
 
     if input.agent == "*":
@@ -651,12 +645,9 @@ async def handle_memory_delete_version(
             return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
         _lock.assert_unlocked(existing, "delete", op="memory.delete_version")
         assert_own_row(existing, op="memory.delete_version")
-        version = int(input.version) + 1
-        # The vectors retire a millisecond above the version: above every metadata copy of
-        # its vectors (each writes read + 1, server.memory.store.rows.reemit_version), and
-        # below the vectors of a write drawn after it.
+        version = next_version()
         tombstoned, downgraded = await _tombstone(
-            existing, version=version, vector_version=int(input.version) + _VECTOR_RETIRE_GAP_NS
+            existing, version=version, op="memory.delete_version"
         )
     return MemoryDeleteVersionOutput(
         tombstoned=True,
@@ -666,10 +657,10 @@ async def handle_memory_delete_version(
     )
 
 
-async def _tombstone(existing: Any, *, version: int, vector_version: int) -> tuple[int, int]:
+async def _tombstone(existing: Any, *, version: int, op: str) -> tuple[int, int]:
     """Write the tombstone of `existing` at `version` and retire what was derived from it:
-    its vectors (at `vector_version`), its chunks, a procedure's run ledger, and the
-    summaries built from it. The consolidated summaries tombstoned and downgraded."""
+    its vectors, its chunks, a procedure's run ledger, and the summaries built from it.
+    The consolidated summaries tombstoned and downgraded."""
     import server.memory.store as memory_repo
     from server.observability.otel import traced
 
@@ -703,7 +694,7 @@ async def _tombstone(existing: Any, *, version: int, vector_version: int) -> tup
             existing.session_id,
             existing.memory_key,
             ts=now.replace(tzinfo=None) if now.tzinfo else now,
-            version=vector_version,
+            version=version,
             ch=ch,
         )
     except Exception as e:  # noqa: BLE001 — the memory row tombstone already landed; mirror is best-effort
@@ -728,9 +719,7 @@ async def _tombstone(existing: Any, *, version: int, vector_version: int) -> tup
                 existing.org, existing.namespace, existing.memory_key
             )
         except Exception as e:  # noqa: BLE001 — the tombstone stands
-            log.warning(
-                "memory.delete: procedure_runs cascade failed for %s: %s", existing.memory_key, e
-            )
+            log.warning("%s: procedure_runs cascade failed for %s: %s", op, existing.memory_key, e)
     # A summary built from this row now says something its evidence no
     # longer supports. If none of its sources survive it goes too; otherwise
     # it is downgraded to `conflicted` (review queue) with a
@@ -745,7 +734,8 @@ async def _tombstone(existing: Any, *, version: int, vector_version: int) -> tup
         )
     except Exception as e:  # noqa: BLE001 — the tombstone stands
         log.warning(
-            "memory.delete: dependent summaries not downgraded for %s: %s",
+            "%s: dependent summaries not downgraded for %s: %s",
+            op,
             existing.memory_key,
             e,
         )

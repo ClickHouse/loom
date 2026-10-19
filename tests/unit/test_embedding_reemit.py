@@ -15,6 +15,17 @@ import pytest
 
 from server.memory import store as M
 
+
+@pytest.fixture(autouse=True)
+def _no_delete_in_flight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No delete races these writes: the fence before the insert finds no tombstone."""
+
+    async def _none(*_a: Any, **_k: Any) -> dict[Any, int]:
+        return {}
+
+    monkeypatch.setattr("server.memory.store.tombstones_above", _none)
+
+
 ROOT = Path(__file__).resolve().parents[2]
 
 

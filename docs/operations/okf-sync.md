@@ -33,7 +33,7 @@ LOOM_API_KEY="$PUBLIC_WRITER" loom import-okf /tmp/bundle --server-url "$PUBLIC_
   `derived` or `external` keeps that class; every other row is stored as `imported`,
   which the server derives from the `okf:` trace. With the same org and namespace on both
   sides the copy carries no `origin:` tags.
-- **One `memory.delete` per pruned row.** `--prune` deletes only rows under the import's
+- **One `memory.delete_version` per pruned row.** `--prune` deletes only rows under the import's
   `--agent`, written by its token, whose `source_trace` starts with `okf:` and whose key is
   no longer in the bundle. Rows anyone else wrote in the namespace stay. Give each bundle
   imported into the namespace its own `--agent` (`--prune` refuses without one). A delete
@@ -71,9 +71,8 @@ guard, a path that is not a directory, or a missing `--agent`, token or org.
   the caller's choice), is still the version the import's listing saw with an `okf:`
   trace, and has no `memory.lock`: anything else is counted as kept. It deletes with
   `memory.delete_version`, which removes only that version, under that exact identity, and
-  never another agent's row. Its
-  tombstone sits right above that version, so a write that lands while the delete runs,
-  conditional or not, keeps its row.
+  never another agent's row. A write to the key that is in flight when the delete lands
+  keeps its row: its insert takes a version above the tombstone.
 - A target replica too old to know `memory.delete_version` answers 404 and deletes
   nothing; the prune counts the failure and the import exits 1. A rolling upgrade of
   either Loom needs no pause.
@@ -152,9 +151,9 @@ namespace. Rows marked `sensitivity: high` stay on the private side (the export 
 them out unless `--include-high`), and a row that becomes `high` is pruned from the
 public side on the next run, unless it was the last row the export would carry: the
 bundle then has no concepts, the import refuses it, and the public copies stay. Delete
-them on the public Loom with `memory.delete`, or through erasure when the content must go. The export knows a `high` row by its `sensitivity`, which it
-reads through `memory.bulk_get`, or by the `sensitivity:high` tag `memory.set` and
-`memory.update` add. Against a private Loom whose `memory.bulk_get` does not return
+them on the public Loom with `memory.delete`, or through erasure when the content must
+go. The export knows a `high` row by its `sensitivity`, which it reads through
+`memory.bulk_get`, or by the `sensitivity:high` tag `memory.set` and `memory.update` add. Against a private Loom whose `memory.bulk_get` does not return
 `sensitivity`, only the tag keeps a row home, and a `high` row without the tag travels.
 A prune is a tombstone: the value stays restorable for 14 days and in the public Loom's
 version history. Content that must leave the public Loom goes through

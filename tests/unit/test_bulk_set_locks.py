@@ -20,6 +20,17 @@ from server.memory.app import session_summary as _session_summary_mod
 from server.memory.app.extract import handler as mem_extract
 from tests.unit.memory_rows import projection_row
 
+
+@pytest.fixture(autouse=True)
+def _no_delete_in_flight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No delete races these writes: the fence before the insert finds no tombstone."""
+
+    async def _none(*_a: Any, **_k: Any) -> dict[Any, int]:
+        return {}
+
+    monkeypatch.setattr("server.memory.store.tombstones_above", _none)
+
+
 _NOW = datetime.now(UTC).replace(tzinfo=None)
 _MID = "11111111-1111-1111-1111-111111111111"
 

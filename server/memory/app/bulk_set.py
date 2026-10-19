@@ -43,6 +43,7 @@ from server.memory.app.projections import (
     write_entity_vectors,
 )
 from server.memory.app.provenance import writer_actor
+from server.memory.app.write_fence import lift_above_tombstones
 from server.memory.domain.memory_types import is_embedded
 
 if TYPE_CHECKING:
@@ -289,6 +290,14 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     """Phase 10: the two core writes — the memory rows and their embedding
     rows — gathered, each a committed insert."""
     import server.memory.store as memory_repo
+
+    if state.memory_rows:
+        first = state.memory_rows[0]
+        lifted = await lift_above_tombstones(
+            first["org"], first["namespace"], state.memory_rows, state.embedding_rows, ch=ch
+        )
+        for res in state.results:
+            res.version = lifted.get(res.version, res.version)
 
     # The two core writes are independent rows of two tables and each is a ~260 ms committed
     # insert on ClickHouse Cloud, so they are gathered, as on the point path (`memory.set`).
