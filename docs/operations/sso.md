@@ -564,8 +564,8 @@ namespaces, with `/v1/me/service_accounts.revoke` and its `name` (its creator
 is a token, not a person, so it is in no one's own list; a namespace admin's
 Tokens list shows it among the newest 200). Then run it again: a token below
 one you revoked shows up once that one is revoked. Stop when it lists only
-tokens made from subjects you minted. While the previous build still serves, a token it lists,
-revokes or reuses the name of records no lineage.
+tokens made from subjects you minted. While the previous build still serves, a
+token it lists, revokes or reuses the name of records no lineage.
 
 A browser sign-in whose steps land on both builds (a code exchanged, an
 identity provider's callback) fails and is started again. The SDK and `loom
