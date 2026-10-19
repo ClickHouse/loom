@@ -141,20 +141,26 @@ def test_rows_say_where_each_value_came_from(
     yaml_file.write_text(
         "version: 1\nsettings:\n  memory_ask_synth_budget_ratio: 0.4\n  ch_database: x\n"
     )
-    monkeypatch.setenv("LOOM_ENV_FILE", str(env_file))
+    for name in [k for k in __import__("os").environ if k.startswith("LOOM_")]:
+        monkeypatch.delenv(name)
     monkeypatch.setenv("LOOM_SETTINGS_FILE", str(yaml_file))
     monkeypatch.setenv("LOOM_CH_HOST", "from-env")
     monkeypatch.setenv("LOOM_CH_PORT", "9")  # the file's value, copied in as the CLI does
-    monkeypatch.setitem(
-        settings.__pydantic_private__, "_inferred_fields", frozenset({"llm_provider"})
-    )
+    monkeypatch.setenv("LOOM_LLM_MODEL", "gpt-4o")  # the provider is inferred from it
+    loaded = settings.__class__(_env_file=str(env_file))
+    monkeypatch.setattr(so, "settings", loaded)
+    yaml_file.write_text("not: [valid")  # edited since: the listing does not read it again
     so.register_source("dashboard", lambda: ["embedding_model"])
     by_name = {r["name"]: r for r in so.rows()}
     assert by_name["ch_host"]["source"] == "env"  # the environment wins, as at startup
     assert by_name["ch_port"]["source"] == "env_file"
     assert by_name["memory_ask_synth_budget_ratio"]["source"] == "env_file"
     assert by_name["ch_database"]["source"] == "settings_file"
-    assert by_name["llm_provider"]["source"] == "inferred"
+    assert by_name["llm_model"]["source"] == "env"
+    assert (by_name["llm_provider"]["value"], by_name["llm_provider"]["source"]) == (
+        "openai",
+        "inferred",
+    )
     assert by_name["embedding_model"]["source"] == "dashboard"
     assert by_name[LIVE]["source"] == "default" and by_name[LIVE]["live"] is True
     assert by_name["ch_host"]["live"] is False

@@ -389,10 +389,10 @@ async def test_the_child_adopts_the_runtime_overrides_before_its_workers_start(
     before the supervisor starts and keeps re-reading them."""
     from server import boot, worker_main
     from server.code.app.index import repo_registry
+    from server.core import runtime_overrides, settings_overrides
     from server.insights.app import provider_barrier, provider_runtime
+    from server.settings import settings
     from server.tracker.app import registry_sources
-
-    calls: list[str] = []
 
     async def _noop(*_a, **_k) -> None:
         return None
@@ -400,13 +400,9 @@ async def test_the_child_adopts_the_runtime_overrides_before_its_workers_start(
     async def _refresher(_ch):
         return asyncio.create_task(asyncio.sleep(3600))
 
-    async def _warm(timeout_s: float, names: tuple[str, ...]) -> list[str]:
-        calls.append(f"waited:{','.join(names)}")
-        return []
-
-    def _overrides() -> asyncio.Task[None]:
-        calls.append("overrides")
-        return asyncio.create_task(asyncio.sleep(3600))
+    async def _load(*, ch=None) -> runtime_overrides.Snapshot:
+        await asyncio.sleep(0.05)  # the first read is not instant
+        return {runtime_overrides.SETTING: {("memory_ask_recency_weight",): 0.9}}
 
     monkeypatch.setattr(provider_barrier, "register_process", _noop)
     monkeypatch.setattr(provider_runtime, "load_active_configuration", _noop)
@@ -414,13 +410,15 @@ async def test_the_child_adopts_the_runtime_overrides_before_its_workers_start(
     monkeypatch.setattr(registry_sources, "refresh_db_sources", _noop)
     monkeypatch.setattr(repo_registry, "start_refresher", _refresher)
     monkeypatch.setattr(boot, "calibrate_similarity_gates", _noop)
-    monkeypatch.setattr(boot, "start_runtime_overrides", _overrides)
-    monkeypatch.setattr(boot, "await_warm_up", _warm)
     monkeypatch.setattr("server.observability.get_emitter", lambda: SimpleNamespace(start=_noop))
+    monkeypatch.setattr(runtime_overrides, "load", _load)
+    monkeypatch.setattr(boot, "_WARM", {})  # no earlier test's first load counts
+    monkeypatch.setattr(settings, "memory_ask_recency_weight", 0.2)
     tasks = await worker_main._start_services(object())
     try:
-        assert calls == ["overrides", "waited:runtime_overrides"]
+        assert settings.memory_ask_recency_weight == 0.9  # before any pass starts
     finally:
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        settings_overrides.adopt({})

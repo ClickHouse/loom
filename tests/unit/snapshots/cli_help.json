@@ -178,7 +178,7 @@
  ],
  "loom settings reset": [
   "usage: loom settings reset [-h] [--expect EXPECT] name",
-  "positional arguments: name",
+  "positional arguments: name The field name, e.g. memory_ask_recency_weight",
   "options: -h, --help show this help message and exit --expect EXPECT Change nothing unless this is the value in force (written as for set)"
  ],
  "loom settings history": [

@@ -53,6 +53,9 @@ Source: `server/settings/_auth.py`
 | `LOOM_OAUTH_ENABLED` | `bool` | `False` |  | MCP one-click connect: dynamic client registration and /oauth/authorize on top of the sign-in routes (device grant, token, revoke) every auth-on deployment serves. Opt-in: anyone can register a client. |
 | `LOOM_OAUTH_ISSUER` | `str` | `''` |  | Public base URL used in OAuth discovery and redirects; empty derives it from each request. Required when `oauth_login_provider` is "oidc" (the IdP callback URL is built from it). |
 | `LOOM_OAUTH_LOGIN_PROVIDER` | `'password' \| 'oidc'` | `'password'` |  | How people sign in (dashboard, `loom login`, MCP connect): "password" (Loom's own form) or "oidc" (the external IdP; loom maps the verified email to an account and still mints its own token). "oidc" closes password sign-in and self-signup, and requires `oauth_issuer` and the three oidc_* values. |
+| `LOOM_OAUTH_ACCESS_TOKEN_TTL_SECONDS` | `int` | `3600` |  | Lifetime of an OAuth access token, in seconds. |
+| `LOOM_PASSWORD_LINK_TTL_SECONDS` | `int` | `86400` |  | Seconds a password set-up or reset link stays valid. |
+| `LOOM_OAUTH_SIGNIN_STATE_SWEEP_INTERVAL_SECONDS` | `int` | `300` |  | Seconds between passes of the always-on sweep that drops sign-in state (loom.oauth_signin_state keys) past its credential's expiry. |
 | `LOOM_OIDC_ISSUER` | `str` | `''` |  | External IdP issuer URL; its `/.well-known/openid-configuration` must name the same issuer. |
 | `LOOM_OIDC_CLIENT_ID` | `str` | `''` |  | Client id registered at the IdP; also the audience each id_token must carry. |
 | `LOOM_OIDC_CLIENT_SECRET` | `str` | *(unset)* |  | Client secret sent to the IdP token endpoint when exchanging the sign-in code. |
@@ -163,6 +166,8 @@ Source: `server/settings/_code.py`
 | `LOOM_CODE_MIRROR_WARMUP` | `bool` | `True` |  | Every serving process clones the configured entries' mirrors it lacks at boot, in the background (code/app/index/mirrors.py): a history read answers `no_git_mirror: cloning <entry>` until its mirror is there. A full bare clone per host, again on every new disk: keep code_repos_root on a volume that outlives a rollout. Off: a mirror is cloned only when a read asks for it. |
 | `LOOM_CODE_MIRROR_WARMUP_CONCURRENCY` | `int` | `2` |  | Clones the warm-up runs at once on one host (each after a random wait), so N replicas starting together do not all clone from the remote at once. |
 | `LOOM_CODE_MIRROR_FETCH_INTERVAL_S` | `float` | `300.0` |  | Seconds between this host's fetches of its mirrors and sweeps of the mirrors, checkouts and lock files no active entry names. A round fetches only the branch tips, open PR heads and ledger merges the leader's pass recorded in ClickHouse that the mirror lacks: nothing when it is current. 0 = no fetch loop and no sweep. |
+| `LOOM_CODE_GIT_TIMEOUT_S` | `float` | `120.0` | live | Seconds one git command on a mirror may run (log, show, rev-parse). |
+| `LOOM_CODE_GIT_FETCH_TIMEOUT_S` | `float` | `3600.0` | live | Seconds one fetch or clone may run; the first fetch after a shallow clone of a large repository can exceed ten minutes. |
 | `LOOM_CODE_MIRROR_GC_INTERVAL_H` | `float` | `168.0` |  | Hours between `git gc` runs of each mirror on this host (low CPU and IO priority, only with room for a second copy plus the margin below). 0 = never. |
 | `LOOM_CODE_MIRROR_GC_MARGIN_GB` | `float` | `5.0` |  | Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without it the gc waits another interval. |
 | `LOOM_CODE_SANDBOX_CPU_SECONDS` | `int` | `7200` |  | rlimits for each process of a sandboxed repository job (clone, fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). They bound each process, not a job's total (max_pids aside): there is no cgroup. CPU seconds a process may use. |
@@ -565,7 +570,7 @@ Source: `server/settings/_extraction.py`
 | `LOOM_EXTRACTION_DEFER_AGENTS` | `str` | `''` | live | Agents whose set_from_messages runs deferred without the flag: comma-separated agent names, "*" = every service-account caller, "" = nobody. A call that sets `record_schema` is never deferred by this list (it reads `written` back), and an explicit defer=false still wins. |
 | `LOOM_EXTRACTION_QUEUE_INTERVAL_SECONDS` | `int` | `15` |  | Seconds between deferred-extraction queue passes. |
 | `LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS` | `int` | `8` | live | Most queued batches one pass claims. |
-| `LOOM_EXTRACTION_QUEUE_LEASE_SECONDS` | `int` | `600` | live | Seconds a claimed batch stays leased to one worker before another may claim it. |
+| `LOOM_EXTRACTION_QUEUE_LEASE_SECONDS` | `int` | `600` | live | Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute, so a batch still replaying is not claimed twice. |
 | `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `int` | `3` | live | Attempts before a failing batch stops returning to `pending` and is marked failed. |
 | `LOOM_EXTRACTION_QUEUE_NAMESPACE_CONCURRENCY` | `int` | `4` | live | Namespaces replayed concurrently per pass; batches inside one namespace stay serial in session-date order. |
 
@@ -606,6 +611,7 @@ Source: `server/settings/_mcp.py`
 | `LOOM_MCP_LOOM_SEARCH_PROFILE_MIN_SIMILARITY` | `float` | `0.38` |  | loom_search's profile leg: sections the words missed pass by cosine against `label\nvalue` at this hard floor. 0 = lexical only. |
 | `LOOM_MCP_LOOM_SEARCH_PROFILE_SOFT_SIMILARITY` | `float` | `0.3` |  | The soft floor (a question about the user only). |
 | `LOOM_MCP_LOOM_SEARCH_PROFILE_MARGIN` | `float` | `0.08` |  | The soft tier's lead over the namespace's runner-up. |
+| `LOOM_MCP_LOOM_SEARCH_TRACKER_TIMEOUT_S` | `float` | `3.0` | live | Seconds loom_search's tracker leg (similar issues and PRs) may take before the answer goes without it. |
 | `LOOM_MCP_LOOM_SEARCH_FLOOR_MODE` | `'drop' \| 'readmit' \| 'ids_only'` | `'drop'` |  | Sub-floor rows in loom_search: "drop" serves only what clears the floor; "readmit" (the memory.search default) pads top_k with below-threshold rows the reader is told to ignore; "ids_only" pads with empty bodies. |
 | `LOOM_MCP_LOOM_SEARCH_PRECISION_FLOOR` | `float` | `-1.0` |  | Precision floor for loom_search memory hits. Negative = auto (midpoint of the embedder's calibrated noise floor and question→fact p25); 0 disables. |
 | `LOOM_MCP_LOOM_SEARCH_FOREIGN_MARGIN` | `float` | `0.08` |  | Extra margin over the precision floor for hits from another namespace. |
@@ -679,7 +685,9 @@ Source: `server/settings/_memory.py`
 | `LOOM_PROJECTION_REPAIR_ENABLED` | `bool` | `True` |  | Retry best-effort projections (chunks, evidence links, graph side tables) that failed after the primary write. Bounded and idempotent; unsupported ones stay in ops.projection_failures.list. |
 | `LOOM_PROJECTION_REPAIR_INTERVAL_SECONDS` | `int` | `300` |  | Seconds between projection repair passes. |
 | `LOOM_PROJECTION_REPAIR_MAX_FAILURES_PER_PASS` | `int` | `25` |  | Recorded projection failures one pass retries (at least 1). |
-| `LOOM_USAGE_FOLD_ENABLED` | `bool` | `True` |  | Fold loom.memory_usage_totals onto the ranking columns (reinforcement boost, memory.list sort_by=score, auto-promote gate); off, they freeze at write-time values. Cadence is fixed in server/memory/workers/usage_fold.py. |
+| `LOOM_USAGE_FOLD_ENABLED` | `bool` | `True` |  | Fold loom.memory_usage_totals onto the ranking columns (reinforcement boost, memory.list sort_by=score, auto-promote gate); off, they freeze at write-time values. |
+| `LOOM_USAGE_FOLD_INTERVAL_SECONDS` | `int` | `300` |  | Seconds between usage-fold passes. |
+| `LOOM_CONFLICT_SWEEP_INTERVAL_SECONDS` | `float` | `30.0` |  | Seconds between passes of the always-on sweep that re-runs the deferred conflict judges a stopped replica left owed. |
 | `LOOM_ORPHAN_VECTOR_RECONCILE_ENABLED` | `bool` | `True` |  | Re-emit, with a tombstone, vector rows still live after their loom.memory row was tombstoned or erased, so search stops offering them. Bounded per pass; loom.integrity.orphan_vectors should read 0 between passes. |
 | `LOOM_ORPHAN_VECTOR_RECONCILE_INTERVAL_SECONDS` | `int` | `600` |  | Seconds between orphan vector reconcile passes. |
 | `LOOM_ORPHAN_VECTOR_RECONCILE_MAX_KEYS_PER_PASS` | `int` | `500` |  | Orphaned keys one pass re-emits tombstones for (at least 1). |
@@ -872,6 +880,11 @@ Source: `server/settings/_memory_ask.py`
 | `LOOM_MEMORY_ASK_PENDING_EVIDENCE_TURNS` | `int` | `5` | live | memory.ask pending evidence: the turns of in-flight deferred batches that share words with the question join the synthesis window as raw rows (source="pending"). Most pending turns read into the synthesis window per ask. |
 | `LOOM_MEMORY_ASK_PENDING_EVIDENCE_BATCHES` | `int` | `20` | live | Newest in-flight deferred batches the pending-evidence read scans. |
 | `LOOM_MEMORY_ASK_SYNTHESIZE_ROUTE_MAX_DOCS` | `int` | `3` | live | A summary-shaped question ("summarize the report") routes to knowledge.synthesize over the documents the knowledge search concentrates on, falling through to the memory path when none concentrates. Documents that route may synthesize over at most. |
+| `LOOM_MEMORY_ASK_KNOWLEDGE_PASSAGE_MAX_CHARS` | `int` | `800` | live | Characters of one knowledge passage in the answer's context block; longer ones are cut and marked. |
+| `LOOM_MEMORY_ASK_KNOWLEDGE_BLOCK_MAX_CHARS` | `int` | `6000` | live | Characters of the whole knowledge block; the lowest-ranked passages go first. |
+| `LOOM_MEMORY_ASK_RECENT_MAX_TURNS` | `int` | `40` | live | Conversation turns the recent-turns block carries at most, newest last. |
+| `LOOM_MEMORY_ASK_RECENT_TURN_MAX_CHARS` | `int` | `1500` | live | Characters of one turn in that block; longer ones are cut and marked. |
+| `LOOM_MEMORY_ASK_RECENT_BLOCK_MAX_CHARS` | `int` | `12000` | live | Characters of the whole recent-turns block; the oldest turns go first. |
 
 ## MemorySearch
 
@@ -887,7 +900,7 @@ Source: `server/settings/_memory_search.py`
 | `LOOM_MEMORY_SEARCH_KEY_AXIS` | `'auto' \| 'on' \| 'off'` | `'auto'` | live | Key-embedding axis on the fact leg: "on" scores least(value_dist, key_dist) and reads both vector columns (measured 399 vs 203 MB/query on a 30k-row namespace); "off" reads the value vector only; "auto" turns it on per namespace when its key-reuse share is at or above memory_search_key_axis_auto_reuse_share (cached for memory_search_key_axis_auto_ttl_seconds; a failed probe reads as off). A per-request `key_axis` wins. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS_AUTO_REUSE_SHARE` | `float` | `0.05` | live | "auto" key-axis threshold: share of a namespace's keys written more than once. 0.05 sits between product namespaces and chat namespaces. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS_AUTO_TTL_SECONDS` | `int` | `600` | live | Seconds a namespace's "auto" key-axis probe result is cached before it is re-read. |
-| `LOOM_MEMORY_SEARCH_QUERY_REWRITE_THRESHOLD` | `float` | `0.38` | live | No-probe fallback for the query-rewrite gate the calibration reports (calibration.get's scalar row): ≈ question→fact P10 for text-embedding-3-small. |
+| `LOOM_MEMORY_SEARCH_QUERY_REWRITE_THRESHOLD` | `float` | `0.38` |  | No-probe fallback for the query-rewrite gate the calibration reports (calibration.get's scalar row): ≈ question→fact P10 for text-embedding-3-small. |
 | `LOOM_MEMORY_SEARCH_FALLBACK_MAX_ROUNDS` | `int` | `1` | live | Bounds on the recursive fallback cascade (iterative-judge retry), shared through one SearchBudget: recursive rounds and wall-clock ms; whichever trips first stops further fallbacks. The first-pass retrieve always runs. |
 | `LOOM_MEMORY_SEARCH_FALLBACK_MAX_WALL_MS` | `int` | `4000` | live | Wall-clock ms the fallback cascade may spend across all rounds before it stops. |
 | `LOOM_MEMORY_SEARCH_FALLBACK_MAX_LLM_CALLS` | `int` | `2` | live | Finer caps inside a round: LLM calls and vector queries a fallback may spend before it is denied. |
@@ -1112,7 +1125,7 @@ Source: `server/settings/_providers.py`
 | `LOOM_LLM_HIDDEN_REASONING_RESERVE_MAX` | `int` | `16384` |  | Most output tokens a call adds over the caller's cap for a model's hidden reasoning. The reserve per model is learned from the reasoning tokens its replies report (twice the most it has spent) and capped here. |
 | `LOOM_LLM_REQUEST_TIMEOUT_S` | `float` | `300.0` |  | Seconds an LLM call waits for its reply before the client retries. Generous on purpose: it only catches a hung connection, so a slow model or a long output never hits it. Calls that must be fast set their own, shorter deadline (HyDE, search budgets). |
 | `LOOM_LLM_POLICY_BY_TRAFFIC_CLASS` | `str` | `'{"bench": {"llm_cache": true}}'` |  | JSON {class: {"llm_cache": bool, "strong": bool, "mid": bool}}: `llm_cache` overrides the class's cache default (a per-request pin wins); `strong`/`mid` false bars the cascade from that tier. Unlisted = every tier eligible. |
-| `LOOM_RERANK_ENDPOINTS_JSON` | `str` | `'{}'` |  | JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are short identifiers, URLs http(s). Loom posts candidate text only to these. |
+| `LOOM_RERANK_ENDPOINTS_JSON` | `str` | *(set)* |  | JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are short identifiers, URLs http(s). Loom posts candidate text only to these. |
 | `LOOM_LLM_RERANK_SKIP_ABOVE` | `float` | `0.62` |  | Skip the rerank when the vector top hit's cosine is ≥ this (strong matches rank reliably; the rerank costs ~500 ms). Fallback when the adaptive gate has no probe. |
 | `LOOM_EMBEDDING_WORKER_ENABLED` | `bool` | `True` |  | Recovery worker: retries failed embeds and reconciles orphan scope='shared' rows (the write path embeds inline). |
 | `LOOM_EMBEDDING_WORKER_INTERVAL_SECONDS` | `int` | `5` |  | Seconds between recovery worker passes while there is work. |
@@ -1156,6 +1169,7 @@ Source: `server/settings/_runtime.py`
 | `LOOM_RUNTIME_DIR` | `str` | `''` |  | Directory of the files one server's web processes share (the rate-limit table); "" = chosen per process by server/core/runtime_files.py. scripts/serve.sh sets it once, before the workers start, so all of them name the same files. |
 | `LOOM_BACKGROUND_WORKERS` | `'auto' \| 'on' \| 'off'` | `'auto'` |  | Which processes run the WorkerSupervisor: auto = the one process of the deployment holding the `workers_supervisor` lease in ClickHouse (server/workers/leader.py), and none outside the deployment (no LOOM_DEPLOYMENT); on = always; off = never (a pure web replica). |
 | `LOOM_SUPERVISOR_LEASE_TTL_S` | `int` | `30` |  | auto mode: seconds a lease holder that stops renewing keeps the workers before another process takes them over (failover time). At least 24: below that a renewal blocked for its 2 s timeout leaves no retry before the holder must give up (server/workers/leader.py has the timings). |
+| `LOOM_KEEPER_SWEEP_INTERVAL_SECONDS` | `float` | `3600.0` |  | Seconds between passes of the always-on sweep that deletes the KeeperMap keys (leases, claims, graph slots) a stopped process left behind. |
 | `LOOM_WORKERS_PROCESS` | `'child' \| 'inline'` | `'child'` |  | auto mode: where the lease holder runs the workers. child = a separate process it starts and stops with the lease, so the passes do not share the event loop that serves requests; inline = in the serving process. |
 | `LOOM_SHUTDOWN_READY_DELAY_S` | `float` | `15.0` |  | Seconds a process keeps serving after SIGTERM while /v1/health/ready answers 503, so the load balancer stops routing to it before its port closes. Size it to the LB's probe interval × failure threshold. 0 = stop at once. |
 | `LOOM_BOOT_WARMUP_TIMEOUT_S` | `float` | `30.0` |  | Seconds boot waits for the first load of the tracker registry and the runtime overrides, and the first publish of the dashboard bundle, before it serves; readiness stays false until the first two load. |
@@ -1228,6 +1242,8 @@ Source: `server/settings/_tasks.py`
 | `LOOM_TASK_WEBHOOK_DELIVER_ENABLED` | `bool` | `True` |  | Post one Standard Webhooks-signed notice per new event batch to each inbox's webhook_url; the secret comes from the env var task_inboxes.webhook_secret_ref names (`LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, one of the inbox org's own). |
 | `LOOM_TASK_WEBHOOK_DELIVER_INTERVAL_SECONDS` | `int` | `5` |  | Seconds between passes while notices are going out. |
 | `LOOM_TASK_WEBHOOK_DELIVER_IDLE_INTERVAL_SECONDS` | `int` | `30` |  | Seconds between passes that found no new event. |
+| `LOOM_TASK_WEBHOOK_BATCH_LIMIT` | `int` | `200` | live | Events one notice carries at most. |
+| `LOOM_MCP_SESSION_RUN_SWEEP_INTERVAL_SECONDS` | `int` | `60` |  | Seconds between passes of the always-on sweep that closes the runs of idle MCP sessions. |
 
 ### Run completion
 

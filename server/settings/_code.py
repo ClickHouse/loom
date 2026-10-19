@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 from server.settings._env import CaseFolded, JsonArray, JsonObject
+from server.settings._live import LIVE
 
 
 class CodeSettings(BaseModel):
@@ -126,6 +127,11 @@ class CodeSettings(BaseModel):
     # tips, open PR heads and ledger merges the leader's pass recorded in ClickHouse
     # that the mirror lacks: nothing when it is current. 0 = no fetch loop and no sweep.
     code_mirror_fetch_interval_s: float = 300.0
+    # Seconds one git command on a mirror may run (log, show, rev-parse).
+    code_git_timeout_s: Annotated[float, LIVE] = Field(default=120.0, gt=0)
+    # Seconds one fetch or clone may run; the first fetch after a shallow clone of
+    # a large repository can exceed ten minutes.
+    code_git_fetch_timeout_s: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
     # Hours between `git gc` runs of each mirror on this host (low CPU and IO
     # priority, only with room for a second copy plus the margin below). 0 = never.
     code_mirror_gc_interval_h: float = 168.0

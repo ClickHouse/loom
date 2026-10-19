@@ -276,3 +276,14 @@ class MemoryAskSettings(BaseModel):
     # the documents the knowledge search concentrates on, falling through to the memory
     # path when none concentrates. Documents that route may synthesize over at most.
     memory_ask_synthesize_route_max_docs: Annotated[int, LIVE] = Field(default=3, ge=1)
+    # Characters of one knowledge passage in the answer's context block; longer
+    # ones are cut and marked.
+    memory_ask_knowledge_passage_max_chars: Annotated[int, LIVE] = Field(default=800, ge=100)
+    # Characters of the whole knowledge block; the lowest-ranked passages go first.
+    memory_ask_knowledge_block_max_chars: Annotated[int, LIVE] = Field(default=6000, ge=100)
+    # Conversation turns the recent-turns block carries at most, newest last.
+    memory_ask_recent_max_turns: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Characters of one turn in that block; longer ones are cut and marked.
+    memory_ask_recent_turn_max_chars: Annotated[int, LIVE] = Field(default=1500, ge=100)
+    # Characters of the whole recent-turns block; the oldest turns go first.
+    memory_ask_recent_block_max_chars: Annotated[int, LIVE] = Field(default=12000, ge=100)

@@ -37,6 +37,9 @@ spec:
         {{- if not .Values.secrets.existingSecret }}
         checksum/secret: {{ include "loom.secretChecksum" . }}
         {{- end }}
+        {{- if .Values.settingsFile }}
+        checksum/settings-file: {{ include "loom.settingsFileChecksum" . }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

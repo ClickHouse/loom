@@ -63,6 +63,10 @@ secrets:
 
 # Any other LOOM_* setting (docs/reference/configuration.md). Values are strings.
 env: {}
+# Settings as the YAML settings file holds them: lowercase field names, typed
+# values (schemas/loom-settings.schema.json). Mounted at /app/config/loom.yaml;
+# `env` wins over it, and the server refuses a secret in it. Empty = no file.
+settingsFile: {}
 # Extra env entries in Kubernetes form (valueFrom etc.).
 extraEnv: []
 envFrom: []

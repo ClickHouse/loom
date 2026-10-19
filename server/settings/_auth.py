@@ -94,6 +94,13 @@ class AuthSettings(BaseModel):
     # password sign-in and self-signup, and requires `oauth_issuer` and the
     # three oidc_* values.
     oauth_login_provider: Literal["password", "oidc"] = "password"
+    # Lifetime of an OAuth access token, in seconds.
+    oauth_access_token_ttl_seconds: int = Field(default=3600, ge=60)
+    # Seconds a password set-up or reset link stays valid.
+    password_link_ttl_seconds: int = Field(default=86400, ge=300)
+    # Seconds between passes of the always-on sweep that drops sign-in state
+    # (loom.oauth_signin_state keys) past its credential's expiry.
+    oauth_signin_state_sweep_interval_seconds: int = Field(default=300, ge=1)
     # External IdP issuer URL; its `/.well-known/openid-configuration` must name the same issuer.
     oidc_issuer: str = ""
     # Client id registered at the IdP; also the audience each id_token must carry.

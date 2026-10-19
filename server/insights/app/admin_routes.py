@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -592,7 +592,8 @@ async def admin_ratelimit_set(input: RatelimitSetInput) -> RatelimitSetOutput:
 @admin_router.post("/v1/admin/settings.list")
 async def admin_settings_list(input: SettingsListInput) -> SettingsListOutput:
     """Every setting with its value in force in this process, its default, where
-    the value came from (override, env, env_file, default) and whether it is live."""
+    the value came from (override, dashboard, env, env_file, settings_file,
+    inferred, default) and whether it is live."""
     from server.core import settings_overrides
 
     rows = settings_overrides.rows(prefix=input.prefix, changed=input.changed)
@@ -600,7 +601,11 @@ async def admin_settings_list(input: SettingsListInput) -> SettingsListOutput:
 
 
 @admin_router.post("/v1/admin/settings.set")
-async def admin_settings_set(request: Request, input: SettingSetInput) -> SettingSetOutput:
+async def admin_settings_set(
+    input: SettingSetInput,
+    # The router's own gate, cached for the request: the token is verified once.
+    info: Annotated[Any, Depends(require_admin)],
+) -> SettingSetOutput:
     """Install a deployment-wide override of a live setting ({name, value}) or
     remove it ({name, clear: true}); with `expected`, only while that is the value
     in force. Every process applies it within `runtime_overrides_refresh_seconds`;
@@ -609,7 +614,6 @@ async def admin_settings_set(request: Request, input: SettingSetInput) -> Settin
     from server.insights.app import settings_changes
 
     set_query_tag("admin.settings_set")
-    info = await require_admin(request)
     row = await settings_changes.change(
         input.name,
         input.value,

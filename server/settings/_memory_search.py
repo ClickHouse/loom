@@ -44,7 +44,7 @@ class MemorySearchSettings(BaseModel):
     # No-probe fallback for the query-rewrite gate the calibration reports
     # (calibration.get's scalar row): ≈ question→fact P10 for
     # text-embedding-3-small.
-    memory_search_query_rewrite_threshold: Annotated[float, LIVE] = 0.38
+    memory_search_query_rewrite_threshold: float = 0.38
 
     # Bounds on the recursive fallback cascade (iterative-judge retry),
     # shared through one SearchBudget: recursive rounds and wall-clock ms;

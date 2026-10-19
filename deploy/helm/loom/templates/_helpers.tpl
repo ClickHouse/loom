@@ -198,6 +198,16 @@ passes and runs an overdue worker instead of restarting its interval. */}}
   mountPath: /run/user
 - name: cache
   mountPath: /app/var
+{{- if .Values.settingsFile }}
+- name: settings-file
+  mountPath: /app/config
+  readOnly: true
+{{- end }}
+{{- end }}
+
+{{/* A hash of the settings file, so a change to it rolls the pods. */}}
+{{- define "loom.settingsFileChecksum" -}}
+{{- .Values.settingsFile | toJson | sha256sum -}}
 {{- end }}
 
 {{/* The cache settings of one role: `cache`, with `workers.cache` over it
@@ -246,6 +256,11 @@ for the workers pods. */}}
     sizeLimit: {{ $cache.sizeLimit }}
 {{- else }}
 {{- fail "cache.volume must be emptyDir or ephemeral" }}
+{{- end }}
+{{- if .Values.settingsFile }}
+- name: settings-file
+  configMap:
+    name: {{ include "loom.suffixed" (dict "root" . "suffix" "settings") }}
 {{- end }}
 {{- with .Values.extraVolumes }}
 {{ toYaml . }}
@@ -324,6 +339,10 @@ the scheduler places the pod where they fit. Sizes in Gi only. */}}
     {{- end }}
     {{- end }}
     {{- include "loom.podEnv" $ | nindent 4 }}
+    {{- if $.Values.settingsFile }}
+    - name: LOOM_SETTINGS_FILE
+      value: /app/config/loom.yaml
+    {{- end }}
     {{- if .serves }}
     - name: LOOM_BACKGROUND_WORKERS
       value: {{ ternary "off" "auto" $.Values.workers.enabled | quote }}

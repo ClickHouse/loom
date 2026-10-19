@@ -697,6 +697,12 @@
           "type": "boolean",
           "description": "The mirror carries `refs/pull/N/head` for every PR the ledger holds OPEN (refetched when the tip moves, never pruned), so pre-merge reads diff the PR's own head. Only open heads: fetching every PR head is too costly. Per-entry `git_fetch_pr_heads` overrides. Off = the overlay reports `head_not_in_mirror`."
         },
+        "code_git_fetch_timeout_s": {
+          "default": 3600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one fetch or clone may run; the first fetch after a shallow clone of a large repository can exceed ten minutes."
+        },
         "code_git_ledger_merge_batch": {
           "default": 40,
           "type": "integer",
@@ -716,6 +722,12 @@
           "default": "",
           "type": "string",
           "description": "The scalar entry's fetch remote; empty = `https://github.com/<owner>/<name>.git`."
+        },
+        "code_git_timeout_s": {
+          "default": 120.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one git command on a mirror may run (log, show, rev-parse)."
         },
         "code_graph_stats_enabled": {
           "default": false,
@@ -1657,6 +1669,12 @@
           "type": "string",
           "description": "JSON {label: {\"table\": \"loom.x\", \"dim\": 256}}: where a label's chunk rows live (the coded vector column is fixed-width). Absent label = loom.code_chunks. Inserts and the vector leg route by it."
         },
+        "conflict_sweep_interval_seconds": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds between passes of the always-on sweep that re-runs the deferred conflict judges a stopped replica left owed."
+        },
         "conflict_threshold": {
           "default": 0.85,
           "type": "number",
@@ -1974,21 +1992,25 @@
         },
         "extraction_queue_lease_seconds": {
           "default": 600,
+          "minimum": 60,
           "type": "integer",
-          "description": "Seconds a claimed batch stays leased to one worker before another may claim it."
+          "description": "Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute, so a batch still replaying is not claimed twice."
         },
         "extraction_queue_max_attempts": {
           "default": 3,
+          "minimum": 1,
           "type": "integer",
           "description": "Attempts before a failing batch stops returning to `pending` and is marked failed."
         },
         "extraction_queue_max_batches_per_pass": {
           "default": 8,
+          "minimum": 1,
           "type": "integer",
           "description": "Most queued batches one pass claims."
         },
         "extraction_queue_namespace_concurrency": {
           "default": 4,
+          "minimum": 1,
           "type": "integer",
           "description": "Namespaces replayed concurrently per pass; batches inside one namespace stay serial in session-date order."
         },
@@ -2093,6 +2115,12 @@
           "default": "",
           "type": "string",
           "description": "Extra accepted `iss` values, for a gateway minting Loom-shaped JWTs with a key in `jwt_public_keys_json`. Loom's own tokens (iss = jwt_issuer) pass."
+        },
+        "keeper_sweep_interval_seconds": {
+          "default": 3600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds between passes of the always-on sweep that deletes the KeeperMap keys (leases, claims, graph slots) a stopped process left behind."
         },
         "knowledge_chunk_size": {
           "default": 1500,
@@ -2293,6 +2321,12 @@
           "type": "number",
           "description": "The soft floor (a question about the user only)."
         },
+        "mcp_loom_search_tracker_timeout_s": {
+          "default": 3.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds loom_search's tracker leg (similar issues and PRs) may take before the answer goes without it."
+        },
         "mcp_ratelimit_retry_max_wait_s": {
           "default": 2.0,
           "type": "number",
@@ -2313,6 +2347,12 @@
           "minimum": 60,
           "type": "integer",
           "description": "Seconds without a tool call after which the mcp_session_run_sweep worker closes an MCP session's implicit run (one per token and `Mcp-Session-Id`, begun on the first run-scoped tool call); with no background workers anywhere, idle runs stay open. At least 60: each web process re-checks its cached run once a minute (mcp_runs.CHECK_INTERVAL_S), so a shorter window would close runs a process still treats as open."
+        },
+        "mcp_session_run_sweep_interval_seconds": {
+          "default": 60,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Seconds between passes of the always-on sweep that closes the runs of idle MCP sessions."
         },
         "mcp_toolset": {
           "default": "core",
@@ -2518,6 +2558,18 @@
           "type": "boolean",
           "description": "When a query names an identifier (PR/issue number, @handle) that recall missed, inject the memories citing it (exact substring) into the synthesis pool. The lexical leg indexes only alpha tokens >= 3 chars, so bare numbers are otherwise unretrievable. Additive."
         },
+        "memory_ask_knowledge_block_max_chars": {
+          "default": 6000,
+          "minimum": 100,
+          "type": "integer",
+          "description": "Characters of the whole knowledge block; the lowest-ranked passages go first."
+        },
+        "memory_ask_knowledge_passage_max_chars": {
+          "default": 800,
+          "minimum": 100,
+          "type": "integer",
+          "description": "Characters of one knowledge passage in the answer's context block; longer ones are cut and marked."
+        },
         "memory_ask_knowledge_top_k": {
           "default": 5,
           "minimum": 1,
@@ -2605,6 +2657,24 @@
           "default": 0.2,
           "type": "number",
           "description": "memory.ask only: re-rank the synthesis window by similarity + weight * recency, recency = 1/(1 + age_days/14), so the freshest copy of a fact reaches synthesis. 0.0 = cosine only."
+        },
+        "memory_ask_recent_block_max_chars": {
+          "default": 12000,
+          "minimum": 100,
+          "type": "integer",
+          "description": "Characters of the whole recent-turns block; the oldest turns go first."
+        },
+        "memory_ask_recent_max_turns": {
+          "default": 40,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Conversation turns the recent-turns block carries at most, newest last."
+        },
+        "memory_ask_recent_turn_max_chars": {
+          "default": 1500,
+          "minimum": 100,
+          "type": "integer",
+          "description": "Characters of one turn in that block; longer ones are cut and marked."
         },
         "memory_ask_relevance_gate_min_keep": {
           "default": 3,
@@ -3523,6 +3593,12 @@
           "type": "number",
           "description": "loom.namespace_write_marks is an in-process max per (org, namespace, plane), flushed as one INSERT this often."
         },
+        "oauth_access_token_ttl_seconds": {
+          "default": 3600,
+          "minimum": 60,
+          "type": "integer",
+          "description": "Lifetime of an OAuth access token, in seconds."
+        },
         "oauth_enabled": {
           "default": false,
           "type": "boolean",
@@ -3541,6 +3617,12 @@
           ],
           "type": "string",
           "description": "How people sign in (dashboard, `loom login`, MCP connect): \"password\" (Loom's own form) or \"oidc\" (the external IdP; loom maps the verified email to an account and still mints its own token). \"oidc\" closes password sign-in and self-signup, and requires `oauth_issuer` and the three oidc_* values."
+        },
+        "oauth_signin_state_sweep_interval_seconds": {
+          "default": 300,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Seconds between passes of the always-on sweep that drops sign-in state (loom.oauth_signin_state keys) past its credential's expiry."
         },
         "observe_extract_buffer_chars": {
           "default": 0,
@@ -3753,6 +3835,12 @@
           "type": "string",
           "description": "OTel resource `service.name` and `deployment.environment` stamped on every span, log and metric."
         },
+        "password_link_ttl_seconds": {
+          "default": 86400,
+          "minimum": 300,
+          "type": "integer",
+          "description": "Seconds a password set-up or reset link stays valid."
+        },
         "platform_admins": {
           "default": "",
           "type": "string",
@@ -3941,11 +4029,6 @@
           "type": "boolean",
           "description": "A fake or key-less provider is a `warn` in /v1/health `problems`; true (production) makes it an `error` and `status: degraded`, which preflight and monitors catch. Never changes the HTTP code (503 is ClickHouse-only)."
         },
-        "rerank_endpoints_json": {
-          "default": "{}",
-          "type": "string",
-          "description": "JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are short identifiers, URLs http(s). Loom posts candidate text only to these."
-        },
         "restricted_audit_inline": {
           "default": true,
           "type": "boolean",
@@ -4118,6 +4201,12 @@
           "default": 60,
           "type": "integer",
           "description": "Seconds between passes while there is work."
+        },
+        "task_webhook_batch_limit": {
+          "default": 200,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Events one notice carries at most."
         },
         "task_webhook_deliver_enabled": {
           "default": true,
@@ -4631,7 +4720,13 @@
         "usage_fold_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "Fold loom.memory_usage_totals onto the ranking columns (reinforcement boost, memory.list sort_by=score, auto-promote gate); off, they freeze at write-time values. Cadence is fixed in server/memory/workers/usage_fold.py."
+          "description": "Fold loom.memory_usage_totals onto the ranking columns (reinforcement boost, memory.list sort_by=score, auto-promote gate); off, they freeze at write-time values."
+        },
+        "usage_fold_interval_seconds": {
+          "default": 300,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Seconds between usage-fold passes."
         },
         "vector_codes_state_probe_seconds": {
           "default": 60,

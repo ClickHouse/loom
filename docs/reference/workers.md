@@ -216,7 +216,7 @@ adding its row.
 | `code_scip_py_delta` | Python compiler-tier deltas per merge. | `LOOM_CODE_SCIP_PY_DELTA_ENABLED` | True | `LOOM_CODE_SCIP_PY_DELTA_INTERVAL_SECONDS` | 600 |
 | `code_scip_ts_delta` | Per-merge compiler-tier freshness for TypeScript. | `LOOM_CODE_SCIP_TS_DELTA_ENABLED` | True | `LOOM_CODE_SCIP_TS_DELTA_INTERVAL_SECONDS` | 600 |
 | `code_summary` | Weekly LLM file/module summary cards for code.map orientation. | `LOOM_CODE_SUMMARY_ENABLED` | False | `LOOM_CODE_SUMMARY_INTERVAL_SECONDS` | 604800 |
-| `conflict_sweep` | Re-judge deferred conflict checks lost with their process. | always on |  | `server.memory.workers.conflict_sweep.INTERVAL_SECONDS` |  |
+| `conflict_sweep` | Re-judge deferred conflict checks lost with their process. | always on |  | `LOOM_CONFLICT_SWEEP_INTERVAL_SECONDS` | 30.0 |
 | `conversation_titler` | Conversation-titler worker. | `LOOM_CONVERSATION_TITLER_ENABLED` | True | `LOOM_CONVERSATION_TITLER_INTERVAL_SECONDS` | 1800 |
 | `document_blob_gc` | Document-original sweep: `loom.document_blobs` rows no live document names. | `LOOM_DOCUMENT_BLOB_GC_ENABLED` | True | `LOOM_DOCUMENT_BLOB_GC_INTERVAL_SECONDS` | 3600 |
 | `embedding_worker` | Embedding recovery worker. | `LOOM_EMBEDDING_WORKER_ENABLED` | True | `LOOM_EMBEDDING_WORKER_INTERVAL_SECONDS` | 5 |
@@ -225,12 +225,12 @@ adding its row.
 | `erasure_reclaim` | Erasure reclaim worker: the bytes of purged rows leave the disk. | `LOOM_ERASURE_RECLAIM_ENABLED` | True | `LOOM_ERASURE_RECLAIM_INTERVAL_SECONDS` | 3600 |
 | `erasure_recovery` | Erasure Saga recovery worker. | `LOOM_ERASURE_RECOVERY_ENABLED` | True | `LOOM_ERASURE_RECOVERY_INTERVAL_SECONDS` | 60 |
 | `extraction_queue` | Replays deferred `memory.set_from_messages` requests. | `LOOM_EXTRACTION_QUEUE_ENABLED` | True | `LOOM_EXTRACTION_QUEUE_INTERVAL_SECONDS` | 15 |
-| `keeper_sweep` | Delete the KeeperMap keys a process died holding (`server.core.leases.DEAD_KEYS`): leases and claims an hour past their expiry, and graph projection slots a day old. | always on |  | `server.workers.keeper_sweep.INTERVAL_SECONDS` |  |
-| `mcp_session_run_sweep` | MCP session run sweeper. | always on |  | `server.tasks.workers.session_run_sweep.INTERVAL_SECONDS` |  |
+| `keeper_sweep` | Delete the KeeperMap keys a process died holding (`server.core.leases.DEAD_KEYS`): leases and claims an hour past their expiry, and graph projection slots a day old. | always on |  | `LOOM_KEEPER_SWEEP_INTERVAL_SECONDS` | 3600.0 |
+| `mcp_session_run_sweep` | MCP session run sweeper. | always on |  | `LOOM_MCP_SESSION_RUN_SWEEP_INTERVAL_SECONDS` | 60 |
 | `memory_code_links` | Code link pass: link the memories written since the last pass to the code they name (and, on the first pass or after falling behind the queue, the ones written before), then follow every… | `LOOM_MEMORY_CODE_LINKS_ENABLED` | True | `LOOM_MEMORY_CODE_LINKS_INTERVAL_SECONDS` | 60 |
 | `memory_expiry_sweep` | Memory expiry sweep worker. | `LOOM_MEMORY_EXPIRY_SWEEP_ENABLED` | True | `LOOM_MEMORY_EXPIRY_SWEEP_INTERVAL_SECONDS` | 300 |
 | `namespace_gc` | namespace_gc worker — a registered bench namespace nobody writes to leaves. | `LOOM_NAMESPACE_GC_WORKER_ENABLED` | True | `LOOM_NAMESPACE_GC_INTERVAL_SECONDS` | 3600 |
-| `oauth_signin_state_sweep` | Sign-in state that changes once, kept in ClickHouse Keeper. | always on |  | `server.auth.claims.SWEEP_INTERVAL_SECONDS` |  |
+| `oauth_signin_state_sweep` | Sign-in state that changes once, kept in ClickHouse Keeper. | always on |  | `LOOM_OAUTH_SIGNIN_STATE_SWEEP_INTERVAL_SECONDS` | 300 |
 | `observe_extract` | Deferred-extraction worker for the ambient-capture (observe) plane. | `LOOM_OBSERVE_EXTRACT_ENABLED` | False | `LOOM_OBSERVE_EXTRACT_INTERVAL_SECONDS` | 300 |
 | `orphan_vector_reconcile` | Orphan-vector reconcile worker. | `LOOM_ORPHAN_VECTOR_RECONCILE_ENABLED` | True | `LOOM_ORPHAN_VECTOR_RECONCILE_INTERVAL_SECONDS` | 600 |
 | `profile_consolidation` | Profile-consolidation worker. | `LOOM_PROFILE_CONSOLIDATION_ENABLED` | False | `LOOM_PROFILE_CONSOLIDATION_INTERVAL_SECONDS` | 21600 |
@@ -244,7 +244,7 @@ adding its row.
 | `tracker_embed` | The `tracker_embed` pass: every thirty minutes (the leg's query-time catch-up covers the gap on the call), for EVERY configured tracker namespace (`configured_namespaces()` — the source map; a… | `LOOM_TRACKER_EMBED_ENABLED` | True | `LOOM_TRACKER_EMBED_INTERVAL_SECONDS` | 1800.0 |
 | `tracker_links` | Daily issue–PR link recovery: for every issue opened in the last `LOOM_TRACKER_LINKS_ISSUE_DAYS` of each configured tracker namespace, rank the merged trunk PRs of the window after it by BM25F over… | `LOOM_TRACKER_LINKS_ENABLED` | True | `LOOM_TRACKER_LINKS_INTERVAL_SECONDS` | 86400.0 |
 | `tracker_test_daily` | The per-test daily roll-up of the public CI history. | `LOOM_TRACKER_TEST_DAILY_ENABLED` | True | `LOOM_TRACKER_TEST_DAILY_INTERVAL_SECONDS` | 1800 |
-| `usage_fold` | Usage fold-back worker. | `LOOM_USAGE_FOLD_ENABLED` | True | `server.memory.workers.usage_fold.INTERVAL_SECONDS` |  |
+| `usage_fold` | Usage fold-back worker. | `LOOM_USAGE_FOLD_ENABLED` | True | `LOOM_USAGE_FOLD_INTERVAL_SECONDS` | 300 |
 
 <!-- prettier-ignore-end -->
 <!-- END GENERATED: workers -->

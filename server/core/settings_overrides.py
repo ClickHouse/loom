@@ -5,27 +5,24 @@ loom.runtime_overrides row (kind `setting`, key the field name). Every process
 lays the stored values over its own settings on each refresh (`adopt`), so an
 override binds the whole deployment within `runtime_overrides_refresh_seconds`
 and outlives a restart. Only a LIVE field takes one (`server.settings._live`);
-clearing it puts back the value the process started with, from its environment
-or the default. A build that no longer has the field, or no longer reads it
-live, logs the row once and ignores it.
+clearing it puts back the value the process started with (from the environment,
+the dotenv file, the settings file or the default). A build that no longer has
+the field, or no longer reads it live, logs the row once and ignores it.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable, Iterable
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
 from server.core import runtime_overrides as ro
-from server.core.env_file import env_file_path, settings_file_path
 from server.core.errors import LoomServerError, ValidationError
 from server.core.repo_base import _CHClient
 from server.settings import Settings, settings
 from server.settings._env import is_secret_field
-from server.settings._file import read_settings_file
 from server.settings._live import coerce, is_live, to_json
 
 log = logging.getLogger(__name__)
@@ -154,35 +151,28 @@ def register_source(source: str, fields: Callable[[], Iterable[str]]) -> None:
 def _sources() -> dict[str, str]:
     """field -> where its value in force came from: override, dashboard, env,
     env_file, settings_file, inferred (filled in at load from other settings) or
-    default, in the order startup ranks them."""
-    environ = {k.upper(): v for k, v in os.environ.items()}
-    dotenv: dict[str, str | None] = {}
-    path = env_file_path()
-    if path and os.path.isfile(path):
-        from dotenv import dotenv_values
-
-        dotenv = {k.upper(): v for k, v in dotenv_values(path).items()}
-    in_file: set[str] = set()
-    file_path, _ = settings_file_path()
-    if file_path and os.path.isfile(file_path):
-        in_file = set(read_settings_file(file_path, set(Settings.model_fields)))
+    default, in the order startup ranks them, from what each source supplied
+    when `settings` loaded."""
     by_code = {name: source for source, fields in _assigned.items() for name in fields()}
+    # The CLI and compose copy the dotenv file into the environment: those stay the file's.
+    env = settings.loaded_from("env") - settings.loaded_from("env_copied_from_file")
     out = {}
-    for name in Settings.model_fields:
-        env = f"LOOM_{name.upper()}"
+    for name, field in Settings.model_fields.items():
         if name in _applied:
             out[name] = "override"
         elif name in by_code:
             out[name] = by_code[name]
-        # The CLI and compose copy the dotenv file into the environment: a variable
-        # holding the file's value came from the file.
-        elif env in environ and dotenv.get(env, None) != environ[env]:
+        elif name in env:
             out[name] = "env"
-        elif env in dotenv:
+        elif name in settings.loaded_from("env_file"):
             out[name] = "env_file"
-        elif name in in_file:
+        elif name in settings.loaded_from("settings_file"):
             out[name] = "settings_file"
-        elif name in settings._inferred_fields:
+        # No source named it, yet it is not the default: load computed it from
+        # other settings (the LLM provider from LOOM_LLM_MODEL, a local model's width).
+        elif name in settings._inferred_fields or getattr(settings, name) != field.get_default(
+            call_default_factory=True
+        ):
             out[name] = "inferred"
         else:
             out[name] = "default"
@@ -190,10 +180,8 @@ def _sources() -> dict[str, str]:
 
 
 def _shown(name: str, value: Any) -> Any:
-    """JSON for the listing; a set secret shows only its length."""
-    if is_secret_field(name) and value not in ("", None):
-        return settings._mask(name, value)
-    return to_json(Settings, name, value)
+    """JSON for the listing; a set secret shows only its length (`Settings._mask`)."""
+    return settings._mask(name, value) if is_secret_field(name) else to_json(Settings, name, value)
 
 
 def rows(*, prefix: str = "", changed: bool = False) -> list[dict[str, Any]]:

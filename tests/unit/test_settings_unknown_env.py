@@ -43,6 +43,18 @@ def test_the_warning_names_keys_never_values(
     assert "hunter2" not in caplog.text
 
 
+def test_the_settings_file_named_in_the_dotenv_file_is_called_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    env = tmp_path / ".env"
+    env.write_text("LOOM_SETTINGS_FILE=/etc/loom.yaml\n")
+    monkeypatch.setenv("LOOM_ENV_FILE", str(env))
+    monkeypatch.delenv("LOOM_SETTINGS_FILE", raising=False)
+    with caplog.at_level(logging.WARNING, logger="server.settings"):
+        log_unknown_env_keys()
+    assert "LOOM_SETTINGS_FILE in" in caplog.text and "is ignored" in caplog.text
+
+
 def test_no_known_variable_is_also_a_field() -> None:
     fields = {f"LOOM_{f.upper()}" for f in Settings.model_fields}
     assert not NON_SETTINGS_ENV & fields

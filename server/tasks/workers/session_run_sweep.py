@@ -16,7 +16,6 @@ from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
 
-INTERVAL_SECONDS = 60
 # Twice the close budget, so closes begun just before it ends can finish.
 MAX_PASS_SECONDS = 2 * IDLE_CLOSE_BUDGET_S
 

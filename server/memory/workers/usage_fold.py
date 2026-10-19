@@ -80,9 +80,6 @@ from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
 
-# Cadence read by the registry; the worker's only other knob is the enable flag.
-INTERVAL_SECONDS = 300
-
 # Bounds the mutation burst of a single batch (mainly the post-restart catch-up).
 MAX_MEMORIES_PER_PASS = 1000
 # A pass keeps taking batches while it is behind, up to this wall-clock budget.
@@ -888,7 +885,6 @@ async def run_pass(
 __all__ = [
     "ACTED_STATEMENT",
     "IDENTITY_STATEMENT",
-    "INTERVAL_SECONDS",
     "UsageFoldConfig",
     "UsageFoldResult",
     "acted_pass",

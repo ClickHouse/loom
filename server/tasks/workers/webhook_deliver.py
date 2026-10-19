@@ -37,6 +37,7 @@ import httpx
 
 from server.core.datetimes import to_naive_utc as _naive
 from server.core.hosts import vet_host
+from server.settings import settings
 from server.tasks.domain import cursors as task_cursors
 from server.tasks.domain.states import webhook_secret_org_prefix, webhook_secret_ref_ok
 from server.tasks.store import repo as repo
@@ -55,7 +56,6 @@ MAX_POSTS_PER_PASS = 10
 # The wait before the next try after the n-th consecutive failure: the next
 # pass, then 5 s, 5 min, and 30 min for every failure after that.
 BACKOFF_SECONDS: tuple[int, ...] = (0, 5, 300, 1800)
-BATCH_LIMIT = 200
 NOTICE_TYPE = "task.inbox.events"
 USER_AGENT = "loom-task-webhook/1"
 
@@ -252,7 +252,7 @@ async def _deliver_inbox(
         since_seq=last_seq,
         lag_s=task_cursors.LAG_SECONDS,
         inbox=inbox,
-        limit=BATCH_LIMIT,
+        limit=settings.task_webhook_batch_limit,
     )
     if not rows:
         return "skipped"

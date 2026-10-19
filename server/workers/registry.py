@@ -15,7 +15,6 @@ from __future__ import annotations
 import importlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
 
 from server.settings import settings
 from server.workers.first_pass import OwnedTable, Scope, due_hook
@@ -101,10 +100,8 @@ class _Worker:
     module: str
     # The settings flag that switches it on; None → always on.
     enabled: str | None
-    # The settings field holding the cadence (or, with `interval_in_module`,
-    # the module attribute holding it).
+    # The settings field holding the cadence.
     interval: str
-    interval_in_module: bool = False
     pass_attr: str = "run_pass"
     # A second settings flag the worker needs beyond its own (the ledger
     # it reads, the plane it serves); off → the worker is off.
@@ -131,7 +128,7 @@ def _spec_for(row: _Worker) -> WorkerSpec:
     each row would otherwise spell out, field for field."""
     mod = importlib.import_module(row.module)
     pass_callable = getattr(mod, row.pass_attr)
-    interval = _interval_of(row, mod)
+    interval = getattr(settings, row.interval)
     max_pass = row.max_pass_seconds
     if row.max_pass_setting is not None:
         max_pass = float(getattr(settings, row.max_pass_setting)) + row.max_pass_headroom
@@ -212,29 +209,25 @@ _WORKERS: tuple[_Worker, ...] = (
         "projection_repair_enabled",
         "projection_repair_interval_seconds",
     ),
-    # cadence is the module's INTERVAL_SECONDS, not a setting
     _Worker(
         "usage_fold",
         "server.memory.workers.usage_fold",
         "usage_fold_enabled",
-        "INTERVAL_SECONDS",
-        interval_in_module=True,
+        "usage_fold_interval_seconds",
     ),
     # Always on: deletes the KeeperMap keys a dead process left behind.
     _Worker(
         "keeper_sweep",
         "server.workers.keeper_sweep",
         None,
-        "INTERVAL_SECONDS",
-        interval_in_module=True,
+        "keeper_sweep_interval_seconds",
     ),
     # Always on: re-runs deferred conflict judges a dead replica left owed.
     _Worker(
         "conflict_sweep",
         "server.memory.workers.conflict_sweep",
         None,
-        "INTERVAL_SECONDS",
-        interval_in_module=True,
+        "conflict_sweep_interval_seconds",
     ),
     _Worker(
         "orphan_vector_reconcile",
@@ -429,16 +422,14 @@ _WORKERS: tuple[_Worker, ...] = (
         "oauth_signin_state_sweep",
         "server.auth.claims",
         None,
-        "SWEEP_INTERVAL_SECONDS",
-        interval_in_module=True,
+        "oauth_signin_state_sweep_interval_seconds",
         pass_attr="sweep",
     ),
     _Worker(
         "mcp_session_run_sweep",
         "server.tasks.workers.session_run_sweep",
         None,
-        "INTERVAL_SECONDS",
-        interval_in_module=True,
+        "mcp_session_run_sweep_interval_seconds",
         max_pass_attr="MAX_PASS_SECONDS",
     ),
     _Worker(
@@ -509,13 +500,6 @@ def _is_enabled(row: _Worker) -> bool:
     return row.also_requires is None or bool(getattr(settings, row.also_requires))
 
 
-def _interval_of(row: _Worker, mod: Any = None) -> Any:
-    """The row's cadence: a settings field, or a module attribute."""
-    if row.interval_in_module:
-        return getattr(mod or importlib.import_module(row.module), row.interval)
-    return getattr(settings, row.interval)
-
-
 def enabled_workers() -> list[WorkerSpec]:
     """The specs of the enabled rows, in table order. Imports happen here,
     not at module import, so a worker that touches an external service is
@@ -527,6 +511,6 @@ def worker_meta() -> dict[str, dict[str, float | bool]]:
     """Enable state and cadence of EVERY worker, disabled ones included —
     what `/v1/admin/workers.status` renders beside the supervised set."""
     return {
-        row.name: {"enabled": _is_enabled(row), "interval_seconds": _interval_of(row)}
+        row.name: {"enabled": _is_enabled(row), "interval_seconds": getattr(settings, row.interval)}
         for row in _WORKERS
     }

@@ -64,7 +64,7 @@ def test_every_default_is_pinned_or_has_a_recorded_change() -> None:
     if missing or gone:
         problems.append(
             f"settings added {missing} or removed {gone}: run "
-            f"LOOM_UPDATE_SNAPSHOT=1 pytest {Path(__file__).relative_to(Path.cwd())}"
+            "LOOM_UPDATE_SNAPSHOT=1 pytest tests/unit/test_settings_defaults.py"
         )
     for name in sorted(current.keys() & expected.keys()):
         if current[name] != expected[name]:
@@ -78,5 +78,4 @@ def test_every_default_is_pinned_or_has_a_recorded_change() -> None:
 def test_each_change_names_a_release_and_a_reason() -> None:
     for change in DEFAULT_CHANGES:
         assert re.fullmatch(r"\d+\.\d+\.\d+", change.version), change
-        assert change.name in Settings.model_fields or change.why, change
         assert change.old != change.new and change.why.strip(), change

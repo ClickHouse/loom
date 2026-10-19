@@ -1,4 +1,6 @@
 [
+ "code_git_fetch_timeout_s",
+ "code_git_timeout_s",
  "context_offload_max_bytes",
  "conversation_search_min_similarity",
  "extraction_defer_agents",
@@ -8,6 +10,7 @@
  "extraction_queue_namespace_concurrency",
  "knowledge_chunk_size",
  "knowledge_chunk_stride",
+ "mcp_loom_search_tracker_timeout_s",
  "memory_ask_aggregational_window",
  "memory_ask_bridge_completion_max",
  "memory_ask_bridge_completion_per_prefix",
@@ -44,6 +47,8 @@
  "memory_ask_identifier_inject_recent",
  "memory_ask_identifier_inject_set_facts",
  "memory_ask_identifier_injection",
+ "memory_ask_knowledge_block_max_chars",
+ "memory_ask_knowledge_passage_max_chars",
  "memory_ask_knowledge_top_k",
  "memory_ask_literal_completion_max",
  "memory_ask_llm_cache_default",
@@ -60,6 +65,9 @@
  "memory_ask_precedents_namespaces",
  "memory_ask_premise_check",
  "memory_ask_recency_weight",
+ "memory_ask_recent_block_max_chars",
+ "memory_ask_recent_max_turns",
+ "memory_ask_recent_turn_max_chars",
  "memory_ask_relevance_gate_min_keep",
  "memory_ask_set_full_scan",
  "memory_ask_set_full_scan_chunk_share",
@@ -146,7 +154,6 @@
  "memory_search_preference_fallback",
  "memory_search_private_first_stop_similarity",
  "memory_search_quality_pool_multiplier",
- "memory_search_query_rewrite_threshold",
  "memory_search_query_spelling_max_words",
  "memory_search_recency_pool_weight",
  "memory_search_reinforcement_half_life_days",
@@ -170,5 +177,6 @@
  "search_trace_log_enabled",
  "session_brief_llm",
  "session_brief_max_windows",
- "session_brief_window_chars"
+ "session_brief_window_chars",
+ "task_webhook_batch_limit"
 ]

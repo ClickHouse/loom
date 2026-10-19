@@ -91,9 +91,10 @@ def oauth_error_response(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(body, status_code=exc.status_code, headers=headers)
 
 
-_ACCESS_TTL = 3600  # 1h access token
 _CODE_TTL = 60  # auth code: short-lived, single-use
-_REFRESH_TTL = 30 * 86400  # 30d refresh token; each refresh issues a new one
+# 30d refresh token; each refresh issues a new one. A constant, not a setting: a
+# refresh reads the token's issue time back as exp minus this.
+_REFRESH_TTL = 30 * 86400
 store: OAuthStore = ClickHouseStore()
 
 
@@ -1130,7 +1131,7 @@ async def _dashboard_signed_in(identity: Identity) -> Response:
         org=org,
         namespaces=namespaces,
         roles=roles,
-        ttl_seconds=_ACCESS_TTL,
+        ttl_seconds=settings.oauth_access_token_ttl_seconds,
         is_service_account=False,
         # A sign-in session like the CLI's: revocable as one, and what it mints
         # is bounded like the person, not by its hour.
@@ -1175,7 +1176,7 @@ async def issue_tokens(
         org=grant["org"],
         namespaces=list(grant["namespaces"]),
         roles=list(grant["roles"]),
-        ttl_seconds=_ACCESS_TTL,
+        ttl_seconds=settings.oauth_access_token_ttl_seconds,
         is_service_account=False,
         session_id=grant["family"] or None,
         # A third-party MCP client's session mints nothing that outlives it.
@@ -1185,7 +1186,7 @@ async def issue_tokens(
     body = {
         "access_token": access,
         "token_type": "Bearer",
-        "expires_in": _ACCESS_TTL,
+        "expires_in": settings.oauth_access_token_ttl_seconds,
         "scope": "loom",
     }
     if settings.oauth_login_provider == "oidc" and not grant["upstream_refresh"]:

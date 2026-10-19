@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from server.settings._live import LIVE
 
 
 class TaskSettings(BaseModel):
@@ -25,6 +27,11 @@ class TaskSettings(BaseModel):
     task_webhook_deliver_interval_seconds: int = 5
     # Seconds between passes that found no new event.
     task_webhook_deliver_idle_interval_seconds: int = 30
+    # Events one notice carries at most.
+    task_webhook_batch_limit: Annotated[int, LIVE] = Field(default=200, ge=1)
+    # Seconds between passes of the always-on sweep that closes the runs of
+    # idle MCP sessions.
+    mcp_session_run_sweep_interval_seconds: int = Field(default=60, ge=1)
 
     # ---- run completion ----
     # What run.complete does to the rows the run wrote when the call does not

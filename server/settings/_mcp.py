@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 from server.settings._env import CaseFolded
+from server.settings._live import LIVE
 
 
 class McpSettings(BaseModel):
@@ -20,6 +21,9 @@ class McpSettings(BaseModel):
     mcp_loom_search_profile_soft_similarity: float = 0.30
     # The soft tier's lead over the namespace's runner-up.
     mcp_loom_search_profile_margin: float = 0.08
+    # Seconds loom_search's tracker leg (similar issues and PRs) may take before
+    # the answer goes without it.
+    mcp_loom_search_tracker_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
 
     # Sub-floor rows in loom_search: "drop" serves only what clears the floor;
     # "readmit" (the memory.search default) pads top_k with below-threshold

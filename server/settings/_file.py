@@ -27,13 +27,36 @@ class SettingsFileError(ValueError):
     """The settings file cannot be used; the message names the file and the key."""
 
 
+def _load_yaml(f: Any) -> Any:
+    """`yaml.safe_load`, refusing a key given twice in one mapping, which the plain
+    loader settles silently by keeping the last."""
+    import yaml
+
+    class _Strict(yaml.SafeLoader):
+        pass
+
+    def _mapping(loader: _Strict, node: yaml.MappingNode) -> dict[Any, Any]:
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            key = loader.construct_object(key_node)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"{key!r} is given twice", key_node.start_mark
+                )
+            seen.add(key)
+        return loader.construct_mapping(node)
+
+    _Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
+    return yaml.load(f, Loader=_Strict)  # a SafeLoader subclass: no arbitrary objects
+
+
 def read_settings_file(path: str, fields: set[str]) -> dict[str, Any]:
     """The `settings` mapping of the file at `path`, checked against `fields`."""
     import yaml
 
     try:
         with open(path, encoding="utf-8") as f:
-            doc = yaml.safe_load(f)
+            doc = _load_yaml(f)
     except (OSError, yaml.YAMLError) as e:
         raise SettingsFileError(f"{path}: not readable YAML ({e})") from e
     if not isinstance(doc, dict):
@@ -41,7 +64,8 @@ def read_settings_file(path: str, fields: set[str]) -> dict[str, Any]:
     extra = sorted(set(doc) - {"version", "settings"})
     if extra:
         raise SettingsFileError(f"{path}: unknown top-level keys {extra}")
-    if doc.get("version") not in VERSIONS:
+    # `type(...) is int`: YAML's `true` is a bool, and True == 1 in Python.
+    if type(doc.get("version")) is not int or doc.get("version") not in VERSIONS:
         raise SettingsFileError(
             f"{path}: version {doc.get('version')!r} is not supported; this build reads "
             f"version {', '.join(str(v) for v in VERSIONS)}"

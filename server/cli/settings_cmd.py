@@ -43,6 +43,8 @@ def _cmd_change(args: argparse.Namespace) -> int:
 
     clearing = args.settings_cmd == "reset"
     expected = NOT_GIVEN if args.expect is None else args.expect
+    # Named before anything is stored: a change must not land without its audit row.
+    actor = f"cli:{getpass.getuser()}"
 
     async def _go(ch: Any) -> int:
         try:
@@ -52,7 +54,7 @@ def _cmd_change(args: argparse.Namespace) -> int:
                 None if clearing else args.value,
                 clear=clearing,
                 expected=expected,
-                actor=f"cli:{getpass.getuser()}",
+                actor=actor,
                 ch=ch,
             )
         except LoomServerError as e:
@@ -106,7 +108,7 @@ def register_settings_cli(sub: Any) -> None:
     st.add_argument("--expect", help=expect)
     st.set_defaults(func=_cmd_change)
     rs = ssub.add_parser("reset", help="Remove the override: back to the env or the default.")
-    rs.add_argument("name")
+    rs.add_argument("name", help="The field name, e.g. memory_ask_recency_weight")
     rs.add_argument("--expect", help=expect)
     rs.set_defaults(func=_cmd_change)
     hs = ssub.add_parser(

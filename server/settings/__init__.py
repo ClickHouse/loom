@@ -12,7 +12,10 @@ the default.
 from __future__ import annotations
 
 import logging
+import os
+from typing import Any
 
+from pydantic import PrivateAttr
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from server.core.env_file import env_file_path
@@ -25,6 +28,7 @@ from server.settings._erasure import ErasureSettings
 from server.settings._extraction import ExtractionSettings
 from server.settings._file import SettingsFileSource
 from server.settings._knowledge import KnowledgeSettings
+from server.settings._loaded import LOADING, Recorded
 from server.settings._mcp import McpSettings
 from server.settings._memory import MemorySettings
 from server.settings._memory_ask import MemoryAskSettings
@@ -73,6 +77,8 @@ class Settings(
         validate_by_alias=True,
         hide_input_in_errors=True,
     )
+    # source -> the fields it supplied at load (`loaded_from`).
+    _loaded_from: dict[str, frozenset[str]] = PrivateAttr(default_factory=dict)
 
     @classmethod
     def settings_customise_sources(
@@ -86,11 +92,21 @@ class Settings(
         # First wins: the environment, then the dotenv file, then the settings file.
         return (
             init_settings,
-            env_settings,
-            dotenv_settings,
+            Recorded(env_settings, "env"),
+            Recorded(dotenv_settings, "env_file"),
             file_secret_settings,
-            SettingsFileSource(settings_cls),
+            Recorded(SettingsFileSource(settings_cls), "settings_file"),
         )
+
+    def __init__(self, **values: Any) -> None:
+        LOADING.clear()
+        super().__init__(**values)
+        self._loaded_from = dict(LOADING)
+
+    def loaded_from(self, source: str) -> frozenset[str]:
+        """The fields `source` (env, env_file, env_copied_from_file, settings_file)
+        supplied when this object loaded."""
+        return self._loaded_from.get(source, frozenset())
 
     def _mask(self, key: str, value: object) -> object:
         # Only the length, so an operator can confirm it is set: even a short
@@ -106,18 +122,26 @@ class Settings(
     __str__ = __repr__
 
 
-# pydantic's mypy plugin reads a `Field(default, ge=…)` field as required;
-# at runtime every field has its default.
-settings = Settings(_env_file=env_file_path())  # type: ignore[call-arg]
+settings = Settings(_env_file=env_file_path())
 
 
 def log_unknown_env_keys() -> None:
-    """One boot WARN naming the LOOM_* keys no setting reads."""
+    """One boot WARN naming the LOOM_* keys no setting reads, and one when the
+    dotenv file names the settings file, which only the environment can."""
+    log = logging.getLogger(__name__)
     unknown = unknown_env_keys(Settings.model_fields, env_file_path())
     if unknown:
-        logging.getLogger(__name__).warning(
-            "LOOM_* variables that match no setting are ignored: %s", ", ".join(unknown)
-        )
+        log.warning("LOOM_* variables that match no setting are ignored: %s", ", ".join(unknown))
+    path = env_file_path()
+    if path and os.path.isfile(path) and "LOOM_SETTINGS_FILE" not in os.environ:
+        from dotenv import dotenv_values
+
+        if "LOOM_SETTINGS_FILE" in dotenv_values(path):
+            log.warning(
+                "LOOM_SETTINGS_FILE in %s is ignored: set it in the environment "
+                "(the settings file is chosen before the dotenv file is read)",
+                path,
+            )
 
 
 __all__ = ["DEV_JWT_SECRET", "Settings", "log_unknown_env_keys", "settings"]

@@ -25,7 +25,6 @@ from server.workers.status import log_pass_errors, record_pass
 
 log = logging.getLogger(__name__)
 
-INTERVAL_SECONDS = 30.0
 MAX_ROWS_PER_PASS = 50
 
 
@@ -147,4 +146,4 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
     return outcome
 
 
-__all__ = ["INTERVAL_SECONDS", "MAX_ROWS_PER_PASS", "rejudge", "run_pass"]
+__all__ = ["MAX_ROWS_PER_PASS", "rejudge", "run_pass"]

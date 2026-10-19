@@ -4,6 +4,8 @@
 # ============================================================
 .env
 .env.local
+# The server's settings file, read from the working directory (loom.example.yaml is the template).
+loom.yaml
 .env.*.local
 # Timestamped .env backups written by hand and by redeploy.sh. The three
 # patterns above do NOT match `.env.bak.<label>`, so five of these were tracked

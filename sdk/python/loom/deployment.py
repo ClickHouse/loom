@@ -33,8 +33,9 @@ class DeploymentClient:
         return await self._call("GET", "/v1/admin/workers.status")
 
     async def settings(self, prefix: str = "", changed: bool = False) -> dict[str, Any]:
-        """Every setting: value in force, default, source (override, env, env_file,
-        default) and whether it is live. `changed`: only the ones off their default."""
+        """Every setting: value in force, default, where the value came from
+        (override, dashboard, env, env_file, settings_file, inferred, default) and
+        whether it is live. `changed`: only the ones off their default."""
         return await self._call(
             "POST", "/v1/admin/settings.list", {"prefix": prefix, "changed": changed}
         )

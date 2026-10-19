@@ -21,12 +21,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
 
+from server.settings import settings
+
 logger = logging.getLogger("loom.code_index.git")
 
 _SHA40 = re.compile(r"[0-9a-f]{40}")
-
-_GIT_TIMEOUT_S = 120.0
-_FETCH_TIMEOUT_S = 3600.0  # first fetch after a shallow clone of a huge repo can exceed 10 min
 
 
 class GitError(RuntimeError):
@@ -210,7 +209,7 @@ def _redact(text: str, token: str) -> str:
 async def _git(
     git_dir: str,
     *args: str,
-    timeout_s: float = _GIT_TIMEOUT_S,
+    timeout_s: float | None = None,
     remote: str = "",
     token: str = "",
     stdin: bytes | None = None,
@@ -219,7 +218,10 @@ async def _git(
     """A git command on the bare clone. With `remote` it talks to that remote, so it
     runs as a repository job (sandbox.run_job): the network only through the egress
     proxy, the clone the one writable path, `token` for the remote's host. A local
-    command reads and writes `index_file` as its index when given."""
+    command reads and writes `index_file` as its index when given. `timeout_s`
+    defaults to `code_git_timeout_s`."""
+    if timeout_s is None:
+        timeout_s = settings.code_git_timeout_s
     extra = upload_pack_args(remote)
     argv = ["git", *UNQUOTED_PATHS, "--git-dir", git_dir, args[0], *extra, *args[1:]]
     label = " ".join(args[:2])
@@ -278,7 +280,7 @@ async def _network_git(
     return done.returncode, done.stdout, done.stderr
 
 
-async def run(git_dir: str, *args: str, timeout_s: float = _GIT_TIMEOUT_S) -> str:
+async def run(git_dir: str, *args: str, timeout_s: float | None = None) -> str:
     """A read-only git command's stdout (blame_range's blame, rev-list and ref reads).
     Same runner, timeout and error shape as the module's own readers; no token — the
     bare mirror is local."""
@@ -286,7 +288,7 @@ async def run(git_dir: str, *args: str, timeout_s: float = _GIT_TIMEOUT_S) -> st
 
 
 async def run_bounded(
-    git_dir: str, *args: str, max_bytes: int, timeout_s: float = _GIT_TIMEOUT_S
+    git_dir: str, *args: str, max_bytes: int, timeout_s: float | None = None
 ) -> tuple[str, bool]:
     """A read-only git command whose stdout is read up to `max_bytes` and then cut:
     (text, truncated). A diff of a huge merge must not hold the request or the process's
@@ -307,7 +309,7 @@ async def run_bounded(
     got = 0
     truncated = False
     try:
-        async with asyncio.timeout(timeout_s):
+        async with asyncio.timeout(timeout_s or settings.code_git_timeout_s):
             while True:
                 piece = await proc.stdout.read(65536)
                 if not piece:
@@ -468,7 +470,7 @@ async def fetch(git_dir: str, remote: str, branch: str, *, token: str = "") -> N
         "--prune",
         remote,
         f"+refs/heads/{branch}:refs/heads/{branch}",
-        timeout_s=_FETCH_TIMEOUT_S,
+        timeout_s=settings.code_git_fetch_timeout_s,
         remote=remote,
         token=token,
     )
@@ -487,7 +489,7 @@ async def fetch_many(git_dir: str, remote: str, branches: list[str], *, token: s
         "--prune",
         remote,
         *(f"+refs/heads/{b}:refs/heads/{b}" for b in wanted),
-        timeout_s=_FETCH_TIMEOUT_S,
+        timeout_s=settings.code_git_fetch_timeout_s,
         remote=remote,
         token=token,
     )
@@ -535,7 +537,7 @@ async def remote_branches(git_dir: str, remote: str, *, token: str = "") -> dict
         "ls-remote",
         "--heads",
         remote,
-        timeout_s=_GIT_TIMEOUT_S,
+        timeout_s=settings.code_git_timeout_s,
         remote=remote,
         token=token,
     )
@@ -579,7 +581,7 @@ async def fetch_branches(git_dir: str, remote: str, branches: list[str], *, toke
         "fetch",
         "--stdin",
         remote,
-        timeout_s=_FETCH_TIMEOUT_S,
+        timeout_s=settings.code_git_fetch_timeout_s,
         remote=remote,
         token=token,
         stdin=refspecs,
@@ -605,7 +607,7 @@ async def fetch_shas(git_dir: str, remote: str, shas: list[str], *, token: str =
         "fetch",
         "--stdin",
         remote,
-        timeout_s=_FETCH_TIMEOUT_S,
+        timeout_s=settings.code_git_fetch_timeout_s,
         remote=remote,
         token=token,
         stdin=refspecs,
@@ -705,7 +707,7 @@ async def fetch_pull_heads(
         "fetch",
         "--stdin",
         remote,
-        timeout_s=_FETCH_TIMEOUT_S,
+        timeout_s=settings.code_git_fetch_timeout_s,
         remote=remote,
         token=token,
         stdin=refspecs,
@@ -1026,7 +1028,7 @@ async def show_file(git_dir: str, sha: str, path: str) -> bytes | None:
         env=auth_env(),
     )
     try:
-        out, _err = await communicate_or_kill(proc, timeout_s=_GIT_TIMEOUT_S)
+        out, _err = await communicate_or_kill(proc, timeout_s=settings.code_git_timeout_s)
     except TimeoutError:
         raise GitError(f"git cat-file {path} timed out") from None
     if proc.returncode != 0:
@@ -1069,7 +1071,7 @@ async def ls_tree_blobs(git_dir: str, sha: str) -> dict[str, str]:
         "-z",
         "--end-of-options",
         _rev(sha),
-        timeout_s=_FETCH_TIMEOUT_S,
+        timeout_s=settings.code_git_fetch_timeout_s,
     )
     # `<mode> <type> <object>\t<path>`: the default record, whose path -z leaves
     # verbatim (a --format %(path) is still quoted)
@@ -1092,7 +1094,7 @@ async def ls_tree(git_dir: str, sha: str, prefixes: tuple[str, ...] = ()) -> lis
         "--name-only",
         "--end-of-options",
         _rev(sha),
-        timeout_s=_FETCH_TIMEOUT_S,
+        timeout_s=settings.code_git_fetch_timeout_s,
     )
     paths = nul_fields(out)
     if prefixes:

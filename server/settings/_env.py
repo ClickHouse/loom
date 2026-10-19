@@ -127,6 +127,8 @@ _SECRET_FIELD = re.compile(
             r"(?:^|_)public_keys_json$",
             r"(?:^|_)credentials_json$",
             r"^code_repos_json$",
+            # Its URLs can carry a credential (`_check_rerank_endpoints`).
+            r"^rerank_endpoints_json$",
             r"(?:^|_)otlp_headers$",
         )
     )

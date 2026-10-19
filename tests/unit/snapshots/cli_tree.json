@@ -4967,7 +4967,7 @@
            "nargs": null,
            "type": null,
            "required": true,
-           "help": null,
+           "help": "The field name, e.g. memory_ask_recency_weight",
            "metavar": null
           },
           {

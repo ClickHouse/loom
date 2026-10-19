@@ -403,11 +403,8 @@ def render_workers() -> str:
         if w.also_requires:
             enabled += f" + `LOOM_{w.also_requires.upper()}`"
         default = _setting_default(w.enabled) if w.enabled else ""
-        if w.interval_in_module:
-            cadence, cadence_default = f"`{w.module}.{w.interval}`", ""
-        else:
-            cadence = f"`LOOM_{w.interval.upper()}`"
-            cadence_default = _setting_default(w.interval)
+        cadence = f"`LOOM_{w.interval.upper()}`"
+        cadence_default = _setting_default(w.interval)
         out.append(
             f"| `{w.name}` | {_cell(_module_summary(w.module))} | {enabled} | "
             f"{default} | {cadence} | {cadence_default} |"

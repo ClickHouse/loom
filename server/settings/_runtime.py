@@ -55,6 +55,9 @@ class RuntimeSettings(BaseModel):
     # that a renewal blocked for its 2 s timeout leaves no retry before the
     # holder must give up (server/workers/leader.py has the timings).
     supervisor_lease_ttl_s: int = Field(default=30, ge=24)
+    # Seconds between passes of the always-on sweep that deletes the KeeperMap
+    # keys (leases, claims, graph slots) a stopped process left behind.
+    keeper_sweep_interval_seconds: float = Field(default=3600.0, gt=0)
     # auto mode: where the lease holder runs the workers. child = a separate
     # process it starts and stops with the lease, so the passes do not share
     # the event loop that serves requests; inline = in the serving process.

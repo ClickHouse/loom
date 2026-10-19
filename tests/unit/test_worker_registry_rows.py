@@ -42,11 +42,30 @@ def test_a_rows_switches_are_boolean_settings(row: registry._Worker) -> None:
 
 @pytest.mark.parametrize("row", _ROWS, ids=[w.name for w in _ROWS])
 def test_a_rows_cadences_are_numeric_settings(row: registry._Worker) -> None:
-    names = [row.idle_interval, row.max_pass_setting]
-    if not row.interval_in_module:
-        names.append(row.interval)
+    names = [row.idle_interval, row.max_pass_setting, row.interval]
     for name in (n for n in names if n is not None):
         assert name in _FIELDS and _FIELDS[name].annotation in (int, float), name
+
+
+_ALWAYS_ON_CADENCES = {
+    "usage_fold": "usage_fold_interval_seconds",
+    "keeper_sweep": "keeper_sweep_interval_seconds",
+    "conflict_sweep": "conflict_sweep_interval_seconds",
+    "oauth_signin_state_sweep": "oauth_signin_state_sweep_interval_seconds",
+    "mcp_session_run_sweep": "mcp_session_run_sweep_interval_seconds",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_ALWAYS_ON_CADENCES))
+def test_a_workers_spec_takes_its_cadence_from_its_setting(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    (row,) = [w for w in _ROWS if w.name == name]
+    assert row.interval == _ALWAYS_ON_CADENCES[name]
+    monkeypatch.setattr(settings, row.interval, 7)
+    assert registry._spec_for(row).interval_seconds == 7
 
 
 def test_only_the_always_on_worker_runs_with_every_switch_off() -> None:

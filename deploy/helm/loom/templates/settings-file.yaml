@@ -1,0 +1,17 @@
+{{- with .Values.settingsFile }}
+{{- range $k, $_ := . }}
+{{- if or (hasPrefix "embedding_" $k) (hasPrefix "jwt_secret" $k) }}
+{{- fail (printf "set %s through embedding.* or secrets.jwtSecret, which the chart guards, not settingsFile" $k) }}
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "loom.suffixed" (dict "root" $ "suffix" "settings") }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+data:
+  loom.yaml: |
+    # yaml-language-server: $schema=https://raw.githubusercontent.com/ClickHouse/loom/main/schemas/loom-settings.schema.json
+    {{- dict "version" 1 "settings" . | toYaml | nindent 4 }}
+{{- end }}

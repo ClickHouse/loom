@@ -136,8 +136,13 @@ class MemorySettings(BaseModel):
 
     # Fold loom.memory_usage_totals onto the ranking columns (reinforcement
     # boost, memory.list sort_by=score, auto-promote gate); off, they freeze at
-    # write-time values. Cadence is fixed in server/memory/workers/usage_fold.py.
+    # write-time values.
     usage_fold_enabled: bool = True
+    # Seconds between usage-fold passes.
+    usage_fold_interval_seconds: int = Field(default=300, ge=1)
+    # Seconds between passes of the always-on sweep that re-runs the deferred
+    # conflict judges a stopped replica left owed.
+    conflict_sweep_interval_seconds: float = Field(default=30.0, gt=0)
 
     # Re-emit, with a tombstone, vector rows still live after their loom.memory
     # row was tombstoned or erased, so search stops offering them. Bounded per
