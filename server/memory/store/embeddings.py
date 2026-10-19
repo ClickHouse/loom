@@ -175,7 +175,7 @@ def status_divergence_sql() -> str:
     return """
         WITH m AS (
             SELECT org, namespace, agent, user_id, session_id, memory_key,
-                   argMax(status, version) AS ms, argMax(invalid_at, version) AS invalid_at
+                   argMax(status, version) AS ms, argMax(tuple(invalid_at), version).1 AS invalid_at
             FROM loom.memory
             WHERE org = {org:String} AND namespace = {ns:String}
             GROUP BY org, namespace, agent, user_id, session_id, memory_key

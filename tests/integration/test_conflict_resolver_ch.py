@@ -3141,3 +3141,33 @@ async def test_an_unguarded_retry_finishes_an_undo_that_landed_late(ch, wired, m
     assert out.restored
     assert await _search_status(ch, org, "office_city") == {"active"}
     assert reopened == [str(rows[0]["memory_id"])]
+
+
+async def test_reconcile_status_clears_the_end_of_an_undone_rows_search_row(
+    ch, wired, monkeypatch
+) -> None:
+    """An Undo whose search-row write failed leaves that row retired, with its end;
+    `reconcile-status` serves it again with the restore's open end, not the old one."""
+    import server.memory.store as memory_repo
+    from server.memory.store.embeddings import reconcile_embedding_status
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 2198)
+    assert (await run_pass())["retired"] == 1
+    winner = (await _rows(ch, org))["office_location"]["id"]
+
+    async def boom(*a: Any, **kw: Any) -> int:
+        raise TimeoutError("search row write failed")
+
+    with monkeypatch.context() as m:
+        m.setattr(memory_repo, "unsupersede_embeddings", boom)
+        assert (await _undo(org, "office_city", winner)).restored
+    await reconcile_embedding_status(org, NS, dry_run=False, ch=ch)
+    search = await ch.query_all(
+        "SELECT status, invalid_at FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+        " AND memory_key = 'office_city' AND tombstoned_at IS NULL"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"o": org},
+    )
+    assert [(r["status"], r["invalid_at"]) for r in search] == [("active", None)]
