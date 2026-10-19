@@ -108,10 +108,10 @@ A run that finds nothing to change sends only reads. For a namespace of N rows:
 
 A 501-row namespace with one writer took 14 requests in all (7 `memory.list` calls, 2
 `memory.bulk_get` and 1 edge page on the export side; 1, 2 and 1 on the import side). At
-50,000 rows under one identity it is about 750 (a namespace spread over many sessions, as
-hooks write it, takes one `memory.bulk_get` per session instead), under one a second over
-a 15-minute schedule; the export lists the source up to three times in all when it changed
-while it was paged.
+50,000 rows under one identity a run is about 750 requests, under one a second over a
+15-minute schedule; a namespace spread over many sessions, as hooks write it, takes one
+`memory.bulk_get` per session instead, and the export lists the source up to three times
+in all when it changed while it was paged.
 
 ## Tokens
 

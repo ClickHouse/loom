@@ -762,17 +762,17 @@ def _dedupe_slugs(concepts: list[Concept]) -> None:
     concept (in sorted order) with a name keeps it; another that shares it, and a key named
     like the bundle's own `index` or `log` file or a Windows device (`nul`, `con`), gets
     `-<hash of its key and row id>`. A lost file would leave a live key out of a bundle that
-    still says complete, and prune would delete its copy. A suffix taken from the concept
-    itself does not depend on the other keys, unless one is literally named like it (the next
-    attempt's name is then taken), so a suffixed file moves only when the concept holding the
-    bare name changes (a key that sorts before it arrives, or the holder leaves) or such a key
-    arrives, and then once."""
+    still says complete, and prune would delete its copy. The suffix does not depend on the
+    other keys, so a suffixed file moves only when the concept holding the bare name changes
+    (a key that sorts before it arrives, or the holder leaves), and then once. A key already
+    named like the suffixed name takes it first only when it sorts first (`a-<h>.b` before
+    `a.b`, since `-` sorts before `.`); the next attempt's hash is then used."""
     used: set[str] = set()
     for c in concepts:
         if c.id.casefold() in used or _is_reserved(c.id):
             identity = f"{c.memory_key}\0{c.loom.get('memory_id') or ''}"
-            # A key literally named like this one's suffixed name takes it first: hash again
-            # with a counter, so each attempt is a new name and the loop always ends.
+            # A key literally named like this one's suffixed name and sorting first holds it:
+            # hash again with a counter, so each attempt is a new name and the loop ends.
             attempt = 0
             while (renamed := _suffixed(c.id, _short_hash(identity, attempt))).casefold() in used:
                 attempt += 1

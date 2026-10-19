@@ -344,3 +344,22 @@ async def test_an_empty_namespace_is_read_whole_in_one_listing() -> None:
         _Empty(), "o", "ns", include_tombstoned=False
     )
     assert (rows, whole, capped) == ([], True, False) and len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_rows_with_no_version_are_not_called_whole() -> None:
+    # A just-emptied namespace refilled between a page's version read and its rows: the
+    # version is "" yet rows came back, so the check after the last page still runs.
+    class _Refilled:
+        async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+            if op == "memory.bulk_get":
+                return {"results": {k: {"value": k} for k in body["memory_keys"]}}
+            if "known_version" in body:
+                return {"entries": [], "unchanged": False}
+            row = {"memory_key": "k", "agent": "x", "user_id": "-", "session_id": "-"}
+            return {"entries": [row], "truncated": False, "total": 1, "namespace_version": ""}
+
+    _rows, whole, _capped = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        _Refilled(), "o", "ns", include_tombstoned=False
+    )
+    assert not whole
