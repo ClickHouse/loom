@@ -866,12 +866,9 @@ class KeeperLeases:
         return await self._lease_row(task_id) is None
 
     async def _lease_row(self, task_id: str) -> dict[str, Any] | None:
-        return cast(
-            "dict[str, Any] | None",
-            await self.ch.query_one(
-                "SELECT owner, fence FROM loom.task_leases WHERE task_id = {tid:String}",
-                params={"tid": task_id},
-            ),
+        return await self.ch.query_one(
+            "SELECT owner, fence FROM loom.task_leases WHERE task_id = {tid:String}",
+            params={"tid": task_id},
         )
 
     async def try_claim(
