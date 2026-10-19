@@ -795,7 +795,8 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         )
 
     candidates = rows[: -input.keep_recent]
-    # An earlier summary in the window is folded in, not compacted.
+    # An earlier summary in the window is not a new turn: it counts toward neither
+    # min_to_compact nor messages_summarized.
     folded = [bool(_compacted_from(r)) for r in candidates]
     # A re-run: an earlier summary sits where the turns it replaced began, so it is
     # the oldest live row and falls among the candidates. A window of nothing but
