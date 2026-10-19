@@ -179,6 +179,37 @@ def _private_rollup(ch_client, db: str) -> None:
     ch_client.command(view)
 
 
+def _insert_private(
+    ch_client, db: str, ts, ingested_at, status: str, *, latency_ms: int = 20, budget_ms: int = 100
+) -> None:
+    """One ledger request row in `db`, stamped `ingested_at` as ClickHouse would."""
+    ch_client.insert(
+        f"{db}.agent_events",
+        [[ts, ingested_at, "o", "n", "a", "memory.get", uuid.uuid4().hex, "http", "read",
+          status, status == "ok", "" if status == "ok" else "INTERNAL_ERROR", latency_ms,
+          budget_ms, "request"]],
+        column_names=["ts", "ingested_at", "org", "namespace", "agent", "operation",
+                      "request_id", "transport", "slo_class", "status_class", "success",
+                      "error_code", "latency_ms", "budget_ms", "kind"],
+    )  # fmt: skip
+
+
+def _refresh_private(ch_client, db: str) -> tuple:
+    """Refresh `db`'s rollup once: (requests, server errors, slow, data minutes)."""
+    ch_client.command(f"SYSTEM REFRESH VIEW {db}.sli_minute_refresh")
+    ch_client.command(f"SYSTEM WAIT VIEW {db}.sli_minute_refresh")
+    return ch_client.query(
+        f"SELECT sum(requests), sum(server_errors), sum(slow), "
+        f"uniqExactIf(minute, slo_class != '') FROM {db}.sli_minute"
+    ).result_rows[0]
+
+
+def _server_now(ch_client):
+    from datetime import UTC
+
+    return ch_client.query("SELECT now64(3)").result_rows[0][0].replace(tzinfo=UTC)
+
+
 def test_each_row_is_folded_once_however_late_and_a_refresh_is_bounded(ch_client) -> None:
     """Rows stamped as ClickHouse would have taken them: a refresh folds at
     most an hour past the first row not folded yet, a row that arrives
@@ -188,34 +219,17 @@ def test_each_row_is_folded_once_however_late_and_a_refresh_is_bounded(ch_client
 
     db = f"sli_probe_{uuid.uuid4().hex[:8]}"
     now = datetime.now(UTC)
-
-    def insert(ts: datetime, ingested_at: datetime, status: str) -> None:
-        ch_client.insert(
-            f"{db}.agent_events",
-            [[ts, ingested_at, "o", "n", "a", "memory.get", uuid.uuid4().hex, "http", "read",
-              status, status == "ok", "" if status == "ok" else "INTERNAL_ERROR", 20, 100,
-              "request"]],
-            column_names=["ts", "ingested_at", "org", "namespace", "agent", "operation",
-                          "request_id", "transport", "slo_class", "status_class", "success",
-                          "error_code", "latency_ms", "budget_ms", "kind"],
-        )  # fmt: skip
-
-    def refresh() -> tuple:
-        ch_client.command(f"SYSTEM REFRESH VIEW {db}.sli_minute_refresh")
-        ch_client.command(f"SYSTEM WAIT VIEW {db}.sli_minute_refresh")
-        return ch_client.query(
-            f"SELECT sum(requests), sum(server_errors), uniqExactIf(minute, slo_class != '') "
-            f"FROM {db}.sli_minute"
-        ).result_rows[0]
-
     try:
         _private_rollup(ch_client, db)
-        insert(now - timedelta(hours=20), now - timedelta(hours=20), "server")
-        insert(now - timedelta(hours=10), now - timedelta(hours=10), "ok")
-        assert refresh() == (1, 1, 1)  # an hour past the first: the second waits
-        assert refresh() == (2, 1, 2)
+        _insert_private(
+            ch_client, db, now - timedelta(hours=20), now - timedelta(hours=20), "server"
+        )
+        _insert_private(ch_client, db, now - timedelta(hours=10), now - timedelta(hours=10), "ok")
+        # an hour past the first: the second waits
+        assert _refresh_private(ch_client, db) == (1, 1, 0, 1)
+        assert _refresh_private(ch_client, db) == (2, 1, 0, 2)
         # Nothing left to fold: the mark moves straight to the 70 s margin.
-        assert refresh() == (2, 1, 2)
+        assert _refresh_private(ch_client, db) == (2, 1, 0, 2)
         lag = ch_client.query(
             f"SELECT dateDiff('second', max(ingested_hwm), now64(3)) FROM {db}.sli_minute "
             "WHERE slo_class = ''"
@@ -226,10 +240,74 @@ def test_each_row_is_folded_once_however_late_and_a_refresh_is_bounded(ch_client
         # the first row's minute.
         # Stamped by ClickHouse's clock, which the mark is read against.
         time.sleep(2)
-        server_now = ch_client.query("SELECT now64(3)").result_rows[0][0].replace(tzinfo=UTC)
-        insert(now - timedelta(hours=20), server_now - timedelta(seconds=70.5), "server")
-        assert refresh() == (3, 2, 2)
-        assert refresh() == (3, 2, 2)
+        late = _server_now(ch_client) - timedelta(seconds=70.5)
+        _insert_private(ch_client, db, now - timedelta(hours=20), late, "server")
+        assert _refresh_private(ch_client, db) == (3, 2, 0, 2)
+        assert _refresh_private(ch_client, db) == (3, 2, 0, 2)
+    finally:
+        ch_client.command(f"DROP DATABASE IF EXISTS {db} SYNC")
+
+
+def test_a_refresh_commits_in_one_part_across_a_month_boundary(ch_client) -> None:
+    """Rows on both sides of a month boundary and the sentinel land in one
+    part, which commits whole: a failed refresh leaves neither data without
+    its mark (folded twice on retry) nor a mark without its data (never
+    folded)."""
+    from datetime import UTC, datetime, timedelta
+
+    db = f"sli_probe_{uuid.uuid4().hex[:8]}"
+    month = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    stamped = _server_now(ch_client) - timedelta(minutes=5)
+    try:
+        _private_rollup(ch_client, db)
+        ch_client.command(f"SYSTEM STOP MERGES {db}.sli_minute")
+        _insert_private(ch_client, db, month - timedelta(seconds=1), stamped, "server")
+        _insert_private(ch_client, db, month, stamped, "ok")
+        assert _refresh_private(ch_client, db) == (2, 1, 0, 2)
+        parts = ch_client.query(
+            "SELECT count(), sum(rows) FROM system.parts "
+            "WHERE database = {db:String} AND table = 'sli_minute' AND active",
+            parameters={"db": db},
+        ).result_rows[0]
+        assert parts == (1, 3)  # both months' rows and the sentinel
+    finally:
+        ch_client.command(f"DROP DATABASE IF EXISTS {db} SYNC")
+
+
+def test_a_zero_budget_makes_every_success_slow(ch_client) -> None:
+    """budget.set's 0 is a real budget, which every request exceeds."""
+    from datetime import timedelta
+
+    db = f"sli_probe_{uuid.uuid4().hex[:8]}"
+    stamped = _server_now(ch_client) - timedelta(minutes=5)
+    try:
+        _private_rollup(ch_client, db)
+        _insert_private(ch_client, db, stamped, stamped, "ok", latency_ms=25, budget_ms=0)
+        assert _refresh_private(ch_client, db) == (1, 0, 1, 1)
+    finally:
+        ch_client.command(f"DROP DATABASE IF EXISTS {db} SYNC")
+
+
+def test_rows_committed_after_the_mark_passed_them_are_counted_as_missed(ch_client) -> None:
+    """A ledger part that becomes visible after the rollup's mark passed its
+    rows is never folded; `loom.sli.rollup_missed_rows` counts them."""
+    from datetime import timedelta
+
+    from server.observability.otel_probes import _SLI_MISSED_SQL
+
+    db = f"sli_probe_{uuid.uuid4().hex[:8]}"
+    missed_sql = _SLI_MISSED_SQL.replace("loom.agent_events", f"{db}.agent_events")
+    missed_sql = missed_sql.replace("loom_telemetry.sli_minute", f"{db}.sli_minute")
+    stamped = _server_now(ch_client) - timedelta(minutes=5)
+    try:
+        _private_rollup(ch_client, db)
+        _insert_private(ch_client, db, stamped, stamped, "ok")
+        assert _refresh_private(ch_client, db) == (1, 0, 0, 1)
+        assert ch_client.query(missed_sql).result_rows[0][0] == 0
+        # Visible only now, stamped before the mark.
+        _insert_private(ch_client, db, stamped, stamped + timedelta(seconds=1), "server")
+        assert _refresh_private(ch_client, db) == (1, 0, 0, 1)
+        assert ch_client.query(missed_sql).result_rows[0][0] == 1
     finally:
         ch_client.command(f"DROP DATABASE IF EXISTS {db} SYNC")
 

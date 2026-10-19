@@ -35,12 +35,6 @@ _SEARCH_OPS = frozenset(
     }
 )
 
-# How long the SLI rollup leaves a ledger row before folding it, seconds:
-# longer than a ledger insert may run (LOOM_CH_TIMEOUT_WRITE_S), so a slow
-# insert commits before the rollup's mark passes it. Migration 043 holds the
-# same number.
-FOLD_MARGIN_S = 70
-
 # Refusals a transport records by code alone, counted as the caller's: MCP's
 # refusals before dispatch (server.transport.mcp_ledger.emit_token_refusal) and the
 # transports' other literal codes. Each is a refusal the caller caused: a 4xx

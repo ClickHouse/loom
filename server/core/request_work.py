@@ -55,6 +55,10 @@ class RequestWork:
     # failed (`row_in_scope`'s found=False; server.auth.fail_closed): its
     # row is the server's.
     answered_unverified: bool = False
+    # The (org, namespace) the gate admitted this call against, defaults
+    # resolved (a code op naming none runs in the code namespace): the ledger
+    # row's tenant where the request named none.
+    admitted: tuple[str, str] | None = None
 
     def mark(self, name: str) -> float:
         now = time.perf_counter()

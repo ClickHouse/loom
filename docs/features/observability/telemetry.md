@@ -28,7 +28,12 @@ Each request row also carries its service-level columns:
   read-only, else `read`.
 - `status_class`: `ok`; `client` for a 4xx refusal or a retried idempotency key still
   running; `server` otherwise.
-- `budget_ms`: the latency budget the request was held to.
+- `budget_ms`: the latency budget the request was held to. A budget of 0 (an override that
+  forces violations) makes every successful request slow.
+
+A call that names no org or namespace is recorded under the ones the gate admitted it
+against (a code op's default is the deployment's code namespace), so it counts in that
+tenant's SLIs. A refusal before the gate is recorded under the token's org.
 
 What counts against the server:
 
@@ -68,14 +73,19 @@ handler's time, the one the budgets are set against, not the gates before it), f
 dashboards and alert rules to read without scanning the ledger. It resumes from when
 ClickHouse took each row (`ingested_at`), not from the row's `ts`, so a row whose flush
 was delayed is still counted once, in the minute of its `ts`; a row is folded at least 70
-seconds (up to about 130) after ClickHouse took it, longer than a ledger insert may run.
-Rows with no SLO class (the `/v1/me/*` routes, and MCP calls that name no registered op,
-such as `initialize`) are left out. A minute can arrive as several rows until they merge,
-so a reader groups by its keys with `sum()` for the counts and `quantilesTDigestMerge(0.5,
-0.95, 0.99)(latency)` for the latencies. Each refresh also writes a row with every key
-empty and every count 0, where the next refresh resumes: a reader filters `slo_class !=
-''`. To leave out test traffic, filter `traffic_class NOT IN ('bench', 'background')`: a
-refusal recorded before the call is classified has an empty class.
+seconds (up to about 130) after ClickHouse took it, which leaves its insert that long to
+commit. A refresh writes one part, so a failed refresh leaves nothing for its retry to
+fold twice or skip. A ledger part that commits more than 70 seconds after ClickHouse
+stamped its rows is never folded; `loom.sli.rollup_missed_rows` counts such rows over the
+last day, and refolding the rollup ([ClickHouse](../../architecture/clickhouse.md))
+recovers them. Rows with no SLO class (the `/v1/me/*` routes, and MCP calls that name no
+registered op, such as `initialize`) are left out. A minute can arrive as several rows
+until they merge, so a reader groups by its keys with `sum()` for the counts and
+`quantilesTDigestMerge(0.5, 0.95, 0.99)(latency)` for the latencies. Each refresh also
+writes a row with every key empty and every count 0, where the next refresh resumes: a
+reader filters `slo_class != ''`. To leave out test traffic, filter `traffic_class NOT IN
+('bench', 'background')`: a refusal recorded before the call is classified has an empty
+class.
 
 The emitter is batched and never fails a request; a crash can lose the unflushed queue.
 
@@ -205,6 +215,7 @@ A level is expected to be non-zero and to drain.
 | `loom.memory_embeddings.patch_parts`                                                                                         | gauge     | patch parts on `loom.memory_embeddings`; non-zero switches off the quantized-codes read                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `loom.ch.view_refresh.scheduled`, `loom.ch.view_refresh.age_s`                                                               | gauge     | per refreshable view (`loom.view`, bare in `loom`, else with its database: `loom_telemetry.sli_minute_refresh`): 1 while scheduled without error; seconds since its last success                                                                                                                                                                                                                                                                                                                          |
 | `loom.sli.rollup_lag_s`                                                                                                      | gauge     | seconds `loom_telemetry.sli_minute`'s mark trailed now at the last storage probe (every five minutes, on the workers-lease holder): about 70 to 130 while current; more is a rollup catching up, whose newest minutes read empty                                                                                                                                                                                                                                                                          |
+| `loom.sli.rollup_missed_rows`                                                                                                | gauge     | ledger request rows of the last day whose insert committed after the rollup's mark had passed them, so `sli_minute` never counts them (storage probe, every five minutes, on the workers-lease holder); alert above 0 and refold the rollup                                                                                                                                                                                                                                                               |
 | `loom.audit.checkpoint_lag_windows`                                                                                          | gauge     | hourly audit windows not yet sealed into the checkpoint chain ([audit log](./audit.md#checkpoint-lag))                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `loom.langfuse.breaker`                                                                                                      | gauge     | Langfuse circuit breaker: 0 closed, 1 half-open, 2 open (traces dropped)                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `loom.health.problems`                                                                                                       | gauge     | 1 per open `/v1/health` problem on this process, by `code` and `severity` (`provider` for `provider_failing`), except those `/v1/health` finds with a ClickHouse read (`otel_erasure_index`); a resolved problem stops reporting, so an alert reads a window of at least `LOOM_OTEL_GAUGE_HEARTBEAT_S` plus one `LOOM_OTEL_METRICS_EXPORT_INTERVAL_S` (two intervals without a heartbeat): with the `ch` exporter and a heartbeat, an unchanged value is written at the first export after each heartbeat |

@@ -3607,7 +3607,7 @@ CREATE TABLE IF NOT EXISTS loom_telemetry.sli_minute
     `ingested_hwm` SimpleAggregateFunction(max, DateTime64(3)) DEFAULT toDateTime64(0, 3)
 )
 ENGINE = AggregatingMergeTree
-PARTITION BY toYYYYMM(minute)
+PARTITION BY toYYYYMM(ingested_hwm)
 ORDER BY (slo_class, minute, operation, transport, traffic_class, org)
 TTL minute + toIntervalDay(400)
 SETTINGS allow_dimensions_outside_sorting_key = 1, ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000, index_granularity = 8192;
@@ -4314,9 +4314,9 @@ SELECT
     countIf(status_class = 'server') AS server_errors,
     countIf(status_class = 'client') AS client_errors,
     countIf(error_code = 'RATE_LIMITED') AS rate_limited,
-    countIf((status_class = 'ok') AND (budget_ms > 0) AND (latency_ms > budget_ms)) AS slow,
+    countIf((status_class = 'ok') AND (latency_ms > budget_ms)) AS slow,
     quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, status_class = 'ok') AS latency,
-    toDateTime64(0, 3) AS ingested_hwm
+    fold_to AS ingested_hwm
 FROM loom.agent_events
 WHERE (kind = 'request') AND (slo_class != '') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > folded) AND (ingested_at <= fold_to)
 GROUP BY
@@ -4354,4 +4354,4 @@ SELECT
     quantilesTDigestStateIf(0.5, 0.95, 0.99)(toUInt32(0), false) AS latency,
     fold_to AS ingested_hwm
 HAVING fold_to > folded
-SETTINGS max_insert_threads = 1, min_insert_block_size_bytes = 0, insert_deduplicate = 0;
+SETTINGS max_insert_threads = 1, min_insert_block_size_rows = 1000000000000, min_insert_block_size_bytes = 0;

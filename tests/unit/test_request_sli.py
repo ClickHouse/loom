@@ -619,27 +619,6 @@ def test_otlp_metrics_reach_a_collector() -> None:
     assert b"loom.auth.refusals" in received[0][1]
 
 
-def test_the_rollup_waits_longer_than_a_ledger_insert_may_run() -> None:
-    """A refresh passes over rows ClickHouse took more recently than its
-    margin; an insert still running past it would be skipped for good."""
-    from types import SimpleNamespace
-
-    from server.core.paths import REPO_ROOT
-    from server.observability.problems import _sli_problems
-    from server.settings._clickhouse import ClickHouseSettings
-
-    sql = (REPO_ROOT / "schemas" / "migrations" / "043_request_sli.sql").read_text()
-    # Every wait in the view is the one margin.
-    waits = {int(n) for n in re.findall(r"now64\(3\) - toIntervalSecond\((\d+)\)", sql)}
-    assert waits == {sli.FOLD_MARGIN_S}
-    margin = sli.FOLD_MARGIN_S
-    default = ClickHouseSettings.model_fields["ch_timeout_write_s"].default
-    assert default < margin and _sli_problems(SimpleNamespace(ch_timeout_write_s=default)) == []
-    for deadline in (0, margin, 300):
-        (problem,) = _sli_problems(SimpleNamespace(ch_timeout_write_s=deadline))
-        assert problem.code == "sli_write_deadline"
-
-
 def test_a_refusal_made_without_readable_grants_is_the_server_s(monkeypatch) -> None:
     """A grant, alias, account or classification read that fails still refuses
     (fail closed), but the refusal must not read as the caller's, or an outage
@@ -1604,3 +1583,71 @@ def test_the_member_scoped_org_rollups_mark_a_scope_emptied_by_a_failed_read(
         assert asyncio.run(_run(handler, input_obj)) is False, handler.__name__
         read_fails["value"] = True
         assert asyncio.run(_run(handler, input_obj)) is True, handler.__name__
+
+
+def test_a_call_served_on_its_default_namespace_counts_in_that_tenant(monkeypatch) -> None:
+    """A code op naming no org or namespace runs in the deployment's code
+    namespace; its ledger row names that tenant on both transports, so the
+    per-org rollup counts it there."""
+    import dataclasses
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from pydantic import BaseModel
+
+    import server.code.app.member_writes as member_writes
+    import server.transport.http as http_mod
+    from server.auth.jwt import AuthInfo
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.settings import settings
+    from server.transport import gates, mcp_call
+
+    class _In(BaseModel):
+        org: str = ""
+        namespace: str = ""
+
+    class _Out(BaseModel):
+        ok: bool = True
+
+    async def _handler(inp: Any) -> _Out:
+        return _Out()
+
+    async def _noop(*a: Any, **k: Any) -> None:
+        return None
+
+    op = dataclasses.replace(
+        OPERATIONS_BY_NAME["code.repos"], input_model=_In, output_model=_Out, handler=_handler
+    )
+    rows: list[dict[str, str]] = []
+    monkeypatch.setattr(settings, "code_org", "acme")
+    monkeypatch.setattr(settings, "code_namespace", "code-acme")
+    monkeypatch.setattr(
+        "server.observability.ledger.emit_agent_event",
+        lambda **kw: rows.append(kw["identity"]),
+    )
+    monkeypatch.setattr(http_mod, "emit_agent_event", lambda **kw: rows.append(kw["identity"]))
+    monkeypatch.setattr(gates, "rate_limit", lambda *a, **k: None)
+
+    # HTTP, auth off.
+    monkeypatch.setattr(http_mod, "ALL_OPERATIONS", [op])
+    monkeypatch.setattr(settings, "auth_required", False)
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: False)
+    app = FastAPI()
+    app.include_router(http_mod.build_router())
+    r = TestClient(app).post("/v1/code.repos", json={})
+    assert r.status_code == 200, r.text
+
+    # MCP, a token admitted by the gate.
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, "loom_code_repos", op)
+    monkeypatch.setattr(mcp_call, "_caller_defaults", _noop)
+    monkeypatch.setattr(member_writes, "authorize_op", _noop)
+    monkeypatch.setattr("server.transport.gates._admitted", _noop)
+    monkeypatch.setattr("server.auth.personal_namespace.ensure_personal_namespace_cached", _noop)
+    eve = AuthInfo(
+        subject="eve", org="acme", namespaces=("*",), roles=(Role.VIEWER,), is_service_account=True
+    )
+    params = {"name": "loom_code_repos", "arguments": {}}
+    asyncio.run(mcp_call._call_tool(1, params, auth=eve))
+
+    assert len(rows) == 2, rows
+    assert all((row["org"], row["namespace"]) == ("acme", "code-acme") for row in rows), rows

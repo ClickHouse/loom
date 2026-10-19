@@ -41,8 +41,17 @@ def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
     """`request_identity` with the identity a narrowed token acts as: the user (and
     session) its read scope pins, and always its `read_user_id` pin, so a refused
     call naming another user is logged as the caller, never as that user. A history
-    rule keyed on the user counts the caller's own calls, whatever its body names."""
+    rule keyed on the user counts the caller's own calls, whatever its body names.
+    An org or namespace the body left out is the one the gate admitted the call
+    against, so a call served on a default counts in that tenant's SLIs."""
+    from server.core import request_work
+
     out = request_identity(args)
+    bag = request_work.current()
+    if bag is not None and bag.admitted is not None:
+        for k, v in zip(("org", "namespace"), bag.admitted, strict=True):
+            if out[k] == "-":
+                out[k] = v
     auth = current_auth()
     if auth is None:
         return out

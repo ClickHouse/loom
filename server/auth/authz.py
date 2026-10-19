@@ -667,18 +667,13 @@ def scope_flags(op: Operation) -> dict[str, bool]:
 async def row_in_scope(
     org: str, namespace: str, required_role: Role = Role.VIEWER, *, hides_answer: bool = True
 ) -> bool:
-    """Second gate for ops addressed by an org-wide id (memory_id, …): the
-    transport could not bind a namespace, so the handler asks after it has
-    the row. True when the current principal may act on (org, namespace) at
-    `required_role`; True with no auth context (auth disabled); False on any
-    refusal so the caller can hide the row (`found=False`) rather than 403 —
-    a 403 would confirm the id exists. A refusal that could not be verified
-    marks the request the server's (`fail_closed`) when it refuses or hides
-    what the caller asked for. `hides_answer=False` when it does not: the
-    answer is whole without the namespace, the call filters a listing the
-    caller did not scope, or another way in already admits the caller.
-    `test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_unmarked`
-    lists the sites that opt out."""
+    """Second gate for ops addressed by an org-wide id (memory_id, …), asked
+    once the handler has the row. True when the current principal may act on
+    (org, namespace) at `required_role`, or with no auth context; False on
+    any refusal, so the caller hides the row (`found=False`): a 403 would
+    confirm the id exists. A refusal that could not be verified marks the
+    request the server's (`fail_closed`); `hides_answer=False` when this
+    refusal does not decide what the caller asked for."""
     from server.auth.context import current_auth
     from server.core.errors import IdentityIncompleteError
 

@@ -190,6 +190,14 @@ _STORAGE_GAUGES: tuple[tuple[str, str, str, str], ...] = (
         "when current; more is a rollup catching up, whose newest minutes read empty",
         "s",
     ),
+    (
+        "loom.sli.rollup_missed_rows",
+        "sli_rollup_missed_rows",
+        "Ledger request rows of the last day the SLI rollup's mark passed before "
+        "their insert committed, so loom_telemetry.sli_minute never counts them "
+        "(storage probe, every five minutes); above 0 the SLIs undercount",
+        "1",
+    ),
 )
 
 

@@ -580,6 +580,33 @@ _SLI_LAG_SQL = """
         HAVING count() > 0
 """
 
+# Ledger request rows of the last day that ClickHouse took before the rollup's
+# mark but the rollup did not count, minute by minute: a ledger insert whose
+# part committed after the mark had passed its rows (the view waits 70 s for
+# that). One refresh writes one part, so the mark and the rows it vouches for
+# are read together; a ledger row that erasure removed makes a minute read short,
+# never long.
+_SLI_MISSED_SQL = """
+        WITH (SELECT max(ingested_hwm) FROM loom_telemetry.sli_minute
+              WHERE slo_class = '' AND minute >= toStartOfMinute(now() - toIntervalDay(31))
+             ) AS mark,
+             toStartOfMinute(now() - toIntervalDay(1)) AS since
+        SELECT sum(greatest(toInt64(ledger.n) - toInt64(rolled.n), 0))
+        FROM (
+            SELECT toStartOfMinute(ts) AS minute, count() AS n
+            FROM loom.agent_events
+            WHERE kind = 'request' AND slo_class != '' AND ts >= since
+              AND ingested_at > mark - toIntervalDay(1) AND ingested_at <= mark
+            GROUP BY minute
+        ) AS ledger
+        LEFT JOIN (
+            SELECT minute, sum(requests) AS n
+            FROM loom_telemetry.sli_minute
+            WHERE slo_class != '' AND minute >= since
+            GROUP BY minute
+        ) AS rolled USING (minute)
+"""
+
 
 def _storage_series_from_rows(
     parts_rows: list[Any], refresh_rows: list[Any], *, now: Any
@@ -632,6 +659,12 @@ def _probe_storage() -> dict[str, list[tuple[float, dict[str, str]]]]:
         lag = []
     if lag:
         series["sli_rollup_lag_s"] = [(float(lag[0][0]), {})]
+        try:
+            missed = client.query(_SLI_MISSED_SQL).result_rows
+        except Exception as e:  # noqa: BLE001 — a login without SELECT on loom.agent_events
+            log.debug("sli rollup missed-rows probe failed: %s", e)
+        else:
+            series["sli_rollup_missed_rows"] = [(float(missed[0][0] or 0), {})]
     return series
 
 

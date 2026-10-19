@@ -299,7 +299,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `user_state` | `ReplacingMergeTree(version)` | `(org, subject)` | `org` |  |  |
 | `worker_status` | `ReplacingMergeTree(version)` | `(worker, instance_label, pass_started)` |  | `toDateTime(pass_started) + toIntervalDay(30)` |  |
 | `working_memory` | `ReplacingMergeTree(version)` | `(org, namespace, agent, user_id, session_id, run_id, block_key)` | `(org, namespace)` |  |  |
-| `loom_telemetry.sli_minute` | `AggregatingMergeTree` | `(slo_class, minute, operation, transport, traffic_class, org)` | `toYYYYMM(minute)` | `minute + toIntervalDay(400)` |  |
+| `loom_telemetry.sli_minute` | `AggregatingMergeTree` | `(slo_class, minute, operation, transport, traffic_class, org)` | `toYYYYMM(ingested_hwm)` | `minute + toIntervalDay(400)` |  |
 
 #### Materialized views
 
