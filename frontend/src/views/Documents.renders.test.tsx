@@ -24,6 +24,7 @@ const doc = (i: number): KnowledgeEntry => ({
   tags: ["ops", "runbook"],
   ingested_at: "2026-09-19T00:00:00Z",
   chunk_count: 3,
+  superseded: false,
   has_blob: false,
 });
 vi.mock("../api", async (importOriginal) => ({
