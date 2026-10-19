@@ -288,7 +288,7 @@ export function Outline({
                 </div>
               </div>
               {isSelected && (
-                <div className="flex items-center shrink-0 -my-1">
+                <div className="flex items-center shrink-0">
                   <IconButton
                     label={isCollapsed ? "Show hidden children" : `Expand ${shorten(n.entity, 24)} in place`}
                     onClick={() => (isCollapsed ? onCollapse(n.entity, false) : onExpand(n.entity))}

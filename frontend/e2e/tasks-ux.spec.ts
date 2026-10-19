@@ -119,12 +119,18 @@ async function focusRing(page: Page): Promise<{ visible: boolean; offset: string
   });
 }
 
-// A lane clips its overflow and inbox items stack flush, so a row's and an inbox's ring is
-// drawn inside the box.
-test("a task row and an inbox take an inset focus ring", async ({ page }) => {
+// A lane clips its overflow and inbox items stack flush, so a row's, a lane header's and an
+// inbox's ring is drawn inside the box.
+test("a task row, a lane header and an inbox take an inset focus ring", async ({ page }) => {
   await open(page, 1400);
   await page.getByRole("row", { name: TRIAGE }).focus();
   expect(await focusRing(page), "a row").toEqual({ visible: true, offset: "-2px" });
+  const header = page.locator(".tq-ghead").first();
+  await header.focus();
+  expect(await focusRing(page), "an open lane's header").toEqual({ visible: true, offset: "-2px" });
+  await page.keyboard.press("Enter");
+  await expect(header).toHaveAttribute("aria-expanded", "false");
+  expect(await focusRing(page), "a folded lane's header").toEqual({ visible: true, offset: "-2px" });
   await page.getByRole("navigation", { name: "Inboxes" }).getByRole("button").first().focus();
   expect(await focusRing(page), "an inbox").toEqual({ visible: true, offset: "-2px" });
 });

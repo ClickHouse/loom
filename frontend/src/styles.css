@@ -591,11 +591,18 @@ textarea[aria-invalid="true"]:focus-visible {
 }
 /* Unlayered, as the list-row ring below: in the components layer these would lose to the
    unlayered *:focus-visible ring. Inset: the Explorer outline tree's scroll box and a task
-   lane (.tq-group) clip their overflow, and inbox items stack flush, where an outset ring
-   would cover the next one. */
+   lane (.tq-group, its header and rows) clip their overflow, and inbox items stack flush,
+   where an outset ring would cover the next one. */
 .explorer-outline [role="treeitem"]:focus-visible,
+.tq-ghead:focus-visible,
 .tq-row:focus-visible,
 .tq-inbox:focus-visible {
+  outline-offset: -2px;
+}
+/* Click UI's split button clips its halves (overflow: hidden), so its focus ring is drawn
+   inside each half; on any split button, wherever it sits (ui/SplitButton). */
+.split-button button:focus-visible,
+.split-button [data-testid="split-button-dropdown"]:focus-visible {
   outline-offset: -2px;
 }
 /* A list row's body is one stretched button (`data-row-open`): the ring goes round the
@@ -1607,66 +1614,63 @@ tbody tr:has([aria-current="true"]) > td:first-child {
   }
 }
 
-/* ThreadReplayDialog: the turn a search hit points at takes the card's active stroke, as
-   an inspected list row does. */
-.thread-turn[data-highlighted] {
-  box-shadow: 0 0 0 1px var(--click-card-horizontal-default-color-stroke-active);
+@layer components {
+  /* ThreadReplayDialog: the turn a search hit points at takes the card's active stroke, as
+     an inspected list row does. */
+  .thread-turn[data-highlighted] {
+    box-shadow: 0 0 0 1px var(--click-card-horizontal-default-color-stroke-active);
+  }
+
+  /* Tasks: the open card on the board takes Click UI's active stroke, as an inspected list row does. */
+  .tq-card[aria-current="true"] {
+    border-color: var(--click-card-horizontal-default-color-stroke-active);
+  }
+
+  /* Graph canvas: a node's relation caption with its direction arrow (Canvas.tsx), centred
+     above the node at the canvas text size, in the muted caption colour. */
+  .graph-svg .graph-relation {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    height: 100%;
+    font-size: calc(var(--canvas-label-min) * var(--canvas-scale, 1.45));
+    line-height: 1.2;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+  }
+  /* Recall Lab: a score cell's bar is Click UI's table bar chart, its width the score
+     against the top ranked hit; it darkens with the row's hover. */
+  .recall-bar {
+    display: block;
+    height: 4px;
+    margin-top: 2px;
+    border-radius: var(--radius-xs);
+    overflow: hidden;
+  }
+  .recall-bar > span {
+    display: block;
+    height: 100%;
+    border-radius: var(--radius-xs);
+    background: var(--click-table-row-color-barChart-default);
+  }
+  tr:hover .recall-bar > span {
+    background: var(--click-table-row-color-barChart-hover);
+  }
+
+  /* Runs: a numeric column's header (Relied on, Took) sits right, over its numbers, with
+     Click UI's sort arrow before the label. */
+  .runs-numeric-header > div {
+    justify-content: flex-end;
+  }
 }
 
-/* Tasks: the open card on the board takes Click UI's active stroke, as an inspected list row does. */
-.tq-card[aria-current="true"] {
-  border-color: var(--click-card-horizontal-default-color-stroke-active);
-}
-
-/* Graph canvas: a node's relation caption with its direction arrow (Canvas.tsx), centred
-   above the node at the canvas text size, in the muted caption colour. */
-.graph-svg .graph-relation {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  height: 100%;
-  font-size: calc(var(--canvas-label-min) * var(--canvas-scale, 1.45));
-  line-height: 1.2;
-  color: var(--color-text-muted);
-  white-space: nowrap;
-}
-/* The arrow at the caption's size, not Click UI's fixed 12 px, which the viewBox shrinks. */
+/* Unlayered: it must beat Click UI's unlayered Icon size. The graph caption's arrow at the
+   caption's size, not Click UI's fixed 12 px, which the viewBox shrinks. */
 .graph-svg .graph-relation svg {
   width: 1em;
   height: 1em;
 }
 
-/* Recall Lab: a score cell's bar is Click UI's table bar chart, its width the score
-   against the top ranked hit; it darkens with the row's hover. */
-.recall-bar {
-  display: block;
-  height: 4px;
-  margin-top: 2px;
-  border-radius: var(--radius-xs);
-  overflow: hidden;
-}
-.recall-bar > span {
-  display: block;
-  height: 100%;
-  border-radius: var(--radius-xs);
-  background: var(--click-table-row-color-barChart-default);
-}
-tr:hover .recall-bar > span {
-  background: var(--click-table-row-color-barChart-hover);
-}
-
-/* Runs: a numeric column's header (Relied on, Took) sits right, over its numbers, with
-   Click UI's sort arrow before the label. */
-.runs-numeric-header > div {
-  justify-content: flex-end;
-}
-
-/* Click UI's split button clips its halves (overflow: hidden), so its focus ring is drawn
-   inside each half; on any split button, wherever it sits (ui/SplitButton). */
-.split-button button:focus-visible,
-.split-button [data-testid="split-button-dropdown"]:focus-visible {
-  outline-offset: -2px;
-}
 /* Repositories: a row's one action is Click UI's SplitButton. On a phone it takes the row's
    width under the summary line. */
 @media (max-width: 639px) {
