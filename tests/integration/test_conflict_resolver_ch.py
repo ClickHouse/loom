@@ -450,8 +450,9 @@ async def test_two_rows_judged_at_once_retire_their_shared_peer_once(
     # One record of the retirement, and one versioned write of it.
     (record,) = await _audit(ch, org, "memory.auto_supersede")
     assert [e["memory_id"] for e in record["retired"]] == [rows["office_city"]["id"]]
+    # Distinct versions: the ReplacingMergeTree keeps a repeat of one until a merge.
     versions = await ch.query_all(
-        "SELECT count() AS n FROM loom.memory_versions WHERE org = {org:String}"
+        "SELECT uniqExact(version) AS n FROM loom.memory_versions WHERE org = {org:String}"
         " AND memory_key = 'office_city' AND status = 'superseded'"
         " SETTINGS select_sequential_consistency = 1",
         params={"org": org},
@@ -3059,8 +3060,9 @@ async def test_a_retried_undo_finishes_a_restore_that_landed_after_its_503(
 
 
 async def _versions_of(ch: Any, org: str, key: str) -> int:
+    """Distinct versions: the ReplacingMergeTree keeps a repeat of one until a merge."""
     rows = await ch.query_all(
-        "SELECT count() AS n FROM loom.memory_versions WHERE org = {o:String}"
+        "SELECT uniqExact(version) AS n FROM loom.memory_versions WHERE org = {o:String}"
         " AND memory_key = {k:String} SETTINGS select_sequential_consistency = 1",
         params={"o": org, "k": key},
     )
@@ -3202,8 +3204,6 @@ async def test_a_repeat_undo_writes_no_new_facts_or_search_rows(ch, wired, monke
     """Rome retires Paris by a value update and a person undoes it; the same Undo again
     (the queue offers it when it cannot read the row) finishes the same restore: no new
     fact rows, no new search-row versions."""
-    import asyncio
-
     from server.memory.app import after_write, conflicts
     from server.memory.domain.conflicts import ConflictResult
 
@@ -3233,21 +3233,25 @@ async def test_a_repeat_undo_writes_no_new_facts_or_search_rows(ch, wired, monke
     assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
     winner = (await _rows(ch, org))["office_location"]["id"]
 
-    async def counts() -> tuple[int, int]:
-        await asyncio.sleep(1.0)  # the fact step settles
+    async def counts() -> tuple[int, int, list[Any]]:
+        await after_write.drain()
         facts = await ch.query_all(
             "SELECT count() AS n FROM loom.entity_triples WHERE org = {o:String}"
             " SETTINGS select_sequential_consistency = 1",
             params={"o": org},
         )
-        # The newest search-row version, not a row count: a merge of the
-        # ReplacingMergeTree drops replaced versions between two counts.
+        # The newest search-row version and what its rows say, not a row count: a merge
+        # of the ReplacingMergeTree drops replaced versions between two counts, and a
+        # re-emit that kept the version shows in the rows at it.
         search = await ch.query_all(
-            "SELECT max(version) AS v FROM loom.memory_embeddings WHERE org = {o:String}"
-            " AND memory_key = 'office_city' SETTINGS select_sequential_consistency = 1",
+            "SELECT version AS v, arraySort(groupUniqArray(tuple("
+            "created_at, status, conflict_checked_at, content_sha256))) AS rows"
+            " FROM loom.memory_embeddings WHERE org = {o:String} AND memory_key = 'office_city'"
+            " GROUP BY version ORDER BY version DESC LIMIT 1"
+            " SETTINGS select_sequential_consistency = 1",
             params={"o": org},
         )
-        return int(facts[0]["n"]), int(search[0]["v"])
+        return int(facts[0]["n"]), int(search[0]["v"]), list(search[0]["rows"])
 
     assert (await _undo(org, "office_city", winner)).restored
     first = await counts()

@@ -2900,15 +2900,21 @@ async def test_a_value_ends_when_the_row_last_stopped_holding_it(ch, org, values
     assert ended == versions[-1]["updated_at"]
 
 
+def _written_earlier() -> dict[str, datetime]:
+    """A first write dated seconds ago, so what ends its value now is a later second (the
+    DateTime columns store whole seconds) without waiting for one."""
+    earlier = naive_utc_now().replace(microsecond=0) - timedelta(seconds=10)
+    return {"updated_at": earlier, "created_at": earlier, "last_reinforced_at": earlier}
+
+
 async def test_a_value_a_retirement_ended_ends_at_the_retirement(ch, org) -> None:
     # A retirement keeps the row's updated_at and stamps invalid_at: the value ended
     # when it was retired, not when it was written.
     from server.memory import store as M
     from server.memory.app.entity_projections import value_ended_at
 
-    row = _row(org, "s1", "User lives in London", None)
+    row = _row(org, "s1", "User lives in London", None, **_written_earlier())
     await M.insert_memory_versions([row], ch=ch)
-    await asyncio.sleep(1.1)  # the retirement a second after the write
     assert await M.supersede_duplicates(
         org, [{**row, "superseded_by": "winner"}], ch=ch, strong=True
     )
@@ -2931,9 +2937,8 @@ async def test_a_value_an_undated_value_update_ended_ends_at_the_retirement(ch, 
     from server.memory.app.entity_projections import value_ended_at
     from server.memory.app.value_updates import _supersession_update
 
-    row = _row(org, "s1", "price is $10", None)
+    row = _row(org, "s1", "price is $10", None, **_written_earlier())
     await M.insert_memory_versions([row], ch=ch)
-    await asyncio.sleep(1.1)  # the retirement a second after the write
     retiring = naive_utc_now().replace(microsecond=0)
     update = _supersession_update("newer", None)
     assert await M.write_versions_by_ids(org, [str(row["memory_id"])], update, ch=ch, strong=True)
@@ -2963,9 +2968,8 @@ async def test_a_value_a_by_id_tombstone_ended_ends_at_the_tombstone(ch, org) ->
     from server.memory import store as M
     from server.memory.app.entity_projections import value_ended_at
 
-    row = _row(org, "s1", "User lives in London", None)
+    row = _row(org, "s1", "User lives in London", None, **_written_earlier())
     await M.insert_memory_versions([row], ch=ch)
-    await asyncio.sleep(1.1)  # the tombstone a second after the write
     when = naive_utc_now().replace(microsecond=0)
     assert await M.tombstone_cascade_by_ids(org, [str(row["memory_id"])], when=when, ch=ch)
     ended = await value_ended_at(org, NS, str(row["memory_id"]), row["content_sha256"], ch=ch)

@@ -197,12 +197,15 @@ def _fresh_request_log() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _quick_intent_marks(monkeypatch: pytest.MonkeyPatch) -> None:
+def _quick_intent_marks() -> Iterator[None]:
     """In-process writes resolve their intents in a batched mark every 10 s; a test
-    waiting for one would wait that long. The batching itself is what a test drains."""
+    waiting for one would wait that long. The batching itself is what a test drains.
+    Its own patch, so a test's `monkeypatch.undo()` keeps it."""
     from server.memory.app import intent_marks
 
-    monkeypatch.setattr(intent_marks, "FLUSH_S", 0.2)
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(intent_marks, "FLUSH_S", 0.2)
+        yield
 
 
 @pytest.hookimpl(wrapper=True)
