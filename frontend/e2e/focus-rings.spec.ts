@@ -4,9 +4,9 @@ import { installApi, NAMESPACE, ROUTES, SMALL_SEED, TASK_INBOX } from "./fixture
 // Every focus ring fits inside each box that clips it; after Tab a scroll box counts its whole
 // scrollable area, after an arrow key only its visible area.
 
-// A page's whole tab cycle fits in this many stops; a walk that reaches it fails.
+// A page's whole tab cycle, and each arrow-key list, fits in this many stops; a walk that
+// reaches it fails.
 const TAB_CAP = 200;
-const ARROW_STOPS = 24;
 
 type Mode = "tab" | "arrow";
 type Stop = {
@@ -14,6 +14,9 @@ type Stop = {
   name: string;
   /** Each clipping box the ring overflows, described. */
   clipped: string[];
+  /** The focused element shows focus by no ring, and is not a text field (which shows it by
+   *  its border, styles.css). */
+  ringless: boolean;
   /** The targets the focused element or its ring's element matches. */
   matched: string[];
   /** Focus is on another element this walk checked already: after a Tab, the cycle is complete. */
@@ -134,6 +137,7 @@ async function stopAt(page: Page, mode: Mode, start: boolean, within: string | n
       const stop = {
         name: "",
         clipped: [] as string[],
+        ringless: false,
         matched: [] as string[],
         again: !!el && walked.seen.has(el),
         moved: el !== walked.last,
@@ -156,7 +160,10 @@ async function stopAt(page: Page, mode: Mode, start: boolean, within: string | n
         if (drawn && (ringEl === el || ringEl.matches(":has(:focus-visible)"))) break;
       }
       stop.matched = targets.filter((t) => el.matches(t) || (ringEl !== document.body && !!ringEl?.matches(t)));
-      if (!ringEl || ringEl === document.body) return stop;
+      if (!ringEl || ringEl === document.body) {
+        stop.ringless = !el.matches('input:not([type="checkbox"]):not([type="radio"]), textarea');
+        return stop;
+      }
       if (ringEl !== el) stop.name += ` ring on ${name(ringEl)}`;
       const r = ringEl.getBoundingClientRect();
       if (r.width === 0 && r.height === 0) return stop;
@@ -189,10 +196,11 @@ type Walk = { failures: string[]; stops: string[]; missed: string[] };
 
 /**
  * Tab from the focus until it lands on a stop checked already, the cycle done (or leaves
- * `within`), roving with the arrow keys into each arrow-key list met, and check every stop's ring. `fromFocus`
- * starts at the element focused now instead of pressing Tab first. Returns the clipped rings,
- * the stops checked, and the `targets` (selectors) no stop matched; a walk that reaches
- * TAB_CAP, or an arrow key that opens a dialog, is a failure.
+ * `within`), roving with the arrow keys into each arrow-key list met until the focus stops
+ * moving, and check every stop's ring. `fromFocus` starts at the element focused now instead
+ * of pressing Tab first. Returns the clipped and missing rings, the stops checked, and the
+ * `targets` (selectors) no stop matched; a walk or a list that reaches TAB_CAP, or an arrow
+ * key that opens a dialog, is a failure.
  */
 async function walk(
   page: Page,
@@ -212,6 +220,7 @@ async function walk(
     if (s.name) stops.push(`${mode === "arrow" ? "  ↓ " : ""}${s.name}`);
     for (const t of s.matched) reached.add(t);
     for (const c of s.clipped) failures.add(`${where}: ${c}`);
+    if (s.ringless) failures.add(`${where}: no ring on ${s.name}`);
     return s;
   };
   if (!fromFocus) await page.keyboard.press("Tab");
@@ -225,11 +234,16 @@ async function walk(
   const dialogs = s.dialogs;
   for (let i = 0; ; i++) {
     if (s.fresh)
-      for (let j = 0; j < ARROW_STOPS; j++) {
+      for (let j = 0; ; j++) {
+        if (j === TAB_CAP) {
+          failures.add(`${where}: ${TAB_CAP} ArrowDown stops and the list has not ended`);
+          break;
+        }
         await page.keyboard.press("ArrowDown");
         const a = await visit("arrow");
         if (a.dialogs > dialogs) failures.add(`${where}: ArrowDown to ${a.name} opened a dialog`);
-        if (!a.moved) break;
+        // The list's end, or a list that wraps back to an item roved already.
+        if (!a.moved || a.again) break;
       }
     if (i === TAB_CAP) {
       failures.add(`${where}: ${TAB_CAP} Tab stops and the cycle is not done`);
@@ -343,6 +357,15 @@ for (const [offset, clipped] of [
       ]);
     else expect(failures).toEqual([]);
   });
+
+test("a focused button that draws no ring fails the walk; a text field shows focus by its border", async ({ page }) => {
+  await page.setContent(`
+    <style>button:focus-visible, input:focus-visible { outline: none; }</style>
+    <input aria-label="Name"><button>Bare</button>`);
+  const { failures, stops } = await walk(page, "probe");
+  expect(stops).toEqual(['input "Name"', 'button "Bare"']);
+  expect(failures).toEqual(['probe: no ring on button "Bare"']);
+});
 
 for (const phone of [false, true]) {
   test.describe(phone ? "375 px, touch" : "1400 px", () => {
