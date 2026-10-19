@@ -81,11 +81,8 @@ def _error_response(e: ScimError) -> JSONResponse:
 
 
 class _ScimRoute(APIRoute):
-    """Answers, as RFC 7644 errors, what these routes and their bearer check
-    raise: a SCIM refusal, a busy user, any of Loom's own errors (a 5xx as a
-    retryable 503) and anything else (a store error) as a 503. Unknown paths
-    and methods under /scim/v2 reach `unknown` below. The rest of the server's
-    error format is left alone."""
+    """Every error these routes and their bearer check raise answers as an
+    RFC 7644 error, a server-side one as a retryable 503."""
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         handler = super().get_route_handler()
@@ -122,7 +119,8 @@ _FILTER = re.compile(
 
 
 def parse_filter(text: str) -> tuple[str, str]:
-    """What a served filter compares and its value: ("userName", v) or ("email", v)."""
+    """What a served filter compares and its value: ("userName", v), ("email", v)
+    or ("work email", v)."""
     refused = ScimError(
         400,
         'the filters served are userName eq "<v>", and emails[type eq "work"].value eq '
@@ -136,7 +134,10 @@ def parse_filter(text: str) -> tuple[str, str]:
         value: str = json.loads(f'"{m.group(2)}"')  # a quoted capture decodes to a string
     except ValueError:  # a bad escape or a control character
         raise refused from None
-    return ("userName" if m.group(1).lower() == "username" else "email"), value
+    attribute = m.group(1).lower()
+    if attribute == "username":
+        return "userName", value
+    return ("email" if attribute == "emails.value" else "work email"), value
 
 
 def parse_active(value: Any) -> bool:
@@ -228,17 +229,29 @@ def patched_names(
                     raise ScimError(400, "userName must be a non-empty string", "invalidValue")
                 user_name = value
             elif attr.startswith("emails"):
-                entry = _keyed_written(kind, attr, value, row) or entry
+                entry = _keyed_written(kind, attr, value, row, entry) or entry
     return user_name, entry
 
 
-def _keyed_written(kind: str, attr: str, value: Any, row: dict[str, Any]) -> dict[str, Any] | None:
+def _keyed_written(
+    kind: str, attr: str, value: Any, row: dict[str, Any], earlier: dict[str, Any] | None
+) -> dict[str, Any] | None:
     """The entry an `emails…` operation leaves the user keyed on, when it
     writes the keyed one or one that takes its place; None when it leaves it
-    alone. Removing the keyed entry, or not saying what replaces it, is refused."""
-    stored = {"value": row["email"], "type": row["email_type"], "primary": row["email_primary"]}
-    # An email the userName gave is outranked by any entry (`user_name_and_email`).
-    here = -1 if row["email_from_user_name"] else _rank(stored)
+    alone. `earlier` is the entry an earlier operation of the request left, as
+    each operation sees the ones before it (RFC 7644 §3.5.2). Removing the
+    keyed entry, or not saying what replaces it, is refused."""
+    if earlier is None:
+        stored = {"value": row["email"], "type": row["email_type"], "primary": row["email_primary"]}
+        # An email the userName gave is outranked by any entry (`user_name_and_email`).
+        here = -1 if row["email_from_user_name"] else _rank(stored)
+    else:
+        stored = {
+            "value": earlier.get("value") or row["email"],
+            "type": earlier.get("type") or "",
+            "primary": earlier.get("primary") or False,
+        }
+        here = _rank(stored)
     if attr == "emails":
         if kind == "remove":
             raise _no_change("the email cannot be removed")
@@ -445,6 +458,8 @@ async def list_users(request: Request) -> JSONResponse:
     if text is not None:
         attribute, value = parse_filter(text)
         row = await (scim.find(value) if attribute == "userName" else scim.get(scim.user_id(value)))
+        if row and attribute == "work email" and str(row["email_type"]).lower() != "work":
+            row = None
         total, rows = (1, [row]) if row else (0, [])
         rows = rows[start - 1 : start - 1 + count]
     else:

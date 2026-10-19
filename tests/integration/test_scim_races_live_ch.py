@@ -42,15 +42,28 @@ class _Seeded:
         self.subjects.append(f"race-{uuid.uuid4().hex[:8]}")
         return self.subjects[-1]
 
-    async def account(self, email: str, subject: str) -> None:
-        """An SSO account (no password) of `subject` naming `email`, as JIT makes one."""
+    async def account(self, email: str, subject: str, *, password: bool = False) -> None:
+        """An SSO account (no password) of `subject` naming `email`, as JIT makes
+        one; with `password`, a password account linked to `email`."""
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+        namespace = f"ns-{uuid.uuid4().hex[:8]}"
+        if password:
+            link = {
+                "email": email,
+                "org": self.org,
+                "namespace": namespace,
+                "linked": 1,
+                "linked_by": "test",
+                "linked_at": now,
+                "version": time.time_ns(),
+            }
+            await get_client().insert("loom.sso_links", [link])
         row = {
             "org": self.org,
-            "namespace": f"ns-{uuid.uuid4().hex[:8]}",
+            "namespace": namespace,
             "owner_email": subject,
             "contact_email": email,
-            "password_hash": "",
+            "password_hash": "x" if password else "",
             "description": "",
             "tags": [],
             "active": True,
@@ -77,6 +90,7 @@ async def seeded(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Seeded]:
         # The namespaces rows go with the org; these name none.
         for table, column, values in (
             ("scim_users", "email", made.emails),
+            ("sso_links", "email", made.emails),
             ("revoked_tokens", "jti", [revocation.SCIM_PREFIX + s for s in made.subjects]),
         ):
             await ch.execute(
@@ -136,6 +150,28 @@ async def test_a_reactivation_racing_a_deactivation_of_a_shared_subject(seeded) 
         assert ra is not None and ra["active"] and rb is not None and not rb["active"]
         assert await _keeps_out(shared), "the one still deactivated reaches it"
         assert not await _keeps_out(own), "only the one reactivated reaches it"
+
+
+@pytest.mark.parametrize("password", [False, True])
+async def test_an_account_an_inactive_email_reaches_since_stays_revoked(
+    seeded, password: bool
+) -> None:
+    # a@ reaches the shared account only after its row recorded what it reached.
+    shared, own = seeded.subject(), seeded.subject()
+    a, b = seeded.email(), seeded.email()
+    await seeded.account(a, own)
+    await seeded.account(b, shared)
+    ua = await scim.create(a, a, active=False, email_entry={})
+    ub = await scim.create(b, b, active=False, email_entry={})
+    await seeded.account(a, shared, password=password)
+    await scim.update(ub["id"], active=True)
+    assert shared not in (await scim.get(ua["id"]) or {})["subjects"]
+    assert await _keeps_out(shared), "a@, still deactivated, reaches it"
+    other, c = seeded.subject(), seeded.email()  # one no inactive email reaches is lifted
+    await seeded.account(c, other)
+    uc = await scim.create(c, c, active=False, email_entry={})
+    await scim.update(uc["id"], active=True)
+    assert not await _keeps_out(other)
 
 
 class _SignIn:

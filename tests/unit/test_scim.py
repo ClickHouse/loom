@@ -49,7 +49,7 @@ _TOKEN = "scim-test-token-" + "x" * 32
         ('  USERNAME EQ "Lee@Example.com" ', ("userName", "Lee@Example.com")),
         (r'userName eq "a\"b@example.com"', ("userName", 'a"b@example.com')),
         # Entra, matching users on `mail`.
-        ('emails[type eq "work"].value eq "lee@example.com"', ("email", "lee@example.com")),
+        ('emails[type eq "work"].value eq "lee@example.com"', ("work email", "lee@example.com")),
         ('emails.value eq "lee@example.com"', ("email", "lee@example.com")),
     ],
 )
@@ -232,10 +232,15 @@ class _Table:
         return row
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-        if "has(subjects" in sql:
+        if "id != {id:String} AND email IN" in sql:  # another inactive user reaching it
             heads = [self.newest(uid) for uid in {r["id"] for r in self.rows} - {params["id"]}]
-            held = [r for r in heads if r and not r["active"] and params["s"] in r["subjects"]]
-            return [{"email": r["email"]} for r in held]
+            reach = self.accounts
+            held = [
+                r
+                for r in heads
+                if r and not r["active"] and params["s"] in reach.get(r["email"], [])
+            ]
+            return [{"email": r["email"]} for r in held[:1]]
         if "loom.service_accounts" in sql:
             rows = [{**r, "live": r["revoked_at"] is None} for r in self.made_by(sql, params)]
             if self.shuffle is not None:
@@ -494,6 +499,35 @@ async def test_a_repeat_deactivation_revokes_an_account_let_go_while_out_of_reac
     world.person("bob@example.com", "shared")  # linked to bob@ again
     await scim.update(bob, active=False)  # the provider repeats bob's deactivation
     assert world.ours["shared"] is None
+
+
+async def test_an_account_linked_to_an_inactive_email_since_stays_revoked(world) -> None:
+    # bob@ reaches it only after his row was written, and no push for him came since.
+    world.person("bob@example.com", "bob")
+    world.person("alice@example.com", "shared")
+    bob, alice = await _create("bob@example.com"), await _create("alice@example.com")
+    await scim.update(bob, active=False)
+    await scim.update(alice, active=False)
+    world.person("bob@example.com", "bob", "shared")
+    await scim.update(alice, active=True)
+    assert world.ours["shared"] is None and world.table.newest(bob)["subjects"] == ["bob"]  # type: ignore[index]
+
+
+async def test_a_repeat_deactivation_whose_row_write_failed_keeps_its_subject(world) -> None:
+    world.person("bob@example.com", "bob")
+    world.person("alice@example.com", "shared")
+    bob, alice = await _create("bob@example.com"), await _create("alice@example.com")
+    await scim.update(bob, active=False)
+    world.person("bob@example.com", "bob", "shared")
+    world.table.fail_insert = True
+    with pytest.raises(RuntimeError):  # bob's revocation of it landed, his row did not
+        await scim.update(bob, active=False)
+    world.table.fail_insert = False
+    await scim.update(alice, active=False)
+    await scim.update(alice, active=True)  # before the provider retries bob
+    assert world.ours["shared"] is None
+    await scim.update(bob, active=False)  # the retry records it
+    assert world.table.newest(bob)["subjects"] == ["bob", "shared"]  # type: ignore[index]
 
 
 def test_a_patch_of_dropped_attributes_lets_a_moved_account_go(client: TestClient, world) -> None:
@@ -1685,6 +1719,39 @@ def test_a_quoted_primary_filter_selects_the_primary(client: TestClient, world) 
     ):
         r = _patch(client, uid, op)
         assert r.status_code == 400 and r.json()["scimType"] == "mutability", op
+
+
+@pytest.mark.parametrize(
+    ("entry", "found"),
+    [
+        ({"value": "lee@example.com", "type": "Work"}, True),
+        ({"value": "lee@example.com", "type": "home"}, False),
+        ({"value": "lee@example.com"}, False),
+    ],
+)
+def test_the_work_email_filter_matches_only_a_work_address(
+    client: TestClient, world, entry: dict[str, Any], found: bool
+) -> None:
+    uid = _user(client, [entry])
+    for text, matches in (
+        ('emails[type eq "work"].value eq "lee@example.com"', found),
+        ('emails.value eq "lee@example.com"', True),
+    ):
+        listed = client.get("/scim/v2/Users", params={"filter": text}).json()
+        assert listed["totalResults"] == int(matches), text
+        assert [u["id"] for u in listed["Resources"]] == [uid] * matches, text
+
+
+def test_each_email_operation_sees_the_ones_before_it(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "lee@example.com"}])
+    r = _patch(
+        client,
+        uid,
+        {"op": "replace", "path": "emails.type", "value": "work"},
+        {"op": "replace", "path": "emails.primary", "value": True},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["emails"] == [{"value": "lee@example.com", "type": "work", "primary": True}]
 
 
 def test_a_new_work_entry_would_take_a_plain_entrys_place(client: TestClient, world) -> None:

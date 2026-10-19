@@ -1,37 +1,17 @@
 """Who an identity provider has deactivated over SCIM 2.0 (`loom.scim_users`).
 
-A SCIM user is an email the provider manages: its `emails` entry marked
-primary, else its work entry, else its first, else its userName
-(`scim_routes.user_name_and_email`). Loom makes no account for one:
-JIT makes that at the person's first sign-in, as without SCIM. What SCIM
-changes is `active`:
+A SCIM user is an email the provider manages; Loom makes no account for one.
+Deactivating revokes outright every subject an SSO sign-in with the email could
+reach and refuses that sign-in; reactivating lifts both and leaves the tokens
+issued before it dead (docs/operations/sso.md).
 
-- Deactivating revokes outright every subject an SSO sign-in with the email
-  could reach (an SSO account naming it, or a password account linked to it),
-  in every org: every session and every token those subjects made, since a
-  delegated token names them as its creator or a parent; the tokens they saved
-  read revoked in the Tokens list. SSO sign-in with the email is refused while
-  it lasts, even when it reaches no account yet.
-- Reactivating lifts the refusal and narrows those revocations to the tokens
-  issued before now, so the person signs in again and the old tokens stay dead.
-  Every write that leaves a user active does it (`_converge_active`), a
-  create, a PUT or a PATCH of any attribute, so a repeat of one finishes what
-  a failed request left.
-
-SCIM's revocations are its own: each is stored under the subject's SCIM key
-(`revocation.SCIM_PREFIX`), and SCIM never writes the row an operator's
-`loom revoke-token` writes (it reads it only to list dead tokens revoked).
-The two are independent, and either keeps a person out; a reactivation lifts
-only SCIM's. A subject another deactivated user still reaches stays revoked
-through a reactivation. The accounts and their data stay: this is not erasure.
+SCIM's revocations are its own, under `revocation.SCIM_PREFIX`: it never
+writes the row an operator's `loom revoke-token` writes, and a reactivation
+lifts only SCIM's. A subject another deactivated user still reaches stays
+revoked.
 
 Leases are always taken in this order: the user's, then a userName's it takes
-(create, rename), then one per subject the user reaches, in sorted order,
-around a deactivation's revocations or a reactivation's lifts and the row they
-belong with. Only users sharing a subject wait on each other (and an
-operator's `--scim` narrowing of one). Each step is idempotent, so a
-provider's retry of a half-done one finishes it. With `LOOM_SCIM_TOKEN` empty
-the routes are not mounted, and a sign-in still reads its email's row.
+(create, rename), then one per subject the user reaches, in sorted order.
 """
 
 from __future__ import annotations
@@ -536,21 +516,26 @@ def _newest_cutoff(rows: dict[str, dict[str, Any]]) -> datetime | None:
 
 
 async def _held_by_another_inactive(uid: str, subject: str) -> bool:
-    """Whether another deactivated (or deleted) user's email still reaches
-    `subject`. One that recorded it before the account moved to another email
-    holds nothing back."""
+    """Whether another deactivated (or deleted) user's email reaches `subject`
+    now, as `_subjects` reads reach: not the `subjects` a row recorded, which
+    lag an account linked since or a deactivation whose row write failed."""
     with own_write_reads():
         rows = await get_client().query_all(
             f"""
             SELECT email FROM {TABLE} FINAL
-            WHERE active = 0 AND id != {{id:String}} AND has(subjects, {{s:String}})
+            WHERE active = 0 AND id != {{id:String}} AND email IN (
+                SELECT contact_email FROM loom.namespaces FINAL
+                WHERE owner_email = {{s:String}} AND active = 1
+                  AND (password_hash = '' OR (org, namespace, contact_email) IN (
+                      SELECT org, namespace, email FROM loom.sso_links FINAL
+                      WHERE linked = 1
+                  ))
+            )
+            LIMIT 1
             """,
             params={"id": uid, "s": subject},
         )
-    for r in rows:
-        if subject in await _subjects(r["email"]):
-            return True
-    return False
+    return bool(rows)
 
 
 async def _write(row: dict[str, Any]) -> None:

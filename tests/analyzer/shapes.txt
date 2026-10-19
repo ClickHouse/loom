@@ -147,6 +147,7 @@
 1b09ee9cca61	SELECT org, namespace, agent, user_id, session_id, memory_key FROM loom.memory AS m WHERE m.memory_type IN (?, ?, ?) AND org = {org_filter:String} AND namespace = {ns_filter:String} AND m.created_at >
 1b0bc6462067	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, ? - cosineDistance(e.embedding, {qv:Array(Float32)}) AS similarity, toString(coalesce(e.temporal_
 1b5da661bf42	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
+1b7797d469e1	SELECT email FROM loom.scim_users FINAL WHERE active = ? AND id != {id:String} AND email IN ( SELECT contact_email FROM loom.namespaces FINAL WHERE owner_email = {s:String} AND active = ? AND (passwor
 1b9df594185a	SELECT count() AS n FROM loom.memory_record_versions WHERE org = {org:String} AND user_id = {uid:String} AND ?
 1bc7a4e72aad	SELECT count() AS n FROM loom.memory_projection_failures WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 1bea4af4ad7c	SELECT count() AS n FROM loom.session_summaries FINAL WHERE org = {org:String} AND namespace = {ns:String}
@@ -1658,7 +1659,6 @@ fbd02f260158	SELECT ts, event_type, org, namespace, actor, subject, request_id, 
 fbd1ef24012c	SELECT count() AS n FROM loom.tasks WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 fbfcdfbdee29	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.session_id AS session_
 fc162bd6bbf5	SELECT * FROM loom.code_symbols FINAL WHERE org = {org:String} AND namespace = {ns:String} AND lower(name) LIKE {like:String} AND positionCaseInsensitive(name, {needle:String}) > ? AND tombstoned_at I
-fc202e24d1f1	SELECT email FROM loom.scim_users FINAL WHERE active = ? AND id != {id:String} AND has(subjects, {s:String})
 fc33b8a8753c	ALTER TABLE loom.conversation_embeddings UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:Strin
 fc7f71aed636	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
 fc8917f4e0b5	SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL
