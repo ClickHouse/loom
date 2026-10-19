@@ -530,6 +530,12 @@ def test_a_summary_past_the_allowance_stays_live_and_the_turns_compact(monkeypat
             [True, True, False],
             ([1, 2], "system: s\nuser: a"),
         ),
+        # A summary after a turn takes budget like a turn and is replaced with it.
+        (
+            ["user: a", "system: S", "user: b"],
+            [False, True, False],
+            ([0, 1, 2], "user: a\nsystem: S\nuser: b"),
+        ),
         # Nothing but summaries (the handler answers already-compacted before this).
         (["system: s"], [True], ([0], "system: s")),
     ],
@@ -668,3 +674,53 @@ def test_a_summary_after_its_first_source_is_not_stale() -> None:
         rows = [s1, row("s2", s2_ts, '{"compacted_from": ["s1"]}'), turn]
         _, transcript = ch_mod._window_of(rows, [True, True, False], live)
         assert ("s2s2" in transcript) is read
+
+
+@pytest.mark.parametrize(("min_to_compact", "compacted"), [(2, True), (3, False)])
+def test_a_summary_inside_the_window_is_replaced_but_not_counted(
+    monkeypatch, min_to_compact: int, compacted: bool
+) -> None:
+    """A client summary appended between turns is read and replaced with them, and
+    counts toward neither min_to_compact nor messages_summarized."""
+    import server.core.ch
+    import server.llm.client
+
+    def row(mid: str, i: int, content: str, metadata: str = "{}", role: str = "user"):
+        return {
+            "msg_id": mid,
+            "role": role,
+            "content": content,
+            "ts": T0 + timedelta(seconds=i),
+            "metadata": metadata,
+            "user_id": "alice",
+            "run_id": "run-1",
+        }
+
+    rows = [
+        row("m1", 1, "turn 1"),
+        row("s", 2, "a client summary", '{"compacted_from": ["m0"]}', "system"),
+        row("m2", 3, "turn 2"),
+        row("m3", 4, "turn 3"),
+    ]
+    fake = _FakeCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _FakeLLM())
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o",
+                namespace="n",
+                agent="a",
+                thread_id="t",
+                keep_recent=1,
+                min_to_compact=min_to_compact,
+            )
+        )
+    )
+    assert out.compacted is compacted
+    if compacted:
+        assert out.messages_summarized == 2
+        [summary] = fake.inserted
+        assert json.loads(summary["metadata"])["compacted_from"] == ["m1", "m2", "s"]
+    else:
+        assert out.reason == "below-min-to-compact"

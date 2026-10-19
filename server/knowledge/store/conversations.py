@@ -774,9 +774,9 @@ async def tombstone_embedding_if_message_gone(
     stores the embedding, then calls this. So for a message the messages mutation
     covered, either that last pass sees the embedding or this read sees the tombstone.
     A message that lands after the mutation began is not covered and stays live. After
-    a compaction its embedding stays live too; a delete's last pass tombstones every
-    embedding of this agent's in the thread, so it takes one that landed before that
-    pass and leaves one that lands after it."""
+    a compaction its embedding stays live too; a delete's last pass covers every
+    embedding of this agent's turns in the thread, so it takes one that landed before
+    that pass and leaves one that lands after it."""
     ch = ch or _default_client()
     with sequential_reads():
         row = await ch.query_one(
