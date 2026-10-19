@@ -233,13 +233,16 @@ export function Conversations() {
   );
 
   // The threads come back in a transition, so the emptied box paints before a page of
-  // thread rows mounts (about 200 ms at 4x CPU).
-  const clearSearch = () =>
+  // thread rows mounts (about 200 ms at 4x CPU). A search still in flight is dropped.
+  const clearSearch = () => {
+    searchSeq.current += 1;
+    setBusy(false);
     startTransition(() => {
       setQ("");
       setHits(null);
       setSearchError(null);
     });
+  };
 
   const run = async (text: string) => {
     if (!text.trim()) return;

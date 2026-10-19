@@ -203,6 +203,24 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(await screen.findByText("Title B")).toBeInTheDocument();
   });
 
+  it("emptying the box while a search is in flight shows the threads, not its late hits", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-a", "Title A")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    const late = deferred<{ hits: ConversationHit[] }>();
+    searchConversations.mockReturnValueOnce(late.promise);
+    render(<Conversations />);
+    expect(await screen.findByText("Title A")).toBeInTheDocument();
+    const box = screen.getByLabelText("Search conversation transcripts");
+    fireEvent.change(box, { target: { value: "hello" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(await screen.findByLabelText("Searching transcripts")).toBeInTheDocument();
+    fireEvent.change(box, { target: { value: "" } });
+    await act(async () => late.resolve({ hits: [hit("thread-z", "late hit")] }));
+    expect(screen.queryByText("late hit")).toBeNull();
+    expect(screen.queryByLabelText("Searching transcripts")).toBeNull();
+    expect(screen.getByText("Title A")).toBeInTheDocument();
+  });
+
   it("opens a hit from another namespace in that namespace", async () => {
     listConversationThreads.mockResolvedValue({ threads: [] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
