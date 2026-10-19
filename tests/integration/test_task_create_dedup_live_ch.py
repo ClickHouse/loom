@@ -906,3 +906,67 @@ async def test_a_create_retry_racing_a_claim_keeps_the_claimants_lease(
             fence=int(claimed["out"].task.fence),
         )
     )
+
+
+@pytest.mark.asyncio
+async def test_a_task_reopened_while_a_create_retry_drops_its_lease_row_is_still_claimable(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A create retry's re-read sees the task ended, then a reopen lands before the retry
+    deletes the lease row: the reopened todo task has no lease row, and a claim writes
+    it back and wins."""
+    org = f"itest-reopen-{uuid.uuid4().hex[:8]}"
+    await inboxes.handle_inbox_register(
+        wire.InboxRegisterInput(
+            org=org,
+            namespace="private",
+            agent="admin",
+            inbox="bot",
+            owner_agent="bot",
+            accept_disclosure=["internal"],
+        )
+    )
+    body = {
+        "org": org,
+        "namespace": "private",
+        "agent": "poster",
+        "inbox": "bot",
+        "kind": "chore",
+        "title": "t",
+        "disclosure": "internal",
+        "idempotency_key": "k1",
+    }
+    first = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    tid = first.task.task_id
+    ident = {"org": org, "namespace": "private", "task_id": tid, "reason": "x"}
+    backend = await repo.lease_backend()
+    real_ensure, real_fetch = backend.ensure_row, repo.fetch_task
+    armed = False
+
+    async def ensure(*a: Any, **k: Any) -> None:
+        nonlocal armed
+        await real_ensure(*a, **k)
+        armed = True  # the retry's ensure_row ran; its re-read is next
+
+    async def fetch(org_: str, task_id: str, *a: Any, **k: Any) -> Any:
+        nonlocal armed
+        if not armed:
+            return await real_fetch(org_, task_id, *a, **k)
+        armed = False
+        monkeypatch.setattr(backend, "ensure_row", real_ensure)
+        monkeypatch.setattr(repo, "fetch_task", real_fetch)
+        # The end lands, the retry's re-read sees it, then a reopen lands before the delete.
+        await transitions.handle_task_wont_do(wire.TaskReasonInput(agent="bot", **ident))
+        seen = await real_fetch(org_, task_id, *a, **k)
+        await transitions.handle_task_reopen(wire.TaskReasonInput(agent="admin", **ident))
+        return seen
+
+    monkeypatch.setattr(backend, "ensure_row", ensure)
+    monkeypatch.setattr(repo, "fetch_task", fetch)
+    await transitions.handle_task_create(wire.TaskCreateInput(**body))  # the client retry
+    assert (await repo.fetch_task(org, tid))["status"] == "todo"
+
+    out = await transitions.handle_task_claim(
+        wire.TaskClaimInput(org=org, namespace="private", agent="bot", task_id=tid)
+    )
+    assert out.task.status == "in_progress"
