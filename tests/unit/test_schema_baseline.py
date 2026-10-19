@@ -33,7 +33,7 @@ TRANSIENT_TABLES = {
     "memory_extraction_queue": "a work queue; the facts it yields live in loom.memory",
     "memory_code_link_queue": "the code link worker's queue of memory writes (keys only)",
     "consolidation_runs": "the consolidation worker's run ledger",
-    "memory_projection_failures": "the repair queue; a resolved or abandoned entry is done",
+    "memory_projection_failures": "the repair queue; a resolved entry is done",
 }
 
 # Objects that are gone and must not come back.

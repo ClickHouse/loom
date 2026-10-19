@@ -7179,7 +7179,9 @@ async def test_point_write_intents_are_resolved_by_a_batched_flush(ch, org, monk
         "SELECT create_table_query AS q FROM system.tables"
         " WHERE database = 'loom' AND name = 'memory_projection_failures'"
     )
-    assert "TTL coalesce(resolved_at, created_at)" in table["q"]
+    # Only a resolved row expires: an abandoned one stays for an operator.
+    assert "TTL coalesce(resolved_at, created_at) + toIntervalDay(30)" in table["q"]
+    assert "WHERE status = 'resolved'" in table["q"]
 
 
 async def test_late_declared_edges_write_nothing_on_a_high_row_without_them(

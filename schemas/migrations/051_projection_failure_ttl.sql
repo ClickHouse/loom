@@ -1,6 +1,7 @@
--- A projection failure that is no longer active (resolved, or abandoned for an operator)
--- leaves 30 days after it was resolved, or after it was recorded when no resolve time was
--- stamped: point writes' retirement intents are resolved by the thousand, and an active
--- one never expires. See docs/architecture/memory-architecture.md, "Replay".
+-- A resolved projection failure leaves 30 days after it was resolved: point writes'
+-- retirement intents are resolved by the thousand. An active one never expires, nor an
+-- abandoned one, left for an operator. A resolve always stamps resolved_at; the coalesce
+-- only gives the TTL the non-Nullable type it requires. See
+-- docs/architecture/memory-architecture.md, "Replay".
 ALTER TABLE loom.memory_projection_failures
-    MODIFY TTL coalesce(resolved_at, created_at) + INTERVAL 30 DAY DELETE WHERE status != 'active';
+    MODIFY TTL coalesce(resolved_at, created_at) + INTERVAL 30 DAY DELETE WHERE status = 'resolved';

@@ -2310,7 +2310,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_projection_failures
 )
 ENGINE = MergeTree
 ORDER BY (org, namespace, projection, created_at, failure_id)
-TTL coalesce(resolved_at, created_at) + toIntervalDay(30) WHERE status != 'active'
+TTL coalesce(resolved_at, created_at) + toIntervalDay(30) WHERE status = 'resolved'
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_record_conflicts

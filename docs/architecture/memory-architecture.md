@@ -280,7 +280,7 @@ both landed, the process resolves it in a batched flush (every ten seconds and a
 shutdown, one chunked mark per org), so the request path writes no mutation; an intent it
 did not resolve (a lost answer, a crash, a failed follow) stays for the repair, which
 follows the pairs, writes a record still missing and resolves it after the grace. A
-resolved or abandoned failure row leaves 30 days on (the table's TTL). The acting of a judged row (its pairs, records,
+resolved failure row leaves 30 days after its resolve (the table's TTL); an abandoned one stays for an operator. The acting of a judged row (its pairs, records,
 follows and audit row) is shielded from cancellation, and a cancelled pass ends only once
 it has finished. A flag is
 `mark_peers_conflicted`; a clear removes the pair from each side's `conflict_with`, and a
