@@ -293,9 +293,18 @@ async def test_a_bulk_write_reconciles_only_the_rows_it_revised(monkeypatch) -> 
 
     closed: list = []
 
-    async def end_overtaken(input, versions, *, op, ch, entities):
+    async def end_overtaken(input, versions, *, op, ch):
         closed.extend(memory_id for memory_id, _, _ in versions)
 
+    asked: list = []
+
+    async def no_holders(org, namespace, versions, *, ch):
+        asked.extend(memory_id for memory_id, _ in versions)
+        return {}  # revised again meanwhile: nothing holds it
+
+    from server.memory.app import entity_projections
+
+    monkeypatch.setattr(entity_projections, "edge_holders", no_holders)
     monkeypatch.setattr(bulk_set, "reconcile_row_facts", reconcile)
     monkeypatch.setattr(bulk_set, "end_overtaken_edges", end_overtaken)
     write = MemoryBulkSetInput(
@@ -315,7 +324,7 @@ async def test_a_bulk_write_reconciles_only_the_rows_it_revised(monkeypatch) -> 
     await bulk_set._bulk_run_projections(None, write, state, None, None, {}, {})
     assert reconciled == [["id-old"]]
     # Only a revised row can have been revised again while its edges were written.
-    assert closed == ["id-old"]
+    assert asked == ["id-old"] and closed == ["id-old"]
 
 
 async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypatch) -> None:

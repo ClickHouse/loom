@@ -47,6 +47,7 @@ from server.memory.app.projections import (
 )
 from server.memory.domain import triples_follow_rows as tfr
 from server.memory.domain.temporal_sql import (
+    EDGE_HOLDS_VALUE_SQL,
     GRAPH_HOLDER_SQL,
     HOLDS_VALUE_SQL,
     LIVE_STATUSES,
@@ -1730,6 +1731,33 @@ async def versions_held(
         params=params,
     )
     return {(str(r["id"]), str(r["sha"])) for r in found}
+
+
+async def edge_holders(
+    org: str, namespace: str, versions: list[tuple[str, str]], *, ch: Any
+) -> dict[tuple[str, str], tuple[str, set[str]]]:
+    """Of `versions`, (memory_id, content_sha256) pairs, the ones still current and
+    holding their value, a 'high' row included (EDGE_HOLDS_VALUE_SQL): each with the
+    row's sensitivity and entities, so a caller decides per edge in one read whether
+    a high row still names its entities."""
+    if not versions:
+        return {}
+    found = await ch.query_all(
+        f"""
+        SELECT DISTINCT toString(memory_id) AS id, toString(content_sha256) AS sha,
+               toString(sensitivity) AS sensitivity, entities
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND (memory_id, content_sha256) IN {{versions:Array(Tuple(UUID, String))}}
+          AND {EDGE_HOLDS_VALUE_SQL}
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": org, "ns": namespace, "versions": sorted(set(versions))},
+    )
+    return {
+        (str(r["id"]), str(r["sha"])): (str(r["sensitivity"]), {str(e) for e in r["entities"]})
+        for r in found
+    }
 
 
 class Holder(NamedTuple):

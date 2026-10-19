@@ -4689,7 +4689,7 @@ async def test_undo_reopens_only_what_the_restored_value_holds(ch, org, monkeypa
     assert await _open_cities(ch, org, {"london"}) == {"london"}
 
 
-async def test_a_high_bulk_entry_puts_nothing_in_the_shared_graph(ch, org) -> None:
+async def test_a_high_bulk_entry_puts_only_its_declared_edge_in_the_shared_graph(ch, org) -> None:
     from server.memory.api.models_bulk import MemoryBulkSetInput
     from server.memory.app.bulk_set import handle_memory_bulk_set
 
@@ -4739,7 +4739,10 @@ async def test_a_high_bulk_entry_puts_nothing_in_the_shared_graph(ch, org) -> No
             break
         await asyncio.sleep(0.1)
     assert want <= graphed
-    assert not [g for g in graphed if "4417" in g[1] or "vault" in g[1]]
+    # Only the edge of the entities its writer declared, as memory.set projects a high
+    # row: no triple, triple row or entity vector of its value.
+    leaked = [g for g in graphed if "4417" in g[1] or "vault" in g[1]]
+    assert leaked == [("edges", "4417 vault")], leaked
 
 
 async def test_a_high_point_write_puts_no_entity_edge_in_the_shared_graph(ch, org) -> None:
@@ -7438,3 +7441,68 @@ async def test_a_bulk_write_making_many_rows_high_owes_one_drop(ch, org, monkeyp
     )
     assert results and all(r.resolved for r in results), results
     assert await _edge_links(ch, other) == 0
+
+
+async def test_a_bulk_revision_asks_once_whether_its_rows_hold_their_edges(
+    ch, org, monkeypatch
+) -> None:
+    """A bulk revision of rows pairing different entities reads the rows' holders once,
+    not once per set of entities, and every edge a current row names stays open."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write, entity_projections
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    def write(text: str) -> MemoryBulkSetInput:
+        entries = [
+            {
+                "memory_key": f"k{i}",
+                "value": f"{text} {i}",
+                "memory_type": "semantic",
+                "entities": [f"Person{i}", f"Place{i}"],
+            }
+            for i in range(40)
+        ]
+        return MemoryBulkSetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=entries
+        )
+
+    await handle_memory_bulk_set(write("first value"))
+    await after_write.drain()
+    reads = {"edge_holders": 0, "versions_held": 0}
+    for name in reads:
+        real = getattr(entity_projections, name)
+
+        async def counted(*a: Any, _real: Any = real, _name: str = name, **k: Any) -> Any:
+            reads[_name] += 1
+            return await _real(*a, **k)
+
+        monkeypatch.setattr(entity_projections, name, counted)
+    await handle_memory_bulk_set(write("second value"))
+    await after_write.drain()
+    assert reads == {"edge_holders": 1, "versions_held": 0}, reads
+    assert len(await _open_edge_pairs(ch, org)) == 40
+
+
+async def test_a_row_written_high_by_bulk_holds_its_declared_edges(ch, org) -> None:
+    """A bulk write as 'high' projects its writer's entities, as memory.set does: when
+    another row naming the pair stops naming it, the high row still holds the edge."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    entry = {
+        "memory_key": "vault",
+        "value": "the vault code",
+        "memory_type": "semantic",
+        "entities": ["Gina", "Hank"],
+        "sensitivity": "high",
+    }
+    await handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=[entry]
+        )
+    )
+    await after_write.drain()
+    await _high_set(org, "s1", "plain", "Gina met Hank", entities=["Gina", "Hank"])
+    await _high_set(org, "s1", "plain", "now secret", sensitivity="high", entities=["Ivy", "Zed"])
+    assert ("gina", "hank") in await _open_edge_pairs(ch, org)
