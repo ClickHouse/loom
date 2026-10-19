@@ -151,6 +151,12 @@ class AuthSettings(BaseModel):
     # key in `jwt_public_keys_json`. Loom's own tokens (iss = jwt_issuer) pass.
     jwt_trusted_issuers: str = ""
 
+    def trusted_issuers(self) -> set[str]:
+        """The `iss` values a token Loom verifies may carry: Loom's own issuer
+        plus the federated issuers in `jwt_trusted_issuers`."""
+        extra = (i.strip() for i in self.jwt_trusted_issuers.split(","))
+        return {self.jwt_issuer, *(i for i in extra if i)}
+
     # JSON (or base64 JSON) map kid → PEM public key of a gateway whose RS256
     # tokens this deployment accepts. Loom's own keys live in loom.signing_keys.
     jwt_public_keys_json: str = ""
