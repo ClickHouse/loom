@@ -763,9 +763,9 @@ async def tombstone_compacted_embeddings(
     when: datetime,
     ch: _CHClient | None = None,
 ) -> None:
-    """One embeddings pass over turns an earlier compaction tombstoned (the caller
-    names only tombstoned ones): it finishes that compaction's last pass if it failed,
-    and writes nothing otherwise."""
+    """One embeddings pass over the turns live summaries name that are not live for
+    `agent`: it finishes an earlier compaction's last pass if it failed, and a row a
+    peer still holds survives."""
     ch = ch or _default_client()
     await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
 
@@ -902,8 +902,8 @@ async def _tombstone_embeddings(
         "embedded": EMBEDDED_EXCERPT_CHARS,
         "short": _SHORT_EXCERPT_CHARS,
     }
-    # Named turns are the agent's own: compaction reads them from its live turns, and
-    # its repair pass from its live summaries' metadata.
+    # Named turns: compaction's are its own live turns; its repair pass names whatever
+    # its live summaries list. A row a peer still holds survives either way.
     parts: list[tuple[str, dict[str, Any]]] = (
         [(_THREAD_TURNS, params)]
         if msg_ids is None
