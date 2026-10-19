@@ -81,9 +81,8 @@ class CodeLink(BaseModel):
 
 class MemoryGetOutput(ProjectedRow):
     # `_projection` (a ProjectedRow) is the requested field
-    # whitelist (plus `found` / `unchanged`, and `resolved_from` when set), or
-    # None = every field. This
-    # row's own serializer drops two unset optionals first.
+    # whitelist (plus `found` / `unchanged`, and `resolved_from` when set), or None =
+    # every field. This row's own serializer drops two unset optionals first.
     @model_serializer(mode="wrap")
     def _omit_unset_canonical_and_project(
         self, handler: SerializerFunctionWrapHandler

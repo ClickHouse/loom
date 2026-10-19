@@ -216,12 +216,15 @@ def _answered_by_parent(
 ) -> bool:
     """Whether bulk_get answered `memory_key` with another row: a chunk-id-shaped key
     (`chunk:memory.set:<parent>:<n>`) that no row holds reads its parent. This build marks
-    that answer with `resolved_from`. An older one marks it only by `canonical_key`, which a
-    duplicate parent sets to its own canonical, so a chunk-shaped key whose answer carries
-    another version than the listed row, with a canonical key set, is taken as another row's
-    too (this build's answer for the row itself carries no canonical key)."""
+    that answer with `resolved_from`, and a duplicate row's own answer with `duplicate_of`,
+    which an older build's bulk_get never filled. An older build marks a parent's answer only
+    by `canonical_key` (a duplicate parent's own canonical), so a chunk-shaped key answered
+    with a canonical key and another version than the listed row is taken as another row's
+    too."""
     if answer.get("resolved_from"):
         return True
+    if answer.get("duplicate_of"):
+        return False  # the row's own answer: it is a duplicate
     rest = memory_key.removeprefix("chunk:memory.set:")
     parent, _, index = rest.rpartition(":")
     if rest == memory_key or not index.isdigit():

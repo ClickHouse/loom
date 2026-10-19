@@ -300,7 +300,7 @@ async def test_export_never_writes_a_parents_value_under_a_chunk_shaped_key() ->
     assert rows == [] and unreadable == ["chunk:memory.set:x:0"]
 
 
-def test_a_chunk_shaped_duplicate_rows_own_answer_is_kept() -> None:
+def test_a_chunk_shaped_rows_own_answer_is_told_apart_from_its_parents() -> None:
     # A duplicate row's answer names its canonical (another key); only the parent named in
     # the id, or `resolved_from`, marks an answer given by another row.
     own = {"value": "v", "canonical_key": "notes-v2"}
@@ -316,3 +316,10 @@ def test_a_chunk_shaped_duplicate_rows_own_answer_is_kept() -> None:
     assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", {**older, "version": 5}, 5)
     # this build's own answer for the row, rewritten since the list: kept
     assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", {"version": 9}, 5)
+    # this build's own answer for a duplicate row (its canonical may even be the "parent"),
+    # whether or not it was rewritten since the list: `duplicate_of` says it is the row's own
+    duplicate = {"canonical_key": "notes", "duplicate_of": "m-1"}
+    assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", duplicate, None)
+    assert not cli_okf._answered_by_parent(
+        "chunk:memory.set:notes:0", {**older, "duplicate_of": "m-1"}, 5
+    )
