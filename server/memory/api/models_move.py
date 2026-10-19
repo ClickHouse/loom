@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from server.memory.api.models_common import _Identity
+from server.memory.api.models_common import EntityName, _Identity
 
 
 class MemoryMoveInput(_Identity):
@@ -38,7 +38,7 @@ class MemoryMoveInput(_Identity):
     )
     memory_type: str | None = Field(default=None, description="Default: the source's.")
     tags: list[str] | None = Field(default=None, description="Default: the source's.")
-    entities: list[str] | None = Field(default=None, description="Default: the source's.")
+    entities: list[EntityName] | None = Field(default=None, description="Default: the source's.")
     valid_at: datetime | None = Field(default=None, description="Default: the source's.")
     source_resource_id: str = Field(default="", description="Default: the source's.")
     keep_redirect: bool = Field(

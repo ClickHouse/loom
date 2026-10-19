@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.core.hashing import sha256_value
+from server.core.repo_base import param_slices
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
 from server.memory.app import conflicts as _conflicts
 from server.memory.app.projection_errors import TriplesInsertFailed, TriplesRepairFailed
@@ -1178,9 +1179,21 @@ async def end_edges(
     when it finds an open edge to end, then a check for a row written meanwhile
     (`reopen_held_edges`), then one for the edges with a stated later end of the pairs no
     row named. The UPDATE stamps the rows it ends with this close's id (`closed_by`), so
-    the reopen opens only those."""
-    if not ends:
-        return
+    the reopen opens only those. The edges go a parameter's worth at a time
+    (`param_slices`): long entity names make a long list of pairs."""
+    for part in param_slices(ends):
+        await _end_edges_slice(ch, org=org, namespace=namespace, ends=part, open_only=open_only)
+
+
+async def _end_edges_slice(
+    ch: Any,
+    *,
+    org: str,
+    namespace: str,
+    ends: list[tuple[str, str, datetime]],
+    open_only: bool,
+) -> None:
+    """`end_edges` for edges whose pairs bind as one parameter."""
     params = {
         "org": org,
         "ns": namespace,

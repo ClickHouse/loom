@@ -18,7 +18,7 @@ from pydantic import (
     model_validator,
 )
 
-from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
+from server.memory.api.models_common import EntityName, MemorySetPeer, MemoryType, _Identity
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.graph_quality import (
     MAX_TRIPLES_PER_ROW,
@@ -291,7 +291,7 @@ class MemorySetInput(_Identity):
     # Explicit entities for a point write. Stored (lowercased) on the embedding
     # row so memory.timeline / entity_filter can find it without waiting on LLM
     # extraction — which never tags a point write under a fake/keyless provider.
-    entities: list[str] = Field(default_factory=list)
+    entities: list[EntityName] = Field(default_factory=list)
     # The (subject, relation, object) facts the value states, written to the fact
     # graph and linked to the row as a `memory.bulk_set` entry's are: a single-valued
     # fact closes the older one it replaces and, under `newest_wins`, retires the rows

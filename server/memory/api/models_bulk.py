@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
+from server.memory.api.models_common import EntityName, MemorySetPeer, MemoryType, _Identity
 from server.memory.api.models_crud import MemoryGetOutput
 from server.operations.base import MCP_HIDDEN
 
@@ -29,7 +29,7 @@ class _BulkSetEntry(BaseModel):
     tags: list[str] = Field(default_factory=list)
     # Extracted named things for memory.related + search entity_filter. Normally
     # populated by the entity worker; set_from_messages gets them from extraction.
-    entities: list[str] = Field(default_factory=list)
+    entities: list[EntityName] = Field(default_factory=list)
     # Typed (subject, relation, object) triples → loom.entity_triples; boost
     # memories whose stored triples match query-extracted triples.
     relations: list[tuple[str, str, str]] = Field(default_factory=list)

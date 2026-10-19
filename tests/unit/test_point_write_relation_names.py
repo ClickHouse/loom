@@ -79,3 +79,20 @@ def test_a_refused_subject_names_what_it_was_stored_as():
     assert "'the ?' is stored as ''" in message
     assert "articles, possessives and punctuation" in message
     assert "a subject needs at least 2 characters" in message
+
+
+def test_a_declared_entity_name_is_at_most_500_characters():
+    """Each pair a write declares binds into its edge statements, as an edge's entity."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.api.models_move import MemoryMoveInput
+
+    name = "n" * 500
+    assert MemorySetInput(**_IDENTITY, memory_key="k", value="v", entities=[name]).entities
+    with pytest.raises(ValidationError):
+        MemorySetInput(**_IDENTITY, memory_key="k", value="v", entities=[name + "x"])
+    with pytest.raises(ValidationError):
+        MemoryBulkSetInput(
+            **_IDENTITY, entries=[{"memory_key": "k", "value": "v", "entities": [name + "x"]}]
+        )
+    with pytest.raises(ValidationError):
+        MemoryMoveInput(**_IDENTITY, from_key="k", to_key="k2", entities=[name + "x"])

@@ -8,6 +8,7 @@ than duplicating.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +18,10 @@ from server.core.naming import SENTINEL
 # tag_registry. Core four (semantic/procedural/preference = searchable+embedded,
 # episodic = session-scoped) remain a runtime convention the handlers key off.
 MemoryType = str
+
+# A declared entity name, at most an edge's entity's length (`models_facts`): each pair a
+# write declares binds into its edge statements.
+EntityName = Annotated[str, Field(max_length=500)]
 
 
 class _Identity(BaseModel):
