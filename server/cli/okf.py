@@ -253,11 +253,12 @@ async def _with_full_values(
     namespace: str,
     entries: list[dict[str, Any]],
     *,
-    include_tombstoned: bool = False,
+    include_tombstoned: bool,
 ) -> tuple[list[dict[str, Any]], int]:
     """The entries with their full values, and how many `memory.bulk_get` no longer found
     (deleted since the listing; left out, as the list preview is a cut value). With
-    `include_tombstoned` a deleted row is listed on purpose and keeps its preview."""
+    `include_tombstoned`, a row the list returned as deleted is exported on purpose and keeps
+    its preview."""
     # Full values (list previews are capped) grouped by the writer identity,
     # since bulk_get resolves keys within one identity tuple.
     by_ident: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
@@ -284,7 +285,8 @@ async def _with_full_values(
             )
             full.update(got.get("results") or {})
         for r in rows:
-            if r["memory_key"] not in full and not include_tombstoned:
+            # a row the list returned as deleted is exported on purpose (--include-tombstoned)
+            if r["memory_key"] not in full and not (include_tombstoned and r.get("tombstoned_at")):
                 gone += 1
                 continue
             g = full.get(r["memory_key"]) or {}
