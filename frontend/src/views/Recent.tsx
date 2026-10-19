@@ -128,7 +128,8 @@ function MemoryList() {
   const [conflictKeys, setConflictKeys] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
   const [query, setQuery] = useState("");
-  // Set by a tag chip, so its filter skips the typing delay.
+  // Set by a tag chosen on a card or elsewhere in the app, or by Clear filters, so the
+  // filter skips the typing delay.
   const applyNow = useRef(false);
   // Another namespace's conflict keys and agent are not this one's: they go during render,
   // before the new namespace's first read or paint can use them (useMemorySearch drops its
@@ -180,16 +181,6 @@ function MemoryList() {
     applyNow.current = true;
     setQuery((q) => toggleQueryToken(q, `tag:${tag}`));
   }, []);
-  useEffect(() => {
-    if (!memoryTagFilter) return;
-    setQuery((q) => {
-      if (parseSearchQuery(q).tags.some((t) => t.toLowerCase() === memoryTagFilter.toLowerCase())) return q;
-      // A tag picked elsewhere applies at once, as a card's does.
-      applyNow.current = true;
-      return `${q} tag:${memoryTagFilter}`.trim();
-    });
-    setMemoryTagFilter(null);
-  }, [memoryTagFilter, setMemoryTagFilter]);
 
   // A filter covers the whole namespace, not the page on screen. A tag or agent filter is
   // asked of the server, which returns the rows carrying every tag, in any case (a server a
@@ -200,11 +191,22 @@ function MemoryList() {
   const typedNow = useSameFilter({ tags: queryTags, agent: queryAgent ?? "" });
   const [typed, setTyped] = useState(typedNow);
   useEffect(() => {
-    // A tag chip applies at once; typing waits for a pause.
+    // A tag chosen on a card or elsewhere in the app, or Clear filters, applies at once;
+    // typing waits for a pause.
     const t = setTimeout(() => setTyped(typedNow), applyNow.current ? 0 : 250);
     applyNow.current = false;
     return () => clearTimeout(t);
   }, [typedNow]);
+  // Declared after the delay effect: on mount that one runs first and would otherwise take
+  // the flag set here for the tag.
+  useEffect(() => {
+    if (!memoryTagFilter) return;
+    setMemoryTagFilter(null);
+    if (queryTags.some((t) => t.toLowerCase() === memoryTagFilter.toLowerCase())) return;
+    // A tag picked elsewhere applies at once, as a card's does.
+    applyNow.current = true;
+    setQuery(`${query} tag:${memoryTagFilter}`.trim());
+  }, [memoryTagFilter, setMemoryTagFilter, query, queryTags]);
   const filterPending = !sameFilter(typedNow, typed);
   // The list filters by what the read was asked for, so a half-typed `tag:`/`agent:` keeps
   // the cards on screen. Built from the tags' text (a tag holds no space), so a keystroke that
@@ -495,12 +497,13 @@ function MemoryList() {
   // Group entries by day label, but not while searching — day buckets would hide the
   // relevance ranking.
   // A tag or an agent narrows any status; a status but Live is a filter too.
-  const narrowed = queryTags.length > 0 || !!queryAgent || agentFilter != null;
+  // Built from the debounced filter the cards follow, so a half-typed `tag:` changes none of it.
+  const narrowed = typed.tags.length > 0 || !!typed.agent || agentFilter != null;
   const filtering = narrowed || status !== "live";
   // The filters in force, as they read in the toolbar ("tag:api, agent:bot, Pinned").
   const filterNames = [
-    ...queryTags.map((t) => `tag:${t}`),
-    ...(queryAgent ? [`agent:${queryAgent}`] : agentFilter != null ? [displayAgent(agentFilter)] : []),
+    ...typed.tags.map((t) => `tag:${t}`),
+    ...(typed.agent ? [`agent:${typed.agent}`] : agentFilter != null ? [displayAgent(agentFilter)] : []),
     ...(status !== "live" ? [STATUSES.find((o) => o.value === status)?.label ?? status] : []),
   ].join(", ");
   // What the reader typed, for the no-match row. With a select in force too (agent, a
@@ -510,14 +513,16 @@ function MemoryList() {
       ? ""
       : [
           searchActive ? rawQuery.trim() : "",
-          ...queryTags.map((t) => `tag:${t}`),
-          queryAgent ? `agent:${queryAgent}` : "",
+          ...typed.tags.map((t) => `tag:${t}`),
+          typed.agent ? `agent:${typed.agent}` : "",
         ]
           .filter(Boolean)
           .join(", ");
   const clearFilters = () => {
     // Every Clear leaves with the filters it clears: focus goes to the search.
     searchInputRef.current?.focus();
+    // The typed tags and agent go at once too, not after the typing delay.
+    if (typedNow.tags.length > 0 || typedNow.agent) applyNow.current = true;
     setQuery(rawQuery);
     setStatus("live");
     setAgentFilter(null);

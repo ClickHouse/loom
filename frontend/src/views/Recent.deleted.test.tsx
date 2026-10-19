@@ -96,6 +96,25 @@ describe("Recently deleted status", () => {
     expect(await screen.findByText("live/key")).toBeInTheDocument();
   });
 
+  // The page reads the filter the cards follow: a `tag:` still being typed changes nothing
+  // until the typing delay has passed.
+  it("keeps the empty state while a tag is typed", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.include_tombstoned
+        ? { entries: [], total: 0, truncated: false, today: 0 }
+        : { entries: [entry("live/key")], total: 1, truncated: false, today: 1 },
+    );
+    render(<Recent />);
+    await screen.findByText("live/key");
+    await userEvent.click(screen.getAllByRole("button", { name: "Status" })[0]);
+    await waitFor(() => expect(item("deleted")).not.toBeNull());
+    await userEvent.click(item("deleted") as HTMLElement);
+    await screen.findByText("No recently deleted memories");
+    await userEvent.type(screen.getByLabelText("Search memories"), "tag:x");
+    expect(screen.getByText("No recently deleted memories")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("No recently deleted memories")).toBeNull());
+  });
+
   // The UTC rule itself is daysLeftToRestore's (lib/format.test.ts).
   it("a deleted row says how many days are left to restore it", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });

@@ -125,7 +125,8 @@ describe("Memories: filtering by tags", () => {
     expect(shown()).toEqual(["both", "alerts_only", "storage_only"]);
 
     await userEvent.type(screen.getByLabelText("Search memories"), "tag:alerts tag:storage");
-    await userEvent.click(within(toolbar).getAllByRole("button", { name: "Clear filters" })[0]);
+    // Clear comes with the typed filter, once the typing delay has passed.
+    await userEvent.click((await within(toolbar).findAllByRole("button", { name: "Clear filters" }))[0]);
     expect(shown()).toEqual(["both", "alerts_only", "storage_only"]);
     expect(screen.getByLabelText("Search memories")).toHaveValue("");
   });

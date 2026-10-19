@@ -3,7 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DraftSearch } from "./DraftSearch";
 
-// Fake timers: the debounce is stepped through, not waited out.
+// Fake timers: each test steps the debounce itself, and userEvent its key delay. They also
+// follow the clock (shouldAdvanceTime), because Testing Library ends every userEvent call
+// by waiting on a zero timeout that it steps only under jest's fake timers.
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
 });
