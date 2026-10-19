@@ -196,9 +196,10 @@ async def owe_retirements(
     *, org: str, namespace: str, victims: Sequence[Mapping[str, Any]], reason: str, agent: str
 ) -> str:
     """A FOLLOW_OWED intent for rows about to be retired, written before the supersede as
-    the conflict resolver writes one: a process stopped before their record leaves it for
-    the repair, which acts only on a row still retired behind its winner. Its id, or ''
-    when it could not be written (the record after the supersede is owed as before)."""
+    the conflict resolver writes one, and left for the projection repair, which acts only
+    on a row still retired behind its winner: a lost answer, a stop before the record or
+    before the follow all end in it. Its id, or '' when it could not be written (the
+    record after the supersede is then owed as before)."""
     from server.memory.app.projection_failures import FOLLOW_OWED, record_projection_failure
 
     if not victims:
@@ -237,20 +238,14 @@ async def record_or_owe(
     """`record_auto_supersessions`; the entries whose record failed are owed to the
     projection repair as a FOLLOW_OWED intent (`agent`: the winner's writer) with their
     reason, which the repair writes once. `intent`: the one `owe_retirements` wrote
-    before the supersede, resolved once this is done; the record names it, which is how
-    a replay finds it. Never raises."""
+    before the supersede, which already owes them: the record names it, and the repair
+    follows its pairs, writes a record still missing and resolves it, batched, after its
+    grace, so the request path writes no mutation. Never raises."""
     left = await unrecorded(
         org=org, namespace=namespace, retired=retired, reason=reason, request_id=intent or None
     )
-    if left:
+    if left and not intent:
         await _owe(org=org, namespace=namespace, left=left, reason=reason, agent=agent)
-    if intent:
-        from server.memory.app.projection_failures import mark_resolved
-
-        try:
-            await mark_resolved(org, [intent])
-        except Exception as e:  # noqa: BLE001 — a replay of recorded rows writes nothing new
-            log.warning("auto_resolution: retirement intent left for the repair: %s", e)
 
 
 async def _owe(

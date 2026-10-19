@@ -272,8 +272,10 @@ record when none exists and clears the winner's flag against the loser, only whi
 loser is retired behind its winner. The repair leaves an intent under ten minutes old
 (`FOLLOW_OWED_GRACE_S`) to its writer, which records and follows the retirement itself, so
 the two never write a record side by side. A point write's retirement (same-key, a
-contradiction, a refine) owes its record the same way: the intent before the supersede,
-resolved once the record, which names it, lands. The acting of a judged row (its pairs, records,
+contradiction, a refine) owes its record and follow the same way: the intent goes before
+the supersede and the record names it; the write leaves it active and the repair, after
+the grace, follows the pairs, writes a record still missing and resolves it in its
+batched mark, so the request path writes no mutation. The acting of a judged row (its pairs, records,
 follows and audit row) is shielded from cancellation, and a cancelled pass ends only once
 it has finished. A flag is
 `mark_peers_conflicted`; a clear removes the pair from each side's `conflict_with`, and a

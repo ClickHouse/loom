@@ -6663,7 +6663,7 @@ async def _owed(ch: Any, org: str, want: str) -> list[dict[str, Any]]:
             "SELECT toString(failure_id) AS id, toString(status) AS status, payload"
             " FROM loom.memory_projection_failures WHERE org = {org:String}"
             " AND projection = 'triples_follow_owed'"
-            " SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1",
+            " SETTINGS select_sequential_consistency = 1",
             params={"org": org},
         )
         if any(r["status"] == want for r in rows):
@@ -6672,20 +6672,22 @@ async def _owed(ch: Any, org: str, want: str) -> list[dict[str, Any]]:
     return rows
 
 
-@pytest.mark.parametrize("killed", [False, True])
-async def test_a_point_write_owes_its_retirement_before_the_supersede(
-    ch, org, monkeypatch, killed: bool
-) -> None:
-    """A newest_wins same-key retirement writes its intent before the supersede, as the
-    conflict resolver does: resolved once the record names it, or left active for the
-    repair when the write stops between the two."""
+async def _newest_wins_two_offices(
+    ch: Any, org: str, monkeypatch: Any, *, stop: str = ""
+) -> dict[str, str]:
+    """Paris, then Rome under one key in a newest_wins namespace, each with its fact.
+    `stop`: "record" skips the retirement's record, "follow" its follow (a process
+    stopped there)."""
     from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import after_write, conflicts, key_supersession
+    from server.memory.app import after_write, conflicts, key_supersession, set_commit
     from server.memory.app.write import handle_memory_set
     from server.memory.domain.conflicts import ConflictResult
 
     async def _clear(**kw: Any) -> ConflictResult:
         return ConflictResult(verdict="clear", peers=[])
+
+    async def _stopped(**kw: Any) -> None:
+        return None
 
     monkeypatch.setattr(conflicts, "check_on_commit", _clear)
     now = datetime.now(UTC)
@@ -6702,14 +6704,12 @@ async def test_a_point_write_owes_its_retirement_before_the_supersede(
             }
         ],
     )
-
-    async def stopped(**kw: Any) -> None:
-        return None  # the process stopped after the supersede, before the record
-
     ids = {}
-    for session, city in (("s1", "Paris"), ("s2", "Rome")):
-        if session == "s2" and killed:
-            monkeypatch.setattr(key_supersession, "settle_retirements", stopped)
+    for session, city in (("s1", "paris"), ("s2", "rome")):
+        if session == "s2" and stop == "record":
+            monkeypatch.setattr(key_supersession, "settle_retirements", _stopped)
+        if session == "s2" and stop == "follow":
+            monkeypatch.setattr(set_commit, "follow_beside_response", lambda **kw: None)
         out = await handle_memory_set(
             MemorySetInput(
                 org=org,
@@ -6718,22 +6718,95 @@ async def test_a_point_write_owes_its_retirement_before_the_supersede(
                 user_id=USER,
                 session_id=session,
                 memory_key="office_city",
-                value=f"The office is in {city}",
+                value=f"The office is in {city.title()}",
+                relations=[("office", "located_in", city)],
             )
         )
         ids[session] = out.memory_id
         await after_write.drain()
-    (intent,) = await _owed(ch, org, "active" if killed else "resolved")
+    return ids
+
+
+async def _replay_owed(ch: Any, org: str, monkeypatch: Any) -> None:
+    from server.memory.app import projection_failures
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    monkeypatch.setattr(projection_failures, "FOLLOW_OWED_GRACE_S", 0)
+    await retry_projection_failures(org=org, projection="triples_follow_owed", ch=ch)
+
+
+async def _records(ch: Any, org: str) -> list[dict[str, Any]]:
+    return await ch.query_all(
+        "SELECT request_id FROM loom.audit_log WHERE org = {org:String}"
+        " AND event_type = 'memory.auto_supersede' SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+
+
+async def test_a_point_write_leaves_its_retirement_intent_to_the_repair(
+    ch, org, monkeypatch
+) -> None:
+    """The intent goes before the supersede and the record names it; the write marks
+    nothing (no mutation in the request), and the repair resolves it, writing no
+    second record."""
+    ids = await _newest_wins_two_offices(ch, org, monkeypatch)
+    (intent,) = await _owed(ch, org, "active")
     assert json.loads(intent["payload"])["pairs"] == [[ids["s1"], ids["s2"]]]
-    assert intent["status"] == ("active" if killed else "resolved")
-    if not killed:
-        named = await ch.query_all(
-            "SELECT count() AS n FROM loom.audit_log WHERE org = {org:String}"
-            " AND event_type = 'memory.auto_supersede' AND request_id = {i:String}"
+    assert intent["status"] == "active", "no mark in the request path"
+    assert [r["request_id"] for r in await _records(ch, org)] == [intent["id"]]
+    await _replay_owed(ch, org, monkeypatch)
+    (intent,) = await _owed(ch, org, "resolved")
+    assert intent["status"] == "resolved"
+    assert len(await _records(ch, org)) == 1
+
+
+async def test_a_retirement_stopped_before_its_record_is_recorded_by_the_repair(
+    ch, org, monkeypatch
+) -> None:
+    ids = await _newest_wins_two_offices(ch, org, monkeypatch, stop="record")
+    assert await _records(ch, org) == []
+    await _replay_owed(ch, org, monkeypatch)
+    (intent,) = await _owed(ch, org, "resolved")
+    assert intent["status"] == "resolved"
+    assert [r["request_id"] for r in await _records(ch, org)] == [intent["id"]]
+    assert json.loads(intent["payload"])["pairs"] == [[ids["s1"], ids["s2"]]]
+
+
+async def test_a_retirement_stopped_before_its_follow_is_followed_by_the_repair(
+    ch, org, monkeypatch
+) -> None:
+    """The record landed but the follow beside the response did not run: the repair
+    follows the intent's pair, then resolves it, and a second follow changes nothing."""
+    from types import SimpleNamespace
+
+    from server.memory.app import entity_projections
+
+    ids = await _newest_wins_two_offices(ch, org, monkeypatch, stop="follow")
+    followed: list[Any] = []
+    real = entity_projections.follow_row_supersessions
+
+    async def spy(scope: Any, pairs: Any, **kw: Any) -> Any:
+        followed.append([tuple(p) for p in pairs])
+        return await real(scope, pairs, **kw)
+
+    monkeypatch.setattr(entity_projections, "follow_row_supersessions", spy)
+    await _replay_owed(ch, org, monkeypatch)
+    assert followed == [[(ids["s1"], ids["s2"])]]
+    (intent,) = await _owed(ch, org, "resolved")
+    assert intent["status"] == "resolved"
+
+    async def facts() -> list[dict[str, Any]]:
+        return await ch.query_all(
+            "SELECT subject, relation, object, valid_to FROM loom.entity_triples"
+            " WHERE org = {org:String} ORDER BY object, seen_at"
             " SETTINGS select_sequential_consistency = 1",
-            params={"org": org, "i": intent["id"]},
+            params={"org": org},
         )
-        assert int(named[0]["n"]) == 1, "the record names its intent"
+
+    before = await facts()
+    scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
+    await real(scope, [(ids["s1"], ids["s2"])], ch=ch)
+    assert await facts() == before, "a second follow changes nothing"
 
 
 async def test_a_retirement_intent_holds_no_value_and_leaves_with_its_user(
@@ -6788,3 +6861,27 @@ async def test_a_retirement_intent_holds_no_value_and_leaves_with_its_user(
         params={"org": org},
     )
     assert int(left[0]["n"]) == 0
+
+
+async def test_a_retirement_whose_supersede_answer_was_lost_is_recorded_by_the_repair(
+    ch, org, monkeypatch
+) -> None:
+    """The supersede lands but its answer is lost: the write records nothing, and its
+    intent stays for the repair, which writes the record."""
+    from server.memory.store import lifecycle
+
+    real = lifecycle.insert_memory_versions
+
+    async def lost(rows: Any, **kw: Any) -> Any:
+        if any(str(r.get("status")) == "superseded" for r in rows):
+            await real(rows, **kw)
+            raise TimeoutError("answer lost after the insert landed")
+        return await real(rows, **kw)
+
+    monkeypatch.setattr(lifecycle, "insert_memory_versions", lost)
+    await _newest_wins_two_offices(ch, org, monkeypatch)
+    assert await _records(ch, org) == []
+    (intent,) = await _owed(ch, org, "active")
+    assert intent["status"] == "active"
+    await _replay_owed(ch, org, monkeypatch)
+    assert [r["request_id"] for r in await _records(ch, org)] == [intent["id"]]
