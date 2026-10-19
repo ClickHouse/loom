@@ -1,17 +1,17 @@
-{{- with .Values.settingsFile }}
-{{- range $k, $_ := . }}
+{{- range $k, $_ := .Values.settingsFile }}
 {{- if has $k (list "embedding_provider" "embedding_model" "embedding_dim" "embedding_base_url" "embedding_send_dimensions" "jwt_secret" "jwt_secret_previous") }}
 {{- fail (printf "set %s through embedding.* or secrets.jwtSecret, which the chart guards, not settingsFile" $k) }}
 {{- end }}
 {{- end }}
+{{- /* Rendered and mounted even when empty: a pod of the previous ReplicaSet started
+during a rollout still names this ConfigMap and LOOM_SETTINGS_FILE. */}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "loom.suffixed" (dict "root" $ "suffix" "settings") }}
+  name: {{ include "loom.suffixed" (dict "root" . "suffix" "settings") }}
   labels:
-    {{- include "loom.labels" $ | nindent 4 }}
+    {{- include "loom.labels" . | nindent 4 }}
 data:
   loom.yaml: |
     # yaml-language-server: $schema=https://raw.githubusercontent.com/ClickHouse/loom/main/schemas/loom-settings.schema.json
-    {{- dict "version" 1 "settings" . | toYaml | nindent 4 }}
-{{- end }}
+    {{- dict "version" 1 "settings" (.Values.settingsFile | default dict) | toYaml | nindent 4 }}

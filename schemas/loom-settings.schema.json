@@ -3598,7 +3598,7 @@
           "maximum": 86400,
           "minimum": 60,
           "type": "integer",
-          "description": "Lifetime of an OAuth access token, in seconds. At most a day: the dashboard cannot refresh its token, and only a refresh asks the IdP whether the person is still active, so this bounds how long someone deactivated there keeps access."
+          "description": "Lifetime of an OAuth access token, in seconds; at most a day, which bounds access after the IdP deactivates someone (only a refresh asks it)."
         },
         "oauth_enabled": {
           "default": false,

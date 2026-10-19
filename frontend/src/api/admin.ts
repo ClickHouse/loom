@@ -873,6 +873,9 @@ export interface SettingChange {
   name: string;
   value: unknown;
   previous: unknown;
+  // `override`: undo by setting `previous` back; anything else was the changing
+  // process's own value, undone with a reset. Null on rows written before it existed.
+  previous_source: string | null;
   cleared: boolean;
 }
 

@@ -185,8 +185,8 @@ export function operatorItems(whoami: WhoAmI | null): NavItem[] {
 }
 
 /** The drawer items a caller may see, in their groups — Review queue leads Review while
- *  there is something to review; the operator-only Access group only for platform / org
- *  admins. */
+ *  there is something to review; the Access group only for platform / org admins, the
+ *  Deployment group only for platform admins. */
 export function groupAdminItems(visible: NavItem[]): NavGroup[] {
   const byId = new Map(visible.map((i) => [i.id, i] as const));
   const out: NavGroup[] = [];

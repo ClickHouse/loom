@@ -313,15 +313,88 @@ def test_the_history_route_reads_the_recorded_changes(
 
     async def setting_changes(event: str, name: str, limit: int, *, ch: Any = None) -> list:
         seen.append((event, name, limit))
-        subject = json.dumps({"name": LIVE, "value": 0.4, "previous": 0.35, "cleared": False})
-        return [{"ts": "2026-01-02 03:04:05.000", "actor": "cli:ops", "subject": subject}]
+        return _HISTORY
 
     monkeypatch.setattr(admin_repo, "setting_changes", setting_changes)
     r = client.post("/v1/admin/settings.history", json={"name": LIVE, "limit": 5})
     assert r.status_code == 200, r.text
-    (change,) = r.json()["changes"]
-    assert (change["actor"], change["previous"], change["value"]) == ("cli:ops", 0.35, 0.4)
+    newer, older = r.json()["changes"]
+    assert (newer["actor"], newer["previous"], newer["value"]) == ("cli:ops", 0.35, 0.4)
+    assert newer["previous_source"] == "env"
+    assert older["previous_source"] is None  # a row recorded before the field existed
     assert seen == [("setting.changed", LIVE, 5)]
+
+
+_HISTORY = [
+    {
+        "ts": "2026-01-02 03:04:05.000",
+        "actor": "cli:ops",
+        "subject": json.dumps(
+            {
+                "name": LIVE,
+                "value": 0.4,
+                "previous": 0.35,
+                "previous_source": "env",
+                "cleared": False,
+            }
+        ),
+    },
+    {
+        "ts": "2026-01-01 03:04:05.000",
+        "actor": "cli:ops",
+        "subject": json.dumps({"name": LIVE, "value": 0.35, "previous": 0.3, "cleared": False}),
+    },
+]
+
+
+def test_the_cli_history_says_when_an_undo_is_a_reset(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import asyncio
+
+    from server.cli import settings_cmd
+    from server.insights.store import admin as admin_repo
+
+    async def setting_changes(event: str, name: str, limit: int, *, ch: Any = None) -> list:
+        return _HISTORY
+
+    monkeypatch.setattr(admin_repo, "setting_changes", setting_changes)
+    monkeypatch.setattr(settings_cmd, "run_connected", lambda run: asyncio.run(run(None)))
+    args = argparse.Namespace(name=LIVE, limit=5, json=False)
+    assert settings_cmd._cmd_history(args) == 0
+    newer, older = capsys.readouterr().out.splitlines()
+    assert "0.35 (undo: reset) → 0.4 (set)" in newer
+    assert "0.3 → 0.35 (set)" in older
+
+
+def test_a_cross_site_origin_is_refused_with_auth_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    from server.insights.app.admin_routes import refuse_browser_reach
+
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda _: True)
+
+    def request(host: str, headers: dict[str, str]) -> Request:
+        raw = [(k.encode(), v.encode()) for k, v in {"host": host, **headers}.items()]
+        scope = {
+            "type": "http",
+            "scheme": "https",
+            "server": (host, 443),
+            "path": "/",
+            "headers": raw,
+        }
+        return Request(scope)
+
+    refuse_browser_reach(request("loom.example.com", {}), "setting changes")  # a remote CLI
+    refuse_browser_reach(
+        request("loom.example.com", {"origin": "https://loom.example.com"}), "setting changes"
+    )
+    with pytest.raises(HTTPException) as e:
+        refuse_browser_reach(
+            request("loom.example.com", {"origin": "https://attacker.example"}), "setting changes"
+        )
+    assert e.value.status_code == 403
 
 
 def test_a_change_a_web_page_could_send_is_refused(

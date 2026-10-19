@@ -33,10 +33,10 @@ def _numeric(node: ast.AST) -> bool:
     return False
 
 
-def _constants(tree: ast.Module, lines: list[str] | None = None) -> list[str]:
+def _constants(tree: ast.Module, lines: list[str]) -> list[str]:
     out = []
     for stmt in tree.body:
-        if lines and "# not a setting: " in lines[stmt.lineno - 1]:
+        if "# not a setting: " in lines[stmt.lineno - 1]:
             continue
         targets: list[ast.expr] = []
         if isinstance(stmt, ast.Assign):

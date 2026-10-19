@@ -237,6 +237,10 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
     if (el) {
       el.focus();
       setFocusNext(null);
+    } else if (!rows.some((r) => focusNext === controlId("change", r.name))) {
+      // A reset to the default under "Changed only" takes the row off the list.
+      document.getElementById("settings-list")?.focus();
+      setFocusNext(null);
     }
   });
   const close = (name: string) => {
@@ -363,6 +367,12 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
   );
 }
 
+/** Only an override is the deployment's value to set back; anything else was the
+ *  changing process's own, which a reset restores (as `loom settings history` marks it). */
+export function undoIsReset(c: SettingChange): boolean {
+  return c.previous_source !== null && c.previous_source !== "override";
+}
+
 const CHANGE_HEADERS = [{ label: "When" }, { label: "Who" }, { label: "Setting" }, { label: "Change" }];
 
 function RecentChanges({ changes }: { changes: SettingChange[] }) {
@@ -383,7 +393,8 @@ function RecentChanges({ changes }: { changes: SettingChange[] }) {
             {
               label: (
                 <span className="font-mono text-xs">
-                  {shown(c.previous)} → {shown(c.value)}
+                  {shown(c.previous)}
+                  {undoIsReset(c) ? " (undo: reset)" : ""} → {shown(c.value)}
                   {c.cleared ? " (reset)" : ""}
                 </span>
               ),

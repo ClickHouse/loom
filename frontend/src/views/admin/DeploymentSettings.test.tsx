@@ -43,6 +43,7 @@ const CHANGE: SettingChange = {
   name: "memory_ask_recency_weight",
   value: 0.35,
   previous: 0.2,
+  previous_source: "default",
   cleared: false,
 };
 
@@ -85,7 +86,7 @@ describe("DeploymentSettings", () => {
     expect(await screen.findAllByText("memory_ask_recency_weight")).toHaveLength(2); // the list and the record
     expect(screen.getByText("Environment")).toBeTruthy();
     expect(screen.queryByText("memory_search_default_mode")).toBeNull(); // at its default
-    expect(screen.getByText("0.2 → 0.35")).toBeTruthy();
+    expect(screen.getByText("0.2 (undo: reset) → 0.35")).toBeTruthy();
     // A setting read at startup offers no change.
     expect(screen.queryByRole("button", { name: "Change ch_host" })).toBeNull();
   });

@@ -13,7 +13,7 @@ live: with `LOOM_ADAPTIVE_THRESHOLDS` on they apply only when there is no calibr
 ## See what is in force
 
 ```bash
-loom settings list --changed              # every setting off its default
+loom settings list --changed              # off its default, or overridden
 loom settings list --prefix memory_ask_   # one area
 loom settings list --json
 ```
@@ -77,7 +77,9 @@ over it: a namespace's `retrieval_defaults` (`top_k`, `min_similarity`,
 `reinforcement_weight` and the other search knobs `namespace.register` takes) and a
 request's own fields.
 
-The same operations over HTTP, with a platform admin token:
+The same operations over HTTP, with a platform admin token. With auth off, a change is
+accepted only on a loopback address (`localhost`): a web page could otherwise reach it
+through DNS rebinding.
 
 ```bash
 curl -s "$LOOM_BASE_URL/v1/admin/settings.list" -H "Authorization: Bearer $TOKEN" \

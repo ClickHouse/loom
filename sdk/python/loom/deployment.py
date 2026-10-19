@@ -40,7 +40,7 @@ class DeploymentClient:
     async def settings(self, prefix: str = "", changed: bool = False) -> dict[str, Any]:
         """Every setting: value in force, default, where the value came from
         (override, dashboard, env, env_file, settings_file, inferred, default) and
-        whether it is live. `changed`: only the ones off their default."""
+        whether it is live. `changed`: only the ones off their default or overridden."""
         return await self._call(
             "POST", "/v1/admin/settings.list", {"prefix": prefix, "changed": changed}
         )

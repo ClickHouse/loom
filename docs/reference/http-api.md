@@ -83,7 +83,9 @@ The `/v1/admin/*` routes sit outside the op registry. Each runs its gate first,
 the role the table names: `platform_admin` for the deployment-wide routes
 (`require_admin`, `server/insights/app/admin_routes.py`), `org_admin` for the ones that
 act inside the one org their body names (a platform admin passes for any org). With
-auth off, every gate passes. The Python SDK has one method per route,
+auth off, every gate passes, but `settings.set` and the model routes still refuse a
+non-loopback Host and a cross-site Origin, so a web page cannot reach them through DNS
+rebinding. The Python SDK has one method per route,
 `agent.deployment.routes.<name>(body)` (`sdk/python/loom/admin_routes.py`, generated from
 the same routes), and the curated `agent.deployment` methods over them.
 

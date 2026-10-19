@@ -598,8 +598,6 @@ server/tasks/app/watch_routes.py::READ_LIMIT
 server/tasks/app/watch_routes.py::RETRY_MS
 server/tasks/domain/cursors.py::LAG_SECONDS
 server/tasks/store/runs.py::DERIVED_LIMIT
-server/tasks/workers/webhook_deliver.py::ACK_TIMEOUT_SECONDS
-server/tasks/workers/webhook_deliver.py::MAX_POSTS_PER_PASS
 server/tracker/app/dup_judge.py::_MAX_CANDIDATE_CHARS
 server/tracker/app/dup_judge.py::_MAX_DRAFT_CHARS
 server/tracker/app/dup_rerank.py::MAX_PICKS

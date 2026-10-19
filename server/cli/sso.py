@@ -179,7 +179,7 @@ def _cmd_password_link(args: argparse.Namespace) -> int:
             )
         print(f"{base}/oauth/set-password?code={code}")
         print(
-            f"  one use, for {settings.password_link_ttl_seconds // 3600} h, while single "
+            f"  one use, for {settings.password_link_ttl_seconds // 60} min, while single "
             "sign-on is off; sets the password of " + ", ".join(namespaces)
         )
         return 0

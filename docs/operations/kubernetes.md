@@ -58,8 +58,9 @@ settingsFile:
   memory_ask_recency_weight: 0.3
 ```
 
-The chart mounts it at `/app/config/loom.yaml` on every pod and rolls the pods when it
-changes; `env` wins over it. Every pod of a rollout reads the one file, and a pod of the
+The chart always renders it, empty when `settingsFile` is, mounts it at
+`/app/config/loom.yaml` on every pod and rolls the pods when it changes; `env` wins over
+it. A pod of the previous ReplicaSet that starts during a rollout still finds the file. Every pod of a rollout reads the one file, and a pod of the
 previous build logs a setting it does not have and ignores it, so a new setting can go in
 the same upgrade. A live setting can also change without a rollout
 ([runtime settings](./runtime-settings.md)). `values.yaml` documents the chart's own values.

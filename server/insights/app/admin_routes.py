@@ -630,7 +630,8 @@ async def admin_settings_set(
 @admin_router.post("/v1/admin/settings.history")
 async def admin_settings_history(input: SettingsHistoryInput) -> SettingsHistoryOutput:
     """The recorded changes of one setting, or of every setting, newest first: who
-    made each, the value before and after. Undo one by setting `previous` back."""
+    made each, the value before and after. Undo one by setting `previous` back when
+    `previous_source` is `override`, else by a reset."""
     from server.insights.app import settings_changes
 
     rows = await settings_changes.history(input.name, input.limit)
