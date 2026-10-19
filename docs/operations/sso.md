@@ -325,7 +325,8 @@ In Okta, on the app integration from [Okta setup](#okta-setup):
 
 3. **Provisioning → To App → Edit:** enable **Create Users**, **Update User
    Attributes** and **Deactivate Users**, and save. Loom keeps no attributes
-   but the `userName` (a rename is kept) and the email, which cannot change.
+   but the `userName` (a rename is kept) and the `emails` list, whose keyed
+   email cannot change.
    With updates on, a changed email shows as a failed task in Okta (Entra
    logs the same refusal); follow
    [Changing a person's email](#changing-a-persons-email). With updates off,
@@ -375,7 +376,8 @@ What Loom does with each request:
   list it is sent. A `PATCH` applies its operations to that list in order,
   and the request is refused (400 `mutability`) when the list it leaves keys
   another email by the rule above: the person would sign in to another
-  account, which a later deactivation of the old email would miss. Other
+  account, which a later deactivation of the old email would miss. A filter
+  that selects no entry adds one, as Entra's writes expect. Other
   addresses may be added, changed or removed (see
   [Changing a person's email](#changing-a-persons-email)). A refused request
   that also sets `active: false` still deactivates: providers send a leaver's
@@ -444,9 +446,10 @@ a reactivation lifts only SCIM's, so a subject an operator revoked stays
 revoked. Only `--scim` changes SCIM's revocation of a subject.
 
 Loom keeps each SCIM user's row in `loom.scim_users` (the userName, the email,
-the subjects it revoked and whether it is active) for as long as the
-deployment does, deleted users included: that row is what keeps a deactivated
-person out. Requests are idempotent, so the provider's retries are safe, and
+the `emails` list the provider sent, the subjects it revoked and whether it is
+active) for as long as the deployment does, deleted users included: that row
+is what keeps a deactivated person out. A `DELETE` clears the `emails` list;
+the email stays. Requests are idempotent, so the provider's retries are safe, and
 they run side by side: only those for people who reach a shared account wait
 on each other (a busy one answers 503 and the provider retries it). The
 filters served are `userName eq "<userName>"` and, on the email,

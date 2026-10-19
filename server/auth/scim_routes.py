@@ -2,10 +2,10 @@
 deactivate and reactivate people (`server/auth/scim.py`).
 
 Mounted only when `LOOM_SCIM_TOKEN` is set, and that bearer token is the only
-credential these routes take. A user resource carries `userName`, its email
-(the `emails` entry marked primary, else the work one, else the first, else
-`userName`) and `active`; other attributes a provider sends are accepted and
-not kept.
+credential these routes take. A user resource carries `userName`, the `emails`
+list (Loom keys the user on the entry marked primary, else the work one, else
+the first, else `userName`) and `active`; other attributes a provider sends
+are accepted and not kept.
 """
 
 from __future__ import annotations
@@ -160,7 +160,15 @@ def _attributes(op: Any) -> list[tuple[str, Any]]:
         raise ScimError(400, "each operation must be an object", "invalidSyntax")
     path, value = str(op.get("path") or ""), op.get("value")
     pairs = list(value.items()) if not path and isinstance(value, dict) else [(path, value)]
-    return [(str(k).lower().removeprefix(_USER_URN), v) for k, v in pairs]
+    return [(_lower_names(str(k)).removeprefix(_USER_URN), v) for k, v in pairs]
+
+
+def _lower_names(path: str) -> str:
+    """`path` with its attribute names lower-cased, and a filter's values as sent."""
+    opening, closing = path.find("["), path.rfind("]")
+    if opening < 0 or closing < opening:
+        return path.lower()
+    return path[:opening].lower() + path[opening : closing + 1] + path[closing + 1 :].lower()
 
 
 def _replaces(op: dict[str, Any]) -> bool:
@@ -241,16 +249,18 @@ def _patched_emails(
     of every entry (`emails.type`), or on the entries a filter selects
     (`emails[type eq "work"]`, `emails[type eq "work"].value`)."""
     filt, sub = _emails_path(attr)
+    comparison = None if filt is None else _comparison(filt)
     if sub not in ("", "value", "type", "primary"):
         return emails  # `emails.display` and the like
-    if filt is None and not sub:
+    if comparison is None and not sub:
         if kind == "remove":
             return []
-        written = _entries(value if isinstance(value, list) else [value])
+        listed = [] if value is None else value if isinstance(value, list) else [value]
+        written = _entries(listed)  # a null is unassigned (RFC 7643 §2.5)
         if kind == "replace":
             return _one_primary(written, range(len(written)))
-        return _one_primary([*emails, *written], range(len(emails), len(emails) + len(written)))
-    picked = [i for i, e in enumerate(emails) if filt is None or _matches(filt, e)]
+        return _added(emails, written)
+    picked = [i for i, e in enumerate(emails) if comparison is None or _matches(comparison, e)]
     if kind == "remove":
         if not sub:
             return [e for i, e in enumerate(emails) if i not in picked]
@@ -259,12 +269,33 @@ def _patched_emails(
     if not sub and not isinstance(value, dict):
         raise ScimError(400, "an emails entry must be an object", "invalidValue")
     changes = value if not sub else {sub: value}
-    if not picked and filt is not None:
-        # Entra writes `emails[type eq "work"].value` for an entry not there yet.
-        added = _entries([{**_criteria(filt), **changes}])
-        return _one_primary([*emails, *added], [len(emails)])
+    if not picked and comparison is not None:
+        # Entra writes `emails[type eq "work"].value` for an entry not there yet,
+        # by add or replace; the list it leaves is checked as any other.
+        return _added(emails, _entries([{comparison[0]: comparison[1], **changes}]))
     out = [_entries([{**e, **changes}])[0] if i in picked else e for i, e in enumerate(emails)]
     return _one_primary(out, picked)
+
+
+def _added(emails: list[dict[str, Any]], written: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`emails` with `written` appended, an entry already there not again
+    (RFC 7644 §3.5.2.1), though its primary flag is taken."""
+    out, touched = list(emails), []
+    for entry in written:
+        same = next((i for i, e in enumerate(out) if _same(e, entry)), None)
+        if same is None:
+            out.append(entry)
+            touched.append(len(out) - 1)
+        elif entry["primary"]:
+            out[same] = {**out[same], "primary": True}
+            touched.append(same)
+    return _one_primary(out, touched)
+
+
+def _same(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    return scim.normalized(a["value"]) == scim.normalized(b["value"]) and (
+        a["type"].lower() == b["type"].lower()
+    )
 
 
 def _emails_path(attr: str) -> tuple[str | None, str]:
@@ -305,39 +336,30 @@ def _entries(items: list[Any]) -> list[dict[str, Any]]:
 
 
 # One `attr eq value` comparison: what a provider puts in an `emails[…]` filter.
-_COMPARISON = re.compile(r'\s*(type|value|primary)\s+eq\s+(?:"([^"]*)"|(true|false))\s*')
+_COMPARISON = re.compile(
+    r'\s*(type|value|primary)\s+eq\s+(?:"([^"]*)"|(true|false))\s*', re.IGNORECASE
+)
 
 
-def _comparison(filt: str) -> tuple[str, str | bool] | None:
-    """An `emails[…]` filter as (attribute, value), `primary` as a bool; None
-    when it is not one comparison."""
+def _comparison(filt: str) -> tuple[str, str | bool]:
+    """An `emails[…]` filter as (attribute, value), `primary` as a bool."""
     m = _COMPARISON.fullmatch(filt)
     if not m:
-        return None
-    attr, text, flag = m.groups()
-    want = text if text is not None else flag
-    return attr, scim.is_primary(want) if attr == "primary" else want
-
-
-def _matches(filt: str, entry: dict[str, Any]) -> bool:
-    """Whether an `emails[…]` filter selects `entry`."""
-    comparison = _comparison(filt)
-    if comparison is None:
         raise ScimError(
             400,
             "an emails filter must be one comparison on type, value or primary",
             "invalidFilter",
         )
+    attr, text, flag = m.groups()
+    attr, want = attr.lower(), text if text is not None else flag
+    return attr, scim.is_primary(want) if attr == "primary" else want
+
+
+def _matches(comparison: tuple[str, str | bool], entry: dict[str, Any]) -> bool:
     attr, want = comparison
     if attr == "primary":
-        return bool(want == entry["primary"])
+        return want is entry["primary"]
     return scim.normalized(str(want)) == scim.normalized(entry[attr])
-
-
-def _criteria(filt: str) -> dict[str, Any]:
-    """What a filter says of the entry it selects (`{"type": "other"}`)."""
-    comparison = _comparison(filt)
-    return {} if comparison is None else {comparison[0]: comparison[1]}
 
 
 def _int_param(request: Request, name: str, default: int) -> int:
@@ -389,6 +411,7 @@ def user_name_and_email(body: dict[str, Any]) -> tuple[str, str, list[dict[str, 
         raise ScimError(400, "userName is required", "invalidValue")
     listed = body.get("emails") or []
     emails = _entries(listed if isinstance(listed, list) else [listed])
+    emails = _one_primary(emails, range(len(emails)))  # the first primary stays the key
     entry = keyed_entry(emails) or {}
     email = scim.normalized(entry.get("value") or name)
     if "@" not in email:
@@ -421,9 +444,10 @@ def _utc(ts: datetime) -> str:
 
 
 def _email(entry: dict[str, Any]) -> dict[str, Any]:
-    """An `emails` entry as the provider wrote it, so comparing finds no change."""
-    shown = {"value": entry["value"], "primary": entry["primary"]}
-    return {**shown, "type": entry["type"]} if entry["type"] else shown
+    """An `emails` entry as Loom keeps it: the value and type as written, when
+    set, and the primary flag (false when not sent, RFC 7643 §2.4)."""
+    shown: dict[str, Any] = {k: entry[k] for k in ("value", "type") if entry[k]}
+    return {**shown, "primary": entry["primary"]}
 
 
 def _not_found() -> ScimError:
@@ -539,7 +563,7 @@ async def replace_user(uid: str, request: Request) -> JSONResponse:
     async with _deactivating_anyway(uid, active):
         name, email, emails = user_name_and_email(body)
         _refuse_another_email(row, email)
-        new = await _update(uid, active, name, emails)
+        new = await _update(uid, active=active, user_name=name, emails=emails)
         if new is None:  # deleted since it was read
             raise _not_found()
         row = new
@@ -556,10 +580,8 @@ async def patch_user(uid: str, request: Request) -> JSONResponse:
         if _sets_inactive(body):
             await scim.update(uid, active=False)  # None for a user that is not there
         raise
-    row = await scim.get(uid)
-    if row is None:
-        raise _not_found()
-    async with _deactivating_anyway(uid, active):
+
+    def patched(row: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]] | None]:
         name, emails = patched_names(body, row)
         if name is not None or emails is not None:
             after = {
@@ -567,12 +589,14 @@ async def patch_user(uid: str, request: Request) -> JSONResponse:
                 "emails": scim.emails_of(row) if emails is None else emails,
             }
             _refuse_another_email(row, user_name_and_email(after)[1])
+        return name, emails
+
+    async with _deactivating_anyway(uid, active):
         # Every PATCH converges, one of only dropped attributes too: an active
         # user lets go what no deactivated email reaches any more.
-        new = await _update(uid, active, name, emails)
-        if new is None:  # deleted since it was read
+        row = await _update(uid, active=active, patched=patched)
+        if row is None:
             raise _not_found()
-        row = new
     return _answer(_resource(request, row))
 
 
@@ -591,11 +615,9 @@ async def _deactivating_anyway(uid: str, active: bool | None) -> AsyncIterator[N
         raise
 
 
-async def _update(
-    uid: str, active: bool | None, name: str | None, emails: list[dict[str, Any]] | None
-) -> dict[str, Any] | None:
+async def _update(uid: str, **changes: Any) -> dict[str, Any] | None:
     try:
-        return await scim.update(uid, active=active, user_name=name, emails=emails)
+        return await scim.update(uid, **changes)
     except scim.Exists:
         raise ScimError(409, "another user has this userName", "uniqueness") from None
 

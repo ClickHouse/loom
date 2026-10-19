@@ -21,7 +21,7 @@ import hmac
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -50,6 +50,8 @@ COLUMNS = (
     "updated_at",
     "version",
 )
+# A PATCH as a function of the row it applies to: the userName and `emails` it leaves.
+Patch = Callable[[dict[str, Any]], tuple[str | None, list[dict[str, Any]] | None]]
 # The reasons on the revocations a deactivation and a reactivation write.
 DEACTIVATED = "scim: deactivated"
 REACTIVATED = "scim: reactivated"
@@ -177,13 +179,18 @@ async def update(
     active: bool | None = None,
     user_name: str | None = None,
     emails: list[dict[str, Any]] | None = None,
+    patched: Patch | None = None,
 ) -> dict[str, Any] | None:
     """Set `active`, rename the userName (it is not the key) and/or replace
-    the provider's `emails` list; None when there is no such user."""
+    the provider's `emails` list; None when there is no such user. `patched`
+    computes the userName and list from the row read under the user's lease,
+    so two PATCHes at once each apply to what the other left."""
     async with _held(_user_lease(uid)):
         row = await get(uid)
         if row is None:
             return None
+        if patched is not None:
+            user_name, emails = patched(row)
         changes = {} if emails is None else {"emails": json.dumps(emails)}
         if not user_name or user_name.strip() == row["user_name"]:
             new, cutoff = await _set_active(row, active, **changes)
@@ -227,7 +234,8 @@ async def delete(uid: str) -> bool:
         if row is None:
             return False
         deleted = bool(row["deleted"])
-        row, _ = await _set_active(row, False, deleted=1)  # a retry finishes a failed try
+        # A retry finishes a failed try. The addresses beside the email keep no one out.
+        row, _ = await _set_active(row, False, deleted=1, emails="[]")
     await _revoke_tokens(row)
     return not deleted
 

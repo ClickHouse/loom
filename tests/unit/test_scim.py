@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -1852,6 +1853,96 @@ def test_the_emails_list_is_answered_as_written(client: TestClient, world) -> No
     assert client.get(f"/scim/v2/Users/{uid}").json()["emails"] == emails
     r = _patch(client, uid, {"op": "remove", "path": 'emails[type eq "home"]'})
     assert r.json()["emails"] == emails[:1]
+
+
+async def test_two_patches_at_once_each_apply_to_what_the_other_left(world, monkeypatch) -> None:
+    # Each passes alone: emptying the list (the userName keys the same email), and
+    # a rename (the work entry still keys it). Together they would key the new name.
+    locks: dict[str, asyncio.Lock] = {}
+
+    @asynccontextmanager
+    async def held(name: str) -> AsyncIterator[None]:
+        async with locks.setdefault(name, asyncio.Lock()):
+            await asyncio.sleep(0)  # the other request runs up to the lease
+            yield
+
+    monkeypatch.setattr(scim, "_held", held)
+    app = FastAPI()
+    scim_routes.attach(app)
+    transport = httpx.ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {_TOKEN}"}
+    async with httpx.AsyncClient(transport=transport, base_url="http://t", headers=headers) as c:
+        work = [{"value": "lee@example.com", "type": "work"}]
+        made = await c.post("/scim/v2/Users", json={"userName": "lee@example.com", "emails": work})
+        uid = made.json()["id"]
+        empty = {"Operations": [{"op": "remove", "path": "emails"}]}
+        rename = {"Operations": [{"op": "replace", "path": "userName", "value": "x@corp.example"}]}
+        answers = await asyncio.gather(
+            c.patch(f"/scim/v2/Users/{uid}", json=empty),
+            c.patch(f"/scim/v2/Users/{uid}", json=rename),
+        )
+    assert sorted(r.status_code for r in answers) == [200, 400]
+    row = world.table.newest(uid)
+    assert row is not None
+    after = {"userName": row["user_name"], "emails": scim.emails_of(row)}
+    assert user_name_and_email(after)[1] == "lee@example.com"
+
+
+def test_a_second_primary_sent_is_not_kept(client: TestClient, world) -> None:
+    # Only one entry may be primary (RFC 7643 §2.4): the first one sent keys the user.
+    uid = _user(
+        client,
+        [
+            {"value": "a@example.com", "primary": True},
+            {"value": "lee@example.com", "primary": True},
+        ],
+    )
+    retyped = {"op": "replace", "path": 'emails[value eq "lee@example.com"].type', "value": "home"}
+    r = _patch(client, uid, retyped)
+    assert r.status_code == 200, r.text
+    assert [e["primary"] for e in r.json()["emails"]] == [True, False]
+
+
+def test_an_add_of_an_entry_already_there_keeps_one(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "lee@example.com", "type": "work"}])
+    again = {"op": "add", "path": "emails", "value": [{"value": "Lee@example.com", "type": "work"}]}
+    for _ in range(2):
+        r = _patch(client, uid, again)
+    assert r.json()["emails"] == [{"value": "lee@example.com", "type": "work", "primary": False}]
+
+
+@pytest.mark.parametrize("emails", [[], [{"value": "lee@example.com", "type": "work"}]])
+def test_an_unsupported_emails_filter_is_refused_however_many_entries(
+    client: TestClient, world, emails: list[dict[str, Any]]
+) -> None:
+    uid = _user(client, emails)
+    path = 'emails[type eq "work" and primary eq true].value'
+    r = _patch(client, uid, {"op": "add", "path": path, "value": "lee@example.com"})
+    assert r.status_code == 400 and r.json()["scimType"] == "invalidFilter"
+
+
+def test_an_entry_is_answered_with_what_was_sent(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "lee@example.com"}])
+    add = {"op": "add", "path": 'emails[type eq "Home"].value', "value": "lee@home.example"}
+    blank = {"op": "remove", "path": 'emails[type eq "Home"].value'}
+    assert _patch(client, uid, add).json()["emails"] == [
+        {"value": "lee@example.com", "primary": False},
+        {"value": "lee@home.example", "type": "Home", "primary": False},
+    ]
+    assert _patch(client, uid, blank).json()["emails"][1] == {"type": "Home", "primary": False}
+
+
+def test_a_null_emails_is_unassigned(client: TestClient, world) -> None:
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    r = _patch(client, uid, {"op": "replace", "path": "emails", "value": None})
+    assert r.status_code == 200 and r.json()["emails"] == []
+
+
+async def test_a_delete_clears_the_other_addresses(world) -> None:
+    home = {"value": "lee@home.example", "type": "home", "primary": False}
+    row = await scim.create("lee@example.com", "lee@example.com", active=True, emails=[home])
+    await scim.delete(row["id"])
+    assert scim.emails_of(world.table.newest(row["id"]) or {}) == []
 
 
 def test_a_new_work_entry_would_take_a_plain_entrys_place(client: TestClient, world) -> None:
