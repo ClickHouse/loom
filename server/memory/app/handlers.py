@@ -890,7 +890,7 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
     # refused.
     from server.auth.authz import row_in_scope
 
-    if not await row_in_scope(input.org, row.namespace):
+    if not await row_in_scope(input.org, row.namespace, by_id=True):
         return MemoryGetByIdOutput(found=False)
     sha = (
         _content_sha256_of_stored(json.dumps(row.value, default=str))

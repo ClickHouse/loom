@@ -34,13 +34,14 @@ for its refusals. The caller is not bound yet, so that row carries the token's o
 subject and consumer, `-` for the rest and no arguments. On either transport, a refusal
 naming an org the token may not act in is recorded in the token's org, never the named
 one. A refusal recorded before the call is classified carries the token's `traffic_class`
-claim, or '' without one. An id lookup that answered `found=False` because such a read
-failed succeeded on the wire but is `server`, with an empty `error_code`; a listing, a
-default-namespace pick or an extra leg the caller did not ask for (repository documents on
-a search aimed elsewhere) that leaves a namespace out stays `ok`. Within one MCP batch,
-each refusal before a handler runs (but an idempotency refusal, which comes after the rate
-limiter) is recorded once per operation, code, org and status class, so a batch of
-repeated refusals counts once; a handler's failure is always its own row.
+claim, or '' without one. An op addressed by an org-wide id (`memory.get_by_id`,
+`update_by_id`, `redact`) that answered `found=False` because such a read failed succeeded
+on the wire but is `server`, with an empty `error_code`. Anywhere else a namespace left
+out for that reason (a listing, a default-namespace pick, code links, repository documents
+and other legs Loom adds) leaves the request `ok`: the answer is whole without it. Within
+one MCP batch, each refusal before a handler runs (but an idempotency refusal, which comes
+after the rate limiter) is recorded once per operation, code, org and status class, so a
+batch of repeated refusals counts once; a handler's failure is always its own row.
 
 A refreshable materialized view folds the ledger into `loom_telemetry.sli_minute` once a
 minute (requests, server and client errors, rate-limited requests, which are among the

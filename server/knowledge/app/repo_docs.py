@@ -54,9 +54,7 @@ async def readable_docs_namespace(org: str, code_namespace: str) -> str:
         from server.auth.authz import row_in_scope
         from server.operations.base import Role
 
-        # An extra leg on a search the caller aimed elsewhere: a refusal here
-        # leaves that answer whole.
-        return ns if await row_in_scope(org, ns, Role.VIEWER, additive=True) else ""
+        return ns if await row_in_scope(org, ns, Role.VIEWER) else ""
     except Exception as e:  # noqa: BLE001 — closed
         log.debug("repo docs gate failed (closed): %s", e)
         return ""

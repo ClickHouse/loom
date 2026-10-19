@@ -549,7 +549,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     from server.auth.authz import row_in_scope
     from server.operations.base import Role as _Role
 
-    if not await row_in_scope(input.org, target.namespace, _Role.ADMIN):
+    if not await row_in_scope(input.org, target.namespace, _Role.ADMIN, by_id=True):
         return MemoryRedactOutput(redacted=False)
 
     # All versions of a memory share one memory_id, so "is this the live head"

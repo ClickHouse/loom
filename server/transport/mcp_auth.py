@@ -64,10 +64,11 @@ def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]
 def _ledger_refusal(
     tool_name: Any, auth: AuthInfo, *, error_code: str, org: str = "", server_fault: bool = False
 ) -> None:
-    from server.transport.mcp_call import op_for_tool
+    from server.operations.registry import ALL_OPERATIONS
     from server.transport.mcp_ledger import emit_token_refusal
 
-    op = op_for_tool(str(tool_name or ""))
+    name = str(tool_name or "")
+    op = next((o for o in ALL_OPERATIONS if o.mcp_tool_name == name), None)
     if op is not None:
         emit_token_refusal(op.name, auth, error_code=error_code, org=org, server_fault=server_fault)
 

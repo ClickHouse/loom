@@ -153,7 +153,7 @@ async def handle_memory_update_by_id(input: MemoryUpdateByIdInput) -> MemoryUpda
     from server.auth.authz import row_in_scope
     from server.operations.base import Role as _Role
 
-    if not await row_in_scope(input.org, existing.namespace, _Role.WRITER):
+    if not await row_in_scope(input.org, existing.namespace, _Role.WRITER, by_id=True):
         return MemoryUpdateByIdOutput(updated=False)
     return await _update_live_row(input, existing, ch, op="memory.update_by_id")
 

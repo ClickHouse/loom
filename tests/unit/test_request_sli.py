@@ -929,7 +929,7 @@ def test_an_id_lookup_hidden_for_want_of_a_grants_read_is_the_server_s(monkeypat
         request_work.begin()
         set_current_auth(eve)
         # Run as handlers fan namespace checks out: in a child task.
-        (hidden,) = await asyncio.gather(authz.row_in_scope("o", "other"))
+        (hidden,) = await asyncio.gather(authz.row_in_scope("o", "other", by_id=True))
         assert hidden is False
         http._emit_event(
             OPERATIONS_BY_NAME["memory.get_by_id"], "r", {}, 3, success=True, error_code=""
@@ -939,11 +939,12 @@ def test_an_id_lookup_hidden_for_want_of_a_grants_read_is_the_server_s(monkeypat
     asyncio.run(_refused(unverified=False))
     assert rows == [(True, True), (True, False)]
 
-    # An additive leg (repo docs on a search aimed elsewhere) leaves the answer whole.
+    # Elsewhere a refused namespace is one Loom added or filtered (code links,
+    # repo docs, a trunk): the answer is whole without it.
     async def _additive() -> bool:
         request_work.begin()
         set_current_auth(eve)
-        assert await authz.row_in_scope("o", "docs", additive=True) is False
+        assert await authz.row_in_scope("o", "docs") is False
         from server.auth.fail_closed import answered_unverified
 
         return answered_unverified()
@@ -1044,7 +1045,7 @@ def test_an_mcp_call_that_hid_a_row_unverified_is_the_server_s_and_the_next_star
 
     async def _lookup(inp: Any) -> _Out:
         if inp.hide:  # as get_by_id hides a row the caller may not see
-            return _Out(found=await authz.row_in_scope("o", "elsewhere"))
+            return _Out(found=await authz.row_in_scope("o", "elsewhere", by_id=True))
         return _Out(found=True)
 
     async def _unverified(*a: Any, **k: Any) -> None:
@@ -1162,3 +1163,17 @@ def test_a_5xx_while_mcp_computes_the_caller_s_defaults_is_ledgered(monkeypatch)
     assert [(e.operation, e.error_code, e.status_class, e.org) for e in emitted] == [
         ("memory.get", "BACKEND_UNAVAILABLE", "server", "o")
     ]
+
+
+def test_the_ops_addressed_by_an_org_wide_id_mark_an_unverified_refusal() -> None:
+    """Only there does a hidden row mean the caller's own request went unanswered."""
+    import inspect
+
+    from server.memory.app import curation, handlers, update
+
+    for handler in (
+        handlers.handle_memory_get_by_id,
+        update.handle_memory_update_by_id,
+        curation.handle_memory_redact,
+    ):
+        assert "by_id=True" in inspect.getsource(handler), handler.__name__

@@ -32,6 +32,12 @@ def answered_unverified() -> bool:
     return bag is not None and bag.answered_unverified
 
 
+def reset() -> None:
+    """A request starts with no failed read noted (a batch's earlier entry
+    may have left one set)."""
+    _unreadable.set(False)
+
+
 def note_unreadable() -> None:
     """A read the current check needs failed, and it carries on as if the
     read found nothing."""

@@ -98,11 +98,13 @@ def begin_request() -> RequestWork:
     response did NOT do) and the work bag (ClickHouse cost, ask stages,
     injection counts, skipped legs). A fresh set per op, so nothing leaks
     across requests on a long-lived task."""
+    from server.auth import fail_closed
     from server.core import request_work
     from server.observability import cost_accumulator, degradations
 
     cost_accumulator.begin_op()
     degradations.begin()
+    fail_closed.reset()
     return request_work.begin()
 
 

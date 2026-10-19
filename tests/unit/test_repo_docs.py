@@ -77,7 +77,7 @@ def test_the_docs_namespace_is_the_trunk_branchs_the_page_order() -> None:
 
 
 def _gate(allowed: set[str]):
-    async def row_in_scope(org, ns, role, *, additive=False):
+    async def row_in_scope(org, ns, role):
         return ns in allowed
 
     return row_in_scope
