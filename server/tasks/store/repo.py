@@ -510,9 +510,9 @@ async def lease_strays(
     *, before: datetime, terminal: list[str], limit: int, ch: _CHClient | None = None
 ) -> tuple[list[MissingLeaseRow], list[StrayLeaseRow]]:
     """What the lease reconcile acts on, org-wide, among rows last written before
-    `before` (a transition still in flight keeps its own rows): todo and triage tasks
-    with no lease row and no event since `before` (a cancel in flight drops the row
-    before its status row), and lease rows idle or expired whose task is gone, ended
+    `before` (a transition still in flight keeps its own rows; a transition writes its
+    task version before its event, so `updated_at` covers it): todo and triage tasks
+    with no lease row, and lease rows idle or expired whose task is gone, ended
     (`terminal`) or at another fence (a claim cut off after winning holds an expired row
     one fence ahead of its todo task)."""
     ch = ch or _default_client()
@@ -524,8 +524,6 @@ async def lease_strays(
             "WHERE is_deleted = 0 AND status IN ('todo', 'triage') "
             "AND updated_at < {before:DateTime} "
             "AND toString(task_id) NOT IN (SELECT task_id FROM loom.task_leases) "
-            "AND task_id NOT IN (SELECT task_id FROM loom.task_events "
-            "                    WHERE ts >= {before:DateTime}) "
             "LIMIT {limit:UInt32} SETTINGS select_sequential_consistency = 1",
             params=params,
         ),
@@ -758,9 +756,9 @@ class ClaimResult:
 
 
 def _lost_race(e: Exception) -> bool:
-    """A strict-mode write that lost to a concurrent one (Keeper's version check
-    failed). Any other Keeper error (a lost connection) is not a lost race."""
-    return "Bad version" in str(e)
+    """A strict-mode write that lost to a concurrent one: Keeper's version check failed,
+    or the row was deleted under it. A lost connection is neither."""
+    return "Bad version" in str(e) or "No node" in str(e)
 
 
 class KeeperLeases:
@@ -769,7 +767,8 @@ class KeeperLeases:
     One row per live task. The conditional ``ALTER … UPDATE`` under
     ``keeper_map_strict_mode = 1`` is executed as a Keeper multi-op with a
     version check, so of two concurrent claimers exactly one row change
-    lands: the loser either raises ``KEEPER_EXCEPTION`` ("Bad version") or
+    lands: the loser either raises ``KEEPER_EXCEPTION`` ("Bad version", or "No node"
+    when a terminal transition deleted the row under it) or
     matches zero rows because the winner landed first. Either way the caller
     reads the row back and owns the task only if it says so. The six
     statements below are the only mutations in this module; they address a

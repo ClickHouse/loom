@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta
 
 from server.core.datetimes import utc_now as _now
@@ -14,6 +15,8 @@ from server.tasks.app.common import (
     _release_lease,
 )
 from server.tasks.store import repo as repo
+
+log = logging.getLogger(__name__)
 from server.tasks.store.rows import InboxRow
 
 SWEEP_ACTOR = "process:task_lease_sweep"
@@ -117,14 +120,25 @@ async def reconcile_leases(now: datetime, *, limit: int) -> int:
     missing, stray = await repo.lease_strays(
         before=now - LEASE_RECONCILE_GRACE, terminal=sorted(TERMINAL), limit=limit
     )
+    repaired = 0
     for task in missing:
-        await backend.ensure_row(task["task_id"], task["org"], task["inbox"], int(task["fence"]))
+        try:
+            await backend.ensure_row(
+                task["task_id"], task["org"], task["inbox"], int(task["fence"])
+            )
+            repaired += 1
+        except Exception as e:  # noqa: BLE001 — one stray row never stops the reconcile
+            log.warning("task_lease_sweep: lease row of %s not written: %s", task["task_id"], e)
     for row in stray:
         held = int(row["lease_fence"])
-        if not row["found"] or row["status"] in TERMINAL:
-            await backend.delete_held(row["task_id"], row["owner"], fence=held)
-        else:
-            await backend.give_back(
-                row["task_id"], row["owner"], held_fence=held, fence=int(row["fence"])
-            )
-    return len(missing) + len(stray)
+        try:
+            if not row["found"] or row["status"] in TERMINAL:
+                await backend.delete_held(row["task_id"], row["owner"], fence=held)
+            else:
+                await backend.give_back(
+                    row["task_id"], row["owner"], held_fence=held, fence=int(row["fence"])
+                )
+            repaired += 1
+        except Exception as e:  # noqa: BLE001 — one stray row never stops the reconcile
+            log.warning("task_lease_sweep: lease row of %s not repaired: %s", row["task_id"], e)
+    return repaired

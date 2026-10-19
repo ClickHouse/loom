@@ -1298,37 +1298,45 @@ async def test_the_lease_reconcile_gives_back_a_row_a_claim_cut_off_after_winnin
 
 
 @pytest.mark.asyncio
-async def test_the_lease_reconcile_leaves_a_task_with_a_fresh_event_alone(ch: Any) -> None:
-    """A todo task with no lease row whose last event is younger than the grace may be
-    mid-transition (a cancel drops the row before its status row): the reconcile leaves
-    it, and heals it once the event is older."""
-    from datetime import timedelta
+async def test_a_claim_racing_a_cancel_never_raises_a_keeper_error(ch: Any) -> None:
+    """A claim and a cancel of one task at once: the cancel may delete the lease row
+    under the claim's strict-mode write ("No node"). That is a lost race: the claim
+    answers lost (409) or won, never a Keeper error."""
+    raised = []
+    for _ in range(30):
+        org = f"itest-race-{uuid.uuid4().hex[:8]}"
+        tid = await _todo_task(org)
+        results = await asyncio.gather(
+            _claim(org, tid),
+            transitions.handle_task_cancel(_reason(org, tid)),
+            return_exceptions=True,
+        )
+        raised += [r for r in results if isinstance(r, Exception) and "KEEPER" in str(r)]
+    assert not raised, raised
 
+
+@pytest.mark.asyncio
+async def test_one_failing_lease_repair_does_not_stop_the_others(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two todo tasks lost their lease rows; writing the first one's fails: the second
+    is still written."""
     from server.tasks.app import sweep
 
-    org = f"itest-fresh-{uuid.uuid4().hex[:8]}"
-    tid = await _todo_task(org)
+    org = f"itest-onebad-{uuid.uuid4().hex[:8]}"
+    first, second = await _todo_task(org), await _todo_task(f"{org}-b")
     backend = await repo.lease_backend()
-    await backend.delete(tid)
-    task = await repo.fetch_task(org, tid)
-    now = datetime.now(UTC).replace(tzinfo=None)
-    # An event a minute ahead stands for one written within the grace of the pass.
-    await ch.insert(
-        "loom.task_events",
-        [
-            {
-                "org": org,
-                "inbox": task["inbox"],
-                "namespace": task["namespace"],
-                "task_id": uuid.UUID(tid),
-                "seq": int(task["version"]) + 1,
-                "event": "progress",
-                "ts": now + timedelta(minutes=1),
-            }
-        ],
-    )
-    grace = sweep.LEASE_RECONCILE_GRACE
-    await sweep.reconcile_leases(now + timedelta(seconds=30) + grace, limit=10_000)
-    assert await _lease(ch, tid) is None
-    await sweep.reconcile_leases(now + timedelta(minutes=5) + grace, limit=10_000)
-    assert await _lease(ch, tid) == {"owner": "", "fence": 0}
+    await backend.delete(first)
+    await backend.delete(second)
+    real_ensure = backend.ensure_row
+
+    async def ensure(task_id: str, *a: Any, **k: Any) -> None:
+        if task_id == first:
+            raise RuntimeError("keeper down")
+        await real_ensure(task_id, *a, **k)
+
+    monkeypatch.setattr(backend, "ensure_row", ensure)
+    await sweep.reconcile_leases(_later(), limit=10_000)
+    monkeypatch.undo()
+    assert await _lease(ch, first) is None
+    assert await _lease(ch, second) == {"owner": "", "fence": 0}
