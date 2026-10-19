@@ -197,9 +197,10 @@ function MemoryList() {
   // newest 1,000 and keeps the matching ones. What is typed is debounced, so `tag:…` sends
   // one read, not one per key; a chip applies at once.
   const typedNow = useSameFilter({ tags: queryTags, agent: queryAgent ?? "" });
-  // From the filter that keeps its identity while the tags are unchanged, so a keystroke
-  // that leaves the tags as they were hands every memoised card the same set.
-  const activeTags = useMemo(() => new Set(typedNow.tags.map((t) => t.toLowerCase())), [typedNow.tags]);
+  // Built from the tags' text (a tag holds no space), so a keystroke that leaves the tags as
+  // they were hands every memoised card the same set.
+  const activeTagsText = queryTags.map((t) => t.toLowerCase()).join(" ");
+  const activeTags = useMemo(() => new Set(activeTagsText.split(" ").filter(Boolean)), [activeTagsText]);
   const [typed, setTyped] = useState(typedNow);
   useEffect(() => {
     // A tag chip applies at once; typing waits for a pause.
