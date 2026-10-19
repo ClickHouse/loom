@@ -88,6 +88,9 @@ class EntityExtractorResult:
     parse_failures: int = 0
     # Rows that exhausted _PARSE_FAIL_MAX and were stamped `_parse_failed_`.
     parse_poisoned: int = 0
+    # Unlabelled rows whose value reads as a credential: never sent to the model, stamped
+    # `_none_` so the scan stops picking them up (the sweep labels them `high`).
+    skipped_sensitive: int = 0
     # Rows the batch write put on each table.
     rows_written: dict[str, int] = field(default_factory=dict)
     failures: list[str] = field(default_factory=list)
@@ -236,6 +239,12 @@ def _backlog_due(*, now: float | None = None) -> bool:
     return not _backlog_keys or _backlog_filled_at <= 0.0 or t - _backlog_filled_at >= full_every
 
 
+def _entity_update(r: dict[str, Any], entities: list[str]) -> dict[str, Any]:
+    """One row of the pass's batch write: the row's identity and key, and its entities."""
+    keys = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
+    return {**{k: r[k] for k in keys}, "entities": entities}
+
+
 async def _next_candidates(cfg: EntityExtractorConfig) -> list[dict[str, Any]]:
     """The rows this pass works on: fresh rows first (the windowed one-shot
     read), then backlog keys from the queue, read in one phase-two call."""
@@ -321,13 +330,8 @@ async def run_pass(
             if reads_high(value_text(value_str)):
                 # An unlabelled row (copy_to, an import, before the sweep) holding a credential
                 # never goes to the model; the sentinel keeps the next pass from picking it up.
-                updates.append(
-                    {
-                        **{k: r[k] for k in ("org", "namespace", "agent", "user_id", "session_id")},
-                        "memory_key": r["memory_key"],
-                        "entities": [_NONE_SENTINEL],
-                    }
-                )
+                updates.append(_entity_update(r, [_NONE_SENTINEL]))
+                result.skipped_sensitive += 1
                 continue
             if over_cap.get((r["org"], r["namespace"]), False):
                 result.skipped_over_budget += 1
@@ -409,17 +413,7 @@ async def run_pass(
                 # Sentinel so the empty() filter stops re-scanning a row
                 # that genuinely has no entities.
                 entities = [_NONE_SENTINEL]
-            updates.append(
-                {
-                    "org": r["org"],
-                    "namespace": r["namespace"],
-                    "agent": r["agent"],
-                    "user_id": r["user_id"],
-                    "session_id": r["session_id"],
-                    "memory_key": r["memory_key"],
-                    "entities": entities,
-                }
-            )
+            updates.append(_entity_update(r, entities))
             result.extracted.append(
                 {
                     "org": r["org"],
@@ -457,6 +451,7 @@ async def run_pass(
             "skipped_over_budget": result.skipped_over_budget,
             "parse_failures": result.parse_failures,
             "parse_poisoned": result.parse_poisoned,
+            "skipped_sensitive": result.skipped_sensitive,
             "failed": len(result.failures),
             "healed_divergent": result.healed_divergent,
             "memory_rows_written": int(result.rows_written.get("memory", 0)),

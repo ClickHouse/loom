@@ -3,6 +3,8 @@ column riding every write path."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -246,3 +248,57 @@ async def test_memory_stack_recent_recall_sql_carries_the_medium_guard(monkeypat
     for q in (sql, pinned[0]):
         assert "(expires_at IS NULL OR expires_at > now())" in q
         assert "status IN ('active', 'conflicted')" in q
+
+
+_TOKEN = "ghp_" + "a" * 36
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        json.dumps("deploy token:\n" + _TOKEN),  # a string, as memory.set stores it
+        {"note": "deploy token:\n" + _TOKEN},
+        {_TOKEN: "ci token"},  # the secret is the key
+        {"password": "hunter2secret"},  # split across key and value
+        {"db": {"api_key": "x9f8e7d6c5b4a3"}},
+        json.dumps({"narrative": 'config: password: "hunter2secret"'}),
+    ],
+    ids=["json-string", "own-line", "in-a-key", "split-password", "nested-key", "quoted"],
+)
+def test_value_text_lets_the_detector_read_what_the_value_holds(value: object) -> None:
+    from server.memory.domain.sensitivity import reads_high, value_text
+
+    assert reads_high(value_text(value))
+
+
+def test_value_text_reads_plain_values_as_written_and_never_recurses() -> None:
+    from server.memory.domain.sensitivity import value_text
+
+    assert [value_text(v) for v in ["null", "123", "plain words", None]] == [
+        "",
+        "123",
+        "plain words",
+        "",
+    ]
+    deep: list[object] = []
+    inner = deep
+    for _ in range(5000):
+        nxt: list[object] = []
+        inner.append(nxt)
+        inner = nxt
+    inner.append("sk-" + "a" * 24)
+    assert value_text(deep) == "sk-" + "a" * 24
+
+
+def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The write path detects on the decoded value, not the stored JSON.
+    from types import SimpleNamespace
+
+    from server.memory.app.update import _update_sensitivity
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
+    level, _tags = _update_sensitivity(
+        SimpleNamespace(sensitivity=""), json.dumps({"note": "token:\n" + _TOKEN}), []
+    )
+    assert level == "high"

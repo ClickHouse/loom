@@ -574,11 +574,16 @@ send their model, and `memory.recall`'s raw turns.
 Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
 
-The detector runs on `memory.set` and extraction when `LOOM_MEMORY_SENSITIVITY_AUTODETECT` is
-on. `memory.export_evidence` and `bodies: "source"` also run it on raw text, whatever the
-setting: raw text has no level to fall back on. The `sensitivity_sweep` worker (on,
-daily) labels rows from paths that skip it: a new version per row and, for `high`,
-tombstoned embedding rows and entity vectors.
+The detector runs on `memory.set` and extraction when `LOOM_MEMORY_SENSITIVITY_AUTODETECT`
+is on, and reads the decoded value (`value_text`): in the stored JSON a token after a
+newline, or a quoted password, loses the word boundary it matches on, and a mapping reads
+`key: value` so a secret in a key is seen. Text that has no level of its own, or carries one
+a later sweep may not have set yet, is checked whatever the setting (`reads_high`):
+`memory.export_evidence`, `bodies: "source"`, the observations `observe_extract` sends its
+model, the entity extractor's input, the existing memories an extraction prompt shows, and a
+session digest's key facts when written, listed by `memory.digests` or read by the outcome
+judge. The `sensitivity_sweep` worker (on, daily) labels rows from paths that skip it: a new
+version per row and, for `high`, tombstoned embedding rows and entity vectors.
 
 ## Audit log
 

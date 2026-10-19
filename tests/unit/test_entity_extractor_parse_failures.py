@@ -202,7 +202,12 @@ async def test_an_unlabelled_credential_row_never_reaches_the_model(
     # (JSON-escaped, it follows `\n`) still keeps the value from the extractor's model.
     import json
 
-    wired.rows = [{**_row(), "value": json.dumps({"text": "the token:\nghp_" + "a" * 36})}]
+    token = "ghp_" + "a" * 36
+    wired.rows = [
+        {**_row("as-object"), "value": json.dumps({"text": "the token:\n" + token})},
+        # memory.set stores a string value as a quoted JSON literal
+        {**_row("as-string"), "value": json.dumps("the token:\n" + token)},
+    ]
     sent: list[str] = []
 
     async def _model(value_str: str):
@@ -210,7 +215,7 @@ async def test_an_unlabelled_credential_row_never_reaches_the_model(
         return ["thing"]
 
     monkeypatch.setattr(ee, "_extract", _model)
-    await ee.run_pass(ee.EntityExtractorConfig())
-    assert sent == []
+    result = await ee.run_pass(ee.EntityExtractorConfig())
+    assert sent == [] and result.skipped_sensitive == 2
     # the sentinel keeps the next pass from picking the row up again
-    assert [a["entities"] for a in wired.applied] == [[ee._NONE_SENTINEL]]
+    assert [a["entities"] for a in wired.applied] == [[ee._NONE_SENTINEL]] * 2

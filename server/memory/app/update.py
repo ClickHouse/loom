@@ -396,10 +396,14 @@ def _update_sensitivity(
         max_sensitivity,
         resolve_sensitivity,
         sensitivity_tags,
+        value_text,
     )
 
     level = max_sensitivity(
-        [getattr(existing, "sensitivity", ""), resolve_sensitivity("", serialized_value)]
+        [
+            getattr(existing, "sensitivity", ""),
+            resolve_sensitivity("", value_text(serialized_value)),
+        ]
     )
     return level, [*tags, *sensitivity_tags(level, tags)]
 

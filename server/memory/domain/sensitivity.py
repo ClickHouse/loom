@@ -175,20 +175,35 @@ def detect_sensitivity(text: str) -> str:
 
 
 def value_text(value: Any) -> str:
-    """The text a stored value holds, decoded: its string leaves joined by newlines (a JSON
-    string is parsed first). The detector reads line starts and quotes as written; in
-    JSON-escaped text a newline before a token is `\\n` and the word boundary is lost."""
+    """The text a stored value holds, decoded, as the detector must read it: in JSON-escaped
+    text a newline before a token is `\\n` and a quoted password is `\\"...\\"`, so the
+    word boundary never matches. A JSON string is parsed first (`memory.set` stores every
+    value as JSON, a string as a quoted literal). Each mapping item reads `key: value`, so a
+    secret held in a key, or an assignment split across key and value, is seen. Walked
+    without recursion: a deeply nested value must not stop a worker pass."""
     if isinstance(value, str):
+        text = value
         try:
-            parsed = json.loads(value)
-        except ValueError:
-            return value
-        return value if isinstance(parsed, str) else value_text(parsed)
-    if isinstance(value, dict):
-        return "\n".join(value_text(v) for v in value.values())
-    if isinstance(value, list | tuple):
-        return "\n".join(value_text(v) for v in value)
-    return "" if value is None else str(value)
+            value = json.loads(text)
+        except (ValueError, RecursionError):
+            return text
+    lines: list[str] = []
+    stack: list[tuple[str, Any]] = [("", value)]
+    while stack:
+        label, v = stack.pop()
+        if isinstance(v, dict):
+            if label:
+                lines.append(f"{label}:")
+            stack.extend((str(k), x) for k, x in reversed(list(v.items())))
+        elif isinstance(v, list | tuple):
+            if label:
+                lines.append(f"{label}:")
+            stack.extend(("", x) for x in reversed(v))
+        elif v is not None:
+            lines.append(f"{label}: {v}" if label else str(v))
+        elif label:
+            lines.append(f"{label}:")
+    return "\n".join(lines)
 
 
 def reads_high(text: str) -> bool:

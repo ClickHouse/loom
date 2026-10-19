@@ -30,7 +30,7 @@ from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
 from server.memory.domain.sensitive_retention import sensitive_retention
-from server.memory.domain.sensitivity import resolve_sensitivity
+from server.memory.domain.sensitivity import resolve_sensitivity, value_text
 from server.memory.store.rows import next_version
 
 if TYPE_CHECKING:
@@ -295,7 +295,9 @@ async def _bulk_build_rows(
         serialized_value = json.dumps(entry.value)
         # Sensitivity tier: caller's level or detected from
         # the value; rides the row, its `sensitivity:` tag and the embed gate.
-        entry_sensitivity = resolve_sensitivity(getattr(entry, "sensitivity", ""), serialized_value)
+        entry_sensitivity = resolve_sensitivity(
+            getattr(entry, "sensitivity", ""), value_text(serialized_value)
+        )
         # Sensitive retention window, same rule as memory.set.
         from server.settings import settings as _sr_settings
 

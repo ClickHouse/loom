@@ -94,7 +94,11 @@ def test_top_key_facts_never_carry_a_credential(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(settings, "memory_sensitivity_autodetect", False)
     token = "ghp_" + "a" * 36
-    facts = [{"value": f"the deploy token is {token}"}, {"value": "user lives in Berlin"}]
+    facts = [
+        {"value": f"the deploy token is {token}"},
+        {"value": {"note": "deploy token:\n" + token}},  # JSON-escaped, the newline hides it
+        {"value": "user lives in Berlin"},
+    ]
     assert _top_key_facts(facts) == ["user lives in Berlin"]
 
 

@@ -10,7 +10,7 @@ from typing import Any
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.embedding import get_embedder
-from server.memory.domain.sensitivity import reads_high
+from server.memory.domain.sensitivity import reads_high, value_text
 from server.observability.genai import staged
 
 log = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ def _top_key_facts(
         text = text.strip()
         if not text or text in seen:
             continue
-        if reads_high(text):
+        if reads_high(value_text(raw)):
             continue
         seen.add(text)
         out.append(text)

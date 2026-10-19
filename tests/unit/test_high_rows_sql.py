@@ -615,18 +615,23 @@ async def test_memory_digests_never_serves_a_stored_credential_key_fact(monkeypa
 @pytest.mark.asyncio
 async def test_the_sweep_labels_a_token_on_its_own_line() -> None:
     # Stored as JSON, the newline before the token is `\n`, which hides the detector's word
-    # boundary; the sweep reads the decoded value, as the write path does.
+    # boundary; the sweep reads the decoded value, as the write path does. A string value is
+    # a quoted literal in `value` (`value_json` holds only objects).
     import json
 
     from server.memory.app import sensitivity_sweep
 
-    value = json.dumps({"narrative": "[command_run] tool=Bash\noutput:\nghp_" + "a" * 36})
+    token = "ghp_" + "a" * 36
+    as_object = json.dumps({"narrative": "[command_run] tool=Bash\noutput:\n" + token})
+    as_string = json.dumps("output:\n" + token)
     ch = _LocalCH(
         ddl("memory"),
         "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
         "memory_key, memory_type, value, value_json, status, sensitivity, version) VALUES "
-        f"('o', 'n', 'a', '-', 's', '{_A}', 'obs/1', 'episodic', {value!r}, {value!r}, "
-        "'active', '', 1)",
+        f"('o', 'n', 'a', '-', 's', '{_A}', 'obs/1', 'episodic', {as_object!r}, {as_object!r}, "
+        f"'active', '', 1), ('o', 'n', 'a', '-', 's', '{_B}', 'note', 'semantic', "
+        f"{as_string!r}, '{{}}', 'active', '', 1)",
     )
     report = await sensitivity_sweep.scan(org="o", namespace="n", ch=ch)
-    assert [(c.memory_key, c.level) for c in report.candidates] == [("obs/1", "high")]
+    found = sorted((c.memory_key, c.level) for c in report.candidates)
+    assert found == [("note", "high"), ("obs/1", "high")]
