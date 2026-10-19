@@ -38,8 +38,9 @@ _EXPECTED_MUTATIONS = Counter(
         # ALTER UPDATE.
         # Task inbox plane: the lease table is KeeperMap, so
         # these address a Keeper znode (a compare-and-swap under strict mode
-        # and the terminal-state key drop), not a MergeTree part.
-        ("server/tasks/store/repo.py", "task_leases", "UPDATE"): 2,
+        # and the terminal-state key drop), not a MergeTree part; the third UPDATE moves
+        # an idle row at an older fence to a reopen's fence.
+        ("server/tasks/store/repo.py", "task_leases", "UPDATE"): 3,
         ("server/tasks/store/repo.py", "task_leases", "DELETE"): 1,
         # run.complete drops a run id claim, also a KeeperMap key (the erasure saga's
         # drop goes through erasure.store.mutations.run_keeper_delete).

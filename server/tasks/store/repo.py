@@ -717,7 +717,7 @@ class KeeperLeases:
     version check, so of two concurrent claimers exactly one row change
     lands: the loser either raises ``KEEPER_EXCEPTION`` ("Bad version") or
     matches zero rows because the winner landed first. Either way the caller
-    reads the row back and owns the task only if it says so. The three
+    reads the row back and owns the task only if it says so. The four
     statements below are the only mutations in this module; they address a
     Keeper znode, not a MergeTree part (mutation inventory: task_leases).
     """
