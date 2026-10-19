@@ -6,7 +6,8 @@ import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { Setup } from "./Setup";
 
 // The server answers a token's times as naive UTC ("2026-10-19T10:00:00", no zone). Read as
-// local east of UTC, a token minted a minute ago would look two hours old and stranded.
+// local east of UTC, a token minted a minute ago would look two hours old and stranded. The
+// clock is pinned to July, when Berlin is two hours ahead.
 
 const DAY = 24 * 3600 * 1000;
 // A naive UTC time `ms` from now, as the server spells it.
@@ -58,6 +59,8 @@ const WAIT = { timeout: 5000 };
 describe("Setup's token times, east of UTC", () => {
   beforeEach(() => {
     vi.stubEnv("TZ", "Europe/Berlin");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-15T10:00:00Z"));
     localStorage.clear();
     window.history.replaceState(null, "", "/settings");
     resetNamespaceRoleCache();
@@ -75,6 +78,7 @@ describe("Setup's token times, east of UTC", () => {
   });
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     useStore.setState({ whoami: null, myNamespaces: null, identity: null });
