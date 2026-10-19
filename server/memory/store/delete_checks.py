@@ -15,9 +15,8 @@ from server.memory.store.sql import _SEQUENTIAL, read_your_writes_enabled
 TABLE = "loom.delete_version_checks"
 
 
-# A check's identity, key and versions: the columns `record_delete_check` writes and
-# the reads return.
-CHECK_COLUMNS = (
+# A check's identity, key and versions: what `record_delete_check` writes besides `done`.
+_CHECK_COLUMNS = (
     "org",
     "namespace",
     "agent",
@@ -35,7 +34,7 @@ async def record_delete_check(
     """The row of `check` (the delete of `memory_key` at version `checked`, tombstoned at
     `tombstone`, under its identity), committed before the call returns."""
     ch = ch or _default_client()
-    row = {k: check[k] for k in CHECK_COLUMNS}
+    row = {k: check[k] for k in _CHECK_COLUMNS}
     row["checked"], row["tombstone"] = int(row["checked"]), int(row["tombstone"])
     row["done"] = 1 if done else 0
     await ch.insert(TABLE, [row], settings={"async_insert": 0, "wait_for_async_insert": 1})

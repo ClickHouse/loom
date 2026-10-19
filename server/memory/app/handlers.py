@@ -656,7 +656,10 @@ async def handle_memory_delete_version(
                 checked=int(input.version),
             )
             if check is not None and not check["done"]:
-                answer = await rerun_delete_check(check)
+                try:
+                    answer = await rerun_delete_check(check)
+                except Exception as e:  # still owed: the next retry or the worker runs it
+                    raise _check_deferred(e) from e
                 if answer is not None:
                     return answer
             return MemoryDeleteVersionOutput(tombstoned=False, found=False)
@@ -666,8 +669,8 @@ async def handle_memory_delete_version(
         assert_own_row(existing, op="memory.delete_version")
         version = next_version()
         # The check this delete owes after its tombstone, recorded first: when the check
-        # cannot run now, the delete_version_check worker runs it, so a write it would
-        # have found is never left under the tombstone. A failure here deletes nothing.
+        # cannot run now, a retry or the delete_version_check worker runs it, so a write it
+        # would have found is never left under the tombstone. A failure here deletes nothing.
         check = {
             "org": existing.org,
             "namespace": existing.namespace,
@@ -684,13 +687,18 @@ async def handle_memory_delete_version(
         )
         try:
             return await finish_delete_check(existing, check)
-        except Exception as e:  # the check is recorded: the worker finishes it
-            degradations.note("memory.delete_version", "check_deferred", e)
-            log.warning("memory.delete_version: the check after the tombstone failed: %s", e)
-            raise BackendUnavailableError(
-                "the delete is recorded but its check did not run; a retry runs it, and "
-                "it finishes in the background otherwise"
-            ) from e
+        except Exception as e:  # the check is recorded: a retry or the worker runs it
+            raise _check_deferred(e) from e
+
+
+def _check_deferred(e: Exception) -> BackendUnavailableError:
+    """The 503 of a delete whose check after its tombstone failed; the check stays owed."""
+    degradations.note("memory.delete_version", "check_deferred", e)
+    log.warning("memory.delete_version: the check after the tombstone failed: %s", e)
+    return BackendUnavailableError(
+        "the delete is recorded but its check did not run; a retry runs it, and it "
+        "finishes in the background otherwise"
+    )
 
 
 async def finish_delete_check(existing: Any, check: dict[str, Any]) -> MemoryDeleteVersionOutput:
