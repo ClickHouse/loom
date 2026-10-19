@@ -590,17 +590,24 @@ async def recent_threads(
     *,
     window_days: int,
     limit: int,
+    offset: int = 0,
     agent: str | None = None,
     count_turns: bool = True,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """The namespace's threads with a live message in the window, most recent
-    first: message count, first/last seen and the latest message's agent
-    (`last_agent`), role and 240-character excerpt. `count_turns`: the message
-    count is the thread's distinct turns, as an opened thread shows; off, the
-    window's raw row count (for a caller that does not read the count)."""
+    """The namespace's threads with a live message in the window. Most recent first, ties
+    by thread_id; `offset` skips that many. Each carries its message count, first/last seen
+    and the latest message's agent (`last_agent`), role and 240-character excerpt.
+    `count_turns`: the message count is the thread's distinct turns, as an opened thread
+    shows; off, the window's raw row count (for a caller that does not read the count)."""
     ch = ch or _default_client()
-    params: dict[str, Any] = {"org": org, "ns": namespace, "wd": window_days, "lim": limit}
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "wd": window_days,
+        "lim": limit,
+        "off": offset,
+    }
     # The aggregate is aliased `last_agent`, not `agent`: the analyzer would resolve a bare
     # `agent` in WHERE to the alias and reject the statement (code 184) under an agent filter.
     agent_clause = ""
@@ -624,8 +631,8 @@ async def recent_threads(
           AND tombstoned_at IS NULL
           {agent_clause}
         GROUP BY thread_id
-        ORDER BY last_seen DESC
-        LIMIT {{lim:UInt32}}
+        ORDER BY last_seen DESC, thread_id ASC
+        LIMIT {{lim:UInt32}} OFFSET {{off:UInt32}}
         """,
         params=params,
     )
