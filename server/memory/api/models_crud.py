@@ -417,10 +417,9 @@ class MemoryDeleteOutput(BaseModel):
     # Nanosecond version of the tombstone row; when nothing was found, a fresh
     # number that no row carries.
     version: int
-    # False when no live row of this key exists in the
-    # namespace under ANY identity — already deleted, or never written. The
-    # delete looked past the caller's own (agent, user, session) first; with
-    # `if_version`, only under the caller's identity.
+    # False when no live row of this key exists under the identities the delete reads: the
+    # caller's own (agent, user, session), then (without `if_version`) the same user's under
+    # any agent. Already deleted, or never written.
     found: bool = True
     # "version_changed" when the live row no longer carries `if_version`.
     reason: str = ""

@@ -540,7 +540,7 @@ WHAT: Tombstone a memory by key (14-day recovery in the dashboard).
 | --- | --- | --- |
 | `tombstoned` | `bool` | True when a live row was found and a tombstone version written over it. |
 | `version` | `int` | Nanosecond version of the tombstone row; when nothing was found, a fresh number that no row carries. |
-| `found` | `bool` | False when no live row of this key exists in the namespace under ANY identity — already deleted, or never written. |
+| `found` | `bool` | False when no live row of this key exists under the identities the delete reads: the caller's own (agent, user, session), then (without `if_version`) the same user's under any agent. |
 | `reason` | `str` | "version_changed" when the live row no longer carries `if_version`. |
 | `dependents_tombstoned` | `int` | Consolidated summaries built from this row (tag `src:<key>`): retired when none of their sources survive, else downgraded to `conflicted`. |
 | `dependents_downgraded` | `int` | Summaries built from this row that keep a live source: set to `conflicted`. |

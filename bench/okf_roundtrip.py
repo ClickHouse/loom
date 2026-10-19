@@ -324,7 +324,7 @@ async def run(args: argparse.Namespace) -> int:
                     "agent": args.import_agent,
                     "user_id": "-",
                     "session_id": (okf.concept_session_id(c) or "-") if args.keep_sessions else "-",
-                    "source_trace": payload.get("source_trace") or f"okf:{c.path}",
+                    "source_trace": f"okf:{c.path}",
                 }
             )
             try:

@@ -328,3 +328,19 @@ async def test_a_repeated_row_never_counts_toward_the_limit() -> None:
     )
     assert not capped and not whole
     assert sorted(r["memory_key"] for r in rows) == ["a", "b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_namespace_is_read_whole_in_one_listing() -> None:
+    # No version to check after the page: an empty namespace is not "changed while read".
+    calls: list[dict[str, Any]] = []
+
+    class _Empty:
+        async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+            calls.append(body)
+            return {"entries": [], "truncated": False, "total": 0, "namespace_version": ""}
+
+    rows, whole, capped = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        _Empty(), "o", "ns", include_tombstoned=False
+    )
+    assert (rows, whole, capped) == ([], True, False) and len(calls) == 1

@@ -242,9 +242,10 @@ async def _list_namespace(
     # Every page must agree, not only the ends: a page answered by a lagging replica reports
     # its own total and version.
     whole = len(set(versions)) == 1 and len(set(totals)) == 1 and totals[0] == len(unique)
-    if whole:
+    if whole and versions[-1]:
         # A page reads the version before its rows, so a write during the last page's read
-        # shows only now: the version must still be the one every page reported.
+        # shows only now: the version must still be the one every page reported. An empty
+        # namespace has no version to check, and prune refuses its empty bundle anyway.
         after = await client.post(
             "memory.list", {**query, "limit": 1, "offset": 0, "known_version": versions[-1]}
         )
