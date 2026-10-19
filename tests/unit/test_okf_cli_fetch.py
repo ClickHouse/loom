@@ -302,36 +302,26 @@ async def test_a_limit_the_namespace_never_reached_is_listed_again_like_a_whole_
 
 @pytest.mark.asyncio
 async def test_a_repeated_row_never_counts_toward_the_limit() -> None:
-    # Three rows under --limit 3, and a write moves "a" to the top between pages, so the
-    # second page serves it again: the listing read every row, it did not stop at the limit.
+    # Three rows under --limit 3. After the first page a row moves to the top, so the next
+    # offset serves "b" again before "c": the repeat must not make the listing look cut.
     class _Repeating:
-        def __init__(self) -> None:
-            self.listings = 0
-
         async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
             if op == "memory.bulk_get":
                 return {"results": {k: {"value": k} for k in body["memory_keys"]}}
             if "known_version" in body:
-                return {"entries": [], "unchanged": True}
-            if body["offset"] == 0:
-                self.listings += 1
-            keys = (
-                ["a", "b", "c"]
-                if body["offset"] == 0 or self.listings > 1
-                else ["a", "a", "b", "c"]
-            )
-            page = keys[body["offset"] : body["offset"] + 2]
+                return {"entries": [], "unchanged": False}
+            rows = ["a", "b", "c"] if body["offset"] == 0 else ["a", "b", "b", "c"]
+            page = rows[body["offset"] : body["offset"] + min(2, body["limit"])]
             return {
                 "entries": [
                     {"memory_key": k, "agent": "x", "user_id": "-", "session_id": "-"} for k in page
                 ],
-                "truncated": body["offset"] + 2 < len(keys),
+                "truncated": body["offset"] + len(page) < len(rows),
                 "total": 3,
                 "namespace_version": "1",
             }
 
-    client = _Repeating()
-    rows, whole, capped = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
-        client, "o", "ns", include_tombstoned=False, limit=4
+    rows, _whole, capped = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        _Repeating(), "o", "ns", include_tombstoned=False, limit=3
     )
     assert not capped and sorted(r["memory_key"] for r in rows) == ["a", "b", "c"]

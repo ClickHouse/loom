@@ -219,6 +219,7 @@ async def _list_namespace(
     totals: list[int] = []
     versions: list[str] = []
     offset = 0
+    capped = False
     while True:
         page_size = _PAGE if limit is None else max(1, min(_PAGE, limit - len(seen)))
         page = await client.post("memory.list", {**query, "limit": page_size, "offset": offset})
@@ -227,11 +228,16 @@ async def _list_namespace(
             seen.setdefault(_entry_id(r), r)
         totals.append(int(page.get("total") or 0))
         versions.append(str(page.get("namespace_version") or ""))
-        if not page.get("truncated") or not rows or (limit is not None and len(seen) >= limit):
+        if not page.get("truncated") or not rows:
+            break
+        # Stopped at the limit only when the server said more rows remain: a namespace of
+        # exactly `limit` rows was read whole.
+        if limit is not None and len(seen) >= limit:
+            capped = True
             break
         offset += len(rows)
     unique = list(seen.values())
-    if limit is not None and len(unique) >= limit:
+    if capped:
         return unique[:limit], False, True
     # Every page must agree, not only the ends: a page answered by a lagging replica reports
     # its own total and version.
