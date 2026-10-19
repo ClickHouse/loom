@@ -238,6 +238,21 @@ test("with communities, the facet counts them and says when, with the absolute t
 test.describe("under a coarse pointer", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
 
+  // A selected row grows its action buttons, 44 px targets here: the row keeps its height.
+  test("selecting an outline row keeps its height", async ({ page }) => {
+    await installApi(page);
+    await page.goto(`/graph?seed=${SMALL_SEED}`);
+    const rows = page.getByRole("tree", { name: "Walk outline" }).getByRole("treeitem");
+    const heights = () => rows.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+    await expect(rows).toHaveCount(SMALL_HOP1 + 1);
+    const before = await heights();
+    for (const [i, name] of [SMALL_SEED, `${SMALL_SEED}-h1-0`].entries()) {
+      await rows.nth(i).getByText(name, { exact: true }).tap();
+      await expect(rows.nth(i)).toHaveAttribute("aria-selected", "true");
+      expect(await heights(), `row ${i} selected`).toEqual(before);
+    }
+  });
+
   test("a Chip, an IconButton and an outline row are 44 px targets", async ({ page }) => {
     await installApi(page, { trackerBound: true });
     const errors = collectErrors(page);

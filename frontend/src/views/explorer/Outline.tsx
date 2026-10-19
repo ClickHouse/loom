@@ -325,7 +325,7 @@ export function Outline({
                   size="sm"
                   tabIndex={-1}
                   aria-pressed={edgeSelected}
-                  className="shrink-0 -my-1"
+                  className="shrink-0"
                 />
               )}
             </div>
