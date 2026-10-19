@@ -1229,7 +1229,7 @@ async def test_one_lease_sweep_puts_a_stranded_lease_row_right(ch: Any, stranded
         task = await repo.fetch_task(org, tid)
         await backend.ensure_row(tid, org, task["inbox"], int(task["fence"]))
     later = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=5)
-    assert await sweep.reconcile_leases(later, limit=10_000) >= 1
+    assert await sweep.reconcile_leases(later, limit=10_000) >= 1, "counts only a repair"
     if stranded == "ended task":
         assert await _lease(ch, tid) is None
     else:
@@ -1340,3 +1340,33 @@ async def test_one_failing_lease_repair_does_not_stop_the_others(
     monkeypatch.undo()
     assert await _lease(ch, first) is None
     assert await _lease(ch, second) == {"owner": "", "fence": 0}
+
+
+@pytest.mark.asyncio
+async def test_the_lease_reconcile_counts_only_the_rows_it_changed(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stray row a claim took between the reconcile's read and its write is not a
+    repair: the guarded write changes nothing, and the count says so."""
+    from server.tasks.app import sweep
+
+    org = f"itest-count-{uuid.uuid4().hex[:8]}"
+    tid = await _todo_task(org)
+    backend = await repo.lease_backend()
+    await backend.give_back(tid, "", held_fence=0, fence=5)  # an idle row at another fence
+    strays = repo.lease_strays
+
+    async def only_this(**kw: Any) -> Any:
+        missing, stray = await strays(**kw)
+        await _claim_one_at(backend, tid, fence=5)  # a claim takes it after the read
+        return [], [r for r in stray if r["task_id"] == tid]
+
+    monkeypatch.setattr(repo, "lease_strays", only_this)
+    assert await sweep.reconcile_leases(_later(), limit=10_000) == 0
+
+
+async def _claim_one_at(backend: Any, tid: str, *, fence: int) -> None:
+    from datetime import timedelta
+
+    until = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=5)
+    assert (await backend.try_claim(tid, "bot", expected_fence=fence, lease_until=until)).won

@@ -56,10 +56,14 @@ class FakeLeases:
 
     async def ensure_row(
         self, task_id: str, org: str, inbox: str, fence: int, *, reset_idle: bool = False
-    ) -> None:
-        row = self.rows.setdefault(task_id, {"owner": "", "fence": fence, "lease_until": None})
+    ) -> bool:
+        if task_id not in self.rows:
+            self.rows[task_id] = {"owner": "", "fence": fence, "lease_until": None}
+            return True
+        row = self.rows[task_id]
         if reset_idle and row["owner"] == "" and row["fence"] < fence:
             row["fence"] = fence
+        return False
 
     async def try_claim(self, task_id, claimant, *, expected_fence, lease_until) -> ClaimResult:
         row = self.rows.get(task_id)
@@ -73,10 +77,11 @@ class FakeLeases:
             return ClaimResult(True, row["fence"], claimant)
         return ClaimResult(False, row["fence"], row["owner"])
 
-    async def give_back(self, task_id, holder, *, held_fence, fence) -> None:
+    async def give_back(self, task_id, holder, *, held_fence, fence) -> bool:
         row = self.rows.get(task_id)
         if row is not None and row["owner"] == holder and row["fence"] == held_fence:
             row.update({"owner": "", "fence": fence, "lease_until": None})
+        return row is not None and row["owner"] == "" and row["fence"] == fence
 
     async def set_owner(self, task_id, *, fence, owner, lease_until, status) -> bool:
         row = self.rows.get(task_id)

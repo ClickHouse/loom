@@ -510,9 +510,10 @@ async def lease_strays(
     *, before: datetime, terminal: list[str], limit: int, ch: _CHClient | None = None
 ) -> tuple[list[MissingLeaseRow], list[StrayLeaseRow]]:
     """What the lease reconcile acts on, org-wide, among rows last written before
-    `before` (a transition still in flight keeps its own rows; a transition writes its
-    task version before its event, so `updated_at` covers it): todo and triage tasks
-    with no lease row, and lease rows idle or expired whose task is gone, ended
+    `before` (a transition still in flight keeps its own rows; a cancel's first drop is
+    not covered by the grace: its second drop removes a row the reconcile wrote back):
+    todo and triage tasks with no lease row, and lease rows idle or expired whose task
+    is gone, ended
     (`terminal`) or at another fence (a claim cut off after winning holds an expired row
     one fence ahead of its todo task)."""
     ch = ch or _default_client()
@@ -757,7 +758,8 @@ class ClaimResult:
 
 def _lost_race(e: Exception) -> bool:
     """A strict-mode write that lost to a concurrent one: Keeper's version check failed,
-    or the row was deleted under it. A lost connection is neither."""
+    or the row was deleted under it. A lost connection is neither. Every write here
+    addresses one row by its own key, so a missing node can only be that row."""
     return "Bad version" in str(e) or "No node" in str(e)
 
 
@@ -786,12 +788,12 @@ class KeeperLeases:
 
     async def ensure_row(
         self, task_id: str, org: str, inbox: str, fence: int, *, reset_idle: bool = False
-    ) -> None:
-        """Insert the lease row for a new task (owner empty). A retry that
-        finds the key present is fine: the row is the same. `reset_idle` (a reopen):
-        a row already present with no owner and an older fence takes `fence`, so a stray
-        row a late write left behind cannot keep every claim losing. Fences only grow,
-        so a late reset never lowers one."""
+    ) -> bool:
+        """Insert the lease row for a new task (owner empty); True when this call wrote
+        it. A retry that finds the key present is fine: the row is the same. `reset_idle`
+        (a reopen): a row already present with no owner and an older fence takes `fence`,
+        so a stray row a late write left behind cannot keep every claim losing. Fences
+        only grow, so a late reset never lowers one."""
         try:
             await self.ch.execute(
                 "INSERT INTO loom.task_leases "
@@ -806,6 +808,8 @@ class KeeperLeases:
                 raise
             if reset_idle:
                 await self._reset_idle_fence(task_id, fence)
+            return False
+        return True
 
     async def _reset_idle_fence(self, task_id: str, fence: int) -> None:
         """Move an idle row at an older fence to `fence`. A claim that took the row
@@ -821,10 +825,11 @@ class KeeperLeases:
             if not _lost_race(e):
                 raise
 
-    async def give_back(self, task_id: str, holder: str, *, held_fence: int, fence: int) -> None:
+    async def give_back(self, task_id: str, holder: str, *, held_fence: int, fence: int) -> bool:
         """Put the row `holder` holds at `held_fence` back idle (todo) at `fence`: a claim
         that backs out undoes its own bump, and the lease reconcile moves an idle or
-        dead-owner row to its task's fence. Changes nothing when the row has moved on."""
+        dead-owner row to its task's fence. Changes nothing when the row has moved on.
+        True when the row, read back, is idle at `fence`."""
         try:
             await self.ch.execute(
                 "ALTER TABLE loom.task_leases UPDATE owner = '', lease_until = toDateTime(0), "
@@ -841,10 +846,13 @@ class KeeperLeases:
         except Exception as e:
             if not _lost_race(e):
                 raise
+        row = await self._lease_row(task_id)
+        return row is not None and row["owner"] == "" and int(row["fence"]) == int(fence)
 
-    async def delete_held(self, task_id: str, holder: str, *, fence: int) -> None:
+    async def delete_held(self, task_id: str, holder: str, *, fence: int) -> bool:
         """Drop the row only while `holder` ('' for an idle row) still holds it at
-        `fence`: the lease reconcile never removes a row a claim took since its read."""
+        `fence`: the lease reconcile never removes a row a claim took since its read.
+        True when no row is left."""
         try:
             await self.ch.execute(
                 "ALTER TABLE loom.task_leases DELETE WHERE task_id = {tid:String} "
@@ -855,6 +863,16 @@ class KeeperLeases:
         except Exception as e:
             if not _lost_race(e):
                 raise
+        return await self._lease_row(task_id) is None
+
+    async def _lease_row(self, task_id: str) -> dict[str, Any] | None:
+        return cast(
+            "dict[str, Any] | None",
+            await self.ch.query_one(
+                "SELECT owner, fence FROM loom.task_leases WHERE task_id = {tid:String}",
+                params={"tid": task_id},
+            ),
+        )
 
     async def try_claim(
         self, task_id: str, claimant: str, *, expected_fence: int, lease_until: datetime

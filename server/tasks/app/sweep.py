@@ -123,22 +123,22 @@ async def reconcile_leases(now: datetime, *, limit: int) -> int:
     repaired = 0
     for task in missing:
         try:
-            await backend.ensure_row(
+            if await backend.ensure_row(
                 task["task_id"], task["org"], task["inbox"], int(task["fence"])
-            )
-            repaired += 1
+            ):
+                repaired += 1
         except Exception as e:  # noqa: BLE001 — one stray row never stops the reconcile
             log.warning("task_lease_sweep: lease row of %s not written: %s", task["task_id"], e)
     for row in stray:
         held = int(row["lease_fence"])
         try:
             if not row["found"] or row["status"] in TERMINAL:
-                await backend.delete_held(row["task_id"], row["owner"], fence=held)
+                done = await backend.delete_held(row["task_id"], row["owner"], fence=held)
             else:
-                await backend.give_back(
+                done = await backend.give_back(
                     row["task_id"], row["owner"], held_fence=held, fence=int(row["fence"])
                 )
-            repaired += 1
+            repaired += int(done)
         except Exception as e:  # noqa: BLE001 — one stray row never stops the reconcile
             log.warning("task_lease_sweep: lease row of %s not repaired: %s", row["task_id"], e)
     return repaired
