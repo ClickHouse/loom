@@ -1968,7 +1968,43 @@ def test_a_remove_naming_an_entry_removes_only_that_one(client: TestClient, worl
     uid = _user(client, emails)
     gone = {"op": "remove", "path": "emails", "value": [{"value": "Lee@home.example"}]}
     r = _patch(client, uid, gone)
+    assert r.status_code == 200, r.text
     assert [e["value"] for e in r.json()["emails"]] == ["lee@example.com"]
+
+
+@pytest.mark.parametrize(
+    ("named", "left"),
+    [
+        ({"value": "lee@example.com", "type": "home"}, ["work", ""]),  # same address, other type
+        ({"type": "home"}, ["work", ""]),
+        ({"value": "Lee@Other.example"}, ["work", "home"]),
+    ],
+)
+def test_a_remove_drops_the_entries_its_value_names(
+    client: TestClient, world, named: dict[str, Any], left: list[str]
+) -> None:
+    emails = [
+        {"value": "lee@example.com", "type": "work", "primary": True},
+        {"value": "lee@example.com", "type": "home"},
+        {"value": "lee@other.example"},
+    ]
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com", "emails": emails})
+    r = _patch(client, uid.json()["id"], {"op": "remove", "path": "emails", "value": [named]})
+    assert r.status_code == 200, r.text
+    assert [e.get("type", "") for e in r.json()["emails"]] == left
+
+
+def test_a_remove_of_the_emails_with_no_value_drops_every_one(client: TestClient, world) -> None:
+    body = {"userName": "lee@example.com", "emails": [{"value": "lee@example.com"}]}
+    uid = client.post("/scim/v2/Users", json=body).json()["id"]
+    r = _patch(client, uid, {"op": "remove", "path": "emails"})
+    assert r.status_code == 200 and r.json()["emails"] == []
+
+
+@pytest.mark.parametrize("emails", ["", False, 0, None, []])
+def test_a_falsy_emails_sends_none(client: TestClient, world, emails: Any) -> None:
+    created = client.post("/scim/v2/Users", json={"userName": "lee@example.com", "emails": emails})
+    assert created.status_code == 201 and created.json()["emails"] == []
 
 
 def test_a_blank_primary_entry_does_not_take_the_flag(client: TestClient, world) -> None:

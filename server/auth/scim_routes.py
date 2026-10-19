@@ -253,11 +253,11 @@ def _patched_emails(
     if sub not in ("", "value", "type", "primary"):
         return emails  # `emails.display` and the like
     if comparison is None and not sub:
-        if kind == "remove":  # the entries it names (RFC 7644 §3.5.2.2), else every one
+        if kind == "remove":  # a value names the entries to drop (as Entra removes members)
             if value is None:
                 return []
-            named = {scim.normalized(e["value"]) for e in _entries(_listed(value))}
-            return [e for e in emails if scim.normalized(e["value"]) not in named]
+            named = [_naming(n) for n in _listed(value)]
+            return [e for e in emails if not any(_names(n, e) for n in named)]
         written = _entries(_listed(value))  # a null is unassigned (RFC 7643 §2.5)
         if kind == "replace":
             return _one_primary(written, range(len(written)))
@@ -298,6 +298,22 @@ def _same(a: dict[str, Any], b: dict[str, Any]) -> bool:
     return scim.normalized(a["value"]) == scim.normalized(b["value"]) and (
         a["type"].lower() == b["type"].lower()
     )
+
+
+def _naming(named: Any) -> dict[str, str]:
+    """What a remove's value says of an entry to drop: its address and/or type."""
+    if not isinstance(named, dict):
+        raise ScimError(400, "an emails entry must be an object", "invalidValue")
+    said = {k: named[k] for k in ("value", "type") if isinstance(named.get(k), str)}
+    if not said:
+        raise ScimError(400, "a remove names an entry by its value or type", "invalidValue")
+    return said
+
+
+def _names(said: dict[str, str], entry: dict[str, Any]) -> bool:
+    if "value" in said and scim.normalized(said["value"]) != scim.normalized(entry["value"]):
+        return False
+    return "type" not in said or said["type"].lower() == entry["type"].lower()
 
 
 def _listed(value: Any) -> list[Any]:
@@ -417,7 +433,7 @@ def user_name_and_email(body: dict[str, Any]) -> tuple[str, str, list[dict[str, 
     name = body.get("userName")
     if not isinstance(name, str) or not name.strip():
         raise ScimError(400, "userName is required", "invalidValue")
-    emails = _entries(_listed(body.get("emails")))
+    emails = _entries(_listed(body.get("emails") or None))  # a falsy one sends none
     emails = _one_primary(emails, range(len(emails)))  # the first primary with an address keys it
     entry = keyed_entry(emails) or {}
     email = scim.normalized(entry.get("value") or name)
