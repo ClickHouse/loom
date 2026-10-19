@@ -114,3 +114,42 @@ async def test_the_tokens_a_reused_names_former_holder_made_are_revoked(org: str
             "SETTINGS mutations_sync = 2",
             params={"j": revocation.SCIM_PREFIX + lee},
         )
+
+
+async def _listed_before_lineage(org: str, name: str, subject: str, created_by: str) -> None:
+    """A token row as a build before migration 044 wrote it: no lineage."""
+    await _save(org, name, subject, created_by, [created_by])
+    row = await get_client().query_one(
+        "SELECT * FROM loom.service_accounts FINAL WHERE org = {org:String} AND name = {n:String}",
+        params={"org": org, "n": name},
+    )
+    old = {**dict(row or {}), "lineage": [], "version": int((row or {})["version"]) + 1}
+    await get_client().insert("loom.service_accounts", [old])
+
+
+async def test_a_reused_name_hands_its_ancestry_to_tokens_listed_before_lineage(org: str) -> None:
+    lee = f"lee-{uuid.uuid4().hex[:8]}"
+    await _listed_before_lineage(org, "parent", "sa:parent-old", lee)
+    await _listed_before_lineage(org, "child", "sa:child-1", "sa:parent-old")
+    old = await get_client().query_one(
+        "SELECT * FROM loom.service_accounts FINAL WHERE org = {org:String} AND name = 'parent'",
+        params={"org": org},
+    )
+    gone = service_accounts.revoked_row(
+        dict(old or {}), revoked_at=datetime(2026, 1, 1), revoked_by=lee
+    )
+    await get_client().insert("loom.service_accounts", [gone])
+    await _save(org, "parent", "sa:parent-new", "admin", ["admin"])  # the name, reused
+
+    from server.auth import revocation
+
+    await revocation.scim_revoke(lee, reason="test", revoked_by="scim")
+    try:
+        await service_accounts.revoke_created_by([lee], revoked_by="scim")
+        assert (await _head(org, "child"))["revoked_at"] is not None
+    finally:
+        await get_client().execute(
+            "ALTER TABLE loom.revoked_tokens DELETE WHERE jti = {j:String} "
+            "SETTINGS mutations_sync = 2",
+            params={"j": revocation.SCIM_PREFIX + lee},
+        )

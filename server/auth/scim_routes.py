@@ -405,20 +405,25 @@ def _entries(items: list[Any]) -> list[dict[str, Any]]:
 
 # One `attr eq value` comparison: what a provider puts in an `emails[…]` filter.
 _COMPARISON = re.compile(
-    r'\s*(type|value|primary)\s+eq\s+(?:"([^"]*)"|(true|false))\s*', re.IGNORECASE
+    r'\s*(type|value|primary)\s+eq\s+(?:"((?:[^"\\]|\\.)*)"|(true|false))\s*', re.IGNORECASE
 )
 
 
 def _comparison(filt: str) -> tuple[str, str | bool]:
-    """An `emails[…]` filter as (attribute, value), `primary` as a bool."""
+    """An `emails[…]` filter as (attribute, value), `primary` as a bool. A
+    quoted value is a JSON string (RFC 7644 §3.4.2.2), escapes and all."""
+    refused = ScimError(
+        400, "an emails filter must be one comparison on type, value or primary", "invalidFilter"
+    )
     m = _COMPARISON.fullmatch(filt)
     if not m:
-        raise ScimError(
-            400,
-            "an emails filter must be one comparison on type, value or primary",
-            "invalidFilter",
-        )
+        raise refused
     attr, text, flag = m.groups()
+    if text is not None:
+        try:
+            text = json.loads(f'"{text}"')
+        except ValueError:  # a bad escape or a control character
+            raise refused from None
     attr, want = attr.lower(), text if text is not None else flag
     return attr, scim.is_primary(want) if attr == "primary" else want
 

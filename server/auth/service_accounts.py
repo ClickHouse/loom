@@ -117,6 +117,52 @@ def revoked_row(row: dict[str, Any], *, revoked_at: datetime, revoked_by: str) -
     }
 
 
+async def hand_down_lineage(org: str, name: str) -> None:
+    """Before a new token takes `name`, add to the lineage of the tokens its
+    former holder made every subject above them. Once the new row replaces the
+    former one under FINAL, no row names the subject they were made by, and a
+    token listed before `lineage` would be found by neither column. Called
+    under the name's claim; each token rewritten under its own."""
+    from server.auth.grant_claims import service_account_change
+    from server.core.ch import get_client, own_write_reads
+
+    ch = get_client()
+    key = {"org": org, "name": name}
+    with own_write_reads():
+        former = await ch.query_one(
+            "SELECT sa_subject, created_by, lineage FROM loom.service_accounts FINAL "
+            "WHERE org = {org:String} AND name = {name:String}",
+            params=key,
+        )
+    if former is None:
+        return
+    made_by = str(former["sa_subject"])
+    above = sorted({made_by, str(former["created_by"]), *former["lineage"]} - {""})
+    find = (
+        "FROM loom.service_accounts FINAL WHERE org = {org:String} "
+        "AND created_by = {by:String} AND NOT hasAll(lineage, {above:Array(String)})"
+    )
+    params = {"org": org, "by": made_by, "above": above}
+    with own_write_reads():
+        made = await ch.query_all(f"SELECT name {find}", params=params)
+    for r in made:
+        async with service_account_change(org, str(r["name"])):
+            with own_write_reads():  # again, under its claim
+                row = await ch.query_one(
+                    f"SELECT * {find} AND name = {{name:String}}",
+                    params={**params, "name": r["name"]},
+                )
+            if row is None:
+                continue
+            row = dict(row)
+            lineage = sorted({*row["lineage"], *above})
+            # Every column carried, past the version read, as `revoked_row` does.
+            version = max(time.time_ns(), int(row["version"]) + 1)
+            await ch.insert(
+                "loom.service_accounts", [{**row, "lineage": lineage, "version": version}]
+            )
+
+
 # Names a pass revokes at once: each is a lease round trip and an insert.
 _CLAIMS_AT_ONCE = 8
 # Creators read at once: their keys are one array parameter, which ClickHouse

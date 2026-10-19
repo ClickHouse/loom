@@ -533,6 +533,24 @@ revoke each subject they reach with `loom revoke-token --subject`. A
 deactivated email that reaches no account has no subject to revoke: the
 provider's block is all that keeps it out of the previous build.
 
+A token made by another token is found, when a deactivation frees the
+person's token names, through the subjects above it. This build records them
+on each token, and hands them to a token's children before a new token
+reuses its name. A token made before this build whose parent's name was
+reused before it lost that link: it is still refused (the revocation reaches
+it through its delegation chain), but it stays listed live and keeps its
+name. List those with
+
+```sql
+SELECT org, name, sa_subject FROM loom.service_accounts FINAL
+WHERE revoked_at IS NULL AND empty(lineage) AND startsWith(created_by, 'sa:')
+  AND created_by NOT IN (SELECT sa_subject FROM loom.service_accounts FINAL)
+```
+
+and revoke each from its owner's Tokens list, or as a namespace admin
+(`/v1/me/service_accounts.revoke`). While the previous build still serves, a
+token it lists, revokes or reuses the name of records no lineage.
+
 A browser sign-in whose steps land on both builds (a code exchanged, an
 identity provider's callback) fails and is started again. The SDK and `loom
 login` ride it out: this build marks its token and device sign-in answers with

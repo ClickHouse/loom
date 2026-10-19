@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from server.auth.delegation import Delegated, delegate
 from server.auth.jwt import AuthInfo
 from server.auth.self_signup import AGENT_NAME_PREFIX
-from server.auth.service_accounts import revoked_row
+from server.auth.service_accounts import hand_down_lineage, revoked_row
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.app import me_callers, token_grants
@@ -202,6 +202,7 @@ async def save_token(
     # the authoritative per-namespace map (JSON), when the token has one.
     roles = sorted(set(ns_roles.values()), key=grant_rank) if ns_roles else delegated.roles
     ch = get_client()
+    await hand_down_lineage(delegated.org, name)
     # Past every row the name has held, whichever host's clock wrote it: a
     # revoked row from a host running ahead would otherwise replace this one.
     version = await next_version(ch, "loom.service_accounts", {"org": delegated.org, "name": name})

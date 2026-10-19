@@ -2194,6 +2194,33 @@ def test_a_name_sent_twice_is_refused_and_still_deactivates(
     assert world.ours == {"lee": None}
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        r'emails[value eq "lee\u0040home.example"]',  # a JSON string, its escapes decoded
+        'emails[value eq "lee@home.example"]',
+        r'emails[type eq "h\u006fme"]',
+    ],
+)
+def test_an_emails_filter_value_is_a_json_string(client: TestClient, world, path: str) -> None:
+    uid = _user(
+        client, [{"value": "lee@example.com"}, {"value": "lee@home.example", "type": "home"}]
+    )
+    r = _patch(client, uid, {"op": "remove", "path": path})
+    assert r.status_code == 200, r.text
+    assert [e["value"] for e in r.json()["emails"]] == ["lee@example.com"]
+
+
+def test_an_emails_filter_value_may_hold_an_escaped_quote(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "lee@example.com"}])
+    add = {"op": "add", "path": r'emails[type eq "a\"b"].value', "value": "lee@home.example"}
+    r = _patch(client, uid, add)
+    assert r.status_code == 200, r.text
+    assert r.json()["emails"][1]["type"] == 'a"b'
+    bad = {"op": "remove", "path": r'emails[type eq "bad \x"]'}
+    assert _patch(client, uid, bad).json()["scimType"] == "invalidFilter"
+
+
 def test_attribute_names_match_in_any_case(client: TestClient, world) -> None:
     # RFC 7643 §2.1: the names of attributes, sub-attributes and operations.
     body = {"UserName": "lee.upn@corp.example", "Emails": _MIXED_CASE, "ACTIVE": True}

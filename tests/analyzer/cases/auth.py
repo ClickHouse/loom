@@ -9,7 +9,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from server.core.ch import get_client
 from server.core.versions import next_version
 from tests.analyzer.cases._common import NS, ORG
 from tests.analyzer.corpus import Case, RecordingCH
@@ -52,8 +51,10 @@ async def _scim(ch: RecordingCH, c: dict[str, Any]) -> None:
     await revocation.has_outright_row("alice")
     await revocation._next_version("alice")
     await service_accounts.revoke_created_by(["alice"], revoked_by="scim")
-    # A new token's version, past every row its name held.
-    await next_version(get_client(), "loom.service_accounts", {"org": ORG, "name": "bot"})
+    # A new token's version, past every row its name held, and the ancestry its
+    # former holder hands down first.
+    await next_version(ch, "loom.service_accounts", {"org": ORG, "name": "bot"})
+    await service_accounts.hand_down_lineage(ORG, "bot")
 
 
 def _scim_rows(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -63,6 +64,10 @@ def _scim_rows(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         made = datetime(2026, 1, 1)
         token = {"org": ORG, "name": "bot", "sa_subject": "sa:bot-1", "created_by": "alice"}
         return [{**token, "created_at": made, "lineage": ["alice"], "live": 1}]
+    if "SELECT sa_subject, created_by, lineage FROM" in sql:
+        return [{"sa_subject": "sa:bot-1", "created_by": "alice", "lineage": ["alice"]}]
+    if "SELECT name FROM loom.service_accounts" in sql:
+        return [{"name": "child"}]
     if "count() AS n" in sql:
         return [{"n": 0}]
     if "max(version)" in sql:
