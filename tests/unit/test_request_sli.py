@@ -171,6 +171,26 @@ def test_an_otlp_deployment_exports_its_metrics_to_the_same_endpoint() -> None:
     assert exporter._endpoint == "http://collector:4318/v1/metrics"
 
 
+def test_the_codes_the_transports_record_through_a_name_are_the_caller_s() -> None:
+    """The literal-code test above cannot see codes recorded through a
+    constant or a result body; each of these is a refusal the caller caused."""
+    from server.transport import gates
+    from server.transport import namespace_resolve as nr
+    from server.transport.mcp_auth import _not_accessible_result
+    from server.transport.mcp_op import UNKNOWN_OP
+
+    codes = {
+        UNKNOWN_OP,
+        gates.ROLE_REFUSAL_CODE,
+        "IDEMPOTENT_IN_PROGRESS",
+        "IDEMPOTENT_CONFLICT",
+        nr.unknown_result("nope", [])["structuredContent"]["code"],
+        _not_accessible_result("loom_memory_get", None, "n")["structuredContent"]["code"],
+        _not_accessible_result("loom_code_search", None, "code-x")["structuredContent"]["code"],
+    }
+    assert {c: sli.status_class(False, c, None) for c in codes} == dict.fromkeys(codes, "client")
+
+
 def test_every_code_the_transports_record_without_an_exception_is_classified() -> None:
     """A refusal written by code alone (no exception) must still be the
     caller's; INTERNAL_ERROR is the server's, and so is HANDLER_HTTP_ERROR
@@ -1349,3 +1369,31 @@ def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
     assert asyncio.run(_refused("someone-else")) is True
     status["value"] = "in_progress"
     assert asyncio.run(_refused("poster")) is True  # only the owner side may act
+
+
+def test_an_answer_hidden_whole_for_want_of_the_classification_is_the_server_s(
+    monkeypatch,
+) -> None:
+    """With the classification unreadable, every namespace is hidden (`*`); the
+    request that answered with nothing is the server's."""
+    from server.auth import context
+    from server.auth.directory import ClassificationUnavailable
+    from server.auth.fail_closed import answered_unverified
+    from server.auth.jwt import AuthInfo
+    from server.core import request_work
+
+    class _Down:
+        def restricted_code_namespaces(self, org: str) -> set[str]:
+            raise ClassificationUnavailable(org)
+
+    monkeypatch.setattr(context, "directory", lambda: _Down())
+    eve = AuthInfo(
+        subject="eve", org="o", namespaces=("n",), roles=(Role.VIEWER,), is_service_account=False
+    )
+
+    async def _hidden() -> tuple[list[str], bool]:
+        request_work.begin()
+        context.set_current_auth(eve)
+        return await context.restricted_namespaces_hidden_from("o"), answered_unverified()
+
+    assert asyncio.run(_hidden()) == (["*"], True)

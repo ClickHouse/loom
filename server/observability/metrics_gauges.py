@@ -768,7 +768,8 @@ def _register_health_gauges(meter: Any) -> None:
         description=(
             "Open /v1/health problems on this process, by code and severity: 1 while "
             "open; a resolved problem stops reporting, so alert on a window of at "
-            "least two export intervals and the gauge heartbeat"
+            "least the gauge heartbeat plus one export interval (two intervals "
+            "without a heartbeat)"
         ),
         unit="1",
     )

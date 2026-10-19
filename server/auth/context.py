@@ -236,7 +236,11 @@ async def restricted_namespaces_hidden_from(org: str) -> list[str]:
         names |= set(await directory().restricted_set(org))
     except ClassificationUnavailable:
         # Cannot tell which are restricted: the rollup gets no filter it can
-        # trust, so the caller must see nothing of the org's namespaces.
+        # trust, so the caller must see nothing of the org's namespaces, and
+        # the request that hid it all is the server's (fail_closed).
+        from server.auth.fail_closed import note_answered_unverified
+
+        note_answered_unverified()
         return ["*"]
     hidden = [ns for ns in sorted(names) if not await restricted_allows(auth, Role.VIEWER, org, ns)]
     return hidden
