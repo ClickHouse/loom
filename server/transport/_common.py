@@ -42,24 +42,26 @@ def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
     session) its read scope pins, and always its `read_user_id` pin, so a refused
     call naming another user is logged as the caller, never as that user. A history
     rule keyed on the user counts the caller's own calls, whatever its body names.
-    An org or namespace the body left out (absent to the gates) is the one the
-    gate admitted the call against, so a call served on a default is the
-    tenant's row; one refused before that names the token's own org, unless
-    the token is org-wide (`*`)."""
+    An org or namespace the body left out (absent to the gates: missing, blank
+    or "-") is the one the gate admitted the call against, so a call served on
+    a default is the tenant's row; one refused before that names the token's
+    own org, unless the token is org-wide (`*`). Whatever stays absent is "-"."""
     from server.core import request_work
+    from server.core.naming import SENTINEL
     from server.transport.gates import present
 
     out = request_identity(args)
     bag = request_work.current()
-    if bag is not None and bag.admitted is not None:
-        for k, v in zip(("org", "namespace"), bag.admitted, strict=True):
-            if present(out[k]) is None:
-                out[k] = v
+    admitted = bag.admitted if bag is not None else None
     auth = current_auth()
+    token_org = present(auth.org) if auth is not None else None
+    for k, fill in zip(("org", "namespace"), admitted or (SENTINEL, SENTINEL), strict=True):
+        if present(out[k]) is None:
+            out[k] = fill
+    if present(out["org"]) is None and token_org not in (None, "*"):
+        out["org"] = token_org
     if auth is None:
         return out
-    if present(out["org"]) is None and present(auth.org) not in (None, "*"):
-        out["org"] = auth.org
     try:
         scope: ReadFilters | None = request_read_filters(auth)
     except (AuthInsufficientError, IdentityIncompleteError):

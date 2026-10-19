@@ -1679,6 +1679,36 @@ def test_a_call_served_on_its_default_namespace_counts_in_that_tenant(monkeypatc
     rows.clear()
     for body in ({}, {"org": "", "namespace": ""}, {"org": " "}):
         contextvars.copy_context().run(_http_refusal, body)
-    # The org falls back to the token's; a refused call keeps the namespace it sent.
     got = [(row["org"], row["namespace"]) for row in rows]
-    assert got == [("eve-org", "-"), ("eve-org", ""), ("eve-org", "-")]
+    assert got == [("eve-org", "-")] * 3
+
+
+def test_the_ledger_reads_an_absent_org_or_namespace_as_the_gates_do() -> None:
+    """Missing, empty, blank and "-" are one absent value: filled from the
+    admitted target, else the token's org, else "-"."""
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.core import request_work
+    from server.transport._common import ledger_identity
+
+    eve = AuthInfo(
+        subject="eve", org="eve-org", namespaces=(), roles=(Role.VIEWER,), is_service_account=True
+    )
+    anyone = AuthInfo(
+        subject="ops", org="*", namespaces=("*",), roles=(Role.VIEWER,), is_service_account=True
+    )
+    blank = {"org": " ", "namespace": ""}
+
+    def _identity(auth: Any, admitted: tuple[str, str] | None) -> tuple[str, str]:
+        set_current_auth(auth)
+        request_work.begin().admitted = admitted
+        out = ledger_identity(blank)
+        return out["org"], out["namespace"]
+
+    def run(auth: Any, admitted: tuple[str, str] | None = None) -> tuple[str, str]:
+        return contextvars.copy_context().run(_identity, auth, admitted)
+
+    assert run(eve, ("acme", "code-acme")) == ("acme", "code-acme")
+    assert run(eve) == ("eve-org", "-")
+    assert run(anyone) == ("-", "-")
+    assert run(None) == ("-", "-")
