@@ -64,7 +64,8 @@ def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]
 def _ledger_refusal(
     tool_name: Any, auth: AuthInfo, *, error_code: str, org: str = "", server_fault: bool = False
 ) -> None:
-    from server.transport.mcp_ledger import TOOLS_BY_NAME, emit_token_refusal
+    from server.transport.mcp_ledger import emit_token_refusal
+    from server.transport.mcp_tools import TOOLS_BY_NAME
 
     op = TOOLS_BY_NAME.get(str(tool_name or ""))
     if op is not None:

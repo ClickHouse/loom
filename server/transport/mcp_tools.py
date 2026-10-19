@@ -58,6 +58,9 @@ log = logging.getLogger(__name__)
 # Tool descriptors (from operation registry)
 # ============================================================
 
+# Tool name → op: how a `tools/call` resolves its op, and its refusal rows name it.
+TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
+
 
 def _synthetic_tool_descriptors(toolset: str = "core") -> list[dict[str, Any]]:
     from server.transport.mcp_schemas import collapse_nullable

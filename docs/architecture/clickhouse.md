@@ -41,11 +41,13 @@ Retention is in [Partitioning and TTL](#partitioning-and-ttl).
 | Provider caches              | `embedding_cache`, `llm_response_cache`                                                                                                                                                                                                                                                                | The embedder and LLM client wrappers                                                                                   |
 
 **Why the SLI rollup has its own database.** `loom` holds what Loom serves; derived
-operational telemetry stays outside it, so a dashboard or alert user gets
-`SELECT ON loom_telemetry.*` without any grant on the database that holds memory, and
-the rollup can be dropped, rebuilt from the ledger or given its own retention without
-touching `loom`. The cost is one more database: the setup SQL grants the migrating user
-`CURRENT GRANTS ON loom_telemetry.*`, and preflight names that grant when it is missing.
+operational telemetry stays outside it, so a dashboard or alert user gets `SELECT ON
+loom_telemetry.*` without any grant on the database that holds memory, and the rollup can
+be dropped, rebuilt from the ledger or given its own retention without touching `loom`; a
+rebuild folds the last 31 days of the ledger only, so a deployment that wants the longer
+history backs `loom_telemetry` up too. The cost is one more database: the setup SQL grants
+the migrating user `CURRENT GRANTS ON loom_telemetry.*`, and preflight names that grant
+when it is missing.
 
 **State outside ClickHouse.** Uploaded document originals are rows of `document_blobs`,
 addressed per namespace by SHA-256 (`server/knowledge/store/blobs.py`). The token signing

@@ -22,11 +22,6 @@ from typing import Any
 
 from server.core.naming import SENTINEL
 from server.observability.sli import row_status
-from server.operations.base import Operation
-from server.operations.registry import ALL_OPERATIONS
-
-# Tool name → op, for the transports' call resolution and refusal rows.
-TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
 
 # How many rows of each refusal a batch has written, while one runs.
 _batch_refusals: contextvars.ContextVar[dict[tuple[str, str, str, str], int] | None] = (
