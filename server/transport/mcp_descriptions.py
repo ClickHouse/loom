@@ -1132,7 +1132,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "turns — turns are immutable once appended."
     ),
     "conversation.delete": (
-        "Permanently tombstone a conversation. Only call on explicit delete request."
+        "Soft-delete (tombstone) one conversation thread. Only call on explicit delete request."
     ),
     # ---- Context pack (session startup bundle) ----
     "context.pack": (

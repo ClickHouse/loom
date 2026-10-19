@@ -757,7 +757,7 @@ async def _pack_conversations(st: _PackState) -> None:
                 text=h.content_excerpt,
                 source="conversation",
                 group=str(h.thread_id),
-                # conversation.search is ILIKE-ranked; hits carry no score.
+                # conversation.search hits carry no score.
                 score=0.0,
             )
             for h in out.hits

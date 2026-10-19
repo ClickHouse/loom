@@ -12,8 +12,10 @@ from typing import Any, NotRequired, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
-from server.core.repo_base import _CHClient, _default_client
-from server.knowledge.domain.conversations import ConversationRole
+from server.core.ch import sequential_reads
+from server.core.errors import OverloadedError
+from server.core.repo_base import _CHClient, _default_client, param_slices
+from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS, ConversationRole
 
 
 class MessageRow(BaseModel):
@@ -279,8 +281,8 @@ async def insert_embedding(
     *,
     ch: _CHClient | None = None,
 ) -> None:
-    """Insert one loom.conversation_embeddings row. Used by
-    conversation.append after the canonical message row is written."""
+    """Insert one loom.conversation_embeddings row: a turn conversation.append
+    embeds, or the summary conversation.compact writes."""
     ch = ch or _default_client()
     await ch.insert(
         "loom.conversation_embeddings",
@@ -298,11 +300,14 @@ async def tombstone_thread(
     when: datetime,
     ch: _CHClient | None = None,
 ) -> dict[str, int]:
-    """Soft-delete one thread: messages + thread row + embeddings.
+    """Soft-delete one thread: messages + thread row + the embeddings no other agent
+    holds (see `tombstone_embeddings`).
 
     Sets `tombstoned_at = when`; read paths here filter
     `tombstoned_at IS NULL`, so rows vanish from subsequent fetch / list
-    / search / count. Returns `{table_name: rows_tombstoned}`.
+    / search / count. Returns `{table_name: rows tombstoned}`; for
+    loom.conversation_embeddings, turns (one per turn however many embedding models
+    hold it).
     """
     ch = ch or _default_client()
     params = {
@@ -310,15 +315,18 @@ async def tombstone_thread(
         "ns": namespace,
         "agent": agent,
         "tid": thread_id,
-        "ts": when.isoformat(),
+        "now": when,
     }
     counts: dict[str, int] = {}
 
-    # 1. Messages.
+    # 1. Embeddings: every turn the agent logged in the thread, a compacted one too.
+    await tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
+
+    # 2. Messages.
     await ch.execute(
         """
         ALTER TABLE loom.conversations
-        UPDATE tombstoned_at = parseDateTimeBestEffort({ts:String})
+        UPDATE tombstoned_at = {now:DateTime}
         WHERE org = {org:String} AND namespace = {ns:String}
           AND agent = {agent:String}
           AND thread_id = {tid:String} AND tombstoned_at IS NULL
@@ -337,11 +345,29 @@ async def tombstone_thread(
     )
     counts["loom.conversations"] = int(msg_n["n"]) if msg_n else 0
 
-    # 2. Thread row.
+    # 3. Embeddings again, for a turn appended during the delete
+    # (`tombstone_embedding_if_message_gone` says why this closes the race).
+    await tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
+    # One per turn (FINAL, however many embedding models hold it), earlier calls'
+    # tombstones included, as the messages count is. Sequential: the tombstones are
+    # inserts, which another replica may not have yet.
+    with sequential_reads():
+        emb_n = await ch.query_one(
+            f"""
+            SELECT uniqExact(msg_id) AS n FROM loom.conversation_embeddings FINAL
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND thread_id = {{tid:String}} AND tombstoned_at IS NOT NULL
+              AND {_THREAD_TURNS}
+            """,
+            params=params,
+        )
+    counts["loom.conversation_embeddings"] = int(emb_n["n"]) if emb_n else 0
+
+    # 4. Thread row.
     await ch.execute(
         """
         ALTER TABLE loom.conversation_threads
-        UPDATE tombstoned_at = parseDateTimeBestEffort({ts:String})
+        UPDATE tombstoned_at = {now:DateTime}
         WHERE org = {org:String} AND namespace = {ns:String}
           AND agent = {agent:String}
           AND thread_id = {tid:String} AND tombstoned_at IS NULL
@@ -350,29 +376,6 @@ async def tombstone_thread(
         params=params,
     )
     counts["loom.conversation_threads"] = 1  # at most one thread row per identity tuple
-
-    # 3. Embeddings.
-    await ch.execute(
-        """
-        ALTER TABLE loom.conversation_embeddings
-        UPDATE tombstoned_at = parseDateTimeBestEffort({ts:String})
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND thread_id = {tid:String} AND tombstoned_at IS NULL
-        SETTINGS mutations_sync = 2
-        """,
-        params=params,
-    )
-    emb_n = await ch.query_one(
-        """
-        SELECT count() AS n FROM loom.conversation_embeddings
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND thread_id = {tid:String} AND tombstoned_at IS NOT NULL
-        """,
-        params=params,
-    )
-    counts["loom.conversation_embeddings"] = int(emb_n["n"]) if emb_n else 0
 
     return counts
 
@@ -690,9 +693,10 @@ async def live_messages(
     *,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Every live message of one thread, oldest first. loom.conversations is a
-    plain MergeTree: FINAL is illegal there (code 181), and
-    conversation.append's existence check keeps msg_ids unique."""
+    """Every live message of one thread, oldest first, a compaction summary ahead of
+    the turns at its `ts` (it sits at its first source's `ts`, so it leads the window it
+    was written over). loom.conversations is a plain MergeTree: FINAL is illegal there
+    (code 181), and conversation.append's existence check keeps msg_ids unique."""
     ch = ch or _default_client()
     return await ch.query_all(
         """
@@ -703,7 +707,9 @@ async def live_messages(
           AND agent = {agent:String}
           AND thread_id = {tid:String}
           AND tombstoned_at IS NULL
-        ORDER BY ts ASC, msg_id ASC
+        ORDER BY ts ASC,
+          NOT (role = 'system' AND notEmpty(JSONExtractArrayRaw(metadata, 'compacted_from'))),
+          msg_id ASC
         """,
         params={"org": org, "ns": namespace, "agent": agent, "tid": thread_id},
     )
@@ -719,29 +725,238 @@ async def tombstone_messages(
     when: datetime,
     ch: _CHClient | None = None,
 ) -> None:
-    """Tombstone the named messages of one thread. A synchronous mutation, so
-    the next read sees a coherent thread."""
+    """Tombstone the named messages of one thread and their embeddings, so
+    conversation.search stops returning them too. The messages mutation is
+    synchronous, so the next read sees a coherent thread. Embeddings are tombstoned
+    before the messages, so a retry finds the messages live and repeats both; a second
+    pass after the messages mutation closes the race `tombstone_embedding_if_message_gone`
+    describes."""
     ch = ch or _default_client()
-    await ch.execute(
-        """
-        ALTER TABLE loom.conversations
-        UPDATE tombstoned_at = {now:DateTime}
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND thread_id = {tid:String}
-          AND msg_id IN {ids:Array(String)}
-        SETTINGS mutations_sync = 2
-        """,
-        params={
-            "now": when,
-            "org": org,
-            "ns": namespace,
-            "agent": agent,
-            "tid": thread_id,
-            "ids": msg_ids,
-        },
+    await tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
+    for part in param_slices(msg_ids):
+        await ch.execute(
+            """
+            ALTER TABLE loom.conversations
+            UPDATE tombstoned_at = {now:DateTime}
+            WHERE org = {org:String}
+              AND namespace = {ns:String}
+              AND agent = {agent:String}
+              AND thread_id = {tid:String}
+              AND msg_id IN {ids:Array(String)}
+            SETTINGS mutations_sync = 2
+            """,
+            params={
+                "now": when,
+                "org": org,
+                "ns": namespace,
+                "agent": agent,
+                "tid": thread_id,
+                "ids": part,
+            },
+        )
+    await tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
+
+
+async def tombstone_embedding_if_message_gone(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> None:
+    """Tombstone a just-stored embedding whose message a delete or compaction tombstoned
+    meanwhile.
+
+    A turn written during a delete or compaction lands its message, then its embedding.
+    Those tombstone the messages, then run their last embeddings pass; the writer
+    stores the embedding, then calls this. So for a message the messages mutation
+    covered, either that last pass sees the embedding or this read sees the tombstone.
+    A message that lands after the mutation began is not covered and stays live. After
+    a compaction its embedding stays live too; a delete's last pass covers every
+    embedding of this agent's turns in the thread, so it takes one that landed before
+    that pass and leaves one that lands after it."""
+    ch = ch or _default_client()
+    with sequential_reads():
+        row = await ch.query_one(
+            """
+            SELECT max(tombstoned_at) AS gone FROM loom.conversations
+            WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String}
+              AND thread_id = {tid:String} AND msg_id = {mid:String}
+            """,
+            params={"org": org, "ns": namespace, "agent": agent, "tid": thread_id, "mid": msg_id},
+        )
+    if row and row["gone"] is not None:
+        await tombstone_embeddings(
+            org, namespace, agent, thread_id, msg_ids=[msg_id], when=row["gone"], ch=ch
+        )
+
+
+# Every embedding row of an agent's turns in a thread: rows it wrote (one whose message
+# row is gone included: the conversation retention TTL expires message rows only), and
+# rows of a turn it logged that another agent wrote last.
+_THREAD_TURNS = """(agent = {agent:String} OR msg_id IN (
+            SELECT msg_id FROM loom.conversations
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND agent = {agent:String} AND thread_id = {tid:String}
+          ))"""
+
+
+# Rows written by build N-1 and by earlier builds hold the first 240 characters of the
+# turn, and a re-embed keeps that excerpt. A row's excerpt is compared whole against a
+# peer's content cut at this length and at EMBEDDED_EXCERPT_CHARS. It is not
+# HIT_EXCERPT_CHARS, the cut a search hit shows.
+_SHORT_EXCERPT_CHARS = 240
+
+
+# Another agent's live copies of the thread's turns that search indexes (user and
+# assistant turns, and compaction summaries); `full` is the text append embeds.
+_PEER_TURNS = """
+    SELECT msg_id, agent, role, run_id, user_id, ts,
+      substringUTF8(content, 1, {embedded:UInt32}) AS full
+    FROM loom.conversations
+    WHERE org = {org:String} AND namespace = {ns:String}
+      AND thread_id = {tid:String} AND agent != {agent:String}
+      AND tombstoned_at IS NULL
+      AND (role IN ('user', 'assistant')
+           OR (role = 'system' AND notEmpty(JSONExtractArrayRaw(metadata, 'compacted_from'))))
+"""
+
+
+# Each peer copy with the text a row would hold for it at either excerpt length.
+_PEER_COPIES = (
+    "SELECT msg_id, agent, arrayJoin([full, substringUTF8(full, 1, {short:UInt32})]) AS excerpt"
+    " FROM (" + _PEER_TURNS + ")"
+)
+
+
+_RECONCILE_ROUNDS = 8
+
+
+def _unheld_embeddings(turns: str) -> str:
+    """The thread's live embedding rows of the turns `turns` selects whose own agent
+    holds no peer copy of them: `agent`'s rows, and rows handed to a peer that has
+    since removed its copy."""
+    return (
+        "SELECT * FROM loom.conversation_embeddings FINAL"
+        " WHERE org = {org:String} AND namespace = {ns:String}"
+        " AND thread_id = {tid:String} AND tombstoned_at IS NULL AND "
+        + turns
+        + " AND (msg_id, content_excerpt, agent) NOT IN"
+        " (SELECT msg_id, excerpt, agent FROM (" + _PEER_COPIES + "))"
     )
+
+
+def _reconcile_sql(turns: str) -> str:
+    """A version row for each unheld row: passed to the latest peer copy that holds
+    it (its agent, role, run and user, so it answers that copy's searches and
+    erasure), or tombstoned when none does. `matched` marks a join match: an unmatched
+    row reads its default, 0 (any field of `holder`, the agent included, can be
+    empty).
+
+    The copy must hold the text the row's vector was built from (`embedded`). A row
+    holding the 240-character cut of its own agent's message (a tombstoned one keeps
+    its content) is taken as built from that message's longer cut, as append built it;
+    a re-embed built it from the 240 characters, which the row cannot show, so a peer
+    sharing only those does not take it. One holding exactly 240 characters with no
+    such message to check could have been built from more, so it passes to nobody
+    (`known = 0`)."""
+    keep = "p.matched = 1 AND e.known = 1"
+    own = "s.found = 1 AND u.content_excerpt = substringUTF8(s.src, 1, {short:UInt32})"
+    return (
+        "INSERT INTO loom.conversation_embeddings"
+        " SELECT e.* EXCEPT (embedded, known) REPLACE ("
+        f"if({keep}, p.holder.1, e.agent) AS agent, if({keep}, p.holder.2, e.role) AS role,"
+        f" if({keep}, p.holder.3, e.run_id) AS run_id,"
+        f" if({keep}, p.holder.4, e.user_id) AS user_id,"
+        f" if({keep}, NULL, {{now:DateTime}}) AS tombstoned_at)"
+        f" FROM (SELECT u.*, if({own}, s.src, u.content_excerpt) AS embedded,"
+        f" ({own}) OR lengthUTF8(u.content_excerpt) != {{short:UInt32}} AS known"
+        " FROM (" + _unheld_embeddings(turns) + ") AS u"
+        " LEFT JOIN (SELECT agent, msg_id, 1 AS found,"
+        " any(substringUTF8(content, 1, {embedded:UInt32})) AS src FROM loom.conversations"
+        " WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String}"
+        " GROUP BY agent, msg_id) AS s ON u.agent = s.agent AND u.msg_id = s.msg_id) AS e"
+        " LEFT JOIN (SELECT msg_id, full, 1 AS matched,"
+        " argMax((agent, role, run_id, user_id), ts) AS holder"
+        " FROM (" + _PEER_TURNS + ") GROUP BY msg_id, full) AS p"
+        " ON e.msg_id = p.msg_id AND e.embedded = p.full"
+    )
+
+
+async def tombstone_embeddings(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    *,
+    msg_ids: list[str] | None,
+    when: datetime,
+    ch: _CHClient | None = None,
+) -> None:
+    """Tombstone the embeddings of `agent`'s turns in one thread: `msg_ids`, or every
+    turn it logged there (`_THREAD_TURNS`) plus the rows whose own agent holds no live
+    message for the turn (a late hand-off, a compaction by an earlier build, or a
+    message the retention TTL expired).
+
+    The embeddings key has no agent, so a turn several agents logged is one row. It
+    stays while another agent holds a live copy with the row's text, and passes to that
+    copy when its own agent holds none. The reconcile copies the row with its `ts`, so
+    the copy replaces it in its partition (the later insert wins a `ts` tie)."""
+    ch = ch or _default_client()
+    params: dict[str, Any] = {
+        "now": when,
+        "org": org,
+        "ns": namespace,
+        "agent": agent,
+        "tid": thread_id,
+        "embedded": EMBEDDED_EXCERPT_CHARS,
+        "short": _SHORT_EXCERPT_CHARS,
+    }
+    # Sequential reads: on a multi-replica service a lagging replica could miss a turn
+    # appended just before, leaving its embedding live once its message is tombstoned.
+    with sequential_reads():
+        if msg_ids is None:
+            # The rows `_THREAD_TURNS` selects, by key, read once: a row selected only
+            # through `agent` (its message row gone) stops matching once handed to a
+            # peer, and the re-read must still see it if that hand-off lands late. Rows
+            # whose own agent holds no live message for the turn (deleted, compacted or
+            # expired) are added: a late hand-off can land one there after this call's
+            # snapshot, and the resend reaches it only this way, even once retention has
+            # removed that agent's message row. A writer stores the message before its
+            # embedding, so no row being written matches.
+            rows = await ch.query_all(
+                "SELECT DISTINCT embedding_model, msg_id FROM loom.conversation_embeddings FINAL"
+                " WHERE org = {org:String} AND namespace = {ns:String}"
+                " AND thread_id = {tid:String} AND tombstoned_at IS NULL AND ("
+                + _THREAD_TURNS
+                + " OR (agent, msg_id) NOT IN (SELECT agent, msg_id FROM loom.conversations"
+                " WHERE org = {org:String} AND namespace = {ns:String}"
+                " AND thread_id = {tid:String} AND tombstoned_at IS NULL))",
+                params=params,
+            )
+            turns = "(embedding_model, msg_id) IN {keys:Array(Tuple(String, String))}"
+            keys = [(str(r["embedding_model"]), str(r["msg_id"])) for r in rows]
+            parts = [{**params, "keys": p} for p in param_slices(keys)]
+        else:
+            turns = "msg_id IN {ids:Array(String)}"
+            parts = [{**params, "ids": p} for p in param_slices(msg_ids)]
+        for bound in parts:
+            # A reconcile can read a peer's copy as live and land after that peer's whole
+            # delete. So it repeats until a read taken after its last write finds no
+            # unheld row; a round goes again only when a write landed on these turns
+            # between its reconcile and that read.
+            for _ in range(_RECONCILE_ROUNDS):
+                await ch.execute(_reconcile_sql(turns), bound)
+                if not await ch.query_all(
+                    "SELECT 1 FROM (" + _unheld_embeddings(turns) + ") LIMIT 1", params=bound
+                ):
+                    break
+            else:
+                raise OverloadedError(
+                    f"embeddings of thread {thread_id} kept changing; retry", retry_after_s=1
+                )
 
 
 async def titler_candidates(

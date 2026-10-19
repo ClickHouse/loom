@@ -267,12 +267,12 @@ Fields for every `conversation` op: [operations/conversation.md](operations/conv
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
 | [`conversation.append`](operations/conversation.md#conversationappend) | Log one chat turn (role + content) to the active thread. | writer | idempotent | yes |  |
-| [`conversation.compact`](operations/conversation.md#conversationcompact) | Summarize messages older than `keep_recent` (from the tail) via an LLM, write the summary as a synthetic role='system' message with metadata.compacted_from=[msg_ids], then tombstone the originals. | writer | idempotent | no | yes |
+| [`conversation.compact`](operations/conversation.md#conversationcompact) | Summarize old turns into one embedded system turn and tombstone the originals. | writer | idempotent | no | yes |
 | [`conversation.create`](operations/conversation.md#conversationcreate) | Open a thread container. | writer | idempotent | yes |  |
-| [`conversation.delete`](operations/conversation.md#conversationdelete) | Soft-delete one thread: sets `tombstoned_at` on messages + thread row + embeddings; read paths filter tombstoned rows, retention TTL hard-deletes. | admin | idempotent | no | yes |
+| [`conversation.delete`](operations/conversation.md#conversationdelete) | Soft-delete one thread: its messages, thread row and embeddings no other agent holds. | admin | idempotent | no | yes |
 | [`conversation.get`](operations/conversation.md#conversationget) | Fetch one thread by id: thread metadata + optional messages. | viewer | read | no |  |
 | [`conversation.list`](operations/conversation.md#conversationlist) | Enumerate stored conversation threads for an agent / namespace. | viewer | read | no |  |
-| [`conversation.search`](operations/conversation.md#conversationsearch) | Text search across a namespace's conversation history (ILIKE over message content). | viewer | read | no |  |
+| [`conversation.search`](operations/conversation.md#conversationsearch) | Rank conversation messages by embedding similarity to `query`. | viewer | read | no |  |
 | [`conversation.set_logging`](operations/conversation.md#conversationset_logging) | Toggle whether this namespace records conversation transcripts. | admin | idempotent | no | yes |
 | [`conversation.threads`](operations/conversation.md#conversationthreads) | Recent conversation threads of a namespace, newest first. | viewer | read | yes |  |
 | [`conversation.update`](operations/conversation.md#conversationupdate) | Update one thread's title/metadata/run_id. | writer | idempotent | no |  |

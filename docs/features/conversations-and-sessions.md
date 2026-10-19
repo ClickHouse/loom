@@ -2,11 +2,11 @@
 
 Loom keeps three kinds of session state, each in its own plane:
 
-| Plane              | Holds                                                                      | Embedded, searched                                 | Written by                                                                  |
-| ------------------ | -------------------------------------------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------- |
-| Conversation plane | The verbatim turns of a thread (`loom.conversations`)                      | User and assistant turns, by `conversation.search` | `conversation.append`, the plugins' capture hooks, `loom ingest-transcript` |
-| Session briefs     | The condensed, resumable state of one line of work (`loom.session_briefs`) | No                                                 | `session.brief_save`, the coding plugins at compaction and session end      |
-| Memory             | Durable facts extracted from what was said                                 | Yes, by `memory.search`                            | `memory.set`, `memory.set_from_messages`                                    |
+| Plane              | Holds                                                                      | Embedded, searched                                                          | Written by                                                                  |
+| ------------------ | -------------------------------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Conversation plane | The verbatim turns of a thread (`loom.conversations`)                      | User and assistant turns and compaction summaries, by `conversation.search` | `conversation.append`, the plugins' capture hooks, `loom ingest-transcript` |
+| Session briefs     | The condensed, resumable state of one line of work (`loom.session_briefs`) | No                                                                          | `session.brief_save`, the coding plugins at compaction and session end      |
+| Memory             | Durable facts extracted from what was said                                 | Yes, by `memory.search`                                                     | `memory.set`, `memory.set_from_messages`                                    |
 
 Storing a turn does not create a memory; to turn a conversation into facts, post it to
 [`memory.set_from_messages`](./memory/extraction.md). An owner can switch transcript recording off without losing
@@ -37,10 +37,14 @@ up front.
   written again (`reason: "duplicate"`). Without a `msg_id` the server derives one from
   a hash of the thread, role and content, so a client that re-logs a turn does not
   double the transcript.
-- **Only user and assistant turns are embedded**, up to their first 2,048 characters. `system` and `tool` turns stay
-  in the transcript unindexed.
+- **User and assistant turns are embedded**, up to their first 2,048 characters,
+  which the embedding row keeps: a re-embed starts from the text the vector was built
+  from. Rows written by earlier builds keep 240 characters, and a re-embed works from
+  those. `system` and `tool` turns stay in the transcript unindexed, except a
+  compaction's summary.
 - **The embed is fail-open.** A failed embed still stores the turn, with the error
-  recorded on its embedding row.
+  recorded on its embedding row. Nothing retries it: the turn stays out of vector
+  search and is found only by the substring fallback.
 
 ### Reading and searching
 
@@ -65,16 +69,41 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
 
 ### Compacting and deleting
 
-- **`conversation.compact`** (writer, needs an LLM provider) summarises the turns older
-  than the last `keep_recent` (default 10), writes the summary as one `system` turn
-  whose `metadata.compacted_from` lists the summarised `msg_id`s, and tombstones the
-  originals. A window smaller than `min_to_compact` (default 4) is left alone.
+- **`conversation.compact`** (writer, needs an LLM provider) summarises the oldest turns
+  before the last `keep_recent` (default 10) that fit the summarizer's prompt, writes
+  the summary as one embedded `system` turn whose `metadata.compacted_from` lists the
+  summarised `msg_id`s, and tombstones the originals and their embeddings:
+  `conversation.search` then finds the summary in their place. A turn another agent of
+  the thread still holds live with the same text, as a turn search indexes, keeps its
+  embedding (see delete below). A window of fewer than `min_to_compact` (default 4) new
+  turns is left alone. An earlier summary counts toward neither `min_to_compact` nor
+  `messages_summarized`. Summaries at the start of the window fold into the prompt from
+  a separate allowance; one that doesn't fit what is left of it stays live, and one a
+  failed run left (its turns all still live and in the window, at the first one's `ts`)
+  is replaced unread. A summary further into the window takes prompt budget like any
+  turn and is replaced with it.
+  A summary that cannot be embedded compacts nothing (`reason: "embed-failed"`).
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
-  embeddings; `confirm_thread_id` must equal `thread_id`. For a person's or a
-  namespace's data everywhere, use [`erasure.request`](./memory/retention-and-erasure.md).
+  embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
+  logged in the thread keeps its embedding while that agent holds a live copy with the
+  same text that search indexes (a user or assistant turn, or a summary), since the
+  two copies share one embedding row; the row takes that copy's agent, role, run and
+  user, so the deleting agent's own search drops it (compaction does the same). A row
+  of exactly 240 characters (an earlier build's cut, or a turn of that length) is kept
+  only for a copy whose first 2,048 characters match its agent's turn, and is
+  tombstoned when no message row is left to check that against. A
+  delete also finishes rows of the thread whose own agent no longer holds a live message
+  for the turn: one it deleted or compacted (earlier builds left some), or one the
+  retention TTL expired. For a
+  person's or a namespace's data everywhere, use
+  [`erasure.request`](./memory/retention-and-erasure.md).
 
 Tombstoned turns are filtered from every read. They are removed from disk only if the
-operator set a table TTL (`LOOM_RETENTION_CONVERSATIONS_DAYS`, 0 = keep forever).
+operator set a table TTL (`LOOM_RETENTION_CONVERSATIONS_DAYS`, 0 = keep forever). That
+TTL covers `loom.conversations` only: a turn's embedding row, which keeps up to 2,048
+characters of its text, has no TTL. Once its message has expired, a whole-thread
+delete in its thread passes it to a live copy of the turn or tombstones it; an erasure
+request tombstones it, and removes it only on a `namespace_list` erasure with `purge`.
 
 ### Thread titles
 

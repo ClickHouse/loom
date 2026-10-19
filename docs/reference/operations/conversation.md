@@ -22,7 +22,7 @@ Log one chat turn (role + content) to the active thread.
 | `thread_id` | `str` | required | The thread to append to; it need not have been created first. |
 | `msg_id` | `str` | `''` | optional; server derives a content hash when omitted |
 | `role` | `Literal['user', 'assistant', 'system', 'tool']` | required | Who spoke: `user`, `assistant`, `system` or `tool`. |
-| `content` | `str` | required | The message text, stored verbatim and embedded for `conversation.search`. |
+| `content` | `str` | required | The message text, stored verbatim; a user or assistant turn is also embedded for `conversation.search`. |
 | `reasoning` | `str` | `''` | The model's reasoning for this turn, stored beside `content`; empty = none. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
@@ -38,7 +38,7 @@ Log one chat turn (role + content) to the active thread.
 
 ## `conversation.compact`
 
-Summarize messages older than `keep_recent` (from the tail) via an LLM, write the summary as a synthetic role='system' message with metadata.compacted_from=[msg_ids], then tombstone the originals.
+Summarize old turns into one embedded system turn and tombstone the originals.
 
 `POST /v1/conversation.compact` · MCP `loom_conversation_compact` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
 
@@ -48,17 +48,17 @@ Summarize messages older than `keep_recent` (from the tail) via an LLM, write th
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `thread_id` | `str` | required | The thread to compact. |
-| `keep_recent` | `int` | `10` | The newest this many messages stay verbatim; everything older is summarized. |
-| `min_to_compact` | `int` | `4` | Skip when the candidate window is smaller than this — nothing to compact. |
+| `keep_recent` | `int` | `10` | The newest this many messages stay verbatim; older ones are summarized, as many as fit the summarizer's prompt. |
+| `min_to_compact` | `int` | `4` | Skip when fewer new turns than this precede the last keep_recent; an earlier summary does not count. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `compacted` | `bool` | True when a summary was written and the originals tombstoned; `reason` says why not. |
-| `messages_summarized` | `int` | How many older messages the summary replaced; 0 when not compacted. |
+| `messages_summarized` | `int` | How many older messages the summary replaced, not counting an earlier summary; 0 when not compacted. |
 | `summary_msg_id` | `str` | Id of the synthetic `system` summary message; empty when not compacted. |
 | `tokens_in` | `int` | Prompt tokens the summarizer LLM call used; 0 when no call was made. |
 | `tokens_out` | `int` | Completion tokens of the summary; 0 when no call was made. |
-| `reason` | `str` | populated when compacted=False |
+| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, or embed-failed (retry once the embedder answers). |
 
 ## `conversation.create`
 
@@ -84,7 +84,7 @@ Open a thread container.
 
 ## `conversation.delete`
 
-Soft-delete one thread: sets `tombstoned_at` on messages + thread row + embeddings; read paths filter tombstoned rows, retention TTL hard-deletes.
+Soft-delete one thread: its messages, thread row and embeddings no other agent holds.
 
 `POST /v1/conversation.delete` · MCP `loom_conversation_delete` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 
@@ -100,7 +100,7 @@ Soft-delete one thread: sets `tombstoned_at` on messages + thread row + embeddin
 | --- | --- | --- |
 | `tombstoned_at` | `datetime` | The tombstone time stamped on every affected row. |
 | `thread_id` | `str` | Echo of the input `thread_id`. |
-| `rows_affected` | `dict[str, int]` | {table_name: rows_tombstoned} |
+| `rows_affected` | `dict[str, int]` | {table_name: rows tombstoned}; for loom.conversation_embeddings, turns (one per turn however many embedding models hold it). |
 | `total` | `int` | Sum of `rows_affected` across tables. |
 
 ## `conversation.get`
@@ -158,7 +158,7 @@ Enumerate stored conversation threads for an agent / namespace.
 
 ## `conversation.search`
 
-Text search across a namespace's conversation history (ILIKE over message content).
+Rank conversation messages by embedding similarity to `query`.
 
 `POST /v1/conversation.search` · MCP `loom_conversation_search` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -170,13 +170,13 @@ Text search across a namespace's conversation history (ILIKE over message conten
 | `query` | `str` | required | Text matched against message content, by embedding similarity, or by substring when the embedder is unavailable. |
 | `thread_id` | `str \| None` | `None` | optional: scope to one thread |
 | `run_id` | `str \| None` | `None` | optional: filter by run_id |
-| `role` | `Literal['user', 'assistant', 'system', 'tool'] \| None` | `None` | optional: filter by speaker |
+| `role` | `Literal['user', 'assistant', 'system', 'tool'] \| None` | `None` | Filter by speaker; system turns other than compaction summaries, and tool turns, are not embedded, so they match only on the substring fallback. |
 | `top_k` | `int` | `20` | At most this many hits (1-200). |
 | `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | "all_mine" also reads the caller's own namespaces, up to `memory_search_fanout_max_namespaces`, as knowledge.search does. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `hits` | `list[_ConversationHit]` | Matching messages, most similar first; empty when none clears the similarity floor. |
+| `hits` | `list[_ConversationHit]` | Matching messages, most similar first and empty when none clears the similarity floor; newest first, with no floor, on the substring fallback. |
 | `namespaces_skipped` | `list[str]` | Namespaces of the caller an all_mine search did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
 
 ## `conversation.set_logging`
