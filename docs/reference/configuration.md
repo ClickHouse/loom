@@ -558,6 +558,12 @@ Source: `server/settings/_knowledge.py`
 | `LOOM_CONVERSATION_TITLER_MAX_THREADS_PER_PASS` | `int` | `10` | Threads one pass titles at most. |
 | `LOOM_CONVERSATION_TITLER_MIN_TURNS` | `int` | `4` | Turns a thread needs before it is titled. |
 
+### Search
+
+| Variable | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_SEARCH_MAX_NAMESPACES` | `int` | `10000` | Namespaces an all_mine knowledge.search reads besides the addressed one, at most; the rest come back in `namespaces_skipped`. Each search leg is one statement over all of them (measured 110 ms at 10,000 collections). |
+
 ### Chunking
 
 | Variable | Type | Default | Meaning |
@@ -853,7 +859,7 @@ Source: `server/settings/_memory_search.py`
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE` | `'this' \| 'all_mine'` | `'this'` | Default `namespace_scope` when a request leaves it unset. "this" reads the addressed namespace only; "all_mine" also reads the caller's own namespaces (the MCP loom_search asks for it by name), see docs/concepts/identities-and-namespaces.md#reading-several-namespaces. |
-| `LOOM_MEMORY_SEARCH_FANOUT_KINDS` | `str` | `'memory'` | Namespace kinds an all_mine fan-out spans (memory.search, knowledge.search, conversation.search, MCP loom_search): comma list over loom.namespaces.kind; a namespace with no kind row stays; "" = every kind. Code and QA indexes are reached by name or their own tools (measured sweep of 24 namespaces: 6.2 s). |
+| `LOOM_MEMORY_SEARCH_FANOUT_KINDS` | `str` | `'memory,collection,personal'` | Namespace kinds an all_mine fan-out spans (memory.search, knowledge.search, conversation.search, MCP loom_search): comma list over loom.namespaces.kind; a namespace with no kind row stays; "" = every kind. Code and QA indexes are reached by name or their own tools (measured sweep of 24 namespaces: 6.2 s); collections are swept. |
 | `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` | `int` | `32` | Upper bound on how many of the caller's namespaces an all_mine fan-out reads besides the addressed one; a search names the rest in `namespaces_skipped`. Every leg issues at least one statement per namespace. A guard, not a tuning knob: set well above what one person holds, so it bounds a runaway sweep rather than trimming normal ones. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS` | `'auto' \| 'on' \| 'off'` | `'auto'` | Key-embedding axis on the fact leg: "on" scores least(value_dist, key_dist) and reads both vector columns (measured 399 vs 203 MB/query on a 30k-row namespace); "off" reads the value vector only; "auto" turns it on per namespace when its key-reuse share is at or above memory_search_key_axis_auto_reuse_share (cached for memory_search_key_axis_auto_ttl_seconds; a failed probe reads as off). A per-request `key_axis` wins. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS_AUTO_REUSE_SHARE` | `float` | `0.05` | "auto" key-axis threshold: share of a namespace's keys written more than once. 0.05 sits between product namespaces and chat namespaces. |

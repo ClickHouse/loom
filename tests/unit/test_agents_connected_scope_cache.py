@@ -33,7 +33,7 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     async def mine(org: str, subject: str | None = None) -> list[str]:
         return [RESTRICTED]
 
-    monkeypatch.setattr(context, "restricted_namespaces_hidden_from", hidden)
+    monkeypatch.setattr(context, "hidden_namespaces", hidden)
     monkeypatch.setattr(context, "resolve_my_namespaces", mine)
     agents_mod.reset_connected_cache()
     yield

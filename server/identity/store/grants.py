@@ -31,7 +31,7 @@ async def insert_row(
             settings={"async_insert": 0, "wait_for_async_insert": 1},
         )
     finally:
-        _invalidate([row])  # a reply lost after the write landed still drops it
+        await _changed([row])  # a reply lost after the write landed still drops it
 
 
 async def insert_rows(
@@ -52,15 +52,14 @@ async def insert_rows(
             settings={"async_insert": 0, "wait_for_async_insert": 1},
         )
     finally:
-        _invalidate(rows)
+        await _changed(rows)
 
 
-def _invalidate(rows: list[dict[str, Any]]) -> None:
-    """This server's namespace gate sees a grant change at once (its other web
-    processes through the write count `grant_cache` keeps); others within
-    `grant_cache_ttl_seconds`."""
+async def _changed(rows: list[dict[str, Any]]) -> None:
+    """This process's namespace gate sees a grant change at once; every other
+    one at its next watermark poll (`grant_cache.changed`)."""
     for org in {r["org"] for r in rows}:
-        grant_cache.invalidate(org, [r["subject"] for r in rows if r["org"] == org])
+        await grant_cache.changed(org, [r["subject"] for r in rows if r["org"] == org])
 
 
 async def pending_for_admins(

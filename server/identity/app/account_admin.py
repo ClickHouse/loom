@@ -234,7 +234,7 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
             [{**row, "contact_email": email, "updated_at": max(now, row["updated_at"])}],
         )
         await sso_links.link(email, [(org, namespace)], by)
-    grant_cache.invalidate(org)  # the person's spellings changed
+    await grant_cache.changed(org)  # the person's spellings changed
     aliases.invalidate(org, [str(row["owner_email"]), was, email])
     await audit.emit(
         "auth.sso_linked",

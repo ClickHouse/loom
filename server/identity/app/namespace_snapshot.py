@@ -227,7 +227,7 @@ async def handle_namespace_restore(
             await ch.insert(
                 "loom.namespaces", [{**target_existing, "active": True, "updated_at": now}]
             )
-            grant_cache.invalidate(input.org)  # the claim cap reads account ties from this table
+            await grant_cache.changed(input.org)  # the claim cap reads account ties from this table
         elif target_existing is None:
             await ch.insert(
                 "loom.namespaces",

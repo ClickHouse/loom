@@ -1245,7 +1245,7 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
         ("server/knowledge/app/repo_docs.py", "readable_docs_namespace", never),
         ("server/tracker/app/dupcheck_fanout.py", "readable_tracker_namespaces", never),
         ("server/tracker/app/common.py", "linked_trackers", never),
-        ("server/auth/context.py", "restricted_namespaces_hidden_from", never),
+        ("server/auth/context.py", "hidden_namespaces", never),
         # A code answer the linked tracker only enriches.
         ("server/code/app/bisect_scan.py", "_linked_scan", never),
         ("server/code/app/blame.py", "_tracker_side", never),
@@ -1393,7 +1393,7 @@ def test_an_answer_hidden_whole_for_want_of_the_classification_is_the_server_s(
     async def _hidden() -> tuple[list[str], bool]:
         request_work.begin()
         context.set_current_auth(eve)
-        return await context.restricted_namespaces_hidden_from("o"), answered_unverified()
+        return await context.hidden_namespaces("o"), answered_unverified()
 
     assert asyncio.run(_hidden()) == (["*"], True)
 
@@ -1432,9 +1432,7 @@ def test_an_org_rollup_is_marked_only_when_emptied_whole_for_want_of_a_read(
         context.set_current_auth(eve)
         if noted_before:  # a check that passed despite a failed read
             fail_closed.note_unreadable()
-        return await context.restricted_namespaces_hidden_from(
-            "o"
-        ), fail_closed.answered_unverified()
+        return await context.hidden_namespaces("o"), fail_closed.answered_unverified()
 
     # A listing the caller did not scope: one namespace left out does not mark,
     # whether or not its read failed.

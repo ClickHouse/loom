@@ -64,6 +64,7 @@ class ChunkInsertRow(TypedDict):
     embedding: list[float]
     created_at: datetime
     content_sha256: str
+    user_id: str
 
 
 def build_chunk_rows(
@@ -79,6 +80,7 @@ def build_chunk_rows(
     embedding_model: str,
     embedding_dim: int,
     now: datetime,
+    user_id: str,
 ) -> list[ChunkInsertRow]:
     """One ingestion's loom.chunks rows, every column set: each chunk with its
     vector, the document's tags and metadata (JSON), its own section metadata
@@ -102,6 +104,7 @@ def build_chunk_rows(
             "embedding": embedding,
             "created_at": now,
             "content_sha256": sha256_document_text(chunk.text),
+            "user_id": user_id,
         }
         for chunk, embedding in zip(chunks, embeddings, strict=True)
     ]

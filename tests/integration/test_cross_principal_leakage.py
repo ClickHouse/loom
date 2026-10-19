@@ -1407,3 +1407,144 @@ def test_positive_control_tenant_a_reads_its_canaries_in_the_task_and_agent_plan
     ):
         r = _post(control_plane_url, tokens["a_writer"], op, body)
         assert r.status_code == 200 and seed.leaked(r.text), f"{op}: {r.status_code} {r.text[:300]}"
+
+
+# ── knowledge sharing (docs/architecture/sharing.md) ─────────────────────────
+#
+# A gateway's end users own collections: a parent shared with a group and one
+# user, a child that inherits it, and a personal collection holding a saved
+# item. A user once granted and then revoked, a member once listed and then
+# removed, a stranger, the owner's id in another tenant, an org admin and a
+# writer of another namespace then drive every read op against each of them.
+
+
+def _post_as(base: str, token: str, user: str, op: str, payload: dict[str, Any]) -> httpx.Response:
+    with httpx.Client(base_url=base, timeout=30.0) as c:
+        return c.post(
+            f"/v1/{op}",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}", "X-Loom-On-Behalf-Of": f"user:{user}"},
+        )
+
+
+class _Shared:
+    def __init__(self, base: str, org: str) -> None:
+        from server.auth.jwt import mint_token
+        from server.identity.app.personal_collection import name_for
+
+        self.org = org
+        self.token = mint_token("sa:leak-chat", org, [], [], gateway=True, ttl_seconds=900)
+        self.other_token = mint_token(
+            "sa:leak-chat", f"{org}-other", [], [], gateway=True, ttl_seconds=900
+        )
+        tag = uuid.uuid4().hex[:6]
+        self.parent, self.child = f"col-leak-{tag}", f"col-leak-{tag}-docs"
+        self.personal = name_for(org, "user:owner")
+        self.seed = _Seed(org, self.child, self.parent)
+        self.seed.keys = ["canary-key-1", "canary-key-2"]
+        self.seed.memory_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        self.seed.entity = "canary"
+        self.base = base
+
+    def ok(self, user: str, op: str, payload: dict[str, Any]) -> dict[str, Any]:
+        r = _post_as(self.base, self.token, user, op, {"org": self.org, **payload})
+        assert r.status_code == 200, f"{op}: {r.status_code} {r.text}"
+        return r.json()
+
+
+_SHARED_CACHE: dict[str, _Shared] = {}
+
+
+@pytest.fixture
+def shared(control_plane_url: str, mint_test_token) -> _Shared:
+    if control_plane_url in _SHARED_CACHE:
+        return _SHARED_CACHE[control_plane_url]
+    s = _Shared(control_plane_url, unique_org("leak-share"))
+    s.ok("owner", "collection.create", {"namespace": s.parent})
+    s.ok("owner", "collection.create", {"namespace": s.child, "parent": s.parent})
+    groups = httpx.post(
+        f"{control_plane_url}/scim/v2/Groups",
+        json={"externalId": "readers", "members": [{"value": "member"}, {"value": "removed"}]},
+        headers={"Authorization": f"Bearer {s.token}"},
+    )
+    assert groups.status_code == 201, groups.text
+    for subject in ("group:readers", "user:direct", "user:revoked"):
+        s.ok(
+            "owner", "grants.create", {"namespace": s.parent, "subject": subject, "role": "viewer"}
+        )
+    s.ok("owner", "grants.revoke", {"namespace": s.parent, "subject": "user:revoked"})
+    removed = httpx.patch(
+        f"{control_plane_url}/scim/v2/Groups/readers",
+        json={"Operations": [{"op": "remove", "path": 'members[value eq "removed"]'}]},
+        headers={"Authorization": f"Bearer {s.token}"},
+    )
+    assert removed.status_code == 200, removed.text
+    for ns, uri in ((s.child, "doc/plan"), (s.parent, "doc/top"), ("@me", "chat/c1/m1")):
+        nonce = _canary()
+        s.seed.nonces.append(nonce)
+        content = f"{nonce} quarterly renewal plan"
+        s.ok("owner", "knowledge.upsert", {"namespace": ns, "source_uri": uri, "content": content})
+    # The probes ask with the canary's words, not its nonce: an op that echoes
+    # the question back is not a leak, and a hit carries the nonce.
+    s.seed.value_text = "quarterly renewal plan"
+    # The walk's pace is its own; the deployment's limits are left as they are.
+    tok_platform = mint_test_token(org="*", roles=["platform_admin"], subject="leak-operator")
+    for ns in (s.parent, s.child, s.personal):
+        for op_class in ("default", "memory"):
+            httpx.post(
+                f"{control_plane_url}/v1/admin/ratelimit.set",
+                json={"namespace": ns, "op_class": op_class, "capacity": 2000, "rate": 200},
+                headers={"Authorization": f"Bearer {tok_platform}"},
+            )
+    _SHARED_CACHE[control_plane_url] = s
+    return s
+
+
+@pytest.mark.parametrize("user", ["owner", "direct", "member"])
+def test_positive_control_the_grantees_read_the_shared_canary(
+    control_plane_url, shared, user
+) -> None:
+    r = _post_as(
+        control_plane_url,
+        shared.token,
+        user,
+        "knowledge.search",
+        {"org": shared.org, "namespace": shared.child, "query": shared.seed.value_text},
+    )
+    assert r.status_code == 200, r.text
+    assert shared.seed.leaked(r.text), f"{user} cannot read the canary: the suite would be vacuous"
+
+
+@pytest.mark.parametrize(
+    "who", ["stranger", "revoked", "removed", "other_tenant", "org_admin", "b_writer"]
+)
+def test_every_read_op_against_a_collection_leaks_nothing(
+    control_plane_url, shared, mint_test_token, who
+) -> None:
+    def post(op: str, payload: dict[str, Any]) -> httpx.Response:
+        if who == "other_tenant":
+            return _post_as(control_plane_url, shared.other_token, "owner", op, payload)
+        if who in ("org_admin", "b_writer"):
+            roles = ["org_admin", "admin", "writer"] if who == "org_admin" else ["writer"]
+            names = ["*"] if who == "org_admin" else [f"tenant-b-{uuid.uuid4().hex[:6]}"]
+            token = mint_test_token(org=shared.org, namespaces=names, roles=roles, subject=who)
+            return _post(control_plane_url, token, op, payload)
+        return _post_as(control_plane_url, shared.token, who, op, payload)
+
+    leaks: dict[str, list[str]] = {}
+    bad_status: dict[str, int] = {}
+    for namespace in (shared.child, shared.parent, shared.personal, "@me"):
+        for op in _read_ops():
+            payload = _synth_payload(op.input_model, seed=shared.seed, namespace=namespace)
+            if payload is None:
+                continue
+            r = post(op.name, payload)
+            if r.status_code in (400, 422):  # unbuildable here, or `@me` for a non-gateway caller
+                continue
+            if r.status_code not in _OK_STATUSES:
+                bad_status[f"{op.name}@{namespace}"] = r.status_code
+            found = shared.seed.leaked(r.text)
+            if found:
+                leaks[f"{op.name}@{namespace}"] = found
+    assert not leaks, f"{who}: canary nonces in responses: {leaks}"
+    assert not bad_status, f"{who}: unexpected statuses: {bad_status}"

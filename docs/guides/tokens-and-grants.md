@@ -468,6 +468,31 @@ person sign up again, under a new subject.
 `X-Loom-On-Behalf-Of: <subject>`: the call runs as that subject and every ledger row records
 the real caller in `impersonated_by`. Empty disables the header.
 
+## Act for a service's end users
+
+A service in front of Loom, whose users have no Loom account, holds one gateway token per
+org and names the end user on every HTTP request:
+
+```bash
+loom mint-token --gateway --subject sa:chat --org acme --ttl-days 30
+curl -s "$LOOM/v1/knowledge.search" -H "Authorization: Bearer $GATEWAY_TOKEN" \
+  -H "X-Loom-On-Behalf-Of: user:u-42" -H "X-Loom-Agent: agent:helper" \
+  -d '{"org": "acme", "namespace": "@me", "query": "renewal clause"}'
+```
+
+- The request runs as `user:u-42` alone, in the token's org: no namespace or role of the
+  token carries over, reads are pinned to that user's rows, and the user reaches what grants
+  give `user:u-42`, the groups that list it, and `agent:helper` when the header names it.
+  A gateway request that names no user is refused; MCP refuses a gateway token.
+- Grants name these principals as subjects: `grants.create` with `subject: "user:u-42"`,
+  `"group:finance"` or `"agent:helper"`. Groups and agents hold grants on collections only.
+- Groups are pushed with the same token to SCIM `/scim/v2/Groups` (create, replace, patch
+  members, delete); a member is a user id. A removed member loses the group's grants
+  within `LOOM_ACL_WATERMARK_POLL_SECONDS`.
+- `namespace: "@me"` is the user's personal collection, created on first use and taking no
+  other grant. Collections, their tree and the read cost are in
+  [Sharing knowledge](../architecture/sharing.md).
+
 ## Revoke and rotate
 
 **One token or one subject.** `loom revoke-token` writes `loom.revoked_tokens` (it needs the

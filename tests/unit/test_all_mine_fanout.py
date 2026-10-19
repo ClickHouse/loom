@@ -202,18 +202,15 @@ def test_knowledge_reads_an_addressed_public_namespace_in_the_first_pass(
     async def _visibility(org: str, namespaces: list[str]) -> dict[str, str]:
         return {"home": "private", "team": "public", "wiki": "public"}
 
-    async def _search_one(ns: str) -> tuple[str, list[ChunkHit]]:
-        read.append(ns)
-        hit = ChunkHit(source_uri=f"{ns}.md", chunk_idx=0, content="", tags=[], distance=0.2)
-        return ns, [hit]
+    async def _search(namespaces: list[str]) -> list[tuple[str, list[ChunkHit]]]:
+        read.append(namespaces)
+        return [(ns, [ChunkHit(ns, f"{ns}.md", 0, "", [], distance=0.2)]) for ns in namespaces]
 
-    read: list[str] = []
+    read: list[list[str]] = []
     monkeypatch.setattr(nv, "visibility_map", _visibility)
     search = KnowledgeSearchInput(org=ORG, namespace="team", query="q", namespace_scope="all_mine")
-    asyncio.run(
-        knowledge_search._search_private_first(search, ["team", "home", "wiki"], _search_one)
-    )
-    assert read == ["team", "home"]
+    asyncio.run(knowledge_search._search_private_first(search, ["team", "home", "wiki"], _search))
+    assert read == [["team", "home"]], "one statement for the first pass; the public one not needed"
 
 
 def test_the_loom_search_text_names_the_skipped_namespaces() -> None:

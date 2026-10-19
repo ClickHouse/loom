@@ -117,15 +117,18 @@ async def authorize(
         _note_admitted(target)
         return
     from server.auth.authz import scope_flags
+    from server.auth.gateway import is_end_user
     from server.auth.personal_namespace import ensure_personal_namespace_cached
     from server.code.app.member_writes import authorize_op
 
     # First contact for a federated subject that never ran self-signup.
     # Idempotent and process-cached; after impersonation, so a trusted caller
-    # provisions for the effective user.
-    await ensure_personal_namespace_cached(
-        org=auth.org, subject=auth.subject, is_service_account=auth.is_service_account
-    )
+    # provisions for the effective user. A gateway's end user gets a personal
+    # collection instead, the first time a request addresses `@me`.
+    if not is_end_user(auth):
+        await ensure_personal_namespace_cached(
+            org=auth.org, subject=auth.subject, is_service_account=auth.is_service_account
+        )
     await authorize_op(auth, op, org=target.org, namespace=target.namespace, **scope_flags(op))
     _note_admitted(target)
     await _admitted(op, auth, target, transport=transport)

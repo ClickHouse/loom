@@ -644,7 +644,7 @@ def register_readiness_checks(ch: Any) -> None:
     the ledger are cached."""
     from server.auth import keyring, revocation
     from server.code.app.index import mirrors, sandbox
-    from server.core import deployment_config, model_work_gate, readiness
+    from server.core import deployment_config, grant_cache, model_work_gate, readiness
     from server.memory.app import embedder_calibration
     from server.tracker.app import registry_sources
 
@@ -662,6 +662,7 @@ def register_readiness_checks(ch: Any) -> None:
     readiness.register("migrations", _migrations, ttl_s=5.0)
     readiness.register("revocation", revocation.readiness_check)
     readiness.register("keyring", keyring.readiness_check)
+    readiness.register("grant_watermark", grant_cache.readiness_check, required=False)
     readiness.register("tracker_registry", registry_sources.readiness_check)
     readiness.register("runtime_overrides", _overrides_ready)
     readiness.register("calibration", embedder_calibration.readiness_check)

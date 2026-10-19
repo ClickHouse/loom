@@ -45,7 +45,7 @@ def test_tokenize_matches_the_view_tokeniser() -> None:
 def _q(**kw: Any) -> HybridSearchQuery:
     base: dict[str, Any] = {
         "org": "o",
-        "namespace": "ns",
+        "namespaces": ("ns",),
         "embedding_model": "m",
         "query_vec": [0.1] * 4,
         "top_k": 5,
@@ -62,6 +62,7 @@ async def test_lexical_search_sql_shape_and_cold_corpus_short_circuit() -> None:
     ch = StubCH(
         rows=[
             {
+                "namespace": "ns",
                 "source_uri": "kb://a",
                 "chunk_idx": 2,
                 "content": "Deploy then rollback",
@@ -95,6 +96,7 @@ async def test_lexical_search_sql_shape_and_cold_corpus_short_circuit() -> None:
 
 def _hit(uri: str, idx: int, *, distance: float, lex: float = 0.0) -> ChunkHit:
     return ChunkHit(
+        namespace="ns",
         source_uri=uri,
         chunk_idx=idx,
         content=uri,
@@ -249,11 +251,11 @@ def test_corpus_stats_cache_is_keyed_by_embedding_model() -> None:
 
     knowledge_bm25._CORPUS_CACHE.clear()
     try:
-        ch = StubCH([{"n": 10, "avgdl": 4.0}])
-        asyncio.run(knowledge_bm25.corpus_stats(ch, org="o", namespace="n", embedding_model="a"))
-        ch.rows = [{"n": 3, "avgdl": 9.0}]
+        ch = StubCH([{"namespace": "n", "n": 10, "avgdl": 4.0}])
+        asyncio.run(knowledge_bm25.corpus_stats(ch, org="o", namespaces=["n"], embedding_model="a"))
+        ch.rows = [{"namespace": "n", "n": 3, "avgdl": 9.0}]
         got = asyncio.run(
-            knowledge_bm25.corpus_stats(ch, org="o", namespace="n", embedding_model="b")
+            knowledge_bm25.corpus_stats(ch, org="o", namespaces=["n"], embedding_model="b")
         )
         assert got == (3, 9.0) and [c[1]["model"] for c in ch.calls] == ["a", "b"]
     finally:

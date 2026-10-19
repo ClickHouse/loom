@@ -21,6 +21,7 @@ from collections.abc import Iterable
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from server.auth import sharing
 from server.auth.directory import ClassificationUnavailable, directory
 from server.auth.fail_closed import (
     marks_unverified,
@@ -109,26 +110,14 @@ async def check_authorized(
     # (org, namespace). A request that omits either leaves it unaddressable:
     # answer 400 IDENTITY_INCOMPLETE, not a misleading 403.
     if auth.has_ns_roles() and (org is None or namespace is None):
-        # Both admissions below gate on the token's best role anywhere; the
-        # org the op reads must still be the token's own.
-        if (row_scoped or deployment_scoped) and org is not None and auth.org not in ("*", org):
-            raise PermissionError(f"scoped token of org {auth.org!r} cannot act in org {org!r}")
-        if deployment_scoped or row_scoped:
-            best = auth.best_ns_role()
-            if best is not None and best.value >= required_role.value:
-                return
-            raise PermissionError(
-                f"scoped token: {required_role.name} required for a "
-                f"{'row' if row_scoped else 'deployment'}-scoped op; "
-                f"token's best namespace role is {best.name if best else 'none'}"
-            )
-        from server.core.errors import IdentityIncompleteError
+        _check_scoped_without_target(auth, required_role, org, deployment_scoped, row_scoped)
+        return
 
-        raise IdentityIncompleteError(
-            "scoped token requires org and namespace in the request body "
-            "(the token's authority is per-namespace and cannot be applied "
-            "without knowing which namespace the request targets)"
-        )
+    # A collection is reached only through grants (server/auth/sharing.py):
+    # no claim, org role or rule below applies to it.
+    if org is not None and namespace is not None and sharing.is_collection(namespace):
+        await sharing.check(auth, required_role, org, namespace)
+        return
 
     if auth.creator and org is not None and namespace is not None:
         await _check_delegated(auth, required_role, org, namespace, known_grant, grants)
@@ -235,6 +224,33 @@ async def check_authorized(
         f"(no per-namespace grant elevates)",
         org,
         namespace,
+    )
+
+
+def _check_scoped_without_target(
+    auth: AuthInfo, required_role: Role, org: str | None, deployment_scoped: bool, row_scoped: bool
+) -> None:
+    """A scoped token on an op that names no (org, namespace): admitted on its
+    best role anywhere for a row- or deployment-scoped op, else 400."""
+    # Both admissions gate on the token's best role anywhere; the org the op
+    # reads must still be the token's own.
+    if (row_scoped or deployment_scoped) and org is not None and auth.org not in ("*", org):
+        raise PermissionError(f"scoped token of org {auth.org!r} cannot act in org {org!r}")
+    if deployment_scoped or row_scoped:
+        best = auth.best_ns_role()
+        if best is not None and best.value >= required_role.value:
+            return
+        raise PermissionError(
+            f"scoped token: {required_role.name} required for a "
+            f"{'row' if row_scoped else 'deployment'}-scoped op; "
+            f"token's best namespace role is {best.name if best else 'none'}"
+        )
+    from server.core.errors import IdentityIncompleteError
+
+    raise IdentityIncompleteError(
+        "scoped token requires org and namespace in the request body "
+        "(the token's authority is per-namespace and cannot be applied "
+        "without knowing which namespace the request targets)"
     )
 
 

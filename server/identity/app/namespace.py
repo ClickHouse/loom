@@ -324,11 +324,16 @@ async def require_admin_of_existing(
 
 
 def refuse_sso_name(namespace: str) -> None:
-    """A new namespace may not take a name single sign-on creates from an email."""
+    """A new namespace may not take a name single sign-on creates from an email,
+    nor a collection's (collection.create makes those)."""
+    from server.auth.sharing import COLLECTION_PREFIX
+
     if reserved_for_sso(namespace):
         raise ValidationError(
             f"'{SSO_NAMESPACE_PREFIX}' names are reserved for the accounts single sign-on creates"
         )
+    if namespace.startswith(COLLECTION_PREFIX):
+        raise ValidationError(f"'{COLLECTION_PREFIX}' names are collections: use collection.create")
 
 
 async def handle_namespace_register(
@@ -336,6 +341,8 @@ async def handle_namespace_register(
 ) -> NamespaceRegisterOutput:
     ch = get_client()
     caller = resolve_subject()
+    if input.kind in ("collection", "personal"):
+        raise ValidationError("a collection is created with collection.create, which places it")
 
     # Create-or-update. Fresh row ⇒ caller becomes admin; existing row ⇒
     # only an admin may update it. The whole stored row is read, so every setting the
@@ -364,7 +371,7 @@ async def handle_namespace_register(
         row = registry_row(input, existing, now)
         await ch.insert("loom.namespaces", [row])
     # The claim cap reads which accounts tie a person's spellings from this table.
-    grant_cache.invalidate(input.org)
+    await grant_cache.changed(input.org)
     # The class this row implies is what the next request in this process runs as — no
     # re-read.
     from server.identity.app.traffic_class_registry import note_registered
@@ -601,8 +608,12 @@ async def handle_namespace_delete(
         row["active"] = False
         row["updated_at"] = now
         await ch.insert("loom.namespaces", [row])
+    if existing.get("kind") in ("collection", "personal"):
+        from server.identity.app.collections import retire
+
+        await retire(input.org, input.namespace)
     # The claim cap reads which accounts tie a person's spellings from this table.
-    grant_cache.invalidate(input.org)
+    await grant_cache.changed(input.org)
     return NamespaceDeleteOutput(
         deleted=True,
         namespace=input.namespace,

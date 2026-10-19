@@ -28,7 +28,8 @@ class _CHClient(Protocol):
 @dataclass(frozen=True)
 class HybridSearchQuery:
     org: str
-    namespace: str
+    # Every namespace the statement reads, in one `namespace IN` range set.
+    namespaces: tuple[str, ...]
     embedding_model: str
     query_vec: list[float]
     top_k: int
@@ -46,6 +47,7 @@ class HybridSearchQuery:
 
 @dataclass(frozen=True)
 class ChunkHit:
+    namespace: str
     source_uri: str
     chunk_idx: int
     content: str
@@ -78,15 +80,16 @@ def fuse_rrf(
     w_lex/(k + rank_lex), k = 60, over the union of candidates. A hit present in
     one leg only takes that leg's term. Ties break on distance, then on the chunk
     key, so the order is a function of the inputs."""
-    by_key: dict[tuple[str, int], ChunkHit] = {}
+    by_key: dict[tuple[str, str, int], ChunkHit] = {}
     for h in [*semantic, *lexical]:
-        key = (h.source_uri, h.chunk_idx)
+        key = (h.namespace, h.source_uri, h.chunk_idx)
         prev = by_key.get(key)
         if prev is None:
             by_key[key] = h
         else:
             # Merge: keep the smaller distance and the larger leg scores.
             by_key[key] = ChunkHit(
+                namespace=h.namespace,
                 source_uri=h.source_uri,
                 chunk_idx=h.chunk_idx,
                 content=h.content,
@@ -95,8 +98,8 @@ def fuse_rrf(
                 section_path=prev.section_path or h.section_path,
                 lexical_score=max(prev.lexical_score, h.lexical_score),
             )
-    sem_rank = {(h.source_uri, h.chunk_idx): r + 1 for r, h in enumerate(semantic)}
-    lex_rank = {(h.source_uri, h.chunk_idx): r + 1 for r, h in enumerate(lexical)}
+    sem_rank = {(h.namespace, h.source_uri, h.chunk_idx): r + 1 for r, h in enumerate(semantic)}
+    lex_rank = {(h.namespace, h.source_uri, h.chunk_idx): r + 1 for r, h in enumerate(lexical)}
     fused: list[ChunkHit] = []
     for key, h in by_key.items():
         score = 0.0
@@ -106,6 +109,7 @@ def fuse_rrf(
             score += w_lex / (RRF_K + lex_rank[key])
         fused.append(
             ChunkHit(
+                namespace=h.namespace,
                 source_uri=h.source_uri,
                 chunk_idx=h.chunk_idx,
                 content=h.content,
@@ -116,7 +120,7 @@ def fuse_rrf(
                 score=score,
             )
         )
-    fused.sort(key=lambda h: (-h.score, h.distance, h.source_uri, h.chunk_idx))
+    fused.sort(key=lambda h: (-h.score, h.distance, h.namespace, h.source_uri, h.chunk_idx))
     return fused[:top_k]
 
 
@@ -146,6 +150,7 @@ async def hybrid_search(
 
     sql = f"""
         SELECT
+            namespace,
             source_uri,
             chunk_idx,
             content,
@@ -161,6 +166,7 @@ async def hybrid_search(
     rows = await ch.query_all(sql, params=params)
     return [
         ChunkHit(
+            namespace=r["namespace"],
             source_uri=r["source_uri"],
             chunk_idx=int(r["chunk_idx"]),
             content=r["content"],
@@ -176,14 +182,14 @@ async def hybrid_search(
 def _common_where(q: HybridSearchQuery) -> tuple[list[str], dict[str, Any]]:
     where = [
         "org = {org:String}",
-        "namespace = {ns:String}",
+        "namespace IN {nss:Array(String)}",
         "embedding_model = {model:String}",
         "embedding_dim > 0",
         live_chunk_sql(),
     ]
     params: dict[str, Any] = {
         "org": q.org,
-        "ns": q.namespace,
+        "nss": list(q.namespaces),
         "model": q.embedding_model,
         "q": q.query_vec,
         "top_k": int(q.top_k),
@@ -241,6 +247,7 @@ async def lexical_search(
     sql = f"""
         WITH splitByNonAlpha(content_lc) AS words
         SELECT
+            namespace,
             source_uri,
             chunk_idx,
             content,
@@ -256,6 +263,7 @@ async def lexical_search(
     rows = await ch.query_all(sql, params=params)
     return [
         ChunkHit(
+            namespace=r["namespace"],
             source_uri=r["source_uri"],
             chunk_idx=int(r["chunk_idx"]),
             content=r["content"],

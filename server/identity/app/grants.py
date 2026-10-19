@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from server.auth.grant_claims import admins_change, grant_change
-from server.core.errors import GrantBusyError
+from server.core.errors import GrantBusyError, ValidationError
 from server.identity.api.models_grants import (
     GrantsApproveInput,
     GrantsApproveOutput,
@@ -74,7 +74,6 @@ async def _enforce_code_ceiling(org: str, namespace: str, role: str) -> None:
     may be granted or approved by anyone the transport's ADMIN gate let through: an org
     admin or a current maintainer of that repository."""
     from server.core.ch import get_client
-    from server.core.errors import ValidationError
     from server.identity.domain import join_policy as _jp
 
     if role == _jp.CODE_MEMBER_ROLE:
@@ -132,6 +131,20 @@ def _refuse_approval_below(current: str, target: str, input: GrantsApproveInput)
     )
 
 
+def _enforce_principal_target(namespace: str, subject: str) -> None:
+    """A personal collection keeps its one grant; a group or an agent holds
+    grants only on collections; a `user:`/`group:`/`agent:` subject needs a
+    well-formed id."""
+    from server.auth import gateway, sharing
+
+    if sharing.is_personal(namespace):
+        raise ValidationError("a personal collection is shared by copying an item out of it")
+    if subject.startswith(gateway.PRINCIPAL_PREFIXES) and not gateway.is_principal(subject):
+        raise ValidationError(f"{subject!r} is not a well-formed principal (prefix:id)")
+    if subject.startswith((gateway.GROUP, gateway.AGENT)) and not sharing.is_collection(namespace):
+        raise ValidationError("groups and agents hold grants on collections only")
+
+
 async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     """Insert or raise a grant; lower one only on `replace=true`. Admin-issued grants are
     always active (the admin is the approver),
@@ -139,6 +152,7 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     is carried forward; one it satisfies is answered by the grant."""
 
     await _enforce_code_ceiling(input.org, input.namespace, input.role)
+    _enforce_principal_target(input.namespace, input.subject)
     # A human's grant is written under the login handle, so one person keeps one row
     # whichever spelling the granter typed; the downgrade guard reads that same row.
     from server.auth.aliases import canonical_subject

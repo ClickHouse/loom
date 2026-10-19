@@ -128,6 +128,8 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
     # namespaces, ordered, authoritative per-namespace roles). This is a local
     # operator mint with the raw secret, so it is NOT capped against grants —
     # the /v1/me/service_accounts.create endpoint enforces that cap.
+    if args.gateway:
+        return _mint_gateway_token(args, ttl_seconds, jti)
     namespaces = _normalize_namespace_args(args.namespaces)
     bad = _invalid_namespace_names(namespaces)
     if bad:
@@ -217,6 +219,39 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
             "consumer": args.consumer or "",
         }
 
+    return _emit_minted_token(args, token, summary)
+
+
+def _mint_gateway_token(args: argparse.Namespace, ttl_seconds: int | None, jti: str) -> int:
+    """`--gateway`: a token that acts only for the end users each request names."""
+    from server.auth.jwt import TokenError, mint_token
+
+    if args.namespaces or args.namespace_role:
+        print("  ✗ a gateway token names no namespaces", file=sys.stderr)
+        return 2
+    try:
+        token = mint_token(
+            subject=args.subject,
+            org=args.org,
+            namespaces=[],
+            roles=[],
+            ttl_seconds=ttl_seconds,
+            gateway=True,
+            consumer=args.consumer,
+            jti=jti,
+        )
+    except TokenError as e:
+        print(f"  ✗ {e}", file=sys.stderr)
+        return 2
+    summary = {
+        "token": token,
+        "jti": jti,
+        "subject": args.subject,
+        "org": args.org,
+        "gateway": True,
+        "ttl_days": args.ttl_days,
+        "consumer": args.consumer or "",
+    }
     return _emit_minted_token(args, token, summary)
 
 
@@ -565,6 +600,12 @@ def _add_mint_token_parser(sub: Any) -> None:
         "request names), own_session (only rows of the session_id each request "
         "names). Mint own_user for an agent that serves many end users through "
         "one token.",
+    )
+    p_mint.add_argument(
+        "--gateway",
+        action="store_true",
+        help="Mint a gateway token for one org: it reaches nothing itself and acts "
+        "for the end user each HTTP request names (X-Loom-On-Behalf-Of: user:<id>).",
     )
     p_mint.add_argument(
         "--read-user-id",

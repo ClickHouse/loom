@@ -66,6 +66,13 @@ def account_change(org: str, namespace: str) -> AbstractAsyncContextManager[None
     return _claimed("account:" + json.dumps([org, namespace]), f"the account {org}/{namespace}")
 
 
+def collections_change(org: str) -> AbstractAsyncContextManager[None]:
+    """Hold the org's collection tree from the read that checks a move to its
+    write: two moves at once could each pass the cycle check and together close
+    a cycle."""
+    return _claimed("collections:" + json.dumps(org), f"the collections of {org}")
+
+
 def service_account_change(org: str, name: str) -> AbstractAsyncContextManager[None]:
     """Hold a person's service-account name in `org` from the check that it is
     free to its row: a second create with the name would replace the first

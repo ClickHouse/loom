@@ -127,7 +127,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Any:
     ):
         monkeypatch.setattr(erasure_exports, name, _rows)
     monkeypatch.setattr("server.observability.audit.emit", _noop)
-    monkeypatch.setattr("server.auth.context.restricted_namespaces_hidden_from", _none_hidden)
+    monkeypatch.setattr("server.auth.context.hidden_namespaces", _none_hidden)
     monkeypatch.setattr("server.auth.context.resolve_my_namespaces", _mine)
     ch = _ListCH()
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)

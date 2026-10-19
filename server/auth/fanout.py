@@ -40,26 +40,29 @@ class Fanout:
     # order is a priority. Not fetched when every namespace fits under the cap.
     public: frozenset[str] = frozenset()
 
-    def split(self, namespace: str) -> Split:
+    def split(self, namespace: str, cap: int | None = None) -> Split:
         """A search addressed to `namespace` reads it first, then up to `cap`
-        of the others in their own order. When the cap cuts, it drops public
-        namespaces before private ones."""
+        (the fan-out's own by default) of the others in their own order. When
+        the cap cuts, it drops public namespaces before private ones."""
         others = [ns for ns in self.namespaces if ns != namespace]
         ranked = others
         if not self.ordered:
             ranked = [ns for ns in others if ns not in self.public]
             ranked += [ns for ns in others if ns in self.public]
-        keep = set(ranked[: self.cap])
+        keep = set(ranked[: self.cap if cap is None else cap])
         read = [ns for ns in others if ns in keep]
         return Split([namespace, *read], [ns for ns in others if ns not in keep])
 
 
-async def namespaces_to_search(org: str, namespace: str, namespace_scope: str | None) -> Split:
+async def namespaces_to_search(
+    org: str, namespace: str, namespace_scope: str | None, *, cap: int | None = None
+) -> Split:
     """What one search leg reads: the addressed `namespace`, and under
-    `all_mine` the caller's fan-out besides."""
+    `all_mine` the caller's fan-out besides, up to `cap` of them (the
+    fan-out setting's by default)."""
     if namespace_scope != "all_mine":
         return Split([namespace], [])
-    return (await resolve_fanout(org)).split(namespace)
+    return (await resolve_fanout(org)).split(namespace, cap)
 
 
 async def resolve_fanout(org: str) -> Fanout:

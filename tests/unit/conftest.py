@@ -362,18 +362,31 @@ def _no_grant_rows(request: pytest.FixtureRequest) -> Iterator[None]:
     there (`authz.claim_cap`), read through the grant cache. Unit fakes answer
     statements by shape, so the cache reads no grant rows (every claim stands)
     unless a test is marked `claim_cap`."""
+    from server.auth import sharing
     from server.core import grant_cache
 
     grant_cache.clear()
     before = grant_cache._read
+    before_tree, before_groups = sharing.load_tree, sharing._load_groups
     if not request.node.get_closest_marker("claim_cap"):
 
         async def _none(org: str, subject: str) -> grant_cache.GrantMap:
             return grant_cache.GrantMap(ranks={})
 
         grant_cache._read = _none  # type: ignore[assignment]
+
+    # Likewise an org has no collections and no groups unless a test says so.
+    async def _no_tree(org: str) -> sharing.Tree:
+        return sharing.Tree()
+
+    async def _no_groups(org: str) -> dict[str, list[str]]:
+        return {}
+
+    sharing.load_tree = _no_tree  # type: ignore[assignment]
+    sharing._load_groups = _no_groups  # type: ignore[assignment]
     yield
     grant_cache._read = before  # type: ignore[assignment]
+    sharing.load_tree, sharing._load_groups = before_tree, before_groups  # type: ignore[assignment]
     grant_cache.clear()
 
 

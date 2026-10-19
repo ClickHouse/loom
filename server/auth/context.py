@@ -133,7 +133,16 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
             subjects = [*subjects, *await subject_aliases(org, creator)]
         grant_namespaces = await _granted_namespaces(org, subjects)
 
-    return await _gate_readable(auth, org, sorted(jwt_namespaces | grant_namespaces))
+    candidates = jwt_namespaces | grant_namespaces
+    if auth is None:
+        return sorted(candidates)
+    # Collections come from their own resolver (grants of every principal of
+    # the request, inherited down the tree), already decided by the gate's rule.
+    from server.auth import sharing
+
+    shared = await sharing.readable(auth, org)
+    others = sorted(ns for ns in candidates if not sharing.is_collection(ns))
+    return [*await _gate_readable(auth, org, others), *shared]
 
 
 def named_claims(auth: AuthInfo) -> list[str]:
@@ -222,17 +231,21 @@ async def delegated_reach(
     return writable, readable
 
 
-async def restricted_namespaces_hidden_from(org: str) -> list[str]:
-    """Restricted namespaces of `org` the current caller may NOT read —
-    the set an org-wide rollup must exclude even for an org admin. Empty with auth
-    disabled."""
+async def hidden_namespaces(org: str) -> list[str]:
+    """The restricted namespaces and collections of `org` the current caller
+    may NOT read — the set an org-wide rollup must exclude even for an org
+    admin. Empty with auth disabled; `["*"]` when it cannot be told."""
+    from server.auth import sharing
     from server.auth.authz import restricted_allows
     from server.operations.base import Role
 
     auth = current_auth()
     if auth is None:
         return []
+    collections = await sharing.hidden_from(auth, org)
     try:
+        if collections is None:
+            raise ClassificationUnavailable("collection tree not readable")
         names = directory().restricted_code_namespaces(org)
         names |= set(await directory().restricted_set(org))
     except ClassificationUnavailable:
@@ -242,11 +255,12 @@ async def restricted_namespaces_hidden_from(org: str) -> list[str]:
         note_answered_unverified()
         return ["*"]
     # A listing the caller did not scope: a namespace left out does not mark.
-    return [
+    restricted = [
         ns
         for ns in sorted(names)
         if not await restricted_allows(auth, Role.VIEWER, org, ns, hides_answer=False)
     ]
+    return sorted({*restricted, *collections})
 
 
 @dataclass(frozen=True)
@@ -295,7 +309,7 @@ async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeF
     ):
         # An org admin sees everything EXCEPT the restricted
         # namespaces it holds no grant + claim for.
-        hidden = await restricted_namespaces_hidden_from(org)
+        hidden = await hidden_namespaces(org)
         if not hidden:
             return OrgScopeFilter(accessible=True, where="", params={})
         if hidden == ["*"]:
@@ -324,7 +338,7 @@ __all__ = [
     "readable_named_claims",
     "resolve_my_namespaces",
     "resolve_org_scope",
-    "restricted_namespaces_hidden_from",
+    "hidden_namespaces",
     "rollup_member_namespaces",
     "set_current_auth",
 ]

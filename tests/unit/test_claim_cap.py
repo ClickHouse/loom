@@ -62,6 +62,8 @@ class _CH:
         return []
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> dict | None:
+        if "loom.acl_versions" in sql:  # the watermark total
+            return {"n": len(self.acl_versions), "s": sum(v for _, v in self.acl_versions)}
         if "groupArray((namespace, rank))" in sql:  # the cap's grant read
             self.grant_reads += 1
             grants = [(ns, grant_rank(self._live(ns))) for ns in self.grants]
@@ -248,6 +250,8 @@ def _slow_reads(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> tuple[asyncio.Event
 
     async def _slow(sql: str, params: dict[str, Any] | None = None) -> dict | None:
         row = await read(sql, params)
+        if "loom.acl_versions" in sql:  # the watermark poll is not a grant read
+            return row
         read_done.set()
         await go.wait()
         return row
@@ -462,15 +466,36 @@ def test_another_org_s_grant_write_keeps_this_org_s_entries(ch: _CH) -> None:
     assert ch.grant_reads == reads
 
 
-def test_a_grant_write_here_moves_the_watermark_for_every_other_process(ch: _CH) -> None:
+def test_a_grant_change_here_moves_the_watermark_for_every_other_process(ch: _CH) -> None:
     _watching(ch)
-
-    async def _write() -> None:
-        grant_cache.invalidate(ORG, ["alice"])
-        await asyncio.gather(*grant_cache._announcing)
-
-    asyncio.run(_write())
+    asyncio.run(grant_cache.changed(ORG, ["alice"]))
     assert [org for org, _ in ch.acl_versions] == [ORG]
+
+
+def test_a_grant_write_returns_after_its_watermark_row_is_written(ch: _CH) -> None:
+    row = {"org": ORG, "namespace": "team", "subject": "alice", "role": "writer"}
+    asyncio.run(grants_repo.insert_row({**row, "revoked_at": None}))
+    assert [org for org, _ in ch.acl_versions] == [ORG]
+
+
+def test_an_unchanged_total_reads_no_org_s_watermark(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _watching(ch)
+    per_org: list[str] = []
+    real = ch.query_all
+
+    async def _query_all(sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+        if "GROUP BY org" in sql:
+            per_org.append(sql)
+        return await real(sql, params)
+
+    monkeypatch.setattr(ch, "query_all", _query_all)
+    asyncio.run(grant_cache.poll())
+    assert per_org == []
+    ch.acl_versions.append((ORG, 7))
+    asyncio.run(grant_cache.poll())
+    assert len(per_org) == 1
 
 
 def test_a_read_begun_before_another_process_s_write_is_not_joined(
@@ -529,6 +554,23 @@ def test_a_stale_watermark_serves_no_cached_grant(ch: _CH, monkeypatch: pytest.M
     assert not _admits(_flat("team"), "team", Role.WRITER)
 
 
+def test_a_failed_re_read_on_a_stale_watermark_serves_the_last_mark_s_entry(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _watching(ch)
+    ch.grants["team"] = ("writer", "active", False)
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    monkeypatch.setattr(settings, "grant_cache_ttl_seconds", 0.0)  # the entry has aged
+    _stale_watermark(monkeypatch)
+
+    async def _down(*_a: Any, **_k: Any) -> dict | None:
+        raise RuntimeError("replica away")
+
+    monkeypatch.setattr(ch, "query_one", _down)
+    grants = asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    assert grants.rank("team") == grant_rank("writer"), "no watermark move was seen since"
+
+
 def test_a_failed_poll_turns_stale_past_the_bound(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:
     _watching(ch)
     asyncio.run(grant_cache.grant_map(ORG, "alice"))
@@ -585,6 +627,7 @@ def test_the_poll_loop_polls_on_its_period_until_cancelled(
 ) -> None:
     polls: list[float] = []
     third = asyncio.Event()
+    period = 0.02
 
     async def _poll() -> None:
         polls.append(asyncio.get_running_loop().time())
@@ -594,11 +637,12 @@ def test_the_poll_loop_polls_on_its_period_until_cancelled(
     monkeypatch.setattr(grant_cache, "poll", _poll)
 
     async def _run() -> None:
-        loop = grant_cache.start_poll_loop(0.01)
+        loop = grant_cache.start_poll_loop(period)
         await asyncio.wait_for(third.wait(), timeout=5)
         loop.cancel()
         with pytest.raises(asyncio.CancelledError):
             await loop
 
     asyncio.run(_run())
-    assert len(polls) >= 3
+    gaps = [b - a for a, b in zip(polls, polls[1:], strict=False)]
+    assert all(gap >= period * 0.9 for gap in gaps), gaps

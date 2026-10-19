@@ -201,12 +201,20 @@ async def test_purge_deletes_documents_and_chunks(monkeypatch) -> None:
 
 def test_knowledge_tables_are_census_rows_owned_by_their_steps() -> None:
     """loom.chunks and loom.documents hold knowledge text: the census counts
-    them for a namespace scope, and residue re-opens the step that owns it."""
+    them for a namespace scope and, by who wrote them, for a user's; an
+    original another writer may share is counted by namespace only. Residue
+    re-opens the step that owns it."""
     from server.erasure.store import census as erasure_census
 
     knowledge = {"loom.chunks", "loom.documents", "loom.document_blobs"}
     assert knowledge <= set(erasure_census.census_tables("namespace"))
-    assert not knowledge & set(erasure_census.census_tables("user_id"))
+    assert knowledge & set(erasure_census.census_tables("user_id")) == {
+        "loom.chunks",
+        "loom.documents",
+    }
+    assert erasure_census.steps_to_reopen({"loom.documents": 1}, "user_id") == {
+        "documents.tombstone"
+    }
     assert erasure_census.steps_to_reopen({"loom.chunks": 2}, "namespace") == {"chunks.supersede"}
     for table in ("loom.documents", "loom.document_blobs"):
         assert erasure_census.steps_to_reopen({table: 1}, "namespace") == {"documents.tombstone"}

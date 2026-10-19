@@ -91,6 +91,11 @@ schema. These rules keep that safe. The operator procedure is in
     it, so a token it revokes still works on an N-1 replica. The feature that writes
     it is turned on only once no N-1 replica serves: SCIM provisioning
     (`LOOM_SCIM_TOKEN`) after the whole rollout.
+11. **A new access rule** (such as collections, [sharing](sharing.md)): N-1 does not
+    know that a `col-` namespace opens only through grants, so an org admin's wildcard
+    token reads one on an N-1 replica. A gateway token reaches nothing there (N-1 sees a
+    token with no claims). Collections are created (`collection.create`, which N-1 does
+    not serve) only once no N-1 replica serves.
 
 ## What checks them
 

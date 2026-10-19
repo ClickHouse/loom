@@ -129,6 +129,18 @@ def _extract_auth(request: Request) -> AuthInfo | None:
             raise missing_bearer()
         return None
 
+    if auth.gateway:
+        from server.auth.gateway import act_for
+
+        try:
+            return act_for(
+                auth,
+                request.headers.get("X-Loom-On-Behalf-Of") or "",
+                request.headers.get("X-Loom-Agent") or "",
+            )
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+
     # Trusted-caller impersonation: a subject on LOOM_TRUSTED_CALLERS carrying
     # X-Loom-On-Behalf-Of takes the header value as its effective subject.
     trusted = {s.strip() for s in settings.trusted_callers.split(",") if s.strip()}
@@ -143,6 +155,24 @@ def _extract_auth(request: Request) -> AuthInfo | None:
                 impersonated_by=auth.subject,
             )
     return auth
+
+
+async def _resolve_personal(
+    op: Operation, call: _HttpCall, payload: Any, raw_body: dict[str, Any], auth: AuthInfo | None
+) -> tuple[Any, dict[str, Any]]:
+    """`namespace: "@me"` is the asserted end user's personal collection, which
+    the server names; any other caller is refused."""
+    from server.auth.gateway import is_end_user
+    from server.core.errors import ValidationError as RequestInvalid
+    from server.identity.app.personal_collection import ALIAS, personal_collection
+
+    if getattr(payload, "namespace", None) != ALIAS:
+        return payload, raw_body
+    if auth is None or not is_end_user(auth):
+        e = RequestInvalid(f"{ALIAS!r} names a gateway end user's personal collection")
+        raise _refuse(op, call, 400, error_code="VALIDATION_FAILED", e=e)
+    namespace = await personal_collection(auth.org, auth.subject)
+    return payload.model_copy(update={"namespace": namespace}), {**raw_body, "namespace": namespace}
 
 
 def server_timing_header(elapsed_ms: int) -> str:
@@ -715,6 +745,8 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         call.raw_body = raw_body = await _read_body(op, request, request_id, auth)
 
         payload = _validate_payload(op, request_id, raw_body, auth)
+        payload, raw_body = await _resolve_personal(op, call, payload, raw_body, auth)
+        call.raw_body = raw_body
 
         # The token is verified: its `consumer` claim, else the body's field, else its class.
         bind_current_consumer(raw_body, auth)

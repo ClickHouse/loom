@@ -159,7 +159,7 @@ def test_census_user_scope_skips_namespace_only_tables() -> None:
         "loom.llm_response_cache",
     } <= set(out)
     assert "loom.memory_answers" not in out
-    assert len(out) == 37
+    assert len(out) == 39
     assert all(params["uid"] == "alice" for _, params in ch.query_one_calls)
 
 

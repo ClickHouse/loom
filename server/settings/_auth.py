@@ -180,7 +180,7 @@ class AuthSettings(BaseModel):
     # Seconds between each process's reads of the per-org grant watermark
     # (loom.acl_versions): a revoke on one replica is enforced on every other
     # within about this long.
-    acl_watermark_poll_seconds: float = Field(default=1.0, gt=0)
+    acl_watermark_poll_seconds: float = Field(default=1.0, ge=0.1)
     # Oldest watermark a process still trusts, seconds. Past it (polls keep
     # failing) cached grants are not served and every request reads its own.
     acl_watermark_max_stale_seconds: float = Field(default=10.0, gt=0)
@@ -240,6 +240,17 @@ class AuthSettings(BaseModel):
     def _check_gateway_keys(self) -> AuthSettings:
         """A malformed gateway key map fails here, not on the first RS256 token."""
         self.jwt_public_key_map()
+        return self
+
+    @model_validator(mode="after")
+    def _check_watermark_staleness(self) -> AuthSettings:
+        """A watermark is polled every interval, so a stale limit at or under it
+        reads grants on every request between two polls."""
+        if self.acl_watermark_max_stale_seconds <= self.acl_watermark_poll_seconds:
+            raise ValueError(
+                "LOOM_ACL_WATERMARK_MAX_STALE_SECONDS must be larger than "
+                "LOOM_ACL_WATERMARK_POLL_SECONDS"
+            )
         return self
 
     @model_validator(mode="after")

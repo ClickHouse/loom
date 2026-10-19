@@ -1,0 +1,313 @@
+"""Knowledge sharing end to end (docs/architecture/sharing.md), against a live
+server: a gateway's end users, collections and their inheritance, SCIM groups,
+saved items in `@me`, revocation, and a user's erasure.
+
+Skips without LOOM_BASE_URL."""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any
+
+import httpx
+import pytest
+
+from tests.integration._eventually import wait_until
+from tests.integration._resources import unique_org
+
+pytestmark = pytest.mark.slow
+
+
+def _gateway_token(org: str) -> str:
+    from server.auth.jwt import mint_token
+
+    return mint_token("sa:chat", org, [], [], gateway=True, ttl_seconds=900)
+
+
+class Gateway:
+    """The service in front of Loom: one token for its org, a user per call."""
+
+    def __init__(self, base: str, org: str) -> None:
+        self.base, self.org, self.token = base, org, _gateway_token(org)
+
+    def call(
+        self, user: str, op: str, payload: dict[str, Any], *, agent: str = ""
+    ) -> httpx.Response:
+        headers = {"Authorization": f"Bearer {self.token}", "X-Loom-On-Behalf-Of": f"user:{user}"}
+        if agent:
+            headers["X-Loom-Agent"] = f"agent:{agent}"
+        return httpx.post(
+            f"{self.base}/v1/{op}", json={"org": self.org, **payload}, headers=headers, timeout=60
+        )
+
+    def ok(self, user: str, op: str, payload: dict[str, Any], **kw: str) -> dict[str, Any]:
+        r = self.call(user, op, payload, **kw)
+        assert r.status_code == 200, f"{op} as {user}: {r.status_code} {r.text}"
+        return r.json()
+
+    def scim(self, method: str, path: str, body: dict[str, Any] | None = None) -> httpx.Response:
+        return httpx.request(
+            method,
+            f"{self.base}/scim/v2/{path}",
+            json=body,
+            headers={"Authorization": f"Bearer {self.token}"},
+            timeout=30,
+        )
+
+
+def _search(gw: Gateway, user: str, namespace: str, query: str, **kw: str) -> list[dict]:
+    r = gw.call(
+        user,
+        "knowledge.search",
+        {"namespace": namespace, "query": query, "namespace_scope": "all_mine", "top_k": 20},
+        **kw,
+    )
+    return r.json().get("results", []) if r.status_code == 200 else []
+
+
+def _nonce() -> str:
+    return f"zqshare{uuid.uuid4().hex[:10]}"
+
+
+@pytest.fixture
+def gw(control_plane_url: str) -> Gateway:
+    return Gateway(control_plane_url, unique_org("share"))
+
+
+def _collection(gw: Gateway, owner: str, name: str, parent: str = "") -> str:
+    gw.ok(owner, "collection.create", {"namespace": name, "parent": parent})
+    return name
+
+
+def _add(gw: Gateway, user: str, namespace: str, text: str, uri: str = "") -> None:
+    gw.ok(
+        user,
+        "knowledge.add",
+        {
+            "namespace": namespace,
+            "source_uri": uri or f"doc/{uuid.uuid4().hex[:8]}",
+            "content": text,
+        },
+    )
+
+
+def test_a_document_added_to_a_shared_collection_reaches_the_group_at_once(gw: Gateway) -> None:
+    q3 = _collection(gw, "alice", f"col-q3-{uuid.uuid4().hex[:6]}")
+    plans = _collection(gw, "alice", f"col-plans-{uuid.uuid4().hex[:6]}", parent=q3)
+    r = gw.scim("POST", "Groups", {"externalId": "finance", "members": [{"value": "bob"}]})
+    assert r.status_code == 201, r.text
+    gw.ok("alice", "grants.create", {"namespace": q3, "subject": "group:finance", "role": "viewer"})
+    nonce = _nonce()
+    _add(gw, "alice", plans, f"Q3 plan {nonce} for the renewal")
+    hits = _search(gw, "bob", plans, nonce)
+    assert any(nonce in h["content"] for h in hits), "inherited from the parent, at once"
+    listed = gw.ok("bob", "collection.list", {})["collections"]
+    assert {(c["namespace"], c["parent"], c["role"]) for c in listed} == {
+        (q3, "", "viewer"),
+        (plans, q3, "viewer"),
+    }
+    assert not any(nonce in h["content"] for h in _search(gw, "carol", "@me", nonce))
+    # A writer role is needed to add; the group holds viewer.
+    assert (
+        gw.call(
+            "bob", "knowledge.add", {"namespace": plans, "source_uri": "x", "content": "y"}
+        ).status_code
+        == 403
+    )
+
+
+def test_a_removed_member_and_a_revoked_grant_read_nothing(gw: Gateway) -> None:
+    col = _collection(gw, "alice", f"col-hr-{uuid.uuid4().hex[:6]}")
+    gw.scim(
+        "POST", "Groups", {"externalId": "people", "members": [{"value": "bob"}, {"value": "dan"}]}
+    )
+    gw.ok("alice", "grants.create", {"namespace": col, "subject": "group:people", "role": "viewer"})
+    gw.ok("alice", "grants.create", {"namespace": col, "subject": "user:erin", "role": "viewer"})
+    nonce = _nonce()
+    _add(gw, "alice", col, f"salary bands {nonce}")
+    for user in ("bob", "dan", "erin"):
+        assert any(nonce in h["content"] for h in _search(gw, user, col, nonce)), user
+    patch = {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "remove", "path": 'members[value eq "dan"]'}],
+    }
+    assert gw.scim("PATCH", "Groups/people", patch).status_code == 200
+    gw.ok("alice", "grants.revoke", {"namespace": col, "subject": "user:erin"})
+    for user in ("dan", "erin"):
+        assert (
+            gw.call(user, "knowledge.search", {"namespace": col, "query": nonce}).status_code == 403
+        )
+        assert not any(nonce in h["content"] for h in _search(gw, user, "@me", nonce)), user
+    assert any(nonce in h["content"] for h in _search(gw, "bob", col, nonce)), "bob stays"
+
+
+def test_cycles_and_depth_are_refused(gw: Gateway) -> None:
+    tag = uuid.uuid4().hex[:6]
+    names = [_collection(gw, "alice", f"col-l0-{tag}")]
+    for i in range(1, 9):
+        names.append(_collection(gw, "alice", f"col-l{i}-{tag}", parent=names[-1]))
+    r = gw.call("alice", "collection.create", {"namespace": f"col-l9-{tag}", "parent": names[-1]})
+    assert r.status_code == 422 and "nest at most" in r.text
+    r = gw.call("alice", "collection.move", {"namespace": names[0], "parent": names[3]})
+    assert r.status_code == 422 and "cannot hold itself" in r.text
+
+
+def test_no_request_field_makes_a_saved_item_or_widens_a_grant(
+    gw: Gateway, control_plane_url: str, mint_test_token: Any
+) -> None:
+    from server.identity.app.personal_collection import name_for
+
+    nonce = _nonce()
+    gw.ok(
+        "alice",
+        "knowledge.upsert",
+        {"namespace": "@me", "source_uri": "chat/c1/m1", "content": nonce},
+    )
+    alices = name_for(gw.org, "user:alice")
+    # Bob names Alice's personal collection: refused, read and write.
+    assert (
+        gw.call(
+            "bob", "knowledge.add", {"namespace": alices, "source_uri": "x", "content": "y"}
+        ).status_code
+        == 403
+    )
+    assert (
+        gw.call("bob", "knowledge.search", {"namespace": alices, "query": nonce}).status_code == 403
+    )
+    # Bob's own `@me` is his, whatever the body says about users.
+    assert not any(
+        nonce in h["content"]
+        for h in gw.ok(
+            "bob", "knowledge.search", {"namespace": "@me", "query": nonce, "user_id": "alice"}
+        )["results"]
+    )
+    # A personal collection takes no other grant, and Bob cannot grant on Alice's.
+    r = gw.call(
+        "alice", "grants.create", {"namespace": alices, "subject": "user:bob", "role": "viewer"}
+    )
+    assert r.status_code == 422, r.text
+    r = gw.call(
+        "bob", "grants.create", {"namespace": alices, "subject": "user:bob", "role": "admin"}
+    )
+    assert r.status_code == 403
+    # A gateway asserts users and agents only.
+    for header in ("group:finance", "alice@example.com", "sa:chat", ""):
+        r = httpx.post(
+            f"{control_plane_url}/v1/knowledge.search",
+            json={"org": gw.org, "namespace": "@me", "query": nonce},
+            headers={"Authorization": f"Bearer {gw.token}", "X-Loom-On-Behalf-Of": header},
+        )
+        assert r.status_code == 403, header
+    # `@me` is only a gateway user's.
+    tok = mint_test_token(org=gw.org, namespaces=["*"], roles=["writer"], subject="sa:other")
+    r = httpx.post(
+        f"{control_plane_url}/v1/knowledge.search",
+        json={"org": gw.org, "namespace": "@me", "query": nonce},
+        headers={"Authorization": f"Bearer {tok}"},
+    )
+    assert r.status_code == 400
+    # An org admin token reaches no collection without a grant.
+    admin = mint_test_token(
+        org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="root"
+    )
+    r = httpx.post(
+        f"{control_plane_url}/v1/knowledge.search",
+        json={"org": gw.org, "namespace": alices, "query": nonce, "namespace_scope": "this"},
+        headers={"Authorization": f"Bearer {admin}"},
+    )
+    assert r.status_code == 403
+
+
+def test_a_long_saved_message_is_chunked_whole_and_its_tail_is_found(gw: Gateway) -> None:
+    tail = _nonce()
+    body = ("The renewal clause covers notice periods and pricing. " * 380) + f"Final note {tail}."
+    assert len(body) > 20_000
+    gw.ok(
+        "alice",
+        "knowledge.upsert",
+        {"namespace": "@me", "source_uri": "chat/c9/m9", "content": body},
+    )
+    rows = gw.ok("alice", "knowledge.list", {"namespace": "@me", "uri_prefix": ["chat/c9/"]})[
+        "rows"
+    ]
+    assert rows and rows[0]["chunk_count"] > 10
+    for mode in ("lexical", "hybrid"):
+        hits = gw.ok(
+            "alice",
+            "knowledge.search",
+            {"namespace": "@me", "query": tail, "search_mode": mode, "namespace_scope": "this"},
+        )["results"]
+        assert hits and hits[0]["source_uri"] == "chat/c9/m9" and tail in hits[0]["content"], mode
+
+
+def test_an_agent_grant_reaches_whoever_runs_the_agent(gw: Gateway) -> None:
+    col = _collection(gw, "alice", f"col-agent-{uuid.uuid4().hex[:6]}")
+    gw.ok("alice", "grants.create", {"namespace": col, "subject": "agent:helper", "role": "viewer"})
+    nonce = _nonce()
+    _add(gw, "alice", col, f"agent knowledge {nonce}")
+    assert any(nonce in h["content"] for h in _search(gw, "bob", col, nonce, agent="helper"))
+    assert gw.call("bob", "knowledge.search", {"namespace": col, "query": nonce}).status_code == 403
+
+
+def test_a_users_erasure_leaves_no_trace_and_keeps_others_documents(
+    gw: Gateway, control_plane_url: str, mint_test_token: Any, ch_client: Any
+) -> None:
+    col = _collection(gw, "alice", f"col-team-{uuid.uuid4().hex[:6]}")
+    gw.ok("alice", "grants.create", {"namespace": col, "subject": "user:bob", "role": "writer"})
+    gw.scim("POST", "Groups", {"externalId": "crew", "members": [{"value": "bob"}]})
+    mine, theirs = _nonce(), _nonce()
+    _add(gw, "bob", col, f"bob wrote {mine}")
+    _add(gw, "alice", col, f"alice wrote {theirs}")
+    gw.ok(
+        "bob", "knowledge.upsert", {"namespace": "@me", "source_uri": "chat/c1/m1", "content": mine}
+    )
+    admin = mint_test_token(
+        org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="ops"
+    )
+    r = httpx.post(
+        f"{control_plane_url}/v1/erasure.request",
+        json={
+            "org": gw.org,
+            "scope_type": "user_id",
+            "scope_value": "bob",
+            "requester": "ops@x.io",
+        },
+        headers={"Authorization": f"Bearer {admin}"},
+        timeout=180,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "completed", r.json()
+    live = ch_client.query(
+        "SELECT count() FROM loom.documents FINAL WHERE org = {o:String} AND user_id = 'bob' "
+        "AND superseded_at IS NULL",
+        parameters={"o": gw.org},
+    ).result_rows[0][0]
+    grants = ch_client.query(
+        "SELECT count() FROM loom.namespace_grants FINAL WHERE org = {o:String} "
+        "AND subject = 'user:bob' AND revoked_at IS NULL",
+        parameters={"o": gw.org},
+    ).result_rows[0][0]
+    groups = ch_client.query(
+        "SELECT count() FROM loom.principal_groups FINAL WHERE org = {o:String} "
+        "AND has(members, 'user:bob') AND NOT deleted",
+        parameters={"o": gw.org},
+    ).result_rows[0][0]
+    assert (live, grants, groups) == (0, 0, 0)
+    assert any(theirs in h["content"] for h in _search(gw, "alice", col, theirs)), "alice's stays"
+    wait_until(
+        lambda: (
+            gw.call("bob", "knowledge.search", {"namespace": col, "query": theirs}).status_code
+            == 403
+        ),
+        description="bob's grant revoked",
+    )
+    # Bob, back later, starts from an empty personal collection.
+    gw.ok(
+        "bob",
+        "knowledge.upsert",
+        {"namespace": "@me", "source_uri": "chat/c2/m1", "content": "new"},
+    )
+    left = gw.ok(
+        "bob", "knowledge.search", {"namespace": "@me", "query": mine, "namespace_scope": "this"}
+    )
+    assert not any(mine in h["content"] for h in left["results"])

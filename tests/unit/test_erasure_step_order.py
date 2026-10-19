@@ -169,6 +169,14 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
         ),
     ),
     ("session_outcomes.delete", ((D, "loom.session_outcomes_by_user"),)),
+    ("chunks.supersede", ((U, "loom.chunks"),)),
+    (
+        "documents.tombstone",
+        ((D, "loom.document_blobs"), (U, "loom.documents"), (U, "loom.documents")),
+    ),
+    ("grants.revoke", (("OTHER", "INSERT"),)),
+    ("groups.remove_member", (("OTHER", "INSERT"),)),
+    ("collections.retire_personal", (("OTHER", "INSERT"), ("OTHER", "INSERT"))),
     (
         "conversations.tombstone",
         (

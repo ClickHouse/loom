@@ -99,6 +99,9 @@ OpName = Literal[
     "code.trace",
     "code.verify",
     "code.verify_citations",
+    "collection.create",
+    "collection.list",
+    "collection.move",
     "conflicts.allowlist_list",
     "conflicts.allowlist_remove",
     "conflicts.list",
@@ -404,6 +407,9 @@ OP_NAMES: tuple[str, ...] = (
     "code.trace",
     "code.verify",
     "code.verify_citations",
+    "collection.create",
+    "collection.list",
+    "collection.move",
     "conflicts.allowlist_list",
     "conflicts.allowlist_remove",
     "conflicts.list",
@@ -1368,6 +1374,42 @@ OPS: dict[str, OpSpec] = {
         1500,
         False,
         True,
+    ),
+    "collection.create": OpSpec(
+        "collection.create",
+        "CollectionCreateInput",
+        "CollectionCreateBody",
+        "CollectionCreateOutput",
+        True,
+        "viewer",
+        "experimental",
+        80,
+        True,
+        False,
+    ),
+    "collection.list": OpSpec(
+        "collection.list",
+        "CollectionListInput",
+        "CollectionListBody",
+        "CollectionListOutput",
+        True,
+        "viewer",
+        "experimental",
+        80,
+        False,
+        True,
+    ),
+    "collection.move": OpSpec(
+        "collection.move",
+        "CollectionMoveInput",
+        "CollectionMoveBody",
+        "CollectionMoveOutput",
+        True,
+        "admin",
+        "experimental",
+        80,
+        True,
+        False,
     ),
     "conflicts.allowlist_list": OpSpec(
         "conflicts.allowlist_list",
@@ -6997,6 +7039,77 @@ class CodeVerifyCitationsOutput(TypedDict, total=False):
     as_of: NotRequired[dict[str, Any]]
     note: NotRequired[str]
     trace_run_id: NotRequired[str]
+
+
+class CollectionCreateInput(TypedDict, total=False):
+    "Create a collection: a namespace read and written only through grants."
+
+    org: Required[str]
+    namespace: Required[str]
+    parent: NotRequired[str]
+    description: NotRequired[str]
+
+
+class CollectionCreateBody(TypedDict, total=False):
+    "Create a collection: a namespace read and written only through grants."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    parent: NotRequired[str]
+    description: NotRequired[str]
+
+
+class CollectionCreateOutput(TypedDict, total=False):
+    namespace: Required[str]
+    parent: Required[str]
+    created: Required[bool]
+
+
+class CollectionListInput(TypedDict, total=False):
+    "List the collections the caller can read."
+
+    org: Required[str]
+    namespace: NotRequired[str]
+
+
+class CollectionListBody(TypedDict, total=False):
+    "List the collections the caller can read."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class CollectionListOutput(TypedDict, total=False):
+    collections: Required[list["CollectionEntry"]]
+
+
+class CollectionEntry(TypedDict, total=False):
+    namespace: Required[str]
+    parent: Required[str]
+    personal: Required[bool]
+    role: Required[str]
+
+
+class CollectionMoveInput(TypedDict, total=False):
+    "Put a collection under another one, or detach it."
+
+    org: Required[str]
+    namespace: Required[str]
+    parent: NotRequired[str]
+
+
+class CollectionMoveBody(TypedDict, total=False):
+    "Put a collection under another one, or detach it."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    parent: NotRequired[str]
+
+
+class CollectionMoveOutput(TypedDict, total=False):
+    namespace: Required[str]
+    parent: Required[str]
+    moved: Required[bool]
 
 
 class ConflictsAllowlistListInput(TypedDict, total=False):
@@ -13601,7 +13714,7 @@ class NamespaceRegisterInput(TypedDict, total=False):
     namespace: Required[str]
     owner_email: Required[str]
     description: NotRequired[Optional[str]]
-    kind: NotRequired[Optional[Literal["memory", "code", "bench"]]]
+    kind: NotRequired[Optional[Literal["memory", "code", "bench", "collection", "personal"]]]
     tags: NotRequired[list[str]]
     traffic_class: NotRequired[Optional[Literal["production", "interactive", "bench"]]]
     active: NotRequired[Optional[bool]]
@@ -13674,7 +13787,7 @@ class NamespaceRegisterBody(TypedDict, total=False):
     namespace: NotRequired[str]
     owner_email: Required[str]
     description: NotRequired[Optional[str]]
-    kind: NotRequired[Optional[Literal["memory", "code", "bench"]]]
+    kind: NotRequired[Optional[Literal["memory", "code", "bench", "collection", "personal"]]]
     tags: NotRequired[list[str]]
     traffic_class: NotRequired[Optional[Literal["production", "interactive", "bench"]]]
     active: NotRequired[Optional[bool]]

@@ -27,7 +27,7 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     async def mine(org: str, subject: str | None = None) -> list[str]:
         return ["own-ns"] if org == "a" else []
 
-    monkeypatch.setattr(context, "restricted_namespaces_hidden_from", hidden)
+    monkeypatch.setattr(context, "hidden_namespaces", hidden)
     monkeypatch.setattr(context, "resolve_my_namespaces", mine)
     yield
     context.set_current_auth(None)

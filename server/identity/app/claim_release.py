@@ -218,7 +218,7 @@ async def _release(
     await sso_links.forget_account(org, namespace, actor_subject, ch=ch)
     await machines.forget_namespace(org, namespace, actor_subject, ch=ch)
     # The claim cap reads which accounts tie a person's spellings from this table.
-    grant_cache.invalidate(org)
+    await grant_cache.changed(org)
     aliases.invalidate(org, [previous_owner, str(existing.get("contact_email") or "")])
 
     log.info(

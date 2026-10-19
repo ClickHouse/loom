@@ -597,22 +597,6 @@ async def list_users(request: Request) -> JSONResponse:
     )
 
 
-@router.get("/Groups")
-async def list_groups(request: Request) -> JSONResponse:
-    """No groups: a provider's connection test and group sync read an empty
-    list here, where a 404 would count as a broken endpoint."""
-    start = min(_LAST_INDEX, max(1, _int_param(request, "startIndex", 1)))
-    return _answer(
-        {
-            "schemas": [_LIST_SCHEMA],
-            "totalResults": 0,
-            "startIndex": start,
-            "itemsPerPage": 0,
-            "Resources": [],
-        }
-    )
-
-
 @router.get("/Users/{uid}")
 async def get_user(uid: str, request: Request) -> JSONResponse:
     row = await scim.get(uid)
@@ -757,9 +741,7 @@ async def unknown(rest: str, request: Request) -> Response:
         raise ScimError(
             405, f"{request.method} is not served here", headers={"Allow": ", ".join(allowed)}
         )
-    raise ScimError(
-        404, "this server serves only Users, an empty Groups list and ServiceProviderConfig"
-    )
+    raise ScimError(404, "this server serves only Users, Groups and ServiceProviderConfig")
 
 
 def scim_settings_problem(raw: str, login_provider: str, auth_required: bool) -> str:

@@ -19,7 +19,16 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.auth import grant_claims, login, oauth, revocation, scim, scim_routes, service_accounts
+from server.auth import (
+    grant_claims,
+    login,
+    oauth,
+    revocation,
+    scim,
+    scim_groups,
+    scim_routes,
+    service_accounts,
+)
 from server.auth.scim_routes import (
     ScimError,
     parse_active,
@@ -1223,6 +1232,7 @@ async def test_an_unreadable_deactivation_fails_the_sign_in_retryably(world, mon
 @pytest.fixture
 def client(world: _World) -> TestClient:
     app = FastAPI()
+    scim_groups.attach(app)
     scim_routes.attach(app)
     c = TestClient(app)
     c.headers["Authorization"] = f"Bearer {_TOKEN}"
@@ -2722,7 +2732,7 @@ def test_a_method_not_served_names_the_ones_that_are(client: TestClient) -> None
 
 def test_unknown_paths_and_methods_answer_scim_errors(client: TestClient) -> None:
     for method, path, status in [
-        ("POST", "/Groups", 405),
+        ("POST", "/Groups", 403),  # groups are pushed with an org's gateway token
         ("GET", "/Schemas", 404),
         ("POST", "/Users/x", 405),
         ("DELETE", "/Users", 405),

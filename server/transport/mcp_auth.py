@@ -116,10 +116,16 @@ def _verify_bearer(request: Request) -> AuthInfo | None:
     # the same per-request path that reads the bearer.
     set_code_scope(request.headers.get("x-loom-code-scope"))
     from server.auth.bearer import bearer_token
-    from server.auth.jwt import verify_token
+    from server.auth.jwt import TokenError, verify_token
 
     token = bearer_token(request.headers.get("authorization"))
-    return None if token is None else verify_token(token)
+    if token is None:
+        return None
+    auth = verify_token(token)
+    if auth.gateway:
+        # A gateway names its end user per request, which only the HTTP API reads.
+        raise TokenError("a gateway token calls the HTTP API (/v1/<op>), not MCP")
+    return auth
 
 
 def _requires_auth(method: str, mode: str) -> bool:

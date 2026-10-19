@@ -14,6 +14,7 @@ from server.code.api import ops as code
 from server.code.api import ops_coverage_watch as code_watch
 from server.erasure.api import ops as erasure
 from server.identity.api import ops_admin_users as admin_users
+from server.identity.api import ops_collections as collections
 from server.identity.api import ops_grants as grants
 from server.identity.api import ops_namespace as namespace
 from server.identity.api import ops_policy as policy
@@ -69,6 +70,7 @@ _OPERATION_MODULES = (
     mentor,
     ops,
     grants,
+    collections,
     agents,
     admin_users,
     facts,

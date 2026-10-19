@@ -118,6 +118,7 @@ def test_boot_registers_every_check(monkeypatch) -> None:
         "migrations",
         "revocation",
         "keyring",
+        "grant_watermark",
         "tracker_registry",
         "runtime_overrides",
         "calibration",
@@ -128,6 +129,17 @@ def test_boot_registers_every_check(monkeypatch) -> None:
     monkeypatch.setattr(settings, "ready_requires_mirrors", True)
     boot.register_readiness_checks(object())
     assert "mirrors" in readiness.names()
+
+
+def test_a_stale_grant_watermark_is_reported_but_not_required(monkeypatch) -> None:
+    import time
+
+    from server.core import grant_cache
+
+    grant_cache.clear()
+    assert not grant_cache.readiness_check().ok
+    monkeypatch.setattr(grant_cache, "_polled_at", time.monotonic())
+    assert grant_cache.readiness_check().ok
 
 
 def test_token_state_needs_a_loaded_fresh_snapshot(monkeypatch) -> None:

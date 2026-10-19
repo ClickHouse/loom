@@ -1809,6 +1809,51 @@ export interface CodeVerifyCitationsOutput {
   trace_run_id?: string;
 }
 
+export interface CollectionCreateInput {
+  org: string;
+  /** The collection's name, also its namespace: 'col-' then lowercase letters, digits and '-'. */
+  namespace: string;
+  /** The collection it sits in and inherits grants from; '' for a top-level one. */
+  parent?: string;
+  description?: string;
+}
+
+export interface CollectionCreateOutput {
+  namespace: string;
+  parent: string;
+  created: boolean;
+}
+
+export interface CollectionListInput {
+  org: string;
+  /** Unused; collections are listed for the whole org. */
+  namespace?: string;
+}
+
+export interface CollectionEntry {
+  namespace: string;
+  parent: string;
+  personal: boolean;
+  role: string;
+}
+
+export interface CollectionListOutput {
+  collections: CollectionEntry[];
+}
+
+export interface CollectionMoveInput {
+  org: string;
+  namespace: string;
+  /** The new parent collection; '' detaches it, keeping only its own grants. */
+  parent?: string;
+}
+
+export interface CollectionMoveOutput {
+  namespace: string;
+  parent: string;
+  moved: boolean;
+}
+
 export interface ConflictsAllowlistListInput {
   org: string;
   namespace: string;
@@ -6237,7 +6282,7 @@ export interface NamespaceRegisterInput {
   /** The namespace's owner; an account with a login (an email, or an agent's claim code) keeps its stored owner exactly, so send that value back to update settings. */
   owner_email: string;
   description?: string | null;
-  kind?: "memory" | "code" | "bench" | null;
+  kind?: "memory" | "code" | "bench" | "collection" | "personal" | null;
   tags?: string[];
   traffic_class?: "production" | "interactive" | "bench" | null;
   active?: boolean | null;
@@ -8408,6 +8453,9 @@ export type OpName =
   | "code.trace"
   | "code.verify"
   | "code.verify_citations"
+  | "collection.create"
+  | "collection.list"
+  | "collection.move"
   | "conflicts.allowlist_list"
   | "conflicts.allowlist_remove"
   | "conflicts.list"
@@ -8713,6 +8761,9 @@ export interface OpMap {
   "code.trace": { input: CodeTraceInput; output: CodeTraceOutput };
   "code.verify": { input: CodeVerifyInput; output: CodeVerifyOutput };
   "code.verify_citations": { input: CodeVerifyCitationsInput; output: CodeVerifyCitationsOutput };
+  "collection.create": { input: CollectionCreateInput; output: CollectionCreateOutput };
+  "collection.list": { input: CollectionListInput; output: CollectionListOutput };
+  "collection.move": { input: CollectionMoveInput; output: CollectionMoveOutput };
   "conflicts.allowlist_list": { input: ConflictsAllowlistListInput; output: ConflictsAllowlistListOutput };
   "conflicts.allowlist_remove": { input: ConflictsAllowlistRemoveInput; output: ConflictsAllowlistRemoveOutput };
   "conflicts.list": { input: ConflictsListInput; output: ConflictsListOutput };
@@ -9018,6 +9069,9 @@ export const OPS: readonly OpSpec[] = [
   { name: "code.trace", group: "code", method: "trace", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "code.verify", group: "code", method: "verify", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "code.verify_citations", group: "code", method: "verifyCitations", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
+  { name: "collection.create", group: "collection", method: "create", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
+  { name: "collection.list", group: "collection", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
+  { name: "collection.move", group: "collection", method: "move", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "conflicts.allowlist_list", group: "conflicts", method: "allowlistList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "conflicts.allowlist_remove", group: "conflicts", method: "allowlistRemove", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "conflicts.list", group: "conflicts", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
@@ -9266,4 +9320,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 302;
+export const GENERATED_OP_COUNT = 305;

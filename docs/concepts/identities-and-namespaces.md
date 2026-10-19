@@ -338,7 +338,16 @@ How a caller gets a token at all is the deployment's identity mode
 - **`gateway`**: an upstream identity layer authenticates people and mints short-lived
   Loom tokens with the shared secret; Loom only verifies. A subject in
   `LOOM_TRUSTED_CALLERS` may act for an end user with `X-Loom-On-Behalf-Of`, and every
-  ledger row records the real caller.
+  ledger row records the real caller. A service whose users have no Loom account holds a
+  gateway token per org instead (`loom mint-token --gateway`) and names a `user:<id>` on
+  every request ([act for a service's end users](../guides/tokens-and-grants.md#act-for-a-services-end-users)).
+
+## Collections
+
+A collection is a namespace named `col-…` that only grants open: no token claim or org
+admin role reaches it. A collection can sit inside another and inherit its grants, and a
+grant on one can name a `user:`, `group:` or `agent:` principal besides a person or a
+service account. [Sharing knowledge](../architecture/sharing.md) describes the model.
 
 When `LOOM_IDENTITY_PROVIDER` is empty the server infers the mode: auth off gives
 `single-user`, auth on with `LOOM_SELF_SIGNUP=open` gives `trust-network`, auth on

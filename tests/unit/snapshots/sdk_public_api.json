@@ -485,6 +485,23 @@
             ]
           }
         },
+        "collection": {
+          "class": "CollectionOps",
+          "methods": {
+            "create": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "move": [
+              "body",
+              "options"
+            ]
+          }
+        },
         "conflicts": {
           "class": "ConflictsOps",
           "methods": {

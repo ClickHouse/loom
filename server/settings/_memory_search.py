@@ -19,8 +19,8 @@ class MemorySearchSettings(BaseModel):
     # knowledge.search, conversation.search, MCP loom_search): comma list over
     # loom.namespaces.kind; a namespace with no kind row stays; "" = every
     # kind. Code and QA indexes are reached by name or their own tools
-    # (measured sweep of 24 namespaces: 6.2 s).
-    memory_search_fanout_kinds: str = "memory"
+    # (measured sweep of 24 namespaces: 6.2 s); collections are swept.
+    memory_search_fanout_kinds: str = "memory,collection,personal"
     # Upper bound on how many of the caller's namespaces an all_mine fan-out
     # reads besides the addressed one; a search names the rest in
     # `namespaces_skipped`. Every leg issues at least one statement per

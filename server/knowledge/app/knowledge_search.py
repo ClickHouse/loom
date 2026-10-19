@@ -6,12 +6,11 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import functools
 import logging
 from typing import TYPE_CHECKING
 
 from server.auth.fanout import namespaces_to_search
-from server.core.vectors.private_first import search_private_first
+from server.core.vectors.private_first import best_similarity, private_first_passes
 from server.embedding import get_embedder
 from server.identity.app import namespace_visibility
 from server.knowledge.api.models_knowledge import (
@@ -19,6 +18,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeSearchOutput,
     _SearchHit,
 )
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -40,11 +40,14 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     embedder = get_embedder()
     with traced("embed.compute.query", model=embedder.model_name):
         query_vec = await embedder.embed(input.query)
-    search_one = _namespace_search(input, embedder, query_vec)
+    search = _namespaces_search(input, embedder, query_vec)
     namespaces, skipped = await namespaces_to_search(
-        input.org, input.namespace, input.namespace_scope
+        input.org,
+        input.namespace,
+        input.namespace_scope,
+        cap=settings.knowledge_search_max_namespaces,
     )
-    results_per_ns = await _search_private_first(input, namespaces, search_one)
+    results_per_ns = await _search_private_first(input, namespaces, search)
     all_hits = _as_search_hits(results_per_ns)
     all_hits.sort(key=lambda x: (x.score, x.similarity), reverse=True)
     if input.collapse_sections:
@@ -57,11 +60,12 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     )
 
 
-def _namespace_search(
+def _namespaces_search(
     input: KnowledgeSearchInput, embedder: Embedder, query_vec: list[float]
-) -> Callable[[str], Awaitable[tuple[str, list[ChunkHit]]]]:
-    """One namespace's search in the requested mode: the vector leg, the
-    lexical leg, or both fused."""
+) -> Callable[[list[str]], Awaitable[list[tuple[str, list[ChunkHit]]]]]:
+    """A search over several namespaces in the requested mode, one statement
+    per leg whatever their number: the vector leg, the lexical leg, or both
+    fused. The hits come back grouped per namespace."""
     from server.knowledge.app import bm25 as knowledge_bm25
     from server.knowledge.app.search import (
         HybridSearchQuery,
@@ -72,10 +76,10 @@ def _namespace_search(
 
     tokens = knowledge_bm25.tokenize(input.query) if input.search_mode != "semantic" else []
 
-    async def _search_one(ns: str) -> tuple[str, list[ChunkHit]]:
+    async def _ranked(namespaces: list[str]) -> list[ChunkHit]:
         base = HybridSearchQuery(
             org=input.org,
-            namespace=ns,
+            namespaces=tuple(namespaces),
             embedding_model=embedder.model_name,
             query_vec=query_vec,
             top_k=input.top_k,
@@ -84,51 +88,61 @@ def _namespace_search(
             uri_prefixes=list(input.uri_prefix or []),
         )
         if input.search_mode == "semantic" or not tokens:
-            return ns, await hybrid_search(base)
-        # Lexical leg needs corpus statistics; a cold namespace (no view rows,
+            return await hybrid_search(base)
+        # Lexical leg needs corpus statistics; a cold corpus (no view rows,
         # no avgdl) or a failed read degrades to the vector leg alone.
         from server.core.ch import get_client as _get_ch
 
         avgdl, idfs = await knowledge_bm25.lexical_stats(
             _get_ch(),
             org=input.org,
-            namespace=ns,
+            namespaces=namespaces,
             embedding_model=embedder.model_name,
             tokens=tokens,
         )
         lex_q = dataclasses.replace(base, tokens=tokens, idfs=idfs, avgdl=avgdl)
         if input.search_mode == "lexical":
-            return ns, await lexical_search(lex_q)
+            return await lexical_search(lex_q)
         # Fusion candidates: fetch a wider slice from each leg so the top_k of
         # the fused list is drawn from more than top_k on either side.
         wide = dataclasses.replace(lex_q, top_k=max(input.top_k * 3, 20))
         sem, lex = await asyncio.gather(hybrid_search(wide), lexical_search(wide))
         if not lex:
-            return ns, sem[: input.top_k]
-        return ns, fuse_rrf(sem, lex, top_k=input.top_k, w_lex=input.lexical_weight)
+            return sem[: input.top_k]
+        return fuse_rrf(sem, lex, top_k=input.top_k, w_lex=input.lexical_weight)
 
-    return _search_one
+    async def _search(namespaces: list[str]) -> list[tuple[str, list[ChunkHit]]]:
+        by_ns: dict[str, list[ChunkHit]] = {}
+        for hit in await _ranked(namespaces):
+            by_ns.setdefault(hit.namespace, []).append(hit)
+        return list(by_ns.items())
+
+    return _search
 
 
 async def _search_private_first(
     input: KnowledgeSearchInput,
     namespaces: list[str],
-    search_one: Callable[[str], Awaitable[tuple[str, list[ChunkHit]]]],
+    search: Callable[[list[str]], Awaitable[list[tuple[str, list[ChunkHit]]]]],
 ) -> list[tuple[str, list[ChunkHit]]]:
+    """The addressed namespace and the private ones first; the public ones
+    only when that pass found nothing within PRIVATE_HIT_THRESHOLD."""
     from server.observability.otel import traced
 
-    return await search_private_first(
-        input.namespace,
-        namespaces,
-        search_one,
-        visibility=(
-            functools.partial(namespace_visibility.visibility_map, input.org)
-            if input.namespace_scope == "all_mine"
-            else None
-        ),
-        threshold=PRIVATE_HIT_THRESHOLD,
-        span=functools.partial(traced, "ch.query.chunks", top_k=input.top_k),
-    )
+    passes = None
+    if input.namespace_scope == "all_mine" and len(namespaces) > 1:
+        visibility = await namespace_visibility.visibility_map(input.org, namespaces)
+        passes = private_first_passes(input.namespace, namespaces, visibility)
+    if passes is None:
+        with traced("ch.query.chunks", op="vector_search", namespaces=len(namespaces)):
+            return await search(namespaces)
+    first, second = passes
+    with traced("ch.query.chunks", op="vector_search.private", namespaces=len(first)):
+        results = await search(first)
+    if second and best_similarity(results) < PRIVATE_HIT_THRESHOLD:
+        with traced("ch.query.chunks", op="vector_search.public", namespaces=len(second)):
+            results += await search(second)
+    return results
 
 
 def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_SearchHit]:

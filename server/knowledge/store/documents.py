@@ -41,6 +41,11 @@ class DocumentRow(BaseModel):
     blob_content_type: str = ""
     original_filename: str = ""
     blob_erased_at: datetime | None = None
+    # Who wrote it (provenance, erasure by user); access never reads these.
+    agent: str = "-"
+    user_id: str = "-"
+    actor: str = ""
+    source_class: str = ""
 
 
 def _hydrate(row: dict[str, Any]) -> DocumentRow:
@@ -291,6 +296,10 @@ DOCUMENT_COLUMNS: tuple[str, ...] = (
     "original_filename",
     "description",
     "blob_erased_at",
+    "agent",
+    "user_id",
+    "actor",
+    "source_class",
 )
 
 _REQUIRED_DOCUMENT_COLUMNS = ("org", "namespace", "source_uri", "content", "version")
@@ -317,6 +326,10 @@ class DocumentInsertRow(TypedDict):
     original_filename: str
     description: str
     blob_erased_at: datetime | None
+    agent: str
+    user_id: str
+    actor: str
+    source_class: str
 
 
 def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) -> DocumentInsertRow:
@@ -344,6 +357,10 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
         "original_filename": "",
         "description": "",
         "blob_erased_at": None,
+        "agent": "-",
+        "user_id": "-",
+        "actor": "",
+        "source_class": "",
     }
     if existing is not None:
         row.update({c: getattr(existing, c) for c in DOCUMENT_COLUMNS if c != "content_sha256"})

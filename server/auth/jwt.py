@@ -158,6 +158,13 @@ class AuthInfo:
     # dashboard), whose children may outlive it (`delegation._child_ttl`);
     # False for a session a third-party client holds.
     first_party: bool = False
+    # `gw` claim: a gateway's token. It reaches nothing itself; each request
+    # names the end user it acts for (`X-Loom-On-Behalf-Of: user:<id>`), and
+    # the HTTP transport swaps in that user's identity (server/auth/gateway.py).
+    gateway: bool = False
+    # The agent a gateway asserted for this request (`agent:<id>`), whose
+    # grants on a collection the request also holds; '' otherwise.
+    agent_principal: str = ""
     # `iat` as unix seconds; None for an identity no token backs (dev mode).
     issued_at: int | None = None
     # `exp` as unix seconds; None for a token without one.
@@ -248,6 +255,7 @@ def mint_token(
     parent_iats: list[int] | None = None,
     creator: str | None = None,
     issued_at: int | None = None,
+    gateway: bool = False,
 ) -> str:
     """Mint a JWT for service accounts, user onboarding, and tests.
 
@@ -265,6 +273,8 @@ def mint_token(
     authorization per namespace instead of the flat `roles`. No `ttl_seconds`
     => no `exp` => indefinite token. The signing kid goes in the header so
     verifiers pick the matching key during signing-key rotation.
+    `gateway` mints a gateway's token for one org: no namespaces and no roles,
+    since it acts only as the end users it names per request.
     `parents` / `parent_subjects` / `parent_iats` / `creator` are the delegation claims
     `delegation.delegate` computes; a token minted from another token gets
     them from there. `issued_at` (unix seconds; default now) is the `iat`:
@@ -275,6 +285,9 @@ def mint_token(
     if "\x00" in subject:
         # Reserved: revocation keys an operator's cutoffs by a NUL a subject never has.
         raise ValueError("a token subject may not contain a NUL character")
+    if subject.startswith(("user:", "group:", "agent:")):
+        # Those name a gateway's end users, whose identity only a gateway asserts.
+        raise TokenError(f"a token subject may not be a grant principal: {subject!r}")
     now = int(time.time()) if issued_at is None else issued_at
     payload: dict[str, Any] = {
         "sub": subject,
@@ -323,6 +336,10 @@ def mint_token(
         payload["parent_iats"] = list(parent_iats)
     if creator:
         payload["creator"] = creator
+    if gateway:
+        if org in ("", "*") or namespaces or roles or not is_service_account:
+            raise TokenError("a gateway token is a service account of one org, with no claims")
+        payload["gw"] = True
     if ttl_seconds is not None:
         payload["exp"] = now + ttl_seconds
     if secret is not None:
@@ -425,6 +442,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         creator=_creator_claim(decoded),
         session_id=_optional_str_claim(decoded, "sid"),
         first_party=_bool_claim(decoded, "fps"),
+        gateway=_bool_claim(decoded, "gw"),
         issued_at=_iat_of(decoded),
         expires_at=int(exp) if exp is not None else None,
     )

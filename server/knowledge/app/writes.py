@@ -45,6 +45,22 @@ if TYPE_CHECKING:
     from server.knowledge.store.documents import DocumentInsertRow, DocumentRow
 
 
+def _authorship() -> dict[str, str]:
+    """Who writes a document, from the request's identity and never its body:
+    the gateway's end user and agent when a gateway asserted them."""
+    from server.auth.context import current_auth
+    from server.memory.app.provenance import writer_actor
+
+    auth = current_auth()
+    agent = auth.agent_principal.removeprefix("agent:") if auth is not None else ""
+    return {
+        "agent": agent or "-",
+        "user_id": (auth.read_user_id if auth is not None else "") or "-",
+        "actor": writer_actor(),
+        "source_class": "asserted",
+    }
+
+
 def _nano_version() -> int:
     return time.time_ns()
 
@@ -194,6 +210,7 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
 
     await documents_repo.insert_one(
         documents_repo.build_document_row(
+            **_authorship(),
             org=input.org,
             namespace=input.namespace,
             source_uri=input.source_uri,
@@ -234,6 +251,7 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         embedding_model=embedder.model_name,
         embedding_dim=embedder.dim,
         now=now,
+        user_id=_authorship()["user_id"],
     )
     await knowledge_repo.insert_chunks(rows)
 
@@ -284,6 +302,7 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
     # The builder sets every loom.documents column, content_sha256 included
     # so cross-URI dedup can match.
     doc_row = _documents_repo.build_document_row(
+        **_authorship(),
         org=input.org,
         namespace=input.namespace,
         source_uri=input.source_uri,
@@ -325,6 +344,7 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
             embedding_model=embedder.model_name,
             embedding_dim=embedder.dim,
             now=now,
+            user_id=_authorship()["user_id"],
         )
 
     # documents + chunks INSERTs are independent — run them concurrently.
@@ -545,6 +565,7 @@ async def handle_knowledge_bulk_add(
 
         doc_rows.append(
             documents_repo.build_document_row(
+                **_authorship(),
                 org=input.org,
                 namespace=input.namespace,
                 source_uri=entry.source_uri,
@@ -586,6 +607,7 @@ async def handle_knowledge_bulk_add(
                 embedding_model=embedder.model_name,
                 embedding_dim=embedder.dim,
                 now=now,
+                user_id=_authorship()["user_id"],
             )
         )
 

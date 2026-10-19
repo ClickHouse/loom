@@ -301,16 +301,20 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate("loom.code_chunks", "1", None, "code_index.purge", None),
     Substrate("loom.code_summaries", "1", None, "code_index.purge", None),
     # The knowledge plane: chunk text, and the whole documents with their
-    # uploaded originals. Namespace-only (no user axis). A chunk is live by the
-    # predicate every reader and the step's count use; a document by its own
-    # `superseded_at`, or while its original is not erased yet; an original by its row.
-    Substrate("loom.chunks", LIVE_CHUNK_SQL, None, "chunks.supersede", None, final=False),
+    # uploaded originals. A chunk is live by the predicate every reader and the
+    # step's count use; a document by its own `superseded_at`, or while its
+    # original is not erased yet; an original by its row. A user's are the ones
+    # they wrote (`user_id`); an original shared with another writer's document
+    # stays, so originals are counted by namespace only.
+    Substrate(
+        "loom.chunks", LIVE_CHUNK_SQL, UID, "chunks.supersede", "chunks.supersede", final=False
+    ),
     Substrate(
         "loom.documents",
         "(superseded_at IS NULL OR (blob_path != '' AND blob_erased_at IS NULL))",
-        None,
+        UID,
         "documents.tombstone",
-        None,
+        "documents.tombstone",
     ),
     Substrate("loom.document_blobs", "1", None, "documents.tombstone", None, final=False),
 )
@@ -382,6 +386,11 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     # Who began each still-open run (KeeperMap: ids and user ids, no run text);
     # dropped beside the runs, not counted.
     "agent_runs.delete": ("loom.agent_run_claims",),
+    # What a grant, a group and the collection tree say about a user as a
+    # principal: identifiers, no memory content; rewritten, not counted.
+    "grants.revoke": ("loom.namespace_grants",),
+    "groups.remove_member": ("loom.principal_groups",),
+    "collections.retire_personal": ("loom.collections", "loom.namespaces"),
 }
 
 # Every other `loom.*` table in schemas/schema.sql, with the reason it holds
@@ -519,11 +528,9 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "90-day TTL ages the identity columns out."
     ),
     # -- namespace registry and configuration ---------------------------------
-    "loom.namespaces": "namespace registry and per-namespace settings.",
     "loom.signing_keys": "token signing keys, sealed with the root secret; no subject data.",
     "loom.runtime_overrides": "operator rate-limit and latency-budget overrides; numbers only.",
     "loom.namespace_types": "per-type retention/dedup configuration.",
-    "loom.namespace_grants": "access grants (subject, role).",
     "loom.namespace_visits": "last-seen per (subject, namespace) for the namespace picker.",
     "loom.namespace_policies": "admin-authored access policies (effect, actions, condition).",
     "loom.namespace_ontology": "admin-registered kinds/names for the ontology.",

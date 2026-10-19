@@ -109,7 +109,7 @@ async def _list(monkeypatch, auth, *, hidden=(), mine=()):
     async def _mine(org, subject=None):
         return list(mine)
 
-    monkeypatch.setattr(ctx, "restricted_namespaces_hidden_from", _hidden)
+    monkeypatch.setattr(ctx, "hidden_namespaces", _hidden)
     monkeypatch.setattr(ctx, "resolve_my_namespaces", _mine)
     ch = _Recorder()
     monkeypatch.setattr(chmod, "get_client", lambda: ch)

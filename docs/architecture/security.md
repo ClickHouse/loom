@@ -21,6 +21,8 @@ vulnerability, and for the deployment hardening checklist, see
 | Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows are never embedded                         | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
 | Audit rows are edited or deleted                     | Per-row hashes plus a hash-chained checkpoint per window                      | `server/observability/audit.py`, `audit_verifier` worker                                                             |
 | Erasure leaves residue                               | Checkpointed saga ending in a residue census                                  | `server/erasure/app/saga.py`, `server/erasure/store/census.py`                                                       |
+| A gateway claims beyond its end user                 | One org per token; only `user:` / `agent:` asserted, never a group or a role  | `server/auth/gateway.py`, `server/transport/http.py` (`_extract_auth`)                                               |
+| A collection is read without a grant                 | Only grants of the request's principals, inherited down the tree, open one    | `server/auth/sharing.py`, `server/auth/authz.py` (`check_authorized`)                                                |
 
 Out of scope: an attacker who already operates the ClickHouse database, vulnerabilities
 in ClickHouse or the integrated backends, and third-party MCP clients.

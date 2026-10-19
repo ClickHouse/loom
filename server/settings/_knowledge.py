@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class KnowledgeSettings(BaseModel):
@@ -23,6 +23,12 @@ class KnowledgeSettings(BaseModel):
     conversation_titler_max_threads_per_pass: int = 10
     # Turns a thread needs before it is titled.
     conversation_titler_min_turns: int = 4
+
+    # ---- search ----
+    # Namespaces an all_mine knowledge.search reads besides the addressed one,
+    # at most; the rest come back in `namespaces_skipped`. Each search leg is
+    # one statement over all of them (measured 110 ms at 10,000 collections).
+    knowledge_search_max_namespaces: int = Field(default=10_000, ge=1)
 
     # ---- chunking ----
     # Sliding-window chunking on knowledge.add/upsert, in characters.

@@ -366,6 +366,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "namespace.get": "the namespace's registration",
     "namespace.list_mine": "the caller's namespaces",
     "namespace.register": "registers a namespace",
+    "namespace.delete": "soft-deletes a namespace the caller administers",
     "namespace.join": "a membership request",
     "namespace.leave": "a membership change",
     "namespace.cancel_request": "a membership request",
@@ -401,6 +402,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "observe.record": "a write",
     "run.begin": "a write: another user's run_id starts a new run",
     "run.complete": "a write: completes only a run inside the read scope",
+    "collection.": "collections and their places in the tree; no user's memory",
 }
 
 

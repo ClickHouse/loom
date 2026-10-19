@@ -16,6 +16,7 @@ from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
+from server.erasure.store import steps_principals as principal_steps
 from server.memory.app.code_links import queue_lease
 from server.workers.registry import DEADLINE_CAP_SECONDS
 
@@ -102,6 +103,13 @@ async def _step_tombstone_documents_by_ns(org: str, namespace: _NS) -> int:
     return await memory_steps.tombstone_documents_by_namespace(org, namespace)
 
 
+async def _step_tombstone_documents_by_user(org: str, user_id: str) -> int:
+    """The user's originals first, as `_step_tombstone_documents_by_ns`, then
+    the documents they wrote."""
+    await memory_steps.erase_blobs_by_user(org, user_id)
+    return await memory_steps.tombstone_documents_by_user(org, user_id)
+
+
 async def _step_erase_blobs_by_ns(org: str, namespace: _NS) -> int:
     """Delete the uploaded originals of the namespace(s), then stamp
     `blob_erased_at` on their documents. Returns the originals deleted."""
@@ -180,6 +188,14 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("summaries.tombstone", graph_steps.tombstone_summaries_by_user),
     ("records.tombstone", graph_steps.tombstone_records_by_user),
     ("session_outcomes.delete", memory_steps.delete_session_outcomes_by_user),
+    # The knowledge the user wrote, in any collection; chunks first, as for a namespace.
+    ("chunks.supersede", memory_steps.supersede_chunks_by_user),
+    ("documents.tombstone", _step_tombstone_documents_by_user),
+    # The user as a principal (`user:<user_id>`): what a grant, a group or the
+    # tree still says about them.
+    ("grants.revoke", principal_steps.revoke_grants_by_user),
+    ("groups.remove_member", principal_steps.remove_from_groups_by_user),
+    ("collections.retire_personal", principal_steps.retire_personal_collection_by_user),
     *_UNCOUNTED_STEPS_USER,
 )
 
