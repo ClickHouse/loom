@@ -3354,3 +3354,31 @@ async def test_an_undelete_whose_insert_answer_was_lost_finishes(ch, wired, monk
         params={"o": org},
     )
     assert search and all(r["tombstoned_at"] is None for r in search)
+
+
+async def test_a_plain_restore_whose_undo_record_read_fails_is_a_no_op(
+    ch, wired, monkeypatch
+) -> None:
+    """The Undo-record read fails: the live row is answered as any other, not an error."""
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore
+    from server.memory.store import conflict_resolver as queue
+
+    org, _ = wired
+    await _set(org, "s1", "plain_key", "A plain row")
+
+    async def down(*a: Any, **kw: Any) -> bool:
+        raise RuntimeError("audit_log unreachable")
+
+    monkeypatch.setattr(queue, "undo_recorded", down)
+    out = await restore.handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key="plain_key",
+        )
+    )
+    assert not out.restored and out.memory_id

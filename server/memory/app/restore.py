@@ -96,28 +96,28 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
 
 
 async def _landed_late(input: MemoryRestoreInput, head: MemoryRow) -> bool:
-    """Whether `head` is the restore an Undo record names (behind `if_superseded_by` when
-    given): an Undo whose answer was lost, or one already finished."""
-    from server.memory.store.conflict_resolver import undo_recorded
-
+    """Whether the served `head` is an Undo's restore (behind `if_superseded_by` when
+    given)."""
     if head.tombstoned_at is not None or str(head.status) == "superseded":
         return False
-    return await undo_recorded(
-        input.org,
-        input.namespace,
-        str(head.memory_id),
-        int(head.version),
-        input.if_superseded_by,
+    return await _an_undos_restore(
+        input, str(head.memory_id), int(head.version), input.if_superseded_by
     )
 
 
-async def _an_undos_restore(input: MemoryRestoreInput, row: dict[str, Any]) -> bool:
-    """Whether a live `row` (read without the lock) is the restore an Undo record names."""
+async def _an_undos_restore(
+    input: MemoryRestoreInput, memory_id: str, version: int, superseded_by: str = ""
+) -> bool:
+    """Whether the row at `version` is the restore an Undo record names (behind
+    `superseded_by` when given): an Undo whose answer was lost, or one already finished.
+    False when the record cannot be read: the call is then a plain no-op."""
     from server.memory.store.conflict_resolver import undo_recorded
 
-    return await undo_recorded(
-        input.org, input.namespace, str(row.get("memory_id") or ""), int(row.get("version") or 0)
-    )
+    try:
+        return await undo_recorded(input.org, input.namespace, memory_id, version, superseded_by)
+    except Exception:  # an unread record is no restore to finish
+        log.warning("memory.restore: Undo record read failed for %s", memory_id, exc_info=True)
+        return False
 
 
 async def _write_restore(
@@ -449,22 +449,16 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
     if row is None:
         return MemoryRestoreOutput(restored=False)
     live = row.get("tombstoned_at") is None
-    if (
-        input.if_superseded_by
-        or input.only_if_superseded
-        or (live and str(row.get("status") or "") == "superseded")
-        or (live and await _an_undos_restore(input, row))
-    ):
+    memory_id, version = str(row.get("memory_id") or ""), int(row.get("version") or 0)
+    guarded = input.if_superseded_by or input.only_if_superseded
+    retired = live and str(row.get("status") or "") == "superseded"
+    if guarded or retired or (live and await _an_undos_restore(input, memory_id, version)):
         # Undo of an automatic retirement, or the finish of one whose answer was lost:
         # `_restore_superseded` rechecks on the strong head, under the key's lock.
         return await _restore_superseded(input, ch)
     if live:
         # Already live, and no Undo's restore: an idempotent no-op.
-        return MemoryRestoreOutput(
-            restored=False,
-            memory_id=str(row.get("memory_id") or ""),
-            version=int(row.get("version") or 0),
-        )
+        return MemoryRestoreOutput(restored=False, memory_id=memory_id, version=version)
 
     # Past the retention TTL the data is gone — report expired explicitly
     # so the UI shows "outside the grace window" not a generic 404.
