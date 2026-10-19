@@ -376,8 +376,9 @@ What Loom does with each request:
   list it is sent. A `PATCH` applies its operations to that list in order,
   and the request is refused (400 `mutability`) when the list it leaves keys
   another email by the rule above: the person would sign in to another
-  account, which a later deactivation of the old email would miss. A filter
-  that selects no entry adds one, as Entra's writes expect. Other
+  account, which a later deactivation of the old email would miss. An `add`
+  or `replace` through a filter that selects no entry adds one, as Entra's
+  writes expect. Other
   addresses may be added, changed or removed (see
   [Changing a person's email](#changing-a-persons-email)). A refused request
   that also sets `active: false` still deactivates: providers send a leaver's

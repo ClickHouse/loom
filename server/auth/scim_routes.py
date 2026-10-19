@@ -313,8 +313,9 @@ def _emails_path(attr: str) -> tuple[str | None, str]:
 
 def _one_primary(entries: list[dict[str, Any]], written: Iterable[int]) -> list[dict[str, Any]]:
     """Only one entry may be primary (RFC 7643 §2.4): the first one just
-    written primary takes the flag from every other."""
-    first = next((i for i in written if entries[i]["primary"]), None)
+    written primary with an address takes the flag from every other. One with
+    no address keys nothing (`keyed_entry`) and takes it once it has one."""
+    first = next((i for i in written if entries[i]["primary"] and entries[i]["value"]), None)
     if first is None:
         return entries
     return [{**e, "primary": i == first} for i, e in enumerate(entries)]
@@ -615,9 +616,18 @@ async def _deactivating_anyway(uid: str, active: bool | None) -> AsyncIterator[N
         raise
 
 
-async def _update(uid: str, **changes: Any) -> dict[str, Any] | None:
+async def _update(
+    uid: str,
+    *,
+    active: bool | None,
+    user_name: str | None = None,
+    emails: list[dict[str, Any]] | None = None,
+    patched: scim.Patch | None = None,
+) -> dict[str, Any] | None:
     try:
-        return await scim.update(uid, **changes)
+        return await scim.update(
+            uid, active=active, user_name=user_name, emails=emails, patched=patched
+        )
     except scim.Exists:
         raise ScimError(409, "another user has this userName", "uniqueness") from None
 

@@ -1903,6 +1903,16 @@ def test_a_second_primary_sent_is_not_kept(client: TestClient, world) -> None:
     assert [e["primary"] for e in r.json()["emails"]] == [True, False]
 
 
+def test_a_primary_entry_with_no_address_does_not_take_the_flag(client: TestClient, world) -> None:
+    emails = [
+        {"type": "home", "primary": True},
+        {"value": "a@example.com", "type": "work"},
+        {"value": "b@example.com", "primary": True},
+    ]
+    created = client.post("/scim/v2/Users", json={"userName": "x@example.com", "emails": emails})
+    assert created.json()["id"] == scim.user_id("b@example.com")
+
+
 def test_an_add_of_an_entry_already_there_keeps_one(client: TestClient, world) -> None:
     uid = _user(client, [{"value": "lee@example.com", "type": "work"}])
     again = {"op": "add", "path": "emails", "value": [{"value": "Lee@example.com", "type": "work"}]}
