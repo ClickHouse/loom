@@ -41,11 +41,12 @@ Loom adds to an answer on its own (code links, grounding, repository documents, 
 tracker enriching a code answer whose item the caller did not name) and leaves out for
 that reason keeps the request `ok`, since the answer is whole without it; so does an entry
 a listing the caller did not scope, or a default pick, leaves out, which degrades the list
-rather than refusing the request, and an owner check on a task whose poster is admitted
-anyway. Within one MCP batch, a caller's refusal before a handler runs (not an idempotency
-refusal, which comes after the rate limiter and keeps a row per entry) is recorded once
-per operation, code and org, so a batch of repeated refusals counts once, and a server
-fault at most ten times; a handler's failure is always its own row.
+rather than refusing the request (an org-wide rollup emptied whole for that reason is the
+server's), and an owner check on a task whose poster is admitted anyway. Within one MCP
+batch, a caller's refusal before a handler runs (not an idempotency refusal, which comes
+after the rate limiter and keeps a row per entry) is recorded once per operation, code and
+org, so a batch of repeated refusals counts once, and a server fault at most ten times; a
+handler's failure is always its own row.
 
 A refreshable materialized view folds the ledger into `loom_telemetry.sli_minute` once a
 minute (requests, server and client errors, rate-limited requests, which are among the

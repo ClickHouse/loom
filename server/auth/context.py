@@ -241,9 +241,12 @@ async def restricted_namespaces_hidden_from(org: str) -> list[str]:
         # the request that hid it all is the server's (fail_closed).
         note_answered_unverified()
         return ["*"]
-    # A namespace hidden for want of a read marks the request (restricted_allows).
-    hidden = [ns for ns in sorted(names) if not await restricted_allows(auth, Role.VIEWER, org, ns)]
-    return hidden
+    # A listing the caller did not scope: a namespace left out does not mark.
+    return [
+        ns
+        for ns in sorted(names)
+        if not await restricted_allows(auth, Role.VIEWER, org, ns, hides_answer=False)
+    ]
 
 
 @dataclass(frozen=True)
@@ -291,8 +294,14 @@ async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeF
             where=f" AND {column} NOT IN {{ns_hidden:Array(String)}}",
             params={"ns_hidden": hidden},
         )
+    from server.auth import fail_closed
+
+    fail_closed.reset()
     ns_list = sorted(await resolve_my_namespaces(org))
     if not ns_list:
+        # Emptied whole because a read failed, as the admin's `*` above: the server's.
+        if fail_closed.unreadable():
+            note_answered_unverified()
         return OrgScopeFilter(accessible=False, where="", params={})
     return OrgScopeFilter(
         accessible=True,

@@ -332,7 +332,7 @@ async def _screen_namespace(
         if isinstance(resolved, str):  # a namespace the caller may read
             args["namespace"] = resolved
             return None
-        # Each refusal with whether the check behind it could read what it needed.
+        # The refusal to answer, and whether the check that made it was unverified.
         if isinstance(resolved, dict):  # on the name it resolved to, or an unknown name
             refusal, unverified = resolved, resolved_unverified
         else:  # on the name given

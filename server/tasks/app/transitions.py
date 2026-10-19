@@ -596,7 +596,8 @@ async def _load_for_reason_op(
     if task is None:
         raise _not_found()
     poster = _is_poster(task, _caller_subject())
-    # Unless this, the owner check alone decides the answer (and marks it).
+    # When the poster is admitted without a read, the owner check does not
+    # decide the answer, so it does not mark.
     poster_admitted_without_read = (
         poster
         and task["status"] != "in_progress"

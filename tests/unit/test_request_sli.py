@@ -1243,6 +1243,7 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
         ("server/knowledge/app/repo_docs.py", "readable_docs_namespace", never),
         ("server/tracker/app/dupcheck_fanout.py", "readable_tracker_namespaces", never),
         ("server/tracker/app/common.py", "linked_trackers", never),
+        ("server/auth/context.py", "restricted_namespaces_hidden_from", never),
         # A code answer the linked tracker only enriches.
         ("server/code/app/bisect_scan.py", "_linked_scan", never),
         ("server/code/app/blame.py", "_tracker_side", never),
@@ -1400,7 +1401,7 @@ def test_an_answer_hidden_whole_for_want_of_the_classification_is_the_server_s(
     assert asyncio.run(_hidden()) == (["*"], True)
 
 
-def test_a_restricted_namespace_left_out_of_a_rollup_for_want_of_a_grant_is_the_server_s(
+def test_an_org_rollup_is_marked_only_when_emptied_whole_for_want_of_a_read(
     monkeypatch,
 ) -> None:
     from server.auth import authz, context, fail_closed
@@ -1438,12 +1439,34 @@ def test_a_restricted_namespace_left_out_of_a_rollup_for_want_of_a_grant_is_the_
             "o"
         ), fail_closed.answered_unverified()
 
-    assert asyncio.run(_hidden()) == (["b-secret"], False)  # no grant: the caller's
-    assert asyncio.run(_hidden(noted_before=True)) == (["b-secret"], False)
-    unreadable.add("a-allowed")  # allowed despite a failed read, then a plain refusal
+    # A listing the caller did not scope: one namespace left out does not mark,
+    # whether or not its read failed.
     assert asyncio.run(_hidden()) == (["b-secret"], False)
-    unreadable.add("b-secret")
-    assert asyncio.run(_hidden()) == (["b-secret"], True)
+    assert asyncio.run(_hidden(noted_before=True)) == (["b-secret"], False)
+    unreadable.update({"a-allowed", "b-secret"})
+    assert asyncio.run(_hidden()) == (["b-secret"], False)
+
+    # A member's org-wide scope emptied whole because a read failed is the
+    # server's, as an admin's `*` is; emptied for want of a grant, the caller's.
+    member = AuthInfo(
+        subject="eve", org="o", namespaces=(), roles=(Role.VIEWER,), is_service_account=False
+    )
+
+    async def _member_scope(readable: list[str], read_fails: bool) -> tuple[bool, bool]:
+        async def _mine(org: str) -> list[str]:
+            if read_fails:
+                fail_closed.note_unreadable()
+            return readable
+
+        monkeypatch.setattr(context, "resolve_my_namespaces", _mine)
+        request_work.begin()
+        context.set_current_auth(member)
+        scope = await context.resolve_org_scope("o")
+        return scope.accessible, fail_closed.answered_unverified()
+
+    assert asyncio.run(_member_scope([], read_fails=True)) == (False, True)
+    assert asyncio.run(_member_scope([], read_fails=False)) == (False, False)
+    assert asyncio.run(_member_scope(["n"], read_fails=True)) == (True, False)
 
 
 def test_http_s_ledger_note_of_a_handler_error_keeps_its_cause() -> None:
