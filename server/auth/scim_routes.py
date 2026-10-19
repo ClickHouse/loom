@@ -196,6 +196,11 @@ def patched_names(
         kind = str(op.get("op") or "").lower()
         if kind not in ("add", "remove", "replace"):
             raise ScimError(400, "op must be add, remove or replace", "invalidSyntax")
+        if not op.get("path"):  # RFC 7644 §3.5.2: a remove needs a target, a write an object
+            if kind == "remove":
+                raise ScimError(400, "a remove needs a path", "noTarget")
+            if not isinstance(op.get("value"), dict):
+                raise ScimError(400, "a write with no path needs an object value", "invalidSyntax")
         for attr, value in pairs:
             if attr == "username":
                 if kind == "remove":

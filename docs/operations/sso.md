@@ -447,7 +447,8 @@ person out. Requests are idempotent, so the provider's retries are safe, and
 they run side by side: only those for people who reach a shared account wait
 on each other (a busy one answers 503 and the provider retries it). The
 filters served are `userName eq "<userName>"` and, on the email,
-`emails[type eq "work"].value eq "<email>"` (or `emails.value eq`);
+`emails[type eq "work"].value eq "<email>"` (or `emails.value eq`), which
+match the one address Loom keys a user on;
 `GET /Users`, `GET /Users/{id}` and `GET /ServiceProviderConfig` answer as
 RFC 7644 says, and `GET /Groups` answers an empty list.
 

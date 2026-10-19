@@ -2057,6 +2057,22 @@ def test_a_null_active_is_unassigned(client: TestClient, world) -> None:
     assert put.status_code == 200 and put.json()["active"] is False
 
 
+@pytest.mark.parametrize(
+    ("op", "scim_type"),
+    [
+        ({"op": "remove"}, "noTarget"),
+        ({"op": "replace", "value": "x"}, "invalidSyntax"),
+        ({"op": "add", "value": ["x"]}, "invalidSyntax"),
+    ],
+)
+def test_a_patch_with_no_path_needs_a_target_or_an_object(
+    op: dict[str, Any], scim_type: str
+) -> None:
+    with pytest.raises(ScimError) as e:
+        patched_names({"Operations": [op]}, _WORK_ROW)
+    assert (e.value.status, e.value.scim_type) == (400, scim_type)
+
+
 def test_groups_is_an_empty_list(client: TestClient) -> None:
     # What Okta's and Entra's connection tests read when group push is on.
     r = client.get(
