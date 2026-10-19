@@ -174,10 +174,6 @@ function MemoryList() {
     const parsed = parseSearchQuery(query);
     return { rawQuery: parsed.text, queryTags: parsed.tags, queryAgent: parsed.agent };
   }, [query]);
-  // Built from the tags' text, so a keystroke that leaves the tags as they were hands every
-  // memoised card the same set.
-  const activeTagsKey = queryTags.map((t) => t.toLowerCase()).join("\n");
-  const activeTags = useMemo(() => new Set(activeTagsKey ? activeTagsKey.split("\n") : []), [activeTagsKey]);
   // A card's tag adds `tag:<tag>` to the search, or takes it out again, so tags stack the
   // way typed ones do. A tag picked elsewhere in the app (searchByTag) joins the same way.
   const toggleTag = useCallback((tag: string) => {
@@ -201,6 +197,9 @@ function MemoryList() {
   // newest 1,000 and keeps the matching ones. What is typed is debounced, so `tag:…` sends
   // one read, not one per key; a chip applies at once.
   const typedNow = useSameFilter({ tags: queryTags, agent: queryAgent ?? "" });
+  // From the filter that keeps its identity while the tags are unchanged, so a keystroke
+  // that leaves the tags as they were hands every memoised card the same set.
+  const activeTags = useMemo(() => new Set(typedNow.tags.map((t) => t.toLowerCase())), [typedNow.tags]);
   const [typed, setTyped] = useState(typedNow);
   useEffect(() => {
     // A tag chip applies at once; typing waits for a pause.

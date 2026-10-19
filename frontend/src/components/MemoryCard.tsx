@@ -86,8 +86,9 @@ interface MemoryCardProps {
 }
 
 // Memoised: a page lists ~100 cards, and each Click UI Badge and Icon re-measures its text
-// on every render, so closing the inspector re-rendered every card (~110 ms at 4x CPU). With
-// stable callbacks from the parent only the cards whose props changed render again.
+// on every render, so closing the inspector re-rendered every card (~110 ms at 4x CPU).
+// With stable props from the parent (callbacks, the tag set, the aside), only the cards
+// whose props changed render again.
 export const MemoryCard = memo(function MemoryCard({
   identity,
   entry,
