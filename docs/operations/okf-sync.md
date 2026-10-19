@@ -53,7 +53,8 @@ guard, a path that is not a directory, or a missing `--agent`, token or org.
   exported into a directory that held an older bundle, never drives deletes. A bundle
   whose `index.md` does not carry `loom.complete: true` (export writes it only when it
   read every row: not after `--limit`, not from an older release, and not when the source
-  kept changing while it paged) is written but not pruned, and the last line says so.
+  changed while it was read: a write while it paged, or a row deleted before its full
+  read; the export says so) is written but not pruned, and the last line says so.
 - The export carries the source's superseded and duplicate rows as `status: deprecated`,
   so a key the source folds into another stays in the copy instead of being pruned.
 - Export pages the source by offset, so a write to the source mid-listing can shift the

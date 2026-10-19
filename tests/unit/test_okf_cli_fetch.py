@@ -244,11 +244,13 @@ async def test_a_delete_during_the_last_pages_read_is_caught_after_it() -> None:
 
 class _DeletedBeforeTheFullRead:
     """One page of rows, every check unchanged; `gone` was deleted before bulk_get, and
-    `old` was already deleted (listed only with include_tombstoned)."""
+    `old` was already deleted (listed only with include_tombstoned). bulk_get never answers
+    a tombstoned row."""
 
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         if op == "memory.bulk_get":
-            return {"results": {k: {"value": k} for k in body["memory_keys"] if k != "gone"}}
+            keys = [k for k in body["memory_keys"] if k not in ("gone", "old")]
+            return {"results": {k: {"value": k} for k in keys}}
         if "known_version" in body:
             return {"entries": [], "unchanged": True}
         keys = ["kept", "gone", "old"] if body.get("include_tombstoned") else ["kept", "gone"]
@@ -281,15 +283,7 @@ async def test_a_row_deleted_before_its_full_read_is_left_out_and_the_bundle_not
 
 @pytest.mark.asyncio
 async def test_include_tombstoned_keeps_a_deleted_row_but_not_one_deleted_mid_export() -> None:
-    client = _DeletedBeforeTheFullRead()
-    client_bulk = client.post
-
-    async def post(op: str, body: dict[str, Any]) -> dict[str, Any]:
-        out = await client_bulk(op, body)
-        if op == "memory.bulk_get":
-            out["results"].pop("old", None)  # bulk_get never answers a tombstoned row
-        return out
-
-    client.post = post  # type: ignore[method-assign]
-    rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=True)  # type: ignore[arg-type]
+    rows, whole = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        _DeletedBeforeTheFullRead(), "o", "ns", include_tombstoned=True
+    )
     assert sorted(r["memory_key"] for r in rows) == ["kept", "old"] and not whole

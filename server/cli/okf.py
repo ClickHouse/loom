@@ -285,7 +285,6 @@ async def _with_full_values(
             )
             full.update(got.get("results") or {})
         for r in rows:
-            # a row the list returned as deleted is exported on purpose (--include-tombstoned)
             if r["memory_key"] not in full and not (include_tombstoned and r.get("tombstoned_at")):
                 gone += 1
                 continue
@@ -504,6 +503,12 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             print(
                 f"  {skipped_high} row(s) with sensitivity=high stayed in the database "
                 f"(--include-high exports them)"
+            )
+        if not whole and args.limit is None:
+            print(
+                "  not marked complete: the source changed while it was read (a write while "
+                "it was listed, or a row deleted before its full read); an import with "
+                "--prune writes it and skips the prune"
             )
         if orphans:
             print(
@@ -940,7 +945,7 @@ def _marked_complete(files: dict[str, str]) -> bool:
 
 _PRUNE_SKIPPED = (
     "not pruning this run: index.md does not mark the export complete (it stopped at "
-    "--limit, the source changed while it was listed, or an older release wrote it); "
+    "--limit, the source changed while it was read, or an older release wrote it); "
     "the writes go ahead"
 )
 

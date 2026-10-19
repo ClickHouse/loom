@@ -974,3 +974,26 @@ def test_a_dry_run_counts_a_row_without_a_version_as_the_real_run_does(
     assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune", "--dry-run") == 1
     out = capsys.readouterr().out
     assert "would delete" not in out and "0 would be pruned (1 failed)" in out
+
+
+def test_an_export_says_when_the_source_changed_while_it_was_read(
+    tmp_path: Path,
+    loom: _FakeLoom,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(cli_okf, "_server_build", lambda _url: "")
+    assert _run(_bundle(tmp_path / "b", [_entry("a"), _entry("c")])) == 0
+    post = loom.post
+
+    async def deleted_before_the_full_read(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        out = await post(op, body)
+        if op == "memory.bulk_get":
+            out["results"].pop("c", None)
+        return out
+
+    monkeypatch.setattr(loom, "post", deleted_before_the_full_read)
+    capsys.readouterr()
+    pointer = _export(tmp_path / "out")
+    assert "complete" not in pointer and pointer["concepts"] == 1
+    assert "not marked complete: the source changed while it was read" in capsys.readouterr().out
