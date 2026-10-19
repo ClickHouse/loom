@@ -58,14 +58,20 @@ class ProviderSettings(ModelSettings):
     # a gateway in front of Anthropic. Off the default, the key also goes as a
     # bearer, the scheme gateways take.
     anthropic_base_url: str = "https://api.anthropic.com"
-    # Model calls with no provider key: exchange the workload's OIDC token
-    # (RFC 8693) at this token endpoint of the gateway, and send the answer as
-    # the bearer (server/llm/gateway.py). The gateway must trust the workload's
-    # issuer. "" = the provider keys.
+    # Model calls with no provider key: exchange an identity token (RFC 8693)
+    # at this token endpoint of the gateway, and send the answer as the bearer
+    # (server/llm/gateway.py). The gateway must trust the token's issuer. "" =
+    # the provider keys.
     inference_token_url: str = ""
     # The workload's OIDC token, as a file its platform rotates (a projected
-    # service-account token on Kubernetes). Needed with inference_token_url.
+    # service-account token on Kubernetes). With inference_token_url, this or
+    # inference_token_audience.
     inference_workload_token_file: str = ""
+    # With no workload token: Loom signs its own identity token with this
+    # audience (what the gateway's trust entry for it names), from issuer
+    # <public_base_url>/v1 with its newest RS256 signing key. Needs
+    # LOOM_PUBLIC_BASE_URL and an RS256 key in the keyring.
+    inference_token_audience: str = ""
     # The scope sent with that exchange; "" sends none.
     inference_token_scope: str = ""
     # Shared query-embedding cache in loom.embedding_cache behind the
@@ -143,10 +149,11 @@ class ProviderSettings(ModelSettings):
         if token.scheme == "http" and token.hostname not in ("localhost", "127.0.0.1", "::1"):
             # The workload's own OIDC token goes there.
             raise ValueError("LOOM_INFERENCE_TOKEN_URL must be https")
-        if self.inference_token_url and not self.inference_workload_token_file:
+        sources = bool(self.inference_workload_token_file) + bool(self.inference_token_audience)
+        if self.inference_token_url and sources != 1:
             raise ValueError(
-                "LOOM_INFERENCE_TOKEN_URL needs LOOM_INFERENCE_WORKLOAD_TOKEN_FILE, "
-                "the token it exchanges"
+                "LOOM_INFERENCE_TOKEN_URL needs one of LOOM_INFERENCE_WORKLOAD_TOKEN_FILE (the "
+                "workload's token) and LOOM_INFERENCE_TOKEN_AUDIENCE (a token Loom signs)"
             )
         return self
 

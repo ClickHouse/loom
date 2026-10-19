@@ -1,6 +1,7 @@
 """The token-introspection routes outside the op registry: the JWKS an
-RS256 verifier reads and `/v1/whoami`, which answers what a bearer token
-verifies as."""
+RS256 verifier reads, the OIDC discovery document of the identity tokens Loom
+signs for an inference gateway, and `/v1/whoami`, which answers what a bearer
+token verifies as."""
 
 from __future__ import annotations
 
@@ -9,11 +10,35 @@ from typing import Any
 
 import jwt as pyjwt
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 
 from server.auth.bearer import auth_unavailable, bearer_token
 from server.auth.jwt import AuthUnavailable, TokenError, verify_token
+from server.settings import settings
 
 auth_router = APIRouter()
+
+
+@auth_router.get("/v1/.well-known/openid-configuration")
+async def v1_openid_configuration() -> JSONResponse:
+    """The issuer of the identity tokens Loom signs for an inference gateway
+    (`LOOM_INFERENCE_TOKEN_AUDIENCE`), and where its keys are; 404 when Loom
+    signs none. It issues nothing to people: no authorization endpoint."""
+    from server.llm import gateway
+
+    if not (settings.inference_token_url and settings.inference_token_audience):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    iss = gateway.issuer()
+    return JSONResponse(
+        {
+            "issuer": iss,
+            "jwks_uri": f"{iss}/.well-known/jwks.json",
+            "id_token_signing_alg_values_supported": ["RS256"],
+            "subject_types_supported": ["public"],
+            "response_types_supported": ["id_token"],
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @auth_router.get("/v1/.well-known/jwks.json")
