@@ -9,7 +9,8 @@ or an outage of those reads would leave the SLOs green.
 from __future__ import annotations
 
 import functools
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 
 from server.core import request_work
@@ -67,3 +68,23 @@ def marks_unverified[**P](check: Callable[P, Awaitable[None]]) -> Callable[P, Aw
                 _unreadable.reset(token)
 
     return checked
+
+
+class Decision:
+    """One access decision's failed reads, from `deciding()`."""
+
+    def refused(self, *, mark: bool = True) -> bool:
+        """The decision refused: whether a read it needed failed, and if so
+        (with `mark`) the request is the server's."""
+        failed = unreadable()
+        if failed and mark:
+            note_answered_unverified()
+        return failed
+
+
+@contextmanager
+def deciding() -> Iterator[Decision]:
+    """Scope one access decision: a failed read noted by an earlier check that
+    still admitted the caller does not count against this one."""
+    reset()
+    yield Decision()

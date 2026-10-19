@@ -101,7 +101,12 @@ def test_health_langfuse_carries_the_score_and_judge_counters(
 
 def test_health_events_carries_the_writers_loss_counters(health_client: TestClient) -> None:
     body = health_client.get("/v1/health?include=events").json()["events"]
-    assert set(body["agent_events"]) == {"queued", "dropped_queue_full", "dropped_flush_failed"}
+    assert set(body["agent_events"]) == {
+        "queued",
+        "dropped_queue_full",
+        "dropped_flush_failed",
+        "dropped_batch_repeat",
+    }
     assert set(body["stream"]) == {"queued", "dropped"}
 
 

@@ -783,6 +783,7 @@ def _register_health_gauges(meter: Any) -> None:
         return [
             Observation(stats["dropped_queue_full"], attributes={"reason": "queue_full"}),
             Observation(stats["dropped_flush_failed"], attributes={"reason": "flush_failed"}),
+            Observation(stats["dropped_batch_repeat"], attributes={"reason": "batch_repeat"}),
         ]
 
     # Rows lost here are missing from loom.agent_events and from every SLI

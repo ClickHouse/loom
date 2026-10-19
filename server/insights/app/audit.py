@@ -36,7 +36,7 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
             current_auth,
             resolve_my_namespaces,
         )
-        from server.auth.fail_closed import note_answered_unverified, reset, unreadable
+        from server.auth.fail_closed import deciding
         from server.operations.base import Role
 
         auth = current_auth()
@@ -54,15 +54,14 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
                 # Covered if the JWT reaches the namespace — can_access honours
                 # the `*` org/namespace wildcards (operator tooling) — or a
                 # grant elevates the caller into it.
-                reset()
-                covered = (
-                    auth.can_access(input.org, input.namespace)
-                    and await claim_cap(auth, input.org, input.namespace) != 0
-                ) or input.namespace in await resolve_my_namespaces(input.org)
-                if not covered:
-                    if unreadable():  # refused for want of a read: the server's
-                        note_answered_unverified()
-                    return AuditListOutput(rows=[], next_cursor=None)
+                with deciding() as decision:
+                    covered = (
+                        auth.can_access(input.org, input.namespace)
+                        and await claim_cap(auth, input.org, input.namespace) != 0
+                    ) or input.namespace in await resolve_my_namespaces(input.org)
+                    if not covered:
+                        decision.refused()
+                        return AuditListOutput(rows=[], next_cursor=None)
         scope_where = " AND namespace = {ns:String}"
         params["ns"] = input.namespace
     else:

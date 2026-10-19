@@ -152,6 +152,8 @@ class EventEmitter:
     # failed. Process totals, served by `/v1/health?include=events`.
     dropped_queue_full: int = 0
     dropped_flush_failed: int = 0
+    # Refusal rows an MCP batch did not write because it already wrote them.
+    dropped_batch_repeat: int = 0
     # Batches whose insert failed; paces the flush-failure log.
     flush_failures: int = 0
 
@@ -200,6 +202,7 @@ class EventEmitter:
             "queued": self.queue.qsize(),
             "dropped_queue_full": self.dropped_queue_full,
             "dropped_flush_failed": self.dropped_flush_failed,
+            "dropped_batch_repeat": self.dropped_batch_repeat,
         }
 
     async def _drain_loop(self) -> None:

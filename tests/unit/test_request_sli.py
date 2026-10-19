@@ -518,7 +518,7 @@ def test_lost_ledger_rows_are_counted_by_reason(monkeypatch) -> None:
 
     class _Emitter:
         def stats(self) -> dict[str, int]:
-            return {"dropped_queue_full": 3, "dropped_flush_failed": 5}
+            return {"dropped_queue_full": 3, "dropped_flush_failed": 5, "dropped_batch_repeat": 7}
 
     monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
     meter = _Meter()
@@ -527,6 +527,7 @@ def test_lost_ledger_rows_are_counted_by_reason(monkeypatch) -> None:
     assert {(p.attributes["reason"], p.value) for p in points} == {
         ("queue_full", 3),
         ("flush_failed", 5),
+        ("batch_repeat", 7),
     }
 
 
@@ -874,11 +875,14 @@ def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> N
     emitted: list = []
 
     class _Emitter:
+        dropped_batch_repeat = 0
+
         def emit(self, event) -> None:
             emitted.append(event)
 
-    monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
-    monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: _Emitter())
+    emitter = _Emitter()
+    monkeypatch.setattr(events, "get_emitter", lambda: emitter)
+    monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: emitter)
     eve = AuthInfo(
         subject="eve", org="eve-org", namespaces=(), roles=(Role.WRITER,), is_service_account=False
     )
@@ -914,6 +918,7 @@ def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> N
         ("memory.set", "UNKNOWN_ARGUMENT", "client"),
     ]
     assert len(rows) == 4 + 10  # each client refusal once, a server fault ten times
+    assert emitter.dropped_batch_repeat == 5000 - len(rows)  # the rows not repeated
     # Outside a batch, each call is its own request.
     emitted.clear()
     emit_token_refusal("memory.set", eve, error_code="ORG_MISMATCH")

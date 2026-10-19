@@ -52,6 +52,9 @@ def batch_allows_row(op_name: str, code: str, org: str, status: str) -> bool:
     key = (op_name, code, org, status)
     written = seen.get(key, 0)
     if written >= (1 if status == "client" else _SERVER_FAULT_ROWS):
+        from server.observability.events import get_emitter
+
+        get_emitter().dropped_batch_repeat += 1  # loom.ledger.dropped{reason=batch_repeat}
         return False
     seen[key] = written + 1
     return True
