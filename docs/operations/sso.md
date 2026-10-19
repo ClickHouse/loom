@@ -536,21 +536,24 @@ provider's block is all that keeps it out of the previous build.
 A token made by another token is found, when a deactivation frees the
 person's token names, through the subjects above it. This build records them
 on each token, and hands them to a token's children before a new token
-reuses its name. A token made before this build whose parent's name was
-reused before it lost that link: it is still refused (the revocation reaches
-it through its delegation chain), but it stays listed live and keeps its
-name. List those with
+reuses its name. A token made before this build loses the person at the top
+of its chain when a name above it was reused before this build (later names
+reused hand down only what was left): it is still refused (the revocation
+reaches it through its delegation chain), but it stays listed live and keeps
+its name. List the tokens whose every subject above is a token with no row
+left, so that none leads to a person, with
 
 ```sql
 SELECT org, name, sa_subject, created_by FROM loom.service_accounts FINAL
-WHERE revoked_at IS NULL AND empty(lineage) AND startsWith(created_by, 'sa:')
-  AND NOT match(created_by, '^sa:[^:]+:')
-  AND created_by NOT IN (SELECT sa_subject FROM loom.service_accounts FINAL)
+WHERE revoked_at IS NULL
+  AND arrayAll(s -> match(s, '^sa:[^:]+$'), arrayConcat([created_by], lineage))
+  AND NOT hasAny(arrayConcat([created_by], lineage),
+                 (SELECT groupArray(sa_subject) FROM loom.service_accounts FINAL))
 ```
 
-It leaves out the agents of a machine trust (`sa:<trust>:<agent>`), which have
-no row there; a token made from an operator-minted `sa:` subject (`loom
-mint-token --subject sa:…`) shows up too, and is not one of these. Revoke each
+A machine trust's agents (`sa:<trust>:<agent>`) count as people here; a token
+made from an operator-minted `sa:` subject (`loom mint-token --subject sa:…`)
+shows up too, and is not one of these. Revoke each
 token it lists as an admin of one of its namespaces, with
 `/v1/me/service_accounts.revoke` and its `name` (its creator is a token, not a
 person, so it is in no one's own list; a namespace admin's Tokens list shows

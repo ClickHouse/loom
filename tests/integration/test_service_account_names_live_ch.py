@@ -189,3 +189,68 @@ async def test_two_reused_names_in_a_chain_listed_before_lineage_keep_its_root(o
             "SETTINGS mutations_sync = 2",
             params={"j": revocation.SCIM_PREFIX + lee},
         )
+
+
+def _lost_ancestry_query() -> str:
+    """The SSO guide's query for tokens whose chain no longer leads to a person."""
+    from pathlib import Path
+
+    guide = (Path(__file__).parents[2] / "docs/operations/sso.md").read_text()
+    query = guide.split("```sql\n")
+    return next(q.split("```")[0] for q in query[1:] if "arrayConcat([created_by], lineage)" in q)
+
+
+async def _lost(org: str) -> list[str]:
+    rows = await get_client().query_all(
+        f"SELECT name FROM ({_lost_ancestry_query()}) WHERE org = {{org:String}} ORDER BY name",
+        params={"org": org},
+    )
+    return [str(r["name"]) for r in rows]
+
+
+async def test_the_guide_lists_a_token_whose_root_was_lost_before_this_build(org: str) -> None:
+    # root -> top -> mid -> leaf, all listed before 044. top's name is reused
+    # before the upgrade (no hand-down), mid's after it: leaf's lineage holds
+    # mid and top, never root.
+    root = f"lee-{uuid.uuid4().hex[:8]}"
+    await _listed_before_lineage(org, "top", "sa:top-old", root)
+    await _listed_before_lineage(org, "mid", "sa:mid-old", "sa:top-old")
+    await _listed_before_lineage(org, "leaf", "sa:leaf-1", "sa:mid-old")
+    before = await get_client().query_one(
+        "SELECT * FROM loom.service_accounts FINAL WHERE org = {org:String} AND name = 'top'",
+        params={"org": org},
+    )
+    replaced = {
+        **dict(before or {}),
+        "sa_subject": "sa:top-new",
+        "created_by": "kim",
+        "lineage": [],
+    }
+    replaced["version"] = int(replaced["version"]) + 1
+    await get_client().insert(
+        "loom.service_accounts", [replaced]
+    )  # as the previous build reused it
+    await _reuse(org, "mid", root)
+    assert await _lost(org) == ["leaf"]
+
+    from server.auth import revocation
+
+    await revocation.scim_revoke(root, reason="test", revoked_by="scim")
+    try:
+        await service_accounts.revoke_created_by([root], revoked_by="scim")
+        assert (await _head(org, "leaf"))["revoked_at"] is None  # what the guide's query is for
+    finally:
+        await get_client().execute(
+            "ALTER TABLE loom.revoked_tokens DELETE WHERE jti = {j:String} "
+            "SETTINGS mutations_sync = 2",
+            params={"j": revocation.SCIM_PREFIX + root},
+        )
+
+
+async def test_the_guide_lists_no_token_whose_chain_leads_to_a_person(org: str) -> None:
+    lee = f"lee-{uuid.uuid4().hex[:8]}"
+    await _listed_before_lineage(org, "top", "sa:top-old", lee)
+    await _listed_before_lineage(org, "leaf", "sa:leaf-1", "sa:top-old")
+    await _save(org, "agent-made", "sa:agent-made-1", "sa:fleet:a1", ["sa:fleet:a1"])
+    await _reuse(org, "top", lee)  # handed down: leaf's lineage reaches lee
+    assert await _lost(org) == []
