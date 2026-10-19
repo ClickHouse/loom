@@ -840,9 +840,9 @@ def test_a_5xx_from_the_gate_is_ledgered_on_both_transports(monkeypatch) -> None
 
 def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> None:
     """A single POST can carry hundreds of thousands of refused entries; within
-    the batch each (op, code, org, status class) is ledgered once, so they
-    cannot fill the ledger queue for every tenant. A server fault is not
-    hidden behind a client refusal of the same code."""
+    the batch each caller's refusal (op, code, org) is ledgered once, so they
+    cannot fill the ledger queue for every tenant; a server fault is written
+    each time, since a caller cannot repeat one at will."""
     from server.auth.jwt import AuthInfo
     from server.observability import events
     from server.operations.registry import OPERATIONS_BY_NAME
@@ -873,26 +873,30 @@ def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> N
         else:  # refused by mcp_call before its handler, with the same code twice
             op = OPERATIONS_BY_NAME["memory.set"]
             mcp_call._emit_refused(op.name, misspelt, error_code="UNKNOWN_ARGUMENT", request_id="r")
+            emit_token_refusal(op.name, eve, error_code="NAMESPACE_NOT_ACCESSIBLE")
+            # A server fault is never deduped: each counts against availability.
             emit_token_refusal(
                 op.name, eve, error_code="NAMESPACE_NOT_ACCESSIBLE", server_fault=True
             )
-            emit_token_refusal(op.name, eve, error_code="NAMESPACE_NOT_ACCESSIBLE")
 
     batch = [{"id": i, "method": "tools/call", "params": hidden} for i in range(1000)]
     batch += [{"id": i, "method": "tools/call", "params": foreign} for i in range(1000)]
     batch += [{"id": i, "method": "tools/call", "params": {"name": "x"}} for i in range(1000)]
     asyncio.run(mcp._dispatch_batch(batch, _entry))
-    assert sorted((e.operation, e.error_code, e.status_class) for e in emitted) == [
+    rows = sorted((e.operation, e.error_code, e.status_class) for e in emitted)
+    assert sorted(set(rows)) == [
         ("blacklist.remove", "OP_NOT_ON_MCP", "client"),
         ("memory.set", "NAMESPACE_NOT_ACCESSIBLE", "client"),
         ("memory.set", "NAMESPACE_NOT_ACCESSIBLE", "server"),
         ("memory.set", "ORG_MISMATCH", "client"),
         ("memory.set", "UNKNOWN_ARGUMENT", "client"),
     ]
+    assert len(rows) == 4 + 1000  # each client refusal once, every server fault
     # Outside a batch, each call is its own request.
+    emitted.clear()
     emit_token_refusal("memory.set", eve, error_code="ORG_MISMATCH")
     emit_token_refusal("memory.set", eve, error_code="ORG_MISMATCH")
-    assert len(emitted) == 7
+    assert len(emitted) == 2
 
 
 def test_an_id_lookup_hidden_for_want_of_a_grants_read_is_the_server_s(monkeypatch) -> None:
@@ -944,7 +948,7 @@ def test_an_id_lookup_hidden_for_want_of_a_grants_read_is_the_server_s(monkeypat
     async def _additive() -> bool:
         request_work.begin()
         set_current_auth(eve)
-        assert await authz.row_in_scope("o", "docs", additive=True) is False
+        assert await authz.row_in_scope("o", "docs", hides_answer=False) is False
         from server.auth.fail_closed import answered_unverified
 
         return answered_unverified()
@@ -1165,33 +1169,67 @@ def test_a_5xx_while_mcp_computes_the_caller_s_defaults_is_ledgered(monkeypatch)
     ]
 
 
-def test_only_the_namespaces_loom_adds_on_its_own_leave_an_unverified_refusal_unmarked() -> None:
+def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_unmarked() -> None:
     """A refusal `row_in_scope` makes without a readable grant marks the request
-    the server's unless the site is additive: a namespace Loom adds to the
-    answer on its own. Marking is the default, so a new call site counts an
-    outage; this pins which sites opt out."""
-    import re
-    from pathlib import Path
+    the server's unless the call site says the answer is whole without that
+    namespace (`hides_answer=False`): one Loom adds on its own, a listing's
+    filter, a probe of which side of a task the caller acts on. Marking is the
+    default, so a new call site counts an outage; this pins which ones opt
+    out, by file and enclosing function."""
+    import ast
 
     from server.core.paths import REPO_ROOT
 
-    additive = set()
+    unmarked: set[tuple[str, str]] = set()
     for path in (REPO_ROOT / "server").rglob("*.py"):
-        for line in path.read_text().splitlines():
-            if "row_in_scope(" in line and "additive=True" in line:
-                additive.add(str(Path(path).relative_to(REPO_ROOT)))
-    assert additive == {
-        "server/code/app/answers.py",  # memory enrichment of a code answer
-        "server/code/app/answers_cache.py",  # reusing a trunk's cached answer
-        "server/code/app/search_fanout.py",  # the readable subset of a fan-out
-        "server/memory/app/code_link_reads.py",  # code links on a memory read
-        "server/memory/app/code_grounding.py",  # memory.ask's code grounding
-        "server/knowledge/app/repo_docs.py",  # repository documents on a search
-        "server/tracker/app/dupcheck_fanout.py",  # the namespaces a dupcheck adds
-        "server/tracker/app/binding.py",  # a tracker's bound code namespace
-        "server/tracker/app/test_signal.py",  # the configured code namespace
+        tree = ast.parse(path.read_text())
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for call in ast.walk(fn):
+                if not isinstance(call, ast.Call):
+                    continue
+                name = getattr(call.func, "id", getattr(call.func, "attr", ""))
+                if name not in {
+                    "row_in_scope",
+                    "_in_scope",
+                    "_gated",
+                    "_may_read_tracker",
+                    "authorized_tracker_namespace",
+                    "authorized_tracker_namespaces",
+                }:
+                    continue  # fmt: skip
+                for kw in call.keywords:
+                    if kw.arg == "hides_answer" and isinstance(kw.value, ast.Constant):
+                        if kw.value.value is False:
+                            rel = str(path.relative_to(REPO_ROOT))
+                            unmarked.add((rel, fn.name))
+    assert unmarked == {
+        # Namespaces Loom adds to the answer on its own.
+        ("server/code/app/answers.py", "_inject_memory_context"),
+        ("server/code/app/answers_cache.py", "reuse_allowed"),
+        ("server/code/app/search_fanout.py", "readable_subset"),
+        ("server/memory/app/code_link_reads.py", "readable_namespaces"),
+        ("server/memory/app/code_grounding.py", "_authorized_code_target"),
+        ("server/knowledge/app/repo_docs.py", "readable_docs_namespace"),
+        ("server/tracker/app/dupcheck_fanout.py", "readable_tracker_namespaces"),
+        ("server/tracker/app/test_signal.py", "_code_namespace_authorized"),
+        # A code answer the linked tracker only enriches.
+        ("server/code/app/backport.py", "run_backport_gap"),
+        ("server/code/app/bisect.py", "_handle_bisect"),
+        ("server/code/app/bisect_scan.py", "_linked_scan"),
+        ("server/code/app/blame.py", "_tracker_side"),
+        ("server/code/app/first_build.py", "handle_code_first_build"),
+        ("server/code/app/history.py", "_tracker_facts"),
+        ("server/code/app/symbol_history.py", "_tracker_side"),
+        ("server/code/workers/backport_gaps.py", "_wanted_from_tracker"),
+        ("server/memory/app/ask/records.py", "_append_tracker_facts"),
+        ("server/tracker/app/ask_route.py", "_searched_everywhere"),
+        ("server/tracker/app/ask_route.py", "qa_route_answer"),
+        # A listing's filter, and probes of which side of a task the caller acts on.
+        ("server/tasks/app/inboxes.py", "handle_inbox_list"),
+        ("server/tasks/app/transitions.py", "_load_for_reason_op"),
+        ("server/tasks/app/transitions.py", "handle_task_unblock"),
+        ("server/tasks/app/transitions.py", "handle_task_update"),
+        ("server/tasks/app/trust.py", "_poster_may_post"),
     }
-    assert re.search(
-        r"if not additive and getattr\(e, \"unverified\"",
-        Path(REPO_ROOT / "server/auth/authz.py").read_text(),
-    )

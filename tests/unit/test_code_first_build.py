@@ -284,7 +284,7 @@ def wired(monkeypatch):
     monkeypatch.setattr(repos, "configured_repos", lambda: cfgs)
     state: dict[str, Any] = {"qa": QA}
 
-    async def _authorized(org, code_ns):
+    async def _authorized(org, code_ns, *, hides_answer=True):
         return state["qa"]
 
     monkeypatch.setattr(binding, "authorized_tracker_namespace", _authorized)

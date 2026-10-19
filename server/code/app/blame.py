@@ -422,7 +422,7 @@ async def _tracker_side(
     from server.tracker.app.source import tracker_source
     from server.tracker.domain.errors import TrackerUnavailable
 
-    tracker_ns = await authorized_tracker_namespace(org, ns)
+    tracker_ns = await authorized_tracker_namespace(org, ns, hides_answer=False)
     if not tracker_ns or not pr_numbers:
         return {}, [], tracker_ns, False
     source = tracker_source(org, tracker_ns)

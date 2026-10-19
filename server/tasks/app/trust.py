@@ -34,7 +34,7 @@ def _missing_evidence(brief: dict[str, Any], required: Iterable[str]) -> list[st
 
 
 async def _poster_may_post(inbox: InboxRow, subject: str, agent: str) -> bool:
-    if await _in_scope(inbox["org"], inbox["owner_namespace"], write=True):
+    if await _in_scope(inbox["org"], inbox["owner_namespace"], write=True, hides_answer=False):
         return True
     posters = set(inbox.get("posters") or [])
     if bool(subject) and subject in posters:

@@ -238,7 +238,7 @@ async def test_a_present_bearer_is_honoured_even_when_auth_is_off(
     seen: list[tuple[str, str]] = []
     eve_reads_ns = False
 
-    async def in_scope(org: str, namespace: str, *, write: bool) -> bool:
+    async def in_scope(org: str, namespace: str, *, write: bool, hides_answer=True) -> bool:
         from server.auth.context import current_auth
 
         seen.append((org, namespace))

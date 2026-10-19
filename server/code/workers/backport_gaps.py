@@ -162,7 +162,7 @@ async def _wanted_from_tracker(
     from server.tracker.app.source import tracker_source
     from server.tracker.domain.errors import TrackerUnavailable
 
-    tracker_ns = await authorized_tracker_namespace(cfg.org, cfg.namespace)
+    tracker_ns = await authorized_tracker_namespace(cfg.org, cfg.namespace, hides_answer=False)
     if not tracker_ns:
         return set()
     src = (source_factory or tracker_source)(cfg.org, tracker_ns)

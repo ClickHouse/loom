@@ -434,7 +434,7 @@ def wired(monkeypatch):
     monkeypatch.setattr(settings, "code_org", ORG)
     monkeypatch.setattr(settings, "code_namespace", "code-clickhouse")
 
-    async def _ok(org, ns, role=Role.VIEWER, *, additive=False):
+    async def _ok(org, ns, role=Role.VIEWER, *, hides_answer=True):
         return ns != "code-secret"
 
     import server.auth.authz as authz

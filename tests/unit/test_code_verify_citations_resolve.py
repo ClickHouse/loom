@@ -367,7 +367,7 @@ def test_base_namespaces_are_read_only_when_the_caller_may_read_them() -> None:
     from server.code.app import citations as h
     from server.core.errors import AuthInsufficientError
 
-    async def _only_n(org: str, ns: str, role: Any, *, additive: bool = False) -> bool:
+    async def _only_n(org: str, ns: str, role: Any, *, hides_answer: bool = True) -> bool:
         return ns == "n"
 
     repo = _repo()

@@ -875,7 +875,7 @@ def wired(monkeypatch):
 
     monkeypatch.setattr(emb, "get_embedder", lambda: _E())
 
-    async def _ok(org, ns, role=None, *, additive=False):
+    async def _ok(org, ns, role=None, *, hides_answer=True):
         return True
 
     monkeypatch.setattr(authz, "row_in_scope", _ok)

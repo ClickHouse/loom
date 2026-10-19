@@ -37,12 +37,13 @@ one. A refusal recorded before the call is classified carries the token's `traff
 claim, or '' without one. A request whose own answer was refused or hidden because such a
 read failed (an id lookup's `found=False`, a 403 or 404 from a handler's own check) is
 `server` even when it succeeded on the wire, with an empty `error_code` then. A namespace
-Loom adds to an answer on its own (code links, grounding, repository documents, a trunk)
-and leaves out for that reason, or one a listing or default pick leaves out, keeps the
-request `ok`: the answer is whole without it. Within one MCP batch, each refusal before a
+Loom adds to an answer on its own (code links, grounding, repository documents, a trunk, a
+tracker enriching a code answer) and leaves out for that reason, one a listing or default
+pick leaves out, or a probe of which side of a task the caller acts on keeps the request
+`ok`: the answer is whole without it. Within one MCP batch, a caller's refusal before a
 handler runs (but an idempotency refusal, which comes after the rate limiter) is recorded
-once per operation, code, org and status class, so a batch of repeated refusals counts
-once; a handler's failure is always its own row.
+once per operation, code and org, so a batch of repeated refusals counts once; a server
+fault and a handler's failure are always their own rows.
 
 A refreshable materialized view folds the ledger into `loom_telemetry.sli_minute` once a
 minute (requests, server and client errors, rate-limited requests, which are among the

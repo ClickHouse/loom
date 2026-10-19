@@ -22,10 +22,12 @@ logger = logging.getLogger(__name__)
 _RANK = {"duplicate_of": 2, "related": 1, "none": 0}
 
 
-async def _may_read_tracker(org: str, ns: str, code_kinds: dict[str, str]) -> bool:
+async def _may_read_tracker(
+    org: str, ns: str, code_kinds: dict[str, str], *, hides_answer: bool = True
+) -> bool:
     """Read gate for a tracker namespace the transport did not bind: a restricted one is
     read only with a grant on itself; a standard one by whoever may read it or any code
-    namespace bound to it."""
+    namespace bound to it. `hides_answer`: the caller named it (see `row_in_scope`)."""
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
     from server.tracker.app.binding import bindings, code_namespaces_linking, parse_binding
@@ -34,7 +36,7 @@ async def _may_read_tracker(org: str, ns: str, code_kinds: dict[str, str]) -> bo
     target = tracker_namespace(org, ns)
     if target is None:
         return False
-    if await row_in_scope(org, ns, Role.VIEWER, additive=True):
+    if await row_in_scope(org, ns, Role.VIEWER, hides_answer=hides_answer):
         return True
     if target.restricted:
         return False
@@ -45,7 +47,7 @@ async def _may_read_tracker(org: str, ns: str, code_kinds: dict[str, str]) -> bo
     for code_ns in code:
         if code_ns not in linking and not any(fnmatch.fnmatchcase(code_ns, p) for p in patterns):
             continue
-        if await row_in_scope(org, code_ns, Role.VIEWER, additive=True):
+        if await row_in_scope(org, code_ns, Role.VIEWER, hides_answer=hides_answer):
             return True
     return False
 
@@ -81,14 +83,14 @@ async def readable_tracker_namespaces(
                     continue
                 out.append(ns)
                 continue
-            if await _may_read_tracker(org, ns, {}):
+            if await _may_read_tracker(org, ns, {}, hides_answer=True):
                 out.append(ns)
         return out[: max(cap, 1)]
     kinds = await kind_map(org)
     for ns in sorted(configured_namespaces()):
         if ns in out:
             continue
-        if await _may_read_tracker(org, ns, kinds):
+        if await _may_read_tracker(org, ns, kinds, hides_answer=False):  # one Loom adds
             out.append(ns)
         if len(out) >= cap:
             break

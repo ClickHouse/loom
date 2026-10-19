@@ -116,7 +116,7 @@ async def readable_subset(
     from server.operations.base import Role
 
     verdicts = await asyncio.gather(
-        *(row_in_scope(org, ns, Role.VIEWER, additive=True) for ns in namespaces)
+        *(row_in_scope(org, ns, Role.VIEWER, hides_answer=False) for ns in namespaces)
     )
     readable = [ns for ns, ok in zip(namespaces, verdicts, strict=True) if ok]
     skipped = [

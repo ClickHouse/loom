@@ -167,11 +167,15 @@ def _caller_is_human() -> bool:
     return not auth.is_service_account
 
 
-async def _in_scope(org: str, namespace: str, *, write: bool) -> bool:
+async def _in_scope(org: str, namespace: str, *, write: bool, hides_answer: bool = True) -> bool:
+    """`row_in_scope` at the role a side needs; `hides_answer=False` for a
+    listing's filter or a probe of which side the caller acts on."""
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
 
-    return await row_in_scope(org, namespace, Role.WRITER if write else Role.VIEWER)
+    return await row_in_scope(
+        org, namespace, Role.WRITER if write else Role.VIEWER, hides_answer=hides_answer
+    )
 
 
 async def _require_owner_side(org: str, namespace: str) -> None:

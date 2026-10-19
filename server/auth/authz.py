@@ -660,7 +660,7 @@ def scope_flags(op: Operation) -> dict[str, bool]:
 
 
 async def row_in_scope(
-    org: str, namespace: str, required_role: Role = Role.VIEWER, *, additive: bool = False
+    org: str, namespace: str, required_role: Role = Role.VIEWER, *, hides_answer: bool = True
 ) -> bool:
     """Second gate for ops addressed by an org-wide id (memory_id, …): the
     transport could not bind a namespace, so the handler asks after it has
@@ -668,10 +668,11 @@ async def row_in_scope(
     `required_role`; True with no auth context (auth disabled); False on any
     refusal so the caller can hide the row (`found=False`) rather than 403 —
     a 403 would confirm the id exists. A refusal that could not be verified
-    refuses or hides what the caller asked for, so it marks the request the
-    server's (`fail_closed`), unless `additive`: a namespace Loom adds to the
-    answer on its own (code links, grounding, repository documents, a trunk),
-    whose answer is whole without it."""
+    marks the request the server's (`fail_closed`) when it refuses or hides
+    what the caller asked for. `hides_answer=False` where the answer is whole
+    without the namespace: one Loom adds on its own (code links, grounding,
+    repository documents, a trunk), one a listing filters, or a probe of
+    which side of a task the caller acts on."""
     from server.auth.context import current_auth
     from server.core.errors import IdentityIncompleteError
 
@@ -681,7 +682,7 @@ async def row_in_scope(
     try:
         await check_authorized(auth, required_role=required_role, org=org, namespace=namespace)
     except PermissionError as e:
-        if not additive and getattr(e, "unverified", False):  # the server's failure
+        if hides_answer and getattr(e, "unverified", False):  # the server's failure
             note_answered_unverified()
         return False
     except IdentityIncompleteError:

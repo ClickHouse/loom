@@ -2,14 +2,14 @@
 
 A refusal before dispatch has no bound caller, so its row is the token's:
 its org (or the one the screen authorized), subject and consumer, `-` for
-the rest, no arguments (`emit_token_refusal`). Within one JSON-RPC batch, each
-refusal before a handler runs (these, and `mcp_call`'s argument, gate,
-read-scope, policy and rate-limit refusals, through `first_in_batch`) is
-written once per (op, code, org, status class): they are written before or
-by the rate limiter and a batch has no length cap, so one POST of many
-refused entries could otherwise fill the ledger queue for every tenant. A
-handler's failure, and an idempotency refusal after the limiter, is always
-its own row.
+the rest, no arguments (`emit_token_refusal`). Within one JSON-RPC batch, a
+caller's refusal before a handler runs (these, and `mcp_call`'s argument,
+gate, read-scope, policy and rate-limit refusals, through `first_in_batch`)
+is written once per (op, code, org): they are written before or by the rate
+limiter and a batch has no length cap, so one POST of many refused entries
+could otherwise fill the ledger queue for every tenant. A server fault, a
+handler's failure, and an idempotency refusal after the limiter are always
+their own rows.
 """
 
 from __future__ import annotations
@@ -40,9 +40,11 @@ def one_refusal_row_each() -> Iterator[None]:
 
 
 def first_in_batch(op_name: str, code: str, org: str, status: str) -> bool:
-    """False when this batch has already written this refusal."""
+    """False when this batch has already written this refusal. Only a
+    caller's refusal is deduped: a server fault is not one a caller can
+    repeat at will, and each counts against availability."""
     seen = _batch_refusals.get()
-    if seen is None:
+    if seen is None or status != "client":
         return True
     key = (op_name, code, org, status)
     if key in seen:

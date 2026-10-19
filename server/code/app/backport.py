@@ -644,7 +644,7 @@ async def run_backport_gap(req: BackportGapRequest) -> Any:  # noqa: PLR0915 —
         org, resolve_branches(org, ns, list(req.branches)), explicit=bool(req.branches)
     )
     branch_ns = [b for b, _ in branches]
-    tracker_ns = await authorized_tracker_namespace(org, ns)
+    tracker_ns = await authorized_tracker_namespace(org, ns, hides_answer=False)
     source = tracker_source(org, tracker_ns) if tracker_ns else None
 
     stage_ms: dict[str, int] = {}

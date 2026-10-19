@@ -190,7 +190,7 @@ async def handle_code_first_build(input: Any) -> Any:
         raise ValidationError("sha or pr_number is required")
     with code_span("first_build.resolve"):
         await _resolve(repo, org, ns, git_dir, sub)
-    tracker_ns = await authorized_tracker_namespace(org, ns)
+    tracker_ns = await authorized_tracker_namespace(org, ns, hides_answer=False)
     source = tracker_source(org, tracker_ns) if tracker_ns else None
     naming: list[dict[str, Any]] = []
     after: list[dict[str, Any]] = []

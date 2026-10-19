@@ -508,7 +508,7 @@ async def handle_task_unblock(input: TaskUnblockInput) -> TaskOutput:
     if task is None:
         raise _not_found()
     subject = _caller_subject()
-    owner_side = await _in_scope(input.org, task["namespace"], write=True)
+    owner_side = await _in_scope(input.org, task["namespace"], write=True, hides_answer=False)
     if not owner_side and not (task.get("blocked_on") == "sender" and _is_poster(task, subject)):
         raise _not_found()
     if task["status"] != "blocked":
@@ -589,7 +589,7 @@ async def _load_for_reason_op(input: TaskReasonInput) -> tuple[TaskRow, bool]:
     task = await repo.fetch_task(input.org, input.task_id)
     if task is None:
         raise _not_found()
-    owner_side = await _in_scope(input.org, task["namespace"], write=True)
+    owner_side = await _in_scope(input.org, task["namespace"], write=True, hides_answer=False)
     if not owner_side and not _is_poster(task, _caller_subject()):
         raise _not_found()
     if task["status"] in TERMINAL:
@@ -675,7 +675,7 @@ async def handle_task_update(input: TaskUpdateInput) -> TaskUpdateOutput:
     task = await repo.fetch_task(input.org, input.task_id)
     if task is None:
         raise _not_found()
-    owner_side = await _in_scope(input.org, task["namespace"], write=True)
+    owner_side = await _in_scope(input.org, task["namespace"], write=True, hides_answer=False)
     if not owner_side and not _is_poster(task, _caller_subject()):
         raise _not_found()
     if task["status"] not in EDITABLE:
