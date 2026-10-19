@@ -567,6 +567,7 @@ async def _audit(
             "memory_id": str(row.memory_id),
             "content_sha256": str(row.content_sha256 or ""),
             "model": model,
+            "prompt_version": cr.PROMPT_VERSION,
             "pairs": acted,
         },
     )
@@ -593,12 +594,10 @@ async def resolve_row(
     counts: Counts,
     shown: frozenset[str] = frozenset(),
 ) -> frozenset[str] | None:
-    """Judge one queue row and act on its pairs, then stamp it judged. A row whose
-    head is no longer the queued write is skipped unstamped: its new write carries
-    its own mark. A provider failure raises, and the row stays owed. When the row was
-    judged and left owed all the same (a flagged peer the answer left out, or flagged
-    peers past the cluster's places), the ids it was judged against; `shown`: those of
-    its earlier attempts, whose flagged peers give their places to the others."""
+    """Judge one queue row, act on its pairs and stamp it judged; a provider failure
+    raises and the row stays owed. Returns None once stamped (or skipped), else the ids
+    it was judged against while it stays owed. `shown`: the peers its earlier attempts
+    were judged against, which give their places to the others."""
     org, namespace, sha = str(q["org"]), str(q["namespace"]), str(q.get("content_sha256") or "")
     row = await _current(q)
     if row is not None and sha and str(row.content_sha256 or "") != sha:
@@ -778,9 +777,8 @@ async def _judge_and_act(
         raise
     except LeaseUnavailable:
         raise  # no lease store: the row stays owed and the pass stops
-    except Exception as e:
-        # A busy key included: the call was paid, so it counts as an attempt, and the row
-        # stays owed until its attempts run out.
+    except Exception as e:  # re-raised: a failure after the paid call is an attempt
+        # A busy key included: the row stays owed until its attempts run out.
         raise JudgedThenFailed(f"{type(e).__name__}: {e}") from e
     return {str(p["memory_id"]) for p in peers} - set(verdicts)
 

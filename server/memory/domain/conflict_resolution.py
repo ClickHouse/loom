@@ -37,6 +37,10 @@ RETIRING_POLICIES = ("newest_wins", "auto_reinforce")
 # A value is cut to this many characters in the prompt.
 MAX_VALUE_CHARS = 700
 
+# Named in each memory.conflict_resolver audit row, so a verdict can be traced to the
+# prompt that produced it. Change it with SYSTEM_PROMPT.
+PROMPT_VERSION = "v3"
+
 SYSTEM_PROMPT = (
     "You check whether a NEW memory note makes an EXISTING note stale or contradicts it. "
     "A similarity search put them together; most such pairs are NOT conflicts. For EACH "
@@ -229,9 +233,9 @@ def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
     Malformed output yields {}: an entry with an unknown verdict, a confidence
     that is not a number in [0, 1], a `same_entity` or `same_attribute` that is not
     a boolean, or a peer id that names no peer is dropped, so its peer is left
-    unresolved and never acted on. A peer named twice keeps its first entry, unless the
-    two disagree on the verdict: then it has none. Checked here, not trusted to the
-    schema: not every provider enforces it."""
+    unresolved and never acted on. A peer named twice keeps its first well-formed entry,
+    unless any two of its entries disagree on the verdict: then it has none. Checked
+    here, not trusted to the schema: not every provider enforces it."""
     # The first JSON object in the text, whatever follows it (a greedy match from the
     # first brace to the last would take a trailing note's braces too).
     text = text or ""
@@ -243,6 +247,7 @@ def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
     if not isinstance(entries, list):
         return {}
     out: dict[str, PeerVerdict] = {}
+    named: dict[str, str] = {}  # each peer's first verdict, its entry well-formed or not
     torn: set[str] = set()  # peers two entries gave different verdicts
     for e in entries:
         if not isinstance(e, dict):
@@ -252,9 +257,9 @@ def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
         verdict = raw_verdict.strip().lower() if isinstance(raw_verdict, str) else ""
         if peer is None or verdict not in VERDICTS:
             continue
+        if named.setdefault(peer.memory_id, verdict) != verdict:
+            torn.add(peer.memory_id)
         if peer.memory_id in out:
-            if out[peer.memory_id].verdict != verdict:
-                torn.add(peer.memory_id)
             continue
         if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
             continue

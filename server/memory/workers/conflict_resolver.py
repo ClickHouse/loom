@@ -200,11 +200,13 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the pass
             counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {type(e).__name__}: {e}")
-            # Counted only once the judge answered: an error before it paid for nothing.
             if isinstance(e, resolver.JudgedThenFailed):
                 _after_row(p, (org, namespace), _attempt_key(r), counts, frozenset())
-            if isinstance(e, resolver.JudgedThenFailed) and await _out_of_attempts(r):
-                p.errors.append(f"{namespace}/{r.get('memory_key')}: stamped after {MAX_ATTEMPTS}")
+                # Counted only once the judge answered: an error before it paid for nothing.
+                if await _out_of_attempts(r):
+                    p.errors.append(
+                        f"{namespace}/{r.get('memory_key')}: stamped after {MAX_ATTEMPTS}"
+                    )
         finally:
             p.counts.add(counts)
             emit_worker_cost_event_for(

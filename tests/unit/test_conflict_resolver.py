@@ -182,6 +182,10 @@ def test_a_peer_given_two_different_verdicts_has_none() -> None:
     assert cr.parse_verdicts(text, _PEERS) == {}
     same = _answer(_entry("p1", "update", 0.97), _entry("p1", "update", 0.5))
     assert cr.parse_verdicts(same, _PEERS)[_PEERS[0].memory_id].confidence == 0.97
+    # The first entry malformed (a confidence past 1), the second another verdict: the
+    # model still gave this peer two verdicts.
+    torn = _answer(_entry("p1", "update", 1.5), _entry("p1", "unrelated", 0.99))
+    assert cr.parse_verdicts(torn, _PEERS) == {}
 
 
 def test_an_answer_followed_by_a_note_in_braces_still_parses() -> None:
@@ -2219,3 +2223,16 @@ async def test_another_anonymous_session_still_flagged_is_judged_and_cleared(row
     counts = await _resolve(policy="auto_reinforce")
     assert row_env.llm_calls == 1 and counts.cleared == 1
     assert row_env.acted == [(cr.CLEAR, "m1", "m2")]
+
+
+async def test_the_audit_row_names_the_prompt_version(monkeypatch) -> None:
+    from server.observability import audit
+
+    emitted: list[dict[str, Any]] = []
+
+    async def emit(event: str, **kw: Any) -> None:
+        emitted.append(kw["subject"])
+
+    monkeypatch.setattr(audit, "emit", emit)
+    await resolver._audit("o", "ns", _mem(), [{"action": cr.FLAG}], "gpt-6.1")
+    assert emitted[0]["prompt_version"] == cr.PROMPT_VERSION == "v3"
