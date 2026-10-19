@@ -1639,12 +1639,21 @@ async def _retire_memories_behind_repairs(
     from server.memory.app.auto_resolution import (
         NEWEST_WINS_CONTRADICTION,
         RetirementTracker,
+        owe_retirements,
         record_or_owe,
     )
     from server.memory.domain.lock import refuses_retirement
 
     # The tracker also refuses a row retired since the read (it is not re-pointed).
     tracker = RetirementTracker(refuses_retirement)
+    agent = str(getattr(input, "agent", "") or "")
+    intent = await owe_retirements(
+        org=input.org,
+        namespace=input.namespace,
+        victims=victims,
+        reason=NEWEST_WINS_CONTRADICTION,
+        agent=agent,
+    )
     try:
         # Read-your-writes: a lagging replica's row would be rebuilt over a revision.
         n = await supersede_duplicates(
@@ -1663,7 +1672,8 @@ async def _retire_memories_behind_repairs(
             namespace=input.namespace,
             retired=tracker.retired(victims),
             reason=NEWEST_WINS_CONTRADICTION,
-            agent=str(getattr(input, "agent", "") or ""),
+            agent=agent,
+            intent=intent,
         )
     log.info("newest_wins retired %d memories behind %d repaired triples", n, len(repairs))
     return n

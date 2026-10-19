@@ -180,13 +180,44 @@ async def settle_retirements(
     reason: str,
     follows: list[tuple[str, str]],
     agent: str = "",
+    intent: str = "",
 ) -> None:
     """The record of rows a point write just retired (`record_or_owe`), and their
     (loser, winner) pairs added to `follows`, which the caller follows once its own
     relations are projected (a follow before them writes the successor fact they then
     write again). Never raises."""
     follows.extend((str(r["memory_id"]), str(r["superseded_by"])) for r in retired)
-    await record_or_owe(org=org, namespace=namespace, retired=retired, reason=reason, agent=agent)
+    await record_or_owe(
+        org=org, namespace=namespace, retired=retired, reason=reason, agent=agent, intent=intent
+    )
+
+
+async def owe_retirements(
+    *, org: str, namespace: str, victims: Sequence[Mapping[str, Any]], reason: str, agent: str
+) -> str:
+    """A FOLLOW_OWED intent for rows about to be retired, written before the supersede as
+    the conflict resolver writes one: a process stopped before their record leaves it for
+    the repair, which acts only on a row still retired behind its winner. Its id, or ''
+    when it could not be written (the record after the supersede is owed as before)."""
+    from server.memory.app.projection_failures import FOLLOW_OWED, record_projection_failure
+
+    if not victims:
+        return ""
+    pairs = [[str(v["memory_id"]), str(v["superseded_by"])] for v in victims]
+    try:
+        return await record_projection_failure(
+            org=org,
+            namespace=namespace,
+            agent=agent,
+            projection=FOLLOW_OWED,
+            source_operation=reason,
+            source_resource_id=f"{reason}:{pairs[0][1]}",
+            error=f"retirement to record: {len(pairs)} row(s)",
+            payload={"pairs": pairs, "retired": [dict(v) for v in victims], "reason": reason},
+        )
+    except Exception as e:  # noqa: BLE001 — the write goes on; its record is owed after it
+        log.warning("auto_resolution: retirement intent not written: %s", e)
+        return ""
 
 
 async def record_or_owe(
@@ -196,13 +227,30 @@ async def record_or_owe(
     retired: Sequence[Mapping[str, Any]],
     reason: str,
     agent: str = "",
+    intent: str = "",
 ) -> None:
     """`record_auto_supersessions`; the entries whose record failed are owed to the
     projection repair as a FOLLOW_OWED intent (`agent`: the winner's writer) with their
-    reason, which the repair writes once. Never raises."""
-    left = await unrecorded(org=org, namespace=namespace, retired=retired, reason=reason)
-    if not left:
-        return
+    reason, which the repair writes once. `intent`: the one `owe_retirements` wrote
+    before the supersede, resolved once this is done; the record names it, which is how
+    a replay finds it. Never raises."""
+    left = await unrecorded(
+        org=org, namespace=namespace, retired=retired, reason=reason, request_id=intent or None
+    )
+    if left:
+        await _owe(org=org, namespace=namespace, left=left, reason=reason, agent=agent)
+    if intent:
+        from server.memory.app.projection_failures import mark_resolved
+
+        try:
+            await mark_resolved(org, [intent])
+        except Exception as e:  # noqa: BLE001 — a replay of recorded rows writes nothing new
+            log.warning("auto_resolution: retirement intent left for the repair: %s", e)
+
+
+async def _owe(
+    *, org: str, namespace: str, left: list[dict[str, Any]], reason: str, agent: str
+) -> None:
     from types import SimpleNamespace
 
     from server.memory.app.projection_errors import record_input_projection_failure

@@ -6651,3 +6651,85 @@ async def test_a_point_write_retirement_whose_record_failed_gets_it_from_the_rep
     assert [(e["memory_id"], e["superseded_by"]) for e in record["retired"]] == [
         (ids["s1"], ids["s2"])
     ]
+
+
+async def _owed(ch: Any, org: str, want: str) -> list[dict[str, Any]]:
+    """The org's FOLLOW_OWED intents, polled until one has status `want` (marks are
+    mutations, and the intent an async insert)."""
+    rows: list[dict[str, Any]] = []
+    for _ in range(50):
+        rows = await ch.query_all(
+            "SELECT toString(failure_id) AS id, toString(status) AS status, payload"
+            " FROM loom.memory_projection_failures WHERE org = {org:String}"
+            " AND projection = 'triples_follow_owed'"
+            " SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1",
+            params={"org": org},
+        )
+        if any(r["status"] == want for r in rows):
+            break
+        await asyncio.sleep(0.2)
+    return rows
+
+
+@pytest.mark.parametrize("killed", [False, True])
+async def test_a_point_write_owes_its_retirement_before_the_supersede(
+    ch, org, monkeypatch, killed: bool
+) -> None:
+    """A newest_wins same-key retirement writes its intent before the supersede, as the
+    conflict resolver does: resolved once the record names it, or left active for the
+    repair when the write stops between the two."""
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, conflicts, key_supersession
+    from server.memory.app.write import handle_memory_set
+    from server.memory.domain.conflicts import ConflictResult
+
+    async def _clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    monkeypatch.setattr(conflicts, "check_on_commit", _clear)
+    now = datetime.now(UTC)
+    await ch.insert(
+        "loom.namespaces",
+        [
+            {
+                "org": org,
+                "namespace": NS,
+                "created_at": now,
+                "updated_at": now,
+                "active": True,
+                "default_conflict_policy": "newest_wins",
+            }
+        ],
+    )
+
+    async def stopped(**kw: Any) -> None:
+        return None  # the process stopped after the supersede, before the record
+
+    ids = {}
+    for session, city in (("s1", "Paris"), ("s2", "Rome")):
+        if session == "s2" and killed:
+            monkeypatch.setattr(key_supersession, "settle_retirements", stopped)
+        out = await handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                session_id=session,
+                memory_key="office_city",
+                value=f"The office is in {city}",
+            )
+        )
+        ids[session] = out.memory_id
+        await after_write.drain()
+    (intent,) = await _owed(ch, org, "active" if killed else "resolved")
+    assert json.loads(intent["payload"])["pairs"] == [[ids["s1"], ids["s2"]]]
+    assert intent["status"] == ("active" if killed else "resolved")
+    if not killed:
+        named = await ch.query_all(
+            "SELECT count() AS n FROM loom.audit_log WHERE org = {org:String}"
+            " AND event_type = 'memory.auto_supersede' AND request_id = {i:String}"
+            " SETTINGS select_sequential_consistency = 1",
+            params={"org": org, "i": intent["id"]},
+        )
+        assert int(named[0]["n"]) == 1, "the record names its intent"

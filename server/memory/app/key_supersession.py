@@ -22,6 +22,7 @@ from server.memory.app import conflicts
 from server.memory.app.auto_resolution import (
     SAME_KEY_NEWEST_WINS,
     RetirementTracker,
+    owe_retirements,
     settle_retirements,
 )
 from server.memory.domain import lock
@@ -202,6 +203,10 @@ async def supersede_same_key_rows(
             return 0
         # The tracker also refuses a row retired since the read (it is not re-pointed).
         tracker = RetirementTracker(lock.refuses_retirement)
+        planned = [{**v, "superseded_by_key": v["memory_key"]} for v in victims]
+        intent = await owe_retirements(
+            org=org, namespace=namespace, victims=planned, reason=SAME_KEY_NEWEST_WINS, agent=agent
+        )
         try:
             # Read-your-writes: a lagging replica's row would be rebuilt over a revision.
             n = await memory_repo.supersede_duplicates(
@@ -224,6 +229,7 @@ async def supersede_same_key_rows(
                 reason=SAME_KEY_NEWEST_WINS,
                 follows=follows,
                 agent=agent,
+                intent=intent,
             )
         log.info(
             "same-key supersession (%s): %d older rows retired behind %d keys in %s/%s",

@@ -773,6 +773,7 @@ async def apply_refines(
         from server.memory.app.auto_resolution import (
             NEWEST_WINS_CONTRADICTION,
             RetirementTracker,
+            owe_retirements,
             settle_retirements,
         )
         from server.memory.domain.lock import refuses_retirement
@@ -780,6 +781,14 @@ async def apply_refines(
         tracker = RetirementTracker(
             lambda row: refuses_retirement(row) or (skip_peer is not None and skip_peer(row))
         )
+        reason = reason or NEWEST_WINS_CONTRADICTION
+        agent = str(getattr(new_row, "agent", "") or "")
+        intent = ""
+        if record_into is None:  # a caller recording into its own list owes its own intent
+            planned = [{**v, "superseded_by_key": new_memory_key} for v in victims]
+            intent = await owe_retirements(
+                org=org, namespace=namespace, victims=planned, reason=reason, agent=agent
+            )
         try:
             # Read-your-writes: a lagging replica's row would be rebuilt over a revision.
             n = await supersede_duplicates(
@@ -797,7 +806,6 @@ async def apply_refines(
             logging.getLogger(__name__).warning("refines: supersede failed (non-fatal): %s", e)
         # What reached loom.memory, even when the embeddings mirror then failed.
         retired = [{**v, "superseded_by_key": new_memory_key} for v in tracker.retired(victims)]
-        reason = reason or NEWEST_WINS_CONTRADICTION
         if record_into is not None:
             record_into.setdefault(reason, []).extend(retired)
         else:
@@ -807,7 +815,8 @@ async def apply_refines(
                 retired=retired,
                 reason=reason,
                 follows=[] if follows is None else follows,
-                agent=str(getattr(new_row, "agent", "") or ""),
+                agent=agent,
+                intent=intent,
             )
     return n
 
