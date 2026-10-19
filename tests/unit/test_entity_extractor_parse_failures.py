@@ -192,3 +192,30 @@ async def test_a_failed_heal_makes_the_pass_partial(
         pass_context.clear()
     assert ("heal", "RuntimeError") in [f[:2] for f in ctx.failures]
     assert wired.applied  # the extraction itself still landed
+
+
+@pytest.mark.asyncio
+async def test_an_unlabelled_credential_row_never_reaches_the_model(
+    monkeypatch: pytest.MonkeyPatch, wired: _Repo
+) -> None:
+    # copy_to or an import leaves the row unlabelled until the sweep; a token on its own line
+    # (JSON-escaped, it follows `\n`) still keeps the value from the extractor's model.
+    import json
+
+    token = "ghp_" + "a" * 36
+    wired.rows = [
+        {**_row("as-object"), "value": json.dumps({"text": "the token:\n" + token})},
+        # memory.set stores a string value as a quoted JSON literal
+        {**_row("as-string"), "value": json.dumps("the token:\n" + token)},
+    ]
+    sent: list[str] = []
+
+    async def _model(value_str: str):
+        sent.append(value_str)
+        return ["thing"]
+
+    monkeypatch.setattr(ee, "_extract", _model)
+    result = await ee.run_pass(ee.EntityExtractorConfig())
+    assert sent == [] and result.skipped_sensitive == 2
+    # the sentinel keeps the next pass from picking the row up again
+    assert [a["entities"] for a in wired.applied] == [[ee._NONE_SENTINEL]] * 2

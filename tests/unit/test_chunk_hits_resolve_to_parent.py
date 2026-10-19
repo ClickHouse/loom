@@ -17,6 +17,7 @@ import pytest
 
 from server.memory.app.handlers import chunk_parent_key, split_chunk_key
 from server.memory.app.retrieval.pool import effective_chunk_floor
+from server.memory.store.rows import MemoryRow
 
 # ------------------------------------------------------------- the id
 
@@ -135,8 +136,12 @@ async def test_memory_get_resolves_a_memory_set_chunk_id(monkeypatch: pytest.Mon
 # ------------------------------------------------------------- bulk_get
 
 
-def _row(key: str) -> SimpleNamespace:
-    return SimpleNamespace(
+def _row(key: str) -> MemoryRow:
+    return MemoryRow(
+        org="o",
+        namespace="ns",
+        user_id="-",
+        session_id="-",
         memory_id="00000000-0000-0000-0000-000000000001",
         memory_key=key,
         value={"v": key},
@@ -175,7 +180,8 @@ async def test_bulk_get_answers_a_chunk_id_with_its_parent_row(
 
     async def fake_get_many(identity, keys, **kw):
         asked.append(list(keys))
-        return [_row(k) for k in keys if k != "gone"]
+        # chunk ids are search hits, not stored keys
+        return [_row(k) for k in keys if k != "gone" and not k.startswith("chunk:")]
 
     monkeypatch.setattr(memory_repo, "get_many_by_keys", fake_get_many)
     out = await Q.handle_memory_bulk_get(
@@ -190,10 +196,20 @@ async def test_bulk_get_answers_a_chunk_id_with_its_parent_row(
                 "chunk:memory.set:gone:1",
                 "lesson_b",
             ],
+            fields=["value", "canonical_key"],  # no usage counters: no read past the fake
         )
     )
-    # the repository was asked for parents, once each, in request order
-    assert asked == [["lesson_a", "gone", "lesson_b"]]
+    # one read: the keys as asked, then the parents not already among them
+    assert asked == [
+        [
+            "chunk:memory.set:lesson_a:0",
+            "lesson_a",
+            "chunk:memory.set:lesson_a:2",
+            "chunk:memory.set:gone:1",
+            "lesson_b",
+            "gone",
+        ]
+    ]
     assert set(out.results) == {
         "chunk:memory.set:lesson_a:0",
         "lesson_a",
@@ -203,6 +219,10 @@ async def test_bulk_get_answers_a_chunk_id_with_its_parent_row(
     for k in ("chunk:memory.set:lesson_a:0", "chunk:memory.set:lesson_a:2"):
         assert out.results[k].value == {"v": "lesson_a"}
         assert out.results[k].canonical_key == "lesson_a"  # the fold target, on the wire
+        # and the alias says so on the wire, whatever the projection, which it still applies
+        dumped = out.results[k].model_dump()
+        assert dumped["resolved_from"] == k and "tags" not in dumped
+    assert "resolved_from" not in out.results["lesson_a"].model_dump()
     assert (
         out.results["lesson_a"].canonical_key is None
     )  # a plain row keeps the canonical-key shape
@@ -258,3 +278,110 @@ def test_finish_pool_with_a_zero_cap_serves_no_chunks(monkeypatch: pytest.Monkey
     )
     window2 = asyncio.run(S._finish_pool(None, list(hits), q2))  # type: ignore[arg-type]
     assert sum(1 for h in window2 if h.source == "chunk") >= 2
+
+
+@pytest.mark.asyncio
+async def test_bulk_get_answers_a_stored_key_shaped_like_a_chunk_id_with_its_own_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # memory.set takes such a key; its own row answers, not its "parent"'s.
+    from server.memory import store as memory_repo
+    from server.memory.api.models_bulk import MemoryBulkGetInput
+    from server.memory.app import query as Q
+
+    async def fake_get_many(identity, keys, **kw):
+        return [_row(k) for k in keys]
+
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", fake_get_many)
+    key = "chunk:memory.set:a:0"
+    out = await Q.handle_memory_bulk_get(
+        MemoryBulkGetInput(
+            org="o", namespace="n", agent="clickgap", memory_keys=[key], fields=["value"]
+        )
+    )
+    assert out.results[key].value == {"v": key} and out.results[key].canonical_key is None
+
+
+@pytest.mark.asyncio
+async def test_bulk_get_never_serves_or_audits_a_parent_nobody_asked_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The export holds a high row `x` home and never asks for it; a stored key shaped like one
+    # of its chunk ids must not bring `x`'s value (or a sensitive-read audit row) back.
+    from server.memory import store as memory_repo
+    from server.memory.api.models_bulk import MemoryBulkGetInput
+    from server.memory.app import query as Q
+    from server.observability import audit
+
+    async def fake_get_many(identity, keys, **kw):
+        high = {"sensitivity": "high", "memory_id": "00000000-0000-0000-0000-000000000002"}
+        return [_row(k).model_copy(update=high) if k == "x" else _row(k) for k in keys]
+
+    audited: list[Any] = []
+
+    async def _emit_many(_event: str, **kw: Any) -> None:
+        audited.extend(kw["subjects"])
+
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", fake_get_many)
+    monkeypatch.setattr(audit, "emit_many", _emit_many)
+    key = "chunk:memory.set:x:0"
+    out = await Q.handle_memory_bulk_get(
+        MemoryBulkGetInput(
+            org="o", namespace="n", agent="clickgap", memory_keys=[key], fields=["value"]
+        )
+    )
+    assert list(out.results) == [key] and audited == []
+
+
+@pytest.mark.asyncio
+async def test_bulk_get_records_the_served_rows_own_keys_as_exposed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A chunk id answers with its parent's row: the exposure ledger names that row once,
+    # however many of its chunk ids were asked.
+    from server.memory import store as memory_repo
+    from server.memory.api.models_bulk import MemoryBulkGetInput
+    from server.memory.app import query as Q
+
+    async def fake_get_many(identity, keys, **kw):
+        ids = {
+            "x": "00000000-0000-0000-0000-00000000000a",
+            "y": "00000000-0000-0000-0000-00000000000b",
+        }
+        return [_row(k).model_copy(update={"memory_id": ids[k]}) for k in keys if k in ids]
+
+    exposed: list[list[str]] = []
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", fake_get_many)
+    monkeypatch.setattr(Q, "_record_read_exposure", lambda _op, _inp, keys: exposed.append(keys))
+    await Q.handle_memory_bulk_get(
+        MemoryBulkGetInput(
+            org="o",
+            namespace="n",
+            agent="clickgap",
+            memory_keys=["chunk:memory.set:x:0", "chunk:memory.set:x:1", "y"],
+            fields=["value"],  # no usage counters: no read past the fake
+        )
+    )
+    assert exposed == [["x", "y"]]
+
+
+@pytest.mark.asyncio
+async def test_get_by_id_never_serves_a_high_row_past_its_retention_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory import store as memory_repo
+    from server.memory.api.models_crud import MemoryGetByIdInput
+    from server.memory.app import handlers
+
+    expired = _row("vault").model_copy(
+        update={"sensitivity": "high", "expires_at": datetime(2020, 1, 1)}
+    )
+
+    async def fake_get_by_id(*_a: Any, **_k: Any) -> Any:
+        return expired
+
+    monkeypatch.setattr(memory_repo, "get_by_id", fake_get_by_id)
+    out = await handlers.handle_memory_get_by_id(
+        MemoryGetByIdInput(org="o", memory_id=str(expired.memory_id))
+    )
+    assert out.found is False

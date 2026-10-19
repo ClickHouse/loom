@@ -136,9 +136,9 @@ def test_unit_bodies_fill_by_rank_then_escalate(monkeypatch):
             identity.namespace == "n" and identity.agent == "*" and identity.user_id == "*"
         )  # No user named -> every user
         return [
-            SimpleNamespace(memory_key="a", value=long_a),
-            SimpleNamespace(memory_key="b", value=long_b),
-            SimpleNamespace(memory_key="c", value={"x": 1}),
+            SimpleNamespace(memory_key="a", value=long_a, sensitivity=""),
+            SimpleNamespace(memory_key="b", value=long_b, sensitivity=""),
+            SimpleNamespace(memory_key="c", value={"x": 1}, sensitivity=""),
         ]
 
     monkeypatch.setattr(memory_repo, "get_many_by_keys", fake_get_many)

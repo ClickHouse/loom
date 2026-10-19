@@ -1173,6 +1173,8 @@ async def test_existing_memories_resolve_across_sessions(monkeypatch: pytest.Mon
     """The rows the vector hits name are read with the session
     axis open — keyed to the session being written they would come back empty
     for every row an earlier session wrote."""
+    from types import SimpleNamespace
+
     import server.memory.app.handlers as hm
     from server.memory import store as memory_repo
 
@@ -1194,7 +1196,12 @@ async def test_existing_memories_resolve_across_sessions(monkeypatch: pytest.Mon
     async def fake_get_many(identity, keys, **kw):
         seen["identity"] = identity
         seen["keys"] = list(keys)
-        return [type("R", (), {"memory_key": "user_journal", "value": "User keeps a journal."})()]
+        seen["exclude_high"] = kw.get("exclude_high_sensitivity")
+        return [
+            SimpleNamespace(
+                memory_key="user_journal", value="User keeps a journal.", sensitivity=""
+            )
+        ]
 
     monkeypatch.setattr("server.embedding.get_embedder", lambda: _Emb())
     monkeypatch.setattr("server.memory.app.retrieval.vector_search", fake_vector_search)
@@ -1206,3 +1213,57 @@ async def test_existing_memories_resolve_across_sessions(monkeypatch: pytest.Mon
     assert [r["memory_key"] for r in rows] == ["user_journal"]
     assert seen["identity"].session_id == "*"
     assert seen["identity"].user_id == "u" and seen["identity"].agent == "a"
+    assert seen["exclude_high"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_extraction_prompt_never_shows_a_high_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cross-session lookup leaves 'high' rows out before it picks one per key, so a
+    'high' row never reaches the existing memories the extraction prompt sends the LLM and
+    another session's 'high' row of a key hides no plain one."""
+    from types import SimpleNamespace
+
+    import server.memory.app.handlers as hm
+    from server.memory import store as memory_repo
+
+    class _Emb:
+        model_name = "fake"
+
+        async def embed(self, text: str) -> list[float]:
+            return [0.0]
+
+    async def fake_vector_search(q):
+        return [
+            SimpleNamespace(memory_key="user_journal"),
+            SimpleNamespace(memory_key="vault"),
+            SimpleNamespace(memory_key="copied"),
+        ]
+
+    rows = {
+        "user_journal": SimpleNamespace(
+            memory_key="user_journal", value="User keeps a journal.", sensitivity=""
+        ),
+        "vault": SimpleNamespace(
+            memory_key="vault", value="the door code is 4412", sensitivity="high"
+        ),
+        # copied in unlabelled (copy_to, an import) before the sweep ran
+        "copied": SimpleNamespace(
+            memory_key="copied", value="deploy token:\nghp_" + "a" * 36, sensitivity=""
+        ),
+    }
+
+    async def fake_get_many(identity, keys, *, scope, exclude_high_sensitivity):
+        return [
+            r for r in rows.values() if not (exclude_high_sensitivity and r.sensitivity == "high")
+        ]
+
+    monkeypatch.setattr("server.embedding.get_embedder", lambda: _Emb())
+    monkeypatch.setattr("server.memory.app.retrieval.vector_search", fake_vector_search)
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", fake_get_many)
+    ident = memory_repo.Identity(org="o", namespace="n", agent="a", user_id="u", session_id="s")
+    rows = await hm._fetch_relevant_existing_memories(
+        ident, [{"role": "user", "content": "what is the door code"}], limit=10
+    )
+    assert [r["memory_key"] for r in rows] == ["user_journal"]

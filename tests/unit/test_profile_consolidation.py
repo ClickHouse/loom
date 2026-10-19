@@ -142,3 +142,36 @@ async def test_default_fold_reads_stated_facts_only(monkeypatch) -> None:
     assert call["max_tokens"] == 320
     assert call["user"] == "- [2025-09-01] vim"
     assert "EPISODES" not in call["system"]
+
+
+@pytest.mark.asyncio
+async def test_an_unlabelled_credential_row_never_reaches_the_fold_model(monkeypatch) -> None:
+    # copy_to and imports leave a row unlabelled until the sweep; the fold's output becomes a
+    # plain profile section, so the model never sees such a value.
+    token = "ghp_" + "a" * 36
+    sent: list[str] = []
+
+    class _RecLLM:
+        async def complete(self, system, user, max_tokens):
+            sent.append(user)
+            return _LLMOut()
+
+    ch = StubCH(
+        identities=[{"org": "dev", "namespace": "ns", "user_id": "u1", "n": 6}],
+        memories=[
+            {"value": "vim", "since": "2025-09-01"},
+            {"value": f"ci uses {token}", "since": "2025-09-02"},
+        ],
+    )
+    _patch(monkeypatch, ch, llm=False)
+    import server.llm.client as llmmod
+    import server.memory.app.profile as profmod
+
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _RecLLM())
+
+    async def fake_set(inp):
+        return None
+
+    monkeypatch.setattr(profmod, "handle_profile_set", fake_set)
+    await run_pass(ProfileConsolidationConfig(model=""))
+    assert sent == ["- [2025-09-01] vim"]

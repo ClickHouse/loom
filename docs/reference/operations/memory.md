@@ -310,8 +310,8 @@ Fetch many memory entries by key in one CH round-trip.
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `memory_keys` | `list[str]` | required | Keys to read under this identity; a `chunk:memory.set:<key>:<n>` id from a search reads its parent fact. |
-| `fields` | `list[str]` | *(computed)* | Whitelist of output field names applied to every entry in `results` (each keeps `found`). |
+| `memory_keys` | `list[str]` | required | Keys to read under this identity; a `chunk:memory.set:<key>:<n>` id from a search reads its parent fact when no row is stored under that key, and the parent answers under the id it was asked by. |
+| `fields` | `list[str]` | *(computed)* | Whitelist of output field names applied to every entry in `results` (each keeps `found`, and `resolved_from` when set). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -394,7 +394,7 @@ Periodic consolidation pass — merges fragmented memories about the same subjec
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `consolidated` | `list[MemoryConsolidateResult]` | One entry per cluster merged (or that would be, under `dry_run`). |
-| `examined` | `int` | Eligible rows read: live, unpinned, unlocked, embedded and older than `min_age_seconds`. |
+| `examined` | `int` | Eligible rows read: live, unpinned, unlocked, embedded, older than `min_age_seconds`, and neither labelled high nor reading as a credential (never sent to the merge model). |
 | `clusters_found` | `int` | Clusters of two or more rows found. |
 | `clusters_failed` | `int` | Clusters whose merge LLM call failed or returned an unparseable / incomplete JSON object. |
 | `clusters_refused_lossy` | `int` | Of the failed clusters, those the merge guard refused because the merged text lost a date, quantity, identifier, name or negation one source carried; the sources stay as they were. |
@@ -659,6 +659,7 @@ The raw chunks and session digests behind a namespace's memories, as portable ro
 | `session_id` | `str` | `''` | optional: one session only |
 | `limit` | `int` | `500` | Rows per page (1–2000); `has_more` says whether another page follows. |
 | `cursor` | `str` | `''` | opaque keyset cursor from a previous page |
+| `include_high` | `bool` | `False` | Also export the chunks and digests behind a 'high' row, or whose text reads as a credential. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -667,6 +668,7 @@ The raw chunks and session digests behind a namespace's memories, as portable ro
 | `edges` | `list[EvidenceEdge]` | `kind: edges`: live typed links, ordered by `(from_key, to_key, relation)`. |
 | `has_more` | `bool` | True when more rows exist past this page. |
 | `next_cursor` | `str` | Pass as `cursor` for the next page; empty on the last page and always for digests. |
+| `held_high` | `int` | Chunks or digests of this page left out as 'high' (see `include_high`). |
 
 ## `memory.exposure_summary`
 
@@ -768,7 +770,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `version` | `int \| None` | Nanosecond version of the live row; send it back as `if_version` to poll. |
 | `created_at` | `datetime \| None` | When the key was first written; kept across later versions. |
 | `updated_at` | `datetime \| None` | Last write to this key; distinct from created_at, which is preserved across updates. |
-| `expires_at` | `datetime \| None` | When the row expires (reads hide it after that); None = no expiry. |
+| `expires_at` | `datetime \| None` | When the row expires (memory.get hides it after that; memory.list serves it until the expiry sweep, and memory.bulk_get does too, except a high one); None = no expiry. |
 | `on_expire` | `str` | Post-action on expiry ('' = tombstone) and its reason. |
 | `expire_reason` | `str` | Why the expiry was set, as the writer gave it; '' when none. |
 | `valid_at` | `datetime \| None` | Real-world time the fact became true (distinct from created_at = when recorded). |
@@ -785,7 +787,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `duplicate_of` | `str` | The row this one duplicates (status='duplicate'), and the verdict the row shows on read — `pending` while a deferred judge still holds it, else derived from `status` (active → clear, conflicted → conflict, duplicate, superseded). |
 | `conflict_verdict` | `str` | pending \| clear \| conflict \| duplicate \| superseded, as described above. |
 | `canonical_key` | `str \| None` | For a `status='duplicate'` row, the memory_key of the canonical that answers for it ("" when that row is no longer active — the orphan case `memory.resolve_orphan_duplicates` repairs). |
-| `resolved_from` | `str \| None` | On a `follow: true` read that served a duplicate's canonical, the memory_key the caller asked for. |
+| `resolved_from` | `str \| None` | On an answer given by another row, the memory_key the caller asked for: a `follow: true` read that served a duplicate's canonical, or a memory.bulk_get chunk id answered by its parent fact. |
 | `tags` | `list[str]` | Surfaced so an in-place tag edit can preserve existing tags/entities rather than clobbering them. |
 | `entities` | `list[str]` | Entity names stored on the row (lowercased), internal sentinels left out. |
 | `content_sha256` | `str` | SHA-256 of the live value (canonical JSON); pass back as if_match_sha256 for a no-clobber update against the value THIS read saw. |
@@ -1042,8 +1044,8 @@ List memory keys under this identity, optionally filtered.
 | `as_of` | `datetime \| None` | `None` | see MemoryGetInput.as_of |
 | `tags` | `list[str]` | *(computed)* | Only rows carrying any one of these tags, in any case; empty = no tag filter. |
 | `tags_every` | `bool` | `False` | Require every one of `tags` instead of any one; default off. |
-| `contains` | `str \| None` | `None` | Only rows whose value or key holds this text, any case — the keyword filter of a browse page's search box, which must find every row that names a word (a ranked search returns its top k and misses the rest). |
-| `fields` | `list[str]` | *(computed)* | Whitelist of entry field names; every entry carries only those plus `memory_key`. |
+| `contains` | `str \| None` | `None` | Only rows whose value or key holds this text, any case (a high row by its key only) — the keyword filter of a browse page's search box, which must find every row that names a word (a ranked search returns its top k and misses the rest). |
+| `fields` | `list[str]` | *(computed)* | Whitelist of entry field names; every entry carries only those plus `memory_key` and `sensitivity`. |
 | `known_version` | `int \| str \| None` | `None` | The `namespace_version` a previous answer carried. |
 
 | Output field | Type | Meaning |
@@ -1126,7 +1128,8 @@ Rename `from_key` to `to_key`, leaving the old key answering.
 | `advisories` | `list[str]` | memory.set's advisories on the destination write, passed through. |
 | `dry_run` | `bool` | Echo of the request's `dry_run`. |
 | `memory_type` | `str` | Dry-run preview of the destination: its type and the first 200 chars. |
-| `value_preview` | `str` | Dry run only: the first 200 chars of the destination value. |
+| `value_preview` | `str` | Dry run only: the first 200 chars of the destination value; "" for a high source, whose value is read by key (memory.get). |
+| `sensitivity` | `str` | Dry run only: the source's sensitivity tier ('' \| low \| medium \| high). |
 
 ## `memory.outcome`
 

@@ -19,6 +19,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.memory.domain.sensitivity import value_reads_high
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
 from server.settings import settings
@@ -155,6 +156,8 @@ async def _consolidate_identity(
         FROM loom.memory FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND user_id = {uid:String} AND tombstoned_at IS NULL
+          -- a high row is readable by key only, never folded into the profile
+          AND sensitivity != 'high'
           AND memory_type IN ('preference', 'decision')
           AND status NOT IN ('superseded', 'rejected', 'proposed')  -- proposed: not a fact yet
           AND (valid_to IS NULL OR valid_to > now())
@@ -176,6 +179,9 @@ async def _consolidate_identity(
             "lim": int(cfg.memory_limit),
         },
     )
+    # An unlabelled row (copy_to, an import, before the sweep) holding a credential is never
+    # sent to the fold model, whose output becomes a plain profile section.
+    rows = [r for r in rows if not value_reads_high(r.get("value"))]
     facts = render_fold_input(rows)
     if not facts:
         return False

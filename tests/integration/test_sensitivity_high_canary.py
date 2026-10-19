@@ -355,3 +355,43 @@ def test_retyping_a_key_to_a_non_searchable_type_retires_its_vector(
     )
     assert r.status_code == 200, r.text
     _wait(lambda: _live_vectors(ch_client, key) == 0)
+
+
+def test_a_high_value_is_never_mined_into_the_entity_graph(
+    control_plane_url: str, ch_client, token: str
+) -> None:
+    """A point write mines entity nodes from its value; a high row's value would put its
+    secret's words into facts.traverse. Only the caller's declared entities project."""
+    plain, secret, declared = (f"{k}_{uuid.uuid4().hex[:6]}" for k in ("plain", "vault", "named"))
+    for key, extra in (
+        (plain, {}),
+        (secret, {"sensitivity": "high"}),
+        (declared, {"sensitivity": "high", "entities": ["Billing", "Stripe"]}),
+    ):
+        r = _post(
+            control_plane_url,
+            token,
+            "memory.set",
+            {
+                "org": ORG,
+                "namespace": NAMESPACE,
+                "agent": "canary",
+                "memory_key": key,
+                "value": "Orchid Falcon Quartz Meridian rotate the Vault Key weekly",
+                "memory_type": "semantic",
+                **extra,
+            },
+        )
+        assert r.status_code == 200, r.text
+
+    def keys() -> set[str]:
+        res = ch_client.query(
+            "SELECT DISTINCT memory_key FROM loom.entity_edge_memories "
+            "WHERE org = {org:String} AND namespace = {ns:String}",
+            parameters={"org": ORG, "ns": NAMESPACE},
+        )
+        return {str(row[0]) for row in res.result_rows}
+
+    _wait(lambda: plain in keys())
+    _wait(lambda: declared in keys())
+    assert secret not in keys()

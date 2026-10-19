@@ -5,9 +5,9 @@ whitelist of output field names. The handler resolves it against the output
 model once (an unknown name is a 422, never a silent drop), stores the set
 on the response model's private `_projection`, and the model's wrap
 serializer keeps only those keys plus the ones every reader relies on
-(`found` / `unchanged` on a get row, `memory_key` on a list entry). Unset,
-`_projection` is None and the payload is byte-identical to what every
-existing client sees.
+(`found` / `unchanged`, and `resolved_from` when set, on a get row; `memory_key` and
+`sensitivity` on a list entry). Unset, `_projection` is None and the payload is
+byte-identical to what every existing client sees.
 """
 
 from __future__ import annotations
@@ -19,8 +19,12 @@ from pydantic import BaseModel, SerializerFunctionWrapHandler, model_serializer
 from server.core.errors import ValidationError
 
 # The keys a projected payload always carries, per response model.
-GET_ALWAYS: frozenset[str] = frozenset({"found", "unchanged"})
-LIST_ENTRY_ALWAYS: frozenset[str] = frozenset({"memory_key"})
+# `resolved_from` too: an answer given by another row (a followed redirect, a chunk id's
+# parent) says so whatever the projection; it is absent on every other answer.
+GET_ALWAYS: frozenset[str] = frozenset({"found", "unchanged", "resolved_from"})
+# `sensitivity` comes with every list entry rather than by name: a reader that asked for it
+# by name would get a 422 from a replica still on a build without the field.
+LIST_ENTRY_ALWAYS: frozenset[str] = frozenset({"memory_key", "sensitivity"})
 
 
 def resolve(

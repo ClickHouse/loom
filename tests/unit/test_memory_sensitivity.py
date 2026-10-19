@@ -3,6 +3,9 @@ column riding every write path."""
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -246,3 +249,151 @@ async def test_memory_stack_recent_recall_sql_carries_the_medium_guard(monkeypat
     for q in (sql, pinned[0]):
         assert "(expires_at IS NULL OR expires_at > now())" in q
         assert "status IN ('active', 'conflicted')" in q
+
+
+_TOKEN = "ghp_" + "a" * 36
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        json.dumps("deploy token:\n" + _TOKEN),  # a string, as memory.set stores it
+        {"note": "deploy token:\n" + _TOKEN},
+        {_TOKEN: "ci token"},  # the secret is the key
+        json.dumps({"narrative": 'config: password: "hunter2secret"'}),
+    ],
+    ids=["json-string", "own-line", "in-a-key", "quoted"],
+)
+def test_detector_text_lets_the_detector_read_what_the_value_holds(value: object) -> None:
+    from server.memory.domain.sensitivity import detector_text, reads_high
+
+    assert reads_high(detector_text(value))
+
+
+def test_detector_text_reads_plain_values_as_written_and_never_recurses() -> None:
+    from server.memory.domain.sensitivity import detector_text
+
+    assert [detector_text(v) for v in ["null", "123", "plain words", None]] == [
+        "",
+        "123",
+        "plain words",
+        "",
+    ]
+    deep: list[object] = []
+    inner = deep
+    for _ in range(5000):
+        nxt: list[object] = []
+        inner.append(nxt)
+        inner = nxt
+    inner.append("sk-" + "a" * 24)
+    assert detector_text(deep) == "sk-" + "a" * 24
+
+
+def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The write path detects on the decoded value, not the stored JSON.
+    from types import SimpleNamespace
+
+    from server.memory.app.update import _update_sensitivity
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
+    level, _tags = _update_sensitivity(
+        SimpleNamespace(sensitivity=""), json.dumps({"note": "token:\n" + _TOKEN}), []
+    )
+    assert level == "high"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"password": {"min_length": 12}},
+        {"password": None, "username": "alice"},
+        {"secret": {"provider": "vault"}},
+        {"fields": {"email": "required", "password": "required"}},
+        {"password": "********"},
+        {"api_key": "env:OPENAI_API_KEY"},
+        {"pwd": "/home/alice/repo"},
+        {"env": {"PWD": "/opt/app/server"}},
+        {"password_hint": "first pet"},
+        {"token_count": 123456789},
+        {"secret_santa": "alice to bob"},
+        # two scalars never read as one: a form label then the next key, or a number list
+        {"label": "Password:", "placeholder": "Enter your password"},
+        {"label": "Secret:", "required": True},
+        {"batch_sizes": [256, 512, 1024]},
+    ],
+)
+def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
+    # Each key and scalar is its own line, joined by a separator no pattern crosses: a config
+    # object reads as the stored JSON always did, neither high nor medium.
+    from server.memory.domain.sensitivity import detect_sensitivity, detector_text
+
+    assert detect_sensitivity(detector_text(value)) == ""
+
+
+@pytest.mark.asyncio
+async def test_memory_set_labels_and_tags_the_decoded_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # memory.set reads the decoded value for both: in the stored JSON a token or a protected
+    # attribute after `\n` has no word boundary.
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import blacklist_guard, write
+    from server.memory.app.set_commit import _SetWrite
+    from server.settings import settings
+
+    async def _allowed(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
+    monkeypatch.setattr(settings, "memory_attribute_tagging", True)
+    monkeypatch.setattr(blacklist_guard, "enforce_on_insert", _allowed)
+    value = {"note": "status update:\nmarried last spring", "token": "id:\n" + _TOKEN}
+    w = _SetWrite(
+        input=MemorySetInput(org="o", namespace="n", agent="a", memory_key="k", value=value),
+        version=1,
+        retyped_from="",
+        existing=None,
+        expires_at=None,
+    )
+    await write._set_prepare_value(w, False)
+    assert "sensitivity:high" in w.input.tags
+    assert any(t.startswith("attribute:") for t in w.input.tags)
+
+
+@pytest.mark.parametrize(
+    ("value", "level"),
+    [
+        ({"name": "Ann", "email": "ann@example.com"}, "medium"),
+        ({"phone": "415-555-0123", "n": 1}, "medium"),
+        ({"phone": 4155550123}, "medium"),
+    ],
+)
+def test_one_scalar_still_reads_as_what_it_holds(value: object, level: str) -> None:
+    from server.memory.domain.sensitivity import detect_sensitivity, detector_text
+
+    assert detect_sensitivity(detector_text(value)) == level
+
+
+def test_a_chunk_of_an_object_value_is_read_with_its_escapes_undone() -> None:
+    # memory.set writes an object's chunks as indented JSON; the raw-text check reads them.
+    from server.memory.app.set_chunks import human_text
+    from server.memory.domain.sensitivity import reads_high
+
+    assert reads_high(human_text({"notes": "deploy steps:\n" + _TOKEN}))
+    assert reads_high(human_text({"notes": "line\r" + _TOKEN}))  # a lone carriage return
+    # an escaped backslash before `n` stays a backslash and an `n`: no line starts there
+    assert not reads_high(human_text({"note": "x\\n" + _TOKEN}))
+    assert not reads_high(human_text({"label": "Password:", "placeholder": "Enter one"}))
+
+
+def test_a_protected_attribute_after_a_newline_is_tagged(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The write path tags attributes on the decoded value: in the stored JSON `\nmarried` has
+    # no word boundary before the word.
+    from server.memory.domain.sensitivity import attribute_tags, detector_text
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_attribute_tagging", True)
+    stored = json.dumps({"note": "status update:\nmarried last spring"})
+    assert attribute_tags(stored) == []
+    assert attribute_tags(detector_text(stored)) != []

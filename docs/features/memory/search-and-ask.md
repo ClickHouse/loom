@@ -13,19 +13,19 @@ and conversations in one call. `memory.search` is not an MCP tool of its own. Se
 
 ## The read operations
 
-| Operation                 | Returns                                                                           |
-| ------------------------- | --------------------------------------------------------------------------------- |
-| `memory.search`           | Ranked hits with scores, abstain and risk.                                        |
-| `memory.ask`              | A synthesised, cited answer, or an abstain.                                       |
-| `memory.search_trace`     | The same pool as `memory.search`, with a per-hit scoring breakdown.               |
-| `memory.search_trace_log` | Past searches of the namespace: keys and scores returned, abstain, risk, latency. |
-| `memory.get`              | One row by exact key.                                                             |
-| `memory.bulk_get`         | Up to 1,000 keys in one round trip; `missing` lists misses.                       |
-| `memory.list`             | Keys and types under the identity, by recency or score; at most 1,000 per call.   |
-| `memory.timeline`         | Rows about an entity, tag set or key prefix, in time order.                       |
-| `memory.related`          | Rows that share entities with a known key, ranked by overlap.                     |
-| `memory.recall`           | The raw conversation turns behind the facts. See [extraction](./extraction.md).   |
-| `memory.brief`            | Orientation on a task: an answer, its grounding, unknowns, what to read next.     |
+| Operation                 | Returns                                                                                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `memory.search`           | Ranked hits with scores, abstain and risk.                                                                                           |
+| `memory.ask`              | A synthesised, cited answer, or an abstain.                                                                                          |
+| `memory.search_trace`     | The same pool as `memory.search`, with a per-hit scoring breakdown.                                                                  |
+| `memory.search_trace_log` | Past searches of the namespace: keys and scores returned, abstain, risk, latency.                                                    |
+| `memory.get`              | One row by exact key.                                                                                                                |
+| `memory.bulk_get`         | Up to 1,000 keys in one round trip, each as `memory.get` answers it (without `conflict_verdict` and `code`); `missing` lists misses. |
+| `memory.list`             | Keys and types under the identity, by recency or score; at most 1,000 per call.                                                      |
+| `memory.timeline`         | Rows about an entity, tag set or key prefix, in time order.                                                                          |
+| `memory.related`          | Rows that share entities with a known key, ranked by overlap.                                                                        |
+| `memory.recall`           | The raw conversation turns behind the facts. See [extraction](./extraction.md).                                                      |
+| `memory.brief`            | Orientation on a task: an answer, its grounding, unknowns, what to read next.                                                        |
 
 All are viewer ops. Reads default to `agent="*"` (every author in the namespace):
 membership is the read boundary, and `agent` records authorship. Pass `agent` only to
