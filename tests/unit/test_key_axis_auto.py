@@ -122,3 +122,20 @@ async def test_a_changed_threshold_applies_to_the_cached_share() -> None:
     assert await key_axis_auto("clickhouse", "ns", ch=ch, settings_obj=s) is True
     assert ms.key_axis_auto_cached("clickhouse", "ns", s) == (True, 0.06)
     assert ch.calls == 1
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"memory_search_key_axis_auto_reuse_share": 1.5},
+        {"memory_search_key_axis_auto_reuse_share": -0.1},
+        {"memory_search_key_axis_auto_ttl_seconds": 0},
+    ],
+)
+def test_a_share_outside_zero_to_one_or_a_ttl_under_a_second_is_refused(
+    values: dict[str, Any],
+) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **values)  # type: ignore[call-arg]

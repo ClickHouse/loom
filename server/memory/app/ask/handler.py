@@ -620,7 +620,9 @@ def ask_shape_sha256(input: MemoryAskInput, settings: Any) -> str:
     # Only a user or session the read filters on is part of the shape.
     exclude |= {f for f in ("user_id", "session_id") if getattr(input, f) in (None, "-")}
     shape = input.model_dump(exclude=exclude, exclude_defaults=True)
-    shape["settings"] = _shape_settings(settings)
+    # Absent, not empty, at every default: the shape a build without this key hashed.
+    if shaped := _shape_settings(settings):
+        shape["settings"] = shaped
     canonical = json.dumps(shape, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

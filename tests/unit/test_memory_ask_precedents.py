@@ -10,6 +10,8 @@ row, an expired row — is a miss and the ask synthesizes.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -370,6 +372,12 @@ def test_ask_shape_hashes_only_the_settings_off_their_default() -> None:
     assert Settings.model_fields["memory_ask_world_knowledge"].default == "forbid"
     assert ask_shape_sha256(_input(), base) == ask_shape_sha256(_input(), at_default)
     assert ask_shape_sha256(_input(), base) != ask_shape_sha256(_input(), allow)
+    # At every default the digest is the request's alone, as a build without the
+    # settings hashed it: an upgrade keeps the stored precedents.
+    excluded = {"query", "org", "namespace", "run_id", "precedents", "user_id", "session_id"}
+    request = _input().model_dump(exclude=excluded, exclude_defaults=True)
+    canonical = json.dumps(request, sort_keys=True, default=str, separators=(",", ":"))
+    assert ask_shape_sha256(_input(), base) == hashlib.sha256(canonical.encode()).hexdigest()
 
 
 @pytest.mark.asyncio

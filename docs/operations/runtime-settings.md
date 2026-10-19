@@ -31,7 +31,7 @@ ch_host = "clickhouse"  (env)
 | `dashboard`     | the model configuration saved in Settings → Models & keys                                |
 | `env`           | the process environment                                                                  |
 | `env_file`      | the dotenv file (`LOOM_ENV_FILE`, default `.env`), also when copied into the environment |
-| `settings_file` | the YAML settings file (`LOOM_SETTINGS_FILE`)                                            |
+| `settings_file` | the YAML settings file (`LOOM_SETTINGS_FILE`), also when `scripts/serve.sh` exports it   |
 | `inferred`      | filled in at startup from other settings (the LLM provider, a local model's width)       |
 | `default`       | the built-in default                                                                     |
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from pydantic import TypeAdapter, ValidationError
 from pydantic.fields import FieldInfo
 from pydantic_settings import PydanticBaseSettingsSource
 
@@ -32,9 +33,26 @@ class Recorded(PydanticBaseSettingsSource):
         # A dotenv source also hands back the file's LOOM_* names no field reads.
         names = frozenset(values) & self.settings_cls.model_fields.keys()
         if self._name in ("env_file", "settings_file"):
+            fields = self.settings_cls.model_fields
             copied = frozenset(
-                n for n in names if os.environ.get(f"LOOM_{n.upper()}") == str(values[n])
+                n
+                for n in names
+                if f"LOOM_{n.upper()}" in os.environ
+                and _same(fields[n], values[n], os.environ[f"LOOM_{n.upper()}"])
             )
             LOADING[f"env_copied_from_{self._name}"] = copied
         LOADING[self._name] = names
         return values
+
+
+def _same(field: FieldInfo, file_value: Any, env_value: str) -> bool:
+    """Whether the environment holds the file's value as the field reads it: a launcher
+    exports the validated value (`web_workers: 3.0` as 3, a path stripped)."""
+    adapter: TypeAdapter[Any] = TypeAdapter(field.annotation)
+    try:
+        a, b = adapter.validate_python(file_value), adapter.validate_python(env_value)
+    except ValidationError:
+        return False
+    if isinstance(a, str) and isinstance(b, str):
+        return a.strip() == b.strip()
+    return bool(a == b)

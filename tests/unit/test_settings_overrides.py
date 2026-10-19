@@ -143,14 +143,15 @@ def test_rows_say_where_each_value_came_from(
     yaml_file = tmp_path / "loom.yaml"
     yaml_file.write_text(
         "version: 1\nsettings:\n  memory_ask_synth_budget_ratio: 0.4\n  ch_database: x\n"
-        "  web_workers: 3\n"
+        "  web_workers: 3.0\n  runtime_dir: '/run/loom '\n"
     )
     for name in [k for k in os.environ if k.startswith("LOOM_")]:
         monkeypatch.delenv(name)
     monkeypatch.setenv("LOOM_SETTINGS_FILE", str(yaml_file))
     monkeypatch.setenv("LOOM_CH_HOST", "from-env")
     monkeypatch.setenv("LOOM_CH_PORT", "9")  # the file's value, copied in as the CLI does
-    monkeypatch.setenv("LOOM_WEB_WORKERS", "3")  # exported by scripts/serve.sh
+    monkeypatch.setenv("LOOM_WEB_WORKERS", "3")  # exported by scripts/serve.sh, validated
+    monkeypatch.setenv("LOOM_RUNTIME_DIR", "/run/loom")  # and stripped
     monkeypatch.setenv("LOOM_LLM_MODEL", "gpt-4o")  # the provider is inferred from it
     loaded = settings.__class__(_env_file=str(env_file))
     monkeypatch.setattr(so, "settings", loaded)
@@ -162,6 +163,7 @@ def test_rows_say_where_each_value_came_from(
     assert by_name["memory_ask_synth_budget_ratio"]["source"] == "env_file"
     assert by_name["ch_database"]["source"] == "settings_file"
     assert by_name["web_workers"]["source"] == "settings_file"
+    assert by_name["runtime_dir"]["source"] == "settings_file"
     assert by_name["llm_model"]["source"] == "env"
     assert (by_name["llm_provider"]["value"], by_name["llm_provider"]["source"]) == (
         "openai",

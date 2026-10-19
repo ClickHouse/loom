@@ -267,3 +267,16 @@ def test_a_settings_file_the_server_would_refuse_stops_the_launcher(tmp_path: Pa
     done = _launch_real(tmp_path, "version: 1\nsettings: false\n")
     assert done.returncode != 0 and done.stdout == ""
     assert "`settings` must be a mapping" in done.stderr
+
+
+@pytest.mark.parametrize("proxies", ["10.0.0.0/8, 192.168.0.0/16", "*", "$(touch pwned) 'a'"])
+def test_a_value_with_shell_characters_reaches_uvicorn_as_written(
+    tmp_path: Path, proxies: str
+) -> None:
+    quoted = proxies.replace("'", "''")
+    done = _launch_real(
+        tmp_path, f"version: 1\nsettings:\n  web_workers: 1\n  trusted_proxies: '{quoted}'\n"
+    )
+    assert done.returncode == 0, done.stderr
+    assert f"--forwarded-allow-ips={proxies} runtime=" in done.stdout
+    assert not (ROOT / "pwned").exists()
