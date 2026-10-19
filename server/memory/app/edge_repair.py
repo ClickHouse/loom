@@ -9,14 +9,11 @@ from datetime import datetime
 from typing import Any, NamedTuple
 
 from server.core.datetimes import naive_utc_now, to_naive_utc
-from server.memory.app.graph_holders import rows_holding, versions_held
+from server.memory.app import graph_holders, projections
 from server.memory.app.projection_failures import (
     EDGES_CLOSE,
     insert_projection_failures,
     projection_failure_row,
-)
-from server.memory.app.projections import (
-    end_edges,
 )
 from server.memory.domain.temporal_sql import (
     EDGE_HOLDS_VALUE_SQL,
@@ -101,7 +98,7 @@ async def close_late_edges(
     `entities`). The edges between two of the entities `keep` stay. Safe to run twice."""
     holder = edge_holder_sql(entities)
     version = [(memory_id, content_sha256)]
-    if await rows_holding(org, namespace, version, ch=ch, holder=holder):
+    if await graph_holders.rows_holding(org, namespace, version, ch=ch, holder=holder):
         return
     if ended_at is None:
         ended_at = await value_ended_at(
@@ -129,7 +126,9 @@ async def end_overtaken_edges(
     held: set[tuple[str, str]] = set()
     try:
         holding = [(memory_id, sha) for memory_id, _, sha in versions]
-        held = await versions_held(input.org, input.namespace, holding, ch=ch, holder=holder)
+        held = await graph_holders.versions_held(
+            input.org, input.namespace, holding, ch=ch, holder=holder
+        )
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
         closes = [
             EdgeClose(mid, key, sha, list(entities), high=(mid, sha) in high)
@@ -275,4 +274,4 @@ async def _end_edges_of(
         for p in pairs
         if not {str(p["entity_a"]), str(p["entity_b"])} <= kept
     ]
-    await end_edges(ch, org=org, namespace=namespace, ends=ends, open_only=True)
+    await projections.end_edges(ch, org=org, namespace=namespace, ends=ends, open_only=True)

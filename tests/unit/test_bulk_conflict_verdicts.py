@@ -492,7 +492,7 @@ async def test_the_bulk_audit_counts_a_conflict_only_once_its_mark_landed(monkey
 
     for name in ("write_entity_vectors", "write_entity_edges", "write_entity_triples"):
         monkeypatch.setattr(bulk_set, name, nothing)
-    monkeypatch.setattr(bulk_set, "_write_derived_facts", nothing)
+    monkeypatch.setattr(bulk_set, "write_derived_facts", nothing)
 
     async def mark(**k) -> str:
         await asyncio.sleep(0.01)  # a round trip: the other legs run meanwhile

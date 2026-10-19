@@ -10,11 +10,12 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now, parse_iso_dt
-from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
+from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
+from server.memory.app import graph_holders, projections
 from server.memory.app.graph_holders import (
+    as_bulk_write,
     holds_graph_facts,
     live_holders,
-    rows_holding,
     stated_by_live_rows,
 )
 from server.memory.app.projection_errors import (
@@ -30,7 +31,6 @@ from server.memory.app.projection_failures import (
 )
 from server.memory.app.projections import (
     close_triples,
-    end_edges,
     end_triples_now,
     entity_triple_row,
     open_triples_among,
@@ -90,7 +90,7 @@ async def _holds_its_value(row: Mapping[str, Any], *, ch: Any) -> bool:
     """Whether the stored row still holds `row`'s value (`HOLDS_VALUE_SQL`)."""
     version = [(str(row["memory_id"]), str(row["content_sha256"]))]
     key = (str(row["agent"]), str(row["user_id"]), str(row["session_id"]), str(row["memory_key"]))
-    held = await rows_holding(
+    held = await graph_holders.rows_holding(
         row["org"], row["namespace"], version, ch=ch, holder=(HOLDS_VALUE_SQL, {}), key=key
     )
     return bool(held)
@@ -100,7 +100,7 @@ async def _write_stated_relations(
     row: Mapping[str, Any], value: Any, relations: list[tfr.Triple], *, op: str, ch: Any
 ) -> None:
     try:
-        write, results = _as_bulk_write(row, value, relations)
+        write, results = as_bulk_write(row, value, relations)
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
         log.warning("%s: relations not projected: %s", op, e)
         return
@@ -188,12 +188,12 @@ async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
     gone = [t for t in linked if t not in held]
     opened = await open_triples_among(ch, org=input.org, namespace=input.namespace, triples=gone)
     if opened:
-        await _write_follow_plan(input, tfr.FollowPlan(closes=sorted(opened), inserts=[]), ch=ch)
+        await write_follow_plan(input, tfr.FollowPlan(closes=sorted(opened), inserts=[]), ch=ch)
     await end_triples_now(ch, org=input.org, namespace=input.namespace, triples=gone)
-    await _after_the_close(input, gone, held, ch=ch)
+    await after_the_close(input, gone, held, ch=ch)
 
 
-async def _after_the_close(
+async def after_the_close(
     input: Any,
     gone: list[tfr.Triple],
     held: frozenset[tfr.Triple],
@@ -251,7 +251,7 @@ async def _close_dropped_edges(
     )
     held = held | await stated_by_live_rows(input.org, input.namespace, others, ch=ch)
     ends = tfr.edge_ends(gone, held, rows, naive_utc_now())
-    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends)
+    await projections.end_edges(ch, org=input.org, namespace=input.namespace, ends=ends)
 
 
 async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: Any) -> None:
@@ -351,35 +351,7 @@ async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: An
 _FALLBACK_ROWS = 8
 
 
-def _as_bulk_write(
-    row: Mapping[str, Any], value: Any, relations: list[tfr.Triple]
-) -> tuple[MemoryBulkSetInput, list[_BulkSetResult]]:
-    """A point write's row as the one-entry bulk write the triple writer reads."""
-    anchor = row.get("temporal_anchor")
-    entry = _BulkSetEntry(
-        memory_key=row["memory_key"],
-        value=value,
-        relations=relations,
-        confidence=row["confidence"],
-        temporal_anchor=anchor.isoformat() if isinstance(anchor, datetime) else anchor,
-        valid_at=row.get("valid_at"),
-        valid_to=row.get("valid_to"),
-    )
-    write = MemoryBulkSetInput(
-        org=row["org"],
-        namespace=row["namespace"],
-        agent=row["agent"],
-        user_id=row["user_id"],
-        session_id=row["session_id"],
-        entries=[entry],
-    )
-    result = _BulkSetResult(
-        memory_key=entry.memory_key, version=int(row["version"]), memory_id=str(row["memory_id"])
-    )
-    return write, [result]
-
-
-async def _write_derived_facts(
+async def write_derived_facts(
     input: MemoryBulkSetInput,
     results: list[_BulkSetResult],
     *,
@@ -471,7 +443,7 @@ async def _write_derived_facts(
     )
 
 
-async def _write_follow_plan(input: Any, plan: tfr.FollowPlan, *, ch: Any) -> tuple[int, int]:
+async def write_follow_plan(input: Any, plan: tfr.FollowPlan, *, ch: Any) -> tuple[int, int]:
     """Write the plan's successors, then close its triples: a close that lands after
     a failed insert would leave a replay nothing open to follow. Returns (closed,
     inserted), not counting a triple opened again after its close."""

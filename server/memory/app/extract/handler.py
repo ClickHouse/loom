@@ -696,7 +696,7 @@ from server.memory.app.set_entities import (  # noqa: E402, F401  (re-export)
     _candidate_entities_from_value,
 )
 from server.memory.app.triple_projections import (  # noqa: E402  (re-export)
-    _write_derived_facts,
+    write_derived_facts,
 )
 
 __all__ = [
@@ -704,7 +704,7 @@ __all__ = [
     "handle_memory_set_from_messages",
     "project_memory_set_entities",
     "_candidate_entities_from_value",
-    "_write_derived_facts",
+    "write_derived_facts",
     "_best_support_span",
     "_evidence_ids_by_memory_key",
     "_evidence_refs_by_memory_key",

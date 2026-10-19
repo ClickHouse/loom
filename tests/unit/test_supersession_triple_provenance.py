@@ -128,7 +128,7 @@ async def test_a_successor_is_repaired_when_its_old_value_is_kept(
         return []
 
     monkeypatch.setattr(triple_projections, "repair_intervals", _repair)
-    await triple_projections._write_follow_plan(
+    await triple_projections.write_follow_plan(
         SimpleNamespace(org="o", namespace="n"), plan, ch=_Stored()
     )
     assert repaired == [{**stored, "valid_from": None, "seen_at": datetime(2026, 1, 1)}]

@@ -7,7 +7,8 @@ from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any, NamedTuple
 
-from server.memory.app.graph_holders import held_by_unlinked_rows, rows_holding, stated_by_live_rows
+from server.memory.app import graph_holders
+from server.memory.app.graph_holders import held_by_unlinked_rows, stated_by_live_rows
 from server.memory.app.projection_errors import TriplesRepairFailed
 from server.memory.app.projections import (
     entity_edge_row,
@@ -29,7 +30,7 @@ async def rows_still_holding(
     """The rows of `hashes` (id to `content_sha256`) whose value is still that one and
     that may still hold graph facts: a row revised or retired since an Undo is its
     revision's or retirement's to reconcile, not the Undo's."""
-    return sorted(await rows_holding(org, namespace, list(hashes.items()), ch=ch))
+    return sorted(await graph_holders.rows_holding(org, namespace, list(hashes.items()), ch=ch))
 
 
 async def _held_now(input: Any, ids: list[str], *, ch: Any) -> frozenset[Any]:

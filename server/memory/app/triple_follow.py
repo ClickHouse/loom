@@ -7,14 +7,14 @@ import logging
 import uuid
 from typing import Any, NamedTuple
 
-from server.memory.app.graph_holders import _carried_by, _text, stated_by_live_rows
+from server.memory.app.graph_holders import as_text, carried_by, stated_by_live_rows
 from server.memory.app.projections import (
     end_triples_now,
 )
 from server.memory.app.triple_projections import (
-    _after_the_close,
-    _write_follow_plan,
+    after_the_close,
     linked_triples,
+    write_follow_plan,
 )
 from server.memory.domain import triples_follow_rows as tfr
 from server.memory.domain.temporal_sql import (
@@ -131,7 +131,7 @@ async def follow_row_supersessions(
     plan = tfr.merge_plans(
         plans, kept=await stated_by_live_rows(input.org, input.namespace, closing, ch=ch)
     )
-    closed, inserted = await _write_follow_plan(input, plan, ch=ch)
+    closed, inserted = await write_follow_plan(input, plan, ch=ch)
     # Read again, not taken from the plan: a replay plans no close for a fact an
     # attempt closed, and must still end what came after it.
     losers = sorted({lo for lo, _wi in followed})
@@ -149,7 +149,7 @@ async def follow_row_supersessions(
         stated_ends_only=True,
         ends=plan.ends,
     )
-    await _after_the_close(input, gone, held, ch=ch)
+    await after_the_close(input, gone, held, ch=ch)
     if closed or inserted:
         log.info(
             "triples follow rows: of %d pair(s), closed %d and wrote %d successor triple(s)",
@@ -198,7 +198,7 @@ async def _plan_chunk(
         return tfr.FollowPlan(closes=[], inserts=[]), unread
     rows = [r for h in held for r in (h.loser, h.head) if r]
     stated, hashes = await _triples_stated(input, rows, ch=ch)
-    holds = await _carried_by(
+    holds = await carried_by(
         input.org, input.namespace, [h.head for h in held if h.head], stated, hashes, ch=ch
     )
     sups = [_supersession(h, stated, hashes, holds) for h in held]
@@ -240,8 +240,8 @@ def _supersession(
     lo, head = held.loser, held.head or {}
     head_id = str(head.get("id") or "")
     return tfr.RowSupersession(
-        loser_text=_text(lo.get("value")),
-        winner_text=_text(head.get("value")),
+        loser_text=as_text(lo.get("value")),
+        winner_text=as_text(head.get("value")),
         winner_key=str(head.get("memory_key") or ""),
         winner_valid_from=head.get("valid_at"),
         # Undated: when the winner was written. A replay reads its latest

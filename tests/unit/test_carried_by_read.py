@@ -1,4 +1,4 @@
-"""The value history `_carried_by` reads decides which triples a live row keeps
+"""The value history `carried_by` reads decides which triples a live row keeps
 (follow, the close of dropped facts, Undo): it must see a version written a moment
 ago on another replica."""
 
@@ -30,7 +30,7 @@ async def test_the_version_read_is_sequentially_consistent(monkeypatch) -> None:
     )
     ch = _StubCH()
     triple = ("user", "live_in", "paris")
-    await graph_holders._carried_by(
+    await graph_holders.carried_by(
         "o",
         "n",
         [{"id": "m1", "content_sha256": "new", "value": '"User lives in Rome."'}],

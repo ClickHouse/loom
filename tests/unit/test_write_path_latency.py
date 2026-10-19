@@ -386,7 +386,6 @@ async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) 
         edge_repair,
         graph_holders,
         set_entities,
-        triple_projections,
     )
 
     def _mined(*_: Any) -> list[str]:
@@ -398,7 +397,6 @@ async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) 
         written.append(bulk.entries[0].entities)
 
     monkeypatch.setattr(set_entities, "set_entities_for_projection", _mined)
-    monkeypatch.setattr(edge_links, "set_entities_for_projection", _mined)
     monkeypatch.setattr(edge_links, "write_entity_edges", _edges)
 
     async def _held(*_: Any, **__: Any) -> set[str]:
@@ -408,9 +406,6 @@ async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) 
         return None
 
     monkeypatch.setattr(graph_holders, "rows_holding", _held)
-    monkeypatch.setattr(edge_repair, "rows_holding", _held)
-    monkeypatch.setattr(edge_links, "rows_holding", _held)
-    monkeypatch.setattr(triple_projections, "rows_holding", _held)
     monkeypatch.setattr(edge_repair, "end_overtaken_edges", _no_overtaken)
     monkeypatch.setattr(edge_links, "end_overtaken_edges", _no_overtaken)
     n = await edge_links.project_memory_set_entities(
@@ -427,7 +422,7 @@ async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) 
 
 @pytest.mark.asyncio
 async def test_a_projection_of_a_value_revised_away_writes_nothing(monkeypatch) -> None:
-    from server.memory.app import edge_links, edge_repair, graph_holders, triple_projections
+    from server.memory.app import edge_links, graph_holders
 
     written: list[Any] = []
 
@@ -439,9 +434,6 @@ async def test_a_projection_of_a_value_revised_away_writes_nothing(monkeypatch) 
 
     monkeypatch.setattr(edge_links, "write_entity_edges", _edges)
     monkeypatch.setattr(graph_holders, "rows_holding", _revised)
-    monkeypatch.setattr(edge_repair, "rows_holding", _revised)
-    monkeypatch.setattr(edge_links, "rows_holding", _revised)
-    monkeypatch.setattr(triple_projections, "rows_holding", _revised)
     n = await edge_links.project_memory_set_entities(
         _set_input(),
         memory_key="k",

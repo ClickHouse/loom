@@ -87,7 +87,7 @@ def _wire(
         _bulk_set_mod, "write_entity_edges", spans.leg("entity_edges", raises=edges_raise)
     )
     monkeypatch.setattr(_bulk_set_mod, "write_entity_triples", spans.leg("entity_triples"))
-    monkeypatch.setattr(_bulk_set_mod, "_write_derived_facts", spans.leg("derived_facts"))
+    monkeypatch.setattr(_bulk_set_mod, "write_derived_facts", spans.leg("derived_facts"))
     monkeypatch.setattr(mx, "record_input_projection_failure", _failure)
     monkeypatch.setattr(_bulk_set_mod, "record_input_projection_failure", _failure)
     return failures
@@ -250,7 +250,7 @@ async def test_entity_texts_ride_the_value_embedding_batch(monkeypatch: pytest.M
     monkeypatch.setattr(_bulk_set_mod, "_audit_bulk_write", _none)
     monkeypatch.setattr(_bulk_set_mod, "write_entity_edges", _none)
     monkeypatch.setattr(_bulk_set_mod, "write_entity_triples", _none)
-    monkeypatch.setattr(_bulk_set_mod, "_write_derived_facts", _none)
+    monkeypatch.setattr(_bulk_set_mod, "write_derived_facts", _none)
 
     out = await mx.handle_memory_bulk_set(_input())
     assert len(out.written) == 2

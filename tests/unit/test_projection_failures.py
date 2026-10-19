@@ -496,7 +496,7 @@ async def test_a_failed_replay_keeps_only_the_entries_it_wrote(monkeypatch) -> N
     # acts on k2.
     from datetime import datetime
 
-    from server.memory.app import edge_repair, graph_holders, projections
+    from server.memory.app import graph_holders, projections
     from server.memory.app.projection_errors import TriplesRepairFailed
     from server.memory.domain.graph_quality import IntervalRepair
 
@@ -514,7 +514,6 @@ async def test_a_failed_replay_keeps_only_the_entries_it_wrote(monkeypatch) -> N
         raise TriplesRepairFailed(datetime(2026, 10, 1, 9), RuntimeError("retire down"), [made])
 
     monkeypatch.setattr(graph_holders, "versions_held", holding)
-    monkeypatch.setattr(edge_repair, "versions_held", holding)
     monkeypatch.setattr(projections, "write_entity_triples", fails)
     assert not (await retry_failures([failure], ch=_FailureRowCH(failure)))[0].resolved
     payload = failure.payload
@@ -889,7 +888,6 @@ async def test_a_failed_late_edges_cleanup_records_when_the_value_ended(monkeypa
         recorded.extend(json.loads(r["payload"]) for r in rows)
 
     monkeypatch.setattr(graph_holders, "versions_held", none_held)
-    monkeypatch.setattr(edge_repair, "versions_held", none_held)
     monkeypatch.setattr(edge_repair, "value_ended_at", value_ended_at)
     monkeypatch.setattr(edge_repair, "_end_edges_of", end_fails)
     monkeypatch.setattr(edge_repair, "insert_projection_failures", record)

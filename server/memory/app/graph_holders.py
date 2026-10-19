@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, NamedTuple
 
 from server.core.datetimes import naive_utc_now, parse_iso_dt
+from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.domain import triples_follow_rows as tfr
 from server.memory.domain.temporal_sql import (
     EDGE_HOLDS_VALUE_SQL,
@@ -29,7 +30,35 @@ def holds_graph_facts(row: Mapping[str, Any]) -> bool:
     return row.get("sensitivity") != "high"
 
 
-def _text(raw: Any) -> str:
+def as_bulk_write(
+    row: Mapping[str, Any], value: Any, relations: list[tfr.Triple]
+) -> tuple[MemoryBulkSetInput, list[_BulkSetResult]]:
+    """A point write's row as the one-entry bulk write the triple writer reads."""
+    anchor = row.get("temporal_anchor")
+    entry = _BulkSetEntry(
+        memory_key=row["memory_key"],
+        value=value,
+        relations=relations,
+        confidence=row["confidence"],
+        temporal_anchor=anchor.isoformat() if isinstance(anchor, datetime) else anchor,
+        valid_at=row.get("valid_at"),
+        valid_to=row.get("valid_to"),
+    )
+    write = MemoryBulkSetInput(
+        org=row["org"],
+        namespace=row["namespace"],
+        agent=row["agent"],
+        user_id=row["user_id"],
+        session_id=row["session_id"],
+        entries=[entry],
+    )
+    result = _BulkSetResult(
+        memory_key=entry.memory_key, version=int(row["version"]), memory_id=str(row["memory_id"])
+    )
+    return write, [result]
+
+
+def as_text(raw: Any) -> str:
     """The prose a stored `value` carries, decoded: names are matched in it."""
     from server.memory.domain.triple_provenance import carrier_text
     from server.memory.store.rows import parse_memory_value
@@ -37,7 +66,7 @@ def _text(raw: Any) -> str:
     return carrier_text(parse_memory_value(raw))
 
 
-async def _carried_by(
+async def carried_by(
     org: str,
     namespace: str,
     heads: list[dict[str, Any]],
@@ -78,11 +107,11 @@ async def _carried_by(
             """,
             params={"org": org, "ns": namespace, "keys": old},
         )
-        old_text = {(str(v["id"]), str(v["sha"])): _text(v["value"]) for v in versions}
+        old_text = {(str(v["id"]), str(v["sha"])): as_text(v["value"]) for v in versions}
     declared = await load_relation_cardinality(org, namespace) if old else {}
     return {
         mid: tfr.carried(
-            _text(h.get("value")),
+            as_text(h.get("value")),
             current[mid],
             stated_now.get(mid, frozenset()),
             {
@@ -267,7 +296,7 @@ async def live_holders(
     if not heads:
         return held
     stated_now = await _stated_links(org, namespace, list(heads.values()), ch=ch)
-    holds = await _carried_by(org, namespace, list(heads.values()), stated_now, hashes, ch=ch)
+    holds = await carried_by(org, namespace, list(heads.values()), stated_now, hashes, ch=ch)
     for mid, carried in holds.items():
         head = heads[mid]
         for triple in carried:
@@ -401,7 +430,7 @@ async def _unlinked_holders(
     held: dict[tfr.Triple, set[Holder]] = {}
     for f in found:
         triple = (str(f["subject"]), str(f["relation"]), str(f["object"]))
-        if tfr.still_states(_text(f["value"]), triple):
+        if tfr.still_states(as_text(f["value"]), triple):
             holder = Holder(str(f["id"]), str(f["sha"]), f["updated_at"])
             held.setdefault(triple, set()).add(holder)
     return held

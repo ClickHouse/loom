@@ -69,14 +69,14 @@ async def test_an_entry_that_wrote_no_row_links_nothing() -> None:
 def test_names_are_matched_in_the_decoded_value() -> None:
     import json
 
-    from server.memory.app.graph_holders import _text
+    from server.memory.app.graph_holders import as_text
     from server.memory.domain.triples_follow_rows import still_states
 
     # Stored with ensure_ascii, "Zürich" is `Zürich` until decoded.
     stored = json.dumps("I currently live in Zürich")
     assert not still_states(stored, ("user", "live_in", "zürich"))
-    assert still_states(_text(stored), ("user", "live_in", "zürich"))
-    assert _text(json.dumps({"city": "Zürich"})) == "city Zürich"
+    assert still_states(as_text(stored), ("user", "live_in", "zürich"))
+    assert as_text(json.dumps({"city": "Zürich"})) == "city Zürich"
 
 
 async def test_a_row_link_lands_before_its_triple() -> None:
@@ -188,7 +188,7 @@ async def test_a_first_write_states_relations_only_while_its_row_holds_the_value
 ) -> None:
     # The fence its edges have: a first write another write revised first states
     # nothing; one revised while it wrote closes what it wrote, as a revision would.
-    from server.memory.app import edge_links, edge_repair, graph_holders, triple_projections
+    from server.memory.app import graph_holders, triple_projections
 
     answers, seen, closed = list(held), [], []
 
@@ -205,9 +205,6 @@ async def test_a_first_write_states_relations_only_while_its_row_holds_the_value
         closed.append(ids)
 
     monkeypatch.setattr(graph_holders, "rows_holding", holding)
-    monkeypatch.setattr(edge_repair, "rows_holding", holding)
-    monkeypatch.setattr(edge_links, "rows_holding", holding)
-    monkeypatch.setattr(triple_projections, "rows_holding", holding)
     monkeypatch.setattr(triple_projections, "_write_stated_relations", write)
     monkeypatch.setattr(triple_projections, "reconcile_row_facts", reconcile)
     row = {
@@ -288,7 +285,7 @@ async def test_a_bulk_write_reconciles_only_the_rows_it_revised(monkeypatch) -> 
         "write_entity_vectors",
         "write_entity_edges",
         "write_entity_triples",
-        "_write_derived_facts",
+        "write_derived_facts",
         "_bulk_settle_verdicts",
         "_bulk_audit",
     ):

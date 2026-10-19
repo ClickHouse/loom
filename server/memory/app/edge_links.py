@@ -12,8 +12,9 @@ from typing import Any
 from server.core.ch import get_client
 from server.core.repo_base import param_slices, query_all_sliced
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
+from server.memory.app import graph_holders, projections, set_entities
 from server.memory.app.edge_repair import end_overtaken_edges
-from server.memory.app.graph_holders import holds_graph_facts, rows_holding
+from server.memory.app.graph_holders import as_bulk_write, holds_graph_facts
 from server.memory.app.projection_errors import (
     bulk_projection_payload,
     record_input_projection_failure,
@@ -23,12 +24,10 @@ from server.memory.app.projection_failures import (
     record_projection_failure,
 )
 from server.memory.app.projections import (
-    end_edges,
     value_sha256,
     write_entity_edges,
 )
-from server.memory.app.set_entities import declared_entities, set_entities_for_projection
-from server.memory.app.triple_projections import _as_bulk_write
+from server.memory.app.set_entities import declared_entities
 from server.memory.domain.temporal_sql import (
     edge_holder_sql,
 )
@@ -66,7 +65,7 @@ async def project_memory_set_entities(
 
     if ents is None:
         with traced("entities.extract"):
-            ents = set_entities_for_projection(input, value)
+            ents = set_entities.set_entities_for_projection(input, value)
     if len(ents) < 2:
         # <2 entities = no co-occurrence pair. Lone nodes come from the
         # bulk/worker path; edges are what point-writes were missing.
@@ -94,7 +93,7 @@ async def project_memory_set_entities(
     # A revision that ran first closed what it dropped already: this value is not current.
     # A row made 'high' holds these edges only if it still names every entity.
     key = (str(input.agent), str(input.user_id), str(input.session_id), memory_key)
-    if not await rows_holding(
+    if not await graph_holders.rows_holding(
         input.org,
         input.namespace,
         [(memory_id, content_sha256)],
@@ -192,7 +191,7 @@ async def _drop_links_of(
     for memory_id, a, b in drop:
         at = version_time(versions[memory_id])
         ends[(a, b)] = min(ends.get((a, b), at), at)
-    await end_edges(
+    await projections.end_edges(
         ch,
         org=input.org,
         namespace=input.namespace,
@@ -288,10 +287,10 @@ async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, 
         return
     scope = SimpleNamespace(tags=row.get("tags"), source_trace=row.get("source_trace", ""))
     # From the new value only: the row's stored `entities` describe the value it replaced.
-    ents = set_entities_for_projection(scope, value)
+    ents = set_entities.set_entities_for_projection(scope, value)
     if len(ents) < 2:
         return
-    write, results = _as_bulk_write(row, value, [])
+    write, results = as_bulk_write(row, value, [])
     entry = write.entries[0].model_copy(update={"entities": ents})
     write = write.model_copy(update={"entries": [entry]})
     try:

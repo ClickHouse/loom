@@ -204,7 +204,7 @@ async def test_a_bulk_write_records_a_failed_repair_under_the_new_name(monkeypat
     for name in (
         "write_entity_vectors",
         "write_entity_edges",
-        "_write_derived_facts",
+        "write_derived_facts",
         "_bulk_settle_verdicts",
         "_bulk_audit",
     ):

@@ -59,7 +59,7 @@ from server.memory.app.projections import (
 from server.memory.app.provenance import writer_actor
 from server.memory.app.set_commit import set_next
 from server.memory.app.set_entities import declared_entities
-from server.memory.app.triple_projections import _write_derived_facts, reconcile_row_facts
+from server.memory.app.triple_projections import reconcile_row_facts, write_derived_facts
 from server.memory.domain.conflicts import kept_versions
 from server.memory.domain.memory_types import is_embedded
 
@@ -803,7 +803,7 @@ async def _bulk_run_projections(
         ),
         _projection(
             "derived_facts",
-            lambda: _write_derived_facts(p_input, p_results, ch=ch, entity_map=entity_resolution),
+            lambda: write_derived_facts(p_input, p_results, ch=ch, entity_map=entity_resolution),
         ),
     ]
     await asyncio.gather(*(leg() for leg in _legs))
