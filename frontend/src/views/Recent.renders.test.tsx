@@ -117,12 +117,16 @@ describe("Recent card renders", () => {
       timeout: 3000,
     });
     renders.count = 0;
+    // The cards stay on screen until the typed filter is read: a list that unmounted them
+    // would render no card either.
     act(() => {
       fireEvent.change(box, { target: { value: "milk agent:c" } });
     });
+    expect(screen.getByText("coffee_pref")).toBeInTheDocument();
     act(() => {
       fireEvent.change(box, { target: { value: "milk agent:cl" } });
     });
+    expect(screen.getByText("coffee_pref")).toBeInTheDocument();
     expect(renders.count).toBe(0);
   });
 });

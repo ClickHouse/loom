@@ -182,11 +182,12 @@ function MemoryList() {
   }, []);
   useEffect(() => {
     if (!memoryTagFilter) return;
-    setQuery((q) =>
-      parseSearchQuery(q).tags.some((t) => t.toLowerCase() === memoryTagFilter.toLowerCase())
-        ? q
-        : `${q} tag:${memoryTagFilter}`.trim(),
-    );
+    setQuery((q) => {
+      if (parseSearchQuery(q).tags.some((t) => t.toLowerCase() === memoryTagFilter.toLowerCase())) return q;
+      // A tag picked elsewhere applies at once, as a card's does.
+      applyNow.current = true;
+      return `${q} tag:${memoryTagFilter}`.trim();
+    });
     setMemoryTagFilter(null);
   }, [memoryTagFilter, setMemoryTagFilter]);
 
@@ -197,10 +198,6 @@ function MemoryList() {
   // newest 1,000 and keeps the matching ones. What is typed is debounced, so `tag:…` sends
   // one read, not one per key; a chip applies at once.
   const typedNow = useSameFilter({ tags: queryTags, agent: queryAgent ?? "" });
-  // Built from the tags' text (a tag holds no space), so a keystroke that leaves the tags as
-  // they were hands every memoised card the same set.
-  const activeTagsText = queryTags.map((t) => t.toLowerCase()).join(" ");
-  const activeTags = useMemo(() => new Set(activeTagsText.split(" ").filter(Boolean)), [activeTagsText]);
   const [typed, setTyped] = useState(typedNow);
   useEffect(() => {
     // A tag chip applies at once; typing waits for a pause.
@@ -209,6 +206,11 @@ function MemoryList() {
     return () => clearTimeout(t);
   }, [typedNow]);
   const filterPending = !sameFilter(typedNow, typed);
+  // The list filters by what the read was asked for, so a half-typed `tag:`/`agent:` keeps
+  // the cards on screen. Built from the tags' text (a tag holds no space), so a keystroke that
+  // leaves the tags as they were hands every memoised card the same set.
+  const activeTagsText = typed.tags.map((t) => t.toLowerCase()).join(" ");
+  const activeTags = useMemo(() => new Set(activeTagsText.split(" ").filter(Boolean)), [activeTagsText]);
   // memory.list matches an agent exactly: a typed agent the list has seen is sent as it is
   // written; one it has not (its rows all past the first page) is sent as typed, so its case
   // must match.
@@ -341,7 +343,7 @@ function MemoryList() {
     // The agent chip and the `agent:` / `tag:` query syntax. What was typed keeps its case,
     // so a typed tag or agent and the rows' compare lowercased (humans and agents both
     // write tags).
-    if (queryAgent) all = all.filter((e) => (e.agent || "").toLowerCase() === queryAgent.toLowerCase());
+    if (typed.agent) all = all.filter((e) => (e.agent || "").toLowerCase() === typed.agent.toLowerCase());
     else if (agentFilter != null) all = all.filter((e) => (e.agent || "") === agentFilter);
     if (activeTags.size > 0) {
       // AND-intersection: row must carry EVERY required tag.
@@ -361,7 +363,7 @@ function MemoryList() {
         .sort((a, b) => (rank.get(a.memory_key) ?? Infinity) - (rank.get(b.memory_key) ?? Infinity));
     }
     return all;
-  }, [entries, searchHits, searchExtra, status, conflictKeys, showDeleted, agentFilter, queryAgent, activeTags]);
+  }, [entries, searchHits, searchExtra, status, conflictKeys, showDeleted, agentFilter, typed.agent, activeTags]);
 
   // The agents the namespace's rows were written by, gathered as pages and filters load
   // (sentinels "*" and "-" are not writers); a new namespace starts again.
