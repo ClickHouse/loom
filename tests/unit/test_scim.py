@@ -2031,6 +2031,11 @@ def test_a_type_is_compared_trimmed_everywhere(client: TestClient, world) -> Non
     assert uid == scim.user_id("lee@example.com")  # keyed as the work entry
     by_mail = 'emails[type eq "work"].value eq "lee@example.com"'
     assert client.get("/scim/v2/Users", params={"filter": by_mail}).json()["totalResults"] == 1
+    same = {"op": "add", "path": "emails", "value": [{"value": "lee@example.com", "type": "work"}]}
+    assert len(_patch(client, uid, same).json()["emails"]) == 2  # not added again
+    plain = {"op": "remove", "path": "emails", "value": [{"type": "work"}]}
+    r = _patch(client, uid, plain)  # the work entry goes: a@ keys it, refused
+    assert r.status_code == 400 and r.json()["scimType"] == "mutability"
 
 
 def test_a_blank_primary_entry_does_not_take_the_flag(client: TestClient, world) -> None:

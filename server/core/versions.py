@@ -3,8 +3,10 @@
 `next_version` serves the tables several replicas write for one key at once
 (revoked_tokens, sso_links, scim_users, machine_identities).
 loom.service_accounts and a refresh grant's loom.oauth_state row stay on the
-host's clock: each is rewritten only under a claim on its key, past the
-version of the row it read there, so that is enough to replace it."""
+host's clock, each written under a claim on its key. A revoked service
+account row and a rotated refresh grant go past the version of the row they
+read; a new service account under a name another host just revoked can land
+below it when that host's clock runs ahead."""
 
 from __future__ import annotations
 

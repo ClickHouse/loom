@@ -9,6 +9,7 @@ behind one URL do. Each holds its own revocation snapshot, refreshed every
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from collections.abc import Iterator
@@ -39,6 +40,8 @@ _REFRESH_S = 3.0
 
 @pytest.fixture
 def replicas(ch_client) -> Iterator[tuple[str, str, str, Any]]:
+    if os.environ.get("LOOM_CH_SECURE", "").lower() == "true":
+        pytest.skip("seeds local namespaces rows; skip against Cloud CH")
     org = unique_org("scim2")
     email = f"scim2-{uuid.uuid4().hex[:6]}@corp.example"
     ns = _seed(ch_client, org, email)
