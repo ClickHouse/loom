@@ -3117,10 +3117,11 @@ async def test_an_undo_keeps_its_edge_open_past_another_relations_end(ch, org) -
 
 
 def _date_undos_at(monkeypatch: Any, clock: Any) -> None:
-    """Date the next Undo by `clock`: the restore reads its own clock, and a direct
-    reconcile reads the projections'."""
+    """Date the next Undo by `clock`: the restore dates its facts by its version's time,
+    and a direct reconcile reads the projections' clock."""
     from server.memory.app import entity_projections, restore
 
+    monkeypatch.setattr(restore, "version_time", lambda version: clock())
     monkeypatch.setattr(restore, "naive_utc_now", clock)
     monkeypatch.setattr(entity_projections, "naive_utc_now", clock)
 
