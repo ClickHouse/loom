@@ -7,8 +7,8 @@ shows that env with the stored overrides laid over it.
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
-import socket
 import sys
 from typing import Any
 
@@ -25,10 +25,10 @@ def _print_rows(rows: list[dict[str, Any]], as_json: bool) -> None:
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
-    from server.core import runtime_overrides, settings_overrides
+    from server.core import settings_overrides
 
     async def _go(ch: Any) -> int:
-        settings_overrides.adopt(await runtime_overrides.load(ch=ch))
+        await settings_overrides.refresh(ch=ch)
         rows = settings_overrides.rows(prefix=args.prefix, changed=args.changed)
         _print_rows(rows, args.json)
         return 0
@@ -45,13 +45,10 @@ def _cmd_change(args: argparse.Namespace) -> int:
 
     async def _go(ch: Any) -> int:
         try:
-            previous = settings_overrides.row(args.name)["value"]
-            if clearing:
-                await settings_overrides.clear(args.name, ch=ch)
-            else:
-                # The raw text, validated as the environment variable would be.
-                await settings_overrides.put(args.name, args.value, ch=ch)
-            row = settings_overrides.row(args.name)
+            # The raw text, validated as the environment variable would be.
+            previous, row = await settings_overrides.change(
+                args.name, None if clearing else args.value, clear=clearing, ch=ch
+            )
         except LoomServerError as e:
             print(f"✗ {e.message}", file=sys.stderr)
             return 2
@@ -59,16 +56,19 @@ def _cmd_change(args: argparse.Namespace) -> int:
             "setting.changed",
             org="-",
             namespace="-",
-            actor=f"cli:{socket.gethostname()}",
+            actor=f"cli:{getpass.getuser()}",
             subject={
                 "name": args.name,
-                "value": row["value"],
+                "value": row["value"] if row else None,
                 "previous": previous,
                 "cleared": clearing,
             },
         )
-        verb = "reset" if clearing else "set"
-        print(f"✓ {verb}: {args.name} = {json.dumps(row['value'])} ({row['source']})")
+        if row is None:
+            print(f"✓ reset: {args.name} (not a setting of this build)")
+        else:
+            verb = "reset" if clearing else "set"
+            print(f"✓ {verb}: {args.name} = {json.dumps(row['value'])} ({row['source']})")
         return 0
 
     return run_connected(_go)

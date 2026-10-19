@@ -318,9 +318,12 @@ class SettingRow(BaseModel):
     # A secret shows only its length.
     value: Any
     default: Any
-    # override (settings.set), env, env_file (the dotenv file), settings_file
-    # (the YAML settings file) or default.
-    source: Literal["override", "env", "env_file", "settings_file", "default"]
+    # override (settings.set), dashboard (Models & keys), env, env_file (the dotenv
+    # file), settings_file (the YAML settings file), inferred (filled in at load from
+    # other settings) or default.
+    source: Literal[
+        "override", "dashboard", "env", "env_file", "settings_file", "inferred", "default"
+    ]
     # True: takes an override while Loom runs; False: read once at startup.
     live: bool
     description: str
@@ -332,7 +335,8 @@ class SettingsListOutput(BaseModel):
 
 class SettingSetOutput(BaseModel):
     ok: bool
-    setting: SettingRow
+    # None after clearing the override of a setting this build does not have.
+    setting: SettingRow | None
 
 
 class FleetCostRow(BaseModel):

@@ -605,12 +605,7 @@ async def admin_settings_set(request: Request, input: SettingSetInput) -> Settin
 
     set_query_tag("admin.settings_set")
     info = await require_admin(request)
-    previous = settings_overrides.row(input.name)["value"]
-    if input.clear:
-        await settings_overrides.clear(input.name)
-    else:
-        await settings_overrides.put(input.name, input.value)
-    row = settings_overrides.row(input.name)
+    previous, row = await settings_overrides.change(input.name, input.value, clear=input.clear)
     await audit.emit(
         "setting.changed",
         org=info.org if info is not None else "-",
@@ -618,12 +613,12 @@ async def admin_settings_set(request: Request, input: SettingSetInput) -> Settin
         actor=info.subject if info is not None else "dev-admin",
         subject={
             "name": input.name,
-            "value": row["value"],
+            "value": row["value"] if row else None,
             "previous": previous,
             "cleared": input.clear,
         },
     )
-    return SettingSetOutput(ok=True, setting=SettingRow(**row))
+    return SettingSetOutput(ok=True, setting=SettingRow(**row) if row else None)
 
 
 # ============================================================

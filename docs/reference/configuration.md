@@ -32,6 +32,13 @@ This page is generated from the comments above each field in `server/settings/`
 by `python scripts/codegen/settings_reference.py`; edit the comment, not this file.
 
 
+## Default changes
+
+Every change to a setting's default, from `server/settings/_history.py`. A deployment that never set the variable changes with each one.
+
+No default has changed since the history began.
+
+
 ## Auth
 
 Authentication, tokens and identity providers.
@@ -892,11 +899,11 @@ Source: `server/settings/_memory_search.py`
 | `LOOM_MEMORY_SEARCH_QUALITY_POOL_MULTIPLIER` | `int` | `3` | live | Pool widening factor for a quality-filtered search (loom_search, context.pack), applied before junk is dropped. |
 | `LOOM_MEMORY_SEARCH_PREFERENCE_FALLBACK` | `float` | `0.15` | live | Boost for any preference-typed/tagged row on any query; 0.0 makes it intent-gated (only a query naming the attribute earns +0.3). |
 | `LOOM_MEMORY_SEARCH_SOURCE_CLASS_BOOST_ELIGIBLE` | `str` | `''` | live | Comma list of source_class values whose rows may earn the user-derived rank terms (preference, prior group, reinforcement); "" = every row. Leaving out "extracted" keeps an inference from outranking a statement by its priors. |
-| `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD` | `float` | `0.3` | live | Top-hit similarity below which a search abstains (weak abstention): the scalar gate for fake embedders or LOOM_ADAPTIVE_THRESHOLDS=false; a calibrated namespace or embedder derives its own. |
+| `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD` | `float` | `0.3` |  | Top-hit similarity below which a search abstains (weak abstention): the scalar gate for fake embedders or LOOM_ADAPTIVE_THRESHOLDS=false; a calibrated namespace or embedder derives its own. |
 | `LOOM_MEMORY_SEARCH_IDENTIFIER_GROUNDING` | `bool` | `True` | live | Identifier-grounding abstain: when the query carries a salient identifier (PR/issue number, test id, @handle) and no returned hit contains any of them, abstain with abstain_code "entity_absent" regardless of the top cosine — catches the on-topic but wrong neighbour the cosine gate cannot. |
 | `LOOM_MEMORY_SEARCH_IDENTIFIER_GROUNDING_MAX_TOKENS` | `int` | `32` | live | The grounding leg applies only to queries of at most this many whitespace tokens; longer inputs (a PR body, a path list) carry incidental numbers. 0 = no cap. |
 | `LOOM_MEMORY_SEARCH_RECENCY_POOL_WEIGHT` | `float` | `0.0` | live | Recency-intent searches ("latest", "current …") re-rank the fused pool by date: the newest dated hit gains this much, the oldest and undated hits nothing. 0.0 = off. A namespace can set its own in retrieval_defaults. |
-| `LOOM_MEMORY_SEARCH_HYDE_FALLBACK_THRESHOLD` | `float` | `0.45` | live | No-probe fallback for the question→fact P25 gate (≈ P25 for text-embedding-3-small): the loom_search precision floor and calibration.get's scalar row read it. |
+| `LOOM_MEMORY_SEARCH_HYDE_FALLBACK_THRESHOLD` | `float` | `0.45` |  | No-probe fallback for the question→fact P25 gate (≈ P25 for text-embedding-3-small): the loom_search precision floor and calibration.get's scalar row read it. |
 | `LOOM_MEMORY_SEARCH_DEFAULT_MODE` | `'semantic' \| 'lexical' \| 'hybrid' \| 'bm25_hybrid' \| 'related' \| 'graph' \| 'rrf' \| 'temporal'` | `'semantic'` | live | search_mode used when the caller sets neither search_mode nor a recipe. The wire default stays "rrf"; planner shape rules still apply on top. |
 | `LOOM_MEMORY_SEARCH_REINFORCEMENT_WEIGHT` | `float` | `0.15` | live | Weight of the decayed-reinforcement rank term (recalls and positive memory.outcome signals, fading with time since last reinforcement). 0 disables; the term is capped below relevance. |
 | `LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE` | `float` | `0.1` | live | Additive penalty on rows tagged `sensitivity:medium\|high` unless the query has contact intent. 0.0 disables. |
@@ -907,7 +914,7 @@ Source: `server/settings/_memory_search.py`
 | `LOOM_MEMORY_SEARCH_SET_EXPANSION_MIN_SIMILARITY` | `float` | `0.5` | live | Similarity a set-expansion leg's row must exceed to join the pool. |
 | `LOOM_MEMORY_SEARCH_SET_EXPANSION_MAX_ADDED` | `int` | `5` | live | Most rows the set-expansion legs add to one search. |
 | `LOOM_MEMORY_EXPOSURE_LEDGER_ENABLED` | `bool` | `True` | live | Read-side exposure ledger in loom.memory_exposures: one row per read (token subject, returned keys, query digest never the text, scope) plus an hourly per-actor roll-up. Carries no user content. |
-| `LOOM_MEMORY_SEARCH_MIN_SIMILARITY` | `float` | `0.22` | live | Cosine floor: hits below it are dropped as noise (ANN always returns top_k). The backstop when rerank is bypassed or fails. |
+| `LOOM_MEMORY_SEARCH_MIN_SIMILARITY` | `float` | `0.22` |  | Cosine floor: hits below it are dropped as noise (ANN always returns top_k). The backstop when rerank is bypassed or fails. |
 | `LOOM_MEMORY_SEARCH_FLOOR_MODE` | `'readmit' \| 'ids_only' \| 'drop'` | `'readmit'` | live | Sub-floor handling when the caller sets top_k: "readmit" (fill k, tag below_floor), "ids_only" (fill k with empty bodies), "drop". A request's floor_mode overrides. |
 | `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` | `float` | `2.5` | live | Per-attempt bound (seconds) on the query embedding; after the retries the search answers 503 EMBED_TIMEOUT. 0 = unbounded. |
 | `LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES` | `int` | `1` | live | Retries after a timed-out first attempt, each with the bound above. |

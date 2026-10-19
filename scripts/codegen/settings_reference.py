@@ -22,6 +22,7 @@ from scripts.codegen.common import GeneratedFile, generator_main  # noqa: E402
 from server.settings import Settings  # noqa: E402
 from server.settings._describe import comment_block, trailing  # noqa: E402
 from server.settings._env import is_secret_field  # noqa: E402
+from server.settings._history import DEFAULT_CHANGES  # noqa: E402
 from server.settings._live import is_live  # noqa: E402
 
 COMMAND = "python scripts/codegen/settings_reference.py"
@@ -136,8 +137,28 @@ def _section(path: Path, tree: ast.Module, cls: ast.ClassDef, lines: list[str]) 
     return out + _table(rows)
 
 
+def _default_changes() -> list[str]:
+    out = [
+        "\n## Default changes\n",
+        "Every change to a setting's default, from `server/settings/_history.py`. A "
+        "deployment that never set the variable changes with each one.\n",
+    ]
+    if not DEFAULT_CHANGES:
+        return [*out, "No default has changed since the history began.\n"]
+    rows = [
+        f"| {c.version} | `{_env_name(c.name)}` | `{c.old!r}` | `{c.new!r}` | {_cell(c.why)} |"
+        for c in reversed(DEFAULT_CHANGES)
+    ]
+    return [
+        *out,
+        "| Release | Variable | Was | Is | Why |",
+        "| --- | --- | --- | --- | --- |",
+        *rows,
+    ]
+
+
 def render() -> str:
-    parts = [HEADER]
+    parts = [HEADER, *_default_changes()]
     for path in sorted(SETTINGS_DIR.glob("_*.py")):
         src = path.read_text(encoding="utf-8")
         tree = ast.parse(src)

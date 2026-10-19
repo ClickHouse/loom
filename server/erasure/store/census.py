@@ -520,7 +520,10 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     # -- namespace registry and configuration ---------------------------------
     "loom.namespaces": "namespace registry and per-namespace settings.",
     "loom.signing_keys": "token signing keys, sealed with the root secret; no subject data.",
-    "loom.runtime_overrides": "operator rate-limit and latency-budget overrides; numbers only.",
+    "loom.runtime_overrides": (
+        "operator rate-limit, latency-budget and setting overrides: numbers, "
+        "namespace names and patterns, no memory content."
+    ),
     "loom.namespace_types": "per-type retention/dedup configuration.",
     "loom.namespace_grants": "access grants (subject, role).",
     "loom.namespace_visits": "last-seen per (subject, namespace) for the namespace picker.",

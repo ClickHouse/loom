@@ -20,9 +20,7 @@
 "sdk-ts:CallOptions" = { owner = "platform", reason = "No test uses this export." }
 "sdk-ts:CursorPage" = { owner = "platform", reason = "No test uses this export." }
 "sdk-ts:DEFAULT_LOG_LEVEL" = { owner = "platform", reason = "No test uses this export." }
-"sdk-ts:FetchLike" = { owner = "platform", reason = "No test uses this export." }
 "sdk-ts:FetchOptions" = { owner = "platform", reason = "No test uses this export." }
-"sdk-ts:Groups" = { owner = "platform", reason = "No test uses this export." }
 "sdk-ts:JsonSchema" = { owner = "platform", reason = "No test uses this export." }
 "sdk-ts:LOG_LEVELS" = { owner = "platform", reason = "No test uses this export." }
 "sdk-ts:LogLevel" = { owner = "platform", reason = "No test uses this export." }
@@ -43,7 +41,6 @@
 "sdk-ts:ToolDefinition" = { owner = "platform", reason = "No test uses this export." }
 "sdk-ts:ToolFormat" = { owner = "platform", reason = "No test uses this export." }
 "sdk-ts:ToolName" = { owner = "platform", reason = "No test uses this export." }
-"sdk-ts:TransportOptions" = { owner = "platform", reason = "No test uses this export." }
 "sdk-ts:consoleLogger" = { owner = "platform", reason = "No test uses this export." }
 "sdk-ts:randomId" = { owner = "platform", reason = "No test uses this export." }
 "setting:audit_checkpoint_max_seal_per_pass" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
@@ -52,7 +49,6 @@
 "setting:audit_verifier_interval_seconds" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:bulk_conflict_check_concurrency" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:bulk_conflict_check_max_entries" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:code_ask_llm_model" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_backport_gaps_interval_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_bisect_history_days" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_bisect_llm_rerank_model" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
@@ -82,14 +78,12 @@
 "setting:code_pr_history_interval_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_pr_reviews_enabled" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_reconcile_max_commits" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
-"setting:code_repos_refresh_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_apply_interval_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_delta_interval_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_delta_max_tus" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_delta_timeout_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_go_jobs" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_max_parts" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
-"setting:code_scip_py_delta_enabled" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_py_delta_interval_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_py_delta_timeout_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_py_heap_mb" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
@@ -155,10 +149,7 @@
 "setting:memory_ask_set_full_scan" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_ask_set_window" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_ask_synth_budget_cheap_ratio" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_ask_synth_budget_ratio" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_ask_synth_cheap_max_evidence_tokens" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_ask_synth_max_tokens" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_ask_synth_max_tokens_ceiling" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_ask_synthesize_route_max_docs" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_ask_when_evidence_top_k" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_bulk_contextualize_concurrency" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
@@ -250,7 +241,6 @@
 "setting:tracker_dupcheck_fix_path_prs" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:tracker_dupcheck_judge_model" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:tracker_dupcheck_rerank_body_chars" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
-"setting:tracker_dupcheck_rerank_model" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:tracker_links_weight_mention" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:tracker_live_cache_ttl_s" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:tracker_similar_agreement_max_rank" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }

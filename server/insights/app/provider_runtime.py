@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Any
 
-from server.core import deployment_config, embedding_space
+from server.core import deployment_config, embedding_space, settings_overrides
 from server.core.background import drain_task_sets
 from server.core.ch import get_client, set_query_tag
 from server.core.model_work_gate import get_model_work_gate
@@ -63,6 +63,21 @@ def _environment_embedding() -> dict[str, Any] | None:
 
 
 deployment_config.set_environment_source(_environment_embedding)
+
+
+def _dashboard_fields() -> list[str]:
+    """The model settings a dashboard configuration holds at another value than
+    the environment's, for `loom settings list`."""
+    if _environment_settings is None:
+        return []
+    return [
+        name
+        for name, value in _environment_settings.items()
+        if not name.startswith("_") and getattr(settings, name) != value
+    ]
+
+
+settings_overrides.register_source("dashboard", _dashboard_fields)
 
 
 def apply_environment_configuration() -> None:

@@ -87,7 +87,7 @@ class MemorySearchSettings(BaseModel):
     # Top-hit similarity below which a search abstains (weak abstention): the
     # scalar gate for fake embedders or LOOM_ADAPTIVE_THRESHOLDS=false; a
     # calibrated namespace or embedder derives its own.
-    memory_search_abstain_threshold: Annotated[float, LIVE] = 0.30
+    memory_search_abstain_threshold: float = 0.30
 
     # Identifier-grounding abstain: when the query carries a salient
     # identifier (PR/issue number, test id, @handle) and no returned hit
@@ -109,9 +109,7 @@ class MemorySearchSettings(BaseModel):
     # No-probe fallback for the question→fact P25 gate (≈ P25 for
     # text-embedding-3-small): the loom_search precision floor and
     # calibration.get's scalar row read it.
-    memory_search_hyde_fallback_threshold: Annotated[float, LIVE] = Field(
-        default=0.45, gt=0.0, le=1.0
-    )
+    memory_search_hyde_fallback_threshold: float = Field(default=0.45, gt=0.0, le=1.0)
     # search_mode used when the caller sets neither search_mode nor a recipe.
     # The wire default stays "rrf"; planner shape rules still apply on top.
     memory_search_default_mode: Annotated[
@@ -154,7 +152,7 @@ class MemorySearchSettings(BaseModel):
     memory_exposure_ledger_enabled: Annotated[bool, LIVE] = True
     # Cosine floor: hits below it are dropped as noise (ANN always returns
     # top_k). The backstop when rerank is bypassed or fails.
-    memory_search_min_similarity: Annotated[float, LIVE] = 0.22
+    memory_search_min_similarity: float = 0.22
     # Sub-floor handling when the caller sets top_k: "readmit" (fill k, tag
     # below_floor), "ids_only" (fill k with empty bodies), "drop". A request's
     # floor_mode overrides.

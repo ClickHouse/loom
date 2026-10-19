@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -378,3 +379,48 @@ async def test_the_child_stops_its_loops_before_its_writes_drain(monkeypatch) ->
     await asyncio.wait_for(serve, timeout=10)
     os.close(alive_r)
     assert events == ["calibration stopped", "service ended", "workers stopped", "drain"]
+
+
+@pytest.mark.asyncio
+async def test_the_child_adopts_the_runtime_overrides_before_its_workers_start(
+    monkeypatch,
+) -> None:
+    """A worker pass reads LIVE settings: the child loads the stored overrides
+    before the supervisor starts and keeps re-reading them."""
+    from server import boot, worker_main
+    from server.code.app.index import repo_registry
+    from server.insights.app import provider_barrier, provider_runtime
+    from server.tracker.app import registry_sources
+
+    calls: list[str] = []
+
+    async def _noop(*_a, **_k) -> None:
+        return None
+
+    async def _refresher(_ch):
+        return asyncio.create_task(asyncio.sleep(3600))
+
+    async def _warm(timeout_s: float, names: tuple[str, ...]) -> list[str]:
+        calls.append(f"waited:{','.join(names)}")
+        return []
+
+    def _overrides() -> asyncio.Task[None]:
+        calls.append("overrides")
+        return asyncio.create_task(asyncio.sleep(3600))
+
+    monkeypatch.setattr(provider_barrier, "register_process", _noop)
+    monkeypatch.setattr(provider_runtime, "load_active_configuration", _noop)
+    monkeypatch.setattr(provider_runtime, "refresh_loop", lambda: asyncio.sleep(3600))
+    monkeypatch.setattr(registry_sources, "refresh_db_sources", _noop)
+    monkeypatch.setattr(repo_registry, "start_refresher", _refresher)
+    monkeypatch.setattr(boot, "calibrate_similarity_gates", _noop)
+    monkeypatch.setattr(boot, "start_runtime_overrides", _overrides)
+    monkeypatch.setattr(boot, "await_warm_up", _warm)
+    monkeypatch.setattr("server.observability.get_emitter", lambda: SimpleNamespace(start=_noop))
+    tasks = await worker_main._start_services(object())
+    try:
+        assert calls == ["overrides", "waited:runtime_overrides"]
+    finally:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

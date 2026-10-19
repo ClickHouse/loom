@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
@@ -23,6 +24,7 @@ from server.core.env_file import env_file_path, settings_file_path
 from server.core.errors import ValidationError
 from server.core.repo_base import _CHClient
 from server.settings import Settings, settings
+from server.settings._env import is_secret_field
 from server.settings._file import read_settings_file
 from server.settings._live import coerce, is_live, to_json
 
@@ -36,6 +38,8 @@ _started_with: dict[str, Any] = {}
 _applied: dict[str, Any] = {}
 # Stored rows already reported as unusable, said once each.
 _warned: set[tuple[str, str]] = set()
+# source -> the fields code outside this module set on `settings` (`register_source`).
+_assigned: dict[str, Callable[[], Iterable[str]]] = {}
 
 
 def check(name: str, value: Any) -> Any:
@@ -53,20 +57,34 @@ def check(name: str, value: Any) -> Any:
         raise ValidationError(f"{name}: {e.errors()[0]['msg']}, not {value!r}") from e
 
 
-async def put(name: str, value: Any, *, ch: _CHClient | None = None) -> Any:
-    """Store and apply an override; returns the value as the setting holds it.
-    Stored first: a failed write changes no process."""
-    checked = check(name, value)
-    await ro.put(KIND, (name,), to_json(Settings, name, checked), ch=ch)
-    _apply(name, checked)
-    return checked
+async def refresh(*, ch: _CHClient | None = None) -> ro.Snapshot:
+    """Adopt the stored overrides now, not at the next refresh; returns what was read."""
+    snapshot = await ro.load(ch=ch)
+    adopt(snapshot)
+    return snapshot
 
 
-async def clear(name: str, *, ch: _CHClient | None = None) -> None:
-    if name not in Settings.model_fields:
-        raise ValidationError(f"no setting is named {name!r}")
-    await ro.clear(KIND, (name,), ch=ch)
-    _restore(name)
+async def change(
+    name: str, value: Any = None, *, clear: bool = False, ch: _CHClient | None = None
+) -> tuple[Any, dict[str, Any] | None]:
+    """Store (or, with `clear`, remove) the override of `name` and apply it here.
+    Returns the value in force before and the `row()` after, None for a field this
+    build does not have. Stored first: a failed write changes no process. Clearing
+    takes any name with a stored override, a field since removed included, and
+    refuses one with none."""
+    snapshot = await refresh(ch=ch)
+    known = name in Settings.model_fields
+    previous = row(name)["value"] if known else None
+    if clear:
+        if (name,) not in snapshot.get(KIND, {}):
+            raise ValidationError(f"{name} has no override to reset")
+        await ro.clear(KIND, (name,), ch=ch)
+        _restore(name)
+    else:
+        checked = check(name, value)
+        await ro.put(KIND, (name,), to_json(Settings, name, checked), ch=ch)
+        _apply(name, checked)
+    return previous, row(name) if known else None
 
 
 def adopt(snapshot: ro.Snapshot) -> None:
@@ -99,40 +117,56 @@ def _restore(name: str) -> None:
         setattr(settings, name, _started_with.pop(name))
 
 
+def register_source(source: str, fields: Callable[[], Iterable[str]]) -> None:
+    """Code outside this module that sets fields on `settings` (the dashboard's
+    model configuration) names them through `fields`, so the listing shows
+    `source` for them."""
+    _assigned[source] = fields
+
+
 def _sources() -> dict[str, str]:
-    """field -> where its value in force came from: override, env, env_file,
-    settings_file or default, in the order startup ranks them."""
-    environ = {k.upper() for k in os.environ}
-    dotenv: set[str] = set()
+    """field -> where its value in force came from: override, dashboard, env,
+    env_file, settings_file, inferred (filled in at load from other settings) or
+    default, in the order startup ranks them."""
+    environ = {k.upper(): v for k, v in os.environ.items()}
+    dotenv: dict[str, str | None] = {}
     path = env_file_path()
     if path and os.path.isfile(path):
         from dotenv import dotenv_values
 
-        dotenv = {k.upper() for k in dotenv_values(path)}
+        dotenv = {k.upper(): v for k, v in dotenv_values(path).items()}
     in_file: set[str] = set()
     file_path, _ = settings_file_path()
     if file_path and os.path.isfile(file_path):
         in_file = set(read_settings_file(file_path, set(Settings.model_fields)))
+    by_code = {name: source for source, fields in _assigned.items() for name in fields()}
     out = {}
     for name in Settings.model_fields:
         env = f"LOOM_{name.upper()}"
         if name in _applied:
             out[name] = "override"
-        elif env in environ:
+        elif name in by_code:
+            out[name] = by_code[name]
+        # The CLI and compose copy the dotenv file into the environment: a variable
+        # holding the file's value came from the file.
+        elif env in environ and dotenv.get(env, None) != environ[env]:
             out[name] = "env"
         elif env in dotenv:
             out[name] = "env_file"
         elif name in in_file:
             out[name] = "settings_file"
+        elif name in settings._inferred_fields:
+            out[name] = "inferred"
         else:
             out[name] = "default"
     return out
 
 
 def _shown(name: str, value: Any) -> Any:
-    """JSON for the listing; a secret shows only its length (`Settings._mask`)."""
-    masked = settings._mask(name, value)
-    return masked if masked is not value else to_json(Settings, name, value)
+    """JSON for the listing; a set secret shows only its length."""
+    if is_secret_field(name) and value not in ("", None):
+        return settings._mask(name, value)
+    return to_json(Settings, name, value)
 
 
 def rows(*, prefix: str = "", changed: bool = False) -> list[dict[str, Any]]:
