@@ -200,7 +200,7 @@ def _patched_app(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Env]:
     async def _none(*_a: Any, **_k: Any) -> None:
         return None
 
-    monkeypatch.setattr(authz, "_is_restricted", _no)
+    monkeypatch.setattr(authz, "may_be_restricted", _no)
     monkeypatch.setattr(authz, "_is_org_readable_code_namespace", _no)
     monkeypatch.setattr(authz, "_lookup_grant", _none)
     monkeypatch.setattr(member_writes, "code_member_may_write", _no)

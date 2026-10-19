@@ -262,7 +262,7 @@ class OrgScopeFilter:
     params: dict[str, list[str]]
 
 
-async def my_namespaces_or_none(org: str) -> list[str]:
+async def rollup_member_namespaces(org: str) -> list[str]:
     """`resolve_my_namespaces`, sorted, for an org-wide rollup's scope. One that
     comes back empty because a read failed is the request's answer refused, so
     it marks the request the server's, as an admin's `*` scope does."""
@@ -305,7 +305,7 @@ async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeF
             where=f" AND {column} NOT IN {{ns_hidden:Array(String)}}",
             params={"ns_hidden": hidden},
         )
-    ns_list = await my_namespaces_or_none(org)
+    ns_list = await rollup_member_namespaces(org)
     if not ns_list:
         return OrgScopeFilter(accessible=False, where="", params={})
     return OrgScopeFilter(

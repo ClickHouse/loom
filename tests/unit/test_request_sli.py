@@ -1499,11 +1499,13 @@ def test_audit_list_naming_a_restricted_namespace_it_cannot_verify_is_the_server
             fail_closed.note_unreadable()
         raise PermissionError("no grant on sec")
 
-    async def _hidden(org: str) -> list[str]:
-        return ["sec"]
+    restricted = {"value": True}
+
+    async def _may_be_restricted(org: str, ns: str) -> bool:
+        return restricted["value"]
 
     monkeypatch.setattr(authz, "_check_restricted", _check)
-    monkeypatch.setattr(context, "restricted_namespaces_hidden_from", _hidden)
+    monkeypatch.setattr(authz, "may_be_restricted", _may_be_restricted)
     admin = AuthInfo(
         subject="ada", org="o", namespaces=("*",), roles=(Role.ORG_ADMIN,), is_service_account=False
     )
@@ -1517,3 +1519,48 @@ def test_audit_list_naming_a_restricted_namespace_it_cannot_verify_is_the_server
     assert asyncio.run(_list()) == (0, False)  # no grant: the caller's
     read_fails["value"] = True
     assert asyncio.run(_list()) == (0, True)
+
+    # A member naming a namespace it does not reach: marked only when a read
+    # made while deciding it failed, not by one left from before the call.
+    restricted["value"] = False
+    member = AuthInfo(
+        subject="eve", org="o", namespaces=("n",), roles=(Role.VIEWER,), is_service_account=False
+    )
+    mine_read_fails = {"value": False}
+
+    async def _mine(org: str) -> list[str]:
+        if mine_read_fails["value"]:
+            fail_closed.note_unreadable()
+        return []
+
+    monkeypatch.setattr(context, "resolve_my_namespaces", _mine)
+
+    async def _member_list(noted_before: bool = False) -> tuple[int, bool]:
+        request_work.begin()
+        context.set_current_auth(member)
+        if noted_before:
+            fail_closed.note_unreadable()
+        out = await audit.handle_audit_list(AuditListInput(org="o", namespace="other"))
+        return len(out.rows), fail_closed.answered_unverified()
+
+    assert asyncio.run(_member_list()) == (0, False)
+    assert asyncio.run(_member_list(noted_before=True)) == (0, False)
+    mine_read_fails["value"] = True
+    assert asyncio.run(_member_list()) == (0, True)
+
+
+def test_the_member_scoped_org_rollups_share_one_scope_rule() -> None:
+    """Every org-wide rollup scoped to a member's namespaces takes them from
+    `rollup_member_namespaces`, which marks a scope emptied by a failed read."""
+    import inspect
+
+    from server.erasure.app import handlers as erasure
+    from server.memory.app import exposure, learnings
+
+    for fn in (
+        exposure.handle_memory_owner_report,
+        learnings.handle_learnings_quality,
+        erasure._list_scope,
+    ):
+        source = inspect.getsource(fn)
+        assert "rollup_member_namespaces" in source and "resolve_my_namespaces" not in source, fn

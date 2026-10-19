@@ -83,9 +83,9 @@ async def handle_learnings_quality(
     if auth is not None and auth.subject:
         platform_view = any(r >= _R.ORG_ADMIN for r in getattr(auth, "roles", []) or [])
         if not platform_view:
-            from server.auth.context import resolve_my_namespaces
+            from server.auth.context import rollup_member_namespaces
 
-            allowed_ns = sorted(await resolve_my_namespaces(input.org))
+            allowed_ns = await rollup_member_namespaces(input.org)
 
     ch = get_client()
     params: dict[str, Any] = {"org": input.org}

@@ -31,23 +31,19 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
         # tokens included (resolve_org_scope drops the same set); otherwise
         # admins (and auth-off) pass and a non-admin is held to their own
         # namespaces.
-        from server.auth.authz import claim_cap, restricted_allows
+        from server.auth.authz import claim_cap, may_be_restricted, restricted_allows
         from server.auth.context import (
             current_auth,
             resolve_my_namespaces,
-            restricted_namespaces_hidden_from,
         )
         from server.auth.fail_closed import note_answered_unverified, reset, unreadable
         from server.operations.base import Role
 
         auth = current_auth()
         if auth is not None and auth.subject:
-            hidden = await restricted_namespaces_hidden_from(input.org)
-            if hidden == ["*"]:
-                return AuditListOutput(rows=[], next_cursor=None)
-            # The caller named this one: its refusal is the answer, and marks
-            # the request when a read it needed failed.
-            if input.namespace in hidden and not await restricted_allows(
+            # The caller named this one: one check decides it, and marks the
+            # request when a read it needed failed.
+            if await may_be_restricted(input.org, input.namespace) and not await restricted_allows(
                 auth, Role.VIEWER, input.org, input.namespace
             ):
                 return AuditListOutput(rows=[], next_cursor=None)

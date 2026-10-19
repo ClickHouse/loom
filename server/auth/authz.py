@@ -136,7 +136,7 @@ async def check_authorized(
 
     # A restricted namespace is decided here and nowhere
     # below — none of the widening rules that follow may apply to it.
-    if org is not None and namespace is not None and await _is_restricted(org, namespace):
+    if org is not None and namespace is not None and await may_be_restricted(org, namespace):
         await _check_restricted(auth, required_role, org, namespace, grants)
         return
 
@@ -306,7 +306,7 @@ async def _check_delegated(
         f"principal {auth.subject!r} cannot access {org}/{namespace}", org, namespace
     )
     is_read = required_role.value <= Role.VIEWER.value
-    if await _is_restricted(org, namespace):
+    if await may_be_restricted(org, namespace):
         await _check_restricted(auth, required_role, org, namespace, grants)
     elif is_read and auth.org == org and await _is_org_readable_code_namespace(org, namespace):
         return
@@ -337,7 +337,7 @@ async def _creator_grant(org: str, namespace: str, creator: str) -> Role | None:
     return role
 
 
-async def _is_restricted(org: str, namespace: str) -> bool:
+async def may_be_restricted(org: str, namespace: str) -> bool:
     """A directory that cannot be read denies: the caller
     treats True as "run the restricted check", and the restricted check
     itself re-raises the outage as a refusal."""

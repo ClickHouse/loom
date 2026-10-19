@@ -308,7 +308,7 @@ async def _list_scope(org: str) -> tuple[str, dict[str, Any]] | None:
         if hidden:
             where += " AND NOT (scope_type = 'namespace' AND scope_value IN {hidden:Array(String)})"
         return where, ({"hidden": hidden} if hidden else {})
-    ns_list = await auth_context.my_namespaces_or_none(org)
+    ns_list = await auth_context.rollup_member_namespaces(org)
     if not ns_list:
         return None
     return (
