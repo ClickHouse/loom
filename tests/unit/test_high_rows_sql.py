@@ -521,3 +521,41 @@ async def test_a_user_bounded_token_still_reads_one_row_per_key() -> None:
     ident = Identity(org="o", namespace="n", agent="a", user_id="u", session_id="*")
     rows = await get_many_by_keys(ident, ["note"], scope=own_user, ch=ch)
     assert [r.value for r in rows] == ["new"]
+
+
+@pytest.mark.asyncio
+async def test_a_period_row_never_carries_a_high_sources_entities() -> None:
+    from types import SimpleNamespace
+
+    from server.memory.app import period_digest
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version, entities) VALUES "
+        f"('o', 'n', 'a', '-', '-', '{_A}', 'door', 'semantic', 'v', 'active', 'high', 1, "
+        f"['acme-prod']), ('o', 'n', 'a', '-', '-', '{_B}', 'tea', 'semantic', 'v', 'active', "
+        "'', 1, ['oolong'])",
+    )
+    period = SimpleNamespace(org="o", namespace="n", digests=[{"derived_from": ["door", "tea"]}])
+    ids, ents = await period_digest._source_memories(ch, period)  # type: ignore[arg-type]
+    assert sorted(ids) == sorted([_A, _B]) and ents == ["oolong"]
+
+
+@pytest.mark.asyncio
+async def test_the_taxonomy_never_counts_a_high_rows_entities(monkeypatch) -> None:
+    from server.identity.api.models_namespace_catalog import NamespaceTaxonomyInput
+    from server.identity.app import namespace_catalog
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version, entities) VALUES "
+        f"('o', 'n', 'a', '-', '-', '{_A}', 'door', 'semantic', 'v', 'active', 'high', 1, "
+        f"['acme-prod']), ('o', 'n', 'a', '-', '-', '{_B}', 'tea', 'semantic', 'v', 'active', "
+        "'', 1, ['oolong'])",
+    )
+    out = await namespace_catalog._compute_taxonomy(
+        ch, NamespaceTaxonomyInput(org="o", namespace="n")
+    )
+    assert [e.value for e in out.entities] == ["oolong"]

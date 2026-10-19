@@ -528,14 +528,17 @@ leg returns it. The other reads that could serve its value follow three rules:
   entities of a `high` row in `memory.list`, `memory.related` and the graph walk's recency
   seeds, the candidates `procedure.match` reads, the bodies `procedure.list` summarises and
   the bodies `bodies: "unit"` reads (each read leaves `high` rows out before it picks a row,
-  so another identity's `high` row of a key never hides the plain one), and the existing
-  memories an extraction prompt shows the LLM. A row the sensitivity sweep labels `high`
-  after the extractor ran (one written unlabelled, or arriving that way through
-  `memory.copy_to` or an import) keeps the entities mined from its value on the row, not
-  served by those reads. A row re-set as `high` through `memory.set` carries only its
-  declared entities. Either way the graph edges an earlier version projected remain:
-  `facts.traverse` and `facts.path` still walk them, and `memory.backlinks` still names a
-  `high` key's shared entities and neighbours from them.
+  so another identity's `high` row of a key never hides the plain one), the existing
+  memories an extraction prompt shows the LLM, the observations `observe_extract` replays to
+  its model, and the entities a period digest copies from its sources and
+  `namespace.taxonomy` counts. A row the sensitivity sweep labels `high` after the extractor
+  ran (one written unlabelled, or arriving that way through `memory.copy_to` or an import)
+  keeps the entities mined from its value on the row, not served by those reads. A row
+  re-set as `high` through `memory.set` carries only its declared entities. Either way the
+  graph edges an earlier version projected remain: `facts.traverse` and `facts.path` still
+  walk them, as do `memory.backlinks` (which names a `high` key's shared entities and
+  neighbours from them), `namespace.summary`'s top entities and `memory.outline`: every read
+  of the entity graph.
 - Listed without the value: `memory.list` (no value or hash, `value_truncated: true`, and
   `contains` does not search it), `conflicts.list`, `memory.proposals`, and the preview of a
   `memory.move` dry run.

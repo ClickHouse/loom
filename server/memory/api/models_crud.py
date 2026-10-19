@@ -567,7 +567,7 @@ class MemoryListInput(_Identity):
     # the MCP listing: agents search with memory.search.
     contains: str | None = Field(default=None, max_length=200, json_schema_extra=MCP_HIDDEN)
     # Whitelist of entry field names; every entry carries only
-    # those plus `memory_key`. Empty = every field. See
+    # those plus `memory_key` and `sensitivity`. Empty = every field. See
     # MemoryGetInput.fields.
     fields: list[str] = Field(default_factory=list, max_length=64)
     # The `namespace_version` a previous answer

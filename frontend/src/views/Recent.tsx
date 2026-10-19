@@ -51,8 +51,8 @@ const PAGE_SIZE = 100;
 // The fields the page and its cards read, and the preview length a card shows (140
 // characters; the base64 envelope check needs 64). Unprojected, a page of a hundred is
 // 166 kB of JSON — 2 KB previews, entities, timestamps nothing reads. Field names are a
-// quarter of a row, so a field the page does not read costs on every row. `sensitivity`: a
-// high row comes without its value.
+// quarter of a row, so a field the page does not read costs on every row. `sensitivity`,
+// which marks a high row sent without its value, comes with every entry, so it is not named.
 const MEMORIES_LIST_FIELDS = [
   "memory_key",
   "memory_type",

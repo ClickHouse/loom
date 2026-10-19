@@ -214,7 +214,10 @@ async def _distill_session(
     (one synthetic `user` turn per narrative) and mark the sources DONE."""
     import server.memory.store as memory_repo
 
-    msgs = replay_messages(observations, agent=str(session.get("agent") or ""))
+    # A 'high' observation (a credential in tool output the sweep labelled) is never sent
+    # to the model; it is still marked DONE below.
+    readable = [o for o in observations if getattr(o, "sensitivity", "") != "high"]
+    msgs = replay_messages(readable, agent=str(session.get("agent") or ""))
     # observation_date anchor: use the newest valid_at the capture path
     # stamped, if any, so relative time refs resolve.
     observation_date = ""
@@ -228,7 +231,7 @@ async def _distill_session(
     # the same observations, before they are marked DONE. Fail-open: the
     # facts are already written; a failed note is a count, not a lost pass.
     context = await _load_session_context(session, ch=get_client_for_context())
-    extras = await _distill_extras(session, observations, context=context)
+    extras = await _distill_extras(session, readable, context=context)
 
     # Mark sources DONE. RMT: mirror every column, only tags + version change.
     from server.core.ch import get_client
@@ -282,6 +285,7 @@ async def _load_session_context(session: dict[str, Any], *, ch: Any) -> list[Any
               AND session_id = {sid:String}
               AND memory_type = 'episodic' AND has(tags, {obs_tag:String})
               AND NOT arrayExists(t -> startsWith(t, 'skipped:'), tags)
+              AND sensitivity != 'high'
               AND tombstoned_at IS NULL
             ORDER BY created_at ASC
             LIMIT {lim:UInt32}

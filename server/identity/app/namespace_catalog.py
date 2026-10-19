@@ -165,6 +165,8 @@ async def _compute_taxonomy(ch: Any, input: NamespaceTaxonomyInput) -> Namespace
             WHERE org = {org:String} AND namespace = {ns:String}
               AND tombstoned_at IS NULL
               AND length(entities) > 0
+              -- a 'high' row's entities may be mined from its value
+              AND sensitivity != 'high'
             GROUP BY value
             ORDER BY total DESC
             LIMIT {nent:UInt32}
