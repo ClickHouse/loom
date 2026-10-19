@@ -635,6 +635,9 @@ def test_a_value_its_writer_restated_after_a_retirement_is_asserted_then() -> No
     assert queue._run_start(run, undo_versions=set()) == 30, "restated: a new statement"
     assert queue._run_start(run, undo_versions={30}) == 10, "the Undo's restore: still 10"
     assert queue._run_start(run, undo_versions={25}) == 30, "another Undo's version: restated"
+    # A copy written while still retired (an attest of the retired row), then the Undo.
+    still = [(1, True, False), (2, True, True), (3, True, True), (4, True, False)]
+    assert queue._run_start(still, undo_versions={4}) == 1
     assert queue._run_start([(10, True, False), (15, True, False)], undo_versions=set()) == 10
     assert queue._run_start([(10, True, False), (15, False, False)], undo_versions=set()) is None
 

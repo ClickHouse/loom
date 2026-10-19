@@ -2879,3 +2879,48 @@ async def test_an_undo_whose_restore_failed_does_not_hold_a_later_restatement(
     rows = await _rows(ch, org)
     assert out["retired"] == 1, out
     assert rows["office_location"]["superseded_by"] == rows["office_city"]["id"]
+
+
+async def test_an_attest_of_a_retired_row_keeps_its_first_assertion(ch, wired, monkeypatch) -> None:
+    """Paris retired by Rome, Berlin written; a person attests the retired Paris row (a
+    copy, still retired), then undoes it. Paris was stated before Berlin, and Berlin's
+    update retires it."""
+    from server.memory.api.models_crud import MemoryVerifyInput
+    from server.memory.app import after_write, conflicts
+    from server.memory.app.verify import handle_memory_verify
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 2140)
+    assert (await run_pass())["retired"] == 1
+    await _later()
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s3", "office_site", "The office is in Berlin")
+        await after_write.drain()
+    await _place(ch, org, "s3", "office_site", _vec((2140, 0.9), (2142, 0.436)), owed=False)
+    await _later()
+    await handle_memory_verify(
+        MemoryVerifyInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key="office_city",
+            actor="human:alice",
+        )
+    )
+    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+    winner = (await _rows(ch, org))["office_location"]["id"]
+    assert (await _undo(org, "office_city", winner)).restored
+    await _place(ch, org, "s3", "office_site", _vec((2140, 0.9), (2142, 0.436)), owed=True)
+    monkeypatch.setitem(_SCRIPT, "office_site", ("update", 0.98))
+    out = await run_pass()
+    rows = await _rows(ch, org)
+    assert rows["office_city"]["superseded_by"] == rows["office_site"]["id"], out

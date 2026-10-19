@@ -496,15 +496,18 @@ class Asserted(NamedTuple):
 
 
 def _run_start(run: list[tuple[int, bool, bool]], undo_versions: set[int]) -> int | None:
-    """The first version of the current run of versions holding the hash. A version right
-    after a retirement continues the run only when an Undo wrote it; otherwise the writer
-    stated the value again, and a new run starts."""
+    """The first version of the current run of versions holding the hash. A served version
+    right after a retirement continues the run only when an Undo wrote it; otherwise the
+    writer stated the value again, and a new run starts. A copy still retired (an attest
+    of the retired row) continues the retirement."""
     start: int | None = None
     after_retirement = False
     for version, held, superseded in run:
         if not held:
             start = None
-        elif start is None or (after_retirement and version not in undo_versions):
+        elif start is None or (
+            after_retirement and not superseded and version not in undo_versions
+        ):
             start = version
         after_retirement = held and superseded
     return start
