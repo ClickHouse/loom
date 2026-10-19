@@ -21,7 +21,7 @@ export const DraftSearch = forwardRef<HTMLInputElement, DraftSearchProps>(functi
   // The timer calls the latest render's handler.
   const onSearchRef = useRef(onSearch);
   onSearchRef.current = onSearch;
-  const handed = useRef(text);
+  const handed = useRef("");
   useEffect(() => {
     if (debounceMs === null || text === handed.current) return;
     const t = setTimeout(() => {

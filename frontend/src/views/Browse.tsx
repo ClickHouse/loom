@@ -506,7 +506,9 @@ const SpaceRow = memo(function SpaceRow({
   joining?: boolean;
   actions: SpaceActions;
 }) {
-  const join = () => entry && actions.join(entry);
+  const join = () => {
+    if (entry) actions.join(entry);
+  };
   const withdraw = () => actions.withdraw(namespace);
   const settings = () => actions.settings(namespace);
   const open = standing === "pending" ? withdraw : standing === "admin" ? settings : join;

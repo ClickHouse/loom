@@ -513,8 +513,8 @@ function RepositoriesHome({
   /** The links a repository holds now, primary first. */
   const linksOf = (g: RepoGroup): string[] => g.primary.bound_trackers ?? [];
 
-  // Every branch the person maintains takes the new access; the QA binding is set on
-  // the primary branch's namespace (the record is per repository).
+  // Every branch the person maintains takes the new access. Opening asks for one typed name,
+  // the primary's, and that confirms opening every branch the person maintains.
   const setAccess = async (
     g: RepoGroup,
     classification: "standard" | "restricted",
@@ -522,7 +522,6 @@ function RepositoriesHome({
     opening: boolean,
   ) => {
     const mine = g.branches.filter((b) => b.my_role === "admin");
-    let confirm = "";
     if (opening) {
       const typed =
         window.prompt(
@@ -532,18 +531,11 @@ function RepositoriesHome({
         toast("Not opened — the namespace did not match", "error");
         return;
       }
-      confirm = typed.trim();
     }
     let done = 0;
     for (const b of mine) {
       try {
-        await setCodeRepoAccess(
-          b.org,
-          b.namespace,
-          classification,
-          join_policy,
-          opening ? (b.namespace === confirm ? confirm : b.namespace) : "",
-        );
+        await setCodeRepoAccess(b.org, b.namespace, classification, join_policy, opening ? b.namespace : "");
         done += 1;
       } catch (e) {
         toast(`${b.namespace}: ${humanizeError(e)}`, "error");
@@ -559,7 +551,7 @@ function RepositoriesHome({
   // The cards call the latest render's handlers through objects that keep their identity
   // while the data they carry is unchanged, so a memoised card renders again only when its
   // own fields change.
-  const now = { onOpen, onChanged, actions, record, tracker, refreshBranch, removeBranch, setAccess, bindSource };
+  const now = { onOpen, onChanged, actions, record, refreshBranch, removeBranch, setAccess, bindSource };
   const handlers = useRef(now);
   handlers.current = now;
 
@@ -593,11 +585,11 @@ function RepositoriesHome({
       onLeave: (r) => void handlers.current.record.leave(r.ns),
       org,
       onSourcesChanged: () => {
-        void handlers.current.tracker.refresh();
+        void tracker.refresh();
         handlers.current.onChanged();
       },
     }),
-    [org],
+    [org, tracker.refresh],
   );
 
   return (
