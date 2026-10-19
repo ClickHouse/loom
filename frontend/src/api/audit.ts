@@ -63,7 +63,7 @@ export interface AutoResolvedRow {
   /** When the retirement was recorded (the audit row's `ts`). */
   ts: string;
   /** The retired row's status now, and the memory it is retired behind now
-   *  (`memory.statuses`); absent when that read failed. */
+   *  (`memory.statuses`); absent when that read failed or did not return the id. */
   current?: { status: string; superseded_by: string };
 }
 
@@ -146,7 +146,7 @@ export async function listAutoResolved(
       for (const r of out) r.current = now.get(r.memory_id);
     } catch (e) {
       if (opts.signal?.aborted) throw e;
-      // Unknown: the tab offers Undo, and undoing a live row answers "Changed since".
+      // Unknown: the tab goes by the Undo records alone.
     }
   }
   return { rows: out, next_cursor: page.next_cursor ?? null };

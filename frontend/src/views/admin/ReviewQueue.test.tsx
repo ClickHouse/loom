@@ -360,7 +360,7 @@ describe("ReviewQueue", () => {
   });
 
   it("offers Undo for a row an Undo record names but that is still retired behind that memory", async () => {
-    // The record was written and its restore failed; or the row's state could not be read.
+    // The record was written and its restore failed. With the state unknown, the record decides.
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listAutoResolved).mockResolvedValue(
       page([
@@ -380,10 +380,10 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
     expect(await screen.findByRole("button", { name: "Undo retirement of orphan" }, WAIT)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Undo retirement of unknown" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Undo retirement of unknown" })).toBeNull();
     // Retired behind another memory since: this retirement is undone.
     expect(screen.queryByRole("button", { name: "Undo retirement of moved" })).toBeNull();
-    expect(screen.getAllByText("Restored")).toHaveLength(1);
+    expect(screen.getAllByText("Restored")).toHaveLength(2);
   });
 
   it("orders audit times by instant, not by their text", async () => {

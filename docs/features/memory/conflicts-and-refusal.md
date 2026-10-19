@@ -189,7 +189,8 @@ mark rows already restored, the tab reads up to 2,500 `memory.unsupersede` recor
 pages of 500) back to the oldest retirement it shows. Past that, an older row still
 offers Undo, and undoing a row that is already live shows "Changed since". A row shows
 as restored only while `memory.statuses` reads it no longer retired behind that memory,
-so the record of an Undo whose restore failed still offers Undo.
+so the record of an Undo whose restore failed still offers Undo; when that read fails,
+the records alone decide.
 
 #### Undo
 
