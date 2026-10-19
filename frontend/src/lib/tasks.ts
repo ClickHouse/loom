@@ -299,9 +299,9 @@ export function sublineOf(
       return u ? { text: "done ·", href: u } : null;
     }
     case "todo": {
-      const t = parseChTime(r.not_before);
+      const notBefore = parseChTime(r.not_before);
       const from = `from ${posterName(r)}`;
-      if (!t || t.getTime() <= now) return { text: from };
+      if (!notBefore || notBefore.getTime() <= now) return { text: from };
       return { text: from, suffix: `· scheduled ${rel(r.not_before, now)}` };
     }
     case "in_progress":
