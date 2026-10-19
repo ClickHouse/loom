@@ -1274,9 +1274,10 @@ def test_a_task_op_refused_on_its_own_side_without_a_readable_grant_is_the_serve
 def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
     monkeypatch,
 ) -> None:
-    """The owner-side check marks only when it is the caller's last way in: a
-    poster is admitted without a read, so its success stays ok; anyone else
-    gets the 404, counted as the server's."""
+    """The owner-side check marks only when it decides alone: a poster is
+    admitted without a read, so its success stays ok; a refusal the owner
+    check alone decides (anyone else, `task.wont_do`, an in-progress task)
+    is the server's."""
     from types import SimpleNamespace
 
     from server.auth import authz
@@ -1284,21 +1285,28 @@ def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
     from server.auth.fail_closed import answered_unverified
     from server.auth.jwt import AuthInfo
     from server.core import request_work
-    from server.tasks.app import transitions
+    from server.tasks.app import common, transitions
 
     async def _unverified(*a: Any, **k: Any) -> None:
         e = PermissionError("refused")
         e.unverified = True  # type: ignore[attr-defined]
         raise e
 
+    status = {"value": "todo"}
+
     async def _task(org: str, task_id: str) -> dict[str, Any]:
-        return {"namespace": "owner", "from_subject": "poster", "status": "todo"}
+        return {
+            "org": "o",
+            "namespace": "owner",
+            "from_subject": "poster",
+            "status": status["value"],
+        }
 
     monkeypatch.setattr(authz, "check_authorized", _unverified)
     monkeypatch.setattr(transitions.repo, "fetch_task", _task)
-    reason = SimpleNamespace(org="o", task_id="t")
+    reason = SimpleNamespace(org="o", task_id="t", fence=None)
 
-    async def _as(subject: str) -> bool:
+    def _as(subject: str) -> None:
         request_work.begin()
         set_current_auth(
             AuthInfo(
@@ -1306,11 +1314,25 @@ def test_a_poster_s_task_op_stays_ok_when_the_owner_check_could_not_be_verified(
                 is_service_account=False,
             )
         )  # fmt: skip
-        try:
-            await transitions._load_for_reason_op(reason)
-        except Exception:  # noqa: BLE001 — the 404 the handler answers
-            pass
+
+    async def _cancel_as_poster() -> tuple[bool, bool]:
+        _as("poster")
+        _task_row, owner_side = await transitions._load_for_reason_op(reason)
+        return owner_side, answered_unverified()
+
+    async def _refused(subject: str, **k: Any) -> bool:
+        _as(subject)
+        with pytest.raises(Exception):  # noqa: B017 — the 404 or 409 the op answers
+            await transitions._load_for_reason_op(reason, **k)
         return answered_unverified()
 
-    assert asyncio.run(_as("poster")) is False
-    assert asyncio.run(_as("someone-else")) is True
+    async def _read_as_poster() -> tuple[bool, bool]:
+        _as("poster")
+        return await common._readable(await _task("o", "t")), answered_unverified()
+
+    assert asyncio.run(_cancel_as_poster()) == (False, False)
+    assert asyncio.run(_read_as_poster()) == (True, False)
+    assert asyncio.run(_refused("someone-else")) is True
+    assert asyncio.run(_refused("poster", poster_may=False)) is True  # task.wont_do
+    status["value"] = "in_progress"
+    assert asyncio.run(_refused("poster")) is True  # only the owner side may act

@@ -457,6 +457,7 @@ async def _drop_lease(task: TaskRow) -> None:
 
 
 async def _readable(task: TaskRow) -> bool:
-    if await _in_scope(task["org"], task["namespace"], write=False):
+    # The poster's way in needs no read, so the owner check, last, decides alone.
+    if _is_poster(task, _caller_subject()):
         return True
-    return _is_poster(task, _caller_subject())
+    return await _in_scope(task["org"], task["namespace"], write=False)
