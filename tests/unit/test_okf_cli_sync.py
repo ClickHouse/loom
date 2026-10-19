@@ -75,7 +75,7 @@ class _FakeLoom:
         # A delete lands on a replica still on the older build (a rolling upgrade).
         self.older_server = False
         # The whole target is older: its catalogue has no if_version on memory.delete.
-        self.delete_fields = ["agent", "if_version", "memory_key", "namespace", "org"]
+        self.older_catalogue = False
 
     def put(self, agent: str, key: str, session_id: str = "-", **row: Any) -> None:
         self.version += 1
@@ -135,7 +135,16 @@ class _FakeLoom:
                 "lock_mode": row.get("lock_mode", ""),
             }
         if op == "ops.capabilities":
-            return {"ops": {"memory.delete": {"request_fields": self.delete_fields}}}
+            # The server's own answer, in its wire shape.
+            from server.insights.api.models_ops import OpsCapabilitiesInput
+            from server.insights.app.ops import handle_ops_capabilities
+
+            caps = (await handle_ops_capabilities(OpsCapabilitiesInput())).model_dump(mode="json")
+            if self.older_catalogue:
+                for o in caps["ops"]:
+                    if o["name"] == "memory.delete":
+                        o["request_fields"].remove("if_version")
+            return caps
         if op == "memory.verify":
             return {"found": True}
         if op == "memory.export_evidence":
@@ -856,7 +865,7 @@ def test_prune_deletes_nothing_on_a_target_without_if_version(
     tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
-    loom.delete_fields = ["agent", "memory_key", "namespace", "org"]
+    loom.older_catalogue = True
     capsys.readouterr()
     assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 1
     assert "memory.delete" not in loom.writes()

@@ -907,17 +907,18 @@ def _prune_refusal(files: dict[str, str], concepts: list[okf.Concept]) -> str:
     return ""
 
 
-def _prune_skip(files: dict[str, str]) -> str:
-    """Why this intact bundle's writes go ahead without the prune, or '': only an export
-    that read every row says which keys have left the source."""
+def _skips_prune(files: dict[str, str]) -> bool:
+    """Whether this intact bundle's writes go ahead without the prune, said on stderr: only
+    an export that read every row says which keys have left the source."""
     if okf_lint.generation_pointer(files).get("complete") is True:
-        return ""
-    reason = (
-        "index.md does not mark the export complete (it stopped at --limit, the source "
-        "changed while it was listed, or an older release wrote it)"
+        return False
+    print(
+        "not pruning this run: index.md does not mark the export complete (it stopped at "
+        "--limit, the source changed while it was listed, or an older release wrote it); "
+        "the writes go ahead",
+        file=sys.stderr,
     )
-    print(f"not pruning this run: {reason}; the writes go ahead", file=sys.stderr)
-    return reason
+    return True
 
 
 async def _prune(
@@ -1004,7 +1005,9 @@ async def _versioned_delete_refusal(client: _Client, org: str) -> str:
         caps = await client.post("ops.capabilities", {"org": org})
     except RuntimeError as e:
         return f"cannot read the target's ops.capabilities ({e})"
-    delete = (caps.get("ops") or {}).get("memory.delete") or {}
+    delete: dict[str, Any] = next(
+        (o for o in caps.get("ops") or [] if o.get("name") == "memory.delete"), {}
+    )
     if "if_version" not in (delete.get("request_fields") or []):
         return "the target's memory.delete does not take if_version; upgrade it before pruning"
     return ""
@@ -1088,7 +1091,7 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
         if reason:
             print(f"refusing to prune: {reason}", file=sys.stderr)
             return 2
-    skip = _prune_skip(files) if args.prune else ""
+    skip = bool(args.prune) and _skips_prune(files)
     token = _resolve_token(args)
     org = _resolve_org(args, token)
     ev_chunks, ev_digests = ([], []) if args.no_evidence else _walk_evidence(root)

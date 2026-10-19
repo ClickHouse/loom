@@ -57,11 +57,11 @@ guard, a path that is not a directory, or a missing `--agent`, token or org.
 - The export carries the source's superseded and duplicate rows as `status: deprecated`,
   so a key the source folds into another stays in the copy instead of being pruned.
 - Export pages the source by offset, so a write to the source mid-listing can shift the
-  pages and skip a live row. Export calls a listing whole only when the first and the last
-  page carry the same `namespace_version` (every write, delete and restore moves it) and
-  the rows it read add up to their total; it lists again up to three times, and otherwise
-  leaves `loom.complete` off, so that run copies without pruning and a later, quieter run
-  prunes.
+  pages and skip a live row. Export calls a listing whole only when every page carries the
+  same `namespace_version` (every write, delete and restore moves it) and `total` (a page
+  from a lagging replica reports its own), and the unique rows it read equal that total;
+  it lists again up to three times, and otherwise leaves `loom.complete` off, so that run
+  copies without pruning and a later, quieter run prunes.
 - Before each delete it reads the row under its own identity again, and goes on only if
   that row is under its `--agent`, was written by its own token (the agent name alone is
   the caller's choice) and carries no `memory.lock`: a locked copy is counted as kept. The
