@@ -109,15 +109,9 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
 
 
 async def _prior_task(prior: TaskRow, *, backfill: bool = True) -> TaskCreateOutput:
-    """The answer to a create whose key already holds the task `prior`.
-
-    The first create may have been cut off (the key's lease timed out) after its task
-    row and before its created event or its lease row; without a lease row the task can
-    never be claimed. The retry writes what is missing: writing the lease row again is a
-    no-op when it is there. Only a task never claimed can be in that state: a claimed
-    one finishing drops its lease before it records the end, and must not get it back.
-    `backfill=False` leaves the created event out: for a create whose own insert lost
-    to `prior`, whose create is still running and writes its own."""
+    """The answer to a create whose key already holds `prior`: a never-claimed task a
+    cut-off create left without its created event or lease row gets them here
+    (`backfill=False`: the first create is still running and writes its own event)."""
     if prior["status"] in ("todo", "triage") and int(prior["fence"]) == 0:
         if backfill:
             await _backfill_created_event(prior)
@@ -129,10 +123,8 @@ async def _prior_task(prior: TaskRow, *, backfill: bool = True) -> TaskCreateOut
 
 
 async def _backfill_created_event(prior: TaskRow) -> None:
-    """Log the created event a cut-off create left out. The retry holds the key's lease,
-    so no other retry of this build writes it at the same time. A first create that was
-    only stalled past its lease, or cancelled while its insert still ran, can still land
-    its own: the two share one dedup token, and readers keep only the first."""
+    """Log the created event a cut-off create left out; a late first create's event
+    shares its dedup token, and readers keep only the first."""
     events = await repo.task_history(prior["org"], str(prior["task_id"]), consistent=True)
     if any(e["event"] == "created" for e in events):
         return

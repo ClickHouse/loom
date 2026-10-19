@@ -215,14 +215,10 @@ def object_substitution(old: str, new: str) -> tuple[str, str] | None:
         return None
     if _COPULA & set(old_mid) or _COPULA & set(new_mid):
         return None
-    # A shared ending of two words or more, after a beginning that does not end in a
-    # preposition, copula or article, is likely a predicate's object in any language
-    # ("The user currently lives in London" / "… works in London", "… живёт в Москве"
-    # / "… работает в Москве"): another fact, not an update. A missed update is safer
-    # than a wrong supersession. One shared word is the head of the object ("prefers
-    # dark mode" / "… light mode"), and so are more after an article ("drives a red
-    # sports car" / "… a blue sports car"). Otherwise a shared ending from a
-    # preposition on is a detail both keep, and the object is the span before it.
+    # A shared ending of two words or more, not after a preposition, copula or article,
+    # is another fact's object, not an update (a missed update is safer than a wrong
+    # supersession); one word, or more after an article, is the object's head; from a
+    # preposition on it is a detail both keep. The cases: tests/unit/test_triples_follow_rows.py.
     end = 0
     while end < min(len(old_mid), len(new_mid)) and old_mid[-1 - end] == new_mid[-1 - end]:
         end += 1
@@ -344,12 +340,9 @@ def _still_named(words: Sequence[str], triple: Triple) -> bool:
     return _named(words, obj) and (subject == SELF_SUBJECT or _named(words, subject))
 
 
-# A revised value keeps a successor only when it says nothing the value it was
-# written for did not: its sentences are the old value's, in order, each whole or
-# cut to a statement of the triple, and no statement is dropped. Anything added
-# closes it, since words alone cannot tell detail from a retraction ("..., near the
-# river" from "..., until May"): a closed triple comes back with the next write that
-# states it, a wrongly open one never leaves.
+# A revised value keeps a successor only when it adds nothing to the value it was written
+# for (`restates`): words cannot tell a detail from a retraction, and a closed triple comes
+# back with the next write that states it, where a wrongly open one never leaves.
 # A sentence ends at a mark, maybe closed by a quote or bracket, followed by a space or
 # the end: "next.js" and "3.12" go on.
 _CLOSERS = "\"')]\u2019\u201d\u00bb"

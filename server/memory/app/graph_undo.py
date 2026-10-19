@@ -59,14 +59,9 @@ async def reopen_held_facts(
     facts: frozenset[Any] | None = None,
     adapter_name: str = "row-restore",
 ) -> None:
-    """Open again the facts the rows `ids` hold now: an Undo brings a retired row's
-    facts back. An Undo is an assertion made at the restore, so each fact gets a new
-    observation starting then, repaired like any other value; no row retires.
-    `restore_id` names this Undo's markers, so a replay with the same id and
-    `restored_at` finds and restates them. With `hashes` (id to the `content_sha256`
-    restored), only the rows still holding that value, and still live, are read. With
-    `facts`, only those are opened: a fallback (`entity_projections._keep_one_current`)
-    opens one value, labelled `row-fallback` by `adapter_name`."""
+    """Open again the facts the rows `ids` hold now, as an assertion made at the restore:
+    `restore_id` and `restored_at` name its markers, so a replay restates the same ones.
+    `hashes`: only rows still holding that value; `facts`: only those (a fallback)."""
     if hashes:
         ids = sorted(i for i in ids if i in hashes)
     asked = ids
