@@ -15,6 +15,7 @@ from server.core.ch import caller_shaped, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value_json as _sha256_value_json
+from server.core.tag_sql import TagFilter, list_tag_filter, tag_where
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_where
 from server.memory.api.models_bulk import MemoryBulkGetInput, MemoryBulkGetOutput
@@ -193,7 +194,7 @@ def reset_list_counts_cache() -> None:
 async def _hidden_under_prefix(
     input: MemoryListInput,
     identity: Any,
-    tags: list[str] | None,
+    tag_filter: TagFilter | None,
     served: ServedFlags,
     total: int,
 ) -> dict[str, Any]:
@@ -216,7 +217,8 @@ async def _hidden_under_prefix(
         memory_type=input.memory_type or None,
         key_prefix=input.prefix,
         source_trace=input.source_trace or None,
-        tags=tags,
+        # The same tag match as `total`, so only the status filter makes the difference.
+        tag_filter=tag_filter,
         contains=input.contains or None,
         include_tombstoned=input.include_tombstoned,
         as_of=input.as_of,
@@ -247,14 +249,14 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
     import server.memory.store as memory_repo
     from server.operations import read_projection
 
-    # The entry field whitelist (None = every field) and the hard OR tag filter, the predicate
-    # memory.search applies.
+    # The entry field whitelist (None = every field) and the hard tag filter, in any case
+    # (memory.search matches tags exactly).
     keep = read_projection.resolve(
         _MemoryListEntry,
         list(input.fields or []),
         always=read_projection.LIST_ENTRY_ALWAYS,
     )
-    tags = [str(t) for t in (input.tags or []) if t] or None
+    tag_filter = list_tag_filter(input.tags, every=input.tags_every)
 
     identity = memory_repo.Identity(
         org=input.org,
@@ -269,7 +271,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
     _served = served_flags(input)  # duplicates and superseded rows
 
     if input.sort_by == "score":
-        return _project_entries(await _list_by_score(input, tags, _served), keep)
+        return _project_entries(await _list_by_score(input, tag_filter, _served), keep)
 
     # The namespace's newest version is the change watermark. A poller that sends the one it
     # has learns "nothing moved" from this one small read instead of the page, the total and the
@@ -297,7 +299,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             memory_type=input.memory_type or None,
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
-            tags=tags,
+            tag_filter=tag_filter,
             contains=input.contains or None,
             order_by="created_at_desc",
             limit=input.limit + 1,
@@ -325,7 +327,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         input.memory_type or "",
         input.prefix or "",
         input.source_trace or "",
-        tuple(tags or ()),
+        tag_filter,
         input.contains or "",
         bool(input.include_tombstoned),
         str(input.as_of or ""),
@@ -342,7 +344,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             memory_type=input.memory_type or None,
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
-            tags=tags,
+            tag_filter=tag_filter,
             contains=input.contains or None,
             include_tombstoned=input.include_tombstoned,
             as_of=input.as_of,
@@ -356,7 +358,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             memory_type=input.memory_type or None,
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
-            tags=tags,
+            tag_filter=tag_filter,
             contains=input.contains or None,
             include_tombstoned=input.include_tombstoned,
             created_since=_today_start,
@@ -378,7 +380,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             total=total,
             today=today,
             namespace_version=namespace_version,
-            **await _hidden_under_prefix(input, identity, tags, _served, total),
+            **await _hidden_under_prefix(input, identity, tag_filter, _served, total),
             entries=[
                 _MemoryListEntry(
                     memory_key=r.memory_key,
@@ -418,10 +420,10 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
 
 
 async def _list_by_score(
-    input: MemoryListInput, tags: list[str] | None, served: ServedFlags
+    input: MemoryListInput, tag_filter: TagFilter | None, served: ServedFlags
 ) -> MemoryListOutput:
     """sort_by="score": `evidence_count + recall_count*0.5` DESC with the optional
-    per-memory_type `quotas` cap (the tags predicate is memory.search's)."""
+    per-memory_type `quotas` cap; tags match in any case."""
     import server.memory.store as memory_repo
 
     params: dict[str, Any] = {
@@ -460,9 +462,8 @@ async def _list_by_score(
     if input.prefix:
         where.append("startsWith(memory_key, {p:String})")
         params["p"] = input.prefix
-    if tags:
-        where.append("hasAny(tags, {tags:Array(String)})")
-        params["tags"] = tags
+    if tag_filter is not None:
+        where.append(tag_where(tag_filter, params))
     if input.contains:
         where.append(memory_repo.CONTAINS_PREDICATE)
         params["contains"] = input.contains

@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 
 ResolveDecision = Literal["revise", "contract", "allow"]
@@ -29,6 +30,8 @@ class ConflictsListInput(BaseModel):
     # A badge needs the number, not the rows. With
     # count_only the answer is `total` and no row (no value column read).
     count_only: bool = False
+    # With count_only, count now instead of reading the minute-long cache; default off.
+    fresh: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # The Memories view marks cards that have a
     # conflict and needs only the keys. With keys_only the answer is `keys`
     # from one FINAL read of the key columns — no value column.
@@ -94,6 +97,9 @@ class ConflictsResolveOutput(BaseModel):
     affected_memory_ids: list[str]
     # When the resolve ran (UTC); null when nothing was resolved.
     resolved_at: datetime | None = None
+    # The namespace's conflicted count under the caller's read scope, counted after the
+    # writes; null when nothing was resolved or the count failed.
+    total: int | None = None
 
 
 class ConflictsProposeRevisionInput(BaseModel):

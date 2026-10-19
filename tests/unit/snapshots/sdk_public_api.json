@@ -2175,6 +2175,7 @@
         ],
         "list": [
           "tags",
+          "tags_every",
           "include_superseded",
           "limit",
           "cursor"
@@ -2390,6 +2391,7 @@
           "as_of",
           "include_duplicates",
           "tags",
+          "tags_every",
           "fields"
         ],
         "lock": [
@@ -2983,7 +2985,10 @@
           "status",
           "limit",
           "memory_activity",
-          "grade"
+          "grade",
+          "offset",
+          "order_by",
+          "q"
         ],
         "scope": [
           "begin_kwargs"

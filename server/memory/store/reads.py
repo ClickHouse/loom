@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.core.tag_sql import TagFilter, tag_where
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.domain.temporal_sql import as_of_predicate
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
@@ -642,6 +643,20 @@ CONTAINS_PREDICATE = (
 )
 
 
+def _identity_where(identity: Identity, where: list[str], params: dict[str, Any]) -> None:
+    """The identity axes `list_by_namespace` and `count_by_namespace` share: `*` on an axis
+    drops it from WHERE."""
+    if identity.agent != "*":
+        where.append("agent = {agent:String}")
+        params["agent"] = identity.agent
+    if identity.user_id != "*":
+        where.append("user_id = {uid:String}")
+        params["uid"] = identity.user_id
+    if identity.session_id != "*":
+        where.append("session_id = {sid:String}")
+        params["sid"] = identity.session_id
+
+
 async def list_by_namespace(
     identity: Identity,
     *,
@@ -650,7 +665,7 @@ async def list_by_namespace(
     pinned_only: bool = False,
     key_prefix: str | None = None,
     source_trace: str | None = None,
-    tags: Sequence[str] | None = None,
+    tag_filter: TagFilter | None = None,
     contains: str | None = None,
     order_by: str = "created_at_desc",
     limit: int = 200,
@@ -670,7 +685,8 @@ async def list_by_namespace(
       - memory_type: exact match (e.g. "preference", "procedural")
       - pinned_only: only rows where pinned=1
       - key_prefix:  startsWith(memory_key, prefix) — for hierarchical key spaces
-      - tags:        hasAny(tags, [...]) — the OR filter memory.search applies
+      - tag_filter:  its tags matched as its `match` says: any one or every one in
+                     any case, or any one exactly as memory.search matches
       - contains:    case-insensitive substring of the value or the key — the
                      keyword filter a browse page's search box applies
 
@@ -711,15 +727,7 @@ async def list_by_namespace(
     if not include_proposed:
         # A fact on trial is served only when asked.
         where.append("status != 'proposed'")
-    if identity.agent != "*":
-        where.append("agent = {agent:String}")
-        params["agent"] = identity.agent
-    if identity.user_id != "*":
-        where.append("user_id = {uid:String}")
-        params["uid"] = identity.user_id
-    if identity.session_id != "*":
-        where.append("session_id = {sid:String}")
-        params["sid"] = identity.session_id
+    _identity_where(identity, where, params)
     where.extend(scope_where(scope, params))
     if memory_type is not None:
         where.append("memory_type = {mt:String}")
@@ -732,9 +740,8 @@ async def list_by_namespace(
     if source_trace is not None:
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
-    if tags:
-        where.append("hasAny(tags, {tags:Array(String)})")
-        params["tags"] = [str(t) for t in tags]
+    if tag_filter is not None:
+        where.append(tag_where(tag_filter, params))
     if contains:
         where.append(CONTAINS_PREDICATE)
         params["contains"] = contains
@@ -858,7 +865,7 @@ async def count_by_namespace(
     pinned_only: bool = False,
     key_prefix: str | None = None,
     source_trace: str | None = None,
-    tags: Sequence[str] | None = None,
+    tag_filter: TagFilter | None = None,
     contains: str | None = None,
     include_tombstoned: bool = False,
     as_of: datetime | None = None,
@@ -890,15 +897,7 @@ async def count_by_namespace(
         where.append("status != 'superseded'")  # as list_by_namespace
     if not include_proposed:
         where.append("status != 'proposed'")  # as list_by_namespace
-    if identity.agent != "*":
-        where.append("agent = {agent:String}")
-        params["agent"] = identity.agent
-    if identity.user_id != "*":
-        where.append("user_id = {uid:String}")
-        params["uid"] = identity.user_id
-    if identity.session_id != "*":
-        where.append("session_id = {sid:String}")
-        params["sid"] = identity.session_id
+    _identity_where(identity, where, params)
     where.extend(scope_where(scope, params))
     if memory_type is not None:
         where.append("memory_type = {mt:String}")
@@ -911,9 +910,8 @@ async def count_by_namespace(
     if source_trace is not None:
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
-    if tags:
-        where.append("hasAny(tags, {tags:Array(String)})")
-        params["tags"] = [str(t) for t in tags]
+    if tag_filter is not None:
+        where.append(tag_where(tag_filter, params))
     if contains:
         where.append(CONTAINS_PREDICATE)
         params["contains"] = contains

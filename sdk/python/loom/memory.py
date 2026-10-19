@@ -1286,6 +1286,7 @@ class MemoryClient:
         as_of: datetime | None = None,
         include_duplicates: bool = False,
         tags: builtins.list[str] | None = None,
+        tags_every: bool = False,
         fields: builtins.list[str] | None = None,
     ) -> dict[str, Any]:
         """List memory entries under this identity tuple.
@@ -1300,10 +1301,10 @@ class MemoryClient:
         `include_duplicates=True` also lists `status='duplicate'` rows, which
         are skipped by default (their canonical is listed).
 
-        `tags` keeps only rows carrying any of them — the
-        same OR predicate `search(tags=...)` applies — so a tagged subset
-        is one call. `fields` whitelists the entry fields (`memory_key`
-        always rides), e.g. `["memory_key", "value", "tags"]`.
+        `tags` keeps only rows carrying any one of them, in any case (search
+        matches exactly); `tags_every=True` needs every one. `fields`
+        whitelists the entry fields (`memory_key` always rides), e.g.
+        `["memory_key", "value", "tags"]`.
 
         Returns a dict with `entries` (list of metadata records, no values
         — call `get` for values) and `truncated` (bool, true if more exist
@@ -1329,6 +1330,8 @@ class MemoryClient:
             payload["include_duplicates"] = True
         if tags:
             payload["tags"] = list(tags)
+        if tags_every:
+            payload["tags_every"] = True
         if fields:
             payload["fields"] = list(fields)
         return await self._agent.transport.post("/v1/memory.list", payload)

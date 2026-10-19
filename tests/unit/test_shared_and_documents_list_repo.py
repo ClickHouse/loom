@@ -15,8 +15,13 @@ from typing import Any
 
 import pytest
 
+from server.core.tag_sql import TagFilter, tag_where
 from server.knowledge.store import documents as documents_repo
 from server.memory.store import shared as shared_repo
+
+# The any-case tag matches, as the list reads render them.
+_FOLDED_ANY = tag_where(TagFilter(("x",), "folded_any"), {})
+_FOLDED_ALL = tag_where(TagFilter(("x",), "folded_all"), {})
 
 
 class StubCH:
@@ -299,21 +304,6 @@ async def test_list_with_chunk_counts_include_superseded_drops_filter() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_with_chunk_counts_tag_filter_uses_hasany() -> None:
-    ch = StubCH()
-    ch.query_all_returns.append([])
-    await documents_repo.list_with_chunk_counts(
-        "clickhouse",
-        "ns",
-        tags=["policy", "internal"],
-        ch=ch,
-    )
-    sql, params = ch.query_all_calls[0]
-    assert "hasAny(tags, {tags:Array(String)})" in sql
-    assert params["tags"] == ["policy", "internal"]
-
-
-@pytest.mark.asyncio
 async def test_list_with_chunk_counts_cursor_strips_tz_for_ch() -> None:
     """ClickHouse params expect naive datetimes (the column is
     DateTime, not DateTime64-tz). A tz-aware cursor must be converted
@@ -332,3 +322,30 @@ async def test_list_with_chunk_counts_cursor_strips_tz_for_ch() -> None:
     # Both cursor values are bound parameters, never text in the statement.
     assert params["cur_ts"] == "2026-05-17 12:00:00" and "2026-05-17" not in sql
     assert params["cur_uri"] == "kb://policy.md"
+
+
+@pytest.mark.asyncio
+async def test_list_with_chunk_counts_matches_tags_in_any_case() -> None:
+    """The folded predicate, with the asked tags bound as typed."""
+    ch = StubCH()
+    ch.query_all_returns.append([])
+    await documents_repo.list_with_chunk_counts(
+        "clickhouse", "ns", tag_filter=TagFilter(("Specs",), "folded_any"), ch=ch
+    )
+    sql, params = ch.query_all_calls[0]
+    assert _FOLDED_ANY in sql
+    assert "hasAny(tags, {tags:Array(String)})" not in sql
+    assert params["tags"] == ["Specs"]
+
+
+@pytest.mark.asyncio
+async def test_list_with_chunk_counts_requires_every_tag_when_asked() -> None:
+    """`tags_every=True` needs every tag: the folded predicate with `hasAll`."""
+    ch = StubCH()
+    ch.query_all_returns.append([])
+    await documents_repo.list_with_chunk_counts(
+        "clickhouse", "ns", tag_filter=TagFilter(("Specs", "onboarding"), "folded_all"), ch=ch
+    )
+    sql, params = ch.query_all_calls[0]
+    assert _FOLDED_ALL in sql
+    assert params["tags"] == ["Specs", "onboarding"]
