@@ -365,19 +365,22 @@ function NamespacePickerMenu() {
             </Section>
           ))}
           {known != null && joined.length === 0 && transient.length === 0 && !query && (
-            <Button
-              type="empty"
-              htmlType="button"
-              iconLeft="globe"
-              align="left"
-              fillWidth
-              onClick={() => {
-                setOpen(false);
-                useStore.getState().setView("browse");
-              }}
-            >
-              Find public namespaces to join in Spaces
-            </Button>
+            // 4 px round it: the list clips its overflow, and the button's ring is drawn outside it.
+            <div className="p-1">
+              <Button
+                type="empty"
+                htmlType="button"
+                iconLeft="globe"
+                align="left"
+                fillWidth
+                onClick={() => {
+                  setOpen(false);
+                  useStore.getState().setView("browse");
+                }}
+              >
+                Find public namespaces to join in Spaces
+              </Button>
+            </div>
           )}
           {groups.map((x) => (
             <GroupDisclosure
@@ -643,7 +646,8 @@ function NamespaceRow({
             type="secondary"
             htmlType="button"
             onClick={() => onCancelPending(r.namespace, pendingRole)}
-            className="shrink-0 mr-1"
+            // 4 px of room for its focus ring: the list clips its overflow.
+            className="shrink-0 mr-1 my-1"
           >
             {`pending ${r.pending_role}`}
           </Button>

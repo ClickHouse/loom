@@ -598,15 +598,16 @@ textarea[aria-invalid="true"]:focus-visible {
   outline-offset: -2px;
 }
 /* A row that spans a box clipping its overflow draws its ring inset: the Explorer outline
-   tree, a task lane (.tq-group: its header, rows and "Show all", each a `data-nav` stop)
-   and the namespace picker's list (.scroll-fade: options, group buttons, "Show all"). Inbox
-   items stack flush, where an outset ring would cover the next one. A clipping box that
-   holds other controls leaves them 4 px of room instead (e2e/focus-rings.spec.ts walks
-   every page for a clipped ring). */
+   tree's items, a task lane's header and rows, and the namespace picker's arrow-key items
+   (options, group buttons, a group's "Show all"). Inbox items stack flush, where an outset
+   ring would cover the next one. A clipping box that holds other controls leaves them 4 px
+   of room instead: a lane's "Show all" (.tq-more), the picker's withdraw and "Find public
+   namespaces" buttons (e2e/focus-rings.spec.ts walks every page for a clipped ring). */
 .explorer-outline [role="treeitem"]:focus-visible,
-.tq-group [data-nav]:focus-visible,
+.tq-ghead:focus-visible,
+.tq-row:focus-visible,
 .tq-inbox:focus-visible,
-.scroll-fade button:focus-visible {
+.scroll-fade [data-nav]:focus-visible {
   outline-offset: -2px;
 }
 /* Click UI's split button clips its halves (overflow: hidden), so its focus ring is drawn
@@ -1073,10 +1074,10 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-assignee {
     display: inline-flex;
   }
-  /* A lane's "Show all" row: a task row's cell padding across, the empty Button's own
-     height down. */
+  /* A lane's "Show all" row: a task row's cell padding across; down, the empty Button's own
+     height and 4 px for its focus ring, which the lane would clip. */
   .tq-more {
-    padding: 0 var(--click-table-body-cell-space-sm-x);
+    padding: 4px var(--click-table-body-cell-space-sm-x);
     border-top: 1px solid var(--color-border);
   }
   .tq-lease {
