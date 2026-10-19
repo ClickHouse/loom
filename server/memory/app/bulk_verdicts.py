@@ -10,7 +10,7 @@ from typing import Any
 
 from server.core.datetimes import parse_iso_dt
 from server.memory.app.conflicts import resolver_mark
-from server.memory.app.set_commit import _peer_id_in_read_scope, set_next, set_peers
+from server.memory.app.set_commit import peer_id_in_read_scope, set_next, set_peers
 from server.memory.domain.conflicts import kept_versions
 
 # ---------------------------------------------------------------------------
@@ -194,7 +194,7 @@ def _stamp_result(result: Any, v: Any, verdict: str) -> None:
     result.next = set_next(verdict, peers)
     if verdict == "rejected":
         blocker = str(getattr(v, "pinned_blocker_id", "") or "")
-        result.pinned_blocker_id = _peer_id_in_read_scope(v, blocker)
+        result.pinned_blocker_id = peer_id_in_read_scope(v, blocker)
 
 
 def apply_bulk_verdicts(

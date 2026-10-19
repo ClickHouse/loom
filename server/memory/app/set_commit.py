@@ -92,7 +92,7 @@ def _peer_in_read_scope(peer: Any) -> bool:
     return row_in_read_scope(scope, getattr(peer, "user_id", ""), getattr(peer, "session_id", ""))
 
 
-def _peer_id_in_read_scope(conflict_result: Any, memory_id: str) -> str:
+def peer_id_in_read_scope(conflict_result: Any, memory_id: str) -> str:
     """`memory_id` when the verdict peer it names is inside the read scope,
     else "". An id that names no peer is shown only to an unbounded read."""
     peer = next(
@@ -416,7 +416,7 @@ async def _set_conflict_verdict(
     if conflict_result.verdict == "rejected":
         # Counted at the handler boundary via _WRITE_OUTCOME_BY_ERROR_CODE.
         # A blocker outside the read scope still blocks but is not named.
-        blocker = _peer_id_in_read_scope(conflict_result, conflict_result.pinned_blocker_id or "")
+        blocker = peer_id_in_read_scope(conflict_result, conflict_result.pinned_blocker_id or "")
         raise HTTPException(
             status_code=409,
             detail={
@@ -584,7 +584,7 @@ def _set_dry_run_answer(
         pinned=input.pinned,
         memory_id=memory_id,
         content_sha256=new_sha,
-        duplicate_of=_peer_id_in_read_scope(conflict_result, duplicate_of_id),
+        duplicate_of=peer_id_in_read_scope(conflict_result, duplicate_of_id),
         namespace=input.namespace,
         memory_key=input.memory_key,
         degraded=_degradations.current(),
@@ -791,7 +791,7 @@ async def _set_after_write(
         pinned=input.pinned,
         memory_id=memory_id,
         content_sha256=new_sha,
-        duplicate_of=_peer_id_in_read_scope(conflict_result, duplicate_of_id),
+        duplicate_of=peer_id_in_read_scope(conflict_result, duplicate_of_id),
         namespace=input.namespace,
         memory_key=input.memory_key,
         degraded=_degradations.current(),
