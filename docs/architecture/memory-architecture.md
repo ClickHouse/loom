@@ -162,7 +162,8 @@ memory.set, memory.pin, memory.delete, Undo and erasure requests):
   and its row and vector are both served. Like an Undo, a pin answers 409 while another
   write holds the key and 503 while the lease store (Keeper) does not answer; retry it.
 - Every retirement has a `memory.auto_supersede` record and can be undone.
-- Nothing is retired below 0.98, flagged below 0.95, or cleared below 0.90.
+- With the default thresholds, nothing is retired below 0.98, flagged below 0.95, or
+  cleared below 0.90.
 - No other user's or tenant's text reaches a prompt. A row's peers are its subject: the
   same org, namespace and `user_id`, whichever agent or session wrote them; for the
   anonymous user `-`, the same agent too.
@@ -424,8 +425,8 @@ The storage identity includes the session, so a key that a later session states 
 a second live row, and the conflict check skips same-key peers. Under `newest_wins` the
 newer write retires the older row. Under `auto_reinforce` a shared key alone is not
 evidence of one attribute: extraction reuses generic keys (`assistant_recommended_3`,
-`user_attended`) for different items, and in a sample of 60 same-key pairs from
-chat-history namespaces 58 were different facts.
+`user_attended`) for different items, and in a labelled sample of 60 same-key pairs from
+chat-history namespaces 52 were different facts, 7 restatements and 1 an update.
 
 Those rows are judged by the conflict resolver like any other peers: under `auto_reinforce`
 and `manual_review`, a point write (`conflicts.same_key_mark`) and a bulk write mark each

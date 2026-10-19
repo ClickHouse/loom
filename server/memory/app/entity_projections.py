@@ -837,7 +837,7 @@ async def drop_undeclared_edges_beside(
 
     if not rows:
         return
-    rows = {memory_id: list(declared) for memory_id, declared in rows.items()}
+    payload_rows = {memory_id: list(declared) for memory_id, declared in rows.items()}
     try:
         intent = await record_projection_failure(
             org=input.org,
@@ -846,21 +846,23 @@ async def drop_undeclared_edges_beside(
             projection=EDGES_DROP_UNDECLARED,
             source_operation=op,
             error="rows made high: undeclared edges to drop",
-            payload={"rows": rows},
+            payload={"rows": payload_rows},
             user_id=str(getattr(input, "user_id", "") or ""),
         )
     except Exception as e:  # noqa: BLE001 — the drop still runs; a failure is recorded then
-        log.warning("%s: drop intent not written for %d rows: %s", op, len(rows), e)
+        log.warning("%s: drop intent not written for %d rows: %s", op, len(payload_rows), e)
         intent = ""
 
     async def drop() -> None:
         if not intent:
-            await drop_undeclared_edges(input, rows, ch=get_client(), op=op)
+            await drop_undeclared_edges(input, payload_rows, ch=get_client(), op=op)
             return
         try:
-            await drop_undeclared_links(input, rows, ch=get_client())
+            await drop_undeclared_links(input, payload_rows, ch=get_client())
         except Exception as e:  # noqa: BLE001 — the intent stays; the repair drops them
-            log.warning("%s: undeclared edges of %d rows not dropped (owed): %s", op, len(rows), e)
+            log.warning(
+                "%s: undeclared edges of %d rows not dropped (owed): %s", op, len(payload_rows), e
+            )
             return
         intent_marks.resolve_soon(input.org, [intent])
 

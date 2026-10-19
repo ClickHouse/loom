@@ -1,8 +1,8 @@
-"""Resolve the FOLLOW_OWED intents of point-write retirements whose record and follow both
-landed, a batch at a time: a request waits on nothing, and a flush is one chunked mark
-for every org it holds instead of a mutation per write. Process-local: an intent this
-process did not flush (a crash, a failed mark) stays active, and the projection repair
-resolves it."""
+"""Resolve the intents (owed follows, undeclared-edge drops) whose work landed, a batch
+at a time: a request waits on nothing, and a flush is one chunked mark for every org
+it holds instead of a mutation per write. Process-local: an intent this process did
+not flush (a crash, a failed mark) stays active, and the projection repair resolves
+it."""
 
 from __future__ import annotations
 
