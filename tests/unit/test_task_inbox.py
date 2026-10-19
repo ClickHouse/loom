@@ -1386,3 +1386,42 @@ async def test_a_stranger_posting_to_an_inbox_is_told_it_does_not_exist(
     with pytest.raises(HTTPException) as absent:
         await _post(fake, inbox="no-such-inbox", from_subject="sa:stranger")
     assert stranger.value.status_code == 404 == absent.value.status_code
+
+
+async def test_the_lease_reconcile_reads_twice_whatever_the_number_of_leases() -> None:
+    """Every lease row and every task the reconcile weighs come in one read each, not one
+    read of the tasks per thousand leases: 2,500 idle rows, one of an ended task, one
+    todo task with no row."""
+    from datetime import datetime
+
+    leases = [{"task_id": f"t{i}", "owner": "", "fence": 0, "settled": True} for i in range(2500)]
+    tasks = [
+        {
+            "task_id": f"t{i}",
+            "org": "o",
+            "inbox": "q",
+            "status": "todo",
+            "fence": 0,
+            "settled": True,
+        }
+        for i in range(2500)
+    ]
+    tasks[7]["status"] = "cancelled"
+    tasks.append(
+        {"task_id": "bare", "org": "o", "inbox": "q", "status": "todo", "fence": 0, "settled": True}
+    )
+
+    class _CH:
+        reads = 0
+
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            self.reads += 1
+            return leases if "FROM loom.task_leases" in sql.split("WHERE")[0] else tasks
+
+    ch = _CH()
+    missing, stray = await repo.lease_strays(
+        before=datetime(2030, 1, 1), terminal=["cancelled", "done"], limit=100, ch=ch
+    )
+    assert ch.reads == 2
+    assert [m["task_id"] for m in missing] == ["bare"]
+    assert [s["task_id"] for s in stray] == ["t7"]

@@ -18,7 +18,6 @@ Handlers own the state machine; this module owns the statements.
 
 from __future__ import annotations
 
-import itertools
 import json
 import logging
 import re
@@ -507,11 +506,6 @@ async def sweep_candidates(
     return {"expired": expired, "resume": resume, "stale_triage": stale_triage}
 
 
-# Task ids one query names: a query parameter is one HTTP form field, which ClickHouse
-# caps at 128 KiB (`http_max_field_value_size`).
-_TASK_IDS_PER_QUERY = 1000
-
-
 async def lease_strays(
     *, before: datetime, terminal: list[str], limit: int, ch: _CHClient | None = None
 ) -> tuple[list[MissingLeaseRow], list[StrayLeaseRow]]:
@@ -519,8 +513,8 @@ async def lease_strays(
     `before` (a transition still in flight keeps its own rows; a cancel's first drop is
     not covered by the grace: its second drop removes a row the reconcile wrote back):
     todo and triage tasks with no lease row, and idle or expired rows whose task is
-    gone, ended or at another fence. The lease rows are read once (each is a Keeper
-    read)."""
+    gone, ended or at another fence. Two reads a pass, the lease rows and the tasks they
+    or the queue name; each list stops at `limit`."""
     ch = ch or _default_client()
     leases = await ch.query_all(
         "SELECT task_id, owner, fence, "
@@ -528,44 +522,44 @@ async def lease_strays(
         "AS settled FROM loom.task_leases",
         params={"before": before},
     )
-    leased = {str(r["task_id"]) for r in leases}
-    todo = await ch.query_all(
-        "SELECT toString(task_id) AS task_id, org, inbox, fence FROM loom.tasks FINAL "
-        "WHERE is_deleted = 0 AND status IN ('todo', 'triage') "
-        "AND updated_at < {before:DateTime} SETTINGS select_sequential_consistency = 1",
+    tasks = await ch.query_all(
+        "SELECT toString(task_id) AS task_id, org, inbox, toString(status) AS status, fence, "
+        "updated_at < {before:DateTime} AS settled FROM loom.tasks FINAL "
+        "WHERE is_deleted = 0 AND (status IN ('todo', 'triage') "
+        "OR toString(task_id) IN (SELECT task_id FROM loom.task_leases)) "
+        "SETTINGS select_sequential_consistency = 1",
         params={"before": before},
     )
-    missing = [cast("MissingLeaseRow", dict(t)) for t in todo if str(t["task_id"]) not in leased][
-        : int(limit)
-    ]
-    settled = sorted((r for r in leases if r["settled"]), key=lambda r: str(r["task_id"]))
-    stray: list[StrayLeaseRow] = []
-    for chunk in itertools.batched(settled, _TASK_IDS_PER_QUERY):
-        tasks = await ch.query_all(
-            "SELECT toString(task_id) AS id, toString(status) AS status, fence "
-            "FROM loom.tasks FINAL WHERE is_deleted = 0 "
-            "AND toString(task_id) IN {ids:Array(String)} "
-            "SETTINGS select_sequential_consistency = 1",
-            params={"ids": [str(r["task_id"]) for r in chunk]},
+    by_id = {str(t["task_id"]): t for t in tasks}
+    leased = {str(r["task_id"]) for r in leases}
+    missing = [
+        MissingLeaseRow(
+            task_id=str(t["task_id"]),
+            org=str(t["org"]),
+            inbox=str(t["inbox"]),
+            fence=int(t["fence"]),
         )
-        by_id = {str(t["id"]): t for t in tasks}
-        for row in chunk:
-            task = by_id.get(str(row["task_id"]))
-            if task and task["status"] not in terminal and int(task["fence"]) == int(row["fence"]):
-                continue
-            stray.append(
-                StrayLeaseRow(
-                    task_id=str(row["task_id"]),
-                    owner=str(row["owner"]),
-                    lease_fence=int(row["fence"]),
-                    found=str(task["id"]) if task else "",
-                    status=str(task["status"]) if task else "",
-                    fence=int(task["fence"]) if task else 0,
-                )
+        for t in tasks
+        if t["settled"] and t["status"] in ("todo", "triage") and str(t["task_id"]) not in leased
+    ][: int(limit)]
+    stray: list[StrayLeaseRow] = []
+    for row in sorted((r for r in leases if r["settled"]), key=lambda r: str(r["task_id"])):
+        task = by_id.get(str(row["task_id"]))
+        if task and task["status"] not in terminal and int(task["fence"]) == int(row["fence"]):
+            continue
+        stray.append(
+            StrayLeaseRow(
+                task_id=str(row["task_id"]),
+                owner=str(row["owner"]),
+                lease_fence=int(row["fence"]),
+                found=str(task["task_id"]) if task else "",
+                status=str(task["status"]) if task else "",
+                fence=int(task["fence"]) if task else 0,
             )
+        )
         if len(stray) >= int(limit):
             break
-    return missing, stray[: int(limit)]
+    return missing, stray
 
 
 async def inbox_counts(
