@@ -7865,3 +7865,40 @@ async def test_a_value_less_close_dates_an_older_high_value_by_when_the_row_left
         e["valid_to"] is not None and abs((e["valid_to"] - dan_written).total_seconds()) < 1.5
         for e in carol
     ), (carol, dan_written)
+
+
+async def test_a_replayed_drop_ends_the_edges_when_the_row_was_made_high(
+    ch, org, monkeypatch
+) -> None:
+    """The drop after a re-set to high fails and the repair runs it later: the dropped
+    edges end when the row was made high, not at the repair's clock."""
+    from server.memory.app import entity_projections
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    value = "Alice Smith met Bob Jones at Acme Corp in Berlin"
+    await _high_set(org, "s1", "contact", value)
+    real = entity_projections.drop_undeclared_links
+
+    async def down(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("DELETE refused")
+
+    made_high = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    with monkeypatch.context() as m:
+        m.setattr(entity_projections, "drop_undeclared_links", down)
+        await _high_set(org, "s1", "contact", value, sensitivity="high")
+    await asyncio.sleep(3)
+    monkeypatch.setattr(entity_projections, "drop_undeclared_links", real)
+    results = await retry_projection_failures(
+        org=org, projection="entity_edges_drop_undeclared", ch=ch
+    )
+    assert results and all(r.resolved for r in results), results
+    await _mutations_done(ch, org)
+    ends = await ch.query_all(
+        "SELECT valid_to FROM loom.entity_edges WHERE org = {org:String} AND valid_to IS NOT NULL"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert ends and all(abs((r["valid_to"] - made_high).total_seconds()) < 2 for r in ends), (
+        ends,
+        made_high,
+    )

@@ -691,9 +691,15 @@ async def _retry_edges_drop(failure: ProjectionFailureRow, *, ch: Any) -> str:
     rows = failure.payload.get("rows")
     if not isinstance(rows, dict) or not all(isinstance(d, list) for d in rows.values()):
         return "malformed_payload"
+    made = failure.payload.get("made_high_at")
+    try:
+        made_high_at = datetime.fromisoformat(made) if made else None
+    except (TypeError, ValueError):
+        return "malformed_payload"
     scope = _failure_scope(failure)
     declared = {str(memory_id): [str(d) for d in ents] for memory_id, ents in rows.items()}
-    await drop_undeclared_links(scope, declared, ch=ch)
+    # The edges end when the row was made high, not at the replay's clock.
+    await drop_undeclared_links(scope, declared, ch=ch, made_high_at=made_high_at)
     return ""
 
 

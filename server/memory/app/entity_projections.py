@@ -820,7 +820,9 @@ def owes_undeclared_drop(previous: Any, declared: Sequence[str]) -> bool:
     return not set(declared) >= set(declared_entities(getattr(previous, "entities", None)))
 
 
-async def drop_undeclared_links(input: Any, rows: Mapping[str, list[str]], *, ch: Any) -> None:
+async def drop_undeclared_links(
+    input: Any, rows: Mapping[str, list[str]], *, ch: Any, made_high_at: datetime | None = None
+) -> None:
     """Rows now 'high' (`rows`: memory_id -> the entities its writer declared) keep only
     the edges of their declared entities: their links to any other pair go, and those
     edges end unless another row names them. One read, one DELETE and one close for all."""
@@ -852,18 +854,25 @@ async def drop_undeclared_links(input: Any, rows: Mapping[str, list[str]], *, ch
         """,
         params={**params, "links": drop},
     )
-    now = naive_utc_now()
-    ends = [(a, b, now) for a, b in sorted({(a, b) for _, a, b in drop})]
+    # The edges end when the row was made high (`made_high_at`), a replay included.
+    end = made_high_at or naive_utc_now()
+    ends = [(a, b, end) for a, b in sorted({(a, b) for _, a, b in drop})]
     await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, open_only=True)
 
 
 async def drop_undeclared_edges(
-    input: Any, rows: Mapping[str, list[str]], *, ch: Any, op: str
+    input: Any,
+    rows: Mapping[str, list[str]],
+    *,
+    ch: Any,
+    op: str,
+    made_high_at: datetime | None = None,
 ) -> None:
     """`drop_undeclared_links`, fail-open: a failure is recorded for the projection repair
     (`EDGES_DROP_UNDECLARED`), which drops them again."""
+    made_high_at = made_high_at or naive_utc_now()
     try:
-        await drop_undeclared_links(input, rows, ch=ch)
+        await drop_undeclared_links(input, rows, ch=ch, made_high_at=made_high_at)
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair drops them
         log.warning("%s: undeclared edges of %d rows not dropped (recorded): %s", op, len(rows), e)
         await record_projection_failure(
@@ -873,7 +882,7 @@ async def drop_undeclared_edges(
             projection=EDGES_DROP_UNDECLARED,
             source_operation=op,
             error=e,
-            payload={"rows": dict(rows)},
+            payload={"rows": dict(rows), "made_high_at": made_high_at.isoformat()},
             ch=ch,
             user_id=str(getattr(input, "user_id", "") or ""),
         )
@@ -894,6 +903,7 @@ async def drop_undeclared_edges_beside(
     if not rows:
         return
     payload_rows = {memory_id: list(declared) for memory_id, declared in rows.items()}
+    made_high_at = naive_utc_now()
     try:
         intent = await record_projection_failure(
             org=input.org,
@@ -902,7 +912,7 @@ async def drop_undeclared_edges_beside(
             projection=EDGES_DROP_UNDECLARED,
             source_operation=op,
             error="rows made high: undeclared edges to drop",
-            payload={"rows": payload_rows},
+            payload={"rows": payload_rows, "made_high_at": made_high_at.isoformat()},
             user_id=str(getattr(input, "user_id", "") or ""),
         )
     except Exception as e:  # noqa: BLE001 — the drop still runs; a failure is recorded then
@@ -911,10 +921,14 @@ async def drop_undeclared_edges_beside(
 
     async def drop() -> None:
         if not intent:
-            await drop_undeclared_edges(input, payload_rows, ch=get_client(), op=op)
+            await drop_undeclared_edges(
+                input, payload_rows, ch=get_client(), op=op, made_high_at=made_high_at
+            )
             return
         try:
-            await drop_undeclared_links(input, payload_rows, ch=get_client())
+            await drop_undeclared_links(
+                input, payload_rows, ch=get_client(), made_high_at=made_high_at
+            )
         except Exception as e:  # noqa: BLE001 — the intent stays; the repair drops them
             log.warning(
                 "%s: undeclared edges of %d rows not dropped (owed): %s", op, len(payload_rows), e
