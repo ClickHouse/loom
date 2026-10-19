@@ -4,8 +4,6 @@
 # ============================================================
 .env
 .env.local
-# A local copy of loom.example.yaml for LOOM_SETTINGS_FILE to name.
-loom.yaml
 .env.*.local
 # Timestamped .env backups written by hand and by redeploy.sh. The three
 # patterns above do NOT match `.env.bak.<label>`, so five of these were tracked

@@ -701,7 +701,7 @@
           "default": 3600.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds one fetch or clone may run; the first fetch after a shallow clone of a large repository can exceed ten minutes."
+          "description": "Seconds one fetch, or one full-tree `ls-tree` of a commit, may run; the first fetch after a shallow clone of a large repository can exceed ten minutes."
         },
         "code_git_ledger_merge_batch": {
           "default": 40,

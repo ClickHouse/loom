@@ -129,8 +129,8 @@ class CodeSettings(BaseModel):
     code_mirror_fetch_interval_s: float = 300.0
     # Seconds one git command on a mirror may run (log, show, rev-parse).
     code_git_timeout_s: Annotated[float, LIVE] = Field(default=120.0, gt=0)
-    # Seconds one fetch or clone may run; the first fetch after a shallow clone of
-    # a large repository can exceed ten minutes.
+    # Seconds one fetch, or one full-tree `ls-tree` of a commit, may run; the first fetch
+    # after a shallow clone of a large repository can exceed ten minutes.
     code_git_fetch_timeout_s: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
     # Hours between `git gc` runs of each mirror on this host (low CPU and IO
     # priority, only with room for a second copy plus the margin below). 0 = never.
