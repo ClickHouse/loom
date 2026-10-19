@@ -6943,6 +6943,40 @@ async def test_a_revision_of_a_high_row_keeps_its_declared_edges(ch, org) -> Non
     assert await _open_edge_pairs(ch, org) == edges
 
 
+@pytest.mark.parametrize("how", ["same value", "new value", "bulk"])
+async def test_a_high_row_re_set_with_fewer_entities_ends_the_dropped_ones(ch, org, how) -> None:
+    """A high row keeps the edges of the entities it names and no other: re-set high
+    naming one entity fewer, the edges of the one it dropped end."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    value = "Alice Smith met Bob Jones at Acme Corp"
+    three = ["Alice Smith", "Bob Jones", "Acme Corp"]
+    await _high_set(org, "s1", "contact", value, sensitivity="high", entities=three)
+    assert len(await _open_edge_pairs(ch, org)) == 3
+    narrowed = {"sensitivity": "high", "entities": ["Alice Smith", "Bob Jones"]}
+    if how == "bulk":
+        # A new value: bulk skips a restatement whose labels are unchanged.
+        entry = {"memory_key": "contact", "value": value + ".", "memory_type": "semantic"}
+        entry |= narrowed
+        await handle_memory_bulk_set(
+            MemoryBulkSetInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                session_id="s1",
+                entries=[entry],
+            )
+        )
+        await after_write.drain()
+    else:
+        new = value if how == "same value" else value + "."
+        await _high_set(org, "s1", "contact", new, **narrowed)
+    assert await _open_edge_pairs(ch, org) == {("alice smith", "bob jone")}
+
+
 async def test_a_relabel_to_high_closes_mined_facts_and_keeps_declared_edges(ch, org) -> None:
     """The sensitivity sweep relabels a row high: the edges its text gave the graph and
     its triples close; the edge of the entities its writer declared stays."""

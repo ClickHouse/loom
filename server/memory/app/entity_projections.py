@@ -754,6 +754,15 @@ async def _end_edges_of(
     await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, open_only=True)
 
 
+def owes_undeclared_drop(previous: Any, declared: Sequence[str]) -> bool:
+    """Whether a write that leaves its row 'high' over `previous` (the row it replaced)
+    must drop edges: a row that was not high had its text mined, and a high one keeps
+    the edges of the entities it named, so only the ones it no longer names go."""
+    if str(getattr(previous, "sensitivity", "") or "") != "high":
+        return True
+    return not set(declared) >= set(declared_entities(previous))
+
+
 async def drop_undeclared_links(input: Any, rows: Mapping[str, list[str]], *, ch: Any) -> None:
     """Rows now 'high' (`rows`: memory_id -> the entities its writer declared) keep only
     the edges of their declared entities: their links to any other pair go, and those
@@ -817,8 +826,8 @@ async def drop_undeclared_edges_beside(
     input: Any, rows: Mapping[str, list[str]], *, op: str
 ) -> None:
     """`drop_undeclared_links` after the response, for the rows a write made 'high'
-    (`rows`: memory_id -> its declared entities; a row that already was high dropped
-    them then). Owed first, as a retirement is: one EDGES_DROP_UNDECLARED
+    (`rows`: memory_id -> its declared entities; callers pick them by
+    `owes_undeclared_drop`). Owed first, as a retirement is: one EDGES_DROP_UNDECLARED
     intent for the whole write goes in before the drop is scheduled and is resolved in
     the next batched mark once the drop lands, so a stop between them leaves it to the
     repair. Scheduled after the write's own declared projection returned, so it runs

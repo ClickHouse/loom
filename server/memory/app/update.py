@@ -33,6 +33,7 @@ from server.memory.app.conflicts import same_key_mark
 from server.memory.app.entity_projections import (
     declared_entities,
     drop_undeclared_edges_beside,
+    owes_undeclared_drop,
     project_revised_edges,
     project_stated_relations,
 )
@@ -403,14 +404,14 @@ async def _revised_edges(
     entities' edges, so what any value's text gave the graph goes, after the response."""
     if new_sha != existing.content_sha256:
         await project_revised_edges(memory_row, new_value, op=op, ch=ch)
-    if sensitivity == "high" and str(existing.sensitivity or "") != "high":
+    declared = declared_entities(SimpleNamespace(entities=memory_row.get("entities")))
+    if sensitivity == "high" and owes_undeclared_drop(existing, declared):
         scope = SimpleNamespace(
             org=existing.org,
             namespace=existing.namespace,
             agent=str(existing.agent),
             user_id=str(existing.user_id),
         )
-        declared = declared_entities(SimpleNamespace(entities=memory_row.get("entities")))
         await drop_undeclared_edges_beside(scope, {str(existing.memory_id): declared}, op=op)
 
 

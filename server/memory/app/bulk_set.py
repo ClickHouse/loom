@@ -429,17 +429,16 @@ async def _drop_undeclared_of_rows_made_high(
     from server.memory.app.entity_projections import (
         declared_entities,
         drop_undeclared_edges_beside,
+        owes_undeclared_drop,
     )
 
     rows: dict[str, list[str]] = {}
     for key, row in kept_versions(state.memory_rows).items():
         if str(row.get("sensitivity") or "") != "high" or key not in state.existing_rows:
             continue
-        if str(getattr(state.existing_rows[key], "sensitivity", "") or "") == "high":
-            continue
-        rows[str(row["memory_id"])] = declared_entities(
-            SimpleNamespace(entities=row.get("entities"))
-        )
+        declared = declared_entities(SimpleNamespace(entities=row.get("entities")))
+        if owes_undeclared_drop(state.existing_rows[key], declared):
+            rows[str(row["memory_id"])] = declared
     # One intent and one drop for the whole batch: a row each would cost a committed
     # insert per row before the response.
     await drop_undeclared_edges_beside(input, rows, op="memory.bulk_set")

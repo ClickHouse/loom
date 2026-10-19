@@ -38,6 +38,7 @@ from server.memory.app.drops import record_drop
 from server.memory.app.entity_projections import (
     declared_entities,
     drop_undeclared_edges_beside,
+    owes_undeclared_drop,
     project_stated_relations,
 )
 from server.memory.app.high_fence import fence_high
@@ -292,8 +293,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
                 ents=declared,
             )
         )
-    was_high = str(getattr(w.existing, "sensitivity", "") or "") == "high"
-    if high and had_existing_row and not was_high:
+    if high and had_existing_row and owes_undeclared_drop(w.existing, declared or []):
         # Made high over a value it held: what its text gave the graph goes.
         await drop_undeclared_edges_beside(input, {memory_id: declared or []}, op="memory.set")
     await project_stated_relations(
