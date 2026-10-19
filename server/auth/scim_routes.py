@@ -363,16 +363,21 @@ def _listed(value: Any) -> list[Any]:
     return [] if value is None else value if isinstance(value, list) else [value]
 
 
+# `emails[<filter>]<rest>`: a bracket inside the filter's quoted value is the value's.
+_EMAILS_FILTER = re.compile(r'emails\[((?:[^"\[\]]|"(?:[^"\\]|\\.)*")*)\](.*)', re.DOTALL)
+
+
 def _emails_path(attr: str) -> tuple[str | None, str]:
     """An `emails…` path as its filter (None for none) and sub-attribute ('' for none)."""
+    malformed = ScimError(400, "an emails path is malformed", "invalidPath")
     filt, rest = None, attr.removeprefix("emails")
     if "[" in attr or "]" in attr:
-        opening, closing = attr.find("["), attr.find("]")
-        if attr.count("[") != 1 or attr.count("]") != 1 or closing < opening or opening != 6:
-            raise ScimError(400, "an emails path is malformed", "invalidPath")
-        filt, rest = attr[opening + 1 : closing], attr[closing + 1 :]
-    if rest and not rest.startswith("."):
-        raise ScimError(400, "an emails path is malformed", "invalidPath")
+        m = _EMAILS_FILTER.fullmatch(attr)
+        if m is None:
+            raise malformed
+        filt, rest = m.groups()
+    if (rest and not rest.startswith(".")) or "[" in rest or "]" in rest:
+        raise malformed
     return filt, rest[1:]
 
 

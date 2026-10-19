@@ -153,3 +153,39 @@ async def test_a_reused_name_hands_its_ancestry_to_tokens_listed_before_lineage(
             "SETTINGS mutations_sync = 2",
             params={"j": revocation.SCIM_PREFIX + lee},
         )
+
+
+async def _reuse(org: str, name: str, by: str) -> None:
+    """Revoke the token holding `name`, then list another under it."""
+    held = await get_client().query_one(
+        "SELECT * FROM loom.service_accounts FINAL WHERE org = {org:String} AND name = {n:String}",
+        params={"org": org, "n": name},
+    )
+    gone = service_accounts.revoked_row(
+        dict(held or {}), revoked_at=datetime(2026, 1, 1), revoked_by=by
+    )
+    await get_client().insert("loom.service_accounts", [gone])
+    await _save(org, name, f"sa:{name}-new", "admin", ["admin"])
+
+
+async def test_two_reused_names_in_a_chain_listed_before_lineage_keep_its_root(org: str) -> None:
+    # lee -> top -> mid -> leaf, all listed before 044; mid's name, then top's, reused.
+    lee = f"lee-{uuid.uuid4().hex[:8]}"
+    await _listed_before_lineage(org, "top", "sa:top-old", lee)
+    await _listed_before_lineage(org, "mid", "sa:mid-old", "sa:top-old")
+    await _listed_before_lineage(org, "leaf", "sa:leaf-1", "sa:mid-old")
+    await _reuse(org, "mid", lee)
+    await _reuse(org, "top", lee)
+
+    from server.auth import revocation
+
+    await revocation.scim_revoke(lee, reason="test", revoked_by="scim")
+    try:
+        await service_accounts.revoke_created_by([lee], revoked_by="scim")
+        assert (await _head(org, "leaf"))["revoked_at"] is not None
+    finally:
+        await get_client().execute(
+            "ALTER TABLE loom.revoked_tokens DELETE WHERE jti = {j:String} "
+            "SETTINGS mutations_sync = 2",
+            params={"j": revocation.SCIM_PREFIX + lee},
+        )

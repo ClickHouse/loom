@@ -542,14 +542,20 @@ it through its delegation chain), but it stays listed live and keeps its
 name. List those with
 
 ```sql
-SELECT org, name, sa_subject FROM loom.service_accounts FINAL
+SELECT org, name, sa_subject, created_by FROM loom.service_accounts FINAL
 WHERE revoked_at IS NULL AND empty(lineage) AND startsWith(created_by, 'sa:')
+  AND NOT match(created_by, '^sa:[^:]+:')
   AND created_by NOT IN (SELECT sa_subject FROM loom.service_accounts FINAL)
 ```
 
-and revoke each from its owner's Tokens list, or as a namespace admin
-(`/v1/me/service_accounts.revoke`). While the previous build still serves, a
-token it lists, revokes or reuses the name of records no lineage.
+It leaves out the agents of a machine trust (`sa:<trust>:<agent>`), which have
+no row there; a token made from an operator-minted `sa:` subject (`loom
+mint-token --subject sa:…`) shows up too, and is not one of these. Revoke each
+token it lists from its owner's Tokens list, or as a namespace admin
+(`/v1/me/service_accounts.revoke`), and then the tokens each one made (those
+whose `created_by` is its `sa_subject`), down the chain. While the previous
+build still serves, a token it lists, revokes or reuses the name of records no
+lineage.
 
 A browser sign-in whose steps land on both builds (a code exchanged, an
 identity provider's callback) fails and is started again. The SDK and `loom

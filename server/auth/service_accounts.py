@@ -119,12 +119,15 @@ def revoked_row(row: dict[str, Any], *, revoked_at: datetime, revoked_by: str) -
 
 async def hand_down_lineage(org: str, name: str) -> None:
     """Before a new token takes `name`, add to the lineage of the tokens its
-    former holder made every subject above them. Once the new row replaces the
-    former one under FINAL, no row names the subject they were made by, and a
-    token listed before `lineage` would be found by neither column. Called
-    under the name's claim; each token rewritten under its own."""
-    from server.auth.grant_claims import service_account_change
+    former holder made, directly or below a token gone already, every subject
+    above them. Once the new row replaces the former one under FINAL, no row
+    names the subject they were made by, and a token listed before `lineage`
+    would be found by neither column. Called under the name's claim; each token
+    rewritten under its own (parent before child, so claims never wait in a
+    cycle)."""
+    from server.auth.grant_claims import NotClaimed
     from server.core.ch import get_client, own_write_reads
+    from server.core.errors import GrantBusyError
 
     ch = get_client()
     key = {"org": org, "name": name}
@@ -138,29 +141,43 @@ async def hand_down_lineage(org: str, name: str) -> None:
         return
     made_by = str(former["sa_subject"])
     above = sorted({made_by, str(former["created_by"]), *former["lineage"]} - {""})
+    # As the revoke pass walks them; an expired token it never reaches.
     find = (
         "FROM loom.service_accounts FINAL WHERE org = {org:String} "
-        "AND created_by = {by:String} AND NOT hasAll(lineage, {above:Array(String)})"
+        "AND (created_by = {by:String} OR has(lineage, {by:String})) "
+        f"AND NOT hasAll(lineage, {{above:Array(String)}}) AND {_UNEXPIRED}"
     )
     params = {"org": org, "by": made_by, "above": above}
     with own_write_reads():
         made = await ch.query_all(f"SELECT name {find}", params=params)
     for r in made:
-        async with service_account_change(org, str(r["name"])):
-            with own_write_reads():  # again, under its claim
-                row = await ch.query_one(
-                    f"SELECT * {find} AND name = {{name:String}}",
-                    params={**params, "name": r["name"]},
-                )
-            if row is None:
-                continue
-            row = dict(row)
-            lineage = sorted({*row["lineage"], *above})
-            # Every column carried, past the version read, as `revoked_row` does.
-            version = max(time.time_ns(), int(row["version"]) + 1)
-            await ch.insert(
-                "loom.service_accounts", [{**row, "lineage": lineage, "version": version}]
+        try:
+            await _add_lineage(org, str(r["name"]), find, params, above)
+        except (GrantBusyError, NotClaimed):  # without naming another person's token
+            raise GrantBusyError(
+                "a change to a token made under this name is running; retry shortly"
+            ) from None
+
+
+async def _add_lineage(
+    org: str, name: str, find: str, params: dict[str, Any], above: list[str]
+) -> None:
+    from server.auth.grant_claims import service_account_change
+    from server.core.ch import get_client, own_write_reads
+
+    ch = get_client()
+    async with service_account_change(org, name):
+        with own_write_reads():  # again, under its claim
+            row = await ch.query_one(
+                f"SELECT * {find} AND name = {{name:String}}", params={**params, "name": name}
             )
+        if row is None:
+            return
+        row = dict(row)
+        lineage = sorted({*row["lineage"], *above})
+        # Every column carried, past the version read, as `revoked_row` does.
+        version = max(time.time_ns(), int(row["version"]) + 1)
+        await ch.insert("loom.service_accounts", [{**row, "lineage": lineage, "version": version}])
 
 
 # Names a pass revokes at once: each is a lease round trip and an insert.

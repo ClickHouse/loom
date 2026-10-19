@@ -8,7 +8,8 @@ write, as a lease (`server.core.leases`) every replica sees, with or without a
 Keeper.
 
 Claims nest in one order: account claims first (several sorted by org and
-namespace) or a service-account name's; then an address's sign-up claim
+namespace) or a service-account name's, then the names of the tokens its
+former holder made (parent before child, `hand_down_lineage`); then an address's sign-up claim
 (`self_signup.email_claim`); then a subject's repository claim
 (`maintainers.repo_change`), the repository's admins and the namespaces'
 admins, or the trusts; then a bot or a grant (several sorted by namespace).

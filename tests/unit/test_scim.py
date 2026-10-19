@@ -2211,6 +2211,28 @@ def test_an_emails_filter_value_is_a_json_string(client: TestClient, world, path
     assert [e["value"] for e in r.json()["emails"]] == ["lee@example.com"]
 
 
+def test_an_emails_filter_value_may_hold_a_bracket(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "lee@example.com"}, {"value": "lee@[192.0.2.1]"}])
+    r = _patch(client, uid, {"op": "remove", "path": 'emails[value eq "lee@[192.0.2.1]"]'})
+    assert r.status_code == 200, r.text
+    assert [e["value"] for e in r.json()["emails"]] == ["lee@example.com"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        'emails[type eq "work"',
+        'emails[type eq "work"]]',
+        'emails[type eq "work"].value[0]',
+        "emailsx",
+    ],
+)
+def test_a_malformed_emails_path_is_refused(client: TestClient, world, path: str) -> None:
+    uid = _user(client, [{"value": "lee@example.com", "type": "work"}])
+    r = _patch(client, uid, {"op": "replace", "path": path, "value": "x"})
+    assert r.status_code == 400 and r.json()["scimType"] == "invalidPath", r.text
+
+
 def test_an_emails_filter_value_may_hold_an_escaped_quote(client: TestClient, world) -> None:
     uid = _user(client, [{"value": "lee@example.com"}])
     add = {"op": "add", "path": r'emails[type eq "a\"b"].value', "value": "lee@home.example"}
