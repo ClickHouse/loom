@@ -782,7 +782,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             input.agent,
             input.thread_id,
             msg_ids=replaced_earlier,
-            when=datetime.now(UTC).replace(tzinfo=None),
+            when=naive_utc_now(),
         )
 
     if len(rows) <= input.keep_recent:

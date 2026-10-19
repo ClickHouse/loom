@@ -304,7 +304,6 @@ def test_a_large_turn_behind_a_summary_is_compacted_whole(monkeypatch) -> None:
         ),
     ]
     llm = _FakeLLM()
-    prompts = llm.prompts
 
     fake = _FakeCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
@@ -320,7 +319,7 @@ def test_a_large_turn_behind_a_summary_is_compacted_whole(monkeypatch) -> None:
     [summary] = fake.inserted
     # The summary is free, so the 15,000-character turn and the short one after it fit.
     assert '"compacted_from": ["compact-1", "m1", "m2"]' in summary["metadata"]
-    [prompt] = prompts
+    [prompt] = llm.prompts
     assert big in prompt  # the large turn reached the summarizer whole
 
 
@@ -408,7 +407,6 @@ def test_client_written_summaries_cannot_lift_the_prompt(
         ),
     ]
     llm = _FakeLLM()
-    prompts = llm.prompts
 
     fake = _FakeCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
@@ -420,7 +418,7 @@ def test_client_written_summaries_cannot_lift_the_prompt(
             )
         )
     )
-    [prompt] = prompts
+    [prompt] = llm.prompts
     assert len(prompt) < ch_mod._COMPACT_TRANSCRIPT_CHARS + ch_mod._FOLDED_SUMMARY_CHARS
     assert out.compacted is True and out.messages_summarized == 2
     assert "turn 1" in prompt and "turn 2" in prompt
@@ -467,7 +465,6 @@ def test_a_summary_past_the_allowance_stays_live_and_the_turns_compact(monkeypat
         ),
     ]
     llm = _FakeLLM()
-    prompts = llm.prompts
 
     fake = _FakeCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
@@ -480,7 +477,7 @@ def test_a_summary_past_the_allowance_stays_live_and_the_turns_compact(monkeypat
         )
     )
     assert out.compacted is True and out.messages_summarized == 3
-    [prompt] = prompts
+    [prompt] = llm.prompts
     assert all(f"turn {i}" in prompt for i in range(1, 4))
     assert "a short summary" in prompt and "sss" not in prompt
     [summary] = fake.inserted
@@ -603,7 +600,6 @@ def test_a_resent_compaction_replaces_the_summary_its_failed_run_left(monkeypatc
         *(row(f"m{i}", f"turn {i}") for i in range(1, 5)),
     ]
     llm = _FakeLLM()
-    prompts = llm.prompts
 
     fake = _FakeCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
@@ -616,7 +612,7 @@ def test_a_resent_compaction_replaces_the_summary_its_failed_run_left(monkeypatc
         )
     )
     assert out.compacted is True and out.messages_summarized == 3
-    [prompt] = prompts
+    [prompt] = llm.prompts
     assert "sss" in prompt and "ttt" not in prompt
     [summary] = fake.inserted
     assert json.loads(summary["metadata"])["compacted_from"] == [
@@ -689,7 +685,6 @@ def test_a_summary_inside_the_window_is_replaced_but_not_counted(
         row("m3", 4, "turn 3"),
     ]
     llm = _FakeLLM()
-    prompts = llm.prompts
 
     fake = _FakeCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
@@ -708,10 +703,10 @@ def test_a_summary_inside_the_window_is_replaced_but_not_counted(
     )
     assert out.compacted is compacted
     if compacted:
-        [prompt] = prompts
+        [prompt] = llm.prompts
         assert "a client summary" in prompt
         assert out.messages_summarized == 2
         [summary] = fake.inserted
         assert json.loads(summary["metadata"])["compacted_from"] == ["m1", "m2", "s"]
     else:
-        assert out.reason == "below-min-to-compact"
+        assert out.reason == "below-min-to-compact" and llm.prompts == []
