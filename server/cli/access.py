@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import UTC, timedelta
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -280,6 +280,7 @@ async def _scim_give_back(
     before `issued_before`. The row written, or None and the exit code."""
     from server.auth import revocation, scim
     from server.core import leases
+    from server.core.datetimes import as_aware_utc, to_naive_utc
 
     try:  # SCIM's own lease on the subject: never amid its lift of it
         async with scim.subject_leases([subject]):
@@ -291,11 +292,11 @@ async def _scim_give_back(
             # names are free: a token made under one would hide a live one.
             # Past every token issued before an outright revocation, on any
             # replica: its own second, and a clock ahead of the one that wrote it.
-            outright_at = _naive_utc(current["revoked_at"]).replace(microsecond=0)
-            floor = (
-                _naive_utc(current["issued_before"])
-                if current["issued_before"]
-                else outright_at + timedelta(seconds=1 + revocation.CLOCK_SKEW_S)
+            floor = to_naive_utc(
+                current["issued_before"]
+                or revocation.past_every_token_before(
+                    as_aware_utc(current["revoked_at"]) or current["revoked_at"]
+                )
             )
             if issued_before < floor:
                 print(
@@ -314,11 +315,6 @@ async def _scim_give_back(
         else:
             print(f"  ✗ SCIM is changing {subject!r}; retry shortly", file=sys.stderr)
         return None, 1
-
-
-def _naive_utc(dt: Any) -> Any:
-    """A ClickHouse DateTime64 (aware or not) as the naive UTC the flags parse to."""
-    return dt.astimezone(UTC).replace(tzinfo=None) if dt.tzinfo is not None else dt
 
 
 def _cmd_revoke_token(args: argparse.Namespace) -> int:

@@ -16,9 +16,10 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
+from server.core.datetimes import as_aware_utc
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -179,9 +180,7 @@ def _is_dead(row: dict[str, Any], revoked: dict[str, int | None], dead: set[str]
     if creator not in revoked:
         return False
     cutoff = revoked[creator]
-    made = row["created_at"]
-    if made.tzinfo is None:
-        made = made.replace(tzinfo=UTC)
+    made = as_aware_utc(row["created_at"]) or row["created_at"]
     return cutoff is None or int(made.timestamp()) < cutoff
 
 

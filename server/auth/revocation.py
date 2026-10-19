@@ -51,10 +51,15 @@ _LATEST_EXPIRY = datetime(2105, 12, 31)
 CLOCK_SKEW_S = 5
 
 
+def past_every_token_before(at: datetime) -> datetime:
+    """The first second no replica could have issued a token before `at` (aware
+    UTC): revocation compares whole seconds, and the token's `iat` is another clock's."""
+    return at.replace(microsecond=0) + timedelta(seconds=1 + CLOCK_SKEW_S)
+
+
 def from_now_on() -> datetime:
-    """A cutoff past every token issued so far, on any replica: revocation
-    compares whole seconds, and the token's `iat` is another clock's."""
-    return datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1 + CLOCK_SKEW_S)
+    """A cutoff past every token issued so far, on any replica."""
+    return past_every_token_before(datetime.now(UTC))
 
 
 async def wait_out(cutoff: datetime) -> None:

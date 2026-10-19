@@ -326,11 +326,11 @@ In Okta, on the app integration from [Okta setup](#okta-setup):
 3. **Provisioning → To App → Edit:** enable **Create Users**, **Update User
    Attributes** and **Deactivate Users**, and save. Loom keeps no attributes
    but the `userName` (a rename is kept) and the email, which cannot change.
-   With updates on, a changed email shows as a failed task in Okta; delete
-   the user from the app and assign them again before they sign in with the
-   new address. With updates off, Okta never says the email changed: the
-   person's next sign-in makes a new account under the new address, which a
-   later deactivation of the old one misses.
+   With updates on, a changed email shows as a failed task in Okta (see
+   [Changing a person's email](#changing-a-persons-email)). With updates off,
+   Okta never says the email changed: the person's next sign-in makes a new
+   account under the new address, which a later deactivation of the old one
+   misses.
 4. Under **General → Sign On**, set **Application username format** to
    **Email**: Loom knows people by their email.
 
@@ -376,8 +376,8 @@ What Loom does with each request:
   which a later deactivation of the old email would miss. A filtered write
   (`emails[type eq "work"].value`) is checked only when its filter selects
   that entry, so an unchanged address passes and other addresses may be
-  added, changed or removed. Change the email by deleting the user at the
-  provider and creating it again. A refused request that also sets
+  added, changed or removed (see
+  [Changing a person's email](#changing-a-persons-email)). A refused request that also sets
   `active: false` still deactivates: providers send a leaver's changes
   together and do not retry a 400. A `PUT` whose body names another user's
   `id` is refused before anything is applied.
@@ -463,6 +463,22 @@ sign-in: to let a deactivated person
 sign in again once SCIM is off, set `LOOM_SCIM_TOKEN` again and send
 `active: true` for them, from the provider or by hand. Reactivate at the
 provider first anyone who should keep Loom.
+
+### Changing a person's email
+
+Loom keys a SCIM user on the address, so a new address is a new user: remove
+the person from the app at the provider (which deactivates the old address
+and revokes the accounts it reaches) and assign them again with the new one.
+Their next sign-in carries the new address. What happens to the old account:
+
+- A password account: point it at the new address with
+  `loom sso link --email <new> --org <org> --namespace <ns> --apply`. The old
+  address no longer reaches it, and the next `PUT` or `PATCH` for the new
+  user lets it go (or give it back at once with
+  `loom revoke-token --subject <it> --issued-before <now> --scim`).
+- An account made at an SSO sign-in has no command to move it: the person's
+  first sign-in with the new address makes a new account. Grant it the old
+  account's namespaces; the old account and its data stay, revoked.
 
 ## Behind a proxy
 

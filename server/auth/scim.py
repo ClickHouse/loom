@@ -48,6 +48,7 @@ from typing import Any
 from server.auth import login, revocation, service_accounts
 from server.core import leases
 from server.core.ch import get_client, own_write_reads
+from server.core.datetimes import as_aware_utc
 from server.core.grant_sql import LIVE_GRANT
 from server.core.versions import next_version
 from server.observability import audit
@@ -391,7 +392,11 @@ async def _converge_active(
         # the revocations it lifts, by a replica whose clock runs ahead.
         lift_to = max(
             datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1),
-            *(_after_skew(r["revoked_at"]) for r in rows.values() if r["issued_before"] is None),
+            *(
+                revocation.past_every_token_before(_aware(r["revoked_at"]))
+                for r in rows.values()
+                if r["issued_before"] is None
+            ),
         )
         # The row first: a lift that fails leaves the user active and still
         # revoked, never inactive with a subject let go. A retry lifts the rest.
@@ -514,10 +519,8 @@ async def _lift(row: dict[str, Any], subjects: list[str], cutoff: datetime) -> b
     return lifted
 
 
-def _after_skew(revoked_at: datetime) -> datetime:
-    """The first second no replica's clock could have issued a token before `revoked_at`."""
-    at = revoked_at if revoked_at.tzinfo else revoked_at.replace(tzinfo=UTC)
-    return at.replace(microsecond=0) + timedelta(seconds=1 + revocation.CLOCK_SKEW_S)
+def _aware(ts: datetime) -> datetime:
+    return as_aware_utc(ts) or ts  # a time read back from ClickHouse is naive UTC
 
 
 def _outright(rows: dict[str, dict[str, Any]]) -> set[str]:
@@ -533,8 +536,7 @@ def _newest_cutoff(rows: dict[str, dict[str, Any]]) -> datetime | None:
     ]
     if not cutoffs:
         return None
-    cutoff = max(cutoffs)
-    return cutoff if cutoff.tzinfo is not None else cutoff.replace(tzinfo=UTC)
+    return _aware(max(cutoffs))
 
 
 async def _held_by_another_inactive(uid: str, subject: str) -> bool:

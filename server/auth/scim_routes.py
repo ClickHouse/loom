@@ -16,7 +16,7 @@ import logging
 import re
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from clickhouse_connect.driver.exceptions import ClickHouseError
@@ -27,6 +27,7 @@ from fastapi.routing import APIRoute
 from server.auth import scim
 from server.auth.public_url import public_base_url
 from server.core.ch import set_query_tag
+from server.core.datetimes import as_aware_utc
 from server.core.errors import LoomServerError
 from server.settings import settings
 
@@ -396,7 +397,7 @@ def _resource(request: Request, row: dict[str, Any]) -> dict[str, Any]:
 
 def _utc(ts: datetime) -> str:
     # ClickHouse hands DateTime64(3, 'UTC') back without its zone; a fresh row has one.
-    return (ts if ts.tzinfo else ts.replace(tzinfo=UTC)).isoformat()
+    return (as_aware_utc(ts) or ts).isoformat()
 
 
 def _email(row: dict[str, Any]) -> dict[str, Any]:
