@@ -501,7 +501,7 @@ def test_a_summary_past_the_allowance_stays_live_and_the_turns_compact(monkeypat
 
 
 @pytest.mark.parametrize(
-    ("lines", "folded", "expected"),
+    ("lines", "is_summary", "expected"),
     [
         # Plain turns: as many as fit the budget.
         (["user: a", "user: b"], [False, False], ([0, 1], "user: a\nuser: b")),
@@ -541,9 +541,9 @@ def test_a_summary_past_the_allowance_stays_live_and_the_turns_compact(monkeypat
     ],
 )
 def test_the_compaction_window(
-    lines: list[str], folded: list[bool], expected: tuple[list[int], str]
+    lines: list[str], is_summary: list[bool], expected: tuple[list[int], str]
 ) -> None:
-    assert ch_mod._compaction_window(lines, folded, [False] * len(lines)) == expected
+    assert ch_mod._compaction_window(lines, is_summary, [False] * len(lines)) == expected
 
 
 def test_a_stale_summary_is_replaced_unread() -> None:
@@ -574,12 +574,11 @@ def test_a_stale_summary_with_a_source_past_the_window_is_read() -> None:
             for i in (1, 2)
         ),
     ]
-    live = {"compact-1", "m1", "m2", "m3"}
-    replaced, transcript = ch_mod._window_of(rows, [True, False, False], live)
+    replaced, transcript = ch_mod._window_of(rows, [True, False, False])
     assert replaced == [0, 1, 2] and "ttt" in transcript
     # Every source inside the window: replaced unread.
     rows[0]["metadata"] = '{"compacted_from": ["m1", "m2"]}'
-    replaced, transcript = ch_mod._window_of(rows, [True, False, False], live)
+    replaced, transcript = ch_mod._window_of(rows, [True, False, False])
     assert replaced == [0, 1, 2] and "ttt" not in transcript
 
 
@@ -669,10 +668,9 @@ def test_a_summary_after_its_first_source_is_not_stale() -> None:
 
     s1 = row("s1", T0, '{"compacted_from": ["m0"]}')
     turn = row("m1", T0 + timedelta(seconds=2), "{}", "user")
-    live = {"s1", "s2", "m1"}
     for s2_ts, read in ((T0 + timedelta(seconds=1), True), (T0, False)):
         rows = [s1, row("s2", s2_ts, '{"compacted_from": ["s1"]}'), turn]
-        _, transcript = ch_mod._window_of(rows, [True, True, False], live)
+        _, transcript = ch_mod._window_of(rows, [True, True, False])
         assert ("s2s2" in transcript) is read
 
 
@@ -702,9 +700,16 @@ def test_a_summary_inside_the_window_is_replaced_but_not_counted(
         row("m2", 3, "turn 2"),
         row("m3", 4, "turn 3"),
     ]
+    prompts: list[str] = []
+
+    class _RecordingLLM(_FakeLLM):
+        async def complete(self, **kw: Any) -> LLMResult:
+            prompts.append(kw["user"])
+            return await super().complete(**kw)
+
     fake = _FakeCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
-    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _FakeLLM())
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _RecordingLLM())
     out = asyncio.run(
         ch_mod.handle_conversation_compact(
             ConversationCompactInput(
@@ -719,6 +724,8 @@ def test_a_summary_inside_the_window_is_replaced_but_not_counted(
     )
     assert out.compacted is compacted
     if compacted:
+        [prompt] = prompts
+        assert "a client summary" in prompt
         assert out.messages_summarized == 2
         [summary] = fake.inserted
         assert json.loads(summary["metadata"])["compacted_from"] == ["m1", "m2", "s"]

@@ -688,7 +688,7 @@ def _fitting_prefix(lines: list[str], cap: int) -> int:
 
 
 def _compaction_window(
-    lines: list[str], folded: list[bool], stale: list[bool]
+    lines: list[str], is_summary: list[bool], stale: list[bool]
 ) -> tuple[list[int], str]:
     """`(replaced, transcript)`: the indices of the leading candidate lines the summary
     replaces, and the prompt transcript. `stale` marks summaries to replace unread;
@@ -699,7 +699,7 @@ def _compaction_window(
     # new turn. A stale summary is replaced unread: its sources, replaced too, say all
     # it says.
     k, allowance, read, dropped = 0, _FOLDED_SUMMARY_CHARS, [], []
-    while k < len(lines) and folded[k]:
+    while k < len(lines) and is_summary[k]:
         if stale[k]:
             dropped.append(k)
         elif len(lines[k]) <= allowance:
@@ -712,22 +712,20 @@ def _compaction_window(
     return sorted([*read, *dropped, *range(k, fit)]), transcript
 
 
-def _window_of(
-    candidates: list[dict[str, Any]], folded: list[bool], live_ids: set[str]
-) -> tuple[list[int], str]:
+def _window_of(candidates: list[dict[str, Any]], is_summary: list[bool]) -> tuple[list[int], str]:
     """`_compaction_window` over the candidate rows. A summary is stale when a failed run
-    could have left it: its sources are all live and all among the candidates, and its
+    could have left it: its sources are all among the candidates (so all live), and its
     `ts` is the earliest of theirs. It stays stale only while this window replaces every
     source; otherwise it is read like any other summary, so no source loses its cover."""
     lines = [f"{r['role']}: {r['content']}" for r in candidates]
     sources = [set(_compacted_from(r)) for r in candidates]
     ts_of = {str(r["msg_id"]): r["ts"] for r in candidates}
     stale = [
-        bool(s) and s <= live_ids and s <= ts_of.keys() and r["ts"] == min(ts_of[i] for i in s)
+        bool(s) and s <= ts_of.keys() and r["ts"] == min(ts_of[i] for i in s)
         for r, s in zip(candidates, sources, strict=True)
     ]
     while True:
-        replaced, transcript = _compaction_window(lines, folded, stale)
+        replaced, transcript = _compaction_window(lines, is_summary, stale)
         covered = {str(candidates[i]["msg_id"]) for i in replaced}
         uncovered = [i for i in replaced if stale[i] and not sources[i] <= covered]
         if not uncovered:
@@ -797,25 +795,24 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     candidates = rows[: -input.keep_recent]
     # An earlier summary in the window is not a new turn: it counts toward neither
     # min_to_compact nor messages_summarized.
-    folded = [bool(_compacted_from(r)) for r in candidates]
+    is_summary = [bool(_compacted_from(r)) for r in candidates]
     # A re-run: an earlier summary sits where the turns it replaced began, so it is
     # the oldest live row and falls among the candidates. A window of nothing but
     # earlier summaries has no new turn to compact.
-    if all(folded):
+    if all(is_summary):
         return ConversationCompactOutput(
             compacted=False,
             messages_summarized=0,
             reason="already-compacted",
         )
-    # Only new turns count toward the minimum.
-    if folded.count(False) < input.min_to_compact:
+    if is_summary.count(False) < input.min_to_compact:
         return ConversationCompactOutput(
             compacted=False,
             messages_summarized=0,
             reason="below-min-to-compact",
         )
 
-    replaced, transcript = _window_of(candidates, folded, live_ids)
+    replaced, transcript = _window_of(candidates, is_summary)
     candidates = [candidates[i] for i in replaced]
     candidate_ids = {str(r["msg_id"]) for r in candidates}
 
@@ -910,7 +907,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
 
     return ConversationCompactOutput(
         compacted=True,
-        messages_summarized=sum(not folded[i] for i in replaced),
+        messages_summarized=sum(not is_summary[i] for i in replaced),
         summary_msg_id=summary_msg_id,
         tokens_in=result.tokens_in,
         tokens_out=result.tokens_out,
