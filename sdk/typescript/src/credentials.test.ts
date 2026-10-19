@@ -875,13 +875,18 @@ describe("the credentials lock", () => {
     store("default", { expires_at: now() - 1 });
     const before = process.listenerCount("exit");
     let exited = false;
+    let gone = false; // what the process leaves when it ends as the hook returns
     srv.onRefresh = async () => {
       const real = fs.renameSync;
       vi.spyOn(fs, "renameSync").mockImplementation(((from: string, ...rest: unknown[]) => {
         if (from === lockDir() && !exited) {
           exited = true;
           const exit = process.listeners("exit").at(-1) as () => void;
-          setImmediate(exit); // the exit lands while the release waits to try again
+          // The exit lands while the release waits to try again; the process ends as it returns.
+          setImmediate(() => {
+            exit();
+            gone = !existsSync(lockDir()) && !existsSync(`${lockDir()}.breaking`);
+          });
           throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
         }
         return (real as (...a: unknown[]) => unknown)(from, ...rest);
@@ -894,6 +899,7 @@ describe("the credentials lock", () => {
       vi.restoreAllMocks();
     }
     expect(exited).toBe(true);
+    expect(gone).toBe(true);
     expect(() => statSync(lockDir())).toThrow();
     expect(() => statSync(`${lockDir()}.breaking`)).toThrow();
     expect(performance.now() - started).toBeLessThan(RELEASE_WAIT_MS);
