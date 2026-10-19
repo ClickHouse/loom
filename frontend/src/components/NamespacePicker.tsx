@@ -341,8 +341,9 @@ function NamespacePickerMenu() {
         <div
           ref={listRef}
           // Stretched across the popover: its panel is a column flex that aligns to the start,
-          // and the rows' hover and current fills span the list.
-          className="scroll-fade self-stretch flex-1 overflow-y-auto -mx-2"
+          // and the rows' hover and current fills span the list. It clips its overflow: 4 px
+          // above and below keep the rings of the first and last controls whole.
+          className="scroll-fade self-stretch flex-1 overflow-y-auto -mx-2 py-1"
           data-fade={fade}
           onScroll={updateFade}
           onKeyDown={onListKey}
@@ -365,7 +366,8 @@ function NamespacePickerMenu() {
             </Section>
           ))}
           {known != null && joined.length === 0 && transient.length === 0 && !query && (
-            // 4 px round it: the list clips its overflow, and the button's ring is drawn outside it.
+            // 4 px of room on each side: the list clips its overflow, and the button's ring is
+            // drawn outside it.
             <div className="p-1">
               <Button
                 type="empty"
@@ -646,8 +648,8 @@ function NamespaceRow({
             type="secondary"
             htmlType="button"
             onClick={() => onCancelPending(r.namespace, pendingRole)}
-            // 4 px of room for its focus ring: the list clips its overflow.
-            className="shrink-0 mr-1 my-1"
+            // 4 px of room on its right for its focus ring: the list clips its overflow.
+            className="shrink-0 mr-1"
           >
             {`pending ${r.pending_role}`}
           </Button>
