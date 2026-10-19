@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import uuid
 from typing import Any
 
 import pytest
@@ -3001,6 +3002,10 @@ async def test_memory_statuses_says_which_retirements_still_stand(ch, wired) -> 
         return {r.memory_id: (r.status, r.superseded_by) for r in out.rows}
 
     assert await statuses() == {loser: ("superseded", winner), winner: ("active", "")}
+    # The most a call takes: more ids than one query parameter carries.
+    many = [str(uuid.uuid4()) for _ in range(4998)] + [loser, winner]
+    out = await handle_memory_statuses(MemoryStatusesInput(org=org, namespace=NS, memory_ids=many))
+    assert {r.memory_id for r in out.rows} == {loser, winner}
     assert (await _undo(org, "office_city", winner)).restored
     assert (await statuses())[loser] == ("active", "")
     other = await handle_memory_statuses(
