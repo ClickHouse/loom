@@ -6887,7 +6887,7 @@ async def test_a_retirement_whose_supersede_answer_was_lost_is_recorded_by_the_r
     assert [r["request_id"] for r in await _records(ch, org)] == [intent["id"]]
 
 
-async def _open_edges(ch: Any, org: str) -> set[tuple[str, str]]:
+async def _open_edge_pairs(ch: Any, org: str) -> set[tuple[str, str]]:
     await _mutations_done(ch, org)
     rows = await ch.query_all(
         "SELECT entity_a, entity_b FROM loom.entity_edges WHERE org = {org:String}"
@@ -6930,7 +6930,7 @@ async def test_a_revision_of_a_high_row_keeps_its_declared_edges(ch, org) -> Non
         sensitivity="high",
         entities=["Billing", "Stripe"],
     )
-    edges = await _open_edges(ch, org)
+    edges = await _open_edge_pairs(ch, org)
     assert len(edges) == 1 and all("orchid" not in a + b for a, b in edges), edges
     await _high_set(
         org,
@@ -6940,7 +6940,7 @@ async def test_a_revision_of_a_high_row_keeps_its_declared_edges(ch, org) -> Non
         sensitivity="high",
         entities=["Billing", "Stripe"],
     )
-    assert await _open_edges(ch, org) == edges
+    assert await _open_edge_pairs(ch, org) == edges
 
 
 async def test_a_relabel_to_high_closes_mined_facts_and_keeps_declared_edges(ch, org) -> None:
@@ -6956,7 +6956,7 @@ async def test_a_relabel_to_high_closes_mined_facts_and_keeps_declared_edges(ch,
         entities=["Ana", "Porto"],
         relations=[("ana", "keeps_key_in", "porto")],
     )
-    declared = await _open_edges(ch, org)
+    declared = await _open_edge_pairs(ch, org)
     assert declared, "the declared pair projects"
     assert await _open_facts(ch, org, {("keep_key_in", "porto")}) == {("keep_key_in", "porto")}
     # A mined edge linked to the same row (as a plain row's text would give it).
@@ -6978,7 +6978,7 @@ async def test_a_relabel_to_high_closes_mined_facts_and_keeps_declared_edges(ch,
         "loom.entity_edges",
         [{"org": org, "namespace": NS, "entity_a": "vault key", "entity_b": "zzz"}],
     )
-    assert ("vault key", "zzz") in await _open_edges(ch, org)
+    assert ("vault key", "zzz") in await _open_edge_pairs(ch, org)
     candidate = sensitivity_sweep.SweepCandidate(
         memory_id=out.memory_id,
         org=org,
@@ -6992,5 +6992,5 @@ async def test_a_relabel_to_high_closes_mined_facts_and_keeps_declared_edges(ch,
     )
     result = await sensitivity_sweep.apply([candidate], ch=ch)
     assert result.high == 1, result
-    assert await _open_edges(ch, org) == declared
+    assert await _open_edge_pairs(ch, org) == declared
     assert await _open_facts(ch, org, set()) == set()
