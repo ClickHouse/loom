@@ -691,8 +691,9 @@ def test_only_an_export_that_read_every_row_is_marked_complete(
     assert _export(tmp_path / "all")["complete"] is True
     assert _export(tmp_path / "under", "--limit", "10")["complete"] is True
     assert "complete" not in _export(tmp_path / "part", "--limit", "1")
-    # a complete export, and one that stopped at --limit, print no "source changed" notice
-    assert "not marked complete" not in capsys.readouterr().out
+    # only the export that stopped at its limit says it is not complete, and why
+    out = capsys.readouterr().out
+    assert out.count("not marked complete") == 1 and "stopped at --limit 1" in out
 
 
 def test_a_complete_export_carries_rows_the_source_marked_duplicate(

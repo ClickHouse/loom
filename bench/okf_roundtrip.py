@@ -288,7 +288,7 @@ async def run(args: argparse.Namespace) -> int:
                 description="OKF round-trip import target",
                 keep=args.keep_namespaces,
             )
-        source, _ = await _fetch_namespace(
+        source, _, _ = await _fetch_namespace(
             client, args.org, args.namespace, include_tombstoned=False, limit=args.limit
         )
         # Typed edges travel as relates_to
@@ -358,7 +358,7 @@ async def run(args: argparse.Namespace) -> int:
             ev_args = argparse.Namespace(namespace=target, agent=args.import_agent, user_id="-")
             ev_totals = await _import_evidence(client, args.org, ev_args, ev_chunks, ev_digests)
         t_import = (datetime.now(UTC) - t1).total_seconds()
-        imported, _ = await _fetch_namespace(client, args.org, target, include_tombstoned=False)
+        imported, _, _ = await _fetch_namespace(client, args.org, target, include_tombstoned=False)
         imp_chunks: list[okf_ev.ChunkRecord] = []
         imp_digests: list[okf_ev.DigestRecord] = []
         if not args.no_evidence:

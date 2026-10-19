@@ -81,7 +81,7 @@ class _FakeClient:
 @pytest.mark.asyncio
 async def test_export_keeps_superseded_rows_and_pages_edges() -> None:
     client = _FakeClient()
-    rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    rows, whole, _ = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
     assert whole
     list_call = next(b for op, b in client.calls if op == "memory.list")
     assert list_call["include_superseded"] is True
@@ -155,7 +155,7 @@ class _ShiftingClient:
 @pytest.mark.asyncio
 async def test_a_listing_that_skipped_a_row_is_read_again() -> None:
     client = _ShiftingClient(shifts=1)
-    rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    rows, whole, _ = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
     assert whole and client.listings == 2
     assert [r["memory_key"] for r in rows] == ["a", "b", "c"]
 
@@ -164,7 +164,7 @@ async def test_a_listing_that_skipped_a_row_is_read_again() -> None:
 async def test_a_namespace_that_keeps_shifting_is_not_called_complete() -> None:
     # The bundle then carries no completeness marker: it is written, and not pruned.
     client = _ShiftingClient(shifts=99)
-    rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    rows, whole, _ = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
     assert not whole and client.listings == cli_okf._LIST_ATTEMPTS
     assert [r["memory_key"] for r in rows] == ["a", "c"]
 
@@ -173,7 +173,7 @@ async def test_a_namespace_that_keeps_shifting_is_not_called_complete() -> None:
 async def test_a_delete_and_a_restore_mid_listing_are_not_called_complete() -> None:
     # The skipped row and the restored one cancel out in the count; the version does not.
     client = _ShiftingClient(shifts=99, restore=True)
-    rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    rows, whole, _ = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
     assert [r["memory_key"] for r in rows] == ["a", "c", "r"]
     assert not whole
 
@@ -203,7 +203,7 @@ class _LaggingMiddleClient:
 
 @pytest.mark.asyncio
 async def test_a_page_from_a_lagging_replica_is_not_called_complete() -> None:
-    rows, whole = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+    rows, whole, _ = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
         _LaggingMiddleClient(), "o", "ns", include_tombstoned=False
     )
     assert [r["memory_key"] for r in rows] == ["a", "x", "c"]  # "b" was skipped
@@ -237,7 +237,7 @@ class _LateDeleteClient:
 @pytest.mark.asyncio
 async def test_a_delete_during_the_last_pages_read_is_caught_after_it() -> None:
     client = _LateDeleteClient()
-    rows, whole = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    rows, whole, _ = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
     assert [r["memory_key"] for r in rows] == ["a", "b", "d"]  # "c" was skipped
     assert not whole
 
@@ -275,7 +275,7 @@ class _DeletedBeforeTheFullRead:
 @pytest.mark.asyncio
 async def test_a_row_deleted_before_its_full_read_is_left_out_and_the_bundle_not_complete() -> None:
     # Its list preview is a cut value, and its absence says nothing about the rows around it.
-    rows, whole = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+    rows, whole, _ = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
         _DeletedBeforeTheFullRead(), "o", "ns", include_tombstoned=False
     )
     assert [r["memory_key"] for r in rows] == ["kept"] and not whole
@@ -283,7 +283,7 @@ async def test_a_row_deleted_before_its_full_read_is_left_out_and_the_bundle_not
 
 @pytest.mark.asyncio
 async def test_include_tombstoned_keeps_a_deleted_row_but_not_one_deleted_mid_export() -> None:
-    rows, whole = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+    rows, whole, _ = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
         _DeletedBeforeTheFullRead(), "o", "ns", include_tombstoned=True
     )
     assert sorted(r["memory_key"] for r in rows) == ["kept", "old"] and not whole
@@ -293,8 +293,45 @@ async def test_include_tombstoned_keeps_a_deleted_row_but_not_one_deleted_mid_ex
 async def test_a_limit_the_namespace_never_reached_is_listed_again_like_a_whole_export() -> None:
     # --limit 100 on a three-row namespace read every row: a shifted listing is retried.
     client = _ShiftingClient(shifts=1)
-    rows, whole = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+    rows, whole, _ = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
         client, "o", "ns", include_tombstoned=False, limit=100
     )
     assert whole and client.listings == 2
     assert [r["memory_key"] for r in rows] == ["a", "b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_row_never_counts_toward_the_limit() -> None:
+    # Three rows under --limit 3, and a write moves "a" to the top between pages, so the
+    # second page serves it again: the listing read every row, it did not stop at the limit.
+    class _Repeating:
+        def __init__(self) -> None:
+            self.listings = 0
+
+        async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+            if op == "memory.bulk_get":
+                return {"results": {k: {"value": k} for k in body["memory_keys"]}}
+            if "known_version" in body:
+                return {"entries": [], "unchanged": True}
+            if body["offset"] == 0:
+                self.listings += 1
+            keys = (
+                ["a", "b", "c"]
+                if body["offset"] == 0 or self.listings > 1
+                else ["a", "a", "b", "c"]
+            )
+            page = keys[body["offset"] : body["offset"] + 2]
+            return {
+                "entries": [
+                    {"memory_key": k, "agent": "x", "user_id": "-", "session_id": "-"} for k in page
+                ],
+                "truncated": body["offset"] + 2 < len(keys),
+                "total": 3,
+                "namespace_version": "1",
+            }
+
+    client = _Repeating()
+    rows, whole, capped = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        client, "o", "ns", include_tombstoned=False, limit=4
+    )
+    assert not capped and sorted(r["memory_key"] for r in rows) == ["a", "b", "c"]

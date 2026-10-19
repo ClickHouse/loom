@@ -161,19 +161,19 @@ async def _fetch_namespace(
     *,
     include_tombstoned: bool,
     limit: int | None = None,
-) -> tuple[list[dict[str, Any]], bool]:
+) -> tuple[list[dict[str, Any]], bool, bool]:
     """Every live row of `namespace` (all agents, users and sessions), full
-    values, as memory_to_concept dicts, and whether the listing is known to hold
-    every row. `limit` caps the rows for smoke runs."""
-    entries, whole = await _list_namespace(
+    values, as memory_to_concept dicts; whether the listing is known to hold
+    every row; and whether it stopped at `limit`, which caps the rows for smoke runs."""
+    entries, whole, capped = await _list_namespace(
         client, org, namespace, include_tombstoned=include_tombstoned, limit=limit
     )
     # Offset pages shift when the namespace changes mid-listing, which can skip a live row;
     # a bundle that says complete without it would let --prune delete its copy. An export
     # that stopped at --limit is never complete, so it is listed once.
     attempts = 1
-    while not whole and not _capped(entries, limit) and attempts < _LIST_ATTEMPTS:
-        entries, whole = await _list_namespace(
+    while not whole and not capped and attempts < _LIST_ATTEMPTS:
+        entries, whole, capped = await _list_namespace(
             client, org, namespace, include_tombstoned=include_tombstoned, limit=limit
         )
         attempts += 1
@@ -182,12 +182,7 @@ async def _fetch_namespace(
     )
     # A row deleted between the listing and its full read is left out, and the bundle is
     # not called complete: its absence says nothing about the rows around it.
-    return rows, whole and not gone
-
-
-def _capped(entries: list[dict[str, Any]], limit: int | None) -> bool:
-    """Whether the listing stopped at --limit, rather than reading the whole namespace."""
-    return limit is not None and len(entries) >= limit
+    return rows, whole and not gone, capped
 
 
 async def _list_namespace(
@@ -197,11 +192,11 @@ async def _list_namespace(
     *,
     include_tombstoned: bool,
     limit: int | None = None,
-) -> tuple[list[dict[str, Any]], bool]:
-    """The `memory.list` entries of every row, and whether they are known to be every row:
-    every page reported the same `namespace_version` (every write, delete and restore moves
-    it) and total, the rows add up to that total, and the version still held after the last
-    page was read."""
+) -> tuple[list[dict[str, Any]], bool, bool]:
+    """The `memory.list` entries of every row; whether they are known to be every row (every
+    page reported the same `namespace_version`, which every write, delete and restore moves,
+    and total, the rows add up to that total, and the version still held after the last
+    page was read); and whether the listing stopped at `limit`."""
     query: dict[str, Any] = {
         "org": org,
         "namespace": namespace,
@@ -218,25 +213,28 @@ async def _list_namespace(
         "include_superseded": True,
         "include_duplicates": True,
     }
-    entries: list[dict[str, Any]] = []
+    # A row a shifted page served twice counts once, as the pages arrive: a repeat must not
+    # count toward --limit.
+    seen: dict[tuple[Any, ...], dict[str, Any]] = {}
     totals: list[int] = []
     versions: list[str] = []
     offset = 0
     while True:
-        page_size = _PAGE if limit is None else max(1, min(_PAGE, limit - len(entries)))
+        page_size = _PAGE if limit is None else max(1, min(_PAGE, limit - len(seen)))
         page = await client.post("memory.list", {**query, "limit": page_size, "offset": offset})
         rows = page.get("entries") or []
-        entries.extend(rows)
+        for r in rows:
+            seen.setdefault(_entry_id(r), r)
         totals.append(int(page.get("total") or 0))
         versions.append(str(page.get("namespace_version") or ""))
-        if not page.get("truncated") or not rows or (limit is not None and len(entries) >= limit):
+        if not page.get("truncated") or not rows or (limit is not None and len(seen) >= limit):
             break
         offset += len(rows)
-    if limit is not None and len(entries) >= limit:
-        return entries[:limit], False
-    # A row a shifted page served twice counts once. Every page must agree, not only the
-    # ends: a page answered by a lagging replica reports its own total and version.
-    unique = list({_entry_id(r): r for r in entries}.values())
+    unique = list(seen.values())
+    if limit is not None and len(unique) >= limit:
+        return unique[:limit], False, True
+    # Every page must agree, not only the ends: a page answered by a lagging replica reports
+    # its own total and version.
     whole = len(set(versions)) == 1 and len(set(totals)) == 1 and totals[0] == len(unique)
     if whole:
         # A page reads the version before its rows, so a write during the last page's read
@@ -245,7 +243,7 @@ async def _list_namespace(
             "memory.list", {**query, "limit": 1, "offset": 0, "known_version": versions[-1]}
         )
         whole = after.get("unchanged") is True
-    return unique, whole
+    return unique, whole, False
 
 
 def _entry_id(r: dict[str, Any]) -> tuple[Any, ...]:
@@ -461,7 +459,7 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
         digests: list[okf_ev.DigestRecord] = []
         edges: list[dict[str, Any]] = []
         async with _Client(args.server_url, token) as client:
-            entries, whole = await _fetch_namespace(
+            entries, whole, capped = await _fetch_namespace(
                 client,
                 org,
                 args.namespace,
@@ -509,7 +507,9 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
                 f"  {skipped_high} row(s) with sensitivity=high stayed in the database "
                 f"(--include-high exports them)"
             )
-        if not whole and not _capped(entries, args.limit):
+        if capped:
+            print(f"  not marked complete: it stopped at --limit {args.limit}")
+        elif not whole:
             print(
                 "  not marked complete: the source changed while it was read (a write while "
                 "it was listed, or a row deleted before its full read); an import with "
