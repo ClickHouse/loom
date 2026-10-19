@@ -24,40 +24,19 @@ from server.memory.domain.temporal_sql import (
 log = logging.getLogger(__name__)
 
 
-# Values of one row a value-less close repair ends in one pass: more is a row revised
-# that many times with every close lost, and the next pass takes the rest.
-OVERTAKEN_VALUES_CAP = 100
+# Values of one row a value-less close repair reads a page at a time.
+_VALUES_PAGE = 100
 
 
-async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch: Any) -> bool:
+async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch: Any) -> None:
     """`close_late_edges` for a close recorded without its value (a 'high' row's): each
     value of the row linked to an open edge, its current one included (a retired or
     deleted row keeps its hash); close_late_edges keeps those the row still holds. Each
     value is asked with the entities its own edges pair and dated by its own end. The
     pairs of the entities the row names now stay, whichever value linked them: a 'high'
-    row keeps the edges of the entities on it. False when it reached
-    `OVERTAKEN_VALUES_CAP`: values may be left for another pass."""
-    params = {"org": org, "ns": namespace, "id": memory_id, "cap": OVERTAKEN_VALUES_CAP}
-    values = await ch.query_all(
-        """
-        SELECT toString(content_sha256) AS sha,
-               arrayDistinct(arrayConcat(groupArray(entity_a), groupArray(entity_b))) AS entities
-        FROM loom.entity_edge_rows
-        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}
-          AND (entity_a, entity_b) IN (
-              SELECT entity_a, entity_b FROM loom.entity_edges
-              WHERE org = {org:String} AND namespace = {ns:String} AND valid_to IS NULL
-                AND (entity_a, entity_b) IN (
-                    SELECT entity_a, entity_b FROM loom.entity_edge_rows
-                    WHERE org = {org:String} AND namespace = {ns:String}
-                      AND memory_id = {id:UUID}))
-        GROUP BY content_sha256
-        ORDER BY sha
-        LIMIT {cap:UInt32}
-        SETTINGS select_sequential_consistency = 1
-        """,
-        params=params,
-    )
+    row keeps the edges of the entities on it. The values are read in pages by hash,
+    so the ones whose edges stay open are not read again."""
+    params: dict[str, Any] = {"org": org, "ns": namespace, "id": memory_id}
     named = await ch.query_all(
         f"""
         SELECT entities FROM loom.memory FINAL
@@ -68,17 +47,43 @@ async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch
         params=params,
     )
     keep = {str(e) for row in named for e in row["entities"]}
-    for value in values:
-        await close_late_edges(
-            org,
-            namespace,
-            memory_id,
-            str(value["sha"]),
-            entities=[str(e) for e in value["entities"]],
-            keep=keep,
-            ch=ch,
+    after = ""
+    while True:
+        values = await ch.query_all(
+            """
+            SELECT toString(content_sha256) AS sha,
+                   arrayDistinct(arrayConcat(groupArray(entity_a), groupArray(entity_b)))
+                       AS entities
+            FROM loom.entity_edge_rows
+            WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}
+              AND toString(content_sha256) > {after:String}
+              AND (entity_a, entity_b) IN (
+                  SELECT entity_a, entity_b FROM loom.entity_edges
+                  WHERE org = {org:String} AND namespace = {ns:String} AND valid_to IS NULL
+                    AND (entity_a, entity_b) IN (
+                        SELECT entity_a, entity_b FROM loom.entity_edge_rows
+                        WHERE org = {org:String} AND namespace = {ns:String}
+                          AND memory_id = {id:UUID}))
+            GROUP BY content_sha256
+            ORDER BY sha
+            LIMIT {page:UInt32}
+            SETTINGS select_sequential_consistency = 1
+            """,
+            params={**params, "after": after, "page": _VALUES_PAGE},
         )
-    return len(values) < OVERTAKEN_VALUES_CAP
+        for value in values:
+            await close_late_edges(
+                org,
+                namespace,
+                memory_id,
+                str(value["sha"]),
+                entities=[str(e) for e in value["entities"]],
+                keep=keep,
+                ch=ch,
+            )
+        if len(values) < _VALUES_PAGE:
+            return
+        after = str(values[-1]["sha"])
 
 
 async def close_late_edges(
