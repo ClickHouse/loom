@@ -97,24 +97,38 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
 
 async def _landed_late(input: MemoryRestoreInput, head: MemoryRow) -> bool:
     """Whether the served `head` is an Undo's restore (behind `if_superseded_by` when
-    given)."""
+    given). A record that cannot be read is a 503: the Undo may have landed."""
     if head.tombstoned_at is not None or str(head.status) == "superseded":
         return False
-    return await _an_undos_restore(
-        input, str(head.memory_id), int(head.version), input.if_superseded_by
-    )
+    try:
+        return await _an_undos_restore(
+            input, str(head.memory_id), int(head.version), input.if_superseded_by
+        )
+    except Exception as e:  # unknown: neither a no-op nor a finish is the true answer
+        raise BackendUnavailableError(
+            "could not tell whether the Undo landed; retry it",
+            operation="memory.restore",
+            outcome_unknown=True,
+        ) from e
 
 
 async def _an_undos_restore(
     input: MemoryRestoreInput, memory_id: str, version: int, superseded_by: str = ""
 ) -> bool:
     """Whether the row at `version` is the restore an Undo record names (behind
-    `superseded_by` when given): an Undo whose answer was lost, or one already finished.
-    False when the record cannot be read: the call is then a plain no-op."""
+    `superseded_by` when given): an Undo whose answer was lost, or one already finished."""
     from server.memory.store.conflict_resolver import undo_recorded
 
+    return await undo_recorded(input.org, input.namespace, memory_id, version, superseded_by)
+
+
+async def _plain_restore_finishes_an_undo(
+    input: MemoryRestoreInput, memory_id: str, version: int
+) -> bool:
+    """`_an_undos_restore` for an unguarded restore of a live row, before any lock: a
+    record that cannot be read leaves it a plain no-op."""
     try:
-        return await undo_recorded(input.org, input.namespace, memory_id, version, superseded_by)
+        return await _an_undos_restore(input, memory_id, version)
     except Exception:  # an unread record is no restore to finish
         log.warning("memory.restore: Undo record read failed for %s", memory_id, exc_info=True)
         return False
@@ -452,7 +466,11 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
     memory_id, version = str(row.get("memory_id") or ""), int(row.get("version") or 0)
     guarded = input.if_superseded_by or input.only_if_superseded
     retired = live and str(row.get("status") or "") == "superseded"
-    if guarded or retired or (live and await _an_undos_restore(input, memory_id, version)):
+    if (
+        guarded
+        or retired
+        or (live and await _plain_restore_finishes_an_undo(input, memory_id, version))
+    ):
         # Undo of an automatic retirement, or the finish of one whose answer was lost:
         # `_restore_superseded` rechecks on the strong head, under the key's lock.
         return await _restore_superseded(input, ch)

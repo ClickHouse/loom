@@ -3382,3 +3382,27 @@ async def test_a_plain_restore_whose_undo_record_read_fails_is_a_no_op(
         )
     )
     assert not out.restored and out.memory_id
+
+
+async def test_an_undo_retry_whose_record_read_fails_answers_503(ch, wired, monkeypatch) -> None:
+    """The retry of an Undo whose restore landed with its answer lost cannot read the
+    record: it answers 503, outcome unknown, not "nothing to undo"."""
+    from server.core.errors import BackendUnavailableError
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 2199)
+    assert (await run_pass())["retired"] == 1
+    winner = (await _rows(ch, org))["office_location"]["id"]
+    from server.memory.app import restore
+
+    rows, kw = await _late_undo(org, winner, monkeypatch)
+    await restore.insert_memory_versions(rows, **kw)
+
+    async def down(*a: Any, **k: Any) -> bool:
+        raise RuntimeError("audit_log unreachable")
+
+    monkeypatch.setattr(queue, "undo_recorded", down)
+    with pytest.raises(BackendUnavailableError, match="could not tell"):
+        await _undo(org, "office_city", winner)
