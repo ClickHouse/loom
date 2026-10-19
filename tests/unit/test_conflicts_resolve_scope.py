@@ -23,6 +23,7 @@ import pytest
 
 from server.auth.context import set_current_auth
 from server.auth.jwt import AuthInfo
+from server.core.ch import sequential_reads_active
 from server.memory.api.models_conflicts import ConflictsResolveInput
 from server.memory.app import conflicts_ops as h
 from server.memory.store.conflicts import ConflictTarget
@@ -38,6 +39,7 @@ class _Table:
     tombstoned: list[str] = field(default_factory=list)
     activated: list[str] = field(default_factory=list)
     allowlisted: list[dict[str, Any]] = field(default_factory=list)
+    count_reads_consistent: list[bool] = field(default_factory=list)
 
 
 @pytest.fixture
@@ -78,6 +80,11 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
     async def _keys(org: str, ids: list[str], **_: Any) -> dict[str, str]:
         return {i: t.rows[i]["key"] for i in ids if i in t.rows}
 
+    async def _count(org: str, namespace: str, **_: Any) -> int:
+        t.count_reads_consistent.append(sequential_reads_active())
+        decided = {*t.tombstoned, *t.activated}
+        return sum(1 for i, r in t.rows.items() if r["namespace"] == namespace and i not in decided)
+
     async def _allow(rows: list[dict[str, Any]], **_: Any) -> None:
         t.allowlisted.extend(rows)
 
@@ -91,6 +98,8 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
     monkeypatch.setattr(repo, "mark_active_by_ids", _activate)
     monkeypatch.setattr(repo, "lookup_keys_for_ids", _keys)
     monkeypatch.setattr(repo, "allowlist_insert", _allow)
+    monkeypatch.setattr(repo, "count_conflicted", _count)
+    h.reset_conflicts_count_cache()
     return t
 
 
@@ -211,3 +220,35 @@ async def test_an_admin_of_both_namespaces_resolves_across_them(
 
 async def _always_in_scope(*_: Any, **__: Any) -> bool:
     return True
+
+
+async def test_a_resolve_answers_the_namespaces_conflicted_count_after_its_writes(
+    table: _Table, admin_of_a: None
+) -> None:
+    out = await _resolve(T_OWN, "revise")
+    assert out.resolved is True
+    # T_OWN is active and its two peers tombstoned: T_MIXED is the one left in a.
+    assert out.total == 1
+
+
+async def test_the_count_after_a_resolve_reads_its_own_writes(
+    table: _Table, admin_of_a: None
+) -> None:
+    # A replica that has not applied the writes yet would answer a stale count that is
+    # then cached for a minute.
+    assert (await _resolve(T_OWN, "revise")).resolved is True
+    assert table.count_reads_consistent == [True]
+
+
+async def test_a_count_that_fails_after_the_writes_still_answers_the_applied_resolve(
+    table: _Table, admin_of_a: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.store import conflicts as repo
+
+    async def _count_fails(*_: Any, **__: Any) -> int:
+        raise RuntimeError("ClickHouse unavailable")
+
+    monkeypatch.setattr(repo, "count_conflicted", _count_fails)
+    out = await _resolve(T_OWN, "revise")
+    assert out.resolved is True and out.total is None
+    assert table.tombstoned == [P_OWN, P_OWN2] and table.activated == [T_OWN]

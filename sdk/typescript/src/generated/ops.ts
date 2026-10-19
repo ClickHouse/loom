@@ -1846,6 +1846,7 @@ export interface ConflictsListInput {
   limit?: number;
   before_version?: number | null;
   count_only?: boolean;
+  fresh?: boolean;
   keys_only?: boolean;
   fields?: string[] | null;
 }
@@ -1915,6 +1916,7 @@ export interface ConflictsResolveOutput {
   decision: "revise" | "contract" | "allow";
   affected_memory_ids: string[];
   resolved_at?: string | null;
+  total?: number | null;
 }
 
 export interface ConsolidationsListInput {
@@ -2227,6 +2229,7 @@ export interface ConversationThreadsInput {
   agent?: string;
   window_days?: number;
   limit?: number;
+  offset?: number;
   fields?: string[] | null;
 }
 
@@ -3080,6 +3083,7 @@ export interface KnowledgeListInput {
   org: string;
   namespace: string;
   tags?: string[];
+  tags_every?: boolean;
   uri_prefix?: string[];
   include_superseded?: boolean;
   limit?: number;
@@ -4599,6 +4603,7 @@ export interface MemoryListInput {
   include_proposed?: boolean;
   as_of?: string | null;
   tags?: string[];
+  tags_every?: boolean;
   contains?: string | null;
   fields?: string[];
   known_version?: number | string | null;
@@ -7287,6 +7292,9 @@ export interface RunListInput {
   session_id?: string;
   status?: "" | "active" | "completed" | "failed" | "cancelled";
   limit?: number;
+  offset?: number;
+  order_by?: "started_desc" | "started_asc" | "duration_desc" | "duration_asc" | "relied_on_desc" | "relied_on_asc";
+  q?: string;
   memory_activity?: "" | "with" | "without";
   grade?: "" | "ungraded" | "graded" | "pass" | "fail";
   fields?: string[] | null;
@@ -7294,6 +7302,7 @@ export interface RunListInput {
 
 export interface RunListOutput {
   runs: RunRow[];
+  total?: number | null;
 }
 
 export interface SearchQueryInput {

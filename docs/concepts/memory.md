@@ -248,7 +248,10 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
 
 - `tags` are free labels (`case:1234`, `kind:evidence`). A search filters on them
   (`tags`), boosts with them (`tags_soft`), or sinks them (`demote_tags`). A namespace's
-  `tag_registry` can attach retention, dedup and conflict policy to a tag.
+  `tag_registry` can attach retention, dedup and conflict policy to a tag. Tags keep the
+  case they were written in: `memory.list` and `knowledge.list` match them in any case,
+  and every other tag filter, `memory.search` and `memory.apply` included, matches them
+  exactly.
 - `entities` are the named things the value mentions, stored in the canonical form search
   reads them in (lowercased; articles, possessives and punctuation dropped; the head noun
   singular), so `Billing Services` and `billing service` are one entity. A writer may pass

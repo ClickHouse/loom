@@ -996,7 +996,7 @@ def _run_window(row: RunLedgerRow) -> tuple[datetime, datetime]:
 
 
 async def handle_run_list(input: RunListInput) -> RunListOutput:
-    """List a namespace's agent runs, newest first, filtered by agent, session, status or grade."""
+    """A page of a namespace's agent runs and their match count (`total`), filtered and sorted."""
 
     where: list[str] = []
     params: dict[str, Any] = {}
@@ -1023,18 +1023,42 @@ async def handle_run_list(input: RunListInput) -> RunListOutput:
     elif input.grade:
         where.append("grade = {grade:String}")
         params["grade"] = input.grade
-    rows = await runs_store.list_runs(
-        get_client(),
+    # The Runs page's search box: goal, run id or agent, any case.
+    q = input.q.strip()
+    if q:
+        where.append(runs_store.RUN_TEXT_MATCH)
+        params["q"] = q
+    ch = get_client()
+    limit, offset = input.limit, input.offset
+    page = runs_store.list_runs(
+        ch,
         input.org,
         input.namespace,
         where=where,
         params=params,
-        limit=int(input.limit),
+        limit=limit,
+        offset=offset,
+        order_by=input.order_by,
     )
+    # The count reads the namespace's runs under FINAL, so it runs only where the page cannot
+    # tell the total. The first page counts beside the page, even when the page alone would do.
+    total: int | None = None
+    if offset == 0:
+        rows, total = await asyncio.gather(
+            page, runs_store.count_runs(ch, input.org, input.namespace, where=where, params=params)
+        )
+    else:
+        rows = await page
+        if not rows:
+            total = await runs_store.count_runs(
+                ch, input.org, input.namespace, where=where, params=params
+            )
+        elif len(rows) < limit:
+            total = offset + len(rows)
 
     runs = [_row_to_model(r) for r in rows]
     project_rows(runs, RunRow, input.fields, always=frozenset({"run_id"}))
-    return RunListOutput(runs=runs)
+    return RunListOutput(runs=runs, total=total)
 
 
 async def recent_run_heads(
