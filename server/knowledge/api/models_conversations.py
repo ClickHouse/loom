@@ -333,7 +333,7 @@ class ConversationCompactInput(BaseModel):
     agent of the thread still holds live with the same text, as a turn search indexes
     (user, assistant or a summary).
     The summary carries metadata.compacted_from=[msg_ids]; when its embed fails,
-    nothing is written (`reason="embed-failed"`).
+    no summary is written and no turn is tombstoned (`reason="embed-failed"`).
 
     Idempotent: re-running on an already-summarized window is a no-op.
     """
