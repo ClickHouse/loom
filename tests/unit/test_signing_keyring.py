@@ -660,3 +660,25 @@ def test_a_key_resealed_under_a_new_root_keeps_verifying_here(
     _load([resealed])
     assert keyring.verification_keys("k1", "HS256") == ["k" * 40]
     assert "k1" not in keyring.status()["unsealable"]
+
+
+def _rs256_row(kid: str, *, at: datetime) -> dict:
+    private, public = keyring._new_key("RS256")
+    return {**_row(kid, secret=private, at=at), "algorithm": "RS256", "public_pem": public}
+
+
+def test_retiring_the_last_rs256_key_is_refused_while_it_signs_for_the_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The HS256 root still signs Loom's tokens; the gateway verifies only RS256.
+    monkeypatch.setattr(settings, "inference_token_audience", "loom-inference")
+    ch = _CH([_rs256_row("r1", at=_now() - timedelta(minutes=1))])
+    with pytest.raises(ValueError, match="no RS256 key"):
+        asyncio.run(keyring.retire("r1", ch=ch))
+    pending = _rs256_row("r2", at=_now() + timedelta(minutes=5))  # not signing yet
+    with pytest.raises(ValueError, match="no RS256 key"):
+        asyncio.run(keyring.retire("r1", ch=_CH([*ch.rows, pending])))
+    ch.rows.append(_rs256_row("r3", at=_now() - timedelta(seconds=30)))
+    assert asyncio.run(keyring.retire("r1", ch=ch))
+    monkeypatch.setattr(settings, "inference_token_audience", "")
+    assert asyncio.run(keyring.retire("r3", ch=_CH(ch.rows[1:])))  # not signing for one
