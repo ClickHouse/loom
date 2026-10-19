@@ -26,7 +26,7 @@ import httpx
 
 from server.core.errors import LoomServerError
 from server.settings import settings
-from server.settings._providers import is_provider_api
+from server.settings.catalog import is_provider_api
 
 log = logging.getLogger(__name__)
 

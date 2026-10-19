@@ -118,7 +118,7 @@ def test_invariants_statement_is_the_whole_table_half() -> None:
 
 
 def test_census_clocks_default_to_an_hour() -> None:
-    from server.settings._observability import ObservabilitySettings
+    from server.settings.catalog import ObservabilitySettings
 
     fields = ObservabilitySettings.model_fields
     assert fields["otel_invariants_probe_s"].default == 3600

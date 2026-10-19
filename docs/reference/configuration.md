@@ -1,6 +1,7 @@
 # Configuration reference
 
-Every setting is an environment variable `LOOM_<FIELD>` read at startup into
+Every setting is declared in one file, `server/settings/catalog.py`, and is an
+environment variable `LOOM_<FIELD>` read at startup into
 `server.settings.settings`. Set them in `.env` or the container environment;
 `.env.example` lists the common ones. `LOOM_ENV_FILE` names a different dotenv file,
 and empty reads none.
@@ -45,8 +46,6 @@ No default has changed since the history began.
 ## Auth
 
 Authentication, tokens and identity providers.
-
-Source: `server/settings/_auth.py`
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
@@ -95,8 +94,6 @@ Source: `server/settings/_auth.py`
 
 ClickHouse connection, query shaping and vector storage.
 
-Source: `server/settings/_clickhouse.py`
-
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CH_HOST` | `str` | `'localhost'` |  | ch_secure=None → wrapper infers TLS from port (8443 → True). |
@@ -134,8 +131,6 @@ Source: `server/settings/_clickhouse.py`
 ## Code
 
 The code plane: ingest, indexes, search, ask, review.
-
-Source: `server/settings/_code.py`
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
@@ -498,8 +493,6 @@ Source: `server/settings/_code.py`
 
 context.pack, context offload, session briefs and the mentor's hints.
 
-Source: `server/settings/_context.py`
-
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CONTEXT_OFFLOAD_MAX_BYTES` | `int` | `8000000` | live | context.offload: largest single parked tool result, in bytes. |
@@ -512,8 +505,6 @@ Source: `server/settings/_context.py`
 ## Erasure
 
 Erasure: saga recovery, reclaim, purge and the external backends it cascades to.
-
-Source: `server/settings/_erasure.py`
 
 
 ### Saga recovery and reclaim
@@ -539,8 +530,6 @@ Source: `server/settings/_erasure.py`
 ## Extraction
 
 Fact extraction from messages and observed events.
-
-Source: `server/settings/_extraction.py`
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
@@ -581,8 +570,6 @@ Source: `server/settings/_extraction.py`
 
 Knowledge documents and conversations: chunking, search floor, thread titles.
 
-Source: `server/settings/_knowledge.py`
-
 
 ### Conversations
 
@@ -607,8 +594,6 @@ Source: `server/settings/_knowledge.py`
 
 The MCP transport: tool listing, lean results, session runs.
 
-Source: `server/settings/_mcp.py`
-
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY` | `float` | `0.3` |  | loom_search drops knowledge hits below this cosine similarity (the conversation leg's floor, applied to the knowledge leg). |
@@ -630,8 +615,6 @@ Source: `server/settings/_mcp.py`
 ## Memory
 
 The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers.
-
-Source: `server/settings/_memory.py`
 
 
 ### Prompt safety and search priors
@@ -812,8 +795,6 @@ Source: `server/settings/_memory.py`
 
 memory.ask: evidence assembly and answer synthesis.
 
-Source: `server/settings/_memory_ask.py`
-
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_ASK_RECENCY_WEIGHT` | `float` | `0.2` | live | memory.ask only: re-rank the synthesis window by similarity + weight * recency, recency = 1/(1 + age_days/14), so the freshest copy of a fact reaches synthesis. 0.0 = cosine only. |
@@ -894,8 +875,6 @@ Source: `server/settings/_memory_ask.py`
 
 memory.search: legs, fusion, ranking and gates.
 
-Source: `server/settings/_memory_search.py`
-
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE` | `'this' \| 'all_mine'` | `'this'` | live | Default `namespace_scope` when a request leaves it unset. "this" reads the addressed namespace only; "all_mine" also reads the caller's own namespaces (the MCP loom_search asks for it by name), see docs/concepts/identities-and-namespaces.md#reading-several-namespaces. |
@@ -973,8 +952,6 @@ Source: `server/settings/_memory_search.py`
 
 Models: which model does each job.
 
-Source: `server/settings/_models.py`
-
 
 ### Defaults
 
@@ -1024,8 +1001,6 @@ Source: `server/settings/_models.py`
 
 Namespace registration, write marks and bench-namespace GC.
 
-Source: `server/settings/_namespaces.py`
-
 
 ### Namespace write marks
 
@@ -1049,8 +1024,6 @@ Source: `server/settings/_namespaces.py`
 ## Observability
 
 Telemetry, audit, tracing and the ops surface.
-
-Source: `server/settings/_observability.py`
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
@@ -1103,8 +1076,6 @@ Source: `server/settings/_observability.py`
 
 Embedding and LLM providers.
 
-Source: `server/settings/_providers.py`
-
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_EMBEDDING_DIM` | `int` | `3072` |  | Inherits ModelSettings for `llm_model`, which the provider resolution below reads and fills. Vector width the embedder is asked for and the schema is sized from; the width probed from the embedder at boot wins when they differ. Change it together with `embedding_model`. Unset with a `local:*` model, it is that model's own width. |
@@ -1143,8 +1114,6 @@ Source: `server/settings/_providers.py`
 
 Rate limits: per-actor and per-traffic-class buckets, shared across web workers.
 
-Source: `server/settings/_ratelimit.py`
-
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_RATELIMIT_ACTOR_FRACTION` | `float` | `1.0` |  | Per-actor rate-limit bucket, keyed (namespace, token subject), as a fraction of the namespace limit. 1.0 = no actor bucket; 0.6 leaves a second credential budget while one sweeps. |
@@ -1157,8 +1126,6 @@ Source: `server/settings/_ratelimit.py`
 ## Runtime
 
 Process shape, deployment, event stream and cost budgets.
-
-Source: `server/settings/_runtime.py`
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
@@ -1191,8 +1158,6 @@ Source: `server/settings/_runtime.py`
 ## Storage
 
 Storage: document originals, per-table retention and warm-tier moves.
-
-Source: `server/settings/_storage.py`
 
 
 ### Document originals (loom.document_blobs)
@@ -1234,8 +1199,6 @@ Source: `server/settings/_storage.py`
 
 The task inbox workers and what run.complete does to a run's rows.
 
-Source: `server/settings/_tasks.py`
-
 
 ### Task inbox
 
@@ -1260,8 +1223,6 @@ Source: `server/settings/_tasks.py`
 ## Tracker
 
 The tracker plane: records, duplicate checks, bisect.
-
-Source: `server/settings/_tracker.py`
 
 
 ### Tracker record, read live

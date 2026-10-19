@@ -424,8 +424,8 @@ conflicts and writes `memory.ask` answers. Both default to fakes that need no ne
 
 ### Models per job
 
-Every setting that names a model is in one file,
-[`server/settings/_models.py`](../../server/settings/_models.py), one per job. Set any
+Every setting that names a model is in the `Models` section of
+[`server/settings/catalog.py`](../../server/settings/catalog.py), one per job. Set any
 of them in `.env` to move that job to another model. The provider comes from the name,
 so a job can run on Claude while the rest run on GPT, as long as both keys are set. An
 empty value uses `LOOM_LLM_MODEL`.

@@ -44,7 +44,7 @@ class RetentionTarget:
 
 
 # Tables this module manages; each reads its retention_<t>_days and
-# tiering_<t>_warm_days setting (server/settings/_storage.py).
+# tiering_<t>_warm_days setting (server/settings/catalog.py).
 TARGETS: tuple[RetentionTarget, ...] = (
     RetentionTarget(
         "loom.audit_log",

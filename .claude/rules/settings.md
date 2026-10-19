@@ -5,7 +5,7 @@ paths:
 
 # Settings
 
-- One mixin per area, `server/settings/_<area>.py`, composed into one `Settings`; the env name is `LOOM_<FIELD>`. Every setting that names a model lives in `_models.py`.
+- Every setting is one field in `server/settings/catalog.py`, in its area's section; the sections compose into one `Settings`, and the env name is `LOOM_<FIELD>`. No setting is declared anywhere else. Every setting that names a model lives in the `Models` section.
 - A new field's comment says what it controls and what its values mean, in one or two lines.
 - Read it as `settings.<field>`; `getattr(settings, "<field>", default)` fails `test_settings_attribute_access.py`. Server code never reads `os.environ` for configuration (`test_env_reads.py`).
 - `Annotated[T, LIVE]` makes a field take a runtime override (`server/settings/_live.py`): only for a field read at call time, never captured at boot or used as a calibration fallback (`test_live_settings.py`, which pins the LIVE set).

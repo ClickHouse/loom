@@ -1,4 +1,4 @@
-"""Generate docs/reference/configuration.md from the settings mixins.
+"""Generate docs/reference/configuration.md from server/settings/catalog.py.
 
 Each field's row carries its env var, type, default and the comment block written above
 it (plus any trailing comment), so the reference is exactly as current as the code.
@@ -26,11 +26,12 @@ from server.settings._history import DEFAULT_CHANGES  # noqa: E402
 from server.settings._live import is_live  # noqa: E402
 
 COMMAND = "python scripts/codegen/settings_reference.py"
-SETTINGS_DIR = ROOT / "server" / "settings"
+CATALOG = ROOT / "server" / "settings" / "catalog.py"
 
 HEADER = f"""# Configuration reference
 
-Every setting is an environment variable `LOOM_<FIELD>` read at startup into
+Every setting is declared in one file, `server/settings/catalog.py`, and is an
+environment variable `LOOM_<FIELD>` read at startup into
 `server.settings.settings`. Set them in `.env` or the container environment;
 `.env.example` lists the common ones. `LOOM_ENV_FILE` names a different dotenv file,
 and empty reads none.
@@ -111,7 +112,7 @@ def _row(name: str, meaning: str) -> str:
     )
 
 
-def _section(path: Path, tree: ast.Module, cls: ast.ClassDef, lines: list[str]) -> list[str]:
+def _section(cls: ast.ClassDef, lines: list[str]) -> list[str]:
     fields = [
         s
         for s in cls.body
@@ -121,12 +122,11 @@ def _section(path: Path, tree: ast.Module, cls: ast.ClassDef, lines: list[str]) 
     ]
     if not fields:
         return []
-    doc = ast.get_docstring(cls) or ast.get_docstring(tree) or ""
+    doc = ast.get_docstring(cls) or ""
     title = doc.split("\n\n")[0].replace("\n", " ")
     out = [f"\n## {cls.name.removesuffix('Settings') or cls.name}\n"]
     if title:
         out.append(f"{title}\n")
-    out.append(f"Source: `server/settings/{path.name}`\n")
     current, rows = None, []
     for stmt in fields:
         name = stmt.target.id  # type: ignore[union-attr]
@@ -162,11 +162,10 @@ def _default_changes() -> list[str]:
 
 def render() -> str:
     parts = [HEADER, *_default_changes()]
-    for path in sorted(SETTINGS_DIR.glob("_*.py")):
-        src = path.read_text(encoding="utf-8")
-        tree = ast.parse(src)
-        for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
-            parts += _section(path, tree, cls, src.splitlines())
+    src = CATALOG.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
+        parts += _section(cls, src.splitlines())
     return "\n".join(parts).rstrip() + "\n"
 
 

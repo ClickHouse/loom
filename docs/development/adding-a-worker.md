@@ -64,7 +64,7 @@ set_query_tag("worker.my_loop")
 
 ## 3. Add its settings
 
-Add the switch and the cadence to the area's settings mixin (`server/settings/_memory.py`, `_code.py`, `_tracker.py`, …). Each comment becomes the row's text in the generated [configuration reference](../reference/configuration.md).
+Add the switch and the cadence to the area's section of `server/settings/catalog.py` (`Memory`, `Code`, `Tracker`, …). Each comment becomes the row's text in the generated [configuration reference](../reference/configuration.md).
 
 ```python
     # Lease sweeper: return expired leases to todo, resume deferred tasks at

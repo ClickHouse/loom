@@ -37,7 +37,7 @@ flowchart LR
 | Hold facts with an identity and typed fields                 | A record schema (data only)   | `memory_schema.register`, `memory.record.write`                                                  | [Writing memory](../features/memory/writing.md)                        |
 | Restrict what agents may do based on their history           | A history policy (data only)  | `policy.set`                                                                                     | [Tokens and grants](../guides/tokens-and-grants.md#add-history-policy) |
 | Use another embedding or LLM provider                        | A provider client             | `server/embedding/`, `server/llm/`                                                               | [below](#add-a-provider)                                               |
-| Add a setting                                                | A settings field              | The area's mixin in `server/settings/`                                                           | [below](#add-a-setting)                                                |
+| Add a setting                                                | A settings field              | The area's section of `server/settings/catalog.py`                                               | [below](#add-a-setting)                                                |
 | Capture sessions from another client, or ship agent guidance | An integration, hook or skill | `integrations/`, `skills/`                                                                       | [below](#add-an-integration)                                           |
 
 ## What every extension shares
@@ -66,7 +66,7 @@ Wire it in `server/embedding/embedder.py`: provider inference from `LOOM_EMBEDDI
 
 ## Add a setting
 
-A new field goes in its area's mixin in `server/settings/` (`_memory_search.py`, `_code.py`, `_tracker.py`, …). The comment above it says what it controls and what its values mean; that comment becomes its row in the generated [configuration reference](../reference/configuration.md). The environment name is `LOOM_<FIELD>`.
+A new field goes in its area's section of `server/settings/catalog.py` (`MemorySearch`, `Code`, `Tracker`, …), the one file every setting is declared in. The comment above it says what it controls and what its values mean; that comment becomes its row in the generated [configuration reference](../reference/configuration.md). The environment name is `LOOM_<FIELD>`.
 
 Read it as `settings.<field>`, never `getattr(settings, "<field>", default)`. `tests/unit/test_settings_attribute_access.py` fails on the latter: a copied default drifts and hides the reader from whoever deletes the field. Regenerate with `python scripts/codegen/settings_reference.py` and `python scripts/codegen/settings_schema.py`.
 

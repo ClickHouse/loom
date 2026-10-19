@@ -1,0 +1,3695 @@
+"""Every Loom setting, in one place.
+
+Each setting is one field below, in the section for its area: its name is the
+`LOOM_<NAME>` environment variable in lowercase, its default is the value it ships with,
+and the comment above it says what it controls; `docs/reference/configuration.md` and
+`schemas/loom-settings.schema.json` are generated from this file. `Annotated[T, LIVE]`
+marks a field a deployment can change while Loom runs (`loom settings set`). The
+sections compose into one flat `Settings` (`server/settings/__init__.py`), which also
+holds where a value comes from: a live override, the environment, the dotenv file, the
+settings file, the default.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
+
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
+
+from server.settings._env import (
+    DEV_JWT_SECRET,
+    CaseFolded,
+    JsonArray,
+    JsonObject,
+    RoutePrior,
+    json_map_items,
+)
+from server.settings._live import LIVE
+
+# ===== Auth ===================================================================
+
+
+class AuthSettings(BaseModel):
+    """Authentication, tokens and identity providers."""
+
+    # Comma-separated login handles and emails promoted to platform_admin
+    # (org-wide visibility). A handle matches a password account's subject; an
+    # email matches only an IdP-verified (OIDC) email, never the unverified
+    # self-signup address. Empty = no platform admins.
+    platform_admins: str = ""
+
+    @property
+    def platform_admins_set(self) -> set[str]:
+        return {s.strip().lower() for s in (self.platform_admins or "").split(",") if s.strip()}
+
+    # True: every operation requires a valid bearer JWT. False (laptop demos
+    # only): missing tokens are not rejected and the SPA synthesizes a local
+    # identity. identity_provider=single-user forces auth off regardless.
+    auth_required: bool = True
+    # The one namespace auth-off mode serves (SPA identity, dashboard bootstrap,
+    # MCP/SDK caller defaults). Ignored when auth is required; `personal-*` is
+    # reserved and rejected.
+    default_namespace: str = "local"
+
+    @field_validator("default_namespace")
+    @classmethod
+    def _normalise_default_namespace(cls, v: str) -> str:
+        """Empty normalises to `local` so an explicitly-blank env var behaves
+        like an unset one. Shape validation happens in the model validator
+        below, where the auth mode is known."""
+        return (v or "").strip() or "local"
+
+    @model_validator(mode="after")
+    def _check_default_namespace(self) -> AuthSettings:
+        """Reject unusable names before any data is written under one — but
+        only in the mode that reads the setting.
+
+        The value is inserted into `loom.namespaces` and baked into the SPA
+        identity, so it must satisfy the shared namespace-name shape
+        (`server.core.naming.validate_namespace_name` — the same rule set
+        `namespace.register` and the create dialog accept). `personal-*` is
+        additionally reserved for per-subject auto-provisioning: reusing it
+        collides with that scheme and skews the `NOT LIKE 'personal-%'`
+        analytics split in the dashboard.
+
+        Auth-ON deployments never read the setting, so a stale value left in
+        a shared .env must not crash-loop the server/CLI/migrations for a
+        mode that ignores it — warn and carry on instead.
+        """
+        from server.core.naming import validate_namespace_name
+
+        v = self.default_namespace
+        error: str | None = None
+        if v.startswith("personal-"):
+            error = (
+                f"LOOM_DEFAULT_NAMESPACE={v!r} uses the reserved 'personal-' "
+                "prefix, which belongs to per-subject auto-provisioning. "
+                "Pick a name that doesn't start with 'personal-'."
+            )
+        else:
+            try:
+                self.default_namespace = validate_namespace_name(v)
+            except ValueError as e:
+                error = f"LOOM_DEFAULT_NAMESPACE: {e}"
+        if error is None:
+            return self
+        if not self.auth_actually_required():
+            raise ValueError(error)
+        logging.getLogger(__name__).warning(
+            "%s — ignored because auth is enabled (the setting only steers "
+            "auth-disabled deployments); fix or remove it from the env.",
+            error,
+        )
+        return self
+
+    # MCP one-click connect: dynamic client registration and /oauth/authorize
+    # on top of the sign-in routes (device grant, token, revoke) every
+    # auth-on deployment serves. Opt-in: anyone can register a client.
+    oauth_enabled: bool = False
+    # Public base URL used in OAuth discovery and redirects; empty derives it from each request.
+    # Required when `oauth_login_provider` is "oidc" (the IdP callback URL is built from it).
+    oauth_issuer: str = ""
+    # How people sign in (dashboard, `loom login`, MCP connect): "password"
+    # (Loom's own form) or "oidc" (the external IdP; loom maps the verified
+    # email to an account and still mints its own token). "oidc" closes
+    # password sign-in and self-signup, and requires `oauth_issuer` and the
+    # three oidc_* values.
+    oauth_login_provider: Literal["password", "oidc"] = "password"
+    # Lifetime of an OAuth access token, in seconds; at most a day, which bounds access
+    # after the IdP deactivates someone (only a refresh asks it).
+    oauth_access_token_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+    # Seconds a password set-up link stays valid, at most a week (it sets a password once).
+    password_link_ttl_seconds: int = Field(default=86400, ge=300, le=7 * 86400)
+    # Seconds between passes of the always-on sweep that drops sign-in state
+    # (loom.oauth_signin_state keys) past its credential's expiry.
+    oauth_signin_state_sweep_interval_seconds: int = Field(default=300, ge=1)
+    # External IdP issuer URL; its `/.well-known/openid-configuration` must name the same issuer.
+    oidc_issuer: str = ""
+    # Client id registered at the IdP; also the audience each id_token must carry.
+    oidc_client_id: str = ""
+    # Client secret sent to the IdP token endpoint when exchanging the sign-in code.
+    oidc_client_secret: str = ""
+    # JIT provisioning: a first OIDC sign-in with no account creates a personal
+    # namespace in oidc_jit_org instead of being rejected. Off = fail closed.
+    # oidc_jit_email_domains (comma-separated) restricts it; empty admits any
+    # verified email the IdP authenticates.
+    oidc_jit_provision: bool = False
+    # Org that JIT-provisioned accounts are created in; required when `oidc_jit_provision` is on.
+    oidc_jit_org: str = ""
+    # Comma-separated email domains JIT provisioning admits; empty admits any verified email.
+    oidc_jit_email_domains: str = ""
+    # Bearer tokens (comma-separated, any one accepted) an identity provider presents to
+    # deactivate and reactivate people over SCIM 2.0 (/scim/v2). Empty = off; needs auth on, oidc.
+    scim_token: str = ""
+
+    @property
+    def oidc_jit_email_domains_set(self) -> set[str]:
+        return {
+            s.strip().lower() for s in (self.oidc_jit_email_domains or "").split(",") if s.strip()
+        }
+
+    # The root secret, and the one secret a deployment carries: it signs tokens
+    # as kid `default` and seals every stored credential and every signing key
+    # in loom.signing_keys (`loom signing-key rotate` adds those). Required when
+    # auth is on. The default is the checked-in DEV secret anyone can mint
+    # with: a deployment with auth on refuses to start with it, except the
+    # `make dev` stack (`loom doctor` warns everywhere else).
+    jwt_secret: str = DEV_JWT_SECRET
+    # The root secret LOOM_JWT_SECRET replaced, while a rotation is under way:
+    # credentials and signing keys sealed under it still open (tokens it signed
+    # as kid `default` do not verify: a leaked root mints nothing). `loom
+    # secrets reseal` rewrites the stored ones under the new root; then remove
+    # this. "" = none.
+    jwt_secret_previous: str = ""
+    # Seconds between re-reads of loom.signing_keys in every process (at least
+    # 1); `loom signing-key rotate` waits out two of the slowest process's.
+    jwt_keyring_refresh_seconds: float = Field(default=30.0, ge=1.0)
+
+    def jwt_secret_is_dev_default(self) -> bool:
+        """Whether the root secret is the checked-in dev default — the value
+        anyone who can read this repo can mint tokens with (`loom mint-token`
+        warns, `loom doctor` grades WARN)."""
+        return self.jwt_secret == DEV_JWT_SECRET
+
+    # The `iss` Loom stamps on every token it mints and the `aud` every
+    # verified token must carry; a token naming another audience is refused.
+    jwt_issuer: str = "loom"
+    # The `aud` claim stamped on minted tokens and required on every verified token.
+    jwt_audience: str = "loom-platform"
+    # Extra accepted `iss` values, for a gateway minting Loom-shaped JWTs with a
+    # key in `jwt_public_keys_json`. Loom's own tokens (iss = jwt_issuer) pass.
+    jwt_trusted_issuers: str = ""
+
+    def trusted_issuers(self) -> set[str]:
+        """The `iss` values a token Loom verifies may carry: Loom's own issuer
+        plus the federated issuers in `jwt_trusted_issuers`."""
+        extra = (i.strip() for i in self.jwt_trusted_issuers.split(","))
+        return {self.jwt_issuer, *(i for i in extra if i)}
+
+    # JSON (or base64 JSON) map kid → PEM public key of a gateway whose RS256
+    # tokens this deployment accepts. Loom's own keys live in loom.signing_keys.
+    jwt_public_keys_json: str = ""
+    # Clock-skew tolerance on iat/exp, seconds; small enough to give replay no
+    # useful post-exp window.
+    jwt_leeway_seconds: int = 30
+
+    # Seconds the `loom.revoked_tokens` snapshot is cached; verify checks both
+    # jti and sub against it, so a revocation takes effect on other processes
+    # within this TTL (at once on the one that wrote it).
+    jwt_revocation_cache_ttl_seconds: float = 30.0
+    # Oldest revocation snapshot a process still trusts, seconds. Past it
+    # (refreshes keep failing) every bearer is refused with a retryable 503.
+    # A subject's cached grants are trusted as long when a re-read fails.
+    jwt_revocation_max_stale_seconds: float = 600.0
+    # Seconds a subject's grant rows are cached for the namespace gate, which
+    # caps a token's claim at the grant it holds there: a revoked or lowered
+    # grant takes effect on other processes within this TTL (at once on the
+    # one that wrote it).
+    grant_cache_ttl_seconds: float = 10.0
+
+    # Sign-ins and sign-ups one process checks at once (each costs ClickHouse
+    # statements and a password hash); past it a caller waits up to a second,
+    # then gets 429, so a burst cannot take the shared connection pool.
+    auth_attempts_concurrency: int = Field(default=8, ge=1)
+
+    # Browser self-signup: "off" (endpoint 404s) or "open"
+    # (/v1/auth/self-signup mints JWTs scoped to the requested namespace).
+    self_signup: Literal["off", "open"] = "off"
+    # Default org for self-signed tokens.
+    self_signup_org: str = "dev"
+
+    # Identity mode; decides how callers authenticate.
+    #   single-user    — no auth, one anonymous identity.
+    #   trust-network  — self-signup, first-claim-wins.
+    #   gateway        — an upstream proxy mints short-lived Loom JWTs with the
+    #                    shared HS256 secret; Loom only validates.
+    # Empty = inferred from auth_required + self_signup at boot.
+    identity_provider: Literal["", "single-user", "trust-network", "gateway"] = ""
+
+    # When set, a dashboard page load redirects (302) here instead of serving the SPA (Loom
+    # behind an aggregator). Deployment-specific; never hardcode.
+    dashboard_redirect_url: str = ""
+
+    # Comma-separated subjects allowed to send `X-Loom-On-Behalf-Of` (a trusted
+    # aggregator passing each end-user's identity under one service token).
+    # Empty disables the header.
+    trusted_callers: str = ""
+
+    def auth_actually_required(self) -> bool:
+        """Whether the HTTP transport should require a bearer.
+
+        single-user mode is "no auth at all" by definition and must override
+        auth_required=True (common in prod-derived dev configs), or the SPA
+        breaks.
+        """
+        if self.effective_identity_provider() == "single-user":
+            return False
+        return self.auth_required
+
+    def effective_identity_provider(self) -> str:
+        """Resolve identity_provider, inferring from auth_required +
+        self_signup when unset: auth-off → single-user; auth-on + signup-open
+        → trust-network; auth-on + signup-off → gateway."""
+        if self.identity_provider:
+            return self.identity_provider
+        if not self.auth_required:
+            return "single-user"
+        if self.self_signup == "open":
+            return "trust-network"
+        return "gateway"
+
+    @model_validator(mode="after")
+    def _check_gateway_keys(self) -> AuthSettings:
+        """A malformed gateway key map fails here, not on the first RS256 token."""
+        self.jwt_public_key_map()
+        return self
+
+    @model_validator(mode="after")
+    def _check_revocation_staleness(self) -> AuthSettings:
+        """A snapshot is refreshed every cache TTL, so a stale limit at or under
+        it refuses every bearer between two refreshes."""
+        if self.jwt_revocation_max_stale_seconds <= self.jwt_revocation_cache_ttl_seconds:
+            raise ValueError(
+                "LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be larger than "
+                "LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS"
+            )
+        # The keyring goes stale at the same limit: a failed read, and the next
+        # one landing a little after its interval, must not trip it.
+        if self.jwt_revocation_max_stale_seconds < 3 * self.jwt_keyring_refresh_seconds:
+            raise ValueError(
+                "LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times "
+                "LOOM_JWT_KEYRING_REFRESH_SECONDS"
+            )
+        return self
+
+    def jwt_public_key_map(self) -> dict[str, str]:
+        """For RS256 verifiers: kid → PEM public key. Empty when none set."""
+        raw = self.jwt_public_keys_json.strip()
+        if not raw:
+            return {}
+        return dict(json_map_items(raw, "jwt_public_keys_json"))
+
+    # Kill switch for restricted namespaces. True: served to a principal whose
+    # token names the namespace AND who holds a live direct grant. False: every
+    # read is refused while ingest continues.
+    restricted_serve: bool = True
+    # Commit the `namespace.restricted_access` audit row every admitted read of a
+    # restricted namespace writes before answering (inline). True by default: a
+    # row written beside the request is lost when the process is killed before it
+    # lands. False trades that row for the seconds the awaited insert adds.
+    restricted_audit_inline: bool = True
+    # Comma-separated origin list. "*" allows all (acceptable when
+    # auth_required=True). Empty disables CORS entirely.
+    cors_origins: str = ""
+    # Request-body cap, bytes, enforced by ASGI middleware before any parser
+    # (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables.
+    max_request_bytes: int = 32 * 1024 * 1024
+
+    # History policy over the agent trace: "off" reads/writes nothing;
+    # "shadow" records verdicts in loom.policy_decisions without blocking;
+    # "enforce" denies (403 POLICY_FORBIDDEN) and records them too. In
+    # enforce, writes fail closed on evaluation errors; reads never do.
+    policy_mode: Literal["off", "shadow", "enforce"] = "off"
+    # Cap on any rule's look-back window, in seconds.
+    policy_max_window_seconds: int = 86_400
+    # Per-(org, namespace) rule cache TTL, seconds; other replicas see a rule
+    # change within it.
+    policy_cache_ttl_seconds: int = 30
+
+
+# ===== ClickHouse =============================================================
+
+
+class ClickHouseSettings(BaseModel):
+    """ClickHouse connection, query shaping and vector storage."""
+
+    # ch_secure=None → wrapper infers TLS from port (8443 → True).
+    ch_host: str = "localhost"
+    # ClickHouse HTTP port; 8443 (the Cloud HTTPS port) turns TLS on when `ch_secure` is unset.
+    ch_port: int = 8123
+    # User name the server connects to ClickHouse as.
+    ch_user: str = "loom"
+    # Password for `ch_user`; the default only suits a local development server.
+    ch_password: str = "loomdev"
+    # Database that holds every Loom table and that migrations run against.
+    ch_database: str = "loom"
+    # The cluster `clusterAllReplicas` reads to find a stopped Loom process's
+    # queries on every node (`default` on ClickHouse Cloud). A server without
+    # it answers for itself; '' reads only the connected server.
+    ch_cluster: Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]*$")] = "default"
+    # Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off).
+    ch_secure: bool | None = None
+    # Append `sql:<shape12> <first 200 chars>` of each statement to its
+    # `log_comment` ("<op> <request_id>"), so query_log rows group by shape.
+    # Off by default: readers that split log_comment on spaces gain tokens.
+    ch_log_comment_statement_digest: bool = False
+    # A file path: append one JSON line (`digest`, `sql`) per executed statement, to
+    # collect the shapes an acceptance run executes for the analyzer corpus. '' = off;
+    # never set it in production.
+    ch_capture_statements: str = ""
+    # HTTP connection pool size; the driver default (~8) exhausts under bulk
+    # writes plus workers. Size to expected request concurrency.
+    ch_pool_maxsize: int = 64
+    # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load
+    # balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled
+    # TLS connection is never reaped under uvloop (`LOOM_UVICORN_LOOP=uvloop`).
+    ch_keepalive_timeout: float = 5.0
+    # A point lookup that MISSES right after a write (get after set, verify,
+    # update_by_id, delete) re-reads once with select_sequential_consistency=1.
+    # Costs only on a miss; a no-op on single-node MergeTree.
+    ch_read_your_writes: bool = True
+    # memory.search on a namespace this process wrote within this many seconds
+    # reads with select_sequential_consistency from the start. 0 = off (the
+    # empty-pool retry remains the backstop).
+    ch_read_your_writes_window_s: float = 20.0
+    # Per-class statement deadline, seconds, applied as `max_execution_time`
+    # and as a client-side bound that frees the pool slot. 0 = no bound for
+    # that class.
+    ch_timeout_read_s: float = 30.0
+    # Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound.
+    ch_timeout_write_s: float = 60.0
+    # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
+    ch_timeout_ddl_s: float = 300.0
+    # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED.
+    # 0 = no slot gate.
+    ch_pool_wait_ms: int = 500
+    # Ceilings for the reads a caller shapes (code.grep, code.search with a
+    # pattern or globs, memory.aggregate, memory.record.query). A ceiling only
+    # lowers the statement's own value, so no request can widen it; 0 = none.
+    # The shipped loom_reader profile (nlp_user_settings.xml) caps these three at
+    # their defaults, with a floor no statement can go under (time: 0.05 s,
+    # code.grep's statement floor), so none can be set to 0 even in the SQL.
+    # Raising a setting above its cap needs the profile raised too; a 0 sends
+    # no ceiling, so the profile's cap applies (code.grep's deadline is then
+    # clamped to ch_timeout_read_s, which the profile's cap matches).
+    # Seconds one such read may run (the read class default).
+    ch_caller_shaped_max_execution_s: float = 30.0
+    # Bytes of memory one such read may use.
+    ch_caller_shaped_max_memory_bytes: int = 4_000_000_000
+    # Rows one such read may scan; past it the read fails (422), never a partial answer.
+    ch_caller_shaped_max_rows_to_read: int = 500_000_000
+    # ClickHouse user the caller-shaped reads run as, with `ch_password`; the
+    # shipped config defines `loom_reader` (SELECT only). Empty = `ch_user`.
+    ch_reader_user: str = ""
+
+    # JSON map {traffic class: ClickHouse settings} applied by
+    # `server.core.ch.statement_settings` to every read (an explicit per-call
+    # setting wins). `priority`: 1 served first, larger waits, 0 opts out;
+    # `max_threads` caps CPU per statement. Neither changes the rows returned.
+    # `background` (workers, operator CLIs) bypasses the filesystem cache on
+    # a miss so a backfill scan does not evict interactive data.
+    ch_settings_by_traffic_class: Annotated[str, JsonObject] = (
+        '{"production": {"priority": 1}, "interactive": {"priority": 2}, '
+        '"bench": {"priority": 10, "max_threads": 4}, '
+        '"background": {"priority": 5, "max_threads": 3, '
+        '"read_from_filesystem_cache_if_exists_otherwise_bypass_cache": 1}}'
+    )
+    # Apply pending migrations at boot. Set False for any server started from
+    # a branch against a shared service, or it applies unmerged migrations.
+    boot_migrate: bool = True
+    # Seconds after which a holder that stopped renewing is replaced.
+    boot_migrate_lease_ttl_s: int = 300
+    # Seconds a contender waits for the holder before boot fails (exit 1, the
+    # container restarts); also how long a booting process waits for the
+    # provider configuration lock (a sibling's rebuild step may hold it).
+    boot_migrate_lease_wait_s: float = 900.0
+    # Seconds a migration file waits for the mutations it started (MATERIALIZE,
+    # UPDATE, a column type change) to finish on every replica; past it the
+    # file fails unrecorded.
+    migrate_mutation_wait_s: int = 600
+
+    # HNSW candidate list size (`ef_search`) for the helper legs, emitted via
+    # vector_search_settings(); tracks ClickHouse's default. The
+    # main leg scales its own value with top_k.
+    vector_search_ef_search: int = 256
+    # Post-filter over-fetch for a `vector_similarity` (HNSW) index: the index
+    # returns top-N before the tenant predicate drops rows. Sent on uncoded
+    # vector reads; coded reads use `vector_search_quantized_fetch_multiplier`.
+    vector_search_index_fetch_multiplier: float = 10.0
+    # Send `vector_search_use_quantized_codes = 1` on vector-ranked reads whose
+    # column has a `Quantized(...)` codec and whose table has no patch parts:
+    # a codes-first scan plus full-precision rescore. A replica that rejects
+    # the setting (code 115) drops the fragment and retries.
+    vector_search_quantized_codes: bool = True
+    # Over-fetch for the codes-first read: stage 1 keeps LIMIT × this by code
+    # distance, stage 2 rescores. Only read when the codes setting is sent.
+    vector_search_quantized_fetch_multiplier: float = 3.0
+    # Seconds between re-reads of which vector columns are coded and which
+    # coded tables carry patch parts. A write that embeds reads again on its own
+    # when the reading is older than a few seconds (codes_state.FRESH_READING_S).
+    vector_codes_state_probe_seconds: int = 60
+
+
+# ===== Code ===================================================================
+
+
+class CodeSettings(BaseModel):
+    """The code plane: ingest, indexes, search, ask, review."""
+
+    # ------------------------------------------------------------------
+    # Code intelligence plane. One code
+    # namespace indexes ONE repo. No repository is configured by default: set
+    # LOOM_CODE_REPO / ORG / NAMESPACE (or LOOM_CODE_REPOS_JSON, or add one from
+    # the Repositories page) before anything is indexed. The index-building workers (ingest, SCIP,
+    # PR history, graph stats, cards, embed recovery) default off and no-op
+    # on a namespace without a git_head watermark or pending work.
+    # ------------------------------------------------------------------
+    # Master kill switch, checked at the top of every code.* handler.
+    code_intel_enabled: bool = True
+
+    # code.test_gate run recipes (LOOM_CODE_TEST_GATE_RUN_TEMPLATES): JSON list of
+    # {"pattern": <regex over the repo-relative test path>, "run": <template>},
+    # tried before the built-ins. Templates may use {path} {dir} {stem} {name}
+    # {parent}. A path no recipe matches is reported run_unknown, never guessed.
+    code_test_gate_run_templates: Annotated[str, JsonArray] = ""
+
+    # Retrieval context (tokens) code.ask hands to synthesis when the caller
+    # passes no token_budget.
+    code_ask_token_budget: int = 4000
+    # The code.ask answer cache's hit cosine. 0 = the per-embedding-model table
+    # in code/app/answers.py; a value in (0, 1] pins one threshold for
+    # every model.
+    code_ask_cache_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
+    # A cached code.ask answer older than this many days is a miss (checked
+    # and tombstoned at read time; no table TTL). 0 = no bound.
+    code_ask_cache_max_age_days: int = Field(default=14, ge=0)
+    # Seconds an abstain stays cached for its exact normalised question under
+    # the index head it abstained at. 0 = off.
+    code_ask_negative_cache_ttl_s: int = Field(default=3600, ge=0)
+    # code.ask's pre-synthesis LLM calls (identifier proposal, HyDE, concept
+    # legs) read the per-namespace exact-prompt response cache; no_cache or a
+    # traffic class with llm_cache off bypasses it.
+    code_ask_llm_cache: bool = True
+    # The scalar repository entry: its loom org, its code namespace and its
+    # GitHub `owner/name`. Empty repo = no scalar entry (nothing indexed until a
+    # repository is configured); an empty org or namespace is never a default
+    # for a code.* request, which then must name its own.
+    code_org: str = ""
+    # The scalar entry's code namespace, used by a code.* request or `loom code` command
+    # that names none; empty = the request must name one.
+    code_namespace: str = ""
+    # The scalar entry's GitHub `owner/name`; empty = no scalar entry.
+    code_repo: str = ""
+
+    # The memory namespace code.ask fuses decision/rationale memories (the
+    # "why") from into its answer; empty = no enrichment, never guessed.
+    code_ask_memory_namespace: str = ""
+    # The org of that namespace; empty = `code_org`.
+    code_ask_memory_org: str = ""
+    # Who may READ the code index. False: the namespace's own visibility and
+    # grants. True: every authenticated principal of the org reads every
+    # configured code namespace (right for public or org-internal repos).
+    # Writes stay grant-driven. Per-entry "org_readable" in LOOM_CODE_REPOS_JSON.
+    code_org_readable: bool = False
+    # The scalar repo entry is public: its namespace registers join_policy=open
+    # and discoverable. Per-entry `"public": true` does the same.
+    code_repo_public: bool = False
+    # Positive-control symbol code.test_home / code.coverage_claim grep for (one
+    # every test suite of the repository names); empty makes every claim
+    # `unknown`.
+    code_coverage_control_symbol: str = ""
+    # The setting code.setting_facts must find before it claims
+    # `not_a_setting` for any other name; empty = it never claims it.
+    code_setting_control: str = ""
+    # Max bytes of a PR patch code.conventions reads from the mirror; a longer
+    # patch is cut at a file boundary and flagged `diff_truncated`.
+    code_conventions_diff_max_bytes: int = 1_500_000
+    # A touched function is "widely called" when its hop-1 callers span more
+    # than this many `src/<dir>` directories (rule wide_callers_untested).
+    code_conventions_wide_caller_dirs: int = 5
+    # Multi-repo: JSON array of repo configs (code/domain/index/repos.py);
+    # empty = the scalar single-repo settings. Missing per-entry fields fall
+    # back to the scalars.
+    code_repos_json: Annotated[str, JsonArray] = ""
+    # Repositories added from the Repositories page (loom.code_repos) merge
+    # with the entries above; the environment wins on a namespace collision.
+    # Off = the operator's JSON is the only source.
+    code_self_service_enabled: bool = True
+    # Where the worker clones a self-service entry's bare mirror (one per
+    # GitHub repository, shared by its branches).
+    code_repos_root: str = "var/code_repos/self"
+    # Active self-service entries per org (branches count); past it the add
+    # refuses with a message.
+    code_self_service_max_repos: int = 20
+    # Files indexed per pass while a new entry's initial index builds; the
+    # cursor persists in code_index_state (400 ≈ 1 min at the live rate).
+    code_bootstrap_files_per_pass: int = 400
+    # Seconds between re-reads of loom.code_repos.
+    code_repos_refresh_seconds: int = 30
+    # Seconds a bare clone may take before the worker gives up for the pass
+    # and retries next pass.
+    code_bootstrap_clone_timeout_s: float = 1800.0
+    # Whether a history read (blame_range, bisect, first_build, lesson checks) on a
+    # host without a repository's mirror clones it there in the background. On:
+    # every serving host keeps its own full copy of every mirror it is asked about.
+    # Off: such a host answers `no_git_mirror` and only the worker's host clones.
+    code_history_clone_on_read: bool = True
+    # Where git-history reads (blame, citation commit checks, PR history, commit
+    # coverage) come from. local = this host's mirrors; none = an edge host with
+    # no mirrors: those reads answer without history.
+    git_history: Literal["local", "none"] = "local"
+    # Every serving process clones the configured entries' mirrors it lacks at boot,
+    # in the background (code/app/index/mirrors.py): a history read answers
+    # `no_git_mirror: cloning <entry>` until its mirror is there. A full bare clone per
+    # host, again on every new disk: keep code_repos_root on a volume that outlives a
+    # rollout. Off: a mirror is cloned only when a read asks for it.
+    code_mirror_warmup: bool = True
+    # Clones the warm-up runs at once on one host (each after a random wait), so N
+    # replicas starting together do not all clone from the remote at once.
+    code_mirror_warmup_concurrency: int = 2
+    # Seconds between this host's fetches of its mirrors and sweeps of the mirrors,
+    # checkouts and lock files no active entry names. A round fetches only the branch
+    # tips, open PR heads and ledger merges the leader's pass recorded in ClickHouse
+    # that the mirror lacks: nothing when it is current. 0 = no fetch loop and no sweep.
+    code_mirror_fetch_interval_s: float = 300.0
+    # Seconds one git command on a mirror may run (log, show, rev-parse).
+    code_git_timeout_s: Annotated[float, LIVE] = Field(default=120.0, gt=0)
+    # Seconds one fetch, or one full-tree `ls-tree` of a commit, may run; the first fetch
+    # after a shallow clone of a large repository can exceed ten minutes.
+    code_git_fetch_timeout_s: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
+    # Hours between `git gc` runs of each mirror on this host (low CPU and IO
+    # priority, only with room for a second copy plus the margin below). 0 = never.
+    code_mirror_gc_interval_h: float = 168.0
+    # Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without
+    # it the gc waits another interval.
+    code_mirror_gc_margin_gb: float = 5.0
+    # rlimits for each process of a sandboxed repository job (clone, fetch,
+    # dependency install, compiler-tier harness; code/app/index/sandbox.py).
+    # They bound each process, not a job's total (max_pids aside): there is no cgroup.
+    # CPU seconds a process may use.
+    code_sandbox_cpu_seconds: int = 7200
+    # Data memory (heap and private mappings, RLIMIT_DATA) a process may use, in
+    # MiB. Not address space: node reserves far more of that than it uses.
+    code_sandbox_memory_mb: int = 16384
+    # Processes and threads one job may run at once (RLIMIT_NPROC, set inside
+    # the job's user namespace, so other jobs and the server do not count;
+    # Linux 5.14+, older kernels count the uid's tasks host-wide).
+    code_sandbox_max_pids: int = 2048
+    # Set by deployments that ship the sandbox profiles: a repository job
+    # refuses to run rather than run unsandboxed, and /v1/health reports the
+    # missing sandbox as an error. False: without the sandbox, jobs fall back
+    # to plain processes as "Without the sandbox" in code-index-operations.md says.
+    code_sandbox_required: bool = False
+    # Largest file a process may write, in MiB (a pack or index.scip).
+    code_sandbox_max_file_mb: int = 32768
+    # Bare clone the ingest worker fetches into (created by `loom code init`)
+    # and its remote. Empty = derived from code_repo: `var/code_repos/<name>.git`
+    # and `https://github.com/<owner>/<name>.git`.
+    code_git_dir: str = ""
+    # The scalar entry's fetch remote; empty = `https://github.com/<owner>/<name>.git`.
+    code_git_remote: str = ""
+    # The scalar entry's branch: the one the ingest worker fetches and indexes.
+    code_git_branch: str = "main"
+    # Comma-separated fnmatch globs of extra remote branches the mirror
+    # fetches besides the configured one (`release/*` = release branches,
+    # `backport/*` = backport staging). Refs are never pruned. Empty = the
+    # configured branch only.
+    code_git_extra_branches: str = ""
+    # Fetch ledger merge commits no branch reaches by sha and pin them under
+    # refs/loom/merges/<sha>: one ledger page and at most the batch below per
+    # entry per pass; the cursor wraps. Off = branches only.
+    code_git_fetch_ledger_merges: bool = True
+    # Ledger merge rows checked for a missing sha per entry per pass.
+    code_git_ledger_merge_page: int = 500
+    code_git_ledger_merge_batch: int = 40  # 40 shas ≈ 8.5 s
+    # The mirror carries `refs/pull/N/head` for every PR the ledger holds OPEN
+    # (refetched when the tip moves, never pruned), so pre-merge reads diff the
+    # PR's own head. Only open heads: fetching every PR head is too costly.
+    # Per-entry `git_fetch_pr_heads` overrides. Off = the overlay reports
+    # `head_not_in_mirror`.
+    code_git_fetch_pr_heads: bool = True
+    # Max PR heads fetched per shared mirror per ingest pass.
+    code_git_pr_head_batch: int = 200
+    # Open-PR rows per pass whose head_sha / base_sha / files the PR-history
+    # worker fills from the mirror; rows the mirror lacks fall back to GitHub
+    # (batch below).
+    code_gh_items_head_fill_batch: int = 200
+    # GitHub `GET /pulls/N` calls per pass for open PRs the mirror lacks;
+    # 0 = the mirror path only.
+    code_gh_items_head_github_batch: int = 20
+    # CSV path prefixes of the scalar entry that are indexed; everything else
+    # is skipped. Empty = the whole tree (the ingest denylist still applies).
+    code_path_prefixes: str = ""
+    # GitHub token for the default repository: git fetches of a private
+    # remote, the PR-history and issue mirrors, and fork lookups. Empty = the
+    # REST calls go anonymously (60 requests/h per IP, public repos only; one
+    # warning) and the issue mirror is skipped.
+    code_github_token: str = ""
+    # Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files →
+    # tree-sitter symbols/edges → context pack → advance watermark.
+    code_ingest_enabled: bool = False
+    # Seconds between fast-tier ingest passes; extra-branch fetches of a shared mirror
+    # are spaced by 0.9 of it (at least 30 s).
+    code_ingest_interval_seconds: int = 120
+    # Seconds an ingesting process caches the namespace's live path set (the
+    # import-resolution oracle); files it writes join at once.
+    code_ingest_live_paths_ttl_s: float = 60.0
+    # Seconds after which the weekly pass refits the jit-risk model.
+    code_jit_risk_refit_interval_s: int = 7 * 24 * 3600
+    # Months of merged PRs the fit reads.
+    code_jit_risk_window_months: int = 12
+    # Days after which a fit is served as `scored_stale` / `fit_stale`.
+    code_jit_risk_max_age_days: int = 183
+    # as_of.stale is true when the fast tier is more than this many
+    # first-parent commits behind the fetched branch tip (60 s cache).
+    code_stale_after_commits: int = 5
+    # as_of.stale is also true when the mirror has not fetched for this many
+    # seconds (lag is counted against the local mirror). 0 = off.
+    code_fetch_stale_after_seconds: int = 3600
+    # code.callers/callees: a bare name with more distinct definitions than
+    # this returns `ambiguous` + candidates instead of walking them all.
+    code_callers_max_distinct_seeds: int = 5
+    # Commits past the watermark one pass reads; later ones wait for the next pass.
+    code_ingest_max_commits_per_pass: int = 20
+    # Prior ingest cost per changed file (seconds), refined by observation. A
+    # commit predicted to overrun the pass deadline is not started unless it
+    # is the pass's first.
+    code_ingest_seconds_per_file: float = 2.5
+    # Changed files indexed per commit; past it the rest are skipped with a warning
+    # and heal on the next backfill.
+    code_ingest_max_files_per_commit: int = 500
+    # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
+    # the budget below keeps a pass under it.
+    code_ingest_max_pass_seconds: int = 900
+    # Share of the commit phase one oversized commit may take per pass while
+    # other entries wait (it is sliced across passes).
+    code_ingest_slice_share: float = Field(default=0.5, ge=0.05, le=1.0)
+    # Fraction of the deadline after which the pass stops STARTING units,
+    # finishes the in-flight round, saves cursors and returns `partial: true`.
+    code_ingest_pass_budget_fraction: float = 0.75
+    # Share of that budget the commit phase leaves to the walk (reconcile heal,
+    # extractor re-chunk). 0 = commits may take it all.
+    code_ingest_walk_budget_share: float = 0.3
+    # Files per round in the walk, the bootstrap slice and a commit's file
+    # list; a round prefetches its per-file resolution reads in two
+    # statements. 0 = per-file reads.
+    code_ingest_round_files: int = 25
+    # Entries whose commits ingest side by side in the commit phase. Each
+    # entry's own commits stay one at a time, oldest first (the watermark
+    # contract); a lane waits on ClickHouse round trips, not on its capacity,
+    # so lanes add throughput. 1 = one commit at a time across all entries.
+    code_ingest_lanes: int = Field(default=1, ge=1, le=8)
+    # SCIP delta apply (compiler-grade tier uploaded via code.scip_ingest).
+    code_scip_apply_enabled: bool = False
+    # Seconds between SCIP apply passes.
+    code_scip_apply_interval_seconds: int = 60
+    # Max bytes of one code.scip_ingest payload part; a larger part is refused.
+    code_scip_max_part_bytes: int = 8 * 1024 * 1024
+    # Max `total_parts` of one code.scip_ingest upload; more is refused.
+    code_scip_max_parts: int = 512
+    # C++ compiler-tier per-merge deltas: scip-clang over changed TUs when
+    # git_head outruns scip_commit. Needs the configured checkout and a
+    # scip-clang binary; CPU-heavy in bursts.
+    code_scip_delta_enabled: bool = True
+    # Seconds between C++ delta passes.
+    code_scip_delta_interval_seconds: int = 300
+    # The scalar entry's working tree the compiler tiers index; other entries default to a
+    # sibling named after their namespace, and an entry's `scip_checkout_dir` wins.
+    code_scip_checkout_dir: str = "var/code_repos/checkout"
+    # The scip-clang binary: a name looked up on PATH, or a path. The image
+    # carries it on amd64 only (upstream builds no arm64 Linux binary).
+    code_scip_clang_path: str = "scip-clang"
+    # scip-clang's parallel jobs in a delta or full run; 0 = half the CPUs the
+    # host shows (a container sees the node's). Each job holds a translation
+    # unit's AST: a few GiB for a large C++ tree.
+    code_scip_clang_jobs: int = 0
+    # Where the C++ harness writes its index and delta (several GB for a full
+    # run of a large tree); "" = the system temp dir.
+    code_scip_work_dir: str = ""
+    # Max translation units one delta indexes; past it only the changed `.cpp` files are
+    # indexed and the header fan-out heals on the next full run.
+    code_scip_delta_max_tus: int = 200
+    # Seconds the C++ delta harness may run before it is killed.
+    code_scip_delta_timeout_seconds: int = 3600
+    # C++ full re-index: seeds an entry the delta has no watermark for, and
+    # re-indexes each entry every `code_scip_full_every_hours` (heals deltas
+    # that hit the TU cap). One entry per pass, under its entry lock.
+    code_scip_full_enabled: bool = True
+    # Seconds between checks for an entry that is due.
+    code_scip_full_interval_seconds: int = 900
+    # Hours between full re-indexes of one entry.
+    code_scip_full_every_hours: int = 168
+    # Seconds the full re-index harness (CMake configure, scip-clang, convert)
+    # may run; the checkout move and the apply get 6 h more in the pass deadline.
+    code_scip_full_timeout_seconds: int = 8 * 3600
+    # SQL <-> C++ crossref (code_test_map from registrations and test queries)
+    # for each C++ entry whose git_head moved since its last run.
+    code_crossref_enabled: bool = True
+    # Seconds between crossref passes.
+    code_crossref_interval_seconds: int = 1800
+    # Directory of the per-entry lock files every compiler-tier pass on this
+    # host takes (`scip.<org>.<namespace>.lock`): a full re-index and a delta
+    # never work on one entry at once; different entries run side by side.
+    # `loom code entry-lock` takes the same lock.
+    code_scip_lock_dir: str = "var/cron/locks"
+    # TypeScript compiler-tier deltas: scip-typescript over an entry with
+    # `scip_producer` "typescript" when git_head outruns scip_commit_ts. The
+    # worker prepares dependencies with lifecycle scripts disabled; needs Node
+    # 22+ and the toolchain from scripts/install-code-toolchains.sh (in the image).
+    code_scip_ts_delta_enabled: bool = True
+    # Seconds between TypeScript delta passes.
+    code_scip_ts_delta_interval_seconds: int = 600
+    # The scip-typescript binary: a name looked up on PATH, or a path.
+    code_scip_typescript_path: str = "scip-typescript"
+    # Seconds the TypeScript delta harness may run before it is killed.
+    code_scip_ts_delta_timeout_seconds: int = 3600
+    # Rewrite consumers' tsconfig `paths` from workspace `exports` before
+    # indexing an unbuilt checkout; off for a built checkout.
+    code_scip_ts_paths: bool = True
+    # Node heap size (MiB) given to scip-typescript.
+    code_scip_ts_node_heap_mb: int = 8192
+    # Python compiler-tier deltas: scip-python over an entry with
+    # `scip_producer` "python", over the files the window touched (a first run
+    # indexes the tree). Needs node and scip-python.
+    code_scip_py_delta_enabled: bool = True
+    # Seconds between Python delta passes.
+    code_scip_py_delta_interval_seconds: int = 600
+    # The scip-python binary: a name looked up on PATH, or a path.
+    code_scip_python_path: str = "scip-python"
+    # Seconds the Python delta harness may run before it is killed.
+    code_scip_py_delta_timeout_seconds: int = 3600
+    code_scip_py_heap_mb: int = 16384  # Pyright dies silently at 8 GB
+    # Go compiler-tier deltas: scip-go per touched module of an entry with
+    # `scip_producer` "go". Needs the Go toolchain and scip-go
+    # (`go install github.com/scip-code/scip-go/cmd/scip-go@v0.2.7`, the image's version).
+    code_scip_go_delta_enabled: bool = True
+    # Seconds between Go delta passes.
+    code_scip_go_delta_interval_seconds: int = 900
+    # The scip-go binary, looked up on PATH or in `code_scip_go_bin_dir`.
+    code_scip_go_path: str = "scip-go"
+    code_scip_go_bin_dir: str = ""  # Where `go` and scip-go live when not on PATH
+    # Seconds the Go delta harness may run before it is killed; also the
+    # pass deadline.
+    code_scip_go_delta_timeout_seconds: int = 7200
+    code_scip_go_jobs: int = 2  # Parallel module builds (~4 GB each)
+    # Root of the Go module caches kept across passes: one per entry beneath it
+    # (<root>/<org>/<namespace>), never shared between repositories.
+    code_scip_go_modcache: str = "var/gocache"
+    code_scip_go_private: str = ""  # GOPRIVATE / GONOSUMDB (a vanity import host)
+
+    # Merged-PR history sync (GitHub REST, cursor-resumable).
+    code_pr_history_enabled: bool = False
+    # Seconds between PR-history sync passes.
+    code_pr_history_interval_seconds: int = 900
+
+    # --- The set-wide backport report ----------------------------------------
+    # Nightly pass: runs `code.backport_gap(exact, history)` for every trunk PR
+    # of the last `days` labelled for backport and writes one row per release
+    # branch into loom.code_backport_gaps. Paced one fix per `pace_s`, at most
+    # `prs_per_pass` a night, stalest first, stopping at `budget_s`; settled
+    # fixes are skipped. Off = nothing written; the read op serves the table.
+    code_backport_gaps_enabled: bool = True
+    # Seconds between passes; the read op reports the table stale past twice this.
+    code_backport_gaps_interval_seconds: float = 86400.0
+    # Days back of backport-labelled trunk PRs a pass considers.
+    code_backport_gaps_days: int = 90
+    # Max fixes checked per pass, stalest first.
+    code_backport_gaps_prs_per_pass: int = 300
+    # Seconds of pause between two fixes.
+    code_backport_gaps_pace_s: float = 1.0
+    # Seconds after which a pass stops starting fixes.
+    code_backport_gaps_budget_s: float = 1800.0
+    # The pass's hard deadline (seconds) under the worker supervisor.
+    code_backport_gaps_max_pass_seconds: float = 3600.0
+    # --- coverage watches -----------------------------------------------------
+    # Coverage watches: post one code.coverage.ready event on the watcher's task
+    # inbox once every index tier covers a watched commit. A pass with no
+    # pending watch is one read of an empty table.
+    code_coverage_notify_enabled: bool = True
+    # Seconds between passes while watches are pending.
+    code_coverage_notify_interval_seconds: int = 60
+    # Seconds between passes that found no pending watch.
+    code_coverage_notify_idle_interval_seconds: int = 120
+    # --- bisect ---------------------------------------------------------------
+    # Days of the repo's own PR history bisect reads back from the window's
+    # end when there is no tracker (or no changed files) and no `after`.
+    code_bisect_history_days: int = Field(90, ge=1, le=3650)
+    # Minor releases searched below the failing one when the report names no
+    # clean one.
+    code_bisect_lookback_minors: int = Field(6, ge=1, le=24)
+    # Merge-time window (days) for a report naming no release.
+    code_bisect_window_days: int = Field(90, ge=7, le=730)
+    # The rerank's wall budget (seconds); a timeout keeps the fused order.
+    code_bisect_rerank_timeout_s: float = Field(6.0, ge=1.0, le=30.0)
+    # The wide read's merge-time window (days) with no release named.
+    code_bisect_wide_days: int = Field(180, ge=30, le=730)
+    # The dupcheck's budget inside a bisect, from the call's
+    # start; it runs beside the resolve, the scan and the fusion reads and is
+    # awaited only before the ranking stages. Past it the bisect answers
+    # without it (`dupcheck_fix.status: timeout`).
+    code_bisect_dupcheck_timeout_s: float = Field(4.0, ge=0.5, le=30.0)
+    # --- PR review comments ---------------------------------------------------
+    # Also fetch each merged PR's inline review comments into
+    # loom.code_pr_reviews (one request per PR; skipped without a GitHub token).
+    code_pr_reviews_enabled: bool = True
+    # --- GitHub issues and PRs mirror -----------------------------------------
+    # Keep loom.code_gh_items current: every issue and PR updated since the
+    # last pass via /issues; the first pass reaches back backfill_days.
+    # Skipped anonymously.
+    code_gh_items_enabled: bool = True
+    # Days back the first mirror pass (and `loom code` with no start date) reads.
+    code_gh_items_backfill_days: int = 730
+    # --- code.pr_check -------------------------------------------------------
+    # Verdict: `duplicate_of` when a candidate's heuristic score reaches the
+    # duplicate line (a closed-unmerged PR caps at related), `related` at the
+    # related line, else `none`. A title alone never reaches duplicate.
+    code_pr_check_duplicate_threshold: float = 0.55
+    # Score at or above which a candidate is `related`.
+    code_pr_check_related_threshold: float = 0.2
+    # merged PRs older than this do not vote as duplicates
+    code_pr_check_merged_days: int = 365
+    # closed-without-merge PRs read back this far
+    code_pr_check_closed_days: int = 180
+    # a candidate touching more files than this is a mass change: files do not vote
+    code_pr_check_mass_files: int = 200
+    # --- merged-PR backfill ---------------------------------------------------
+    # Months of merged PRs `loom code backfill-prs` (and a cold worker)
+    # fetch; matches the churn window in code/app/risk.py.
+    code_pr_backfill_months: int = 12
+    # --- embedding recovery ---------------------------------------------------
+    # Embedding recovery for code_chunks/code_summaries stubs (dim=0).
+    code_embed_recovery_enabled: bool = False
+    # Seconds between recovery passes while stubs are pending.
+    code_embed_recovery_interval_seconds: int = 30
+    # Sleep after a pass that found no pending stub; the normal interval
+    # returns once a pass writes a row.
+    code_embed_recovery_idle_interval_seconds: int = 120
+    # The pending scan reads above a version watermark; once per this many
+    # seconds it scans from version 0 to catch late rows. 0 = always from 0.
+    code_embed_recovery_full_scan_seconds: int = 1800
+    # Embed attempts per stub before it is poisoned (`embed_failed_at` set) and skipped.
+    code_embed_max_attempts: int = 8
+    # Stub keys the recovery scan takes per repo per pass (also texts per
+    # embed call); raise it to onboard large repositories faster.
+    code_embed_recovery_batch: int = 100
+    # Share of embeddable chunks that must carry a vector before a repo is
+    # `ready`; below it code.search says "lexical only". Poisoned rows count
+    # against it; fixtures unembedded by design do not.
+    code_ready_embed_coverage: float = 0.95
+    # --- ingest limits and denylist -------------------------------------------
+    # Files above this size are recorded (index_error) and not chunked.
+    # 0 = no cap.
+    code_ingest_max_file_bytes: int = 1_000_000
+    # Ingest denylist (code/app/index/denylist.py): the built-in
+    # generated/minified/vendored rules are off (they match 0.19% of rows);
+    # `exclude` globs (CSV here, a list per repo entry) and the repo-local
+    # ignore file are always honoured.
+    code_ingest_denylist_builtin: bool = False
+    # CSV of path globs never indexed (the scalar entry's `exclude`).
+    code_ingest_exclude: str = ""
+    # Name of the repo-local ignore file whose patterns are never indexed.
+    code_ingest_ignore_file: str = ".loomignore"
+    # --- reconciliation and re-chunking ---------------------------------------
+    # Content-based reconciliation (code/app/index/reconcile.py): each
+    # interval, compare every path's chunk commit with the branch head and
+    # re-ingest up to heal_per_pass stale paths.
+    code_reconcile_enabled: bool = True
+    # Seconds between reconciliation runs per namespace.
+    code_reconcile_interval_seconds: int = 3600
+    # Stale paths re-ingested per run.
+    code_reconcile_heal_per_pass: int = 200
+    # Max distinct chunk commits a run compares; past it the stale set is a floor
+    # (`truncated`).
+    code_reconcile_max_commits: int = 1000
+    # When the recorded parser/chunker/grammar stamp differs from the running
+    # process, re-chunk the namespace in paced batches per ingest pass. A first
+    # observation is recorded, never acted on.
+    code_extractor_rechunk_enabled: bool = True
+    # Live paths re-chunked per ingest pass while the stamp differs.
+    code_extractor_rechunk_per_pass: int = 200
+    # Files a re-chunk re-derives at once. A re-derive waits mostly on its
+    # ClickHouse reads and writes, so raising this shortens a heal roughly in
+    # proportion, at that much more concurrent load on the cluster.
+    code_extractor_rechunk_concurrency: int = 4
+    # --- dependents, closure repair and call guards ---------------------------
+    # After a commit, re-extract edges only on untouched files whose call
+    # sites or edges reference symbols it added, removed or tombstoned (or,
+    # opt-in, that include a touched header). Capped per commit; overflow
+    # drains through reconcile. A replay closed every gap at 20% of the ingest
+    # wall.
+    code_ingest_dependents_enabled: bool = True
+    # Dependent files re-extracted per commit; the overflow queues for reconcile.
+    code_ingest_dependents_max_files: int = 200
+    # Dependents re-extracted at once; the batch is bound by ClickHouse read
+    # throughput, so more is not faster.
+    code_ingest_dependents_concurrency: int = Field(default=4, ge=1, le=64)
+    # Size cap of that overflow queue; paths past it are dropped and counted.
+    code_ingest_dependents_pending_max: int = 5000
+    # Closure repair: a bare function name the commit added with exactly ONE
+    # live definition repo-wide binds its `unresolved` sites at 0.6 without
+    # re-parsing; several definitions leave them declined. Capped per commit.
+    code_closure_repair_enabled: bool = True
+    # Added and removed names per commit closure repair considers; the rest are skipped.
+    code_closure_repair_max_names: int = 500
+    # Unresolved call sites read per commit for those names.
+    code_closure_repair_max_sites: int = 2000
+    # --- graph and symbol statistics ------------------------------------------
+    # Weekly graph statistics: PageRank, degrees, test_map rebuild.
+    code_graph_stats_enabled: bool = False
+    # Seconds between graph-statistics passes.
+    code_graph_stats_interval_seconds: int = 7 * 24 * 3600
+    # This worker's pass deadline (seconds); a pass past it is cancelled and
+    # counted a failure.
+    code_graph_stats_max_pass_seconds: int = 3600
+    # Seconds from pass start the unit-risk leg may schedule
+    # rounds; past it the pass succeeds with `unit_risk_partial: true` and the
+    # next resumes. Must stay under the deadline above.
+    code_graph_stats_unit_risk_budget_s: int = 2400
+    # Cap of code.search's fan-in rank prior:
+    # score *= 1 + cap * log1p(fan_in) / log1p(max fan_in in the pool);
+    # skipped under test intent and on noise paths; inert without the stats.
+    # 0 = off.
+    code_fan_in_prior_cap: float = 0.25
+    # The floor below which a declined site code.callers / code.callees return
+    # is counted, not returned; a request may pass `candidate_min_confidence`.
+    code_callers_candidate_min_confidence: float = 0.2
+    # Fan-in at or above which the `uses` block says `skipped: hub` instead of
+    # listing sites. 0 = never.
+    code_symbol_uses_hub_fan_in: int = 200
+    # --- summary cards --------------------------------------------------------
+    # Weekly LLM file/module summary cards (inputs_hash-gated).
+    code_summary_enabled: bool = False
+    # Seconds between card passes.
+    code_summary_interval_seconds: int = 7 * 24 * 3600
+    # Cards written per pass across every repository, shared out evenly (a
+    # share one repository does not use rolls to the next).
+    code_summary_max_scopes_per_pass: int = 200
+    # Cards in flight per pass; 1 = sequential.
+    code_summary_concurrency: int = 1
+    # A bounded card pass considers files by merged-PR count per path over
+    # these days (source tree), then by include-graph rank. Days of merged PRs
+    # the churn order counts.
+    code_summary_churn_days: int = 365
+    # CSV path prefixes the churn order may propose (empty = any) and CSV
+    # prefixes it never proposes, at any depth (vendored trees).
+    code_summary_churn_prefixes: str = ""
+    # CSV of path prefixes the churn order never proposes, at any depth.
+    code_summary_churn_exclude: str = ""
+    # CSV of summary models whose cards are rewritten when code_summary_model
+    # differs, even for an unchanged file. Empty = an unchanged file keeps its
+    # card.
+    code_summary_upgrade_from_models: str = ""
+    # --- chunking and language lanes ------------------------------------------
+    # Chunking: whole AST units; functions larger than this split at top-level
+    # statement boundaries, each piece re-prefixed with the signature header.
+    code_chunk_max_chars: int = 6000
+    # SQL tests as statement records: one `statement` symbol per record,
+    # chunks packed by whole statements, facet rows in loom.code_test_facets.
+    # Off = line-window chunks for `.sql`. Existing namespaces need `loom code
+    # backfill --paths-file` (outside the extractor stamp).
+    code_sql_statement_records: bool = False
+    # Statement packing target (chars); a larger single statement splits at
+    # lines at `code_chunk_max_chars`.
+    code_sql_chunk_target_chars: int = Field(default=2000, ge=1)
+    # SQL a Python file runs (database-client call arguments and SQL-looking
+    # literals) becomes `statement` symbols, facets (confidence 0.7 with a
+    # format hole) and table edges. Off = functions only. Needs a
+    # `--paths-file` backfill of the Python tree.
+    code_py_sql_islands: bool = False
+    # Column-level SQL lineage: `<table>.<column>` symbols, `column_read` /
+    # `column_write` facets and statement → column edges, for `.sql` and
+    # Python SQL islands. Off = table-level lineage. Needs a
+    # `--paths-file` backfill.
+    code_sql_column_lineage: bool = False
+    # A shell test's SQL strings (`$CLICKHOUSE_CLIENT -q`, heredocs, `echo |`)
+    # become `statement` symbols with facets; leftover chunks coalesce up to
+    # the target below, never across a function. Needs a `--paths-file`
+    # backfill.
+    code_shell_islands: bool = False
+    # Leftover coalescing target in chars for shell files.
+    code_shell_chunk_target_chars: int = Field(default=2000, ge=1)
+    # Shell inside CI/build files (Actions `run:`, GitLab `script:`,
+    # Dockerfile `RUN`, Makefile recipes, Jenkinsfile `sh`) is parsed for
+    # facets, script `includes` edges and SQL; jobs, targets and stages become
+    # symbols, and extensionless Dockerfile / Makefile / Jenkinsfile index as
+    # config. Needs a `--paths-file` backfill.
+    code_host_islands: bool = False
+    # --- chunk descriptions and ingest rounds ---------------------------------
+    # Contextual-embedding one-liner per chunk, inline on the per-merge path;
+    # falls back to structural-only on any LLM failure.
+    code_context_description_enabled: bool = True
+    # Shape of the embedded chunk description: `oneliner` (what the code does)
+    # or `questions` (file card + chunk → what it does and the questions it
+    # answers). Changing it re-texts new rows only.
+    code_context_description_prompt: Literal["oneliner", "questions"] = "oneliner"
+    # A file's chunk descriptions in flight at once; 1 = serial.
+    code_describe_concurrency: int = Field(default=8, ge=1, le=64)
+    # Model calls one round runs at once.
+    code_ingest_round_model_concurrency: int = Field(default=16, ge=1, le=128)
+    # A round writes one INSERT per table (flushed when a read could see the
+    # rows, at the row count below, or at round end). Buffered rows at which a
+    # round writes a table early.
+    code_ingest_round_write_rows: int = Field(default=2000, ge=1, le=100_000)
+    # --- bot authors -----------------------------------------------------------
+    # Comma-separated GitHub logins of autonomous agents that author pull requests
+    # or issues in the indexed repositories, beyond the generic bots (dependabot,
+    # github-actions, …). They are never suggested as owners, their names are not
+    # tracker entities, and bisect ignores the lines they sign.
+    code_bot_authors: str = ""
+    # --- search ranking, legs and caches (code.search) ------------------------
+    # Fire-and-forget code_search_trace/code_search_outcome telemetry.
+    code_trace_log_enabled: bool = True
+    # Post-fusion rank priors in code.search (path-noise penalty, query↔path
+    # stem affinity, file coherence), applied after RRF and before the outcome
+    # boost. Kill switch.
+    code_fusion_signals: bool = True
+    # Long-question trim: past this many lexemes the question is treated as an
+    # issue body (template headings stripped, the rarest 32 tokens gate, the
+    # first 512 cleaned words embed). Under the cap nothing changes. 0 = off.
+    code_search_query_max_tokens: int = 48
+    # Per-file saturation: the 2nd, 3rd... unit from one path is multiplied by
+    # decay^excess before the cut; a file's best unit never decays. 0 = off.
+    # Skipped under path_prefix, symbol routes and test intent.
+    code_search_file_saturation: float = 0.5
+    # CSV of vector-model specs a request may name as `vector_model` (e.g.
+    # "prefix:512:text-embedding-3-large"); only the vector leg switches. Empty = the
+    # override is refused.
+    code_search_vector_models: str = ""
+    # JSON {label: {"table": "loom.x", "dim": 256}}: where a label's chunk
+    # rows live (the coded vector column is fixed-width).
+    # Absent label = loom.code_chunks. Inserts and the vector leg route by it.
+    code_vector_tables: Annotated[str, JsonObject] = ""
+    # With a vector_model set and this > 0, the second model's top-N ids are
+    # rescored by exact cosine on the served vectors. 0 = its own distances
+    # rank. Per-request CodeSearchInput.vector_shortlist.
+    code_search_vector_shortlist: int = 0
+    # Over-fetch multiplier of the file-card leg's codes shortlist once
+    # loom.code_summaries carries the codec.
+    code_search_cards_fetch_multiplier: float = 10.0
+    # Default vector-leg shortlist label (`prefix:<dim>:<served model>`, listed
+    # in code_search_vector_models and code_vector_tables), rescored by the
+    # served vectors. Needs code_search_vector_shortlist > 0; an empty
+    # shortlist falls back to the full scan. Empty = off.
+    code_search_vector_model_default: str = ""
+    # A bulk `loom code` pass that wrote at least this many chunk rows ends by
+    # compacting the prefix/twin vector tables past code_compact_min_ratio.
+    # 0 = off; loom.code_chunks is compacted only by the CLI.
+    code_compact_after_bulk_rows: int = 10_000
+    # Copies per key (active rows / distinct keys) at which a code vector table
+    # is OPTIMIZE ... FINAL'd.
+    code_compact_min_ratio: float = Field(default=1.5, gt=0.0)
+    # Per-result risk annotations (churn/amp/tested) and one-hop callee
+    # context on code.search results; reserves part of the token budget.
+    # Kill switch.
+    code_risk_annotations: bool = True
+    # Age (seconds) past which a risk row is stale and annotated live; must
+    # exceed the weekly pass interval.
+    code_unit_risk_max_age_s: int = 10 * 24 * 3600
+    # code.search `bodies` when the request omits it: "auto" fills bodies into
+    # the budget; "none" serves handles only.
+    code_search_bodies_default: Literal["auto", "none"] = "auto"
+    # Memoise served code.search responses per (org, namespace, request shape)
+    # in loom.code_search_memo and replay within the TTL (route "+memo");
+    # `fresh=true` bypasses it.
+    code_search_memo_enabled: bool = True
+    # Seconds a memoised response, and a cursor's stored pool, stay replayable.
+    code_search_memo_ttl_s: int = Field(default=1800, ge=1)
+    # Max bytes of a response the memo stores; a larger one is not memoised.
+    # 0 = no cap.
+    code_search_memo_max_payload_bytes: int = 200_000
+    # Seconds the BM25 corpus statistics (term df, chunk count, mean length)
+    # are cached per process; 0 = no cache. Bounded by the term cap, oldest
+    # out.
+    code_corpus_stats_ttl_s: int = 300
+    # Max terms whose df the per-process cache holds; the oldest goes first.
+    code_corpus_stats_max_terms: int = 50_000
+    # A computed code.search / code.grep stores its ranked pool (no bodies)
+    # in loom.code_search_memo and issues `next_cursor`; the next page is a
+    # point read. The pool size is capped below.
+    code_search_cursor_enabled: bool = True
+    # Units kept in a cursor's ranked pool; capped at 200.
+    code_search_cursor_pool: int = Field(default=100, ge=1)
+    # Wall deadline (ms) per namespace in a multi-namespace search; a late
+    # namespace is dropped and named in `fanout.dropped`.
+    code_search_fanout_timeout_ms: int = 3000
+    # Max namespaces one request fans out to; can only lower the wire cap of 8.
+    code_search_fanout_max_namespaces: int = 8
+    # A `pattern` admitting more files than this is refused with
+    # `pattern_too_broad` and the count (1,500 = 5% of a large namespace's files).
+    code_search_pattern_max_files: int = 1500
+    # The card leg: file cards are searched by cosine and the top files' chunks
+    # join fusion as a capped RRF list (the history leg's shape). No per-request
+    # override.
+    code_search_card_leg: bool = False
+    # Files the card leg votes for.
+    code_search_card_leg_files: int = 15
+    # Skeleton chunks per voted file (the history leg's shape).
+    code_search_card_leg_units_per_file: int = 2
+    # What a voted file contributes: `skeleton` (its class skeletons) or
+    # `best_chunk` (its source chunks nearest the query by exact cosine).
+    code_search_card_leg_mode: Annotated[Literal["skeleton", "best_chunk"], CaseFolded] = "skeleton"
+    # Max share of the best two-leg RRF score a card row contributes.
+    code_search_card_leg_cap: float = 1.0
+    # CSV of prose question kinds the card leg votes on; `any` = all.
+    code_search_card_leg_kinds: str = "responsibility"
+    # Reranker code.search and code.ask use when the request names none (same
+    # values as the per-request `rerank`: a builtin or a name in
+    # LOOM_RERANK_ENDPOINTS_JSON; rerank="none" turns it off). Empty = no default rerank.
+    code_search_rerank_default: str = ""
+    # Prose question kinds the default rerank applies to (`any` = all);
+    # symbol-shaped or constrained searches are never default-reranked.
+    code_search_rerank_kinds: str = "responsibility"
+    # How many fused units the default rerank reads.
+    code_search_rerank_top: int = 20
+    # Characters of each candidate shown to the default rerank (path and
+    # signature first, then the body head).
+    code_search_rerank_excerpt_chars: int = 300
+    # Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on
+    # the kinds below; 1.0 = off.
+    code_search_catalogue_penalty: float = 1.0
+    # Fusion multiplier for prose files (documentation, release notes, changelogs)
+    # unless the query asks for documentation or the search is constrained to paths;
+    # 1.0 = off.
+    code_search_prose_penalty: float = 0.25
+    # The question kinds the catalogue penalty applies to.
+    code_search_catalogue_kinds: str = "responsibility"
+    # Lexical list's RRF weight for a responsibility question (vector = 1.0).
+    # 1.0 = equal weights.
+    code_search_rrf_lexical_weight_responsibility: float = 1.0
+    # A prose question whose nearest file card's cosine is below this
+    # abstains `off_domain`; independent of the card leg. 0 = off.
+    code_search_abstain_card_below: float = 0.0
+    # Calibrated confidence below which a result is flagged
+    # `low_calibrated_confidence` (still returned). The deployment sets 0.30.
+    code_search_abstain_confidence_below: float = 0.35
+    # The calibrated confidences from which a code.search result reads
+    # `retrieval_risk` "medium" and "low" (below the first it reads "high").
+    # Code embeddings score a right hit lower than memory text does: on the
+    # conceptual question set every right top 3 scored 0.40–0.63, so the
+    # memory plane's 0.55 / 0.75 labelled three in four right answers "high".
+    code_search_medium_risk_from: float = 0.40
+    code_search_low_risk_from: float = 0.55
+    # The question kinds the hypothetical answer votes on.
+    code_search_hyde_kinds: str = "responsibility"
+    # The list's cap × the two-leg top (the history rule).
+    code_search_hyde_cap: float = 1.0
+    # The passage's length budget.
+    code_search_hyde_max_tokens: int = 220
+    # Default code.search request budget (ms) when the request sets no
+    # `deadline_ms`; what it cuts (late legs, rerank) makes the answer
+    # `partial`. 0 = none.
+    code_search_deadline_ms: int = 0
+    # Ms a model-backed leg (HyDE) may run past the last plain leg before it
+    # is dropped. 0 = no bound.
+    code_search_llm_leg_grace_ms: int = 0
+    # Default `llm_legs`: `auto` runs the configured model-backed legs; `none`
+    # skips them.
+    code_search_llm_legs_default: Annotated[Literal["auto", "none"], CaseFolded] = "auto"
+    # Max share of the best two-leg RRF score a concept unit contributes.
+    code_search_concept_expand_cap: float = 0.5
+    # Identifiers + phrases kept from the model's answer.
+    code_search_concept_expand_max_terms: int = 8
+    # CSV of prose question kinds the concept leg expands; `any` = all.
+    code_search_concept_expand_kinds: str = "responsibility"
+    # Expansion tokens below this BM25 idf are dropped (2.0 ≈ in more than an
+    # eighth of chunks).
+    code_search_concept_expand_min_idf: float = 2.0
+    # History leg: merged-PR text scored lexically votes for the files each PR
+    # touched, as a third RRF list. "off" | "issue" (issue-shaped queries) |
+    # "always".
+    code_search_pr_leg: Literal["off", "issue", "always"] = "issue"
+    # PRs read per query, files that may vote, chunk units per voted file.
+    code_search_pr_leg_pool: int = 30
+    # Files that may vote per query.
+    code_search_pr_leg_max_files: int = 10
+    # Chunk units a voted file contributes.
+    code_search_pr_leg_units_per_file: int = 2
+    # A namespace with fewer live voting PRs than this skips the leg.
+    code_search_pr_leg_min_prs: int = 500
+    # Per-unit cap on the leg's contribution as a fraction of the top two-leg
+    # fusion score.
+    code_search_pr_leg_cap: float = 0.5
+    # Only files under these prefixes (CSV) receive votes; "" = every file.
+    code_search_pr_leg_path_prefixes: str = ""
+    # History intent: a question about a change is answered from the PR plane
+    # as a `history` section. "off" | "number" (explicit issue/PR numbers,
+    # point reads) | "on" (also why/when/who-changed phrasings).
+    code_search_history_route: Literal["off", "number", "on"] = "number"
+    # PR rows served in the section (no bodies; inside the token budget).
+    code_search_history_max_prs: int = 3
+    # Max PR files of a number intent that anchor the ranking (present files
+    # stay, absent ones insert at rank 1); a phrase intent never anchors.
+    code_search_history_anchor_max_files: int = 5
+
+    # --- measured coverage ---------------------------------------------------
+    # Import per-test line coverage from an instrumented CI run into the test
+    # map (`method='coverage'`) and the per-file executed lines
+    # (`code_coverage_files`). Off by default; `loom code coverage-import`
+    # runs one import by hand whatever this says.
+    code_coverage_import_enabled: bool = False
+    # ClickHouse HTTP endpoint holding the coverage tables
+    # (`checks_coverage_lines`, `checks`); "" = no source, the import is a no-op.
+    code_coverage_source_url: str = ""
+    # User and password for the source endpoint.
+    code_coverage_source_user: str = ""
+    code_coverage_source_password: str = ""
+    # Database of the source tables.
+    code_coverage_source_database: str = "default"
+    # Namespaces (CSV) whose repository the source's runs cover; every other
+    # namespace is skipped.
+    code_coverage_namespaces: str = ""
+    # The run's coverage is read in this many slices by file hash, two
+    # statements per slice. One slice must fit the source server's per-query
+    # memory, and a source with a per-statement-shape hourly quota (a public
+    # playground allows 100) must take a whole import plus a retry: a nightly
+    # run read in 16 slices is 16 statements of each shape.
+    code_coverage_shards: int = Field(default=16, ge=1, le=4096)
+    # A line executed by more tests than this names none of them (shared
+    # plumbing every query runs); a test-map row needs a line under the cap.
+    code_coverage_specific_max_tests: int = Field(default=200, ge=1)
+    # Seconds one source query may take before the import stops (no rows
+    # are tombstoned by an import that did not finish).
+    code_coverage_source_timeout_s: float = 300.0
+    # Check names (a LIKE pattern) whose runs carry per-test coverage.
+    code_coverage_check_pattern: str = "%per_test_coverage%"
+    # Jobs of one run start within this many hours of its newest job.
+    code_coverage_run_window_hours: int = Field(default=6, ge=1)
+    # Seconds between import passes, and the pass's hard deadline.
+    code_coverage_import_interval_seconds: float = 86400.0
+    code_coverage_import_max_pass_seconds: float = 7200.0
+
+    def code_coverage_namespace_set(self) -> frozenset[str]:
+        """`code_coverage_namespaces` as a set."""
+        return frozenset(n.strip() for n in self.code_coverage_namespaces.split(",") if n.strip())
+
+    def code_bot_author_names(self) -> frozenset[str]:
+        """`code_bot_authors` as a set of lower-cased logins."""
+        return frozenset(a.strip().lower() for a in self.code_bot_authors.split(",") if a.strip())
+
+
+# ===== Context ================================================================
+
+
+class ContextSettings(BaseModel):
+    """context.pack, context offload, session briefs and the mentor's hints."""
+
+    # context.offload: largest single parked tool result, in bytes.
+    context_offload_max_bytes: Annotated[int, LIVE] = 8_000_000
+    # session.brief_save. `session_brief_llm` off = every brief comes from the
+    # deterministic builder (goal, status, files, errors, rules, pointers; no
+    # decisions or dead ends). The model is the
+    # deployment's LLM when `session_brief_llm_model` has no key. A save
+    # condenses its events into windows of `session_brief_window_chars`
+    # (≈6k tokens each) and revises the brief once per window, at most
+    # `session_brief_max_windows` calls per save (the last window takes the
+    # remainder, condensed harder).
+    session_brief_llm: Annotated[bool, LIVE] = True
+    # Condensed size, characters, of one brief window (floor 2000); a window holds about three
+    # times this much raw event text before it is condensed.
+    session_brief_window_chars: Annotated[int, LIVE] = Field(default=24_000, ge=2000)
+    # Most windows (and model revision calls) per brief save; the last window takes the rest.
+    session_brief_max_windows: Annotated[int, LIVE] = 4
+    # Seconds a per-process (org, namespace, agent) mentor profile is cached
+    # (a failed read ≤ 300 s). 0 disables the mentor everywhere (no pack
+    # section, no call hints, empty mentor.brief).
+    mentor_ttl_seconds: Annotated[int, LIVE] = 3600
+    # At most this many hints per session, each code once.
+    mentor_max_hints_per_session: Annotated[int, LIVE] = 6
+
+
+# ===== Erasure ================================================================
+
+
+class ErasureSettings(BaseModel):
+    """Erasure: saga recovery, reclaim, purge and the external backends it cascades to."""
+
+    # ---- saga recovery and reclaim ----
+    # Replay erasure sagas stuck `in_progress` past a heartbeat from
+    # `steps_completed`.
+    erasure_recovery_enabled: bool = True
+    # Seconds between passes of the erasure recovery worker.
+    erasure_recovery_interval_seconds: int = 60
+    # Physically remove purged rows: a purge of a wide table only masks its
+    # rows (lightweight DELETE), and large settled parts rarely merge, so the
+    # bytes stay. The erasure reclaim worker gives the purge table with the
+    # most dead bytes one `APPLY DELETED MASK` per pass. False = the masked
+    # rows wait for merges.
+    erasure_reclaim_enabled: bool = True
+    # Seconds between passes of the erasure reclaim worker.
+    erasure_reclaim_interval_seconds: int = 3600
+    # A table is reclaimed once this share of its rows on disk are purged rows.
+    erasure_reclaim_min_dead_fraction: float = 0.3
+    # ...and those rows hold at least this many bytes (default 1 GiB).
+    erasure_reclaim_min_dead_bytes: int = 1073741824
+    # Seconds one erasure step waits for its mutation (submitted with
+    # mutations_sync=0, polled in system.mutations); past it the saga fails
+    # naming the mutation.
+    erasure_mutation_wait_s: int = 3600
+
+    # ---- external erasure backends ----
+    # ClickStack erasure: direct ALTER TABLE DELETE on the OTel tables in the
+    # same CH service. `clickstack_database` = HyperDX's DB ("" skips the leg);
+    # `clickstack_user_id_keys` = comma-separated Map attribute keys that carry
+    # user_id (ORed; depends on the emitting SDK).
+    clickstack_database: str = ""  # empty → skip cascade
+    # Comma-separated OTel Map attribute keys holding user_id, ORed in the delete.
+    clickstack_user_id_keys: str = "user_id,user.id,enduser.id"
+    # Per-request seconds for external trace/chat backend lookups and deletes
+    # during erasure.
+    external_erasure_timeout_s: float = 30.0
+
+
+# ===== Extraction =============================================================
+
+
+class ExtractionSettings(BaseModel):
+    """Fact extraction from messages and observed events."""
+
+    # Value-update supersession on the extraction write path (memory.app.value_updates):
+    # a fresh memory restating an existing one with a different value token marks the
+    # older one superseded. Costs one ANN lookup per written row; a per-request
+    # `detect_updates` overrides it. `_min_cosine` is the neighbour floor, set below the
+    # conflict threshold.
+    memory_extract_value_updates: Annotated[bool, LIVE] = False
+    # Least cosine similarity a neighbour needs to be checked as the older value of a fresh memory.
+    memory_extract_value_updates_min_cosine: Annotated[float, LIVE] = Field(
+        default=0.75, gt=0.0, le=1.0
+    )
+
+    # The observation date a write is anchored to when the caller sends
+    # none. "request_time" = today's UTC date, so valid_at is never NULL for a live
+    # agent; "none" = undated.
+    memory_extract_observation_date_default: Annotated[
+        Literal["request_time", "none"], CaseFolded, LIVE
+    ] = "request_time"
+
+    # Capture long / structured / enumerated assistant answers whole (not clipped at
+    # EXCERPT_LIMIT) so a positional follow-up resolves: at write time the prompt gains
+    # a structured-answer block and assistant-answer facts get a higher content_excerpt
+    # ceiling. The value column is untouched; takes effect only on (re-)ingest.
+    memory_capture_structured_answers: Annotated[bool, LIVE] = True
+    # Current messages totalling at most this many characters are
+    # extracted with the compact system prompt (every rule, the schema anchors a short
+    # statement can match, no structured-answer block); longer ones keep the full
+    # prompt. 0 turns it off.
+    memory_extract_compact_prompt_max_chars: Annotated[int, LIVE] = 1200
+    # Existing memories (fact rows only) an extraction in that short tier sees for
+    # update detection (sized on an extraction eval); 0 lets it see the caller's full
+    # limit. A longer transcript sees none: shown the namespace's facts, the extractor
+    # links later details to them instead of writing them.
+    memory_extract_existing_short_limit: Annotated[int, LIVE] = 8
+    # A session's procedure and hint (observe notes) are mined
+    # only once the session holds this many non-trivial observations. 0 = any.
+    observe_extract_notes_min_observations: Annotated[int, LIVE] = 15
+    # A coding capture keeps the coverage sweep's density / uncovered
+    # auto-gates only with at least this many user turns (on short sessions the
+    # sweep's output is mostly junk). 0 = always keep. An explicit namespace /
+    # per-call switch wins either way.
+    memory_extract_coding_sweep_min_user_turns: Annotated[int, LIVE] = 4
+    # Per verifier call; a timeout keeps every fact.
+    memory_extract_verify_timeout_s: Annotated[float, LIVE] = 45.0
+    # The coverage sweep: turns the first pass cited nowhere get a second
+    # reading of their own (one more call), when the namespace or the call turns it
+    # on or the density / uncovered gates below fire. `_min_chars` skips
+    # "thanks!"-sized turns; `_max_turns` bounds the call.
+    memory_extract_coverage_sweep_min_chars: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Most uncovered turns one sweep call reads; later ones are left out. 0 = no cap.
+    memory_extract_coverage_sweep_max_turns: Annotated[int, LIVE] = 60
+    # Inside a turn the first pass cited, the individual statements no fact covers are
+    # swept too (a fact list, a long update), at most this many.
+    memory_extract_coverage_sweep_max_sentences: Annotated[int, LIVE] = Field(default=60, ge=1)
+    # With the namespace and the call silent, the
+    # sweep still runs when the ingest is statement-dense — some turn holds
+    # at least this many statements (a fact list, a long update). 0 = never.
+    # Chatty conversation (one to four sentences a turn) never reaches it.
+    memory_extract_coverage_sweep_auto_min_statements: Annotated[int, LIVE] = 10
+    # With the namespace and the call silent and no list-shaped
+    # turn, a conversation ingest still gets the sweep when the first pass left at least
+    # this many statements without a memory (lexical, LLM-free). 0 = never: on
+    # conversation the gate fires on nearly every session, so enabling it is the
+    # operator's token trade.
+    memory_extract_coverage_sweep_auto_min_uncovered: Annotated[int, LIVE] = 0
+    # The listed turns and sentences are read in groups of this
+    # many items, one concurrent call each (more recall for more tokens). 0 = one call.
+    memory_extract_coverage_sweep_batch_items: Annotated[int, LIVE] = 0
+
+    # Size segments: a session longer than this many messages is
+    # extracted in fixed windows of `_turns` turns (a turn = one user message + the
+    # assistant replies that follow). 0 disables. One call per window, concurrently.
+    memory_extract_size_segment_messages: Annotated[int, LIVE] = 60
+    # Turns per size segment window (a window never splits a turn).
+    memory_extract_size_segment_turns: Annotated[int, LIVE] = Field(default=20, ge=1)
+    # Most size segment windows per session; past it the last window takes the remainder
+    # (windows grow past `_turns` turns first).
+    memory_extract_size_segment_max: Annotated[int, LIVE] = Field(default=16, ge=1)
+    # The same windows past this many characters of message content,
+    # whatever the message count; a window closes early once its turns carry this much
+    # (an agent transcript with tool results runs ~190K chars a session at the median).
+    # 0 disables the character budget (turn budget only).
+    memory_extract_size_segment_chars: Annotated[int, LIVE] = 60000
+    # Buffer threshold: a session whose un-distilled
+    # observations reach this many characters is distilled even without an
+    # explicit observe.crystallize, like a short-term buffer that flushes when
+    # full. 0 disables; the READY tag still works either way.
+    observe_extract_buffer_chars: Annotated[int, LIVE] = 0
+    # Observations a session needs before the buffer threshold can fire (at least 1);
+    # a per-namespace value wins.
+    observe_extract_buffer_min_observations: Annotated[int, LIVE] = Field(default=8, ge=1)
+    # Deferred-extraction worker for the observe plane: distills READY rows
+    # (observe.record/crystallize) into durable memories through the
+    # memory.set_from_messages pipeline. Off by default (makes LLM calls).
+    observe_extract_enabled: bool = False
+    # Seconds between observe-extraction worker passes.
+    observe_extract_interval_seconds: int = 300
+    # Most transition events written per distilled session.
+    observe_extract_max_events_per_session: Annotated[int, LIVE] = 12
+    # Tool names (case-insensitive globs, comma-separated) whose
+    # observations are stored content-less and already distilled: loom's own MCP tools
+    # (observing one copies a memory outside the key the user can delete) and the
+    # harness's meta tools, which say nothing about the task. "" disables the skip.
+    observe_skip_tools: Annotated[str, LIVE] = (
+        # The plugin-installed server's tools arrive as
+        # `mcp__plugin_loom_loom__*`, hence the `mcp__plugin_loom*` glob.
+        "mcp__loom__*,mcp__plugin_loom*,loom_memory_*,loom_knowledge_*,loom_search,loom_observe*,"
+        "loom_procedure_*,loom_context_*,loom_ask,"
+        "ToolSearch,ListAgents,ListMcpResourcesTool,ReadMcpResourceTool,"
+        "ReadMcpResourceDirTool,AskUserQuestion,TodoWrite,Skill,EnterPlanMode,"
+        "ExitPlanMode,EnterWorktree,ExitWorktree"
+    )
+    # Deferred set_from_messages replay. On by default: `defer`
+    # is opt-in per call, and an empty queue costs one SELECT per interval.
+    extraction_queue_enabled: bool = True
+    # Agents whose set_from_messages runs deferred without the flag:
+    # comma-separated agent names, "*" = every service-account
+    # caller, "" = nobody. A call that sets `record_schema` is never deferred by this
+    # list (it reads `written` back), and an explicit defer=false still wins.
+    extraction_defer_agents: Annotated[str, LIVE] = ""
+    # Seconds between deferred-extraction queue passes.
+    extraction_queue_interval_seconds: int = 15
+    # Most queued batches one pass claims.
+    extraction_queue_max_batches_per_pass: Annotated[int, LIVE] = Field(default=8, ge=0)
+    # Seconds a claimed batch stays leased to one worker before another may claim it;
+    # at least a minute. Set it above the longest pass (max_batches_per_pass times one
+    # replay), or an overlapping worker may claim a batch still waiting in the pass.
+    extraction_queue_lease_seconds: Annotated[int, LIVE] = Field(default=600, ge=60)
+    # Attempts before a failing batch stops returning to `pending` and is marked failed.
+    extraction_queue_max_attempts: Annotated[int, LIVE] = Field(default=3, ge=0)
+    # Namespaces replayed concurrently per pass; batches inside one namespace
+    # stay serial in session-date order. At least 1: none would hang the pass.
+    extraction_queue_namespace_concurrency: Annotated[int, LIVE] = Field(default=4, ge=1)
+
+
+# ===== Knowledge ==============================================================
+
+
+class KnowledgeSettings(BaseModel):
+    """Knowledge documents and conversations: chunking, search floor, thread titles."""
+
+    # ---- conversations ----
+    # conversation.search cosine floor; without it the top_k nearest threads
+    # return however far. Stricter than memory recall: chat excerpts are noisy.
+    conversation_search_min_similarity: Annotated[float, LIVE] = 0.30
+    # Characters of a turn a conversation.search hit shows; the embedding row keeps
+    # the whole embedded text, so this changes no stored row. At most 2048, the
+    # most a row stores (EMBEDDED_EXCERPT_CHARS).
+    conversation_search_excerpt_chars: Annotated[int, LIVE] = Field(default=240, ge=1, le=2048)
+
+    # LLM-title untitled threads in namespaces with conversation_logging_enabled
+    # (the Sessions "Recording" toggle is the off-switch). Skipped with the fake
+    # LLM.
+    conversation_titler_enabled: bool = True
+    # Seconds between titler passes.
+    conversation_titler_interval_seconds: int = 1800
+    # Only threads with a turn in the last this-many hours are titled.
+    conversation_titler_window_hours: int = 168
+    # Threads one pass titles at most.
+    conversation_titler_max_threads_per_pass: int = 10
+    # Turns a thread needs before it is titled.
+    conversation_titler_min_turns: int = 4
+
+    # ---- chunking ----
+    # Sliding-window chunking on knowledge.add/upsert, in characters.
+    # chunk_size 0 = one chunk per doc (hurts long-form retrieval). Smaller
+    # chunks mean more embed calls; 1500/1230 stays well under the
+    # text-embedding-3 context.
+    knowledge_chunk_size: Annotated[int, LIVE] = 1500
+    # Characters between chunk starts: below chunk_size the chunks overlap; above it
+    # the step is chunk_size, so no text falls between chunks.
+    knowledge_chunk_stride: Annotated[int, LIVE] = 1230
+
+
+# ===== Mcp ====================================================================
+
+
+class McpSettings(BaseModel):
+    """The MCP transport: tool listing, lean results, session runs."""
+
+    # loom_search drops knowledge hits below this cosine similarity (the
+    # conversation leg's floor, applied to the knowledge leg).
+    mcp_loom_search_knowledge_min_similarity: float = 0.30
+    # loom_search's profile leg: sections the words missed pass by cosine
+    # against `label\nvalue` at this hard floor. 0 = lexical only.
+    mcp_loom_search_profile_min_similarity: float = 0.38
+    # The soft floor (a question about the user only).
+    mcp_loom_search_profile_soft_similarity: float = 0.30
+    # The soft tier's lead over the namespace's runner-up.
+    mcp_loom_search_profile_margin: float = 0.08
+    # Seconds loom_search's tracker leg (similar issues and PRs) may take before
+    # the answer goes without it.
+    mcp_loom_search_tracker_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
+
+    # Sub-floor rows in loom_search: "drop" serves only what clears the floor;
+    # "readmit" (the memory.search default) pads top_k with below-threshold
+    # rows the reader is told to ignore; "ids_only" pads with empty bodies.
+    mcp_loom_search_floor_mode: Literal["drop", "readmit", "ids_only"] = "drop"
+    # Precision floor for loom_search memory hits. Negative = auto (midpoint
+    # of the embedder's calibrated noise floor and question→fact p25);
+    # 0 disables.
+    mcp_loom_search_precision_floor: float = -1.0
+    # Extra margin over the precision floor for hits from another namespace.
+    mcp_loom_search_foreign_margin: float = 0.08
+    # MCP transport auth mode (the endpoint exposes one tool per wire op, so an
+    # anonymous prober could otherwise enumerate every tool):
+    #   "required"        — every JSON-RPC method requires a bearer.
+    #   "discovery_only"  — initialize/tools/list/ping open; tools/call needs auth.
+    #   "open"            — no auth on any method. Trusted-network only.
+    # Any other value fails at load: a mistyped mode must not boot as some mode.
+    mcp_auth_mode: Literal["required", "discovery_only", "open"] = "required"
+
+    # Which tools `tools/list` shows — VISIBILITY only; every op stays callable
+    # by name over MCP and /v1/*. Rosters are the frozensets in
+    # server/operations/toolsets.py plus loom_search and loom_activate.
+    #   "core"   — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when
+    #              mcp_code_tools is on).
+    #   "coding" — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it
+    #              per request with `?toolset=coding`.
+    #   "all"    — every op except _MCP_HIDDEN_OPS and the experimental ones
+    #              no curated tier lists (they stay callable by name).
+    #   "atomic" — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS),
+    #              policy-shaped descriptions.
+    # An unknown value is "core".
+    mcp_toolset: str = "core"
+    # tools/list schema profile: "standard" (curated prose + inputSchema),
+    # "full" (+ outputSchema) or "compact" (first paragraph, argument tree).
+    # Per request: `?schema_profile=`.
+    mcp_schema_profile: Annotated[Literal["standard", "full", "compact"], CaseFolded] = "standard"
+    # Ops whose tools/list entry carries `_meta: {"anthropic/alwaysLoad": true}`, so a host
+    # that defers MCP tools behind tool search lists these up front and an agent calls them
+    # on its first turn instead of spending a turn loading them. Comma-separated op names;
+    # empty = none.
+    mcp_always_load_tools: str = "code.search,code.symbol"
+    # Seconds without a tool call after which the mcp_session_run_sweep worker
+    # closes an MCP session's implicit run (one per token and `Mcp-Session-Id`,
+    # begun on the first run-scoped tool call); with no background workers
+    # anywhere, idle runs stay open. At least 60: each web process re-checks its
+    # cached run once a minute (mcp_runs.CHECK_INTERVAL_S), so a shorter window
+    # would close runs a process still treats as open.
+    mcp_session_run_idle_seconds: int = Field(default=1800, ge=60)
+    # A rate-limited tool call waits out its Retry-After once and re-checks
+    # before returning RATE_LIMITED (MCP clients don't retry). This is the
+    # longest Retry-After, seconds, that one retry waits out; a longer hint is
+    # refused at once, and 0 refuses every limited call at once.
+    mcp_ratelimit_retry_max_wait_s: float = 2.0
+
+    # List code.* tools on the MCP surface (core toolset union). Off = code
+    # ops are HTTP/SDK-only.
+    mcp_code_tools: bool = False
+
+
+# ===== Memory =================================================================
+
+
+class MemorySettings(BaseModel):
+    """The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers."""
+
+    # ---- prompt safety and search priors ----
+    # Cap on memory.search's metadata priors (confidence, soft tag/category) so
+    # they break ties instead of re-ranking. 0.0 = uncapped; a request's
+    # `prior_cap` overrides it.
+    memory_prior_cap: float = 0.08
+    # Memory bodies in every synthesis and extraction prompt sit between
+    # nonce-carrying data markers (server/memory/domain/prompt_fence.py).
+    # Key for the fence nonce, HMAC(secret, prompt): an identical prompt renders
+    # identically (the response cache keys on it) while a memory author cannot
+    # predict the closing marker. "" = derive from jwt_secret.
+    prompt_fence_secret: str = ""
+
+    # Characters each injected working-memory block renders before it is cut with "(truncated)".
+    memory_scratchpad_max_chars: int = Field(default=2000, ge=1)
+
+    # ---- deployment-specific names the fact filters recognise ----
+    # Comma-separated names of the people whose sessions this deployment records
+    # ("jane,jane doe"). The junk-fact filters read "Jane ran a command …" like
+    # "The user ran a command …". Empty = only the generic actors (user, assistant,
+    # Claude, the agent).
+    memory_quality_actor_names: str = ""
+    # Regex (case-insensitive) matching the host name of another agent session on
+    # this deployment ("build-[0-9]+"); a fact whose subject is such a peer is
+    # coordination chatter, not a durable fact. Empty = no host pattern.
+    memory_quality_peer_host_pattern: str = ""
+
+    # ---- write-path contracts and reinforcement ----
+    # Negative memory.outcome signals after which a memory is quarantined
+    # (status 'rejected', excluded from search). 0 = off: negatives stay
+    # audit-only.
+    memory_negative_demote_threshold: int = 0
+    # Recall-equivalents one `used` event (run.complete memories_used,
+    # memory.outcome "used") adds to search-side reinforcement; the boost
+    # follows use, not exposure. 0 = recorded, not reinforcing.
+    memory_used_reinforcement_weight: int = 2
+    # Recall-equivalents one `harm` event (a relied-on row in a run that ended
+    # badly) subtracts. Floored at the write-time base: harm cancels earned
+    # reinforcement, never ranks below cosine and never deletes. None = the
+    # `used` weight; 0 = counted in memory.health, not charged.
+    memory_harm_reinforcement_weight: int | None = None
+    # Recall-equivalents one `used_cited` event (memory.ask crediting the keys
+    # its answer cited) adds; `used` stays for labels an agent wrote. None =
+    # the `used` weight; 0 = recorded, not ranking.
+    memory_used_cited_reinforcement_weight: int | None = None
+    # Days a consumer's closer keeps its run-less reads credited.
+    memory_reinforcement_closer_window_days: int = 14
+    # Seconds one (org, consumer) closer answer is cached per worker.
+    memory_reinforcement_closer_cache_seconds: int = 300
+    # memory.list rows per call for a token below writer on the namespace; it
+    # pages with `offset` (wire cap stays 1000). 0 = no viewer cap.
+    memory_list_viewer_limit: int = 100
+    # Transcript characters the session-digest call reads (~4 chars a token);
+    # 0 = the built-in 3000.
+    memory_session_digest_max_input_chars: int = 3000
+    # content_excerpt ceiling for answer-bearing facts (question_topic set)
+    # when memory_capture_structured_answers is on, so an enumerated answer
+    # is not clipped mid-list; every other fact keeps EXCERPT_LIMIT (1,200 chars).
+    memory_structured_answer_excerpt_limit: int = 4096
+    # A searchable memory.set value serializing longer than this many chars
+    # gets one advisory line (the write still lands): only the first
+    # EXCERPT_LIMIT chars are embedded, and past the embedder's 8,191-token cap
+    # nothing is. 30,000 chars ≈ 8k tokens. 0 disables.
+    memory_value_advisory_chars: int = 30_000
+
+    # ---- conflict detection ----
+    # memory.set flags a write `conflicted` when an active peer in the same
+    # (org, namespace, memory_type) sits at cosine ≥ this. Tuned
+    # for text-embedding-3-*; 1.0 disables. Per-namespace override:
+    # loom.namespaces.conflict_threshold.
+    conflict_threshold: float = 0.85
+    # When the cosine check would flag a write, one cheap LLM call labels the
+    # closest peers (contradiction / elaboration / restatement / unrelated) and
+    # the verdict follows: conflict / refines (supersedes with a `refines`
+    # edge) / merge / clear. One call per flagged write.
+    memory_conflict_judge: bool = False
+    # Closest peers the conflict judge labels in its one call per flagged write.
+    memory_conflict_judge_max_peers: int = Field(default=3, ge=1)
+    # With the judge on, peers down to this cosine are judged too (never
+    # flagged on cosine alone), catching knowledge updates filed under a
+    # different key.
+    memory_conflict_judge_min_similarity: float = Field(default=0.70, gt=0.0, le=1.0)
+    # Entries per bulk call that get the conflict check; later entries are written unchecked
+    # and counted. 0 = none are checked.
+    bulk_conflict_check_max_entries: int = 200
+    # Bulk-path conflict checks run at once (at least 1).
+    bulk_conflict_check_concurrency: int = Field(default=8, ge=1)
+    # Facts per batched candidate lookup (conflict and value-update peers) on
+    # the write path; matches the per-fact concurrency so wall time stays flat.
+    # 0 = one statement per fact.
+    memory_write_candidate_batch: int = 6
+
+    # Cosine ≥ this with a canonical-form mismatch marks a write 'duplicate'
+    # with a duplicate_of pointer instead of 'conflicted'. Per-namespace
+    # override: loom.namespaces.duplicate_threshold.
+    duplicate_threshold: float = 0.97
+
+    # Blacklist cache invalidation: in-process invalidate_cache(), a one-row
+    # CH version watermark (loom.blacklist_version) polled at most every check
+    # interval (bounds cross-replica lag), and a hard TTL backstop. No Redis.
+    blacklist_version_check_interval_seconds: float = 2.0
+    # Seconds after which the blacklist cache reloads regardless of the version watermark.
+    blacklist_cache_ttl_seconds: int = 300
+
+    # ---- workers ----
+    # Periodically re-run the embedder calibration probe so thresholds follow a
+    # silently revised embedder. Fake providers skip.
+    recalibration_enabled: bool = True
+    # Seconds between embedder calibration probes.
+    recalibration_interval_seconds: int = 7 * 24 * 3600
+
+    # Seconds between the entity extractor's mirror divergence heal, a
+    # FINAL-to-FINAL join of loom.memory and loom.memory_embeddings (343 GB/day
+    # if run every pass). Divergence arrives a few rows a day.
+    entity_heal_interval_seconds: int = 900
+
+    # Retry best-effort projections (chunks, evidence links, graph side tables)
+    # that failed after the primary write. Bounded and idempotent; unsupported
+    # ones stay in ops.projection_failures.list.
+    projection_repair_enabled: bool = True
+    # Seconds between projection repair passes.
+    projection_repair_interval_seconds: int = 300
+    # Recorded projection failures one pass retries (at least 1).
+    projection_repair_max_failures_per_pass: int = Field(default=25, ge=1)
+
+    # Fold loom.memory_usage_totals onto the ranking columns (reinforcement
+    # boost, memory.list sort_by=score, auto-promote gate); off, they freeze at
+    # write-time values.
+    usage_fold_enabled: bool = True
+    # Seconds between usage-fold passes.
+    usage_fold_interval_seconds: int = Field(default=300, ge=1)
+    # Seconds between passes of the always-on sweep that re-runs the deferred
+    # conflict judges a stopped replica left owed.
+    conflict_sweep_interval_seconds: float = Field(default=30.0, gt=0)
+
+    # Re-emit, with a tombstone, vector rows still live after their loom.memory
+    # row was tombstoned or erased, so search stops offering them. Bounded per
+    # pass; loom.integrity.orphan_vectors should read 0 between passes.
+    orphan_vector_reconcile_enabled: bool = True
+    # Seconds between orphan vector reconcile passes.
+    orphan_vector_reconcile_interval_seconds: int = 600
+    # Orphaned keys one pass re-emits tombstones for (at least 1).
+    orphan_vector_reconcile_max_keys_per_pass: int = Field(default=500, ge=1)
+    # Seconds before an unmatched embedding counts as orphaned, so a write whose
+    # two rows land apart is not taken for a deletion.
+    orphan_vector_reconcile_grace_seconds: int = 600
+
+    # ---- procedures ----
+    # `procedure.evolve` quarantines a procedure whose trace log ends in this
+    # many consecutive failed runs (out of procedure.match and the pack until a
+    # run succeeds). 0 = off.
+    procedure_strike_limit: int = 3
+
+    # ---- consolidation ----
+    # Clusters merged concurrently by memory.consolidate; 1 = sequential.
+    consolidation_merge_concurrency: int = 4
+
+    # Fold a user's durable preference/decision memories into a versioned
+    # profile section (memory_type='profile') for profile.render /
+    # context.pack; skipped when refreshed within the cooldown. LLM calls;
+    # namespace opt-in via consolidation_enabled.
+    profile_consolidation_enabled: bool = False
+    # Seconds between profile fold passes.
+    profile_consolidation_interval_seconds: int = 6 * 3600
+    # Users (org, namespace, user_id) one pass folds, most preference/decision rows first.
+    profile_consolidation_max_identities_per_pass: int = 10
+    # Live preference/decision memories a user needs before a profile is folded.
+    profile_consolidation_min_memories: int = 5
+    # Memories read into one fold, highest confidence then newest first.
+    profile_consolidation_memory_limit: int = 100
+    # Seconds after a profile section is written before it is folded again.
+    profile_consolidation_cooldown_seconds: int = 24 * 3600
+    # `memory_key` of the folded profile row.
+    profile_consolidation_label: str = "consolidated_profile"
+
+    # Reflection distillation: label recent sessions that carry no outcome
+    # (positive / negative / unclear into loom.session_outcomes_by_user), pair each
+    # confidently failed session with its nearest successful one and distil
+    # the difference into one hidden `reflection` memory. LLM calls; sessions
+    # labelled through run.complete are not re-judged.
+    reflection_distill_enabled: bool = False
+    # Seconds between reflection distillation passes.
+    reflection_distill_interval_seconds: int = 3600
+    # Days back a pass looks for unlabelled sessions and for failed sessions to contrast.
+    reflection_distill_lookback_days: int = 14
+    # Sessions one pass sends to the outcome labeller.
+    reflection_distill_max_judged_per_pass: int = 40
+    # Failed sessions one pass tries to pair and distil.
+    reflection_distill_max_contrasts_per_pass: int = 10
+    # A judged label below this confidence neither pairs nor is paired with.
+    reflection_distill_min_confidence: float = 0.7
+    # Cosine floor between the failed and the successful summary; below it the
+    # sessions were not about the same thing.
+    reflection_distill_min_pair_similarity: float = 0.55
+
+    # Async LLM entity tagging of memory rows (fills `entities` for search's
+    # entity match); off the memory.set hot path.
+    entity_extract_enabled: bool = True
+    # Seconds between entity extraction passes that found work.
+    entity_extract_interval_seconds: int = 60
+    # Sleep after a pass that found no unentitied row.
+    entity_extract_idle_interval_seconds: int = 300
+    # Each pass scans only memories of the last recent_seconds; the full
+    # candidate scan (without the value column) runs once per
+    # full_scan_seconds. full_scan_seconds 0 = full scan every pass.
+    entity_extract_full_scan_seconds: int = 1800
+    # Window, seconds, of recent memories each pass scans for untagged rows.
+    entity_extract_recent_seconds: int = 7200
+    # Keys the full scan queues for the passes in between (refilled early when
+    # the queue runs dry).
+    entity_extract_full_scan_keys: int = 5000
+    # Backlog keys per namespace in one refill, oldest first, round-robin
+    # across namespaces so one cannot starve the rest. 0 = org-wide newest
+    # first.
+    entity_extract_backlog_per_namespace: int = 500
+
+    # ---- dedup and expiry ----
+    # Bulk-path exact dedup. "session" = a byte-identical value is skipped only
+    # under the same key in the same session. "identity" = a live row anywhere
+    # in (org, namespace, agent, user_id) with the same content_sha256 is the
+    # fact; the entry becomes an `evidence` reinforcement of it, named in
+    # `identity_duplicates`.
+    memory_bulk_dedup_scope: Literal["session", "identity"] = "identity"
+
+    # Apply each expired row's `on_expire` (tombstone | demote | anonymize) as a
+    # version row. Reads already hide expired rows; the sweep records it.
+    memory_expiry_sweep_enabled: bool = True
+    # Seconds between expiry sweep passes.
+    memory_expiry_sweep_interval_seconds: int = 300
+    # Expired rows one sweep pass applies.
+    memory_expiry_sweep_batch_size: int = 500
+    # `demote` multiplies confidence by this factor, never below the floor.
+    memory_expiry_demote_factor: float = 0.5
+    # Lowest confidence a `demote` (expiry or run.complete) leaves on a row.
+    memory_expiry_demote_floor: float = 0.05
+
+    # ---- namespace health, knowledge graph, communities ----
+    # Seconds a namespace's health summary is cached per process (a failed
+    # lookup at most 300 s). 0 disables the summary and its pack section.
+    namespace_health_ttl_seconds: int = 3600
+    # Label-propagation communities over the entity co-occurrence graph, per
+    # namespace, into loom.entity_communities (read by namespace.taxonomy and
+    # graph-mode expansion). A CPU pass over every namespace's edges.
+    entity_communities_enabled: bool = False
+    # Seconds between community partition passes.
+    entity_communities_interval_seconds: int = 6 * 3600
+    # Entity pairs read per namespace, strongest first; past it the rest are dropped and
+    # the namespace is reported truncated.
+    entity_communities_max_edges: int = 200_000
+    # A pass covers the namespaces with consolidation_enabled plus those whose
+    # graph was walked (facts.traverse / related / path, namespace.taxonomy)
+    # within this many days; 0 = the opted-in set only.
+    entity_communities_walked_days: int = 14
+    # Leave the top fraction of entities by degree out of the partition, so
+    # generic tokens cannot fuse the graph into one community. A graph under 500
+    # entities drops none.
+    # 0 = keep every entity.
+    entity_communities_hub_drop_fraction: float = 0.002
+    # When one community holds more than this share of a namespace's entities,
+    # double hub_drop_fraction and re-partition, up to hub_drop_max_fraction
+    # (a code corpus parted at 0.016, 2.9%). 0 = fixed fraction.
+    entity_communities_giant_share: float = 0.5
+    # Four doublings from the default; a graph still fused here is written as
+    # is and counted in the pass outcome.
+    entity_communities_hub_drop_max_fraction: float = 0.032
+    # Co-occurrence count an entity pair needs to count as an edge.
+    entity_communities_min_co_occur: int = 1
+    # ---- bulk contextualization ----
+    # memory.bulk_set honours contextualize=true (embed a chunk with its
+    # context) only when allowed; concurrency bounds the per-entry model calls,
+    # max_entries caps one call's spend.
+    memory_bulk_contextualize_allowed: bool = True
+    # Context model calls one bulk_set runs at once.
+    memory_bulk_contextualize_concurrency: int = Field(default=8, ge=1)
+    # A bulk_set with more pending entries than this is not contextualized at all.
+    memory_bulk_contextualize_max_entries: int = Field(default=200, ge=1)
+    # ---- graph walks (facts.traverse) ----
+    # Relative hub rule: hold a reached node when the edge that reached it is at
+    # most this share of the node's degree (via_co_occur / degree). Scale-free.
+    # 0 = off; a request's `hub_share` overrides it.
+    facts_traverse_hub_share: float = 0.01
+    # What facts.traverse's per-hop trim ranks by: `co_occur` (most
+    # co-mentioned pairs), `specificity` (via_co_occur / degree; request option
+    # only, it fills hop 1 with singletons) or `cosine` (via_co_occur /
+    # sqrt(degree)).
+    facts_traverse_rank_by: Annotated[Literal["co_occur", "specificity", "cosine"], CaseFolded] = (
+        "cosine"
+    )
+
+    # ---- sensitivity and provenance ----
+    # With no explicit `sensitivity`, detect it from the value with regexes:
+    # credential shapes -> 'high' (never embedded, key-only reads, audited);
+    # email/phone -> 'medium' (embedded, labelled). Off = every row stays ''.
+    memory_sensitivity_autodetect: bool = True
+    # `medium`/`high` rows get expires_at = now + N days on the set and bulk
+    # paths (a shorter caller expiry wins) and, if the caller set none, this
+    # on_expire. 0 = off.
+    memory_sensitive_retention_days: int = 0
+    # `on_expire` given to a sensitive row whose caller set none.
+    memory_sensitive_on_expire: Literal["tombstone", "demote", "anonymize"] = "anonymize"
+    # Daily sweep: re-label live rows written `sensitivity = ''` by a path that
+    # skipped the detector, as a new version per row; `high` rows' embeddings
+    # are tombstoned, never ALTER UPDATE. Covers the trailing window; the
+    # backlog is `loom sensitivity-sweep --apply`.
+    sensitivity_sweep_enabled: bool = True
+    # Seconds between sensitivity sweep passes.
+    sensitivity_sweep_interval_seconds: int = 86400
+    # Days back the sweep re-labels rows created in.
+    sensitivity_sweep_window_days: int = 2
+    # Rows one sweep pass re-labels (at least 1).
+    sensitivity_sweep_max_rows_per_pass: int = Field(default=500, ge=1)
+    # Shapes the sweep applies (comma-separated: credential, email, phone,
+    # other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label
+    # demotes the row in ranking, so it is left to the operator's
+    # `--only-shape phone`.
+    sensitivity_sweep_shapes: str = "credential,email"
+    # ---- code-linked memories ----
+    # Link memories to the code they name (symbols and files of the repository
+    # their `repo:` tag or code namespace names) and keep the links current as the
+    # code changes; the namespace's `code_change_policy` decides how reads treat a
+    # memory whose code is removed or changed. Off stops linking and rechecks; reads
+    # still show the stored states but no longer hide a memory, as nothing keeps them
+    # current.
+    memory_code_links_enabled: bool = True
+    # Seconds between link passes.
+    memory_code_links_interval_seconds: int = 60
+    # Memory writes one pass links (at least 1).
+    memory_code_links_batch: int = Field(default=500, ge=1)
+    # Seconds the pass stays behind the newest queued memory write, so inserts running at
+    # the same moment are visible before the cursor passes them (at least 10). A write
+    # visible later than this is passed and stays unlinked until a backfill reads it; a
+    # longer wait makes that rarer and links every write that much later.
+    memory_code_links_settle_seconds: int = Field(default=60, ge=10)
+    # Days a code-shaped name that names nothing on trunk yet (unmerged code) is
+    # retried before it is dropped.
+    memory_code_links_pending_days: int = Field(default=14, ge=1)
+    # Changed claims one pass re-checks with the LLM under the `revise` policy.
+    memory_code_links_revise_per_pass: int = Field(default=20, ge=0)
+    # Tag rows mentioning a protected attribute or common proxy with
+    # `attribute:<class>` at write time (gender, religion, health, age, family,
+    # income, ethnicity, sexuality, politics). A label, never a gate; the
+    # profile fold leaves such rows out.
+    memory_attribute_tagging: bool = True
+
+    # ---- memory chunks ----
+    # Max ~800-char verbatim chunks one set_from_messages call writes (512 ≈
+    # 400K chars; agent transcripts run ~190K chars a session at the median).
+    # Text past the cap is recorded in loom.memory_drops as
+    # chunk.split/truncated.
+    memory_chunks_max_per_call: int = 512
+    # Max chunks per memory.set value (48 ≈ 34 KB); the tail is recorded in
+    # loom.memory_drops as chunk.split/truncated.
+    memory_set_chunk_max_chunks: int = 48
+    # ---- fact-leg reads of memory_embeddings ----
+    # Seconds a process caches its count of patch parts on
+    # loom.memory_embeddings (server/core/vectors/patch_parts.py); the fact leg
+    # reads quantized codes only while the count is zero.
+    memory_embeddings_patch_parts_probe_seconds: int = 60
+
+
+# ===== MemoryAsk ==============================================================
+
+
+class MemoryAskSettings(BaseModel):
+    """memory.ask: evidence assembly and answer synthesis."""
+
+    # memory.ask only: re-rank the synthesis window by similarity + weight * recency,
+    # recency = 1/(1 + age_days/14), so the freshest copy of a fact reaches synthesis. 0.0 =
+    # cosine only.
+    memory_ask_recency_weight: Annotated[float, LIVE] = 0.2
+
+    # Fraction of the namespace's 24 h cost cap at which the cascade routes every ask cheap,
+    # with no escalation. 0 = off.
+    memory_ask_synth_budget_cheap_ratio: Annotated[float, LIVE] = 0.7
+    # Adaptive synthesis output budget: max(window rule, ratio * evidence tokens), capped at
+    # memory_ask_synth_max_tokens_ceiling. The window rule (600 tokens at <= 15 memories,
+    # 900 above) is the floor; 0 = the window rule alone.
+    memory_ask_synth_budget_ratio: Annotated[float, LIVE] = 0.75
+    # Upper bound on the adaptive budget (a cost and p99 guard, not a target); the
+    # provider's own maximum still applies.
+    memory_ask_synth_max_tokens_ceiling: Annotated[int, LIVE] = Field(default=8000, ge=1)
+    # Fixed synthesis output-token budget; 0 = adaptive.
+    memory_ask_synth_max_tokens: Annotated[int, LIVE] = 0
+    # The cheap tier answers only when the synthesis window holds at most this many evidence
+    # tokens (chars/4); above it the ask routes strong (cheap losses averaged 5.9k tokens).
+    # 0 = off.
+    memory_ask_synth_cheap_max_evidence_tokens: Annotated[int, LIVE] = 2500
+    # Routing prior from the consistency judge's contradicted rate per route. '' = rule-only
+    # router; "measured" = synth_policy.MEASURED_ROUTE_PRIOR; or a JSON object route ->
+    # rate. A strong-routed ask whose route rate is <=
+    # memory_ask_synth_route_prior_max_cheap goes cheap (reason "<rule>:prior_cheap"); hard
+    # stops (identifier, breadth, rich evidence, as_of, ungrounded) never move.
+    memory_ask_synth_route_prior: Annotated[str, RoutePrior, LIVE] = ""
+    # Route contradicted rate at or below which the routing prior sends a strong-routed ask cheap.
+    memory_ask_synth_route_prior_max_cheap: Annotated[float, LIVE] = 0.10
+    # Which strong-routed reasons go to the mid tier: "uncertain", "off", or a comma list of
+    # reason tokens.
+    memory_ask_synth_mid_routes: Annotated[str, LIVE] = "uncertain"
+
+    # How many top memories the synthesizer sees, independent of the caller's top_k; also
+    # sizes the fetch pool and, above 15, the answer-token budget. Raise it only with a
+    # strong memory_ask_synth_model, since a weak one dilutes over more items.
+    memory_ask_context_memories: Annotated[int, LIVE] = Field(default=15, ge=1)
+    # Deep-evidence pass: a selector picks up to memory_ask_deep_evidence_max_memories
+    # ranked candidates, their source turns are read (loom.memory_evidence via
+    # loom.memory_belief_sources, scoped rows first) and synthesis reruns with the raw
+    # turns. Runs on depth="raw" and temporal questions. This field: how many candidates
+    # the selector sees (30 = the whole 2x top_k pool).
+    memory_ask_deep_evidence_pool: Annotated[int, LIVE] = Field(default=30, ge=1)
+    # Who picks the memories to open: "llm" = one selection call over the pool; "top" = the
+    # top-ranked memories, no LLM call. A request's deep_select overrides.
+    memory_ask_deep_evidence_select: Annotated[Literal["llm", "top"], CaseFolded, LIVE] = "llm"
+    # At most this many memories are opened per ask.
+    memory_ask_deep_evidence_max_memories: Annotated[int, LIVE] = Field(default=5, ge=1)
+    # Source text per opened memory and in total, so a window-linked
+    # memory cannot expand into its whole conversation.
+    memory_ask_deep_evidence_max_chars_per_memory: Annotated[int, LIVE] = Field(default=2500, ge=1)
+    # Total source-text characters deep evidence may open across all memories of one ask.
+    memory_ask_deep_evidence_max_chars: Annotated[int, LIVE] = Field(default=8000, ge=1)
+
+    # Default answer length in characters for asks that pass max_answer_chars=0, except
+    # breadth questions and structured count/preference/affect answers. 0 = unbounded
+    # (synthesis is 88% of ask median latency).
+    memory_ask_default_answer_chars: Annotated[int, LIVE] = 0
+    # Selector the temporal trigger uses: "llm" (one selection call, about +3 s p50 on
+    # temporal asks only) or "top" (no model call). Per-request deep_select overrides.
+    memory_ask_temporal_deep_select: Annotated[Literal["llm", "top"], LIVE] = "llm"
+    # Client for the deep selector: "cheap" = the cascade's cheap client when configured,
+    # else the routed client; "routed" = the client that synthesizes the answer.
+    memory_ask_deep_select_tier: Annotated[Literal["cheap", "routed"], LIVE] = "cheap"
+
+    # When a query names an identifier (PR/issue number, @handle) that recall missed, inject
+    # the memories citing it (exact substring) into the synthesis pool. The lexical leg
+    # indexes only alpha tokens >= 3 chars, so bare numbers are otherwise unretrievable.
+    # Additive.
+    memory_ask_identifier_injection: Annotated[bool, LIVE] = True
+    # After injection, follow identifier-shaped tokens the injected memories name (a value
+    # that is a key, a PR naming a commit) for up to this many more exact-substring reads,
+    # adding at most memory_ask_identifier_chase_cap rows. 0 = off. Runs only when the
+    # question named an identifier.
+    memory_ask_identifier_chase_hops: Annotated[int, LIVE] = 3
+    # Identifier injection also reads up to this many verbatim chunks (loom.memory_chunks),
+    # ranked by cosine to the question; 0 = facts only.
+    memory_ask_identifier_inject_chunks: Annotated[int, LIVE] = 0
+    # A set-shaped question about an identifier reads this many fact rows (and twice as many
+    # chunks) from the exact fetch instead of eight.
+    memory_ask_identifier_inject_set_facts: Annotated[int, LIVE] = 24
+    # For a bug / error / flaky question, read this many verbatim chunks that cite the
+    # identifier and carry fix-or-cause vocabulary (root cause, Closes #, backtrace ...)
+    # into the pool ahead of the window. 0 = off.
+    memory_ask_decisive_chunks: Annotated[int, LIVE] = 6
+    # For a disposition / premise / classification question, read this many newest facts and
+    # chunks citing the identifier into the pool, and tell the synthesizer the later-dated
+    # memory is current when memories on one subject disagree. 0 = off.
+    memory_ask_identifier_inject_recent: Annotated[int, LIVE] = 4
+    # A question about what was mentioned at a time reads up to this many verbatim chunks
+    # whose session date falls in the resolved window (±1 day), cosine-ranked; facts carry
+    # the event date, not the mention date. 0 = off.
+    memory_ask_mention_window_chunks: Annotated[int, LIVE] = 4
+    # Fact rows the identifier chase (identifiers named by the rows the question's
+    # identifier reached) may add across all its hops.
+    memory_ask_identifier_chase_cap: Annotated[int, LIVE] = 8
+    # Verbatim chunks the chase may add, counted apart from memory_ask_identifier_chase_cap.
+    # 0 = facts only.
+    memory_ask_identifier_chase_chunk_cap: Annotated[int, LIVE] = 8
+
+    # Facet completion: a count question pulls every memory in scope whose key shares the hit
+    # keys' attribute facet (user_maya_age -> _age), widening the window to
+    # memory_ask_aggregational_window. At most this many rows.
+    memory_ask_facet_completion_max: Annotated[int, LIVE] = 60
+    # Bridge completion: the other attributes of the entities the top hits name (key-prefix
+    # siblings) join the pool, so a question that names an entity by one attribute can
+    # answer with another. The top hits it reads, the rows it adds, the rows per prefix.
+    memory_ask_bridge_completion_top_hits: Annotated[int, LIVE] = 12
+    # Most rows bridge completion adds to the pool.
+    memory_ask_bridge_completion_max: Annotated[int, LIVE] = 48
+    # Most rows bridge completion adds per entity key prefix.
+    memory_ask_bridge_completion_per_prefix: Annotated[int, LIVE] = Field(default=6, ge=1)
+    # Hops over the rows — the
+    # proper-noun objects of the top hits and their bridged siblings bridge
+    # again, twice at most, so a multi-hop question is answered from rows when
+    # the triple plane has no path.
+    memory_ask_bridge_row_hops: Annotated[int, LIVE] = 2
+    # Count questions: the raw turns naming the question's literal (a place, a number) join
+    # the pool, at most this many — a fact the extractor dropped is still a turn.
+    memory_ask_literal_completion_max: Annotated[int, LIVE] = 40
+    # The synthesis window a count question widens to when facet or literal completion
+    # adds rows (never narrower than the window it had).
+    memory_ask_aggregational_window: Annotated[int, LIVE] = 40
+    # Question decomposition (request `decompose`, off when unset): most
+    # sub-questions a decomposed question splits into.
+    memory_ask_decompose_max_parts: Annotated[int, LIVE] = 4
+    # Rows retrieved for each decomposed sub-question.
+    memory_ask_decompose_part_top_k: Annotated[int, LIVE] = 8
+    # memory.ask general-knowledge bridging: forbid (default)
+    # keeps the synthesizer memory-only; allow lets it combine a memory fact
+    # with widely known public facts, marking each bridged sentence, and the
+    # output's `grounding` says whether it did. Per-request `world_knowledge`
+    # overrides. Agents that must never answer beyond the store keep forbid.
+    memory_ask_world_knowledge: Annotated[Literal["forbid", "allow"], CaseFolded, LIVE] = "forbid"
+    # The fewest synthesis rows the similarity knee below may leave.
+    memory_ask_relevance_gate_min_keep: Annotated[int, LIVE] = 3
+    # Synthesis window for count-shaped questions ("how many X", op=count), whose answer set
+    # is scattered across sessions (a missed item sat at rank 18). 0 = no widening.
+    memory_ask_count_window: Annotated[int, LIVE] = 30
+
+    # Kill-switch for code-plane enrichment: when a query names code-shaped identifiers (a
+    # symbol, a File.cpp, a snake_case setting), fuse the bound code index's file:line,
+    # symbol and recent PRs into the grounding pool. Additive and fail-open. The opt-in is
+    # the code namespace binding (_resolve_code_target): with no per-request override and no
+    # memory_ask_code_namespace, enrichment is skipped, hence default on.
+    memory_ask_code_enrichment: Annotated[bool, LIVE] = True
+    # Symbols the retrieved window names (not only the question) are looked up in the bound
+    # code index too, up to this many, one code.symbol definition each, appended after the
+    # question's own grounding rows. 0 = off.
+    memory_ask_code_hop_symbols: Annotated[int, LIVE] = 4
+
+    # For each PR the query or grounding references, inject its authoritative
+    # code_pr_history record (author, merged_at, title) as a high-trust grounding fact; the
+    # synthesizer prefers it over a memory's older claim (_PR_RECORD_NOTE). Gated by the
+    # code binding (_resolve_code_target); additive, fail-open, as-of aware. See
+    # _inject_pr_facts.
+    # A judged arm shows fewer control regressions with it on than off.
+    memory_ask_pr_grounding: Annotated[bool, LIVE] = True
+
+    # For an as_of query, drop grounding memories that cite a PR opened after the anchor (an
+    # under-dated bulk ingest can name a later PR). Open dates come from
+    # code_pr_history.opened_at; a no-op without as_of or a bound code index; a PR with an
+    # unknown open date is never gated. See _gate_future_prs.
+    memory_ask_pr_temporal_gate: Annotated[bool, LIVE] = True
+
+    # Check the code locations a retrieved memory asserts against the live index and flag
+    # rotted ones (symbol moved or renamed) so synthesis prefers the current site.
+    # Read-time, additive, gated by the code binding; ambiguous symbols are skipped
+    # (code_anchor), never false-flagged.
+    memory_ask_code_staleness: Annotated[bool, LIVE] = True
+
+    # Code namespace enrichment reads when the request sets none (a per-request override
+    # wins). '' = enrichment skipped: with many repos and branches indexed as separate
+    # namespaces there is no safe global default. Pair with memory_ask_code_org when the org
+    # differs.
+    memory_ask_code_namespace: Annotated[str, LIVE] = ""
+
+    # An ordering question with a time cue of up to this many days reads the user's turns
+    # from that window with the first synthesis, so a member the extractor left as an aside
+    # is listed.
+    memory_ask_order_window_max_days: Annotated[int, LIVE] = 95
+    # How many user turns dated inside the question's short time window ("a couple of days
+    # ago") the not-recorded second reading adds, whatever words they carry.
+    memory_ask_cue_window_turns_top_k: Annotated[int, LIVE] = Field(default=24, ge=1)
+    # Dated raw turns the not-recorded second reading recalls.
+    memory_ask_when_evidence_top_k: Annotated[int, LIVE] = Field(default=6, ge=1)
+    # Org of memory_ask_code_namespace; "" = code_org, then the ask's own org.
+    memory_ask_code_org: Annotated[str, LIVE] = ""
+
+    # After synthesis one judge call (the cheap client when the cascade is on, else the
+    # synth client) labels the answer entailed / neutral / contradicted against the memories
+    # it cites (consistency, consistency_score, consistency_note). Off: one extra LLM call
+    # per synthesized ask.
+    memory_ask_consistency_check: Annotated[bool, LIVE] = False
+    # Where the judge runs. "inline" awaits it and returns the verdict on the wire.
+    # "deferred" answers first, leaves the wire fields empty, and writes the verdict as a
+    # memory.ask.consistency ledger row (kind='verdict', joined by request_id) plus the
+    # contradicted usage event; a precedent is stored only once the verdict
+    # is in. A request's consistency field pins either; benches that read the label pin
+    # "inline".
+    memory_ask_consistency_mode: Annotated[Literal["inline", "deferred"], LIVE] = "deferred"
+    # When the window holds a pinned or human-verified memory, one judge call asks whether
+    # the question presupposes something it contradicts; if so the synthesizer holds the
+    # trusted fact and corrects the premise (premise_conflict / premise_note on the wire).
+    # One read per ask; an LLM call only with trusted rows in the window.
+    memory_ask_premise_check: Annotated[bool, LIVE] = False
+    # Synthesis window for a set question ("what books has she read"), like a count's, since
+    # its items sit one per session. 0 = off. MemoryAskInput.set_window overrides.
+    memory_ask_set_window: Annotated[int, LIVE] = 40
+    # A count or set question reads up to this many rows (window and search pool) instead of
+    # the 40-row pool; 0 = off. Such an ask costs about four times a plain one.
+    memory_ask_set_full_scan: Annotated[int, LIVE] = 300
+    # When the whole-set scan widens the pool, cap its chunk share so it is mostly fact
+    # rows. 0 = uncapped.
+    memory_ask_set_full_scan_chunk_share: Annotated[float, LIVE] = 0.15
+    # A chain question ("the citizenship of the CEO of X") follows the first hop's answer
+    # entity into one more retrieval per bridge entity: at most this many entities, this many
+    # rows each.
+    memory_ask_entity_follow_max: Annotated[int, LIVE] = 3
+    # Rows retrieved for each followed bridge entity.
+    memory_ask_entity_follow_top_k: Annotated[int, LIVE] = 6
+    # Passages the knowledge.search leg appends to the synthesis window.
+    memory_ask_knowledge_top_k: Annotated[int, LIVE] = Field(default=5, ge=1)
+
+    # memory.ask keeps declared-external, unattested rows out of the synthesis
+    # pool (they still surface as hits). Off = they are synthesized like any other row.
+    memory_ask_exclude_unverified_external: Annotated[bool, LIVE] = True
+
+    # Serve the earlier synthesized answer to the same question and shape, with no LLM call,
+    # when the synthesis window is byte-identical (same keys, same content_sha256 per key);
+    # otherwise synthesize and store. A per-request precedents field overrides. Max age 0 =
+    # only the evidence decides.
+    memory_ask_precedents: Annotated[bool, LIVE] = False
+    # Hours a stored precedent stays servable; 0 = no age bound, the evidence alone decides.
+    memory_ask_precedents_max_age_hours: Annotated[int, LIVE] = 0
+    # Comma-separated fnmatch globs the precedent flag applies to; '' = every namespace.
+    # Scope it to namespaces whose traffic is real repeats (e.g. "support-*"): on a shared
+    # server a paired A/B would answer its second arm from the first.
+    memory_ask_precedents_namespaces: Annotated[str, LIVE] = ""
+    # With precedents on, an eligible precedent is served before retrieval when no plane its
+    # namespaces read was written since (loom.namespace_write_marks), the blacklist is
+    # unchanged and every cited row is live with the same hash. Hours a precedent stays
+    # servable on that fast path (a bound on rank drift, not staleness); 0 = no bound.
+    memory_ask_precedents_fast_max_age_hours: Annotated[int, LIVE] = 1
+
+    # Exact-prompt LLM response cache for every memory.ask synthesis-path call, keyed by
+    # sha256(system, user, max_tokens, response_format) per model in
+    # loom.llm_response_cache; a miss writes fire-and-forget. The evidence is in the key, so
+    # a changed memory misses. The namespace globs (comma-separated fnmatch, '' = all) scope
+    # the default; a per-request llm_cache wins (benches measuring synthesis send false).
+    memory_ask_llm_cache_default: Annotated[bool, LIVE] = True
+    # Comma-separated fnmatch namespace globs the LLM cache default applies to; '' = all.
+    memory_ask_llm_cache_namespaces: Annotated[str, LIVE] = ""
+
+    # memory.ask pending evidence: the turns of in-flight deferred batches that share words
+    # with the question join the synthesis window as raw rows (source="pending").
+    # Most pending turns read into the synthesis window per ask.
+    memory_ask_pending_evidence_turns: Annotated[int, LIVE] = Field(default=5, ge=1)
+    # Newest in-flight deferred batches the pending-evidence read scans.
+    memory_ask_pending_evidence_batches: Annotated[int, LIVE] = Field(default=20, ge=1)
+
+    # A summary-shaped question ("summarize the report") routes to knowledge.synthesize over
+    # the documents the knowledge search concentrates on, falling through to the memory
+    # path when none concentrates. Documents that route may synthesize over at most.
+    memory_ask_synthesize_route_max_docs: Annotated[int, LIVE] = Field(default=3, ge=1)
+    # Characters of one knowledge passage in the answer's context block; longer
+    # ones are cut and marked.
+    memory_ask_knowledge_passage_max_chars: Annotated[int, LIVE] = Field(default=800, ge=100)
+    # Characters of the whole knowledge block; the lowest-ranked passages go first.
+    memory_ask_knowledge_block_max_chars: Annotated[int, LIVE] = Field(default=6000, ge=100)
+    # Conversation turns the recent-turns block carries at most, newest last.
+    memory_ask_recent_max_turns: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Characters of one turn in that block; longer ones are cut and marked.
+    memory_ask_recent_turn_max_chars: Annotated[int, LIVE] = Field(default=1500, ge=100)
+    # Characters of the whole recent-turns block; the oldest turns go first.
+    memory_ask_recent_block_max_chars: Annotated[int, LIVE] = Field(default=12000, ge=100)
+
+
+# ===== MemorySearch ===========================================================
+
+
+class MemorySearchSettings(BaseModel):
+    """memory.search: legs, fusion, ranking and gates."""
+
+    # Default `namespace_scope` when a request leaves it unset. "this" reads
+    # the addressed namespace only; "all_mine" also reads the caller's own
+    # namespaces (the MCP loom_search asks for it by name), see
+    # docs/concepts/identities-and-namespaces.md#reading-several-namespaces.
+    memory_search_default_namespace_scope: Annotated[Literal["this", "all_mine"], LIVE] = "this"
+    # Namespace kinds an all_mine fan-out spans (memory.search,
+    # knowledge.search, conversation.search, MCP loom_search): comma list over
+    # loom.namespaces.kind; a namespace with no kind row stays; "" = every
+    # kind. Code and QA indexes are reached by name or their own tools
+    # (measured sweep of 24 namespaces: 6.2 s).
+    memory_search_fanout_kinds: Annotated[str, LIVE] = "memory"
+    # Upper bound on how many of the caller's namespaces an all_mine fan-out
+    # reads besides the addressed one; a search names the rest in
+    # `namespaces_skipped`. Every leg issues at least one statement per
+    # namespace. A guard, not a tuning knob: set well above what one person
+    # holds, so it bounds a runaway sweep rather than trimming normal ones.
+    memory_search_fanout_max_namespaces: Annotated[int, LIVE] = Field(default=32, ge=1)
+    # Key-embedding axis on the fact leg: "on" scores least(value_dist,
+    # key_dist) and reads both vector columns (measured 399 vs 203 MB/query on
+    # a 30k-row namespace); "off" reads the value vector only; "auto" turns it
+    # on per namespace when its key-reuse share is at or above
+    # memory_search_key_axis_auto_reuse_share (cached for
+    # memory_search_key_axis_auto_ttl_seconds; a failed probe reads as off).
+    # A per-request `key_axis` wins.
+    memory_search_key_axis: Annotated[Literal["auto", "on", "off"], CaseFolded, LIVE] = "auto"
+    # "auto" key-axis threshold: share of a namespace's keys written more than
+    # once. 0.05 sits between product namespaces and chat namespaces.
+    memory_search_key_axis_auto_reuse_share: Annotated[float, LIVE] = Field(
+        default=0.05, ge=0.0, le=1.0
+    )
+    # Seconds a namespace's "auto" key-axis probe result is cached before it is re-read.
+    memory_search_key_axis_auto_ttl_seconds: Annotated[int, LIVE] = Field(default=600, ge=1)
+    # No-probe fallback for the query-rewrite gate the calibration reports
+    # (calibration.get's scalar row): ≈ question→fact P10 for
+    # text-embedding-3-small.
+    memory_search_query_rewrite_threshold: float = 0.38
+
+    # Bounds on the recursive fallback cascade (iterative-judge retry),
+    # shared through one SearchBudget: recursive rounds and wall-clock ms;
+    # whichever trips first stops further fallbacks. The first-pass retrieve
+    # always runs.
+    memory_search_fallback_max_rounds: Annotated[int, LIVE] = 1
+    # Wall-clock ms the fallback cascade may spend across all rounds before it stops.
+    memory_search_fallback_max_wall_ms: Annotated[int, LIVE] = 4000
+    # Finer caps inside a round: LLM calls and vector queries a fallback may
+    # spend before it is denied.
+    memory_search_fallback_max_llm_calls: Annotated[int, LIVE] = 2
+    # Vector queries one fallback round may issue before further ones are denied.
+    memory_search_fallback_max_vector_queries: Annotated[int, LIVE] = 12
+
+    # First-stage pool = top_k × multiplier, per retrieval profile, capped at
+    # memory_search_max_pool_top_k (all_mine searches multiply by namespace
+    # and sub-query count).
+    memory_search_pool_multiplier_standard: Annotated[int, LIVE] = 3
+    # Rerank gets the widest pool: a reranker only reorders what the first
+    # stage surfaced (measured: items it should promote sat at rank 11-30).
+    # Affects rerank-enabled searches only.
+    memory_search_pool_multiplier_rerank: Annotated[int, LIVE] = 6
+    # A deep-budget search's pool multiplier (the budget class `deep`).
+    memory_search_pool_multiplier_deep: Annotated[int, LIVE] = 5
+    # Upper bound on the first-stage pool size; a caller's top_k above it raises the bound to
+    # top_k.
+    memory_search_max_pool_top_k: Annotated[int, LIVE] = 150
+    # Pool widening factor for a quality-filtered search (loom_search,
+    # context.pack), applied before junk is dropped.
+    memory_search_quality_pool_multiplier: Annotated[int, LIVE] = 3
+
+    # Boost for any preference-typed/tagged row on any query; 0.0 makes it
+    # intent-gated (only a query naming the attribute earns +0.3).
+    memory_search_preference_fallback: Annotated[float, LIVE] = 0.15
+    # Comma list of source_class values whose rows may earn the user-derived
+    # rank terms (preference, prior group, reinforcement); "" = every row.
+    # Leaving out "extracted" keeps an inference from outranking a statement
+    # by its priors.
+    memory_search_source_class_boost_eligible: Annotated[str, LIVE] = ""
+    # Top-hit similarity below which a search abstains (weak abstention): the
+    # scalar gate for fake embedders or LOOM_ADAPTIVE_THRESHOLDS=false; a
+    # calibrated namespace or embedder derives its own.
+    memory_search_abstain_threshold: float = 0.30
+
+    # Identifier-grounding abstain: when the query carries a salient
+    # identifier (PR/issue number, test id, @handle) and no returned hit
+    # contains any of them, abstain with abstain_code "entity_absent"
+    # regardless of the top cosine — catches the on-topic but wrong neighbour
+    # the cosine gate cannot.
+    memory_search_identifier_grounding: Annotated[bool, LIVE] = True
+    # The grounding leg applies only to queries of at most this many
+    # whitespace tokens; longer inputs (a PR body, a path list) carry
+    # incidental numbers. 0 = no cap.
+    memory_search_identifier_grounding_max_tokens: Annotated[int, LIVE] = 32
+
+    # Recency-intent searches ("latest", "current …") re-rank the fused pool
+    # by date: the newest dated hit gains this much, the oldest and undated
+    # hits nothing. 0.0 = off. A namespace can set its own in
+    # retrieval_defaults.
+    memory_search_recency_pool_weight: Annotated[float, LIVE] = 0.0
+
+    # No-probe fallback for the question→fact P25 gate (≈ P25 for
+    # text-embedding-3-small): the loom_search precision floor and
+    # calibration.get's scalar row read it.
+    memory_search_hyde_fallback_threshold: float = Field(default=0.45, gt=0.0, le=1.0)
+    # search_mode used when the caller sets neither search_mode nor a recipe.
+    # The wire default stays "rrf"; planner shape rules still apply on top.
+    memory_search_default_mode: Annotated[
+        Literal[
+            "semantic", "lexical", "hybrid", "bm25_hybrid", "related", "graph", "rrf", "temporal"
+        ],
+        CaseFolded,
+        LIVE,
+    ] = "semantic"
+    # Weight of the decayed-reinforcement rank term (recalls and positive
+    # memory.outcome signals, fading with time since last reinforcement).
+    # 0 disables; the term is capped below relevance.
+    memory_search_reinforcement_weight: Annotated[float, LIVE] = 0.15
+    # Additive penalty on rows tagged `sensitivity:medium|high` unless the
+    # query has contact intent. 0.0 disables.
+    memory_search_sensitivity_demote: Annotated[float, LIVE] = 0.1
+    # Days after which a use's reinforcement weighs half (the base half-life
+    # the use-scaled one below grows from).
+    memory_search_reinforcement_half_life_days: Annotated[float, LIVE] = 90.0
+    # Per-query recall telemetry into loom.search_trace_log (query, returned
+    # keys+scores, abstain, latency), fire-and-forget. Off by default: query
+    # text is logged, so it is an operator opt-in.
+    search_trace_log_enabled: Annotated[bool, LIVE] = False
+    # Past queries as nodes: one loom.query_nodes row per memory.search
+    # (normalised text, embedding, returned keys), gated on the namespace's
+    # capture consent; the erasure saga deletes the table.
+    memory_query_nodes_enabled: Annotated[bool, LIVE] = False
+    # Set-expansion instance legs (collective nouns -> "has a sister"): each
+    # phrase runs as a narrow sub-query leg of top_k rows; a row joins only
+    # above min_similarity, at most max_added per search, never above the main
+    # leg's best row.
+    memory_search_set_expansion_leg_top_k: Annotated[int, LIVE] = 2
+    # Similarity a set-expansion leg's row must exceed to join the pool.
+    memory_search_set_expansion_min_similarity: Annotated[float, LIVE] = 0.5
+    # Most rows the set-expansion legs add to one search.
+    memory_search_set_expansion_max_added: Annotated[int, LIVE] = 5
+    # Read-side exposure ledger in loom.memory_exposures: one row per read
+    # (token subject, returned keys, query digest never the text, scope) plus
+    # an hourly per-actor roll-up. Carries no user content.
+    memory_exposure_ledger_enabled: Annotated[bool, LIVE] = True
+    # Cosine floor: hits below it are dropped as noise (ANN always returns
+    # top_k). The backstop when rerank is bypassed or fails.
+    memory_search_min_similarity: float = 0.22
+    # Sub-floor handling when the caller sets top_k: "readmit" (fill k, tag
+    # below_floor), "ids_only" (fill k with empty bodies), "drop". A request's
+    # floor_mode overrides.
+    memory_search_floor_mode: Annotated[
+        Literal["readmit", "ids_only", "drop"], CaseFolded, LIVE
+    ] = "readmit"
+    # Per-attempt bound (seconds) on the query embedding; after the retries
+    # the search answers 503 EMBED_TIMEOUT. 0 = unbounded.
+    memory_search_embed_bound_s: Annotated[float, LIVE] = 2.5
+    # Retries after a timed-out first attempt, each with the bound above.
+    memory_search_embed_bound_retries: Annotated[int, LIVE] = 1
+    # A query of at most this many words embeds each all-lowercase word of 4+
+    # letters in the identifier spelling the caller's rows in the addressed
+    # namespace use most ("datalakecatalog" -> "DataLakeCatalog"; never
+    # "what" -> "What"). One read of the namespace beside the embed (100-300 ms
+    # for 40k rows), reused for a minute; fail-open. 0 = off.
+    memory_search_query_spelling_max_words: Annotated[int, LIVE] = Field(default=6, ge=0)
+    # Body length (chars) for bodies="excerpt" (the MCP search default).
+    memory_search_excerpt_chars: Annotated[int, LIVE] = Field(default=200, ge=1)
+    # Above this top_k a search that pinned no `bodies` serves excerpts, and
+    # per-hit explanation / score_components ride only under `explain: true`.
+    # Keys, order and scores are unchanged. 0 = never.
+    memory_search_excerpt_bodies_k: Annotated[int, LIVE] = 15
+
+    # Visibility-ordered private-first fallback (non-scoped tokens): the best
+    # private-namespace similarity that skips the public pass. "Private" is
+    # namespace visibility, not the caller's role; scoped tokens use their
+    # priority order instead.
+    memory_search_private_first_stop_similarity: Annotated[float, LIVE] = 0.30
+
+    # Tier waterfall stop: a per-tier best similarity at or above this stops
+    # the search before lower-priority tiers. A control cutoff, not a return
+    # filter (memory_search_min_similarity still gates rows); keep it above
+    # the noise band (~0.10-0.25) or a middling hit hides a stronger one.
+    memory_search_tier_stop_similarity: Annotated[float, LIVE] = 0.40
+
+    # A key matches when it covers at least this share of the query's
+    # idf-weighted stems (idf over the namespace's own keys).
+    memory_search_key_match_min_strength: Annotated[float, LIVE] = 0.5
+    # Boost (cosine units) of a full-strength key match: a tie-break inside
+    # the pool's band, not a lever over it (a 0.5 scale lifted wrong rows
+    # over gold).
+    memory_search_key_match_boost_scale: Annotated[float, LIVE] = 0.03
+    # Tie-break boost (cosine units) for a hand-asserted fact row (source_class
+    # 'asserted', not a hint:/procedure/summary:/obs: row) against derived
+    # rows; never a lever over a stronger match. 0 disables.
+    memory_search_asserted_boost_scale: Annotated[float, LIVE] = 0.03
+    # When the key-match arm runs: "always" (every search; measured 585-781 ms
+    # p50 on live namespaces), "gated" (only when an added row could reach the
+    # served window: rrf/rerank pool, pool short of top_k, an under-covered
+    # identifier, or a pooled key already matching), "off".
+    memory_search_key_match_mode: Annotated[Literal["always", "gated", "off"], LIVE] = "gated"
+    # Rows per memory_key in the final block (0 = no cap), freeing slots taken
+    # by one key re-extracted per session (38 of 60 questions on one eval).
+    # Skipped for aggregational / temporal_diff shapes.
+    memory_search_per_key_cap: Annotated[int, LIVE] = 3
+    # Digest-anchored expansion: a session digest in the pool's top-m
+    # summaries adds that session's top-k facts as candidates (+300 ms ask
+    # p50); MemorySearchInput.digest_descent overrides. chunk_date_source:
+    # "session" dates a chunk by its conversation's digest, "parent" by the
+    # session's first fact anchor.
+    memory_search_chunk_date_source: Annotated[Literal["session", "parent"], LIVE] = "session"
+    # Top session digests in the pool that digest descent expands.
+    memory_search_digest_descent_top_m: Annotated[int, LIVE] = Field(default=3, ge=1)
+    # Facts digest descent adds as candidates from each expanded session.
+    memory_search_digest_descent_k: Annotated[int, LIVE] = Field(default=5, ge=1)
+    # graph_seed: query | recent | both — under recent/both the entities of
+    # the identity's newest memories (recent_memories, at most recent_max)
+    # join the graph seeds. diversify: "none" | "session" — under "session" at
+    # most diversify_session_cap hits per source session (0 = max(2,
+    # top_k // 3)); per-request `diversify` overrides.
+    memory_search_graph_seed: Annotated[Literal["query", "recent", "both"], LIVE] = "query"
+    # Newest memories of the identity whose entities seed the graph under recent/both.
+    memory_search_graph_seed_recent_memories: Annotated[int, LIVE] = Field(default=5, ge=1)
+    # Most recent-memory entities added to the graph seeds under recent/both.
+    memory_search_graph_seed_recent_max: Annotated[int, LIVE] = Field(default=8, ge=1)
+    # bm25_hybrid merges the once-a-minute BM25 roll-ups with a live aggregate
+    # over rows newer than their mark, so df and corpus size are exact. Off =
+    # roll-ups alone (up to ~70 s behind a write).
+    memory_search_bm25_live_tail: Annotated[bool, LIVE] = True
+    # Seconds a parked page (a `paging=true` search's tail) stays fetchable
+    # before the TTL merge reclaims it.
+    memory_search_page_ttl_s: Annotated[int, LIVE] = Field(default=1800, ge=1)
+
+    # Entity-boost candidate shape (server/memory/app/search/ann_entity_boosts.py).
+    # loom.entity_vectors holds one row per (entity, memory_key) edge, so the
+    # lookup ranks distinct entities first, then expands to edges (a flat
+    # LIMIT surfaced as few as 1 distinct entity). top_entities = distinct
+    # entities kept; max_pairs = hard bound on the edge expansion (a hub can
+    # carry hundreds), which bounds work rather than results.
+    memory_search_entity_boost_top_entities: Annotated[int, LIVE] = 20
+    # Most (entity, memory_key) edges the entity-boost lookup expands to.
+    memory_search_entity_boost_max_pairs: Annotated[int, LIVE] = 400
+    # Weight on the provenance term (source_class + verified); 0 = off, a
+    # strict no-op in every mode.
+    memory_search_trust_weight: Annotated[float, LIVE] = 0.0
+    # Prepend the extractor's `question_topic` to the embedded text of
+    # assistant-direct-answer facts, so a topic-only follow-up matches them.
+    # The stored value is untouched; takes effect on (re-)ingest.
+    memory_embed_answer_topic: Annotated[bool, LIVE] = True
+    # Pre-built entity summaries fetched per namespace on that leg.
+    memory_search_entity_summaries_top_n: Annotated[int, LIVE] = 5
+
+    # Per-token top_k ceiling by the token's role on the namespace: viewer and
+    # writer each have one, admin and above are uncapped. 0 = no ceiling. The
+    # applied ceiling rides the response as `top_k_ceiling` and the ledger as
+    # `out_top_k_ceiling`.
+    memory_search_top_k_ceiling_viewer: Annotated[int, LIVE] = 0
+    # top_k ceiling for a writer token on the namespace; 0 = no ceiling.
+    memory_search_top_k_ceiling_writer: Annotated[int, LIVE] = 0
+
+    # RRF adaptive lexical weight: code/path-shaped queries (CamelCase,
+    # extensions, separators, digit runs) down-weight the lexical leg so
+    # fusion leans semantic; prose keeps full weight.
+    # Shape at/below which w_lex == 1.0 (prose).
+    memory_rrf_code_shape_lo: Annotated[float, LIVE] = 0.20
+    # Shape at/above which w_lex == floor (code).
+    memory_rrf_code_shape_hi: Annotated[float, LIVE] = 0.30
+    # Never fully zero the lexical leg.
+    memory_rrf_lexical_weight_floor: Annotated[float, LIVE] = 0.1
+
+    # Smallest window share verbatim chunks keep when the pool has them.
+    # 0.0 = off.
+    memory_search_chunk_min_share: Annotated[float, LIVE] = 0.0
+    # Which cosine the abstain gate reads: "first" = the fused rank-1 row,
+    # "window" = the best cosine among returned rows.
+    memory_search_abstain_top_sim_scope: Annotated[str, LIVE] = "first"
+    # Codes-first main fact leg (`vector_search_use_quantized_codes = 1`),
+    # safe only while loom.memory_embeddings has no patch part (ClickHouse
+    # skips the lazy rescore under patch parts). "auto" follows a 60 s
+    # system.parts probe (gauge loom.memory_embeddings.patch_parts); "on" /
+    # "off" pin it. The setting ships only where
+    # the replica probe finds it.
+    memory_search_fact_codes_first: Annotated[Literal["auto", "on", "off"], CaseFolded, LIVE] = (
+        "auto"
+    )
+    # Over-fetch of the codes pass on the main leg; x1 is too low (it changes the
+    # top-10 on a quarter of queries).
+    memory_search_fact_codes_fetch_multiplier: Annotated[float, LIVE] = 3.0
+    # `max_threads` pin on the main fact statement; 0 = no pin (threads follow
+    # the marks); 4 bounds each statement to four threads. Unpinned costs more
+    # CPU and peak memory per statement.
+    memory_search_fact_leg_max_threads: Annotated[int, LIVE] = 0
+
+
+# ===== Model ==================================================================
+
+# `local:<alias>` embedding models: alias -> (Hugging Face id, the width it emits).
+# `local` alone is DEFAULT_LOCAL_EMBEDDING_MODEL.
+LOCAL_EMBEDDING_MODELS: dict[str, tuple[str, int]] = {
+    "bge-small": ("BAAI/bge-small-en-v1.5", 384),
+    "bge-base": ("BAAI/bge-base-en-v1.5", 768),
+    "minilm": ("sentence-transformers/all-MiniLM-L6-v2", 384),
+}
+DEFAULT_LOCAL_EMBEDDING_MODEL = "bge-small"
+
+
+class ModelSettings(BaseModel):
+    """Models: which model does each job.
+
+    Every setting that names a model lives here, one per job, so a deployment changes
+    a job's model with one env var (`LOOM_<FIELD>`). The provider is inferred from the
+    name (`claude*` → Anthropic, `gpt*` / o-series → OpenAI), so any job can run on
+    either provider when its API key is set. "" means the job uses `llm_model`.
+    """
+
+    # --- defaults ---------------------------------------------------------------
+    # The deployment's LLM: memory extraction, the conflict judge, rerank and every
+    # job below left "". Empty takes the resolved provider's default model
+    # (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
+    llm_model: str = ""
+    # Model to answer with when a client's provider is still unavailable after
+    # its retries (429 / 5xx / transport / timeout) or rejected the request
+    # (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are
+    # configuration and never fall back. "" = fail the op.
+    llm_fallback_model: str = ""
+    # Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no
+    # network or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change
+    # it together with `embedding_dim`; a new embedding space needs a full re-embed.
+    embedding_model: str = "fake-ngram-3072"
+
+    # --- memory -----------------------------------------------------------------
+    # memory.ask synthesis (the strong tier when the cascade is on).
+    memory_ask_synth_model: str = ""
+    # memory.ask cheap tier. "" = off: every ask uses memory_ask_synth_model. When
+    # set, server/memory/domain/synth_policy.py routes easy asks cheap and hard ones
+    # strong; an empty, uncited or hedging cheap answer escalates to strong once.
+    # route_tier / route_reason / synth_model on the output record the choice.
+    memory_ask_synth_model_cheap: str = ""
+    # memory.ask mid tier. "" = none. With a model set, strong-routed asks whose
+    # reason is in memory_ask_synth_mid_routes go mid; an empty, uncited or hedging
+    # mid answer escalates to strong once.
+    memory_ask_mid_model: str = ""
+    # The durability check on a coding capture: one batched call per capture per
+    # listed model (CSV) judges each fact durable or not and folds same-claim
+    # paraphrases and replaced states. A fact is dropped only when every model says
+    # drop; folds come from the first. Fails open. "" turns it off.
+    memory_extract_verify_models: str = "claude-opus-5-5"
+    # The profile fold.
+    profile_consolidation_model: str = ""
+    # Reflection distillation: the outcome labeller and the contrast writer.
+    reflection_distill_model: str = ""
+    # The code-link `revise` judge: does a memory's claim still hold for its code's
+    # new text.
+    code_link_revise_model: str = ""
+    # Session briefs; without its provider's key the deployment's LLM writes them.
+    session_brief_llm_model: str = "gpt-6-luna"
+
+    # --- code -------------------------------------------------------------------
+    # code.ask synthesis. Answers are memoized fleet-wide, so a stronger model costs
+    # once per unique question.
+    code_ask_llm_model: str = ""
+    # code.search HyDE: writes a hypothetical indexed passage whose embedding runs a
+    # second vector list (see code_search_hyde_*). "" = off.
+    code_search_hyde_model: str = ""
+    # code.search concept expansion: maps a prose, unconstrained question to likely
+    # code identifiers — via this model, or `cards` / `cards:<n>` (symbols of the n
+    # nearest file cards) — fused as a capped lexical list. "" = off.
+    code_search_concept_expand_model: str = ""
+    # code.bisect_candidates' one-call rerank of the fused top 20.
+    code_bisect_llm_rerank_model: str = "gpt-6-luna"
+    # File and module summary cards.
+    code_summary_model: str = ""
+
+    # --- tracker ----------------------------------------------------------------
+    # tracker.duplicate_check's rerank call.
+    tracker_dupcheck_rerank_model: str = "gpt-6-luna"
+    # tracker.duplicate_check's judge call.
+    tracker_dupcheck_judge_model: str = ""
+
+    # --- observability ----------------------------------------------------------
+    # The sampled retrieval judge (retrieval_judge_sample_rate). Deliberately a
+    # different model from the ones answering: a same-model judge measures
+    # agreement, not quality.
+    retrieval_judge_model: str = "gpt-6.1-sol"
+
+
+# ===== Namespace ==============================================================
+
+
+class NamespaceSettings(BaseModel):
+    """Namespace registration, write marks and bench-namespace GC."""
+
+    # ---- namespace write marks ----
+    # loom.namespace_write_marks is an in-process max per (org, namespace,
+    # plane), flushed as one INSERT this often.
+    namespace_write_marks_flush_interval_s: float = 5.0
+
+    # ---- namespace registration and GC ----
+    # A principal's first write into a namespace with no loom.namespaces row
+    # inserts one: owner = token subject, `kind = 'bench'` under a bench
+    # prefix, `retention_days = 0` (never a TTL). No
+    # ALTER.
+    namespace_autoregister_enabled: bool = True
+    # Op-name prefixes the auto-register hook ignores: ops on a namespace
+    # rather than into it, the code plane (registers `kind = 'code'` itself),
+    # and the operator planes.
+    namespace_autoregister_skip_prefixes: str = (
+        "namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,erasure."
+    )
+    # Comma-separated name prefixes of throwaway harness namespaces: stamped
+    # `kind = 'bench'` by `namespace.register` (when no kind is given) and
+    # auto-register, and scanned by `namespaces-gc`.
+    namespace_bench_prefixes: str = (
+        "lme-,mb-,td-,locomo-,kcurve-,wpath-,bench-,ma-verbatim-,mab-,musique-"
+    )
+    # namespace_gc: `kind = 'bench'` namespaces with live memory and no write
+    # for idle_hours are purged by one list-scoped erasure saga per batch, at
+    # most sagas_per_pass a pass, kept to loom tables.
+    namespace_gc_worker_enabled: bool = True
+    # Seconds between namespace GC passes.
+    namespace_gc_interval_seconds: int = 3600
+    # Hours without a write before a bench namespace is purged.
+    namespace_gc_idle_hours: int = 24
+    # Namespaces one erasure saga purges, oldest write first (at least 1).
+    namespace_gc_batch: int = Field(default=200, ge=1)
+    # Erasure sagas one GC pass submits (at least 1).
+    namespace_gc_sagas_per_pass: int = Field(default=1, ge=1)
+
+
+# ===== Observability ==========================================================
+
+
+class ObservabilitySettings(BaseModel):
+    """Telemetry, audit, tracing and the ops surface."""
+
+    # Root log level. (Bind host/port are flags of `loom serve`, not settings.)
+    log_level: Annotated[Literal["debug", "info", "warning", "error", "critical"], CaseFolded] = (
+        "info"
+    )
+    # "text" (dev) or "json" (production).
+    log_format: Annotated[Literal["text", "json"], CaseFolded] = "text"
+
+    # ops.health's create/read/update/delete mix over the window: warns when
+    # reads per write exceed the bar (polling load) or, after `min_writes`,
+    # the update share falls below its bar (append-only bank).
+    ops_op_mix_window_days: int = 7
+    # Reads per write above which the `op_mix` check warns (polling load).
+    ops_op_mix_reads_per_write_warn: float = 20.0
+    # Share of writes that are updates below which the check warns (append-only bank).
+    ops_op_mix_update_share_warn: float = 0.01
+    # Writes in the window before the update-share warning can fire.
+    ops_op_mix_min_writes: int = 500
+    # ops.health `procedure_plane`: warns when ≥ `min_packs` packs flowed and
+    # none showed a procedure while procedures exist, or when success retention
+    # over ≥ `min_pairs` pairs is below `retention_warn`.
+    ops_procedure_plane_window_days: int = 7
+    # Context packs in the window before "no pack showed a procedure" can warn.
+    ops_procedure_plane_min_packs: int = 50
+    # Success retention (fraction) below which the `procedure_plane` check warns.
+    ops_procedure_plane_retention_warn: float = 0.5
+    # Pairs the retention is measured over before its warning can fire.
+    ops_procedure_plane_min_pairs: int = 20
+    # Periodic re-hash of audit rows; a mismatch writes `audit.tamper_detected`.
+    # Per-row detection, not a hash chain (see server/observability/audit.py).
+    audit_verifier_enabled: bool = True
+    # Seconds between audit verifier passes (row re-hash and checkpoint sealing).
+    audit_verifier_interval_seconds: int = 3600
+    # Length, seconds, of one audit window. Each closed window is sealed as a
+    # chained checkpoint once `grace_seconds` old, and the last `verify_windows`
+    # are recounted every pass: a short recount is a deletion, which per-row
+    # hashes cannot see.
+    audit_checkpoint_window_seconds: int = 3600
+    # Seconds after a window closes before it is sealed.
+    audit_checkpoint_grace_seconds: int = 600
+    # Most recent sealed windows recounted every pass (at least 1).
+    audit_checkpoint_verify_windows: int = Field(default=24, ge=1)
+    # Most windows one pass seals; a backlog is sealed over later passes.
+    audit_checkpoint_max_seal_per_pass: int = 48
+
+    # OTel exporter, for spans and metrics: "ch" writes to `default.otel_traces`
+    # and `default.otel_metrics_*` on the same service, "otlp" ships to
+    # otel_exporter_otlp_endpoint (headers: comma-separated K=V), "" = auto
+    # (otlp when the endpoint is set, else ch).
+    otel_exporter: Annotated[Literal["", "ch", "otlp"], CaseFolded] = ""
+    # Seconds between refreshes of the per-namespace code-plane COUNT gauges
+    # (one FINAL scan each of code_files, code_chunks, code_symbols and
+    # code_edges, on the lease holder). The counts move once an index run, so
+    # an hour is enough; each refresh reads every live code row. 0 = every export.
+    otel_code_counts_cache_s: int = 3600
+    # Seconds between recounts of the code.grep wrong-abstain gauge (a
+    # `content` scan per namespace with abstains). 0 = gauge off.
+    otel_code_grep_replay_cache_s: int = 3600
+    # Max namespaces `loom.memory.agent_labels_24h` names per probe (top N by
+    # label total); the rest sum under `loom.namespace = "other"`. 0 = no cap.
+    otel_agent_labels_max_namespaces: int = 20
+    # Seconds between the state probe's whole-table readings (embed backlog,
+    # integrity invariants), taken on the lease holder only. The invariants
+    # read 0 and exist to catch drift, so an hour is enough; each reading is
+    # one FINAL pass over memory, memory_embeddings and entity_vectors.
+    otel_invariants_probe_s: int = 3600
+    # Seconds between retention censuses (`loom.retention.*`: per-org counts
+    # over 7- and 45-day windows; one FINAL pass over loom.memory on the lease
+    # holder). 0 = every export.
+    otel_retention_census_s: int = 3600
+    # Who takes the whole-table censuses (invariants, code-plane counts,
+    # retention, agent labels, storage): "leader" = only the supervisor-lease
+    # holder, "process" = every process (costly).
+    otel_census_scope: Literal["leader", "process"] = "leader"
+    # Metric export cadence, seconds. Spans keep their own 3 s batch delay,
+    # which bounds span loss at SIGTERM.
+    otel_metrics_export_interval_s: int = 60
+    # Delta temporality for counters and histograms (an idle synchronous
+    # series writes no row). Off: the dashboards (deploy/hyperdx_dashboards.md)
+    # read cumulative rows — flip together with them.
+    otel_metrics_delta_temporality: bool = False
+    # Write a gauge point only when its value changed or this many seconds
+    # after the last write; 0 = every export. The ClickHouse exporter only
+    # (LOOM_OTEL_EXPORTER=ch); OTLP exports every point. Off because gauge
+    # tiles fill gaps with 0 and would draw a sawtooth.
+    otel_gauge_heartbeat_s: int = 0
+    # OTLP/HTTP collector base URL (`/v1/traces` and `/v1/metrics` are appended); set with
+    # `otel_exporter` = "", it selects the otlp exporter.
+    otel_exporter_otlp_endpoint: str = ""
+    # Comma-separated K=V headers sent to that endpoint, e.g.
+    # `Authorization=Bearer <token>`.
+    otel_exporter_otlp_headers: str = ""
+    # OTel resource `service.name` and `deployment.environment` stamped on
+    # every span, log and metric.
+    otel_service_name: str = "loom"
+    # The `deployment.environment` value.
+    otel_environment: str = "dev"
+    # Comma-separated path regexes the FastAPI instrumentation opens no span
+    # for (health polls). "" = instrument every path but the sign-in routes
+    # (/oauth/), which are always left out: their URLs carry codes.
+    otel_excluded_urls: str = "/v1/health"
+
+    # Scales every per-op `budget_p99_ms` (tuned for local CH) at the
+    # comparison site; set e.g. 20.0 on Cloud so SLO alerts don't fire on
+    # baseline RTT.
+    latency_budget_multiplier: float = 1.0
+    # JSON map {consumer: {op | "*": ms | "<n>x"}}: an integer is a budget in
+    # ms, "3x" multiplies the op's declared budget. Checked after runtime
+    # `admin/budget.set` overrides, before per-op ones; malformed = logged once
+    # and ignored. '' = none.
+    latency_budget_overrides_by_consumer: Annotated[str, JsonObject] = ""
+
+    # One agent_events row per worker pass that spent something or failed
+    # (operation worker.<name>.pass, kind='worker'); loom.worker_status records
+    # every pass.
+    worker_ledger_rows: bool = True
+
+    # Master switch for OTel emission. `init_otel()` also refuses under pytest
+    # regardless: server/main.py calls it at import, and a test run must never
+    # ship rows into production observability tables.
+    otel_enabled: bool = True
+
+    # Langfuse: with both set, OTel spans are forwarded to Langfuse's OTLP
+    # endpoint as a second span processor beside the ClickHouse exporter,
+    # retrieval scores are posted, and the erasure saga makes real HTTP DELETE
+    # calls (empty = log intent only). The token is `pk-lf-…:sk-lf-…`.
+    langfuse_url: str = ""
+    # Langfuse `pk-lf-…:sk-lf-…` key pair for erasure, scores and the OTLP forward.
+    langfuse_admin_token: str = ""
+    # Fraction of TRACES forwarded, sampled by trace id so a trace arrives
+    # whole. Span volume is dominated by worker embeddings; turn down in
+    # production.
+    langfuse_sample_rate: float = 1.0
+    # Span-name prefixes never forwarded: high-volume infrastructure spans with
+    # no LLM work (they belong in ClickStack).
+    langfuse_span_denylist: str = "ch.query,ch.insert,GET /v1/health,POST /v1/health"
+    # Score-POST circuit breaker: consecutive failures that open it.
+    langfuse_circuit_failure_threshold: int = 5
+    # Seconds the open breaker waits before a trial call (floor 1).
+    langfuse_circuit_cooldown_s: float = Field(default=30.0, ge=1.0)
+    # How much LLM prompt/completion text is recorded, by what the prompt holds:
+    #   "off"   — none (default; consent is given, not withdrawn).
+    #   "query" — only legs whose prompt is the user's own search text (hyde,
+    #             query_rewrite, enrichment, …).
+    #   "all"   — also legs carrying retrieved memories or conversation turns
+    #             (inline_rerank, iterative_judge, extract, session_summary, …).
+    # A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒
+    # all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token
+    # counts, cost, latency and quality scores are never gated.
+    langfuse_capture_io_level: Annotated[Literal["off", "query", "all"], CaseFolded] = "off"
+
+    # Per-field cap on recorded prompt/completion text; truncation adds an
+    # explicit marker.
+    langfuse_generation_io_max_chars: int = 2000
+    # Fraction of searches sent to an independent LLM judge, written back as a
+    # `retrieval_relevance` score (unlike loom's own confidence scores, it
+    # shares no state with retrieval). 0.0 = off: it costs money per search;
+    # a few percent (e.g. 0.05) suits production.
+    retrieval_judge_sample_rate: float = 0.0
+
+
+# ===== Provider ===============================================================
+
+# The providers' own APIs: a gateway's token never goes there (server/llm/gateway.py).
+PROVIDER_API_HOSTS = frozenset({"api.openai.com", "api.anthropic.com"})
+
+
+def is_provider_api(url: str) -> bool:
+    """Whether `url` is a provider's own API, a regional host of it too."""
+    host = (urlsplit(url).hostname or "").rstrip(".")
+    return any(host == h or host.endswith("." + h) for h in PROVIDER_API_HOSTS)
+
+
+# A configured rerank endpoint's name: what a request or a namespace sends instead of a URL.
+RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+
+
+class ProviderSettings(ModelSettings):
+    """Embedding and LLM providers."""
+
+    # Inherits ModelSettings for `llm_model`, which the provider resolution below
+    # reads and fills.
+    # Vector width the embedder is asked for and the schema is sized from; the width probed from
+    # the embedder at boot wins when they differ. Change it together with `embedding_model`.
+    # Unset with a `local:*` model, it is that model's own width.
+    embedding_dim: int = Field(3072, ge=1)
+
+    # "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-*
+    # → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin
+    # "openai", "gemini", "local", "fake".
+    # Switching providers changes the embedding space: a full re-embed is
+    # required.
+    embedding_provider: Annotated[
+        Literal["", "openai", "gemini", "compatible", "local", "fake"], CaseFolded
+    ] = ""
+    # API root for an explicitly selected OpenAI-compatible embedding service,
+    # e.g. https://provider.example/v1. Empty is invalid for compatible providers.
+    embedding_base_url: str = ""
+    # Send the optional dimensions request parameter to a compatible endpoint.
+    # False uses its native output width; responses must still match embedding_dim.
+    embedding_send_dimensions: bool = False
+    # OpenAI's API root, for chat and embeddings: point it at an
+    # OpenAI-compatible inference gateway in front of OpenAI (its /v1 root).
+    openai_base_url: str = "https://api.openai.com/v1"
+    # Anthropic's API root (the Messages API is <root>/v1/messages): point it at
+    # a gateway in front of Anthropic. Off the default, the key also goes as a
+    # bearer, the scheme gateways take.
+    anthropic_base_url: str = "https://api.anthropic.com"
+    # Model calls with no provider key: exchange an identity token (RFC 8693)
+    # at this token endpoint of the gateway, and send the answer as the bearer
+    # (server/llm/gateway.py). The gateway must trust the token's issuer. "" =
+    # the provider keys.
+    inference_token_url: str = ""
+    # The workload's OIDC token, as a file its platform rotates (a projected
+    # service-account token on Kubernetes). With inference_token_url, this or
+    # inference_token_audience.
+    inference_workload_token_file: str = ""
+    # With inference_token_url and no workload token: the audience of the identity token Loom
+    # signs (issuer <https public_base_url>/v1, newest RS256 key); never jwt_audience.
+    inference_token_audience: str = ""
+    # The scope sent with that exchange; "" sends none.
+    inference_token_scope: str = ""
+    # Shared query-embedding cache in loom.embedding_cache behind the
+    # per-process LRU, keyed (model, sha1 of normalised text). Only single-text
+    # (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use
+    # it. Off = process cache only.
+    embedding_cache_shared: bool = True
+    # Longest query text, characters, that uses the shared cache; 0 = no cap.
+    embedding_cache_shared_max_chars: int = 2000
+    # The per-process query-embedding LRU: entries held (0 = cache nothing)
+    # and seconds each lives.
+    embedding_cache_size: int = Field(10_000, ge=0)
+    # Seconds one per-process LRU entry lives.
+    embedding_cache_ttl_s: float = 3600.0
+
+    # Derive the similarity gates from this embedder's cosine distribution at
+    # boot (server/memory/app/embedder_calibration.py). False pins the scalar
+    # defaults (tuned for text-embedding-3-small) — re-bench after an embedder
+    # change. Fake embedders and probe failures always use the scalars.
+    adaptive_thresholds: bool = True
+    # Seconds between each replica's re-read of the shared calibration
+    # (loom.embedder_calibration), so every replica serves the same gates.
+    calibration_refresh_seconds: float = 60.0
+
+    # "openai" | "anthropic" | "fake"; "" = infer from LOOM_LLM_MODEL's name
+    # (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key
+    # present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once
+    # at load; an explicit value is never overridden. Run `make bench-quick`
+    # before making anthropic a default.
+    llm_provider: str = ""
+    # A fake or key-less provider is a `warn` in /v1/health `problems`; true
+    # (production) makes it an `error` and `status: degraded`, which preflight
+    # and monitors catch. Never changes the HTTP code (503 is ClickHouse-only).
+    require_real_providers: bool = False
+    # What decided `llm_provider` — "LOOM_LLM_PROVIDER" when
+    # explicit, else the evidence ("LOOM_LLM_MODEL=…", "OPENAI_API_KEY is set",
+    # "nothing set"). Read through `llm_provider_source()`; not an env var.
+    _llm_provider_source: str = PrivateAttr(default="LOOM_LLM_PROVIDER")
+    # Fields the env left unset and load filled in (the LLM pair, a local
+    # model's width): assigning them marks them set, but they are not the env's.
+    _inferred_fields: frozenset[str] = PrivateAttr(default=frozenset())
+
+    @model_validator(mode="after")
+    def _resolve_local_embedding_dim(self) -> ProviderSettings:
+        """A local model emits its own width, whatever LOOM_EMBEDDING_DIM says, and
+        the schema is sized from `embedding_dim`: unset, it takes the model's."""
+        if "embedding_dim" in self.model_fields_set:
+            return self
+        name = self.embedding_model
+        if name == "local" or name.startswith("local:"):
+            alias = name.partition(":")[2].strip() or DEFAULT_LOCAL_EMBEDDING_MODEL
+        elif self.embedding_provider == "local":
+            alias = DEFAULT_LOCAL_EMBEDDING_MODEL
+        else:
+            return self
+        if alias in LOCAL_EMBEDDING_MODELS:  # an unknown alias fails when the embedder is built
+            self.embedding_dim = LOCAL_EMBEDDING_MODELS[alias][1]
+            self._inferred_fields |= {"embedding_dim"}
+        return self
+
+    @model_validator(mode="after")
+    def _check_gateway(self) -> ProviderSettings:
+        """A mistyped API root or a token exchange missing its token fails at
+        load, not at the first model call."""
+        urls = {
+            "openai_base_url": self.openai_base_url,
+            "anthropic_base_url": self.anthropic_base_url,
+            "inference_token_url": self.inference_token_url,
+        }
+        for name, value in urls.items():
+            parts = urlsplit(value)
+            if value and (parts.scheme not in ("https", "http") or not parts.hostname):
+                raise ValueError(f"LOOM_{name.upper()} must be an http(s) URL, got {value!r}")
+        token = urlsplit(self.inference_token_url)
+        if token.scheme == "http" and token.hostname not in ("localhost", "127.0.0.1", "::1"):
+            # The identity token goes there.
+            raise ValueError("LOOM_INFERENCE_TOKEN_URL must be https")
+        if self.inference_token_audience and not self.inference_token_url:
+            raise ValueError("LOOM_INFERENCE_TOKEN_AUDIENCE needs LOOM_INFERENCE_TOKEN_URL")
+        sources = bool(self.inference_workload_token_file) + bool(self.inference_token_audience)
+        if self.inference_token_url and sources != 1:
+            raise ValueError(
+                "LOOM_INFERENCE_TOKEN_URL needs one of LOOM_INFERENCE_WORKLOAD_TOKEN_FILE (the "
+                "workload's token) and LOOM_INFERENCE_TOKEN_AUDIENCE (a token Loom signs)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _resolve_llm_provider(self) -> ProviderSettings:
+        """Resolve an unset LLM provider / model once, at load,
+        so `settings.llm_provider` is concrete everywhere (client factory,
+        /v1/health, `loom doctor`) and the three never disagree."""
+        from server.core.llm_provider import DEFAULT_MODEL_BY_PROVIDER, resolve_llm_provider
+
+        # An explicit provider is never overridden, so a typo (`openia`) would
+        # load as itself with no model and only fail at the first LLM call.
+        explicit = (self.llm_provider or "").strip().lower()
+        if explicit and explicit not in DEFAULT_MODEL_BY_PROVIDER:
+            raise ValueError(
+                f"unknown LOOM_LLM_PROVIDER={explicit!r}; expected one of: "
+                f"{', '.join(DEFAULT_MODEL_BY_PROVIDER)} (or leave empty to infer "
+                "from LOOM_LLM_MODEL or the API key present)"
+            )
+        # The pair moves together: an env that names either set both.
+        pair = frozenset({"llm_provider", "llm_model"})
+        inferred = pair if not (pair & self.model_fields_set) else frozenset()
+        resolved = resolve_llm_provider(self.llm_provider, self.llm_model)
+        self.llm_provider = resolved.provider
+        self.llm_model = resolved.model
+        self._llm_provider_source = resolved.source
+        self._inferred_fields |= inferred
+        return self
+
+    def env_fields_set(self) -> frozenset[str]:
+        """The fields this process's env (or constructor) set, without those
+        load inferred."""
+        return frozenset(self.model_fields_set) - self._inferred_fields
+
+    def llm_provider_inferred(self) -> bool:
+        """True when LOOM_LLM_PROVIDER was unset and the provider came from
+        the model name or a key — the case `loom doctor`
+        and the health problem list call out when the key is also missing."""
+        return self._llm_provider_source != "LOOM_LLM_PROVIDER"
+
+    def llm_provider_source(self) -> str:
+        """The evidence behind `llm_provider`, for logs."""
+        return self._llm_provider_source
+
+    # Reasoning effort sent to OpenAI models. "" = the lowest the model accepts
+    # (learned from its refusals, see server/llm/traits.py); set to pin one value
+    # for every call.
+    llm_openai_reasoning_effort: str = ""
+    # Thinking effort sent to Claude models as `output_config.effort`: "low" |
+    # "medium" | "high"; "" = send none (the model's own default). A model that
+    # does not take it refuses it once and is not sent it again.
+    llm_anthropic_effort: str = ""
+    # Most output tokens a call adds over the caller's cap for a model's hidden
+    # reasoning. The reserve per model is learned from the reasoning tokens its
+    # replies report (twice the most it has spent) and capped here.
+    llm_hidden_reasoning_reserve_max: int = Field(16384, ge=0)
+    # Seconds an LLM call waits for its reply before the client retries. Generous
+    # on purpose: it only catches a hung connection, so a slow model or a long
+    # output never hits it. Calls that must be fast set their own, shorter
+    # deadline (HyDE, search budgets).
+    llm_request_timeout_s: float = Field(300.0, gt=0)
+
+    # JSON {class: {"llm_cache": bool, "strong": bool, "mid": bool}}:
+    # `llm_cache` overrides the class's cache default (a per-request pin
+    # wins); `strong`/`mid` false bars the cascade from that tier. Unlisted =
+    # every tier eligible.
+    llm_policy_by_traffic_class: Annotated[str, JsonObject] = '{"bench": {"llm_cache": true}}'
+    # JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's
+    # `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are
+    # short identifiers, URLs http(s). Loom posts candidate text only to these.
+    rerank_endpoints_json: Annotated[str, JsonObject] = "{}"
+
+    def rerank_endpoint_map(self) -> dict[str, str]:
+        """The operator's rerank endpoints, name → URL."""
+        raw = self.rerank_endpoints_json.strip()
+        if not raw:
+            return {}
+        return dict(json_map_items(raw, "rerank_endpoints_json"))
+
+    @model_validator(mode="after")
+    def _check_gateway_is_in_front(self) -> ProviderSettings:
+        """The gateway's token is for the gateway: any model a request or the
+        dashboard names may be either provider's, so both API roots must point
+        away from the providers' own hosts (the senders refuse them too)."""
+        if not self.inference_token_url:
+            return self
+        for name, url in (
+            ("LOOM_OPENAI_BASE_URL", self.openai_base_url),
+            ("LOOM_ANTHROPIC_BASE_URL", self.anthropic_base_url),
+        ):
+            if is_provider_api(url):
+                raise ValueError(f"LOOM_INFERENCE_TOKEN_URL needs {name} at the gateway")
+        return self
+
+    @model_validator(mode="after")
+    def _check_rerank_endpoints(self) -> ProviderSettings:
+        """Every name is a short identifier and every URL http(s) with a host. The
+        error names the entry, never the URL (it can carry a credential)."""
+        for name, url in self.rerank_endpoint_map().items():
+            if not RERANK_NAME_RE.fullmatch(name) or name == "none":
+                raise ValueError(
+                    f"LOOM_RERANK_ENDPOINTS_JSON: {name[:64]!r} is not a valid name "
+                    "(letters, digits, '_' or '-', at most 64, not 'none')"
+                )
+            parts = urlsplit(url)
+            if parts.scheme not in ("http", "https") or not parts.hostname:
+                raise ValueError(f"LOOM_RERANK_ENDPOINTS_JSON: {name!r} is not an http(s) URL")
+        return self
+
+    # Skip the rerank when the vector top hit's cosine is ≥ this (strong
+    # matches rank reliably; the rerank costs ~500 ms). Fallback when the
+    # adaptive gate has no probe.
+    llm_rerank_skip_above: float = 0.62
+
+    # Recovery worker: retries failed embeds and reconciles orphan
+    # scope='shared' rows (the write path embeds inline).
+    embedding_worker_enabled: bool = True
+    # Seconds between recovery worker passes while there is work.
+    embedding_worker_interval_seconds: int = 5
+    # Sleep after an idle pass (nothing to embed); the 5 s interval resumes
+    # once a pass writes a row.
+    embedding_worker_idle_interval_seconds: int = 30
+    # Orphan reconciliation: the full memory × embedding anti-join runs once
+    # per `full_scan_seconds`; other passes check only memories of the last
+    # `recent_seconds`. 0 = full join every pass.
+    embedding_worker_orphan_full_scan_seconds: int = 1800
+    # Age window, seconds, of the memories a non-full orphan pass checks.
+    embedding_worker_orphan_recent_seconds: int = 900
+    # The table the wrapper reads and writes; an isolated server whose boot
+    # migrations are off points this at its own scratch mirror.
+    llm_response_cache_table: str = "loom.llm_response_cache"
+
+
+# ===== RateLimit ==============================================================
+
+
+class RateLimitSettings(BaseModel):
+    """Rate limits: per-actor and per-traffic-class buckets, shared across web workers."""
+
+    # Per-actor rate-limit bucket, keyed (namespace, token subject), as a
+    # fraction of the namespace limit. 1.0 = no actor bucket; 0.6 leaves a
+    # second credential budget while one sweeps.
+    ratelimit_actor_fraction: float = 1.0
+    # Share rate buckets across one server's web workers via a memory-mapped
+    # file, so a keep-alive client pinned to one worker sees the full cap.
+    # auto = when web_workers > 1; on = always; off = per-process buckets
+    # divided by replicas × workers.
+    ratelimit_shared: Literal["auto", "on", "off"] = "auto"
+    # Bucket file; "" = one per server in the runtime dir (server/core/runtime_files.py).
+    # The file is 0600 and never opened through a symlink. Set it for two servers
+    # sharing one cap.
+    ratelimit_shared_path: str = ""
+    # Table slots (32 bytes each). Every process of a server must agree; a
+    # mismatch falls back to per-process buckets and shows in /v1/health.
+    ratelimit_shared_slots: int = Field(default=16384, ge=1)
+    # JSON {class: fraction}: a traffic class carved into its own bucket of the
+    # base cap × fraction, so a bench sweep never spends production's budget.
+    # Class = token `traffic_class` claim, else namespace row, else request
+    # hint, else interactive. Absent class = 1.0 (base bucket).
+    ratelimit_class_fractions: Annotated[str, JsonObject] = '{"bench": 0.5}'
+    # Requests one org may have in flight at once, deployment-wide. Each
+    # process holds its share (divided by replicas × web workers, at least 1);
+    # a call over it gets 429 RATE_LIMITED. 0 = no cap.
+    tenant_max_concurrent_requests: int = Field(default=256, ge=0)
+
+
+# ===== Runtime ================================================================
+
+
+class RuntimeSettings(BaseModel):
+    """Process shape, deployment, event stream and cost budgets."""
+
+    # Deployed git commit, stamped at image build (ARG LOOM_BUILD_COMMIT) and
+    # shown in /v1/health. Empty in a source run.
+    build_commit: str = ""
+
+    # Flush cadence of the loom.events queue (budget violations); also the
+    # visibility delay of those rows and the loss window on a process crash.
+    events_stream_flush_interval_s: float = 1.0
+    # Queued telemetry rows that trigger a flush before the interval elapses.
+    events_stream_flush_batch: int = 500
+    # How long a namespace's registry class is kept in the process cache.
+    traffic_class_registry_ttl_seconds: int = 300
+
+    # Daily LLM spend cap per namespace, USD: extraction workers skip a
+    # namespace whose rolling 24 h cost reached it. Overridden per namespace by
+    # loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers.
+    default_daily_cost_cap_usd: float = 1.0
+
+    # The rate limiter divides every cap by the deployment's replica count so
+    # the replicas' sum matches the target (approximate, not cluster-strict).
+    # The count is the hosts with a live serving loom.instances row; this is
+    # its floor, and the count while those rows cannot be read.
+    replica_count: int = Field(default=1, ge=1)
+    # False for a process no load balancer routes to (a workers-only
+    # container): its instance row does not count as a replica.
+    serves_traffic: bool = True
+    # Seconds between this process's loom.instances heartbeats, each of which
+    # also compares it with the deployment's published configuration. A row
+    # not renewed for three intervals is not live.
+    instance_heartbeat_seconds: float = Field(default=10.0, ge=1.0)
+    # uvicorn processes per container (the image's default: server.core.web_workers);
+    # the rate limiter counts N workers as N replicas.
+    web_workers: int = Field(default=1, ge=1)
+    # Directory of the files one server's web processes share (the rate-limit
+    # table); "" = chosen per process by server/core/runtime_files.py.
+    # scripts/serve.sh sets it once, before the workers start, so all of them
+    # name the same files.
+    runtime_dir: str = ""
+    # Which processes run the WorkerSupervisor: auto = the one process of the
+    # deployment holding the `workers_supervisor` lease in ClickHouse
+    # (server/workers/leader.py), and none outside the deployment (no
+    # LOOM_DEPLOYMENT); on = always; off = never (a pure web replica).
+    background_workers: Literal["auto", "on", "off"] = "auto"
+    # auto mode: seconds a lease holder that stops renewing keeps the workers
+    # before another process takes them over (failover time). At least 24: below
+    # that a renewal blocked for its 2 s timeout leaves no retry before the
+    # holder must give up (server/workers/leader.py has the timings).
+    supervisor_lease_ttl_s: int = Field(default=30, ge=24)
+    # Seconds between passes of the always-on sweep that deletes the KeeperMap
+    # keys (leases, claims, graph slots) a stopped process left behind.
+    keeper_sweep_interval_seconds: float = Field(default=3600.0, gt=0)
+    # auto mode: where the lease holder runs the workers. child = a separate
+    # process it starts and stops with the lease, so the passes do not share
+    # the event loop that serves requests; inline = in the serving process.
+    workers_process: Literal["child", "inline"] = "child"
+    # Seconds a process keeps serving after SIGTERM while /v1/health/ready
+    # answers 503, so the load balancer stops routing to it before its port
+    # closes. Size it to the LB's probe interval × failure threshold. 0 = stop at once.
+    shutdown_ready_delay_s: float = Field(default=15.0, ge=0)
+    # Seconds boot waits for the first load of the tracker registry and the
+    # runtime overrides, and the first publish of the dashboard bundle, before
+    # it serves; readiness stays false until the first two load.
+    boot_warmup_timeout_s: float = Field(default=30.0, ge=0)
+    # True: /v1/health/ready also waits until the mirror warm-up has queued its
+    # clones and while a clone of this host's git mirrors is running or queued (a
+    # failed clone does not hold it). Needs LOOM_CODE_MIRROR_WARMUP: without the
+    # warm-up nothing is cloned at boot and readiness does not wait for mirrors.
+    # Off by default: history ops answer `no_git_mirror` meanwhile.
+    ready_requires_mirrors: bool = False
+    # Seconds between re-reads of loom.runtime_overrides (the admin rate-limit,
+    # latency-budget and live-setting overrides) in every process.
+    runtime_overrides_refresh_seconds: float = 10.0
+    # The deployment's compose files set LOOM_DEPLOYMENT=1; every other process
+    # must set LOOM_INSTANCE_LABEL (e.g. `iso:<worktree>:<port>`,
+    # `ci:integration`). A process with neither refuses to start, so every
+    # ledger row is attributable.
+    deployment: bool = False
+    # At most one `budget.violated` audit row per op per this many seconds
+    # (the row carries `suppressed_since_last`). 0 = a row per violation.
+    budget_violation_audit_interval_s: float = 60.0
+    # Violations per window that still write their own row before the rest are
+    # folded into the next: a short burst stays visible, a storm costs at most
+    # this many inserts a minute per (op, org, namespace).
+    budget_violation_audit_burst: int = 5
+    # The address the server hands to clients — the Setup page's config
+    # block, `claude mcp add`, a bot's claim_url, OAuth metadata. Empty = the
+    # request's own Host and scheme, which only a loopback bind may rely on:
+    # a non-loopback bind_host refuses to start without it.
+    public_base_url: str = ""
+    # The address Loom is reachable on: `loom serve` and `make server` bind
+    # it; in a container (which listens on all its interfaces) it is the
+    # address the port is published on. Anything but loopback turns on the
+    # startup checks for the dev secret, auth-off and public_base_url.
+    bind_host: str = "127.0.0.1"
+    # Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto
+    # headers uvicorn applies; any other peer's are ignored. "*" trusts all.
+    # Required behind a load balancer: at the default every client counts as the
+    # balancer's address for the sign-in and sign-up limits.
+    trusted_proxies: str = "127.0.0.1"
+    # True lets a non-loopback bind start with the dev signing secret or
+    # with auth off. Only for a port that is not actually reachable by others.
+    allow_insecure: bool = False
+
+    def workers_mode(self) -> str:
+        """`background_workers` as this process runs it: `auto` outside the
+        deployment is `off`, so a branch server never runs the deployment's
+        workers. `on` is the explicit opt-in there."""
+        if self.background_workers == "auto" and not self.deployment:
+            return "off"
+        return self.background_workers
+
+
+# ===== Storage ================================================================
+
+
+class StorageSettings(BaseModel):
+    """Storage: document originals, per-table retention and warm-tier moves."""
+
+    # ---- document originals (loom.document_blobs) ----
+    # The sweep that deletes originals no live document points at: those of
+    # deleted and re-uploaded documents, and of documents that retention
+    # (retention_documents_days, a namespace's retention_days) aged out, so the
+    # bytes leave with their rows.
+    document_blob_gc_enabled: bool = True
+    # Seconds between sweeps.
+    document_blob_gc_interval_seconds: int = 3600
+    # Seconds an original must have gone unwritten before the sweep may remove
+    # it. A write stores its original before the document row that names it, so
+    # a younger original may belong to a write still in flight. Erasure ignores
+    # it and deletes every original of its scope.
+    document_blob_min_age_seconds: int = 3600
+
+    # ---- retention and tiering ----
+    # Opt-in retention/tiering, applied as idempotent ALTER TABLE MODIFY TTL by
+    # server/storage/retention_overrides.py:
+    #   - retention_*_days: delete rows older than N days. 0 = keep forever.
+    #   - tiering_*_warm_days: move rows older than W days to
+    #     tiering_warm_volume_name. 0 = no tiering.
+    # With both set, W must be < N or the move is a no-op (logged WARN).
+    retention_audit_log_days: int = 0
+    # Days `loom.agent_events` rows are kept; 0 = forever.
+    retention_agent_events_days: int = 0
+    # Days `loom.memory` rows are kept; 0 = forever.
+    retention_memory_days: int = 0
+    # Days `loom.memory_embeddings` rows are kept; 0 = forever.
+    retention_memory_embeddings_days: int = 0
+    # Days `loom.conversations` rows are kept; 0 = forever.
+    retention_conversations_days: int = 0
+    # Days `loom.chunks` rows are kept; 0 = forever.
+    retention_chunks_days: int = 0
+    # Days `loom.documents` rows are kept; 0 = forever.
+    retention_documents_days: int = 0
+    # The supervisor re-applies table TTLs from settings + namespace rows on
+    # this timer as metadata changes (materialize_ttl_after_modify = 0): rows
+    # already past a new TTL leave at their part's next merge or a manual
+    # MATERIALIZE TTL.
+    retention_reconcile_enabled: bool = True
+    # Seconds between TTL re-apply passes.
+    retention_reconcile_interval_seconds: int = 300
+
+    # ---- storage tiering ----
+    # Per-table warm-tier move age, days (see retention and tiering above).
+    tiering_audit_log_warm_days: int = 0
+    # Days before `loom.agent_events` rows move to the warm volume; 0 = never.
+    tiering_agent_events_warm_days: int = 0
+    # Days before `loom.memory` rows move to the warm volume; 0 = never.
+    tiering_memory_warm_days: int = 0
+    # Days before `loom.memory_embeddings` rows move to the warm volume;
+    # 0 = never.
+    tiering_memory_embeddings_warm_days: int = 0
+    # Days before `loom.conversations` rows move to the warm volume; 0 = never.
+    tiering_conversations_warm_days: int = 0
+    # Days before `loom.chunks` rows move to the warm volume; 0 = never.
+    tiering_chunks_warm_days: int = 0
+    # Days before `loom.documents` rows move to the warm volume; 0 = never.
+    tiering_documents_warm_days: int = 0
+
+    # Volume named in tiering TTL clauses; must match a volume in the
+    # cluster's storage_policies.
+    tiering_warm_volume_name: str = "warm"
+
+
+# ===== Task ===================================================================
+
+
+class TaskSettings(BaseModel):
+    """The task inbox workers and what run.complete does to a run's rows."""
+
+    # ---- task inbox ----
+    # Lease sweeper: return expired leases to todo, resume deferred tasks at
+    # resume_at, escalate stale triage. One read per pass.
+    task_lease_sweep_enabled: bool = True
+    # Seconds between passes while there is work.
+    task_lease_sweep_interval_seconds: int = 60
+    # Seconds between passes that found nothing.
+    task_lease_sweep_idle_interval_seconds: int = 300
+    # Post one Standard Webhooks-signed notice per new event batch to each
+    # inbox's webhook_url; the secret comes from the env var
+    # task_inboxes.webhook_secret_ref names (`LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`,
+    # one of the inbox org's own).
+    task_webhook_deliver_enabled: bool = True
+    # Seconds between passes while notices are going out.
+    task_webhook_deliver_interval_seconds: int = 5
+    # Seconds between passes that found no new event.
+    task_webhook_deliver_idle_interval_seconds: int = 30
+    # Events one notice carries at most.
+    task_webhook_batch_limit: Annotated[int, LIVE] = Field(default=200, ge=1)
+    # Seconds between passes of the always-on sweep that closes the runs of
+    # idle MCP sessions.
+    mcp_session_run_sweep_interval_seconds: int = Field(default=60, ge=1)
+
+    # ---- run completion ----
+    # What run.complete does to the rows the run wrote when the call does not
+    # say: keep = nothing; demote = scale confidence by the expiry demote
+    # factor now; expire = expires_at now + memory_run_complete_expire_days
+    # with on_expire=demote. Pinned, verified, promoted, locked, episodic and
+    # reflection rows are always kept, and so is everything an MCP session's
+    # implicit run wrote when the transport closes it.
+    memory_run_complete_retain: Literal["keep", "demote", "expire"] = "keep"
+    # Days until expiry for `memory_run_complete_retain = expire`.
+    memory_run_complete_expire_days: int = 7
+
+
+# ===== Tracker ================================================================
+
+
+class TrackerSettings(BaseModel):
+    """The tracker plane: records, duplicate checks, bisect."""
+
+    # --- tracker record, read live -------------------------
+    # Per-statement `max_execution_time` on the remote, seconds; the client's receive
+    # timeout is this plus 5 s.
+    tracker_live_timeout_s: float = 1.5
+    # Caller-side budget per read, ms: past it the read is `tracker_unavailable` and
+    # counts against the breaker.
+    tracker_live_budget_ms: int = 300
+    # Process cache TTL for live rows, seconds (upstream refreshes every 5–10 min); an
+    # empty result is kept at most 60 s.
+    tracker_live_cache_ttl_s: float = 300.0
+    # Kill switch: off = every tracker read answers `tracker_unavailable`.
+    tracker_live_serve: bool = True
+    # Budget of the bisect candidate read, which scans a release range's diffs, ms: a
+    # triage step, not an interactive one.
+    tracker_live_bisect_budget_ms: int = 6000
+    # Budget of the text-index reads (similar bugs, threads, changelog, PRs by
+    # path, area escalations / incidents by term), ms; above the 300 ms interactive
+    # budget.
+    tracker_live_text_budget_ms: int = 900
+    # Breaker per credential: consecutive failures that open it, and how long
+    # it stays open before one probe read.
+    tracker_circuit_failure_threshold: int = 3
+    # Seconds an open breaker stays open before one probe read (at least 1 s).
+    tracker_circuit_cooldown_s: float = Field(default=120.0, ge=1.0)
+    # --- tracker org and code-namespace bindings ------------------------------
+    # The loom org the tracker namespaces belong to; empty (default) = none, so no
+    # tracker namespace serves and self-service sources are refused until it is set.
+    tracker_org: str = ""
+    # Which tracker namespace a code namespace reads its facts from:
+    # glob keys → namespace, e.g. {"code-myrepo*": "tracker-myrepo"}. Numbers are
+    # repository-global, so every branch namespace binds to its repository's one
+    # tracker namespace. '' = no QA facts anywhere.
+    tracker_code_namespace_bindings_json: Annotated[str, JsonObject] = ""
+    # --- tracker sources and the record contract ------------------------------
+    # Every tracker source and the namespaces that read them:
+    # {"sources": {"<name>": {"host": "x.clickhouse.cloud", "port": 8443,
+    #   "secure": true, "database": "loom_tracker"}},
+    #  "namespaces": {"qa-<team>": {"source": "<name>", "repos": ["Org/repo"],
+    #   "restricted": false}}}. A namespace naming an unknown source does not serve (one
+    # error line, never a guess).
+    tracker_sources_json: Annotated[str, JsonObject] = ""
+    # The repositories whose numbers name a restricted namespace's escalations and core
+    # incidents, as `Org/repo`: {"escalation": "Org/escalations", "incident":
+    # "Org/incidents"}. `escalation_context` / `incident_context` read the record
+    # `Org/repo#<number>`; a kind with no repository here reads no record by number.
+    tracker_restricted_repos_json: Annotated[str, JsonObject] = ""
+    # Credentials per source, kept apart from the map above:
+    # {"<name>": {"user": "...", "password": "..."}}.
+    tracker_credentials_json: Annotated[str, JsonObject] = ""
+    # A source serves only while its schema meets the record contract
+    # (docs/features/tracker/record-contract.md), checked through its own credential once per
+    # this many seconds (at least 1 s); a failed check retries after 60 s.
+    tracker_contract_ttl_s: float = Field(default=3600.0, ge=1.0)
+    # --- self-service tracker sources -----------------------------------------
+    # Self-service tracker sources: any signed-in org member registers
+    # one (`tracker.source.add`); credential and schema are checked before any write.
+    # Off = only the operator's map serves; loom.qa_sources rows are
+    # ignored. `_max_sources` caps the registrations.
+    tracker_self_service_enabled: bool = True
+    # At most this many self-service sources an org may register; a further
+    # `tracker.source.add` is refused.
+    tracker_self_service_max_sources: int = 10
+    # A registered host must resolve to a public address (no loopback, RFC 1918,
+    # link-local, CGNAT 100.64/10 or multicast); True lets a dev stack point
+    # at a local ClickHouse.
+    tracker_self_service_allow_private_hosts: bool = False
+    # How often a process re-reads loom.qa_sources (seconds); a write in this
+    # process refreshes at once.
+    tracker_sources_refresh_seconds: float = 60.0
+    # --- similar items (tracker.similar) --------------------------------------
+    # Whether tracker.similar's vector leg (over
+    # loom.qa_item_embeddings, filled by the `tracker_embed` pass) is in the default
+    # leg set; a caller naming `vector` in `legs` runs it regardless. The leg only adds
+    # candidates, after the ranked legs (the agreement boost below aside).
+    tracker_similar_vector_leg: bool = True
+    # The agreement boost: a tracker.similar candidate found by a ranked leg AND the
+    # vector leg gains the vector leg's RRF contribution times this weight (1.0 = counts
+    # like a ranked leg, 0.5 = a tie-breaker) and the ranked set is re-sorted;
+    # vector-only candidates stay appended.
+    tracker_similar_agreement_weight: float = 1.0
+    # The deepest vector-leg rank that may boost a ranked candidate; 0 = any rank.
+    tracker_similar_agreement_max_rank: int = 5
+    # Ms the vector leg waits for its query-time catch-up (embedding the
+    # items changed since the pass's cursor), run beside the cosine scan. Past it the
+    # call answers from the table (`query.fresh_pending = true`) and the embedding
+    # finishes in the background for the next call.
+    tracker_similar_catch_up_budget_ms: int = 300
+    # --- the tracker_embed pass --------------------------------------------------
+    # Every interval (seconds), for each configured tracker namespace, the issues and
+    # PRs open or closed within `closed_days` and changed since the last pass are
+    # embedded (`title + "\n" + left(body, body_chars)`, `tracker_embed_batch` a call)
+    # into loom.qa_item_embeddings; an unchanged text (sha256) is skipped, an item that
+    # left the window is tombstoned. Off = nothing is written; the leg serves the table
+    # plus its query-time catch-up. The interval bounds only that catch-up, never what
+    # a query can find.
+    tracker_embed_enabled: bool = True
+    # Seconds between `tracker_embed` passes.
+    tracker_embed_interval_seconds: float = 1800.0
+    # The embedding window for PRs, days: a PR closed longer ago is not embedded
+    # and one that leaves the window is tombstoned.
+    tracker_embed_closed_days: int = 365
+    # The window for ISSUES, days (3650 = every closed issue the record holds):
+    # labelled duplicate targets are often closed long before the draft. PRs keep
+    # `tracker_embed_closed_days`.
+    tracker_embed_issue_closed_days: int = 3650
+    # Body characters embedded per item. Must stay under the
+    # embedder's 8,191-token input limit (a stack trace runs ~2 chars a token; one
+    # oversized text fails the whole batch). A change needs a re-embed
+    # (`loom tracker-embed-reset`, then the pass).
+    tracker_embed_body_chars: int = 8000
+    # Items sent to the embedder in one call (at least 1).
+    tracker_embed_batch: int = Field(default=200, ge=1)
+    # The nearest read's codes-shortlist over-fetch on
+    # loom.qa_item_embeddings (x10's misses are BFloat16 rounding only).
+    tracker_embed_fetch_multiplier: float = 10.0
+    # Seconds the issue corpus's per-token document frequency (for
+    # BM25F) is cached per process; the upstream index cannot count it inside a budget.
+    tracker_similar_idf_ttl_s: float = 3600.0
+    # --- an issue names the PRs that probably fixed it -----------------------
+    # A daily pass ranks, for every issue opened in the last `issue_days`, the merged
+    # trunk PRs of the `window_days` after it (from a week before) by BM25F over title
+    # and body, the issue's stack frames in the PR's diff, the closing mention and the
+    # component, and writes each issue's top `per_issue` into
+    # loom.qa_link_candidates. Off = nothing is written; `tracker.links` serves the table.
+    tracker_links_enabled: bool = True
+    # Seconds between `tracker_links` passes.
+    tracker_links_interval_seconds: float = 86400.0
+    # Issues opened within this many days are ranked each pass.
+    tracker_links_issue_days: int = 90
+    # Days after an issue opened in which a merged trunk PR is a fix candidate.
+    tracker_links_window_days: int = 90
+    # The top candidates written per issue into loom.qa_link_candidates.
+    tracker_links_per_issue: int = 20
+    # Score = bm25_norm (the pair's BM25F as a share of the issue's best)
+    # + weight_mention × (1 closing keyword, 0.5 bare mention) + 0.05 × component_match.
+    # The stack-frames-in-diff features ride the row unscored.
+    tracker_links_weight_mention: float = 1.5
+    # A consumer (code.backport_gap's issue path, the bisect's fix candidate) takes the
+    # top candidate as the fix only above `min_score` AND when a closing keyword names
+    # the issue. tracker.links serves every row with its score.
+    tracker_links_min_score: float = 1.0
+    # --- tracker.duplicate_check -------------------------------------------------
+    # A draft's verdict: `duplicate_of` when the top candidate's calibrated confidence
+    # reaches this, `related` when any candidate reaches the related threshold, else
+    # `none` with no items. Both are probabilities from a logistic fit on labelled
+    # duplicate pairs, so they survive a refit; the scale is compressed. Measured `none`
+    # on 99% of negatives at 0.25.
+    tracker_dupcheck_duplicate_threshold: float = 0.25
+    # the lower band's floor
+    tracker_dupcheck_related_threshold: float = 0.05
+    # The fix-in-flight leg reads PRs from the last this many days.
+    tracker_dupcheck_fix_path_days: int = 365
+    # At most this many PRs the fix-in-flight leg reads per draft.
+    tracker_dupcheck_fix_path_prs: int = 20
+    # A leg whose read failed for a transient reason (a timeout, a connection
+    # error, an upstream 5xx) is run once more inside the op budget; one that still
+    # fails leaves the answer `epistemic: degraded` and `leg_status` names it with its
+    # reason. The pause before that retry, ms (at most 200).
+    tracker_dupcheck_leg_retry_delay_ms: int = Field(default=50, ge=0, le=200)
+    # What the retry leaves of the op budget for the steps after the legs
+    # (hydrate, fit, judge), ms.
+    tracker_dupcheck_leg_retry_reserve_ms: int = 300
+    # The shortest retry worth starting, ms: with less left the retry is skipped
+    # and `leg_status` says `retry_skipped_budget`.
+    tracker_dupcheck_leg_retry_min_ms: int = 200
+    # How many tracker namespaces a duplicate check addressed to a code
+    # namespace (or its bound tracker namespace) reads when no `namespaces` list is
+    # given: every readable tracker record, the bound one first. 1 = the bound one only.
+    tracker_dupcheck_fanout_namespaces: int = Field(default=4, ge=1)
+    # Bounds the fitted duplicate threshold is clamped into, so one odd fit
+    # cannot make every candidate (or none) a duplicate.
+    tracker_dupcheck_duplicate_threshold_min: float = 0.15
+    # Upper bound of the fitted duplicate threshold.
+    tracker_dupcheck_duplicate_threshold_max: float = 0.5
+    # The fit (coefficients, curve, holdout) is JSON in loom.code_index_state under the
+    # tracker namespace, refitted by the tracker_links pass once older than the refit
+    # interval by replaying every gold query at its filing time; `fit_negatives`
+    # non-duplicates are sampled by hash per fit. Off = the stored fit keeps serving;
+    # with none stored the op answers `uncalibrated`.
+    tracker_dupcheck_refit_enabled: bool = True
+    # 7 days
+    tracker_dupcheck_refit_interval_s: float = 604800.0
+    # the negatives sampled per fit
+    tracker_dupcheck_fit_negatives: int = 400
+    # The judge stage. On a `related` answer one model call reads
+    # the draft against the top `judge_top_k` issue candidates' title + body head
+    # (`judge_body_chars`) and may promote a same-defect one to `duplicate` (never
+    # demotes; a recorded related_to never promotes). `judge_model` "" = default client.
+    # Benched on a labelled duplicate set.
+    tracker_dupcheck_judge_enabled: bool = True
+    # Issue candidates the judge reads (at least 1).
+    tracker_dupcheck_judge_top_k: int = Field(default=5, ge=1)
+    # Body characters per candidate the judge reads.
+    tracker_dupcheck_judge_body_chars: int = 1500
+    # The rerank stage. One model call reads the draft against a pool of
+    # each leg's own head (`_rerank_per_leg` rows a leg) plus the issues the tracker
+    # graph links to the leading candidates; its same/related picks lead `nearest`, the
+    # verdict stays the fit's. Fails open.
+    tracker_dupcheck_rerank_enabled: bool = True
+    # Rows each leg contributes to the rerank pool; also deepens the rows kept
+    # per leg when it exceeds the default head.
+    tracker_dupcheck_rerank_per_leg: int = Field(default=50, ge=1)
+    # The candidates one rerank call reads (0 = dup_rerank.POOL_CAP,
+    # 40); 200 lets a 50-per-leg pool through a fan-out's namespaces.
+    tracker_dupcheck_rerank_pool_cap: int = 200
+    # At most this many candidates the rerank pool holds for one namespace's
+    # legs (after dedup, the legs taking turns).
+    tracker_dupcheck_rerank_ns_cap: int = Field(default=60, ge=1)
+    # A rerank `same` row at or above this is offered as a lead
+    # ("nearest reported: … — may be related, check it"), never as the verdict.
+    tracker_dupcheck_lead_min: float = Field(0.9, ge=0.0, le=1.0)
+    # Body characters per candidate the rerank call reads.
+    tracker_dupcheck_rerank_body_chars: int = 200
+    # Seconds the rerank call may take; past it the rerank reports
+    # error="timeout" and the verdict stands without it.
+    tracker_dupcheck_rerank_timeout_s: float = Field(default=4.0, gt=0.0)
+    # --- bisect without a stack frame ----------------------------------------
+    # When no frame resolves to a file, code.bisect_candidates(issue_number) scans the
+    # release window only for PRs whose diff carries one of this many of the issue's
+    # rarest patterns (IDF over the issue corpus). 0 turns the leg off.
+    tracker_bisect_scope_patterns: int = 6
+    # The issue's component widens the scan to at most `component_dirs` `src/`
+    # directories its PRs touch, each with `min_lift` × the share every trunk PR has (a
+    # hub directory says nothing); the aggregate is cached per component for `ttl_s`.
+    tracker_bisect_component_dirs: int = 8
+    # A component directory counts only when its share of the component's PRs
+    # is at least this multiple of its share of every trunk PR.
+    tracker_bisect_component_min_lift: float = 1.5
+    # Seconds the per-component directory aggregate is cached.
+    tracker_bisect_component_ttl_s: float = 3600.0
+    # --- a failing test is read against its own CI history -------------------
+    # The FROM clause of the checks reads; '' = none. A tracker names
+    # its own (`checks` table, or its source entry's `checks.from`); this is the
+    # deployment-wide fallback. Name the table function, not a view over it: a view's
+    # filter runs on the QA side, so a hot test's read hits play's 1 GB result cap.
+    # ClickHouse's public CI (the `play` user is public) is
+    # "remoteSecure('play.clickhouse.com', 'default', 'checks', 'play', '')".
+    tracker_checks_from: str = ""
+    # the repository whose CI `tracker_checks_from` is ('' = the namespace's
+    # only repository)
+    tracker_checks_repo: str = ""
+    # Budget of the per-test history read, ms: play scans the whole window by its time
+    # key, far past the 300 ms interactive budget.
+    tracker_live_checks_budget_ms: int = 8000
+    # Window of the history read, days; churn window of the ledger leg, days.
+    tracker_test_signal_window_days: int = 30
+    # Churn window of the ledger leg, days (at least 1).
+    tracker_test_signal_churn_days: int = Field(default=54, ge=1)
+    # Verdict thresholds: `min_runs` below which nothing is said;
+    # `flip_rate` (status changes between consecutive runs of one PR/check sequence)
+    # that reads as flaky; a storm hour holds ≥ K other failing tests across
+    # ≥ `cofail_prs` PRs, K = max(`cofail_k`, `cofail_multiple` × the window's median
+    # failing tests per hour); `cofail_share` of the test's failing hours must be storm
+    # hours for `infra_candidate`; a test failing on ≥ `cofail_prs` PRs in one hour is
+    # a shared cause by itself.
+    tracker_test_signal_min_runs: int = 5
+    # Status-change rate between consecutive runs of one PR/check sequence at
+    # or above which a test reads as flaky.
+    tracker_test_signal_flip_rate: float = 0.02
+    # Floor of K, the other failing tests an hour needs to be a storm hour.
+    tracker_test_signal_cofail_k: int = 100
+    # K is at least this multiple of the window's median failing tests per hour.
+    tracker_test_signal_cofail_multiple: float = 5.0
+    # A storm hour spans at least this many PRs; a test failing on this many
+    # PRs in one hour is a shared cause by itself.
+    tracker_test_signal_cofail_prs: int = 3
+    # Share of the test's failing hours that must be storm hours for
+    # `infra_candidate`.
+    tracker_test_signal_cofail_share: float = 0.5
+    # --- the per-test daily roll-up and the CI prior read from it -------------
+    # The tracker_test_daily worker rolls the CI table into loom.qa_test_daily once per
+    # day per test, so tracker.test_signal reads a key range here and the remote only
+    # for hours no roll-up covers. Off = the tables stop filling; the op falls back to
+    # the live read of the whole window.
+    tracker_test_daily_enabled: bool = True
+    # Pass interval, seconds; today (and yesterday inside the settle lag) is re-rolled
+    # every pass as a partial day, so the live tail the op reads is at most one
+    # interval plus the current hour.
+    tracker_test_daily_interval_seconds: int = 1800
+    # How far back a cold worker rolls, in days (the op's largest window is 90).
+    tracker_test_daily_backfill_days: int = 30
+    # Days rolled per pass and the pause between remote statements: the shared
+    # `play` user is metered at 100 statements of one shape per hour, and the
+    # op's live reads share that quota.
+    tracker_test_daily_max_days_per_pass: int = 6
+    # Seconds paused between remote statements of a pass; 0 = no pause.
+    tracker_test_daily_pace_s: float = 5.0
+    # Hours after a day ends before its roll is final: a check's row lands
+    # when the check finishes, not when it starts.
+    tracker_test_daily_lag_hours: float = 3.0
+    # Budget of one roll-up statement, ms.
+    tracker_test_daily_budget_ms: int = 60000
+    # --- the static smell leg -------------------------------------------------
+    # The static smell leg reads at most this many chunks of the test's home
+    # file(s) from the code plane (flaky-test smell tokens per category, counted).
+    tracker_test_signal_smell_chunks: int = 6

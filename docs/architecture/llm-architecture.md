@@ -310,7 +310,7 @@ Prompts are Python constants, versioned with the code:
 | `memory.ask` synthesis                                                         | `server/memory/app/ask/prompts.py`                                                                      |
 | Worker prompts                                                                 | The worker modules (`code_summary`, `conversation_titler`, `profile_consolidation`, `entity_extractor`) |
 
-Which model runs each job is set in one place, `server/settings/_models.py`
+Which model runs each job is set in one place, the `Models` section of `server/settings/catalog.py`
 ([models per job](../operations/deployment.md#models-per-job)). Recalled memory
 inside a prompt is fenced as data ([security](security.md#prompt-safety)).
 

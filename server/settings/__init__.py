@@ -1,12 +1,12 @@
 """Environment-driven configuration for the Loom Control Plane.
 
-One `Settings` object, composed from one mixin per area (`_clickhouse`,
-`_memory_search`, `_code`, …). Every field keeps its flat name and its
-`LOOM_<NAME>` env var: `settings.memory_ask_top_k` is one flat field
-whichever mixin declares it — the split is for the reader, not the caller.
-A value comes from, first match wins: the environment, the dotenv file
-(`LOOM_ENV_FILE`), the YAML settings file (`LOOM_SETTINGS_FILE`, `_file.py`),
-the default.
+One `Settings` object, composed from the sections of `server/settings/catalog.py`,
+where every setting is declared. Every field keeps its flat name and its
+`LOOM_<NAME>` env var: `settings.memory_ask_top_k` is one flat field whichever
+section declares it. A value comes from, first match wins: the environment, the
+dotenv file (`LOOM_ENV_FILE`), the YAML settings file (`LOOM_SETTINGS_FILE`,
+`_file.py`), the default; a live override (`server.core.settings_overrides`) wins
+over all of them while Loom runs.
 """
 
 from __future__ import annotations
@@ -20,29 +20,31 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 from pydantic_settings.sources import DotEnvSettingsSource
 
 from server.core.env_file import env_file_path
-from server.settings._auth import AuthSettings
-from server.settings._clickhouse import ClickHouseSettings
-from server.settings._code import CodeSettings
-from server.settings._context import ContextSettings
 from server.settings._env import DEV_JWT_SECRET, is_secret_field, unknown_env_keys
-from server.settings._erasure import ErasureSettings
-from server.settings._extraction import ExtractionSettings
 from server.settings._file import SettingsFileSource
-from server.settings._knowledge import KnowledgeSettings
 from server.settings._loaded import LOADING, Recorded
-from server.settings._mcp import McpSettings
-from server.settings._memory import MemorySettings
-from server.settings._memory_ask import MemoryAskSettings
-from server.settings._memory_search import MemorySearchSettings
-from server.settings._models import ModelSettings
-from server.settings._namespaces import NamespaceSettings
-from server.settings._observability import ObservabilitySettings
-from server.settings._providers import ProviderSettings
-from server.settings._ratelimit import RateLimitSettings
-from server.settings._runtime import RuntimeSettings
-from server.settings._storage import StorageSettings
-from server.settings._tasks import TaskSettings
-from server.settings._tracker import TrackerSettings
+from server.settings.catalog import (
+    AuthSettings,
+    ClickHouseSettings,
+    CodeSettings,
+    ContextSettings,
+    ErasureSettings,
+    ExtractionSettings,
+    KnowledgeSettings,
+    McpSettings,
+    MemoryAskSettings,
+    MemorySearchSettings,
+    MemorySettings,
+    ModelSettings,
+    NamespaceSettings,
+    ObservabilitySettings,
+    ProviderSettings,
+    RateLimitSettings,
+    RuntimeSettings,
+    StorageSettings,
+    TaskSettings,
+    TrackerSettings,
+)
 
 
 def _named_in(dotenv_settings: PydanticBaseSettingsSource) -> str | None:

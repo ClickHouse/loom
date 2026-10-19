@@ -100,7 +100,7 @@ list, so a new task also updates that test. See [skill eval](./skill-eval.md).
 4. **Public benchmark names are fine in `bench/`**, never as the reason for a choice in
    prose under `server/` (`tests/unit/test_public_copy.py` `BENCHMARK_NAMES`).
 5. Mint throwaway namespaces under a prefix in `LOOM_NAMESPACE_BENCH_PREFIXES`
-   (`server/settings/_namespaces.py`; new harnesses use `bench-`), so `loom namespaces-gc` and
+   (`server/settings/catalog.py`; new harnesses use `bench-`), so `loom namespaces-gc` and
    the namespace GC find what an aborted run leaves behind.
 
 ## Write a new harness

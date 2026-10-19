@@ -83,7 +83,7 @@ def test_unknown_mode_rejected() -> None:
     import pytest
     from pydantic import ValidationError
 
-    from server.settings._auth import AuthSettings
+    from server.settings.catalog import AuthSettings
 
     for field, bad in [
         ("identity_provider", "oidc"),
@@ -98,7 +98,7 @@ def test_a_malformed_gateway_key_map_fails_at_load() -> None:
     """A malformed key map would fail every request, so it refuses at load."""
     from pydantic import ValidationError
 
-    from server.settings._auth import AuthSettings
+    from server.settings.catalog import AuthSettings
 
     AuthSettings()  # the defaults are consistent
     with pytest.raises(ValidationError, match="jwt_public_keys_json"):
@@ -111,7 +111,7 @@ def test_key_maps_decode_once_per_value(monkeypatch: pytest.MonkeyPatch) -> None
     import json
 
     from server.settings import _env
-    from server.settings._auth import AuthSettings
+    from server.settings.catalog import AuthSettings
 
     calls: list[str] = []
     real = _env._decode_json_or_b64
