@@ -11,19 +11,31 @@ export function keywordThenRanked(keywordKeys: string[], rankedKeys: string[]): 
   return [...keywordKeys, ...rankedKeys.filter((k) => !keyword.has(k))];
 }
 
+/** A parsed search: the text the server is asked, and the tag and agent filters. */
+export type SearchQuery = { text: string; tags: string[]; agent: string | null };
+
 /** A search box's text split into what the server is asked and the filters the list
  *  applies itself: `tag:work coffee` searches "coffee" among memories tagged `work`;
- *  `agent:foo bar` does the same for an agent. Whitespace runs count as one space. */
-export function parseSearchQuery(query: string): { text: string; tags: string[]; agent: string | null } {
+ *  `agent:foo bar` does the same for an agent. Whitespace runs count as one space. The
+ *  prefixes read in any case ("TAG:work"); the values keep the case they were typed in,
+ *  and a caller matching them ignores case. */
+export function parseSearchQuery(query: string): SearchQuery {
   const tags: string[] = [];
   let agent: string | null = null;
   const rest: string[] = [];
   for (const tok of query.trim().split(/\s+/).filter(Boolean)) {
-    const mTag = /^tag:(.+)$/.exec(tok);
-    const mAgent = /^agent:(.+)$/.exec(tok);
-    if (mTag) tags.push(mTag[1].toLowerCase());
-    else if (mAgent) agent = mAgent[1].toLowerCase();
+    const mTag = /^tag:(.+)$/i.exec(tok);
+    const mAgent = /^agent:(.+)$/i.exec(tok);
+    if (mTag) tags.push(mTag[1]);
+    else if (mAgent) agent = mAgent[1];
     else rest.push(tok);
   }
   return { text: rest.join(" "), tags, agent };
+}
+
+/** The query with `token` added at the end, or taken out wherever it is (any case). */
+export function toggleQueryToken(query: string, token: string): string {
+  const tokens = query.trim().split(/\s+/).filter(Boolean);
+  const kept = tokens.filter((t) => t.toLowerCase() !== token.toLowerCase());
+  return (kept.length < tokens.length ? kept : [...tokens, token]).join(" ");
 }

@@ -1,4 +1,5 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationHit, ConversationThreadDetail, ConversationThreadSummary, MemoryListResponse } from "../api";
 import { useStore } from "../lib/state";
@@ -188,6 +189,38 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(setConversationLogging.mock.calls[0][1]).toBe(true);
   });
 
+  it("a failed search in one namespace does not hide the next namespace's threads", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-b", "Title B")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    searchConversations.mockRejectedValueOnce(new Error("search down"));
+    render(<Conversations />);
+    const box = screen.getByLabelText("Search conversation transcripts");
+    fireEvent.change(box, { target: { value: "hello" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(await screen.findByText("Couldn't load search results")).toBeInTheDocument();
+    act(() => setNamespace("ns-b"));
+    await waitFor(() => expect(screen.queryByText("Couldn't load search results")).toBeNull());
+    expect(await screen.findByText("Title B")).toBeInTheDocument();
+  });
+
+  it("emptying the box while a search is in flight shows the threads, not its late hits", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-a", "Title A")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    const late = deferred<{ hits: ConversationHit[] }>();
+    searchConversations.mockReturnValueOnce(late.promise);
+    render(<Conversations />);
+    expect(await screen.findByText("Title A")).toBeInTheDocument();
+    const box = screen.getByLabelText("Search conversation transcripts");
+    fireEvent.change(box, { target: { value: "hello" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(await screen.findByLabelText("Searching transcripts")).toBeInTheDocument();
+    fireEvent.change(box, { target: { value: "" } });
+    await act(async () => late.resolve({ hits: [hit("thread-z", "late hit")] }));
+    expect(screen.queryByText("late hit")).toBeNull();
+    expect(screen.queryByLabelText("Searching transcripts")).toBeNull();
+    expect(screen.getByText("Title A")).toBeInTheDocument();
+  });
+
   it("opens a hit from another namespace in that namespace", async () => {
     listConversationThreads.mockResolvedValue({ threads: [] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
@@ -199,8 +232,9 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     const box = screen.getByLabelText("Search conversation transcripts");
     fireEvent.change(box, { target: { value: "said" } });
     fireEvent.keyDown(box, { key: "Enter" });
-    // The result count is announced: a status region that stays mounted, its text changing.
-    expect(await screen.findByRole("status", { name: "" })).toHaveTextContent("1 match in 1 thread");
+    // The result count is announced: the toolbar's status region, mounted with the bar.
+    const bar = screen.getByLabelText("Search and filters");
+    await waitFor(() => expect(bar.querySelector("[aria-live]")).toHaveTextContent("1 match in 1 thread"));
     fireEvent.click(await screen.findByText("said in Z"));
     expect(await screen.findByText("body of thread-z")).toBeInTheDocument();
     const [scope, agent, threadId] = getConversationThread.mock.calls[0];
@@ -345,7 +379,8 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     const box = screen.getByLabelText("Search conversation transcripts");
     fireEvent.change(box, { target: { value: "ship" } });
     fireEvent.keyDown(box, { key: "Enter" });
-    fireEvent.click(await screen.findByText("ship the fix"));
+    // The hit line, not the row's title (an untitled thread is named by what the user said).
+    fireEvent.click(await screen.findByRole("button", { name: /^User ship the fix$/ }));
     await screen.findAllByText("plan the fix");
     const ringed = [...document.querySelectorAll("[data-highlighted]")].map((el) => el.textContent);
     expect(ringed).toHaveLength(1);
@@ -368,5 +403,220 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     await screen.findByText("body of thread-a");
     fireEvent.keyDown(dialog, { key: "/" });
     expect(box).not.toHaveFocus();
+  });
+});
+
+// Every thread in the namespace can be reached, a page of 30 at a time: the next page asks
+// the server for the threads after the first 30, and a build that predates paging (it
+// names offset in ignored_args) ends the paging instead of repeating threads.
+describe("Conversations: thread pages", () => {
+  const page = (from: number, n: number) =>
+    Array.from({ length: n }, (_, i) => summary(`t${from + i}`, `Thread ${from + i}`));
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    useStore.setState({
+      authed: true,
+      whoami: { authenticated: false },
+      identity: { org: "dev", namespace: "ns-a", agent: "loom-ui" },
+      view: "sessions",
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ identity: null, whoami: null });
+  });
+
+  it("reads the next 30 threads on the next page", async () => {
+    listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => ({
+      threads: (opts.offset ?? 0) === 0 ? page(0, 30) : page(30, 5),
+    }));
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    const pager = screen.getByRole("navigation", { name: "Thread pages" });
+    fireEvent.click(within(pager).getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Thread 30")).toBeInTheDocument();
+    expect(listConversationThreads).toHaveBeenLastCalledWith(
+      { org: "dev", namespace: "ns-a" },
+      expect.objectContaining({ limit: 30, offset: 30, window_days: 365 }),
+    );
+    expect(
+      within(screen.getByRole("navigation", { name: "Thread pages" }))
+        .getAllByRole("button")
+        .at(-1),
+    ).toBeDisabled();
+  });
+
+  it("stops paging when the server names offset in ignored_args", async () => {
+    let reads = 0;
+    // The server ignores offset: the second read is the first page again, a new thread on top.
+    listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => {
+      reads += 1;
+      if (reads === 1) return { threads: page(0, 30) };
+      return {
+        threads: [summary("t-new", "Thread new"), ...page(0, 29)],
+        ...(opts.offset ? { ignored_args: ["offset"] } : {}),
+      };
+    });
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Thread pages" }))
+        .getAllByRole("button")
+        .at(-1)!,
+    );
+    await waitFor(() => expect(screen.queryByRole("navigation", { name: "Thread pages" })).toBeNull());
+    expect(screen.getByText("Thread 0")).toBeInTheDocument();
+  });
+
+  it("pages on when the first page's threads moved down to the next page", async () => {
+    let reads = 0;
+    // 30 new threads arrived between the reads: page 2 now holds what page 1 showed.
+    listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => {
+      reads += 1;
+      if ((opts.offset ?? 0) === 0) return { threads: page(0, 30) };
+      return { threads: page(0, 30).map((t) => ({ ...t, title: `${t.title} moved` })) };
+    });
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    );
+    expect(await screen.findByText("Thread 0 moved")).toBeInTheDocument();
+    expect(reads).toBe(2);
+    expect(screen.getByRole("navigation", { name: "Thread pages" })).toHaveTextContent(/31–60/);
+  });
+
+  it("a page typed past a short last page goes nowhere and reads nothing", async () => {
+    listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => {
+      const from = opts.offset ?? 0;
+      return { threads: from === 0 ? page(0, 30) : from === 30 ? page(30, 15) : [] };
+    });
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    );
+    expect(await screen.findByText("Thread 30")).toBeInTheDocument();
+    const calls = listConversationThreads.mock.calls.length;
+    const field = within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("spinbutton", {
+      name: "Page",
+    });
+    fireEvent.change(field, { target: { value: "6" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(listConversationThreads).toHaveBeenCalledTimes(calls);
+    expect(screen.getByText("Thread 30")).toBeInTheDocument();
+  });
+
+  it("a second Next while a page loads asks for that page again, and counts the threads right", async () => {
+    const pending: Array<() => void> = [];
+    listConversationThreads.mockImplementation(
+      (_id: unknown, opts: { offset?: number }) =>
+        new Promise((resolve) => {
+          const from = opts.offset ?? 0;
+          const answer = () => resolve({ threads: from === 0 ? page(0, 30) : from === 30 ? page(30, 10) : [] });
+          if (from === 0) answer();
+          else pending.push(answer);
+        }),
+    );
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    const next = () =>
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" });
+    fireEvent.click(next());
+    await waitFor(() => expect(pending).toHaveLength(1));
+    fireEvent.click(next());
+    await new Promise((r) => setTimeout(r, 50));
+    const offsets = listConversationThreads.mock.calls.map((c) => (c[1] as { offset?: number }).offset ?? 0);
+    expect(offsets.filter((o) => o > 0)).toEqual([30]);
+    act(() => pending.forEach((answer) => answer()));
+    expect(await screen.findByText("Thread 30")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Thread pages" })).not.toHaveTextContent(/of 60/);
+  });
+
+  it("pages a new agent filter from its first page, not from the page the old filter showed", async () => {
+    const mixed = (from: number, n: number) =>
+      page(from, n).map((t, i) => ({ ...t, agent: (from + i) % 2 ? "beta" : "alpha" }));
+    let answerBeta: () => void = () => {};
+    listConversationThreads.mockImplementation(
+      (_id: unknown, opts: { offset?: number; agent?: string }) =>
+        new Promise((resolve) => {
+          const from = opts.offset ?? 0;
+          if (opts.agent === "beta") {
+            answerBeta = () =>
+              resolve({ threads: from === 0 ? page(500, 5).map((t) => ({ ...t, agent: "beta" })) : [] });
+            if (from > 0) answerBeta();
+          } else resolve({ threads: from < 60 ? mixed(from, 30) : [] });
+        }),
+    );
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    );
+    expect(await screen.findByText("Thread 30")).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole("button", { name: "Agent" })[0]);
+    // The open list renders last, after the rows that also name the agent.
+    await userEvent.click((await screen.findAllByText("beta")).at(-1)!);
+    await waitFor(() =>
+      expect(listConversationThreads.mock.calls.at(-1)?.[1]).toMatchObject({ agent: "beta", offset: 0 }),
+    );
+    // The new filter's first page has not answered: the old rows give the pager nothing to page.
+    expect(screen.queryByRole("navigation", { name: "Thread pages" })).toBeNull();
+    act(() => answerBeta());
+    expect(await screen.findByText("Thread 500")).toBeInTheDocument();
+    const betaOffsets = listConversationThreads.mock.calls
+      .filter((c) => (c[1] as { agent?: string }).agent === "beta")
+      .map((c) => (c[1] as { offset?: number }).offset ?? 0);
+    expect(betaOffsets).toEqual([0]);
+    expect(screen.queryByText(/of 30/)).toBeNull();
+  });
+
+  it("pages on past a learned total once new threads arrive at the top", async () => {
+    let firstPageReads = 0;
+    listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => {
+      const from = opts.offset ?? 0;
+      if (from > 0) return { threads: [] };
+      firstPageReads += 1;
+      // The step-back reads page 1 again, and new threads have arrived at its top.
+      return { threads: firstPageReads === 1 ? page(0, 30) : page(100, 30) };
+    });
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    );
+    expect(await screen.findByText("Thread 100")).toBeInTheDocument();
+    // The total learned from the empty page is out of date: Next pages on.
+    expect(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    ).toBeEnabled();
+  });
+
+  it("with an exact multiple of 30 threads, the empty page after the last goes back to it", async () => {
+    listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => ({
+      threads: (opts.offset ?? 0) >= 60 ? [] : page(opts.offset ?? 0, 30),
+    }));
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    );
+    expect(await screen.findByText("Thread 30")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+      ).toBeDisabled(),
+    );
+    expect(screen.getByText("Thread 30")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Thread pages" })).toHaveTextContent("31–60 of 60");
+    // The page it steps back to is announced, not the empty page asked for.
+    expect(within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("status")).toHaveTextContent(
+      "Page 2 of 2",
+    );
+    expect(screen.queryByText("No conversations yet in this namespace")).toBeNull();
   });
 });

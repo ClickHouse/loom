@@ -36,3 +36,12 @@ export const TipTarget = forwardRef<HTMLSpanElement, TipTargetProps>(function Ti
     </Tip>
   );
 });
+
+/**
+ * Whether a tooltip's content sits in a list or table row, or inside a control (a row's open button):
+ * there it takes no tab stop of its own (a row list is one tab stop, and a control cannot
+ * hold another), and lifts over the row's stretched button so a hover still reaches it.
+ */
+export function inRowOrControl(el: Element): boolean {
+  return !!el.parentElement?.closest('button, a[href], [role="button"], [role="link"], .list-row, tr, [role="row"]');
+}

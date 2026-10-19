@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -17,21 +17,29 @@ import {
   type KnowledgeDocument,
   type InlinePreview,
 } from "../api";
-import { useStore, useIdentity } from "../lib/state";
-import { SkeletonCard } from "../components/Skeleton";
-import { EmptyState } from "../components/EmptyState";
+import { setViewParam, useStore, useIdentity } from "../lib/state";
+import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
-import { Chip, PageHeader, Tip, TipTarget } from "../components/ui";
+import { ListRow, Loading, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
+import { BusyButton } from "../components/ui/BusyButton";
+import { ListState } from "../components/ui/ListState";
+import { ListTime } from "../components/ui/ListTime";
+import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
+import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import { Modal } from "../components/ui/Modal";
-import { formatBytesShort, relativeTime } from "../lib/format";
+import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { oneOf } from "../lib/oneOf";
+import { parseSearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
+import { useMedia, PHONE_QUERY } from "../lib/useMedia";
+import { useRowNav } from "../lib/useRowNav";
+import { useRowSelection } from "../lib/useRowSelection";
 
 const FIRST_SCREEN_ROWS = 12;
 type SortBy = "recency" | "title" | "chunks" | "size";
@@ -58,21 +66,37 @@ const LIBRARY_LIST_FIELDS = [
   "original_filename",
 ];
 
+// Documents per read; "Load more" asks for the next 50 (knowledge.list has a cursor, no total).
+const LIBRARY_PAGE = 50;
+
+/** The document at exactly `uri`, read through its prefix page by page (newer documents
+ *  under the same prefix come first), or null when the namespace does not hold it. */
+async function findDocument(
+  id: { org: string; namespace: string },
+  uri: string,
+  signal: AbortSignal,
+): Promise<KnowledgeEntry | null> {
+  let cursor: string | undefined;
+  do {
+    const r = await listKnowledge(id, { uriPrefix: [uri], fields: LIBRARY_LIST_FIELDS, limit: 500, cursor, signal });
+    const found = (r.rows || []).find((d) => d.source_uri === uri);
+    if (found) return found;
+    cursor = r.next_cursor ?? undefined;
+  } while (cursor && !signal.aborted);
+  return null;
+}
+
 export function Documents() {
   const identity = useIdentity();
+  const phone = useMedia(PHONE_QUERY);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const focusSearchOnRead = useRef(false);
   const [sortBy, setSortBy] = useState<SortBy>("recency");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  // A row's four icon actions (each a tooltip'd button with an SVG) are rendered only for
-  // the row under the pointer, focused, or selected — 50 rows carried ~30 nodes each for
-  // controls nobody could use at once. Their slot keeps its width meanwhile, so the row
-  // does not reflow on hover. A touch screen has no hover: there every row shows them.
-  const [hotRow, setHotRow] = useState<string | null>(null);
-  const [touch] = useState(() => typeof window.matchMedia === "function" && matchMedia("(pointer: coarse)").matches);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<KnowledgeEntry | null>(null);
   const [previewDoc, setPreviewDoc] = useState<KnowledgeDocument | null>(null);
@@ -82,41 +106,99 @@ export function Documents() {
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
 
-  // knowledge.list pages at 100: `nextCursor` is the server's continuation, null once the
-  // namespace is fully loaded. `scopeRef` stamps each first-page load so a "Load more"
-  // that resolves after the scope moved on is dropped instead of appended under the wrong
-  // header.
+  // `nextCursor` is the server's continuation, null once the namespace is fully loaded.
+  // `scopeRef` stamps each first-page load so a "Load more" that resolves after the scope
+  // moved on is dropped instead of appended under the wrong header.
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const scopeRef = useRef(0);
 
-  const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
+  // A tag filter is asked of the server, which returns the documents carrying every tag
+  // (a server a release behind matches any one, and the list then requires every tag
+  // itself), so it covers documents past the pages loaded so far. Debounced, so typing
+  // `tag:…` sends one read.
+  // The list filters by the text a render behind the box, so a keystroke paints the box
+  // first; the memoised rows render again only when what they show changes.
+  const listQuery = useDeferredValue(query);
+  const parsedQuery = useMemo(() => parseSearchQuery(listQuery), [listQuery]);
+  const queryTags = parsedQuery.tags;
+  // Built from the tags' text (a tag holds no space), so a keystroke that leaves the tags as
+  // they were hands every row the same set.
+  const activeTagsText = queryTags.map((t) => t.toLowerCase()).join(" ");
+  const activeTags = useMemo(() => new Set(activeTagsText.split(" ").filter(Boolean)), [activeTagsText]);
+  // Each tag once: the first page and Load more send the same list.
+  const tagKey = JSON.stringify([...new Set(queryTags)]);
+  const [serverTags, setServerTags] = useState(tagKey);
+  useEffect(() => {
+    const t = setTimeout(() => setServerTags(tagKey), 250);
+    return () => clearTimeout(t);
+  }, [tagKey]);
+  const shownScope = useRef("");
+  // The tags the rows on screen were read for, and why the last read failed.
+  const [rowsFor, setRowsFor] = useState("");
+  const [loadError, setLoadError] = useState<unknown>(null);
+  // Every reload (Retry, a delete, an add, an edit) goes through the effect below, so an
+  // answer for a namespace the page has left is aborted and dropped.
+  const [reloads, setReloads] = useState(0);
+  const reload = () => setReloads((n) => n + 1);
+
+  const load = (signal: AbortSignal, live: () => boolean) => {
     scopeRef.current += 1;
-    setRows(null);
+    // Blank only for a new namespace; a new filter keeps the rows until the next land.
+    const scope = `${identity.org}/${identity.namespace}`;
+    if (shownScope.current !== scope) {
+      shownScope.current = scope;
+      setRows(null);
+    }
     setNextCursor(null);
-    listKnowledge({ org: identity.org, namespace: identity.namespace }, { signal, fields: LIBRARY_LIST_FIELDS })
+    const tags = JSON.parse(serverTags) as string[];
+    listKnowledge(
+      { org: identity.org, namespace: identity.namespace },
+      {
+        signal,
+        fields: LIBRARY_LIST_FIELDS,
+        limit: LIBRARY_PAGE,
+        ...(tags.length ? { tags } : {}),
+      },
+    )
       .then((r) => {
         if (live()) {
+          setLoadError(null);
           setRows(r.rows || []);
+          setRowsFor(serverTags);
           setNextCursor(r.next_cursor ?? null);
         }
       })
-      .catch(() => {
-        if (live()) setRows([]);
+      .catch((e) => {
+        if (!live()) return;
+        // A failed read is said as a failure, never as an empty library.
+        setLoadError(e);
+        setRows([]);
+        setRowsFor(serverTags);
       });
   };
 
   // A memory write cannot change the document list.
-  useAbortableEffect(load, [identity.org, identity.namespace]);
+  useAbortableEffect(load, [identity.org, identity.namespace, serverTags, reloads]);
 
+  // The library is empty only when nothing narrowed the read and the read worked.
+  const emptyLibrary = rows !== null && rows.length === 0 && !loadError && serverTags === "[]" && tagKey === serverTags;
+  const readTags = JSON.parse(serverTags) as string[];
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
     const scope = scopeRef.current;
+    focusAdded.current = new Set(shownRows?.map((r) => r.source_uri));
     setLoadingMore(true);
     try {
       const r = await listKnowledge(
         { org: identity.org, namespace: identity.namespace },
-        { cursor: nextCursor, fields: LIBRARY_LIST_FIELDS },
+        {
+          cursor: nextCursor,
+          fields: LIBRARY_LIST_FIELDS,
+          limit: LIBRARY_PAGE,
+          // The tags the list was read with, so the cursor and the filter agree.
+          ...(readTags.length ? { tags: readTags } : {}),
+        },
       );
       if (scopeRef.current !== scope) return;
       setRows((prev) => [...(prev || []), ...(r.rows || [])]);
@@ -124,17 +206,62 @@ export function Documents() {
     } catch (e) {
       if (scopeRef.current === scope) toastError("Load more failed", e);
     } finally {
-      if (scopeRef.current === scope) setLoadingMore(false);
+      // Always: a load for a scope the list has left must not leave the button spinning.
+      setLoadingMore(false);
     }
   };
 
+  // The last page removes Load more, which held the focus: it goes to the first document
+  // in the list's order that the page added, else the last one shown.
+  const listBox = useRef<HTMLDivElement | null>(null);
+  const focusAdded = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const before = focusAdded.current;
+    if (before === null || loadingMore) return;
+    focusAdded.current = null;
+    if (nextCursor || document.activeElement !== document.body) return;
+    const rows = [...(listBox.current?.querySelectorAll<HTMLElement>("[data-doc-row]") ?? [])];
+    const row = rows.find((el) => !before.has(el.dataset.docRow ?? "")) ?? rows[rows.length - 1];
+    row?.querySelector<HTMLElement>("[data-row-open]")?.focus();
+  });
+
+  // The read behind a `?doc=` link past the loaded rows. It ends with the page, with its
+  // namespace, and when the reader opens or closes a document themselves: its answer then
+  // opens nothing.
+  const linkRead = useRef<AbortController | null>(null);
+  useEffect(() => () => linkRead.current?.abort(), [identity.org, identity.namespace]);
+
   useEffect(() => {
     if (!pendingDocSourceUri || !rows) return;
-    const target = rows.find((r) => r.source_uri === pendingDocSourceUri);
-    if (target) void onOpenRef.current(target);
+    const uri = pendingDocSourceUri;
     clearPendingDoc();
-  }, [pendingDocSourceUri, rows, clearPendingDoc]);
-
+    const target = rows.find((r) => r.source_uri === uri);
+    if (target) {
+      void handlers.current.onOpen(target);
+      return;
+    }
+    // Not among the rows loaded (a link past the first page): read that one document. A
+    // link to one the namespace does not hold opens nothing, and the URL stops naming it;
+    // a failed read says so and keeps the link.
+    linkRead.current?.abort();
+    const ac = new AbortController();
+    linkRead.current = ac;
+    void findDocument({ org: identity.org, namespace: identity.namespace }, uri, ac.signal)
+      .then((found) => {
+        if (ac.signal.aborted) return;
+        if (found) void handlers.current.onOpen(found);
+        else setViewParam("doc", null);
+      })
+      .catch((e) => {
+        if (!ac.signal.aborted) toastError("Open failed", e);
+      });
+  }, [pendingDocSourceUri, rows, clearPendingDoc, identity.org, identity.namespace]);
+  // After a row's delete, the read that drops the row hands focus to the search field.
+  useEffect(() => {
+    if (!focusSearchOnRead.current) return;
+    focusSearchOnRead.current = false;
+    searchRef.current?.focus();
+  }, [rows]);
   const onDelete = async (source_uri: string) => {
     if (
       !(await confirmAction({
@@ -149,7 +276,9 @@ export function Documents() {
     try {
       await deleteKnowledge({ org: identity.org, namespace: identity.namespace }, source_uri);
       toast("Deleted", "ok");
-      load();
+      // The row and its menu leave with the next read: focus then goes to the search.
+      focusSearchOnRead.current = true;
+      reload();
     } catch (e) {
       toastError("Delete failed", e);
     }
@@ -168,6 +297,9 @@ export function Documents() {
   };
 
   const onOpen = async (r: KnowledgeEntry) => {
+    linkRead.current?.abort();
+    // The open document is the page's URL (`?doc=`): a reload or Back reopens it.
+    setViewParam("doc", r.source_uri);
     setPreviewEntry(r);
     setPreviewDoc(null);
     setShowText(false);
@@ -195,11 +327,13 @@ export function Documents() {
       setPreviewLoading(false);
     }
   };
-  // The deep-link effect opens with the latest render's `onOpen` without re-firing on it.
-  const onOpenRef = useRef(onOpen);
-  onOpenRef.current = onOpen;
+  // The deep-link effect and the rows call the latest render's handlers without re-firing
+  // on them or rendering every row again.
+  const handlers = useRef({ onOpen, onDownload, onDelete });
+  handlers.current = { onOpen, onDownload, onDelete };
 
   const closePreview = () => {
+    linkRead.current?.abort();
     if (inlineBlob?.url) {
       try {
         URL.revokeObjectURL(inlineBlob.url);
@@ -211,6 +345,7 @@ export function Documents() {
     setPreviewEntry(null);
     setPreviewDoc(null);
     setShowText(false);
+    setViewParam("doc", null);
   };
 
   // The first screen mounts with the page, the rest of the rows in a transition after the
@@ -224,21 +359,19 @@ export function Documents() {
     });
     return () => cancelAnimationFrame(raf);
   }, [firstScreenOnly, rows]);
+  // The words the browser matches over the loaded rows: the Memories parser's text, and an
+  // `agent:` token as words (a document has no agent).
+  const words = `${parsedQuery.text} ${parsedQuery.agent === null ? "" : `agent:${parsedQuery.agent}`}`.trim();
+  const freeText = useMemo(() => words.toLowerCase().split(/\s+/).filter(Boolean), [words]);
   const visibleRows = useMemo(() => {
     if (!rows) return rows;
     let r = rows;
-    const tokens = query.trim().split(/\s+/).filter(Boolean);
-    const requiredTags: string[] = [];
-    const freeText: string[] = [];
-    for (const tok of tokens) {
-      const m = /^tag:(.+)$/i.exec(tok);
-      if (m) requiredTags.push(m[1].toLowerCase());
-      else freeText.push(tok.toLowerCase());
-    }
+    // The server already asked for every tag; a build a release behind matches any one.
+    const requiredTags = parsedQuery.tags.map((t) => t.toLowerCase());
     if (requiredTags.length > 0) {
       r = r.filter((row) => {
         const lower = (row.tags || []).map((t) => t.toLowerCase());
-        return requiredTags.every((t) => lower.some((x) => x.includes(t)));
+        return requiredTags.every((t) => lower.includes(t));
       });
     }
     if (freeText.length > 0) {
@@ -267,18 +400,25 @@ export function Documents() {
       sorted.sort((a, b) => (b.blob_size || 0) - (a.blob_size || 0));
     }
     return sorted;
-  }, [rows, query, sortBy]);
+  }, [rows, parsedQuery.tags, freeText, sortBy]);
 
-  const toggleSelected = (uri: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(uri)) next.delete(uri);
-      else next.add(uri);
-      return next;
-    });
-  };
-
-  const clearSelection = () => setSelected(new Set());
+  // Checkboxes: one row, a Shift-click range, every row shown; Escape clears them while no
+  // dialog is up (each owns its Escape).
+  const shownRows = firstScreenOnly ? visibleRows?.slice(0, FIRST_SCREEN_ROWS) : visibleRows;
+  const rowKeys = useMemo(() => (visibleRows ?? []).map((r) => r.source_uri), [visibleRows]);
+  const dialogOpen = !!previewEntry || addOpen || !!replaceEntry || !!editEntry;
+  const selection = useRowSelection(rowKeys, { enabled: !dialogOpen });
+  const { selected } = selection;
+  const clearSelection = selection.clear;
+  // One tab stop over the rows: arrows and j/k move, Enter previews, Space selects.
+  const listNav = useRowNav({ enabled: !dialogOpen && rowKeys.length > 0 });
+  const listRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      listNav(el);
+      listBox.current = el;
+    },
+    [listNav],
+  );
 
   const onBulkDelete = async () => {
     if (selected.size === 0 || bulkBusy) return;
@@ -297,7 +437,7 @@ export function Documents() {
       const r = await bulkDeleteKnowledge({ org: identity.org, namespace: identity.namespace }, Array.from(selected));
       toast(`Deleted ${r.total_tombstoned} document${r.total_tombstoned === 1 ? "" : "s"}`, "ok");
       clearSelection();
-      load();
+      reload();
     } catch (e) {
       toastError("Bulk delete failed", e);
     } finally {
@@ -320,77 +460,154 @@ export function Documents() {
     return { chunks, bytes, withBlob };
   }, [rows]);
 
+  const filtering = listQuery.trim() !== "";
+  const failed = !!loadError;
+  const docCount = aggregateStats && rows ? `${rows.length.toLocaleString()}${nextCursor ? "+" : ""}` : "";
+  // The tags are the server's (they cover the library); the words and a sort but newest
+  // first run here, over the rows loaded so far. While the cursor holds more, what they
+  // found is said of those rows, never of the library.
+  const partial = !!nextCursor && !!rows;
+  const loaded = `the first ${(rows?.length ?? 0).toLocaleString()}`;
+  const browserOnly = partial && (freeText.length > 0 || sortBy !== "recency");
+  // One count, at the end of the toolbar: how many rows are shown (the
+  // cursor has no total), the matches for a search or a tag, nothing on an error or before
+  // the first read. While a new filter is read the last one stays up.
+  const matches = (n: number, more = false) =>
+    `${n.toLocaleString()}${more ? "+" : ""} match${n === 1 && !more ? "" : "es"}`;
+  const shownCount = visibleRows?.length ?? 0;
+  const countText =
+    rows === null || failed || emptyLibrary
+      ? ""
+      : filtering
+        ? browserOnly
+          ? `${matches(shownCount)} in ${loaded}`
+          : matches(shownCount, partial)
+        : browserOnly
+          ? `The first ${(rows?.length ?? 0).toLocaleString()}, sorted`
+          : `${shownCount.toLocaleString()} shown`;
+  const reading = rows !== null && rowsFor !== serverTags;
+  const lastCount = useRef("");
+  if (countText && !reading) lastCount.current = countText;
+  const countShown = reading ? lastCount.current : countText;
+  const sortSelect = (className: string) => (
+    <Select
+      value={sortBy}
+      onSelect={(value) => {
+        const v = oneOf(
+          SORTS.map((o) => o.value),
+          value,
+        );
+        if (v !== null) setSortBy(v);
+      }}
+      triggerProps={{ "aria-label": "Sort documents" }}
+      className={className}
+    >
+      {SORTS.map((o) => (
+        <Select.Item key={o.value} value={o.value}>
+          {o.label}
+        </Select.Item>
+      ))}
+    </Select>
+  );
+  const toggleRow = selection.toggle;
+  const rowActions = useMemo<DocRowActions>(
+    () => ({
+      open: (r) => void handlers.current.onOpen(r),
+      download: (r) => void handlers.current.onDownload(r),
+      replace: setReplaceEntry,
+      edit: setEditEntry,
+      remove: (uri) => void handlers.current.onDelete(uri),
+      toggle: toggleRow,
+      tag: (t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`)),
+    }),
+    [toggleRow],
+  );
+
   return (
     <PageContainer>
       <PageHeader
         title="Library"
         actions={
           <>
-            <span role="status" className="text-sm text-text-muted tabular">
-              {rows
-                ? visibleRows && visibleRows.length !== rows.length
-                  ? `${visibleRows.length} of ${rows.length} shown`
-                  : `showing ${rows.length}`
-                : ""}
-            </span>
-            <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
-              Add document
-            </Button>
+            {/* The empty state's own Add is the one primary while it shows. */}
+            {!emptyLibrary && (
+              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+                Add document
+              </Button>
+            )}
           </>
         }
       >
-        <ScopeBadge kind="namespace" value={identity.namespace} />
+        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
+        <span className="hidden sm:contents">
+          <ScopeBadge kind="namespace" value={identity.namespace} />
+        </span>
       </PageHeader>
-      <p className="text-sm text-text-muted mb-6">
-        Reference docs your agents can read. Memories are what the agent remembered; the library is what you gave it to
-        read.
-      </p>
+      {/* One line: the library's figures once they are read, what the library is behind the tip. */}
+      <div className="mb-4 flex min-h-6 items-center gap-1 text-sm text-text-muted tabular">
+        <span className="min-w-0 truncate">
+          {docCount && aggregateStats && rows && rows.length > 0
+            ? [
+                `${docCount} document${rows.length === 1 && !nextCursor ? "" : "s"}`,
+                `${aggregateStats.chunks.toLocaleString()} chunk${aggregateStats.chunks === 1 ? "" : "s"}`,
+                ...(aggregateStats.withBlob > 0 ? [formatBytesShort(aggregateStats.bytes)] : []),
+              ].join(" · ")
+            : "Reference docs your agents can read."}
+        </span>
+        <IconButton
+          icon="info-in-circle"
+          size="xs"
+          label="About the library"
+          tooltip="Reference docs your agents can read. Memories are what the agent remembered; the library is what you gave it to read."
+        />
+      </div>
 
-      {rows !== null && rows.length > 0 && (
-        <>
-          <div className="mb-3">
-            <SearchField
-              value={query}
-              onChange={(value) => setQuery(value)}
-              placeholder="Search title, filename, description, or tag — try `tag:specs` or `tag:specs onboarding`"
-              aria-label="Search library"
-            />
-          </div>
-          <div className="mb-5 flex justify-end">
-            <Select
-              value={sortBy}
-              onSelect={(value) => {
-                const v = oneOf(
-                  SORTS.map((o) => o.value),
-                  value,
-                );
-                if (v !== null) setSortBy(v);
-              }}
-              triggerProps={{ "aria-label": "Sort documents" }}
-              className="w-44"
-            >
-              {SORTS.map((o) => (
-                <Select.Item key={o.value} value={o.value}>
-                  {o.label}
-                </Select.Item>
-              ))}
-            </Select>
-          </div>
-        </>
-      )}
-
-      {selected.size > 0 && (
-        <div className="sticky top-0 z-[2] mb-3 animate-fade-in flex items-center gap-2 p-2.5 rounded-xl border border-accent bg-accent-soft shadow-sm">
-          <span className="text-sm font-medium text-accent tabular">{selected.size} selected</span>
-          <div className="flex-1" />
-          <Button type="secondary" htmlType="button" iconLeft="cross" onClick={clearSelection}>
-            Clear
+      {/* The search, the sort and the count, in the one bar that stays at the top as the list
+          scrolls, in every state: nothing moves when the rows land. A tag picked from a row
+          further down is seen to apply, as its `tag:` in the field. While documents are
+          selected, the bar holds their actions. */}
+      <ListToolbar
+        label="Search and filters"
+        count={countShown && <span aria-busy={reading || undefined}>{countShown}</span>}
+        selection={
+          selected.size > 0
+            ? {
+                count: selected.size,
+                onClear: clearSelection,
+                all: { total: rowKeys.length, checked: selection.allSelected, onToggle: selection.toggleAll },
+                actions: [{ label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete }],
+              }
+            : null
+        }
+      >
+        <ListToolbarSearch>
+          <SearchField
+            ref={searchRef}
+            value={query}
+            onChange={(value) => setQuery(value)}
+            // A phone's field holds the short form only.
+            placeholder={phone ? "Search, or tag:specs" : "Search title, filename, description, or tag — try tag:specs"}
+            aria-label="Search library"
+          />
+        </ListToolbarSearch>
+        {queryTags.length > 0 && (
+          <Button
+            type="empty"
+            htmlType="button"
+            className="hidden shrink-0 sm:inline-flex"
+            onClick={() => {
+              // The button leaves with the tags: focus goes to the search.
+              searchRef.current?.focus();
+              setQuery(words);
+            }}
+          >
+            Clear filters
           </Button>
-          <Button type="danger" htmlType="button" iconLeft="trash" loading={bulkBusy} onClick={onBulkDelete}>
-            Delete all
-          </Button>
-        </div>
-      )}
+        )}
+        {sortSelect("hidden w-40 shrink-0 sm:block")}
+      </ListToolbar>
+      {/* A phone's toolbar has room for the search only; the sort sits under it. */}
+      <div className="-mt-1 mb-3 flex justify-end sm:hidden">{sortSelect("w-40")}</div>
 
       {/* Mounted while open, not on every render. */}
       {addOpen && (
@@ -398,7 +615,7 @@ export function Documents() {
           open={addOpen}
           onOpenChange={setAddOpen}
           identity={{ org: identity.org, namespace: identity.namespace }}
-          onAdded={load}
+          onAdded={reload}
         />
       )}
       {!!replaceEntry && (
@@ -408,7 +625,7 @@ export function Documents() {
             if (!v) setReplaceEntry(null);
           }}
           identity={{ org: identity.org, namespace: identity.namespace }}
-          onAdded={load}
+          onAdded={reload}
           replaceMode={
             replaceEntry
               ? {
@@ -428,18 +645,24 @@ export function Documents() {
         }}
         identity={{ org: identity.org, namespace: identity.namespace }}
         entry={editEntry}
-        onSaved={load}
+        onSaved={reload}
       />
 
       {rows === null && (
-        <div className="space-y-2">
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
+        <LoadingSkeleton label="Loading documents">
+          <div className="space-y-2">
+            <RowSkeleton kind="document" />
+            <RowSkeleton kind="document" />
+            <RowSkeleton kind="document" />
+          </div>
+        </LoadingSkeleton>
       )}
 
-      {rows !== null && rows.length === 0 && (
-        <EmptyState
+      {failed && <ListState kind="error" things="documents" error={loadError} onRetry={reload} />}
+
+      {emptyLibrary && (
+        <ListState
+          kind="empty"
           icon="document"
           title="Your library is empty"
           description="Upload PDFs, DOCX, Markdown or any text-shaped file. Your agents can search the extracted text via knowledge.search, and you can download the originals back any time."
@@ -447,182 +670,42 @@ export function Documents() {
         />
       )}
 
-      {rows !== null && rows.length > 0 && visibleRows && visibleRows.length === 0 && (
-        <div className="py-12 text-center">
-          <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
-            <Icon name="search" size="md" aria-hidden="true" />
-          </div>
-          <h2>No documents match</h2>
-          <p className="mt-1 text-sm text-text-muted">
-            {rows.length} loaded from this namespace, but none pass the active filters.
-          </p>
-          <Button type="secondary" htmlType="button" onClick={() => setQuery("")} className="mt-4">
-            Clear search
-          </Button>
-        </div>
-      )}
+      {rows !== null &&
+        !emptyLibrary &&
+        !failed &&
+        rowsFor === serverTags &&
+        tagKey === serverTags &&
+        visibleRows?.length === 0 && (
+          <ListState
+            kind="filtered"
+            things="documents"
+            filter={listQuery.trim()}
+            among={partial ? `${loaded} loaded` : undefined}
+            onClear={() => setQuery("")}
+          />
+        )}
 
-      {rows !== null && rows.length > 0 && visibleRows && visibleRows.length > 0 && (
-        <div className="space-y-2">
-          {(firstScreenOnly ? visibleRows.slice(0, FIRST_SCREEN_ROWS) : visibleRows).map((r) => (
-            // biome-ignore lint/a11y/noStaticElementInteractions: tracks the row under the pointer or holding focus for the row actions; nothing happens on these events alone
-            // biome-ignore lint/a11y/noNoninteractiveElementInteractions: as above
-            <div
+      {rows !== null && rows.length > 0 && shownRows && shownRows.length > 0 && (
+        <div ref={listRef} className="space-y-2" aria-busy={reading || undefined}>
+          {shownRows.map((r) => (
+            <DocRow
               key={r.source_uri}
-              onMouseEnter={() => setHotRow(r.source_uri)}
-              onMouseLeave={() => setHotRow((cur) => (cur === r.source_uri ? null : cur))}
-              onFocus={() => setHotRow(r.source_uri)}
-              data-doc-row
-              className={`p-3.5 rounded-xl border bg-surface flex flex-wrap items-start gap-3 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_96px] ${
-                selected.has(r.source_uri)
-                  ? "border-accent ring-1 ring-accent/40"
-                  : "border-border hover:border-border-strong"
-              }`}
-            >
-              <Checkbox
-                checked={selected.has(r.source_uri)}
-                onCheckedChange={() => toggleSelected(r.source_uri)}
-                aria-label={`Select ${r.title || r.original_filename || r.source_uri}`}
-                className="mt-1 shrink-0"
-                onClick={(e) => e.stopPropagation()}
-              />
-              <Icon name="document" size="sm" aria-hidden="true" className="shrink-0 mt-0.5" />
-              <div className="min-w-0 flex-1">
-                <button
-                  type="button"
-                  onClick={() => onOpen(r)}
-                  className="w-full text-left bg-transparent border-0 p-0 cursor-pointer"
-                  aria-label={`Preview ${r.title || r.original_filename || r.source_uri}`}
-                >
-                  <div className={`text-sm text-text font-medium truncate ${r.title ? "" : "font-mono"}`}>
-                    {r.title || r.original_filename || r.source_uri}
-                  </div>
-                  {r.title && (r.original_filename || r.source_uri) && (
-                    <div className="text-xs text-text-muted font-mono truncate">
-                      {r.original_filename || r.source_uri}
-                    </div>
-                  )}
-                  {r.description && (
-                    <div className="text-xs text-text mt-1 line-clamp-2 leading-snug">{r.description}</div>
-                  )}
-                </button>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-text-muted tabular">
-                  <span>{r.chunk_count} chunks</span>
-                  <span>·</span>
-                  <span>{relativeTime(r.ingested_at)}</span>
-                  {r.superseded && (
-                    <TipTarget tip="A newer version of this URI was uploaded; agents read the latest">
-                      <Badge text="Superseded" state="warning" size="sm" />
-                    </TipTarget>
-                  )}
-                  {r.tags && r.tags.length > 0 && (
-                    <span className="flex flex-wrap items-center gap-1 sm:ml-2">
-                      {r.tags.slice(0, 3).map((t) => (
-                        <Chip
-                          key={t}
-                          label={`#${t}`}
-                          ariaLabel={`Filter by tag ${t}`}
-                          onClick={() => {
-                            const tagToken = `tag:${t}`;
-                            setQuery((cur) => (cur.includes(tagToken) ? cur : cur ? `${cur} ${tagToken}` : tagToken));
-                          }}
-                        />
-                      ))}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="doc-acts">
-                {(touch || hotRow === r.source_uri || selected.has(r.source_uri)) && (
-                  <>
-                    {/* Icon actions: ≥36 px targets, named by aria-label + tooltip.
-                    "Edit content" also covers the no-blob case — uploading a file
-                    into a text-only document is the same replace flow. Download is
-                    offered for every document: the original file
-                    when one was preserved, else the stored text as Markdown. */}
-                    <IconButton
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDownload(r);
-                      }}
-                      label={hasOriginalFile(r) ? "Download original file" : "Download text (.md)"}
-                      tooltip={
-                        hasOriginalFile(r)
-                          ? r.original_filename
-                            ? `Download ${r.original_filename}${r.blob_size ? ` (${formatBytesShort(r.blob_size)})` : ""}`
-                            : "Download original file"
-                          : `Download text (.md) — ${textDownloadName(r.source_uri)}`
-                      }
-                      icon="download"
-                      size="sm"
-                    />
-                    <IconButton
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditEntry(r);
-                      }}
-                      label="Edit details"
-                      tooltip="Edit details (title, description, tags — no re-upload)"
-                      icon="pencil"
-                      size="sm"
-                    />
-                    <IconButton
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setReplaceEntry(r);
-                      }}
-                      label="Edit content"
-                      tooltip={
-                        r.has_blob
-                          ? `Edit content — upload a new file version of ${r.title || r.original_filename || r.source_uri}`
-                          : "Edit content — upload the source file to enable download and preserve the original"
-                      }
-                      icon="refresh"
-                      size="sm"
-                    />
-                    <IconButton
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete(r.source_uri);
-                      }}
-                      label="Delete document"
-                      icon="trash"
-                      type="danger"
-                      size="sm"
-                    />
-                  </>
-                )}
-              </div>
-            </div>
+              entry={r}
+              active={previewEntry?.source_uri === r.source_uri}
+              checked={selected.has(r.source_uri)}
+              selecting={selected.size > 0}
+              activeTags={activeTags}
+              actions={rowActions}
+            />
           ))}
         </div>
       )}
 
-      {aggregateStats && rows && rows.length > 0 && (
-        <div className="mt-8 pt-4 border-t border-border text-xs text-text-muted tabular flex items-center justify-between flex-wrap gap-2">
-          <span>
-            showing <span className="text-text font-medium">{rows.length}</span>
-            {" · "}
-            <span className="text-text font-medium">{aggregateStats.chunks.toLocaleString()}</span> chunk
-            {aggregateStats.chunks === 1 ? "" : "s"} indexed
-            {aggregateStats.withBlob > 0 && (
-              <>
-                {" · "}
-                <span className="text-text font-medium">{formatBytesShort(aggregateStats.bytes)}</span> stored (
-                {aggregateStats.withBlob} file{aggregateStats.withBlob === 1 ? "" : "s"})
-              </>
-            )}
-          </span>
-          {aggregateStats.withBlob < rows.length && (
-            <span className="text-text-muted">
-              {rows.length - aggregateStats.withBlob} text-only · no preserved original
-            </span>
-          )}
-          {nextCursor && (
-            <Button type="secondary" htmlType="button" loading={loadingMore} onClick={loadMore}>
-              Load more
-            </Button>
-          )}
+      {nextCursor && !failed && (
+        <div className="mt-4">
+          <BusyButton type="secondary" htmlType="button" busy={loadingMore} onClick={loadMore}>
+            Load more
+          </BusyButton>
         </div>
       )}
 
@@ -637,7 +720,11 @@ export function Documents() {
       >
         <div className="flex items-start justify-between gap-4 mb-4">
           <div className="min-w-0 text-xs text-text-muted flex items-center gap-2 flex-wrap">
-            {previewEntry?.ingested_at && <span>uploaded {relativeTime(previewEntry.ingested_at)}</span>}
+            {previewEntry?.ingested_at && (
+              <span>
+                Uploaded <ListTime time={previewEntry.ingested_at} quiet />
+              </span>
+            )}
             {previewEntry?.has_blob && previewEntry.blob_size != null && (
               <>
                 <span>·</span>
@@ -650,9 +737,7 @@ export function Documents() {
                 <span className="font-mono">{previewEntry.blob_content_type}</span>
               </>
             )}
-            {(previewEntry?.tags || []).slice(0, 4).map((t) => (
-              <Badge key={t} text={t} state="neutral" size="sm" />
-            ))}
+            <TagList tags={previewEntry?.tags || []} max={4} />
           </div>
           {previewEntry && (
             <div className="flex items-center gap-2 shrink-0">
@@ -684,9 +769,7 @@ export function Documents() {
         </div>
         {/* Sized to what the dialog leaves after its header and footer, so only the pane scrolls. */}
         <div className="h-[max(12rem,calc(75vh-14rem))] overflow-hidden rounded-lg bg-surface-2 relative">
-          {previewLoading && (
-            <div className="absolute inset-0 grid place-items-center text-sm text-text-muted">Loading…</div>
-          )}
+          {previewLoading && <Loading label="Loading preview" className="absolute inset-0" />}
           {/* Only passive types reach here (previewKind): text in an iframe whose empty
                   sandbox grants nothing, images as <img>. Nothing else is ever framed. */}
           {!previewLoading && inlineBlob?.url && previewEntry?.has_blob && inlineBlob.kind === "image" && (
@@ -784,9 +867,128 @@ export function Documents() {
   );
 }
 
+/** The More menu's download item, naming what it saves: "Download PDF, 1.8 MB" for an
+ *  original file, "Download text (.md)" for a text-only document. */
+function downloadLabel(r: KnowledgeEntry): string {
+  if (!hasOriginalFile(r)) return "Download text (.md)";
+  const ext = /\.([a-z0-9]{1,8})$/i.exec(r.original_filename || "")?.[1];
+  const kind = (ext || r.blob_content_type?.split("/")[1]?.split(/[;+.]/)[0] || "").toUpperCase();
+  const size = r.blob_size ? formatBytesShort(r.blob_size) : "";
+  return ["Download" + (kind ? ` ${kind}` : " original file"), size].filter(Boolean).join(", ");
+}
+
 /** Whether a document has an original file to download. False for a
  *  text-only document (no blob, size 0, no filename), whose Download
  * button saves the stored text as Markdown instead. */
 function hasOriginalFile(r: KnowledgeEntry): boolean {
   return Boolean(r.has_blob || r.blob_size || r.original_filename);
 }
+
+/** What a row asks of the page; one object for the page's life, so a memoised row keeps
+ *  its props across a keystroke. */
+interface DocRowActions {
+  open: (r: KnowledgeEntry) => void;
+  download: (r: KnowledgeEntry) => void;
+  replace: (r: KnowledgeEntry) => void;
+  edit: (r: KnowledgeEntry) => void;
+  remove: (sourceUri: string) => void;
+  toggle: (sourceUri: string, range?: boolean) => void;
+  tag: (tag: string) => void;
+}
+
+interface DocRowProps {
+  entry: KnowledgeEntry;
+  active: boolean;
+  checked: boolean;
+  /** Some row is checked: a click on the row checks it instead of previewing it. */
+  selecting: boolean;
+  activeTags: ReadonlySet<string>;
+  actions: DocRowActions;
+}
+
+// Memoised: a hundred rows of Click UI checkboxes, badges, icons and menus rendered again
+// on every keystroke in the search.
+const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, activeTags, actions }: DocRowProps) {
+  const name = r.title || r.original_filename || r.source_uri;
+  const file = r.title ? r.original_filename || r.source_uri : "";
+  const menu: RowMenuItem[] = [
+    { label: "Preview", icon: "eye", onSelect: () => actions.open(r) },
+    { label: downloadLabel(r), icon: "download", onSelect: () => actions.download(r) },
+    // Uploading a file into a text-only document is the same replace flow.
+    { label: "Replace content", icon: "refresh", onSelect: () => actions.replace(r) },
+    { label: "Edit details", icon: "pencil", onSelect: () => actions.edit(r) },
+    {
+      label: "Copy URI",
+      icon: "copy",
+      onSelect: () => {
+        void navigator.clipboard?.writeText(r.source_uri).then(
+          () => toast("Copied", "ok"),
+          () => toast("Couldn't copy", "error"),
+        );
+      },
+    },
+    { label: "Delete", icon: "trash", danger: true, onSelect: () => actions.remove(r.source_uri) },
+  ];
+  return (
+    <ListRow
+      data-doc-row={r.source_uri}
+      data-focus-key={`doc:${r.source_uri}`}
+      active={active}
+      checked={checked}
+      trailing={<RowMenu name={name} items={menu} />}
+      leading={
+        <Checkbox
+          checked={checked}
+          aria-label={`Select ${name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            actions.toggle(r.source_uri, e.shiftKey);
+          }}
+          className="list-row-control"
+        />
+      }
+    >
+      <button
+        type="button"
+        data-row-open=""
+        onClick={() => (selecting ? actions.toggle(r.source_uri) : actions.open(r))}
+        className="list-row-open block w-full"
+        aria-label={`Preview ${name}`}
+      >
+        {/* Line 1: the document and its state; right, how much is indexed and when. */}
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {/* The icon, the name and its state stay on one line; a long name is cut. */}
+          <span className="flex min-w-0 max-w-full items-center gap-2">
+            <Icon name="document" size="sm" aria-hidden="true" className="shrink-0" />
+            {/* An untitled document is named by its file name or URI, an identifier. */}
+            {r.title ? (
+              <span className="min-w-0 truncate text-text text-sm font-semibold">{name}</span>
+            ) : (
+              <code className="min-w-0 truncate text-text font-mono text-xs">{name}</code>
+            )}
+            {r.superseded && (
+              <span className="inline-flex shrink-0">
+                <Badge text="Superseded" state="neutral" size="sm" aria-hidden="true" />
+                <span className="sr-only">, superseded: a newer version of this URI was uploaded</span>
+              </span>
+            )}
+          </span>
+          {/* The meta slot: flush right; under 640 px its own line. */}
+          <span className="basis-full text-xs text-text-muted tabular sm:ml-auto sm:basis-auto sm:shrink-0">
+            {(r.chunk_count ?? 0).toLocaleString()} chunk{r.chunk_count === 1 ? "" : "s"} ·{" "}
+            <ListTime time={r.ingested_at} quiet />
+          </span>
+        </span>
+        {/* Line 2: the file it came from and what it is about. */}
+        {(file || r.description) && (
+          <span className="mt-1 block truncate text-xs text-text-muted">
+            {file && <span className="font-mono">{file}</span>}
+            {file && r.description && " · "}
+            {r.description}
+          </span>
+        )}
+      </button>
+      <TagList tags={r.tags ?? []} activeTags={activeTags} onTagClick={actions.tag} className="mt-2" />
+    </ListRow>
+  );
+});

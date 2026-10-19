@@ -105,6 +105,38 @@ test("an outline row selects its node; the button at its end selects the edge", 
   expect(errors).toEqual([]);
 });
 
+// A selected row's action buttons reach the tree's scroll box, which clips its overflow:
+// their ring (2 px wide, 2 px out) stays inside that box, on the first row and the last.
+test("a selected outline row's buttons show their whole focus ring", async ({ page }) => {
+  await installApi(page);
+  await page.goto(`/graph?seed=${SMALL_SEED}`);
+  const tree = page.getByRole("tree", { name: "Walk outline" });
+  for (const row of [tree.getByRole("treeitem").first(), tree.getByRole("treeitem").last()]) {
+    await row.click();
+    await expect(row).toHaveAttribute("aria-selected", "true");
+    const button = row.getByRole("button").first();
+    // A key press first, so the focus that follows the click shows the keyboard ring.
+    await page.keyboard.press("Shift");
+    await button.focus();
+    const ring = await button.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const reach = parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+      const b = el.getBoundingClientRect();
+      const box = el.closest('[role="tree"]') as HTMLElement;
+      const t = box.getBoundingClientRect();
+      const top = t.top + box.clientTop;
+      const bottom = top + box.clientHeight;
+      return {
+        visible: el.matches(":focus-visible"),
+        inside: b.top - reach >= top - 0.5 && b.bottom + reach <= bottom + 0.5,
+        detail: { buttonTop: b.top, buttonBottom: b.bottom, reach, top, bottom },
+      };
+    });
+    expect(ring.visible).toBe(true);
+    expect(ring.inside, JSON.stringify(ring.detail)).toBe(true);
+  }
+});
+
 test("a re-walk drops the expand it started over: the late result lands nowhere", async ({ page }) => {
   const HOLD_MS = 1_500;
   const calls = await installApi(page, { relatedDelayMs: HOLD_MS });
@@ -205,6 +237,21 @@ test("with communities, the facet counts them and says when, with the absolute t
 
 test.describe("under a coarse pointer", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+
+  // A selected row grows its action buttons, 44 px targets here: the row keeps its height.
+  test("selecting an outline row keeps its height", async ({ page }) => {
+    await installApi(page);
+    await page.goto(`/graph?seed=${SMALL_SEED}`);
+    const rows = page.getByRole("tree", { name: "Walk outline" }).getByRole("treeitem");
+    const heights = () => rows.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+    await expect(rows).toHaveCount(SMALL_HOP1 + 1);
+    const before = await heights();
+    for (const [i, name] of [SMALL_SEED, `${SMALL_SEED}-h1-0`].entries()) {
+      await rows.nth(i).getByText(name, { exact: true }).tap();
+      await expect(rows.nth(i)).toHaveAttribute("aria-selected", "true");
+      expect(await heights(), `row ${i} selected`).toEqual(before);
+    }
+  });
 
   test("a Chip, an IconButton and an outline row are 44 px targets", async ({ page }) => {
     await installApi(page, { trackerBound: true });

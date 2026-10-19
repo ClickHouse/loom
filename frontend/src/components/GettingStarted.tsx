@@ -6,6 +6,7 @@ import { Select } from "@clickhouse/click-ui/Select";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import type { Identity, MyNamespaceEntry, ServiceAccountEntry } from "../api";
 import { useStore } from "../lib/state";
+import { paletteShortcut } from "../lib/platform";
 import { CLIENTS, formatMcpConfig, type ClientId } from "../lib/clients";
 import {
   countDone,
@@ -186,7 +187,7 @@ export function GettingStarted({
             {spaceName ? (
               <>
                 {" "}
-                — <code className="font-mono text-xs bg-surface-2 px-1 rounded-sm">{spaceName}</code>
+                — <code className="code-inline text-xs">{spaceName}</code>
               </>
             ) : null}
             . Four steps show the whole loop; about five minutes.
@@ -242,7 +243,7 @@ export function GettingStarted({
                   <p className="text-xs text-text-muted mt-0.5">{meta.why}</p>
                   {step === "find" && !isDone && (
                     <p className="text-xs text-text-muted mt-1">
-                      Or press <Kbd>⌘K</Kbd> anywhere and type a few words.
+                      Or press <Kbd>{paletteShortcut()}</Kbd> anywhere and type a few words.
                     </p>
                   )}
                   {step === "connect" && lastMint && <ConnectLine mint={lastMint} />}
@@ -325,7 +326,8 @@ function ConnectLine({ mint }: { mint: { token: string; mcpUrl: string } }) {
         </Tabs.Content>
         <Tabs.Content value="cursor" className="mt-2">
           <p className="text-xs text-text-muted mb-1">
-            Paste into Cursor's MCP settings (<code className="font-mono">.cursor/mcp.json</code>), then restart Cursor:
+            Paste into Cursor's MCP settings (<code className="code-inline">.cursor/mcp.json</code>), then restart
+            Cursor:
           </p>
           <CopyBlock text={JSON.stringify(cursor.block, null, 2)} label="Copy config" />
         </Tabs.Content>

@@ -1,3 +1,4 @@
+import { parseChTime } from "./format";
 /**
  * One verdict per code index: converged / N behind / stale / unknown. The
  * fast tier is the headline (it is what search reads); scip lag is
@@ -22,7 +23,8 @@ export function freshness(r: {
 }): Fresh {
   if (!r.git_head)
     return { tone: "muted", label: "not indexed", detail: "no git_head watermark — run loom code backfill" };
-  const ageMs = r.indexed_at ? Date.now() - new Date(r.indexed_at.replace(" ", "T") + "Z").getTime() : 0;
+  const indexed = parseChTime(r.indexed_at);
+  const ageMs = indexed ? Date.now() - indexed.getTime() : 0;
   if (r.fast_tier_lag > 0) {
     return {
       tone: r.fast_tier_lag > 20 ? "bad" : "warn",

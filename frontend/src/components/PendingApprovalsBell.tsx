@@ -145,7 +145,7 @@ export function PendingApprovalsBell() {
             tooltip={tip}
           />
         </PopoverTrigger>
-        {items.length > 0 && <CountBadge count={items.length} state="neutral" />}
+        {items.length > 0 && <CountBadge count={items.length} />}
       </span>
       <Popover.Content
         align="end"
@@ -237,7 +237,9 @@ export function PendingApprovalsBell() {
                 {it.pending_since && <>requested {relativeTime(it.pending_since)}</>}
               </div>
             </div>
-            <span className="text-xs text-text-muted mt-1 shrink-0">Review →</span>
+            <span className="text-xs text-text-muted mt-1 shrink-0 inline-flex items-center gap-1">
+              Review <Icon name="arrow-right" size="xs" aria-hidden="true" />
+            </span>
           </button>
         ))}
       </Popover.Content>
@@ -265,13 +267,14 @@ export function PendingApprovalsBell() {
 
 function RoleIcon({ role }: { role: GrantRole }) {
   if (role === "admin")
-    return <Icon name="star" size="xs" color="var(--color-warn)" aria-label="Admin" className="mt-1" />;
+    return <Icon name="star" size="xs" color="var(--global-color-text-muted)" aria-label="Admin" className="mt-1" />;
   if (role === "writer") return <Icon name="user" size="xs" aria-label="Writer" className="mt-1" />;
   return <Icon name="eye" size="xs" color="var(--color-text-muted)" aria-label="Viewer" className="mt-1" />;
 }
 
-/** The count over a bell: Click UI's small solid badge, read out by the bell's tooltip. */
-export function CountBadge({ count, state }: { count: number; state: "neutral" | "warning" }) {
+/** The count over a bell: Click UI's small solid badge, read out by the bell's tooltip. A
+ *  count is not a warning: neutral, unless what it counts has failed or is overdue. */
+export function CountBadge({ count, state = "neutral" }: { count: number; state?: "neutral" | "danger" }) {
   return (
     <Badge
       text={count > 99 ? "99+" : String(count)}

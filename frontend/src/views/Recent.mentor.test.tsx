@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryListEntry, MentorBriefResult, MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { setFoldOpen } from "../lib/folds";
 import { Recent } from "./Recent";
 import { humanizeHintCode, planeState, sortHints } from "../components/MentorPanel";
 
@@ -100,14 +101,21 @@ const owner: WhoAmI = {
   namespaces: ["team-alerts"],
 };
 
+// The panel lives on the Memories page's Insights tab (`?section=insights`), not above
+// the list.
 async function openMemories() {
+  window.history.replaceState(null, "", "/memories?section=insights");
   render(<Recent />);
-  await waitFor(() => expect(listMemories).toHaveBeenCalled());
-  await screen.findByText("coffee_pref");
+  await screen.findByTestId("mentor-panel");
+  expect(screen.getByRole("tab", { name: "Insights" })).toHaveAttribute("aria-selected", "true");
+  // Insights reads no rows.
+  expect(listMemories).not.toHaveBeenCalled();
 }
 
 describe("Memories: mentor panel", () => {
   beforeEach(() => {
+    // The panel starts folded; these tests are about what it shows once opened.
+    setFoldOpen("mentor", true);
     vi.clearAllMocks();
     resetNamespaceRoleCache();
     useStore.setState({
@@ -121,6 +129,7 @@ describe("Memories: mentor panel", () => {
   });
   afterEach(() => {
     cleanup();
+    window.history.replaceState(null, "", "/");
     useStore.setState({ whoami: null, myNamespaces: null, identity: null, inspectedMemoryKey: null });
   });
 
@@ -187,7 +196,7 @@ describe("Memories: mentor panel", () => {
     resetNamespaceRoleCache();
     useStore.setState({ myNamespaces: [], whoami: { ...owner, namespaces: [] } });
     render(<Recent />);
-    await waitFor(() => expect(listMemories).toHaveBeenCalled());
+    await screen.findByRole("tab", { name: "Insights" });
     expect(screen.queryByTestId("mentor-panel")).toBeNull();
   });
 

@@ -4,19 +4,26 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Select } from "@clickhouse/click-ui/Select";
 import { Table } from "@clickhouse/click-ui/Table";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { useStore, useIdentity } from "../../lib/state";
+import { ListPager, usePageSize } from "../../components/ui/ListPager";
 import { hasOrgAdminClaim } from "../../lib/role";
 import { adminListUsers, claimRelease, type AdminUserRow, type AdminUsersResult } from "../../api";
-import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
-import { relativeTime, humanizeError } from "../../lib/format";
+import { humanizeError, parseChTime } from "../../lib/format";
+import { ListState } from "../../components/ui/ListState";
+import { ListTime } from "../../components/ui/ListTime";
+import { ListToolbar } from "../../components/ui/ListToolbar";
+import { BusyButton } from "../../components/ui/BusyButton";
+import { PHONE_QUERY, useMedia } from "../../lib/useMedia";
 import { useAbortableEffect } from "../../lib/hooks";
 import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
+import { TableSkeleton } from "../../components/Skeleton";
 import { Alert, PageHeader } from "../../components/ui";
 
 type Filter = "all" | "pending" | "active7d";
@@ -33,30 +40,49 @@ type Filter = "all" | "pending" | "active7d";
 export function Users() {
   const identity = useStore((s) => s.identity);
   const whoami = useStore((s) => s.whoami);
+  const phone = useMedia(PHONE_QUERY);
   const [data, setData] = useState<AdminUsersResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Whether those accounts were read with service accounts (null before the first read):
+  // under the other setting they are not the list's to page.
+  const [dataWithServiceAccounts, setDataWithServiceAccounts] = useState<boolean | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [includeServiceAccounts, setIncludeServiceAccounts] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = usePageSize("users");
+  // A refresh keeps the list on screen, marked busy, until it answers.
+  const [refreshing, setRefreshing] = useState(false);
 
-  const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
+  // Refresh and Retry read again through the effect, so a newer read drops an older one.
+  const [reads, setReads] = useState(0);
+  const load = (signal: AbortSignal, live: () => boolean) => {
     if (!identity) return;
     setError(null);
+    setRefreshing(true);
     adminListUsers(
       {
         org: identity.org,
         include_service_accounts: includeServiceAccounts,
-        limit: 200,
+        // admin.users has no offset: one read of up to 1,000 accounts, paged here.
+        limit: 1000,
       },
       { signal },
     )
       .then((d) => {
-        if (live()) setData(d);
+        if (!live()) return;
+        setData(d);
+        setDataWithServiceAccounts(includeServiceAccounts);
       })
       .catch((e) => {
-        if (live()) setError(String(e?.message || e));
+        if (live()) setError(e);
+      })
+      .finally(() => {
+        if (live()) setRefreshing(false);
       });
   };
-  useAbortableEffect(load, [identity?.org, includeServiceAccounts]);
+  useAbortableEffect(load, [identity?.org, includeServiceAccounts, reads]);
+
+  const rows = useMemo(() => filtered(data, filter), [data, filter]);
 
   if (!identity) return null;
 
@@ -73,10 +99,62 @@ export function Users() {
     );
   }
 
+  // The accounts on screen were read with the service-accounts setting now ticked; until a
+  // toggle's read answers, its counts and rows are not drawn.
+  const dataCurrent = dataWithServiceAccounts === includeServiceAccounts;
+  const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize);
+  // One read holds at most 1,000 accounts: past that the list says it holds the first ones.
+  const cut = data !== null && data.total > data.users.length;
+  const count =
+    !error && data && dataCurrent && rows.length > 0
+      ? `${(page * pageSize + 1).toLocaleString()}–${(page * pageSize + pageRows.length).toLocaleString()} of ${rows.length.toLocaleString()}${cut ? ` · the first ${data.users.length.toLocaleString()} of ${data.total.toLocaleString()} accounts` : ""}`
+      : undefined;
+  const pick = (value: string) => {
+    setFilter(value as Filter);
+    setPage(0);
+  };
+  const options = data
+    ? [
+        // Each counts the accounts loaded, as its filter lists them (the toolbar says when
+        // they are the first 1,000 of more).
+        { value: "all", label: "All", count: data.users.length },
+        {
+          value: "pending",
+          label: "Pending elevation",
+          count: filtered(data, "pending").length,
+          icon: "clock" as const,
+        },
+        { value: "active7d", label: "Active last 7d", count: filtered(data, "active7d").length },
+      ]
+    : [];
+  const serviceAccounts = (
+    <Checkbox
+      label="Include service accounts"
+      checked={includeServiceAccounts}
+      onCheckedChange={(x) => {
+        setIncludeServiceAccounts(x === true);
+        setPage(0);
+      }}
+    />
+  );
+
   return (
     <PageContainer>
       <div className="mb-6">
-        <PageHeader title="Users">
+        <PageHeader
+          title="Users"
+          actions={
+            <BusyButton
+              type="secondary"
+              htmlType="button"
+              iconLeft="refresh"
+              onClick={() => setReads((n) => n + 1)}
+              busy={refreshing}
+            >
+              Refresh
+            </BusyButton>
+          }
+        >
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </PageHeader>
         <p className="text-sm text-text-muted max-w-2xl">
@@ -85,50 +163,62 @@ export function Users() {
         </p>
       </div>
 
-      {data && (
-        <div className="flex flex-wrap items-center gap-2 mb-4">
-          <ButtonGroup
-            aria-label="Filter users"
-            selected={filter}
-            onClick={(value) => setFilter(value as Filter)}
-            options={[
-              { value: "all", label: <FilterLabel label="All" count={data.users.length} /> },
-              {
-                value: "pending",
-                label: <FilterLabel label="Pending elevation" count={data.total_pending_elevations} icon="clock" />,
-              },
-              { value: "active7d", label: <FilterLabel label="Active last 7d" count={data.total_active_last_7d} /> },
-            ]}
-          />
-          <div className="flex-1" />
-          <Checkbox
-            label="Include service accounts"
-            checked={includeServiceAccounts}
-            onCheckedChange={(x) => setIncludeServiceAccounts(x === true)}
-          />
-          <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => load()}>
-            Refresh
-          </Button>
-        </div>
-      )}
+      {/* Mounted before the first read answers, so its count is announced when it lands; it
+          stays through a failed read, as its checkbox is how the reader got there. */}
+      <ListToolbar label="Filters and count" search={false} count={count}>
+        {/* Three filters with their counts are wider than a phone: there they are a select. */}
+        {data &&
+          (phone ? (
+            <Select
+              value={filter}
+              onSelect={pick}
+              triggerProps={{ "aria-label": "Filter users" }}
+              className="min-w-0 flex-1"
+            >
+              {options.map((o) => (
+                <Select.Item key={o.value} value={o.value}>
+                  {dataCurrent ? `${o.label} ${o.count.toLocaleString()}` : o.label}
+                </Select.Item>
+              ))}
+            </Select>
+          ) : (
+            <>
+              <ButtonGroup
+                aria-label="Filter users"
+                selected={filter}
+                onClick={pick}
+                options={options.map((o) => ({
+                  value: o.value,
+                  label: <FilterLabel label={o.label} count={dataCurrent ? o.count : null} icon={o.icon} />,
+                }))}
+              />
+              {serviceAccounts}
+            </>
+          ))}
+      </ListToolbar>
+      {data && phone && <div className="mb-3">{serviceAccounts}</div>}
 
-      {error && <EmptyState icon="users" title="Couldn't load" description={error} />}
-      {!error && data === null && (
-        <div className="space-y-2">
-          <Skeleton className="h-14" />
-          <Skeleton className="h-14" />
-          <Skeleton className="h-14" />
-        </div>
+      {!!error && <ListState kind="error" things="users" error={error} onRetry={() => setReads((n) => n + 1)} />}
+      {!error && (data === null || !dataCurrent) && (
+        <Table
+          aria-label="Users"
+          aria-busy
+          size="sm"
+          headers={USER_HEADERS}
+          rows={[]}
+          noDataMessage={<TableSkeleton label="Loading users" />}
+        />
       )}
-      {!error && data !== null && data.users.length === 0 && (
-        <EmptyState
+      {!error && data !== null && dataCurrent && data.users.length === 0 && (
+        <ListState
+          kind="empty"
           icon="users"
           title="No accounts yet"
           description="When users sign up in the dashboard or get granted on a namespace, they'll appear here."
         />
       )}
-      {!error && data !== null && data.users.length > 0 && (
-        <div className="space-y-2">
+      {!error && data !== null && dataCurrent && data.users.length > 0 && (
+        <div className="space-y-2" aria-busy={refreshing || undefined}>
           {data.platform_admins_configured.length > 0 && (
             <div className="mb-3 text-xs text-text-muted">
               <span className="font-medium text-text">Configured platform admins (LOOM_PLATFORM_ADMINS):</span>{" "}
@@ -141,12 +231,26 @@ export function Users() {
             </div>
           )}
 
-          <UserListTable data={data} filter={filter} />
+          <UserListTable rows={pageRows} filter={filter} />
+          <ListPager
+            label="Users pages"
+            page={page}
+            pageSize={pageSize}
+            shown={pageRows.length}
+            total={rows.length}
+            busy={refreshing}
+            onPage={setPage}
+            onPageSize={(n) => {
+              setPageSize(n);
+              setPage(0);
+            }}
+            topId="users-list"
+          />
 
           <div className="mt-3 text-xs text-text-muted">
-            {data.total} account{data.total === 1 ? "" : "s"} shown. To promote someone to platform admin, add their
-            email to <code className="font-mono text-xs bg-surface-2 px-1 py-0.5 rounded">LOOM_PLATFORM_ADMINS</code> in{" "}
-            <code className="font-mono text-xs bg-surface-2 px-1 py-0.5 rounded">.env</code> and have them re-login.
+            To promote someone to platform admin, add their email to{" "}
+            <code className="code-inline text-xs">LOOM_PLATFORM_ADMINS</code> in{" "}
+            <code className="code-inline text-xs">.env</code> and have them re-login.
           </div>
         </div>
       )}
@@ -154,6 +258,21 @@ export function Users() {
       <ClaimReleaseSection />
     </PageContainer>
   );
+}
+
+const SEVEN_DAYS_MS = 7 * 24 * 3600 * 1000;
+
+/** The accounts the filter keeps (admin.users has no offset, so the pages are cut here). */
+function filtered(data: AdminUsersResult | null, filter: Filter): AdminUserRow[] {
+  if (!data) return [];
+  if (filter === "pending") return data.users.filter((u) => u.grants.some((g) => g.pending_role));
+  if (filter === "active7d") {
+    return data.users.filter((u) => {
+      const active = parseChTime(u.last_active);
+      return !!active && Date.now() - active.getTime() < SEVEN_DAYS_MS;
+    });
+  }
+  return data.users;
 }
 
 /**
@@ -233,30 +352,25 @@ function ClaimReleaseSection() {
 }
 
 // ButtonGroup draws an option's `icon` only in icon-only mode, so the label carries it.
-function FilterLabel({ label, count, icon }: { label: string; count: number; icon?: IconName }) {
+function FilterLabel({ label, count, icon }: { label: string; count: number | null; icon?: IconName }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       {icon && <Icon name={icon} size="xs" aria-hidden="true" />}
       {label}
-      <span className="tabular">{count}</span>
+      {count !== null && <span className="tabular">{count.toLocaleString()}</span>}
     </span>
   );
 }
 
-function UserListTable({ data, filter }: { data: AdminUsersResult; filter: Filter }) {
-  const sevenDaysMs = 7 * 24 * 3600 * 1000;
-  const rows = useMemo(() => {
-    if (filter === "pending") {
-      return data.users.filter((u) => u.grants.some((g) => g.pending_role));
-    }
-    if (filter === "active7d") {
-      return data.users.filter((u) => u.last_active && Date.now() - new Date(u.last_active).getTime() < sevenDaysMs);
-    }
-    return data.users;
-  }, [data, filter, sevenDaysMs]);
+const USER_HEADERS = [{ label: "Subject" }, { label: "Namespaces" }, { label: "Auth" }, { label: "Last active" }];
 
+// A new page scrolls to the table and gives it focus.
+function UserListTable({ rows, filter }: { rows: AdminUserRow[]; filter: Filter }) {
   return (
     <Table
+      id="users-list"
+      tabIndex={-1}
+      aria-label="Users"
       size="sm"
       noDataMessage={
         filter === "pending"
@@ -265,7 +379,7 @@ function UserListTable({ data, filter }: { data: AdminUsersResult; filter: Filte
             ? "No users active in the last 7 days."
             : "No users to show."
       }
-      headers={[{ label: "Subject" }, { label: "Namespaces" }, { label: "Auth" }, { label: "Last active" }]}
+      headers={USER_HEADERS}
       rows={rows.map((u: AdminUserRow) => ({
         id: u.subject,
         items: [
@@ -317,8 +431,8 @@ function UserListTable({ data, filter }: { data: AdminUsersResult; filter: Filte
           { label: <span className="text-xs text-text-muted">{u.has_password_auth ? "password" : "token / SA"}</span> },
           {
             label: (
-              <span className="text-xs tabular text-text-muted whitespace-nowrap">
-                {u.last_active ? relativeTime(u.last_active) : "never"}
+              <span className="text-xs text-text-muted">
+                {u.last_active ? <ListTime time={u.last_active} quiet /> : "never"}
               </span>
             ),
           },

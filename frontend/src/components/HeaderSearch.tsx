@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import * as RadixPopover from "@radix-ui/react-popover";
-import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
+import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { Popover } from "@clickhouse/click-ui/Popover";
@@ -20,10 +20,12 @@ import {
   type SearchHit,
 } from "../api";
 import { sharedMine } from "../lib/sharedReads";
-import { useStore, viewHref } from "../lib/state";
+import { useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
-import { relativeTime } from "../lib/format";
-import { Kbd } from "./ui";
+import { displayAgent, sentenceCase } from "../lib/format";
+import { Kbd, Loading, TagList } from "./ui";
+import { toast } from "./Toast";
+import { paletteShortcut } from "../lib/platform";
 
 /** The memory group is server-side memory.search: a debounced call per settled query,
  *  aborted by the next keystroke. */
@@ -305,11 +307,14 @@ export function HeaderSearch({
   const yourProfileShown = q.length === 0 ? profileSections.slice(0, 3) : [];
   const documentsShown = matchedDocuments.slice(0, PER_GROUP_CAP);
 
+  // A namespace switch keeps the page: the view re-reads under the new namespace, and the
+  // toast says what changed (a switch never also moves the person to another view). The
+  // switch itself drops the URL keys that name an object of the namespace left.
   const switchNs = (ns: string) => {
     if (!identity) return;
     setIdentity({ ...identity, namespace: ns });
     setSavedNamespace(ns);
-    setView("memories");
+    toast(`Switched to ${ns}`, "info");
     setOpen(false);
     setQ("");
   };
@@ -356,6 +361,9 @@ export function HeaderSearch({
   // A query highlights its top hit, so Enter opens it; the empty box highlights nothing
   // until ↓ moves into it. Each open starts over.
   const [activeIdx, setActiveIdx] = useState(-1);
+  // Whether the pointer made the active option: Click UI's menus tint a hovered item and
+  // ring only the item the keys moved to.
+  const [byPointer, setByPointer] = useState(false);
   useEffect(() => {
     if (open) setActiveIdx(q ? 0 : -1);
   }, [q, open]);
@@ -392,9 +400,11 @@ export function HeaderSearch({
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
+      setByPointer(false);
       setActiveIdx((i) => Math.min(activations.length - 1, i + 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
+      setByPointer(false);
       setActiveIdx((i) => Math.max(0, i - 1));
     } else if (e.key === "Enter") {
       e.preventDefault();
@@ -417,9 +427,13 @@ export function HeaderSearch({
     id: optionId(idx),
     role: "option",
     "aria-selected": idx === activeIdx,
+    "data-by-keys": idx === activeIdx && !byPointer ? "" : undefined,
     tabIndex: -1,
-    onMouseEnter: () => setActiveIdx(idx),
-    className: rowClass(idx === activeIdx),
+    onMouseEnter: () => {
+      setByPointer(true);
+      setActiveIdx(idx);
+    },
+    className: OPTION_CLASS,
   });
 
   // Radix counts the anchor as outside the panel, so the focus that opens the panel (or a
@@ -431,7 +445,7 @@ export function HeaderSearch({
   return (
     <Popover open={popoverOpen} onOpenChange={setOpen}>
       <RadixPopover.Anchor asChild>
-        <div ref={anchorRef} className="relative w-full">
+        <div ref={anchorRef} className="group relative w-full">
           <SearchField
             ref={inputRef}
             value={q}
@@ -470,9 +484,11 @@ export function HeaderSearch({
             // the entity box, not a look-alike search.
             tabIndex={view === "graph" ? -1 : undefined}
           />
+          {/* Platform-correct (⌘K / Ctrl K); the hint leaves once the field has the focus or
+              any text, as on the placeholder field it replaces (layout/Header.tsx). */}
           {!q && (
-            <Kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex">
-              ⌘K
+            <Kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex sm:group-focus-within:hidden">
+              {paletteShortcut()}
             </Kbd>
           )}
         </div>
@@ -493,21 +509,21 @@ export function HeaderSearch({
               {[
                 matchedNamespaces.length > 0 &&
                   `${matchedNamespaces.length} namespace${matchedNamespaces.length === 1 ? "" : "s"}`,
-                matchedProfile.length > 0 && `${matchedProfile.length} profile`,
+                matchedProfile.length > 0 &&
+                  `${matchedProfile.length} profile section${matchedProfile.length === 1 ? "" : "s"}`,
                 matchedDocuments.length > 0 &&
                   `${matchedDocuments.length} document${matchedDocuments.length === 1 ? "" : "s"}`,
               ]
                 .filter(Boolean)
                 .join(" · ")}
             </span>
-            <span className="font-mono">↑↓ navigate · ↵ open</span>
           </div>
         )}
 
         {activations.length > 0 && (
           <div id={listboxId} role="listbox" aria-label="Search results">
             {recentShown.length > 0 && (
-              <OptionGroup id={`${listboxId}-recent`} icon="document" label="Recent memories">
+              <OptionGroup id={`${listboxId}-recent`} icon="clock" label="Recent memories">
                 {recentShown.map((e, i) => (
                   <button
                     type="button"
@@ -516,7 +532,7 @@ export function HeaderSearch({
                     onClick={() => openMemory(e)}
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      <TypeChip label="memory" />
+                      <TypeIcon kind="memory" />
                       <span className="font-mono text-sm truncate">{e.memory_key}</span>
                     </div>
                   </button>
@@ -534,7 +550,7 @@ export function HeaderSearch({
                     onClick={() => openProfileSection(s.label)}
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      <TypeChip label="profile" />
+                      <TypeIcon kind="profile" />
                       <span className="font-mono text-sm truncate">{s.label}</span>
                     </div>
                   </button>
@@ -547,27 +563,18 @@ export function HeaderSearch({
                 {namespacesShown.map((r, i) => {
                   const idx = offNs + i;
                   return (
-                    <a
-                      key={r.namespace}
-                      {...optionProps(idx)}
-                      href={viewHref("memories")}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        switchNs(r.namespace);
-                      }}
-                    >
+                    // A button, not a link: the switch keeps the page it is made on.
+                    <button type="button" key={r.namespace} {...optionProps(idx)} onClick={() => switchNs(r.namespace)}>
                       <div className="flex items-center gap-2">
-                        <TypeChip label="namespace" />
+                        <TypeIcon kind="namespace" />
                         <span className="font-mono text-sm">{r.namespace}</span>
-                        <Badge
-                          text={r.visibility}
-                          size="sm"
-                          state={r.visibility === "public" ? "success" : "default"}
-                        />
+                        <Badge text={sentenceCase(r.visibility)} size="sm" state="neutral" />
                         {!r.joined && <span className="text-xs text-text-muted">not joined</span>}
                       </div>
-                      {r.description && <div className="text-xs text-text-muted mt-0.5 truncate">{r.description}</div>}
-                    </a>
+                      {r.description && (
+                        <div className="pl-6 text-xs text-text-muted mt-0.5 truncate">{r.description}</div>
+                      )}
+                    </button>
                   );
                 })}
               </OptionGroup>
@@ -585,10 +592,10 @@ export function HeaderSearch({
                       onClick={() => openProfileSection(s.label)}
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <TypeChip label="profile" />
+                        <TypeIcon kind="profile" />
                         <span className="font-mono text-sm truncate">{s.label}</span>
                       </div>
-                      <div className="text-xs text-text-muted mt-0.5 truncate">{truncateForRow(s.value)}</div>
+                      <div className="pl-6 text-xs text-text-muted mt-0.5 truncate">{truncateForRow(s.value)}</div>
                     </button>
                   );
                 })}
@@ -596,7 +603,7 @@ export function HeaderSearch({
             )}
 
             {memoryShown.length > 0 && (
-              <OptionGroup id={`${listboxId}-mem`} icon="document" label="Best matches">
+              <OptionGroup id={`${listboxId}-mem`} icon="search" label="Best matches">
                 {memoryShown.map((e, i) => {
                   const idx = offMem + i;
                   return (
@@ -607,19 +614,13 @@ export function HeaderSearch({
                       onClick={() => openMemory({ memory_key: e.memory_key, agent: e.agent || "" })}
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <TypeChip label="memory" />
+                        <TypeIcon kind="memory" />
                         <span className="font-mono text-sm truncate">{e.memory_key}</span>
-                        <span className="text-xs text-text-muted shrink-0 ml-auto">
-                          {e.memory_type}
-                          {e.created_at ? ` · ${relativeTime(e.created_at)}` : ""}
-                        </span>
+                        <span className="text-xs text-text-muted shrink-0 ml-auto">{e.memory_type}</span>
                       </div>
-                      <div className="text-xs text-text-muted mt-0.5 truncate">
-                        {e.agent ? (
-                          <>
-                            <span className="text-text-muted">{e.agent}</span> ·{" "}
-                          </>
-                        ) : null}
+                      {/* Rows are per key and agent: the agent tells two of one key apart. */}
+                      <div className="pl-6 text-xs text-text-muted mt-0.5 truncate">
+                        {e.agent ? `${displayAgent(e.agent)} · ` : ""}
                         {e.content_excerpt || "(empty)"}
                       </div>
                     </button>
@@ -629,20 +630,19 @@ export function HeaderSearch({
             )}
 
             {documentsShown.length > 0 && (
-              <OptionGroup id={`${listboxId}-doc`} icon="book" label="Library">
+              <OptionGroup id={`${listboxId}-doc`} icon="document" label="Library">
                 {documentsShown.map((d, i) => {
                   const idx = offDoc + i;
                   const label = d.title || d.original_filename || d.source_uri;
                   return (
                     <button type="button" key={d.source_uri} {...optionProps(idx)} onClick={() => openDocument(d)}>
                       <div className="flex items-center gap-2 min-w-0">
-                        <TypeChip label="library" />
-                        <span className={`text-sm truncate ${d.title ? "" : "font-mono"}`}>{label}</span>
-                        {(d.tags || []).slice(0, 3).map((t) => (
-                          <Badge key={t} text={`#${t}`} size="sm" className="shrink-0" />
-                        ))}
+                        <TypeIcon kind="document" />
+                        <span className={`truncate text-sm ${d.title ? "" : "font-mono"}`}>{label}</span>
+                        {/* At most three, so no "+N" with a tooltip sits inside the option. */}
+                        <TagList tags={(d.tags || []).slice(0, 3)} className="shrink-0" />
                       </div>
-                      <div className="text-xs text-text-muted mt-0.5 truncate">
+                      <div className="pl-6 text-xs text-text-muted mt-0.5 truncate">
                         {d.chunk_count} chunk{d.chunk_count === 1 ? "" : "s"}
                         {d.description ? ` · ${d.description}` : ""}
                       </div>
@@ -730,15 +730,19 @@ function OptionGroup({
   );
 }
 
-function TypeChip({ label }: { label: "namespace" | "profile" | "memory" | "library" }) {
-  const states: Record<typeof label, BadgeState> = {
-    namespace: "default",
-    profile: "neutral",
-    memory: "info",
-    library: "neutral",
-  };
-  const state = states[label];
-  return <Badge text={label} state={state} size="sm" className="shrink-0" />;
+/** A result's type, as the 16 px icon the sidebar gives it (Memories is the clock), not a
+ *  coloured badge on every row; "Best matches" and "Recent memories" differ by their
+ *  heading icons. */
+const TYPE_ICONS: Record<"namespace" | "profile" | "memory" | "document", IconName> = {
+  namespace: "folder-closed",
+  profile: "user",
+  memory: "clock",
+  document: "document",
+};
+function TypeIcon({ kind }: { kind: keyof typeof TYPE_ICONS }) {
+  return (
+    <Icon name={TYPE_ICONS[kind]} size="sm" color="var(--color-text-muted)" aria-hidden="true" className="shrink-0" />
+  );
 }
 
 function MoreLink({
@@ -767,11 +771,10 @@ function MoreLink({
 /** A result row bleeds into the popover's padding so its hover fill spans the width. */
 const ROW_BLEED = "block text-left -mx-2 w-[calc(100%+1rem)] px-2 rounded-sm cursor-pointer";
 
-// Focus stays in the field (aria-activedescendant), so the active option's ring is the
-// only focus indicator: Click UI's outline blue, inset, over the menu tint.
-function rowClass(isActive: boolean): string {
-  return `${ROW_BLEED} py-2 no-underline hover:no-underline text-text ${isActive ? "bg-surface-2 ring-2 ring-inset ring-focus" : "hover:bg-surface-2"}`;
-}
+// Focus stays in the field (aria-activedescendant), so the ring on the option the keys moved
+// to is the only focus indicator: Click UI's outline blue, inset, over the menu tint. An
+// option the pointer is on takes the tint alone. `data-by-keys` marks the keys' option.
+const OPTION_CLASS = `${ROW_BLEED} py-2 no-underline hover:no-underline text-text aria-selected:bg-surface-2 data-[by-keys]:ring-2 data-[by-keys]:ring-inset data-[by-keys]:ring-focus`;
 
 /** The query syntax, under the empty box's options. */
 function SyntaxHelp() {
@@ -780,21 +783,19 @@ function SyntaxHelp() {
       <div className="section-label pt-2 pb-1 border-t border-border mt-2">Syntax</div>
       <div className="pb-1 space-y-1 text-xs text-text-muted">
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">coffee</code>
+          <code className="code-inline">coffee</code>
           <span>match across profile, memory, library</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">tag:work</code>
+          <code className="code-inline">tag:work</code>
           <span>memories + library tagged work (partial OK)</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">namespace:qa</code>
+          <code className="code-inline">namespace:qa</code>
           <span>jump to a namespace</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">
-            type:profile|memory|doc
-          </code>
+          <code className="code-inline">type:profile|memory|doc</code>
           <span>constrain to one content type</span>
         </div>
       </div>
@@ -803,11 +804,7 @@ function SyntaxHelp() {
 }
 
 function Searching() {
-  return (
-    <div className="py-5 text-sm text-text-muted text-center" aria-live="polite">
-      Searching…
-    </div>
-  );
+  return <Loading label="Loading results" />;
 }
 
 function NoResults({ q }: { q: string }) {
@@ -817,8 +814,8 @@ function NoResults({ q }: { q: string }) {
         No matches for <span className="font-mono text-text">{q}</span>
       </div>
       <div className="text-xs text-text-muted mt-1.5">
-        Try <code className="font-mono">tag:</code>, <code className="font-mono">namespace:</code>, or{" "}
-        <code className="font-mono">type:</code>.
+        Try <code className="code-inline">tag:</code>, <code className="code-inline">namespace:</code>, or{" "}
+        <code className="code-inline">type:</code>.
       </div>
     </div>
   );

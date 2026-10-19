@@ -177,6 +177,8 @@ export interface MemoryListResponse {
   // string: the value is above 2^53, which a JS number would round.
   namespace_version?: string;
   unchanged?: boolean;
+  // Inputs this server does not know (a release behind), named rather than refused.
+  ignored_args?: string[];
 }
 
 export interface Identity {
@@ -288,16 +290,19 @@ export async function listMemories(
     previewChars?: number;
     // Only rows whose value or key holds this text, any case.
     contains?: string;
+    // Only rows carrying every one of these tags, in any case.
+    tags?: string[];
+    // Only rows this agent wrote; every agent's rows when unset.
+    agent?: string;
   } & RequestOpts = {},
 ): Promise<MemoryListResponse> {
-  // The Memories view shows everything in the namespace regardless of
-  // which agent wrote the row, so pass `agent=*` to drop the per-agent
-  // server filter.
+  // Without an agent the Memories view shows every agent's rows, so it sends `agent=*` to
+  // drop the server's per-agent filter.
   const out = await post<MemoryListResponse>(
     "/v1/memory.list",
     {
       ...id,
-      agent: "*",
+      agent: opts.agent || "*",
       limit,
       ...(opts.offset ? { offset: opts.offset } : {}),
       include_tombstoned: opts.include_tombstoned ?? false,
@@ -309,6 +314,10 @@ export async function listMemories(
       ...(opts.fields ? { fields: opts.fields } : {}),
       ...(opts.previewChars ? { preview_chars: opts.previewChars } : {}),
       ...(opts.contains ? { contains: opts.contains } : {}),
+      // Tags as typed; the server matches them in any case. Two or more must all match (a
+      // build that predates `tags_every` matches any one, and the page then requires every tag
+      // itself).
+      ...(opts.tags?.length ? { tags: opts.tags, ...(opts.tags.length > 1 ? { tags_every: true } : {}) } : {}),
     },
     opts.signal,
   );
@@ -745,12 +754,15 @@ export async function listConflicts(
   return post("/v1/conflicts.list", body, opts.signal);
 }
 
-/** The live conflicted count for a badge: the same operation with `count_only`, answered
- *  from a 60 s server cache with no value column read. */
-export async function countConflicts(id: Pick<Identity, "org" | "namespace">, opts: RequestOpts = {}): Promise<number> {
+/** The namespace's conflicted count. `fresh` counts now instead of answering from the
+ *  replica's minute-long cache (the review queue; the sidebar badge takes the cache). */
+export async function countConflicts(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: RequestOpts & { fresh?: boolean } = {},
+): Promise<number> {
   const r = await post<{ total?: number | null }>(
     "/v1/conflicts.list",
-    { org: id.org, namespace: id.namespace, count_only: true },
+    { org: id.org, namespace: id.namespace, count_only: true, ...(opts.fresh ? { fresh: true } : {}) },
     opts.signal,
   );
   return r.total ?? 0;
@@ -814,7 +826,13 @@ export async function resolveConflict(
   memory_id: string,
   decision: ResolveDecision,
   opts: { peer_id?: string; reason?: string; resolved_by?: string } = {},
-): Promise<{ resolved: boolean; affected_memory_ids: string[] }> {
+): Promise<{
+  resolved: boolean;
+  affected_memory_ids: string[];
+  /** The namespace's conflicted count after the writes; absent from a server a release
+   *  behind, null when nothing was resolved. */
+  total?: number | null;
+}> {
   const body: Record<string, unknown> = {
     org: id.org,
     namespace: id.namespace,

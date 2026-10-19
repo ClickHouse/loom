@@ -69,7 +69,7 @@ vi.mock("../api", async (importOriginal) => {
           : { ...MOVED, from_key: fromKey, to_key: toKey, redirected: opts.keepRedirect !== false },
     ),
     memoryHistory: vi.fn(async () => ({ rows: [] })),
-    memoryRelated: vi.fn(async () => ({ rows: [] })),
+    memoryRelated: vi.fn(async () => ({ results: [] })),
     memoryLineage: vi.fn(async () => ({ steps: [] })),
     getProvenance: vi.fn(async () => ({ found: false })),
     listMemories: vi.fn(async () => ({ entries: [], total: 0 })),
@@ -115,6 +115,12 @@ async function open(onChanged = () => {}) {
   await screen.findByText("oat milk, no sugar");
 }
 
+/** Rename lives in the footer's More menu. */
+async function openRename() {
+  await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+}
+
 describe("MemoryInspector rename with redirect", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -132,7 +138,7 @@ describe("MemoryInspector rename with redirect", () => {
     await open(onChanged);
 
     expect(screen.queryByTestId("rename-form")).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Rename (keep redirect)" }));
+    await openRename();
     const form = screen.getByTestId("rename-form");
 
     const input = within(form).getByLabelText("New key");
@@ -178,7 +184,7 @@ describe("MemoryInspector rename with redirect", () => {
   it("unticking the redirect sends keep_redirect false and follows the new key", async () => {
     seed("admin");
     await open();
-    await userEvent.click(screen.getByRole("button", { name: "Rename (keep redirect)" }));
+    await openRename();
     const form = screen.getByTestId("rename-form");
     await userEvent.click(within(form).getByRole("checkbox", { name: "Keep old key readable (redirect)" }));
     expect(form).toHaveTextContent("The old key is deleted");
@@ -206,7 +212,9 @@ describe("MemoryInspector rename with redirect", () => {
     seed("viewer");
     await open();
     expect(screen.queryByTestId("redirect-badge")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Rename (keep redirect)" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    await screen.findByRole("menuitem", { name: "Copy" });
+    expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
     expect(moveMemory).not.toHaveBeenCalled();
   });
 });

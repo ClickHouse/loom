@@ -1,9 +1,8 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
-import { Icon } from "@clickhouse/click-ui/Icon";
-import { Link } from "@clickhouse/click-ui/Link";
 import { Popover } from "@clickhouse/click-ui/Popover";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
@@ -18,8 +17,8 @@ import {
   type Identity,
 } from "../api";
 import { useStore, useIdentity } from "../lib/state";
-import { Skeleton } from "../components/Skeleton";
-import { fmtInt, humanizeError, relativeTime } from "../lib/format";
+import { RowSkeleton } from "../components/Skeleton";
+import { fmtInt, humanizeError, parseChTime, relativeTime } from "../lib/format";
 import { useVisiblePoll } from "../lib/hooks";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
@@ -28,7 +27,13 @@ import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { pluginInstallLines } from "../lib/clients";
 import { PopoverTrigger } from "../components/ui/Menu";
-import { fieldError, PageHeader } from "../components/ui";
+import { fieldError, ListRow, LoadingSkeleton, PageHeader } from "../components/ui";
+import { ListState } from "../components/ui/ListState";
+import { ListTime } from "../components/ui/ListTime";
+import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
+import { RowMenu } from "../components/ui/RowMenu";
+import { useRowNav } from "../lib/useRowNav";
+import { useRowSelection } from "../lib/useRowSelection";
 
 const DEFAULT_CHAR_LIMIT = 8192;
 
@@ -72,22 +77,12 @@ const TEMPLATES: Array<{
 export function Profile() {
   const identity = useIdentity();
   const [entries, setEntries] = useState<ProfileEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [newSeed, setNewSeed] = useState<{ label: string; value: string } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
-
-  function toggleSelect(label: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(label)) next.delete(label);
-      else next.add(label);
-      return next;
-    });
-  }
 
   async function bulkDelete() {
     if (selected.size === 0 || bulkBusy) return;
@@ -102,7 +97,7 @@ export function Profile() {
     try {
       await Promise.all(Array.from(selected).map((label) => deleteProfileSection(identity, label)));
       toast(`Deleted ${selected.size} section${selected.size === 1 ? "" : "s"}`, "ok");
-      setSelected(new Set());
+      selection.clear();
       refresh();
     } catch (e) {
       toast(humanizeError(e), "error");
@@ -111,13 +106,22 @@ export function Profile() {
     }
   }
 
-  const filteredEntries = entries
-    ? entries.filter((e) => {
-        const q = query.trim().toLowerCase();
-        if (!q) return true;
-        return e.label.toLowerCase().includes(q) || e.value.toLowerCase().includes(q);
-      })
-    : null;
+  // The sections filter by the text a render behind the box: clearing a search that hid
+  // most of them mounts them again after the box has painted, not before.
+  const listQuery = useDeferredValue(query);
+  const filteredEntries = useMemo(() => {
+    const q = listQuery.trim().toLowerCase();
+    return entries && q
+      ? entries.filter((e) => e.label.toLowerCase().includes(q) || e.value.toLowerCase().includes(q))
+      : entries;
+  }, [entries, listQuery]);
+  // Checkboxes: one row, a Shift-click range, every section shown; Escape clears them while
+  // no editor is open (it owns Escape). Arrows and j/k move over the rows, Enter opens one.
+  const labels = useMemo(() => (filteredEntries ?? []).map((e) => e.label), [filteredEntries]);
+  const editorOpen = !!editing || newOpen;
+  const selection = useRowSelection(labels, { enabled: !editorOpen });
+  const { selected, toggle: toggleSelect } = selection;
+  const listNav = useRowNav({ enabled: !editorOpen && labels.length > 0 });
 
   // The scope a refresh was asked for; one that answers after the namespace or agent moved
   // on is dropped, so namespace A's sections never render under B.
@@ -132,7 +136,7 @@ export function Profile() {
       setEntries(out.entries);
     } catch (e) {
       if (scopeRef.current !== scope) return;
-      setError(humanizeError(e));
+      setError(e);
     }
   }
 
@@ -157,7 +161,7 @@ export function Profile() {
   const selecting = selected.size > 0;
   const openOrSelect = useCallback(
     (label: string) => (selecting ? toggleSelect(label) : useStore.getState().inspectProfile(label)),
-    [selecting],
+    [selecting, toggleSelect],
   );
   const deleteSection = useCallback(
     (label: string) => {
@@ -165,8 +169,12 @@ export function Profile() {
     },
     [identity],
   );
+  // Another namespace's sections, and an editor open on one of them, are not this one's.
   useEffect(() => {
     setEntries(null);
+    setEditing(null);
+    setNewOpen(false);
+    setNewSeed(null);
     void refreshRef.current();
   }, [identity.org, identity.namespace, identity.agent]);
 
@@ -186,122 +194,132 @@ export function Profile() {
     setNewOpen(true);
   }
 
-  if (error) {
-    return (
-      <PageContainer>
-        <Header onNew={() => openNew(null)} entries={[]} />
-        <p className="text-sm text-danger">Couldn't load profile: {error}</p>
-      </PageContainer>
-    );
-  }
-
-  if (entries === null) {
-    return (
-      <PageContainer>
-        <Header onNew={() => openNew(null)} entries={[]} />
-        <div className="space-y-3 mt-6">
-          <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-24 w-full" />
-        </div>
-      </PageContainer>
-    );
-  }
-
-  const isEmpty = entries.length === 0 && !newOpen;
+  const isEmpty = entries !== null && entries.length === 0 && !newOpen && !error;
+  const searching = listQuery.trim() !== "";
+  // One count, at the end of the toolbar; nothing before the read or on an
+  // error.
+  const shown = filteredEntries?.length ?? 0;
+  const countText =
+    entries === null || error || isEmpty
+      ? ""
+      : searching
+        ? `${shown.toLocaleString()} match${shown === 1 ? "" : "es"}`
+        : `${shown === 0 ? 0 : 1}–${shown.toLocaleString()} of ${entries.length.toLocaleString()}`;
 
   return (
     <PageContainer>
-      <Header onNew={() => openNew(null)} entries={entries} empty={entries.length === 0} />
+      <Header onNew={() => openNew(null)} entries={entries ?? []} empty={entries?.length === 0} />
 
       {isEmpty ? (
         <EmptyState onPickTemplate={(t) => openNew({ label: t.label, value: t.value })} />
       ) : (
-        <div className="space-y-3 mt-6">
-          <SearchField
-            aria-label="Search profile sections"
-            value={query}
-            onChange={(value) => setQuery(value)}
-            placeholder="Search sections by label or value…"
-          />
-          {selected.size > 0 && (
-            <div className="sticky top-0 z-[2] animate-fade-in flex items-center gap-2 p-2.5 rounded-xl border border-accent bg-accent-soft shadow-sm">
-              <span className="text-sm font-medium text-accent tabular">{selected.size} selected</span>
-              <div className="flex-1" />
-              <Button type="secondary" htmlType="button" iconLeft="cross" onClick={() => setSelected(new Set())}>
-                Clear
-              </Button>
-              <Button type="danger" htmlType="button" iconLeft="trash" onClick={bulkDelete} loading={bulkBusy}>
-                Delete all
-              </Button>
-            </div>
-          )}
+        <div className="mt-6">
+          <ListToolbar
+            label="Search and filters"
+            count={countText || undefined}
+            selection={
+              selecting
+                ? {
+                    count: selected.size,
+                    onClear: selection.clear,
+                    all: { total: labels.length, checked: selection.allSelected, onToggle: selection.toggleAll },
+                    actions: [{ label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: bulkDelete }],
+                  }
+                : null
+            }
+          >
+            <ListToolbarSearch>
+              <SearchField
+                aria-label="Search profile sections"
+                value={query}
+                onChange={(value) => setQuery(value)}
+                placeholder="Search by label or value…"
+              />
+            </ListToolbarSearch>
+          </ListToolbar>
           {newOpen && (
-            <SectionEditor
-              label={newSeed?.label ?? ""}
-              value={newSeed?.value ?? ""}
-              isNew
-              onCancel={() => {
-                setNewOpen(false);
-                setNewSeed(null);
-              }}
-              onSaved={() => {
-                setNewOpen(false);
-                setNewSeed(null);
-                refresh();
-              }}
-            />
-          )}
-          {filteredEntries && filteredEntries.length === 0 && query && (
-            <div className="text-center py-8 text-sm text-text-muted">
-              No sections matching <span className="font-mono">{query}</span>.
-            </div>
-          )}
-          {(filteredEntries ?? entries).map((b) =>
-            editing === b.label ? (
+            <div className="mb-2">
               <SectionEditor
-                key={b.label}
-                label={b.label}
-                value={b.value}
-                isNew={false}
-                onCancel={() => setEditing(null)}
+                label={newSeed?.label ?? ""}
+                value={newSeed?.value ?? ""}
+                isNew
+                onCancel={() => {
+                  setNewOpen(false);
+                  setNewSeed(null);
+                }}
                 onSaved={() => {
-                  setEditing(null);
+                  setNewOpen(false);
+                  setNewSeed(null);
                   refresh();
                 }}
               />
-            ) : (
-              // biome-ignore lint/a11y/noStaticElementInteractions: a pointer shortcut over the whole card; the section name (a button) and the checkbox are the keyboard paths
-              // biome-ignore lint/a11y/useKeyWithClickEvents: as above
-              // biome-ignore lint/a11y/noNoninteractiveElementInteractions: as above
-              <div
-                key={b.label}
-                onClick={() => openOrSelect(b.label)}
-                className={
-                  "p-4 rounded-lg border bg-surface flex items-start gap-3 transition-colors cursor-pointer " +
-                  (selected.has(b.label)
-                    ? "border-accent ring-1 ring-accent/40"
-                    : "border-border hover:border-border-strong")
-                }
-              >
-                <Checkbox
-                  checked={selected.has(b.label)}
-                  onCheckedChange={() => toggleSelect(b.label)}
-                  onClick={(e) => e.stopPropagation()}
-                  aria-label={`Select section ${b.label}`}
-                  className="mt-1 shrink-0"
-                />
-                <div className="flex-1 min-w-0">
-                  <SectionRow
-                    embedded
-                    section={b}
-                    onOpen={openOrSelect}
-                    onEdit={editSection}
-                    onDelete={deleteSection}
-                  />
-                </div>
-              </div>
-            ),
+            </div>
           )}
+          {entries === null && !error && (
+            <LoadingSkeleton label="Loading the profile">
+              <div className="space-y-2">
+                <RowSkeleton />
+                <RowSkeleton />
+                <RowSkeleton />
+              </div>
+            </LoadingSkeleton>
+          )}
+          {!!error && (
+            <ListState
+              kind="error"
+              things="profile sections"
+              error={error}
+              onRetry={() => {
+                setError(null);
+                setEntries(null);
+                void refresh();
+              }}
+            />
+          )}
+          {filteredEntries && filteredEntries.length === 0 && searching && (
+            <ListState
+              kind="filtered"
+              things="profile sections"
+              filter={listQuery.trim()}
+              onClear={() => setQuery("")}
+            />
+          )}
+          <div ref={listNav} className="space-y-2">
+            {(filteredEntries ?? []).map((b) =>
+              editing === b.label ? (
+                <SectionEditor
+                  key={b.label}
+                  label={b.label}
+                  value={b.value}
+                  isNew={false}
+                  onCancel={() => setEditing(null)}
+                  onSaved={() => {
+                    setEditing(null);
+                    refresh();
+                  }}
+                />
+              ) : (
+                <ListRow
+                  key={b.label}
+                  data-focus-key={`section:${b.label}`}
+                  checked={selected.has(b.label)}
+                  leading={
+                    <Checkbox
+                      checked={selected.has(b.label)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSelect(b.label, e.shiftKey);
+                      }}
+                      aria-label={`Select section ${b.label}`}
+                      className="list-row-control"
+                    />
+                  }
+                >
+                  <SectionRow section={b} onOpen={openOrSelect} onEdit={editSection} onDelete={deleteSection} />
+                </ListRow>
+              ),
+            )}
+          </div>
         </div>
       )}
 
@@ -324,9 +342,15 @@ function Header({ onNew, entries, empty }: { onNew: () => void; entries: Profile
           </Button>
         }
       >
-        <ScopeBadge kind="namespace" value={namespace} />
+        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
+        <span className="hidden sm:contents">
+          <ScopeBadge kind="namespace" value={namespace} />
+        </span>
       </PageHeader>
-      <p className="text-sm text-text-muted">One profile. Every AI you use reads it before responding.</p>
+      {/* Left to the title on a phone, where the sections need the room. */}
+      <p className="hidden text-sm text-text-muted sm:block">
+        One profile. Every AI you use reads it before responding.
+      </p>
 
       <div className="flex items-center gap-4 mt-4 text-xs">
         <ActivityChip empty={empty} />
@@ -334,10 +358,11 @@ function Header({ onNew, entries, empty }: { onNew: () => void; entries: Profile
           <Button
             type="empty"
             htmlType="button"
-            iconLeft={previewOpen ? "eye-closed" : "eye"}
+            iconLeft="eye"
+            aria-pressed={previewOpen}
             onClick={() => setPreviewOpen((v) => !v)}
           >
-            {previewOpen ? "Hide preview" : "Preview rendered"}
+            Rendered preview
           </Button>
         )}
       </div>
@@ -397,18 +422,19 @@ function ActivityChip({ empty }: { empty?: boolean }) {
   }
 
   const mostRecent = entries[0];
-  const ms = mostRecent.last_activated_at ? Date.now() - new Date(mostRecent.last_activated_at).getTime() : Infinity;
-  const dotClass = ms < 3_600_000 ? "bg-success" : ms < 86_400_000 ? "bg-warn" : "bg-text-muted";
+  const last = parseChTime(mostRecent.last_activated_at);
+  // Green for a read in the last hour; an older one is not a warning.
+  const dotClass = last && Date.now() - last.getTime() < 3_600_000 ? "bg-success" : "bg-text-muted";
 
   return (
     <Popover open={expanded} onOpenChange={setExpanded}>
       <PopoverTrigger>
-        <button type="button" className="inline-flex items-center gap-1.5 text-text-muted hover:text-text">
+        <Button type="empty" htmlType="button">
           <span className={`inline-block w-2 h-2 rounded-full ${empty ? "bg-surface-3" : dotClass}`} />
           {empty ? "Checked by" : "Read by"} {entries.length === 1 ? mostRecent.agent : `${entries.length} clients`} ·{" "}
           {mostRecent.last_activated_at ? relativeTime(mostRecent.last_activated_at) : "—"}
           {empty && " · empty, nothing to read yet"}
-        </button>
+        </Button>
       </PopoverTrigger>
       <Popover.Content align="start" aria-label="Clients that read the profile" className="min-w-[280px] space-y-1">
         {empty && (
@@ -426,7 +452,7 @@ function ActivityChip({ empty }: { empty?: boolean }) {
               )}
             </span>
             <span className="shrink-0 text-xs text-text-muted tabular-nums">
-              {e.event_count}× · {relativeTime(e.last_activated_at)}
+              {e.event_count}× · <ListTime time={e.last_activated_at} quiet={false} />
             </span>
           </div>
         ))}
@@ -545,9 +571,8 @@ function ReachSection() {
           <div className="font-medium text-xs text-text-muted mb-1">Claude Desktop · Cursor · any MCP client</div>
           <div className="mb-1">Delivered when the client connects, as Loom&apos;s session instructions.</div>
           <div className="text-xs text-text-muted leading-relaxed">
-            If a client ignores server instructions, type{" "}
-            <code className="font-mono bg-accent-soft text-accent rounded px-1 py-0.5">use loom</code> once at the start
-            of the conversation; it re-delivers the same text.
+            If a client ignores server instructions, type <code className="code-inline">use loom</code> once at the
+            start of the conversation; it re-delivers the same text.
           </div>
         </div>
         <details className="group">
@@ -600,12 +625,7 @@ function EmptyState({ onPickTemplate }: { onPickTemplate: (t: (typeof TEMPLATES)
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {TEMPLATES.map((t) => (
-          <button
-            key={t.title}
-            type="button"
-            onClick={() => onPickTemplate(t)}
-            className="text-left rounded-md border border-border bg-surface-2 hover:border-accent hover:bg-surface p-3 transition-colors"
-          >
+          <button key={t.title} type="button" onClick={() => onPickTemplate(t)} className="persona-card">
             <div className="text-sm font-semibold mb-1">{t.title}</div>
             <div className="text-xs text-text-muted mb-2">{t.description}</div>
             <pre className="text-xs font-mono text-text-muted whitespace-pre-wrap leading-relaxed line-clamp-3">
@@ -623,110 +643,79 @@ const SectionRow = memo(function SectionRow({
   onOpen,
   onEdit,
   onDelete,
-  embedded = false,
 }: {
   section: ProfileEntry;
-  /** Makes the section name a button: what clicking the card does, for the keyboard. */
-  onOpen?: (label: string) => void;
+  /** The row's body: opens the section (or toggles it while a selection is made). */
+  onOpen: (label: string) => void;
   onEdit: (label: string) => void;
   onDelete: (label: string) => void;
-  /** When true, the row drops its own border + padding so a parent
-   *  wrapper can host the card chrome — used by the Profile bulk-select
-   *  layout where the checkbox lives inside the same border as content. */
-  embedded?: boolean;
 }) {
   const valueLen = section.value.length;
   const cap = section.char_limit ?? DEFAULT_CHAR_LIMIT;
-  const pct = Math.min(100, (valueLen / cap) * 100);
-  const headroomWarn = pct >= 95;
+  const nearLimit = valueLen / cap >= 0.95;
   const editor = section.last_edited_by || "—";
-  const isAgentEdit = editor !== "loom-ui" && editor !== "-";
-  const lines = section.value.split("\n");
-  const truncated = lines.length > 6;
-  const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className={embedded ? "" : "rounded-lg border border-border bg-surface p-4"}>
-      <div className="flex items-start justify-between mb-2 gap-3">
-        <div className="flex items-baseline gap-2 min-w-0 flex-1">
-          {onOpen ? (
-            <Link
-              component="button"
-              type="button"
-              size="sm"
-              weight="mono"
-              onClick={(e: MouseEvent) => {
-                e.stopPropagation();
-                onOpen(section.label);
-              }}
-              className="min-w-0 max-w-full"
-            >
-              <span className="truncate">{section.label}</span>
-            </Link>
-          ) : (
-            <div className="font-mono text-sm font-semibold truncate">{section.label}</div>
-          )}
-          <div className="text-xs font-mono tabular-nums text-text-muted whitespace-nowrap">
+    <div className="flex items-start gap-2">
+      <button
+        type="button"
+        data-row-open=""
+        onClick={() => onOpen(section.label)}
+        // Named as the section it opens; the text it shows is read in the dialog.
+        aria-label={section.label}
+        className="list-row-open block min-w-0 flex-1"
+      >
+        {/* Line 1: the section and how full it is; right, who last wrote it and when. */}
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+          <span className="min-w-0 truncate font-mono text-text">{section.label}</span>
+          <span className="font-mono tabular-nums text-text-muted whitespace-nowrap">
             {fmtInt(valueLen)} / {fmtInt(cap)}
-          </div>
-        </div>
-        <div className="flex items-center gap-1">
-          <IconButton
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit(section.label);
-            }}
-            label={`Edit ${section.label}`}
-            tooltip="Edit"
-            data-opener={`edit:${section.label}`}
-            icon="pencil"
-            size="sm"
-          />
-          <IconButton
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(section.label);
-            }}
-            label={`Delete ${section.label}`}
-            tooltip="Delete"
-            icon="trash"
-            size="sm"
-          />
-        </div>
-      </div>
-      <pre className="text-sm whitespace-pre-wrap break-words mb-2 font-sans text-text">
-        {expanded || !truncated ? section.value : lines.slice(0, 6).join("\n") + "\n…"}
-      </pre>
-      {truncated && (
-        <Button
-          type="empty"
-          htmlType="button"
-          className="mb-2"
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded((v) => !v);
-          }}
-        >
-          {expanded ? "Show less" : `Show all (${lines.length} lines)`}
-        </Button>
-      )}
-      <div className="flex items-center gap-3 text-xs text-text-muted mt-2">
-        {/* Not Click UI's ProgressBar: it has no warn state, and the bar turns warn near the cap. */}
-        <div
-          className="flex-1 h-1.5 rounded-full bg-surface-2 overflow-hidden"
-          role="progressbar"
-          aria-label="Share of the section limit used"
-          aria-valuenow={Math.round(pct)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        >
-          <div className={"h-full " + (headroomWarn ? "bg-warn" : "bg-accent")} style={{ width: `${pct}%` }} />
-        </div>
-        <div className="flex items-center gap-1.5 whitespace-nowrap">
-          <Icon name={isAgentEdit ? "cpu" : "user"} size="sm" aria-hidden="true" />
-          <span className="font-mono">{editor}</span>
-          {section.updated_at && <span>· {relativeTime(section.updated_at)}</span>}
-        </div>
+          </span>
+          {nearLimit && (
+            <span className="inline-flex shrink-0">
+              <Badge text="Near limit" state="warning" size="sm" />
+            </span>
+          )}
+          <span className="flex min-w-0 basis-full items-center gap-1.5 text-text-muted sm:ml-auto sm:basis-auto sm:shrink-0">
+            <span className="min-w-0 truncate font-mono">{editor}</span>
+            {section.updated_at && (
+              <>
+                · <ListTime time={section.updated_at} quiet />
+              </>
+            )}
+          </span>
+        </span>
+        {/* Line 2: the text, two lines at most; the section's dialog shows all of it. */}
+        <span className="mt-1 text-sm text-text leading-normal line-clamp-2 whitespace-pre-line break-words">
+          {section.value.slice(0, 400)}
+        </span>
+      </button>
+      {/* Edit is the row's one inline action; the rest are in its More menu. */}
+      <div className="list-row-control -my-1 flex shrink-0 items-center">
+        <IconButton
+          onClick={() => onEdit(section.label)}
+          label={`Edit ${section.label}`}
+          tooltip="Edit"
+          data-opener={`edit:${section.label}`}
+          icon="pencil"
+          size="sm"
+        />
+        <RowMenu
+          name={section.label}
+          items={[
+            {
+              label: "Copy text",
+              icon: "copy",
+              onSelect: () => {
+                void navigator.clipboard?.writeText(section.value).then(
+                  () => toast("Copied", "ok"),
+                  () => toast("Couldn't copy", "error"),
+                );
+              },
+            },
+            { label: "Delete", icon: "trash", danger: true, onSelect: () => onDelete(section.label) },
+          ]}
+        />
       </div>
     </div>
   );

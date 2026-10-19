@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "../../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../lib/state";
 import { Health, OpMixPanel, WorkersPanel, colourOf, parseOpMix } from "./Health";
@@ -113,7 +113,7 @@ describe("WorkersPanel", () => {
     expect(screen.getByText("Audit integrity")).toBeInTheDocument();
     expect(screen.getByText(/Idle — ran, nothing to do/)).toBeInTheDocument();
     expect(screen.getByText(/Last pass failed/)).toBeInTheDocument();
-    expect(screen.getByText(/3 consecutive failures — DEGRADED/)).toBeInTheDocument();
+    expect(screen.getByText("3 consecutive failures, degraded")).toBeInTheDocument();
     expect(screen.getByText(/ConnectionError: refused/)).toBeInTheDocument();
     expect(screen.getByText(/took 12\.3 s/)).toBeInTheDocument();
     expect(screen.getByText(/took 420 ms/)).toBeInTheDocument();
@@ -142,6 +142,94 @@ describe("WorkersPanel", () => {
     expect(screen.queryByText("All systems running")).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/loom\.worker_status/);
     expect(screen.getByText(/No pass reported yet/)).toBeInTheDocument();
+  });
+
+  it("keeps the workers on screen, marked busy, while Refresh reads again", async () => {
+    const worker = {
+      enabled: true,
+      effective: true,
+      interval_seconds: 30,
+      last_run_at: recent,
+      last_duration_ms: 420,
+      consecutive_failures: 0,
+      last_pass_status: "ok",
+      source: "registry",
+    };
+    respond({ workers: { embedding_worker: worker } });
+    render(<WorkersPanel />);
+    await waitFor(() => expect(screen.getByText("Memory indexing")).toBeInTheDocument());
+    let answer: (v: unknown) => void = () => undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise((r) => (answer = r))),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(screen.getByText("Memory indexing")).toBeInTheDocument();
+    expect(screen.getByTestId("workers-list")).toHaveAttribute("aria-busy", "true");
+    await act(async () => answer({ ok: true, json: async () => ({ workers: { embedding_worker: worker } }) }));
+    await waitFor(() => expect(screen.getByTestId("workers-list")).not.toHaveAttribute("aria-busy"));
+    cleanup();
+  });
+
+  it("with every worker disabled in config, its empty state offers Show all, which shows them", async () => {
+    const worker = {
+      enabled: false,
+      effective: false,
+      disabled_reason: "disabled_by_setting",
+      interval_seconds: 30,
+      last_run_at: null,
+      last_duration_ms: 0,
+      consecutive_failures: 0,
+      last_pass_status: "",
+      source: "registry",
+    };
+    respond({ workers: { embedding_worker: worker } });
+    render(<WorkersPanel />);
+    expect(await screen.findByText("Nothing to show")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(await screen.findByText("Memory indexing")).toBeInTheDocument();
+    cleanup();
+  });
+
+  it("lays the workers out as a table, one row each, its status a badge", async () => {
+    const worker = {
+      enabled: true,
+      effective: true,
+      interval_seconds: 30,
+      last_run_at: recent,
+      last_duration_ms: 420,
+      consecutive_failures: 0,
+      last_pass_status: "ok",
+    };
+    respond({ workers: { embedding_worker: worker, dedup_worker: { ...worker, consecutive_failures: 1 } } });
+    render(<WorkersPanel />);
+    await waitFor(() => expect(screen.getByText("Memory indexing")).toBeInTheDocument());
+    const table = screen.getByRole("table", { name: "Workers" });
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((h) => h.textContent),
+    ).toEqual(["Worker", "Status", "Last pass", "Every"]);
+    const [, indexing, dedup] = within(table).getAllByRole("row");
+    expect(within(indexing).getAllByRole("cell")[1]).toHaveTextContent("Healthy");
+    expect(within(indexing).getAllByRole("cell")[3]).toHaveTextContent("30s");
+    expect(within(dedup).getAllByRole("cell")[1]).toHaveTextContent("1 consecutive failure");
+    expect(within(dedup).getAllByRole("cell")[1]).not.toHaveTextContent("Healthy");
+  });
+
+  it("draws the first read as the table's header over a skeleton, marked busy", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise(() => {})),
+    );
+    render(<WorkersPanel />);
+    const table = await screen.findByRole("table", { name: "Workers" });
+    expect(table).toHaveAttribute("aria-busy", "true");
+    // The first read waits 300 ms before its loader shows, like every loader
+    // (ui/LoadingSkeleton), under the header row already in place.
+    expect(within(table).queryByText("Loading data")).toBeNull();
+    expect(within(table).getByRole("status", { name: "Loading workers" })).toBeInTheDocument();
   });
 
   it("shows the empty state only when there is nothing from either source", async () => {
@@ -316,7 +404,7 @@ describe("Extraction quality Refresh", () => {
 
 describe("OpMixPanel", () => {
   // A check the server ran but could not compute is a failure with a reason, not the
-  // "needs an org-admin token" state a request that did not answer reads as.
+  // "needs an org-admin token" state a refused request reads as.
   beforeEach(() =>
     useStore.setState({
       identity: { org: "dev", namespace: "team-a", agent: "loom-ui" },
@@ -341,11 +429,11 @@ describe("OpMixPanel", () => {
     expect(screen.queryByText(/org-admin/)).not.toBeInTheDocument();
   });
 
-  it("reads an absent check as unavailable", async () => {
+  it("says an answer without its op_mix check is a failed read", async () => {
     respond({ checks: [{ name: "clickhouse_parts", status: "ok", detail: "", data: {}, repair: "" }], overall: "ok" });
     render(<OpMixPanel />);
-    expect(await screen.findByText("Operation mix unavailable")).toBeInTheDocument();
-    expect(screen.getByText(/needs an org-admin token/)).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load the operation mix")).toBeInTheDocument();
+    expect(screen.queryByText("Operation mix unavailable")).toBeNull();
   });
 
   it("reads a refused request as unavailable", async () => {
@@ -355,6 +443,49 @@ describe("OpMixPanel", () => {
     );
     render(<OpMixPanel />);
     expect(await screen.findByText("Operation mix unavailable")).toBeInTheDocument();
+  });
+
+  it("over a failed check, the badge names the scope that check was read for while a toggle reads", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls > 1) return new Promise(() => {});
+        return new Response(JSON.stringify(opMix({ status: "fail", detail: "boom" })), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+    render(<OpMixPanel />);
+    expect(await screen.findByText("Operation mix check failed")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Whole org" }));
+    await waitFor(() => expect(calls).toBe(2));
+    expect(screen.queryByText("org · dev")).toBeNull();
+  });
+
+  it("a failed org-wide read keeps the scope toggle, so the reader can go back to the namespace", async () => {
+    const report = opMix({
+      detail: "healthy mix",
+      data: { window_days: 7, writes: 10, agents: 2, counts: { create: 10, read: 40 }, top: [] },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) =>
+        !("namespace" in JSON.parse(String(init?.body)))
+          ? new Response("down", { status: 503 })
+          : new Response(JSON.stringify(report), { status: 200, headers: { "Content-Type": "application/json" } }),
+      ),
+    );
+    render(<OpMixPanel />);
+    expect(await screen.findByText("healthy mix")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Whole org" }));
+    expect(await screen.findByText("Couldn't load the operation mix")).toBeInTheDocument();
+    // The badge names the scope of what is shown: the org read that failed.
+    expect(screen.getByText("org · dev")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "This namespace" }));
+    expect(await screen.findByText("healthy mix")).toBeInTheDocument();
   });
 
   it("renders a computed check's report", async () => {
@@ -368,5 +499,75 @@ describe("OpMixPanel", () => {
     expect(await screen.findByText("healthy mix")).toBeInTheDocument();
     expect(screen.getByText(/last 7 d · 50 calls · 2 agents/)).toBeInTheDocument();
     expect(screen.queryByText("Operation mix check failed")).not.toBeInTheDocument();
+  });
+});
+
+describe("WorkersPanel count, times and failure", () => {
+  beforeEach(() => useStore.setState({ whoami: { authenticated: false } }));
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    useStore.setState({ whoami: null });
+  });
+  const worker = {
+    enabled: true,
+    effective: true,
+    interval_seconds: 30,
+    last_run_at: recent,
+    last_duration_ms: 420,
+    consecutive_failures: 0,
+    last_pass_status: "ok",
+  };
+
+  it("counts the workers shown at the end of the toolbar, and shows the last pass as a list time", async () => {
+    respond({ workers: { embedding_worker: worker, dedup_worker: worker } });
+    render(<WorkersPanel />);
+    await waitFor(() => expect(screen.getByText("Memory indexing")).toBeInTheDocument());
+    const bar = document.querySelector<HTMLElement>('[role="group"][aria-label="Workers status"]');
+    expect(bar).toHaveTextContent("2 workers");
+    expect(within(bar!).getByRole("button", { name: /Refresh/ })).toBeInTheDocument();
+    expect(screen.getAllByText("just now")[0].tagName).toBe("TIME");
+  });
+
+  it("says a failed read failed, with Retry, never 'No workers reporting'", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ detail: "down" }), { status: 503 })),
+    );
+    render(<WorkersPanel />);
+    expect(await screen.findByText("Couldn't load workers")).toBeInTheDocument();
+    expect(screen.queryByText("No workers reporting")).toBeNull();
+    expect(document.querySelector('[role="group"][aria-label="Workers status"]')).not.toHaveTextContent(/worker/);
+    respond({ workers: { embedding_worker: worker } });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByText("Memory indexing")).toBeInTheDocument());
+  });
+});
+
+describe("Extraction quality failure", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    useStore.setState({ whoami: null, identity: null });
+  });
+
+  it("says a failed read failed, with Retry", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url === "/v1/learnings.quality"
+          ? new Response(JSON.stringify({ detail: "down" }), { status: 503 })
+          : new Response(JSON.stringify({ rows: [] }), { status: 200 }),
+      ),
+    );
+    useStore.setState({
+      identity: { org: "dev", namespace: "team-a", agent: "loom-ui" },
+      whoami: { authenticated: true, subject: "v@example.com", org: "dev", roles: ["VIEWER"] },
+    });
+    render(<Health />);
+    expect(await screen.findByText("Couldn't load extraction quality")).toBeInTheDocument();
+    respond({ rows: [{ namespace: "dev-ns", pending: 1, promoted: 0, rejected: 0, approve_ratio: 0 }] });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByText("dev-ns")).toBeInTheDocument());
   });
 });

@@ -26,7 +26,7 @@ import { ApiError } from "../lib/errors";
 import { toast } from "../components/Toast";
 import { ModePill } from "../components/TaskPills";
 import { IconButton } from "../components/IconButton";
-import { fieldError } from "../components/ui";
+import { fieldError, Loading } from "../components/ui";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 import { oneOf } from "../lib/oneOf";
 
@@ -405,12 +405,7 @@ function PosterPicker({
       />
       <div className="mt-2 rounded-lg border border-border bg-surface-2">
         {!inbox && <div className="px-3 py-2 text-xs text-text-muted">Name the inbox to choose posters.</div>}
-        {inbox && loading && (
-          <div className="px-3 py-2" role="status" aria-live="polite">
-            <span className="sr-only">Loading identities…</span>
-            <span aria-hidden="true" className="block h-3 w-2/3 animate-pulse rounded bg-border" />
-          </div>
-        )}
+        {inbox && loading && <Loading layout="inline" label="Loading identities" className="px-3 py-2" />}
         {inbox && error && (
           <div className="px-3 py-2 text-xs text-danger" role="alert">
             Could not load identities: {error}
@@ -568,7 +563,7 @@ function TrustTable({ identity, inbox, open }: { identity: Caller; inbox: string
           </Button>
         )}
       </div>
-      {rows === null && <div className="text-xs text-text-muted">Loading…</div>}
+      {rows === null && <Loading layout="inline" label="Loading trust rules" />}
       {rows && rows.length === 0 && !draft && (
         <div className="text-xs text-text-muted">
           No rules yet: writers on the owner namespace post as <span className="font-mono">auto</span>; anyone in the

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { EmptyState } from "../../../components/EmptyState";
 import { Skeleton } from "../../../components/Skeleton";
-import { Tip } from "../../../components/ui";
+import { LoadingSkeleton, Tip } from "../../../components/ui";
 import { heat, pct, trendGlyph, type Board as BoardModel, type BoardRow } from "./model";
 
 /**
@@ -59,6 +60,9 @@ function splitCellId(id: string): [string, string] {
   return i < 0 ? [id, ""] : [id.slice(0, i), id.slice(i + SEP.length)];
 }
 
+// The gap ratio's trend since the previous snapshot: more bugs without a test is worse.
+const TREND_ICON: Record<string, IconName> = { worse: "arrow-up", better: "arrow-down", flat: "minus" };
+
 function RowHeader({ row }: { row: BoardRow }) {
   const g = row.gap;
   const t = g ? trendGlyph(g.trend_delta) : null;
@@ -82,7 +86,7 @@ function RowHeader({ row }: { row: BoardRow }) {
             className={`tabular-nums shrink-0 inline-flex items-center gap-0.5 ${t.word === "worse" ? "text-danger" : t.word === "better" ? "text-success" : "text-text-muted"}`}
             aria-hidden="true"
           >
-            {pct(g.gap_ratio)} <span>{t.glyph}</span>
+            {pct(g.gap_ratio)} <Icon name={TREND_ICON[t.word] ?? "minus"} size="xs" aria-hidden="true" />
           </span>
         ) : (
           <span className="text-text-muted shrink-0" aria-hidden="true">
@@ -220,15 +224,17 @@ export function Board({
 
   const frame = "relative rounded-xl border border-border bg-surface overflow-hidden min-h-[320px] flex flex-col";
 
-  if (status === "loading") {
+  // A new window keeps the board on screen, marked busy, until it answers.
+  const refreshing = status === "loading";
+  if (refreshing && !board) {
     return (
-      <div className={frame} role="status" aria-label="Reading the bug board">
+      <LoadingSkeleton label="Loading the bug board" className={frame}>
         <div className="p-4 space-y-2">
           {Array.from({ length: 8 }, (_, i) => (
             <Skeleton key={i} className="h-7 w-full" />
           ))}
         </div>
-      </div>
+      </LoadingSkeleton>
     );
   }
   if (status === "error") {
@@ -293,7 +299,7 @@ export function Board({
 
   const cols = `minmax(180px,260px) repeat(${board.severities.length}, minmax(72px, 1fr))`;
   return (
-    <div className={frame}>
+    <div className={frame} aria-busy={refreshing || undefined}>
       <div className="overflow-auto overscroll-contain flex-1 min-h-0">
         {/* biome-ignore-start lint/a11y/useSemanticElements: APG data grid with a roving tabindex over the count cells; a <table> cannot hold the sticky CSS-grid layout */}
         {/* biome-ignore-start lint/a11y/useFocusableInteractive: APG data grid — only the count cells take the roving focus; headers and empty cells are read, not visited */}
@@ -313,7 +319,7 @@ export function Board({
               role="columnheader"
               className="sticky top-0 left-0 z-20 bg-surface-2 px-2 py-1.5 section-label border-b border-r border-border"
             >
-              component · open · gap ▲▼
+              component · open · gap, trend
             </div>
             {board.severities.map((s) => (
               <div

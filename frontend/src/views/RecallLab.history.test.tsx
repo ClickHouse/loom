@@ -128,3 +128,31 @@ describe("Recall history rows", () => {
     expect(screen.getByText("–")).toBeInTheDocument();
   });
 });
+
+// A failed read is the list's error state, with its request id and a Retry that reads again.
+describe("Recall history errors", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useStore.setState({
+      authed: true,
+      identity: { org: "dev", namespace: "ns", agent: "loom-ui" },
+      view: "recall",
+    });
+  });
+  afterEach(() => cleanup());
+
+  it("says the read failed, with a Retry that reads again", async () => {
+    const { ApiError } = await import("../api");
+    listSearchTraceLog.mockRejectedValueOnce(
+      new ApiError({ status: 503, code: "BACKEND_UNAVAILABLE", message: "upstream down", requestId: "req-7" }),
+    );
+    listSearchTraceLog.mockResolvedValue({ rows: [row()] });
+    await openHistory();
+    expect(await screen.findByText("Couldn't load recorded searches")).toBeInTheDocument();
+    expect(screen.getByText(/req-7/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(listSearchTraceLog).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("uniqTheta state blob allocates 1 GiB")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load recorded searches")).toBeNull();
+  });
+});

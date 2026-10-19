@@ -3,6 +3,7 @@ import { flushView, installVitals, startView } from "./lib/vitals";
 import { ReloadBar } from "./components/ReloadBar";
 import { sharedMine, sharedHealth } from "./lib/sharedReads";
 import { SkeletonCard } from "./components/Skeleton";
+import { Loading, LoadingSkeleton } from "./components/ui";
 import {
   whoami,
   getSavedNamespace,
@@ -22,6 +23,7 @@ import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
 import { MemoryScopeMissing } from "./components/MemoryScopeMissing";
 import { useStore, pathnameView } from "./lib/state";
+import { arriveAt, readPlace, restorePlace } from "./lib/place";
 import { useKeyboard } from "./lib/hooks";
 import { NetworkProgress } from "./components/NetworkProgress";
 import { Sidebar } from "./layout/Sidebar";
@@ -79,10 +81,13 @@ export default function App() {
   // Only a navigation scrolls. The boot applying the URL's view is not one — a fresh
   // document is at the top, and a scrollTo there would flush layout for nothing (42 ms at
   // 4x on the Repositories, Graph and Profile boots). `navSeq` counts navigations.
+  // Back and Forward do not count: they restore the place the entry remembers (below).
+  // A navigation also moves the focus to the new page's h1 and says where it went.
   const navSeq = useStore((s) => s.navSeq);
   useEffect(() => {
     if (navSeq === 0) return;
     mainRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    arriveAt(useStore.getState().navNote);
   }, [navSeq]);
   // The dashboard reports its own paint — one ui.vitals row per view, posted when the
   // view ends (a navigation, the page hiding), never inside the view's own measured
@@ -127,8 +132,11 @@ export default function App() {
   const setAuthed = useStore((s) => s.setAuthed);
   const gateReason = useStore((s) => s.gateReason);
   const setWhoami = useStore((s) => s.setWhoami);
-  const setIdentity = useStore((s) => s.setIdentity);
+  // Boot settles the identity (a provisional namespace, then the answer): not a switch, so
+  // the deep link's memory or thread stays open.
+  const bootIdentity = useStore((s) => s.bootIdentity);
   const setView = useStore((s) => s.setView);
+  const arriveFromHistory = useStore((s) => s.arriveFromHistory);
   const bootView = useStore((s) => s.bootView);
   const helpOpen = useStore((s) => s.helpOpen);
   const inspectedProfileLabel = useStore((s) => s.inspectedProfileLabel);
@@ -152,16 +160,23 @@ export default function App() {
     authed,
   );
 
-  // Browser back/forward: sync view from URL.
+  // Browser back/forward: the view from the URL, then the place the entry remembers — the
+  // scroll of <main>, the memory in the drawer, the focused element. A move inside one
+  // view (the Graph's walks) restores only what the entry remembers.
   useEffect(() => {
     if (!authed) return;
-    const sync = () => {
+    const sync = (e: PopStateEvent) => {
       const v = pathnameView();
-      if (v && v !== useStore.getState().view) setView(v);
+      if (!v) return;
+      const changed = v !== useStore.getState().view;
+      const place = readPlace(e.state);
+      if (!changed && !place) return;
+      arriveFromHistory(v, place);
+      restorePlace(place, changed);
     };
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
-  }, [authed, setView]);
+  }, [authed, arriveFromHistory]);
 
   // Goto-prefix: `g` then a letter within 1.2s jumps view (vim/Gmail convention).
   useEffect(() => {
@@ -247,7 +262,7 @@ export default function App() {
             roles: ["PLATFORM_ADMIN"],
             is_service_account: false,
           });
-          setIdentity({ org: "dev", namespace: authOffNs, agent: "loom-ui" });
+          bootIdentity({ org: "dev", namespace: authOffNs, agent: "loom-ui" });
           // Local mode uses one namespace, but explicit links still choose the
           // view: model onboarding and refreshes must not land on Memories.
           bootView(pathnameView() ?? "memories");
@@ -295,7 +310,7 @@ export default function App() {
         // only list_mine knows.
         const provisional = initial ? provisionalNamespace(initial, saved, claims) : null;
         if (initial && provisional) {
-          setIdentity({ org: effectiveOrg, namespace: provisional, agent: "loom-ui" });
+          bootIdentity({ org: effectiveOrg, namespace: provisional, agent: "loom-ui" });
           bootView(initial);
         }
         let mine: MyNamespaceEntry[] = [];
@@ -322,7 +337,7 @@ export default function App() {
           // when it changed: views key their reads on it, and the
           // provisional paint above usually already holds this answer.
           const next = { org: effectiveOrg, namespace: ns ?? "", agent: "loom-ui" };
-          if (!sameIdentity(useStore.getState().identity, next)) setIdentity(next);
+          if (!sameIdentity(useStore.getState().identity, next)) bootIdentity(next);
           bootView(initial);
         } else {
           // The bare root: the default-namespace chain (saved pick → own memory namespace →
@@ -332,7 +347,7 @@ export default function App() {
           // with the picker on that namespace; only a token that reaches nothing lands on
           // Setup, whose notice says how to get in.
           const target = landingTarget(saved, claims, mine);
-          setIdentity({ org: effectiveOrg, namespace: target.namespace ?? "", agent: "loom-ui" });
+          bootIdentity({ org: effectiveOrg, namespace: target.namespace ?? "", agent: "loom-ui" });
           if (target.namespace === null) {
             // Setup's notice says how to get in and opens the picker on request; opened here
             // it would cover that notice's actions.
@@ -411,7 +426,7 @@ export default function App() {
     return (
       <main className="min-h-screen grid place-items-center text-sm text-text-muted" aria-busy="true">
         <h1 className="sr-only">Loom</h1>
-        Loading…
+        <Loading label="Loading Loom" />
       </main>
     );
   }
@@ -439,11 +454,12 @@ export default function App() {
                 three panes) something to resolve against;
                 taller views overflow it and scroll <main> as before. */}
             <div key={view} className="animate-view-in h-full">
+              {/* Delayed, so a chunk that arrives quickly never flashes a loader. */}
               <Suspense
                 fallback={
-                  <div className="p-6">
+                  <LoadingSkeleton label="Loading page" className="p-6">
                     <SkeletonCard />
-                  </div>
+                  </LoadingSkeleton>
                 }
               >
                 <ViewSwitch view={view} />
@@ -453,6 +469,8 @@ export default function App() {
           <MobileNav />
         </div>
       </div>
+      {/* Where a navigation went, said once (lib/place.ts `announce`). */}
+      <p id="loom-nav-status" role="status" className="sr-only" />
 
       {inspectedKey && inspectorIdentity && (
         <Suspense fallback={null}>

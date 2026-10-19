@@ -697,8 +697,8 @@ export interface AuditEntry {
 
 export async function listAuditLog(
   id: Pick<Identity, "org"> & { namespace?: string },
-  opts: { limit?: number; event_type?: string; since?: string; fields?: string[] } & RequestOpts = {},
-): Promise<{ rows: AuditEntry[] }> {
+  opts: { limit?: number; event_type?: string; since?: string; cursor?: string; fields?: string[] } & RequestOpts = {},
+): Promise<{ rows: AuditEntry[]; next_cursor?: string | null }> {
   const body: Record<string, unknown> = {
     org: id.org,
     limit: opts.limit ?? 100,
@@ -712,6 +712,8 @@ export async function listAuditLog(
   // all, regular users to their accessible namespaces).
   if (id.namespace) body["namespace"] = id.namespace;
   if (opts.event_type) body["event_type"] = opts.event_type;
+  // The next, older page: the `next_cursor` the previous page answered.
+  if (opts.cursor) body["cursor"] = opts.cursor;
   return post("/v1/audit.list", body, opts.signal);
 }
 
@@ -813,7 +815,7 @@ export async function memoryHistory(
 export interface RelatedMemoryRow {
   memory_key: string;
   shared_entities: string[];
-  overlap: number;
+  overlap_count: number;
 }
 
 /** Memories that share entities with this one. */
@@ -821,7 +823,7 @@ export async function memoryRelated(
   id: Identity,
   memoryKey: string,
   topK: number = 5,
-): Promise<{ rows: RelatedMemoryRow[] }> {
+): Promise<{ results: RelatedMemoryRow[] }> {
   return post("/v1/memory.related", {
     org: id.org,
     namespace: id.namespace,
