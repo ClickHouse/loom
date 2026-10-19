@@ -22,12 +22,13 @@ re-hashed.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import yaml
 
 from server.core.hashing import sha256_text
 from server.memory.domain.okf_bundle import slugify, split_frontmatter
+from server.memory.domain.sensitivity import reads_high, value_reads_high
 
 EVIDENCE_DIR = "evidence"
 DIGEST_DIR = "digests"
@@ -69,6 +70,54 @@ class DigestRecord:
     @property
     def path(self) -> str:
         return f"{DIGEST_DIR}/{slugify(self.session_id)}.md"
+
+
+class ChunkLike(Protocol):
+    """A raw chunk: `ChunkRecord` here, or `EvidenceChunk` on the wire."""
+
+    parent_memory_key: str
+    memory_keys: list[str]
+    content: str
+
+
+@runtime_checkable
+class DigestLike(Protocol):
+    """A session digest: `DigestRecord` here, or `EvidenceDigest` on the wire."""
+
+    summary_text: str
+    key_facts: list[str]
+    derived_from: list[str]
+
+
+def evidence_keys(item: ChunkLike | DigestLike) -> list[str]:
+    """The memory keys a chunk or digest is linked to."""
+    if isinstance(item, DigestLike):
+        return list(item.derived_from)
+    return [item.parent_memory_key, *item.memory_keys]
+
+
+def evidence_is_high(item: ChunkLike | DigestLike, held_keys: set[str]) -> bool:
+    """A chunk or digest stays home when it is linked to a key held home, or when its text
+    reads as a credential: raw text has no sensitivity column, so the detector memory.set
+    runs decides."""
+    if isinstance(item, DigestLike):
+        facts, text = item.key_facts, item.summary_text
+    else:
+        facts, text = [], item.content
+    if set(evidence_keys(item)) & held_keys or reads_high(text):
+        return True
+    # each key fact on its own, as memory.digests and the outcome judge read them, decoded
+    # first (an earlier build stored a structured fact as JSON)
+    return any(value_reads_high(k) for k in facts)
+
+
+def without_high(
+    chunks: list[ChunkRecord], digests: list[DigestRecord], held_keys: set[str]
+) -> tuple[list[ChunkRecord], list[DigestRecord], int]:
+    """The evidence that may leave with the bundle, and how much stays home."""
+    keep_c = [c for c in chunks if not evidence_is_high(c, held_keys)]
+    keep_d = [d for d in digests if not evidence_is_high(d, held_keys)]
+    return keep_c, keep_d, len(chunks) + len(digests) - len(keep_c) - len(keep_d)
 
 
 def _one_line(text: str, limit: int = 140) -> str:

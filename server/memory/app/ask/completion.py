@@ -69,6 +69,8 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
             WHERE {" AND ".join(where)}
               AND status = 'active'
               AND tombstoned_at IS NULL
+              -- a high value is readable by key only, not as an answer's excerpt
+              AND sensitivity != 'high'
               AND memory_key LIKE {{pat:String}}
             ORDER BY version DESC
             LIMIT {{lim:UInt32}}

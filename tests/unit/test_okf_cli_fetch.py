@@ -40,10 +40,16 @@ class _FakeClient:
         if op == "memory.bulk_get":
             return {
                 "results": {
-                    "new": {"value": "v2", "memory_id": "m-new", "source_class": "asserted"},
+                    "new": {
+                        "value": "v2",
+                        "memory_id": "m-new",
+                        "source_class": "asserted",
+                        "sensitivity": "",
+                    },
                     "old": {
                         "value": "v1",
                         "memory_id": "m-old",
+                        "sensitivity": "",
                         "status": "superseded",
                         "superseded_by": "m-new",
                         "source_class": "extracted",
@@ -77,7 +83,8 @@ class _FakeClient:
 @pytest.mark.asyncio
 async def test_export_keeps_superseded_rows_and_pages_edges() -> None:
     client = _FakeClient()
-    rows = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    rows, unreadable = await cli_okf._fetch_namespace(client, "o", "ns", include_tombstoned=False)  # type: ignore[arg-type]
+    assert unreadable == []
     list_call = next(b for op, b in client.calls if op == "memory.list")
     assert list_call["include_superseded"] is True
     assert sorted(r["memory_key"] for r in rows) == ["new", "old"]
@@ -106,3 +113,214 @@ async def test_export_keeps_superseded_rows_and_pages_edges() -> None:
     assert newer.relates_to == [{"path": "semantic/old.md", "kind": "supersedes"}]
     assert orphans == [] and skipped == 0
     assert datetime.now(UTC).date().isoformat() in files["log.md"]
+
+
+class _MixedClient:
+    """A namespace with three live rows (plain, one both reads call high, one only the list
+    calls high) and three tombstoned rows, which bulk_get does not answer: one short, one
+    longer than the list preview, one 'high'."""
+
+    async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        def entry(key: str, **over: Any) -> dict[str, Any]:
+            base = {"memory_key": key, "agent": "a", "user_id": "-", "session_id": "-"}
+            return {**base, "memory_type": "semantic", "value": f"{key} text", **over}
+
+        if op == "memory.list":
+            return {
+                "entries": [
+                    entry("plain", sensitivity=""),
+                    # The list reached a build that reads it as high, bulk_get one that does not.
+                    entry("split", sensitivity="high"),
+                    entry("secret", sensitivity="high"),
+                    entry("gone-short", status="tombstoned", sensitivity=""),
+                    entry("gone-long", status="tombstoned", sensitivity="", value_truncated=True),
+                    # memory.list sends a high row without its value
+                    entry(
+                        "gone-high",
+                        status="tombstoned",
+                        sensitivity="high",
+                        value=None,
+                        value_truncated=True,
+                    ),
+                ],
+                "truncated": False,
+            }
+        if op == "memory.bulk_get":
+            return {
+                "results": {
+                    "plain": {"value": "plain text", "sensitivity": ""},
+                    "split": {"value": "split text", "sensitivity": ""},
+                    "secret": {"value": "secret text", "sensitivity": "high"},
+                }
+            }
+        raise AssertionError(op)
+
+
+@pytest.mark.asyncio
+async def test_export_keeps_high_and_unreadable_rows_home() -> None:
+    rows, unreadable = await cli_okf._fetch_namespace(
+        _MixedClient(),  # type: ignore[arg-type]
+        "o",
+        "ns",
+        include_tombstoned=True,
+    )
+    assert unreadable == ["gone-long"]
+    files, _orphans, skipped = cli_okf._plan_export(
+        rows, [], [], [], namespace="ns", title=None, include_high=False
+    )
+    text = "\n".join(files.values())
+    assert skipped == 3  # secret, split and gone-high
+    assert "plain text" in text and "gone-short text" in text
+    assert "secret text" not in text and "gone-high text" not in text and "split text" not in text
+
+
+class _OlderEvidenceClient(_MixedClient):
+    """A server that sends every chunk, without holding back those behind a 'high' row."""
+
+    async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == "memory.export_evidence" and body["kind"] == "chunks":
+            chunk = {"session_id": "s", "content": "", "memory_keys": []}
+            return {
+                "chunks": [
+                    {
+                        **chunk,
+                        "chunk_index": 0,
+                        "content": "said in passing",
+                        "memory_keys": ["plain"],
+                    },
+                    {
+                        **chunk,
+                        "chunk_index": 1,
+                        "content": "the vault rotates",
+                        "memory_keys": ["secret"],
+                    },
+                ],
+                "has_more": False,
+            }
+        if op == "memory.export_evidence":
+            return {"digests": [], "edges": [], "has_more": False}
+        return await super().post(op, body)
+
+    async def close(self) -> None:
+        pass
+
+
+def test_export_keeps_the_evidence_of_a_held_row_home(tmp_path, monkeypatch, capsys) -> None:
+    import argparse
+
+    monkeypatch.setattr(cli_okf, "_Client", lambda *_a: _OlderEvidenceClient())
+    monkeypatch.setattr(cli_okf, "_server_build", lambda _url: "")
+    parser = argparse.ArgumentParser()
+    cli_okf.register_okf_cli(parser.add_subparsers())
+    out = tmp_path / "b"
+    args = parser.parse_args(
+        ["export-okf", "--token", "t", "--org", "o", "--namespace", "ns", "--out", str(out)]
+    )
+    assert int(args.func(args)) == 0
+    evidence = "\n".join(p.read_text() for p in (out / "evidence").rglob("*.md"))
+    assert "said in passing" in evidence and "the vault rotates" not in evidence
+    assert "1 raw chunk(s) or session digest(s) stayed in the database" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_export_never_reads_the_value_of_a_row_the_list_calls_high() -> None:
+    asked: list[str] = []
+
+    class _Client(_MixedClient):
+        async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+            if op == "memory.bulk_get":
+                asked.extend(body["memory_keys"])
+            return await super().post(op, body)
+
+    rows, _ = await cli_okf._fetch_namespace(
+        _Client(),  # type: ignore[arg-type]
+        "o",
+        "ns",
+        include_tombstoned=True,
+    )
+    assert "secret" not in asked and "split" not in asked and "plain" in asked
+    assert {r["memory_key"] for r in rows} >= {"secret", "split"}  # listed, kept home
+
+
+@pytest.mark.asyncio
+async def test_include_high_cannot_export_a_tombstoned_high_row() -> None:
+    # bulk_get does not answer a tombstoned row and the list sends no high value, so even
+    # --include-high has nothing to write for it: it is named, not exported empty.
+    _rows, unreadable = await cli_okf._fetch_namespace(
+        _MixedClient(),  # type: ignore[arg-type]
+        "o",
+        "ns",
+        include_tombstoned=True,
+        include_high=True,
+    )
+    assert "gone-high" in unreadable
+
+
+@pytest.mark.asyncio
+async def test_a_tombstoned_high_row_is_counted_as_high_not_named_without_include_high() -> None:
+    rows, unreadable = await cli_okf._fetch_namespace(
+        _MixedClient(),  # type: ignore[arg-type]
+        "o",
+        "ns",
+        include_tombstoned=True,
+    )
+    assert "gone-high" not in unreadable
+    from server.memory.domain import okf_bundle
+
+    held = [r["memory_key"] for r in rows if not okf_bundle.is_exportable(r)]
+    assert "gone-high" in held
+
+
+class _AliasClient:
+    """A stored key shaped like a chunk id, deleted between the list and bulk_get: bulk_get
+    answers it with its parent's row (`canonical_key` names the parent)."""
+
+    async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        key = "chunk:memory.set:x:0"
+        if op == "memory.list":
+            row = {"memory_key": key, "agent": "a", "user_id": "-", "session_id": "-"}
+            return {
+                "entries": [{**row, "value": "cut…", "value_truncated": True}],
+                "truncated": False,
+            }
+        if op == "memory.bulk_get":
+            return {
+                "results": {
+                    key: {"value": "x's own value", "canonical_key": "x", "sensitivity": ""}
+                }
+            }
+        raise AssertionError(op)
+
+
+@pytest.mark.asyncio
+async def test_export_never_writes_a_parents_value_under_a_chunk_shaped_key() -> None:
+    rows, unreadable = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        _AliasClient(), "o", "ns", include_tombstoned=False
+    )
+    assert rows == [] and unreadable == ["chunk:memory.set:x:0"]
+
+
+def test_a_chunk_shaped_rows_own_answer_is_told_apart_from_its_parents() -> None:
+    # Another row's answer: `resolved_from`, the parent named in the id as `canonical_key`,
+    # or (an older build) a canonical key with another version. `duplicate_of` marks the
+    # row's own answer, and a duplicate's canonical alone (another key) says nothing.
+    own = {"value": "v", "canonical_key": "notes-v2"}
+    assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", own, None)
+    assert cli_okf._answered_by_parent("chunk:memory.set:notes:0", {"canonical_key": "notes"}, None)
+    assert cli_okf._answered_by_parent("chunk:memory.set:notes:0", {"resolved_from": "x"}, None)
+    assert not cli_okf._answered_by_parent(
+        "chunk:memory.set:notes", {"canonical_key": "notes"}, None
+    )
+    # an older build answering with a duplicate parent: its canonical, and another version
+    older = {"value": "v", "canonical_key": "notes-v2", "version": 9}
+    assert cli_okf._answered_by_parent("chunk:memory.set:notes:0", older, 5)
+    assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", {**older, "version": 5}, 5)
+    # this build's own answer for the row, rewritten since the list: kept
+    assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", {"version": 9}, 5)
+    # this build's own answer for a duplicate row (its canonical may even be the "parent"),
+    # whether or not it was rewritten since the list: `duplicate_of` says it is the row's own
+    duplicate = {"canonical_key": "notes", "duplicate_of": "m-1"}
+    assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", duplicate, None)
+    assert not cli_okf._answered_by_parent(
+        "chunk:memory.set:notes:0", {**older, "duplicate_of": "m-1"}, 5
+    )

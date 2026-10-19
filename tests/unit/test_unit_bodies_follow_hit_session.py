@@ -51,7 +51,7 @@ async def test_body_is_read_under_the_hit_session_and_missing_bodies_are_flagged
     async def fake_get_many(identity, keys, **_):
         calls.append((identity.session_id, list(keys)))
         return [
-            SimpleNamespace(memory_key=k, value=store[(identity.session_id, k)])
+            SimpleNamespace(memory_key=k, value=store[(identity.session_id, k)], sensitivity="")
             for k in keys
             if (identity.session_id, k) in store
         ]
@@ -79,3 +79,19 @@ async def test_short_excerpt_without_a_body_is_not_flagged(monkeypatch):
     h = _hit("k9", excerpt="short value, already whole")
     returned, elided, _ = await _expand_unit_bodies([h], _input())
     assert (returned, elided) == (0, 0) and h.body_truncated is False
+
+
+@pytest.mark.asyncio
+async def test_a_high_row_is_never_a_search_body(monkeypatch):
+    # The body read leaves 'high' rows out before it picks one per key: the newest row of
+    # the key may be another identity's 'high' one.
+    # Without the flag the fake answers the high row, so the test fails if the read stops
+    # asking (a TypeError would be swallowed by the body read's own except).
+    async def fake_get_many(identity, keys, *, scope, exclude_high_sensitivity=False):
+        high = SimpleNamespace(memory_key="k1", value="vault token", sensitivity="high")
+        return [] if exclude_high_sensitivity else [high]
+
+    monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
+    h = _hit("k1")
+    await _expand_unit_bodies([h], _input())
+    assert h.content_excerpt == CLIP and "vault" not in h.content_excerpt

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -27,6 +26,7 @@ from server.memory.api.models_crud import (
     _MemoryListEntry,
 )
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput, _MemorySearchHit
+from server.memory.store.rows import MemoryRow
 from server.operations import read_projection
 
 # ------------------------------------------------------------- defaults
@@ -95,7 +95,7 @@ def test_empty_fields_means_no_projection() -> None:
     assert read_projection.resolve(MemoryGetOutput, None, always=read_projection.GET_ALWAYS) is None
 
 
-def test_list_entry_projection_always_keeps_memory_key() -> None:
+def test_list_entry_projection_always_keeps_memory_key_and_sensitivity() -> None:
     e = _MemoryListEntry(
         memory_key="lesson_1",
         memory_type="semantic",
@@ -109,24 +109,23 @@ def test_list_entry_projection_always_keeps_memory_key() -> None:
     e._projection = read_projection.resolve(
         _MemoryListEntry, ["value", "tags"], always=read_projection.LIST_ENTRY_ALWAYS
     )
+    # `sensitivity` too: a reader never names it, so it never 422s on an older replica
     assert e.model_dump(mode="json") == {
         "memory_key": "lesson_1",
+        "sensitivity": "",
         "tags": ["kind:false_positive"],
         "value": "never flag X",
     }
     # through the envelope too
     out = MemoryListOutput(entries=[e], truncated=False)
-    assert set(out.model_dump(mode="json")["entries"][0]) == {"memory_key", "tags", "value"}
+    entry = out.model_dump(mode="json")["entries"][0]
+    assert set(entry) == {"memory_key", "sensitivity", "tags", "value"}
 
 
 # ------------------------------------------------------------- handlers
 
 
-class _Row(SimpleNamespace):
-    pass
-
-
-def _row(key: str, **kw: Any) -> _Row:
+def _row(key: str, **kw: Any) -> MemoryRow:
     base = dict(
         memory_id="00000000-0000-0000-0000-000000000001",
         memory_key=key,
@@ -153,7 +152,7 @@ def _row(key: str, **kw: Any) -> _Row:
         last_recalled_at=None,
     )
     base.update(kw)
-    return _Row(**base)
+    return MemoryRow(org="o", namespace="ns", user_id="-", session_id="-", **base)
 
 
 @pytest.mark.asyncio
@@ -360,7 +359,9 @@ async def test_list_tags_filter_is_the_any_case_predicate_on_both_paths(monkeypa
     score = [(s, p) for s, p in ch.calls if "FROM loom.memory FINAL" in s]
     assert len(score) == 2 and all(_ANY_CASE_TAGS in s for s, _ in score)
     dumped = out.model_dump(mode="json")
-    assert dumped["entries"] == [{"memory_key": "lesson_1", "value": "never flag X"}]
+    assert dumped["entries"] == [
+        {"memory_key": "lesson_1", "value": "never flag X", "sensitivity": ""}
+    ]
 
     # no tags, no fields: no predicate, the whole entry
     ch.calls.clear()

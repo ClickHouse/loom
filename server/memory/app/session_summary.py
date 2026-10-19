@@ -10,6 +10,7 @@ from typing import Any
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.embedding import get_embedder
+from server.memory.domain.sensitivity import value_reads_high
 from server.observability.genai import staged
 
 log = logging.getLogger(__name__)
@@ -68,7 +69,9 @@ def _top_key_facts(
     *,
     limit: int = _SESSION_SUMMARY_MAX_KEY_FACTS,
 ) -> list[str]:
-    """Top-N non-empty fact values as strings, order-preserving + deduped."""
+    """Top-N non-empty fact values as strings, order-preserving + deduped. A fact whose text
+    reads as a credential is left out: the digest is listed by memory.digests and sent to
+    the outcome judge, so its key facts never carry such a value."""
     out: list[str] = []
     seen: set[str] = set()
     for fact in extracted_facts or []:
@@ -83,6 +86,8 @@ def _top_key_facts(
             text = json.dumps(raw, default=str)
         text = text.strip()
         if not text or text in seen:
+            continue
+        if value_reads_high(raw):
             continue
         seen.add(text)
         out.append(text)

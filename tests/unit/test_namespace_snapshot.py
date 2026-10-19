@@ -95,3 +95,63 @@ def test_snapshot_carries_live_grants_only(monkeypatch) -> None:
         ns_handlers.handle_namespace_snapshot(NamespaceSnapshotInput(org="o", namespace="n"))
     )
     assert [g.subject for g in out.grants] == ["alice"]
+
+
+def test_snapshot_audits_each_high_row_it_carries(monkeypatch) -> None:
+    """A snapshot carries high rows on purpose, for a restore; each one is audited as a key
+    read of a high row is."""
+    import asyncio
+
+    import server.identity.app.namespace as registry
+    import server.identity.app.namespace_snapshot as ns_handlers
+    import server.memory.app.namespace_types as types
+    from server.identity.api.models import NamespaceSnapshotInput
+    from server.memory.app import snapshot_rows
+    from server.observability import audit
+
+    def row(key: str, sensitivity: str) -> dict:
+        return {
+            "memory_id": f"id-{key}",
+            "agent": "a",
+            "user_id": "-",
+            "session_id": "-",
+            "run_id": "-",
+            "memory_key": key,
+            "memory_type": "semantic",
+            "value": '"v"',
+            "confidence": 1.0,
+            "source_trace": "",
+            "pinned": 0,
+            "sensitivity": sensitivity,
+        }
+
+    class _CH:
+        async def query_all(self, sql, params=None):
+            return []
+
+        async def query_one(self, sql, params=None):
+            return None
+
+        async def insert(self, *a, **k):
+            return None
+
+    async def _rows(*_a, **_k):
+        return [row("plain", ""), row("vault", "high")]
+
+    async def _no_types(org, namespace):
+        return []
+
+    audited: list[list[str]] = []
+
+    async def _emit_many(event, **kw):
+        audited.append([s["memory_key"] for s in kw["subjects"]])
+
+    monkeypatch.setattr(ns_handlers, "get_client", lambda: _CH())
+    monkeypatch.setattr(snapshot_rows, "read_namespace", _rows)
+    monkeypatch.setattr(types, "list_type_configs", _no_types)
+    monkeypatch.setattr(registry, "resolve_subject", lambda *a: "alice")
+    monkeypatch.setattr(audit, "emit_many", _emit_many)
+    out = asyncio.run(
+        ns_handlers.handle_namespace_snapshot(NamespaceSnapshotInput(org="o", namespace="n"))
+    )
+    assert len(out.memories) == 2 and audited == [["vault"]]

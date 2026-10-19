@@ -22,6 +22,7 @@ from server.memory.domain.observation_tags import (
     CRYSTALLIZE_READY_TAG,
     OBSERVATION_TAG,
 )
+from server.memory.domain.sensitivity import value_reads_high
 from server.memory.store.rows import next_version
 from server.workers.status import record_pass
 
@@ -214,7 +215,11 @@ async def _distill_session(
     (one synthetic `user` turn per narrative) and mark the sources DONE."""
     import server.memory.store as memory_repo
 
-    msgs = replay_messages(observations, agent=str(session.get("agent") or ""))
+    # An observation that holds a credential is never sent to the model, labelled or not:
+    # capture writes it unlabelled and only the sweep labels it later. It is still marked
+    # DONE below.
+    readable = [o for o in observations if _sendable(o.sensitivity, o.value)]
+    msgs = replay_messages(readable, agent=str(session.get("agent") or ""))
     # observation_date anchor: use the newest valid_at the capture path
     # stamped, if any, so relative time refs resolve.
     observation_date = ""
@@ -228,7 +233,7 @@ async def _distill_session(
     # the same observations, before they are marked DONE. Fail-open: the
     # facts are already written; a failed note is a count, not a lost pass.
     context = await _load_session_context(session, ch=get_client_for_context())
-    extras = await _distill_extras(session, observations, context=context)
+    extras = await _distill_extras(session, readable, context=context)
 
     # Mark sources DONE. RMT: mirror every column, only tags + version change.
     from server.core.ch import get_client
@@ -282,6 +287,7 @@ async def _load_session_context(session: dict[str, Any], *, ch: Any) -> list[Any
               AND session_id = {sid:String}
               AND memory_type = 'episodic' AND has(tags, {obs_tag:String})
               AND NOT arrayExists(t -> startsWith(t, 'skipped:'), tags)
+              AND sensitivity != 'high'
               AND tombstoned_at IS NULL
             ORDER BY created_at ASC
             LIMIT {lim:UInt32}
@@ -299,7 +305,17 @@ async def _load_session_context(session: dict[str, Any], *, ch: Any) -> list[Any
     except Exception as e:  # noqa: BLE001 — the session distills without context
         log.debug("session context read skipped: %s", e)
         return []
-    return [tn.observation_from_row(SimpleNamespace(**dict(r))) for r in rows or []]
+    return [
+        tn.observation_from_row(SimpleNamespace(**dict(r)))
+        for r in rows or []
+        if _sendable("", r.get("value"))  # the statement already left out labelled rows
+    ]
+
+
+def _sendable(sensitivity: str, value: Any) -> bool:
+    """Whether an observation may go to the model: neither labelled 'high' nor reading as a
+    credential."""
+    return sensitivity != "high" and not value_reads_high(value)
 
 
 # The most observations a session's notes read: the notes
