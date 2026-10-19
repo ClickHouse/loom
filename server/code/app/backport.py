@@ -61,6 +61,7 @@ from server.code.domain.index.blame_range import sha_text
 from server.code.store.index import CodeRepo
 from server.code.store.index.pr_history import PrFacts
 from server.core.errors import ValidationError
+from server.settings import settings
 from server.tracker.app import links as lk
 from server.tracker.app import patch_history as ph
 from server.tracker.domain import backport as bp
@@ -70,12 +71,6 @@ logger = logging.getLogger(__name__)
 
 MAX_BRANCHES = 8
 _MAX_FIXES = 8
-_PRESENCE_WALL_MS = 1200
-# The hunk-level stage's wall — one chunk read per branch, all at once.
-_PATCH_WALL_MS = 1000
-# The history stage — one grep per path and at most 3 `-S` reads per undecided branch, 3 s
-# each, at most _HISTORY_GIT_PROCS git processes alive at once, under one wall.
-_HISTORY_WALL_MS = 8000
 _HISTORY_GIT_PROCS = 4
 
 
@@ -677,7 +672,9 @@ async def run_backport_gap(req: BackportGapRequest) -> Any:  # noqa: PLR0915 —
     if fix_found and branch_ns:
         with code_span("backport.presence", seeds=len(symbols) or len(files)):
             if symbols:
-                sym_rows = await _symbol_presence(org, repo, branch_ns, symbols, _PRESENCE_WALL_MS)
+                sym_rows = await _symbol_presence(
+                    org, repo, branch_ns, symbols, settings.code_backport_presence_budget_ms
+                )
             elif files:
                 from server.code.app import search_fanout as fanout
 
@@ -697,7 +694,7 @@ async def run_backport_gap(req: BackportGapRequest) -> Any:  # noqa: PLR0915 —
                 branch_ns,
                 st.sections,
                 authorized=bool(symbols or files),
-                wall_ms=_PATCH_WALL_MS,
+                wall_ms=settings.code_backport_patch_budget_ms,
             )
         fix["patch"] = _patch_summary(groups, st.sections)
         stage_ms["patch"] = int((time.monotonic() - started) * 1000) - sum(stage_ms.values())
@@ -713,7 +710,7 @@ async def run_backport_gap(req: BackportGapRequest) -> Any:  # noqa: PLR0915 —
                 ns,
                 undecided,
                 groups,
-                wall_ms=_HISTORY_WALL_MS,
+                wall_ms=settings.code_backport_history_budget_ms,
                 pr_number=number,
                 merge_sha=str(cherry.get("merge_sha") or ""),
             )

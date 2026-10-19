@@ -771,7 +771,7 @@ async def test_history_deadline_and_error_leave_the_floor(wired, monkeypatch) ->
         return ph.HistoryPresence()
 
     monkeypatch.setattr(ph, "branch_history", _hang)
-    monkeypatch.setattr(h, "_HISTORY_WALL_MS", 50)
+    monkeypatch.setattr(settings, "code_backport_history_budget_ms", 50)
     out = await h.handle_code_backport_gap(
         CodeBackportGapInput(
             org=ORG, namespace=NS, pr_number=115670, history=True, branches=["26.6", "26.5"]

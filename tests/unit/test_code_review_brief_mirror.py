@@ -18,6 +18,7 @@ import server.code.app.review_brief as h
 from server.code.api.models_review import CodeReviewBriefInput, CodeReviewBriefOutput
 from server.code.app.index import review_brief as rb
 from server.code.app.index import review_brief_build, review_brief_sources
+from server.settings import settings
 from tests.unit.test_code_review_brief_sections import (
     DIFF,
     NS,
@@ -188,7 +189,7 @@ async def test_mirror_merge_facts_finds_the_merge_by_subject_not_body_and_caches
         is None
     )
     assert len(calls) == 3
-    clock[0] += review_brief_sources._MIRROR_NEGATIVE_TTL_S + 1
+    clock[0] += settings.code_review_brief_mirror_miss_ttl_s + 1
     assert (
         await review_brief_sources.mirror_merge_facts(git_dir, "master", 8, now=lambda: clock[0])
         is None

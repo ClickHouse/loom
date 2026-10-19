@@ -36,10 +36,6 @@ _RELAY_INSIDE = "/run/loom-relay.py"
 _EGRESS_INSIDE = "/run/loom-egress"
 _HOME_INSIDE = "/tmp/home"
 
-# Output the parent holds: a `keep_stdout` job's stdout whole up to this (a big
-# repository's `ls-remote` of PR heads is ~6 MB), past it the job is killed; any other
-# stream keeps only its last _TAIL_BYTES. The child's rlimits do not bound the parent.
-_STDOUT_LIMIT = 64 * 1024 * 1024
 _TAIL_BYTES = 1024 * 1024
 _READ_CHUNK = 64 * 1024
 # How long a killed job's pipes may stay open. Outside the sandbox a process that
@@ -488,7 +484,8 @@ class JobOptions(TypedDict, total=False):
     environment is exactly `env` (inside the sandbox HOME and TMPDIR point into
     the job's scratch directory). `timeout_s` kills the tree (TimeoutError).
     `keep_stdout`: the caller parses stdout (ls-remote), so it is kept whole up to
-    _STDOUT_LIMIT and the job killed past it; otherwise only its tail is kept."""
+    `code_sandbox_stdout_limit_bytes` and the job killed past it; otherwise only its tail is
+    kept."""
 
     env: Required[Mapping[str, str]]
     timeout_s: Required[float]
@@ -561,8 +558,12 @@ async def _result(proc: asyncio.subprocess.Process, job: JobOptions) -> JobResul
         await _kill_group(proc)
         raise
     if out is None:
-        logger.warning("repository job killed: stdout passed %d bytes", _STDOUT_LIMIT)
-        reason = f"loom: job killed, its stdout passed {_STDOUT_LIMIT} bytes\n"
+        logger.warning(
+            "repository job killed: stdout passed %d bytes",
+            settings.code_sandbox_stdout_limit_bytes,
+        )
+        limit = settings.code_sandbox_stdout_limit_bytes
+        reason = f"loom: job killed, its stdout passed {limit} bytes\n"
         return JobResult(-signal.SIGKILL, b"", err + reason.encode())
     return JobResult(proc.returncode or 0, out, err)
 
@@ -581,7 +582,7 @@ async def _talk(
     proc: asyncio.subprocess.Process, stdin: bytes | None, *, keep_stdout: bool
 ) -> tuple[bytes | None, bytes]:
     """Feed stdin and read stdout and stderr to EOF, each into a bounded buffer.
-    stdout is None when it passed _STDOUT_LIMIT (the job was killed then)."""
+    stdout is None when it passed `code_sandbox_stdout_limit_bytes` (the job was killed then)."""
     feed = None
     if stdin is not None and proc.stdin is not None:
         feed = asyncio.create_task(_feed(proc.stdin, stdin))
@@ -610,15 +611,15 @@ async def _read(
     proc: asyncio.subprocess.Process, stream: asyncio.StreamReader, *, keep_all: bool
 ) -> bytes | None:
     """A stream to EOF: with `keep_all` all of it, else only its last _TAIL_BYTES.
-    A `keep_all` stream past _STDOUT_LIMIT kills the job and gives None; the rest
-    is read and dropped, as asyncio's wait() waits for the pipes to close."""
+    A `keep_all` stream past `code_sandbox_stdout_limit_bytes` kills the job and gives None;
+    the rest is read and dropped, as asyncio's wait() waits for the pipes to close."""
     buf = bytearray()
     overflowed = False
     while chunk := await stream.read(_READ_CHUNK):
         if overflowed:
             continue
         buf += chunk
-        if keep_all and len(buf) > _STDOUT_LIMIT:
+        if keep_all and len(buf) > settings.code_sandbox_stdout_limit_bytes:
             overflowed = True
             buf.clear()
             _signal_group(proc)

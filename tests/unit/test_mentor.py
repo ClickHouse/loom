@@ -512,7 +512,7 @@ def test_profile_is_cached_per_agent_and_a_failure_is_remembered_briefly(
     asyncio.run(m.mentor_profile("o", "ns", "a", clock=lambda: clock[0]))
     assert len(ch.sqls) > 2 * n - 1  # expired → re-read
 
-    # A total failure: None, remembered for FAILURE_TTL_SECONDS, no re-read inside it.
+    # A total failure: None, remembered for `memory_namespace_health_failure_ttl_s`, no re-read inside it.
     m.reset_cache()
     ch2 = _wire(monkeypatch, {M_USAGE: RuntimeError("down")})
 
@@ -525,7 +525,14 @@ def test_profile_is_cached_per_agent_and_a_failure_is_remembered_briefly(
     assert asyncio.run(m.mentor_profile("o", "ns", "a", clock=lambda: 6.0)) is None
     assert len(ch2.sqls) == before
     assert (
-        asyncio.run(m.mentor_profile("o", "ns", "a", clock=lambda: 5.0 + m.FAILURE_TTL_SECONDS + 1))
+        asyncio.run(
+            m.mentor_profile(
+                "o",
+                "ns",
+                "a",
+                clock=lambda: 5.0 + settings.memory_namespace_health_failure_ttl_s + 1,
+            )
+        )
         is None
     )
 

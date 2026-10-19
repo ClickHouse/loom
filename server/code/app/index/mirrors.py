@@ -63,7 +63,6 @@ _LOCK_SUFFIXES = (".clone-lock", ".fetch-lock", ".gc-lock")
 _QUEUED: set[str] = set()
 # Set once the warm-up has queued its clones: until then `_QUEUED` says nothing.
 _LISTED = asyncio.Event()
-_WARMUP_RETRY_S = 60.0
 # (git_dir, namespace) → the PR number the host's ledger-merge sweep continues below.
 _MERGE_BELOW: dict[tuple[str, str], int] = {}
 _TASK: asyncio.Task[None] | None = None
@@ -198,8 +197,12 @@ async def _run() -> None:
             await warm_up()
             break
         except Exception as e:  # noqa: BLE001 — retried; a read still clones what it asks for
-            logger.warning("mirror warm-up failed, retrying in %.0f s: %s", _WARMUP_RETRY_S, e)
-            await asyncio.sleep(_WARMUP_RETRY_S)
+            logger.warning(
+                "mirror warm-up failed, retrying in %.0f s: %s",
+                settings.code_mirror_warmup_retry_s,
+                e,
+            )
+            await asyncio.sleep(settings.code_mirror_warmup_retry_s)
     interval = float(settings.code_mirror_fetch_interval_s)
     if interval <= 0:
         return

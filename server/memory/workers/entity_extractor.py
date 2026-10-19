@@ -25,6 +25,7 @@ from server.memory.domain.graph_quality import canonical_entity_text
 from server.memory.domain.sensitivity import value_reads_high
 from server.observability.budget import namespaces_over_cap
 from server.observability.genai import staged
+from server.settings import settings
 from server.settings.budgets import llm_max_tokens
 from server.workers import pass_context
 from server.workers.cost_event import emit_worker_cost_event_for
@@ -84,10 +85,10 @@ class EntityExtractorResult:
     # Rows dropped because the namespace was over its 24h LLM cost cap.
     skipped_over_budget: int = 0
     # LLM replies that were not a parseable JSON array. The row is left
-    # untouched for the next pass (see _PARSE_FAIL_MAX) — NOT written as
+    # untouched for the next pass (see `memory_entity_extract_parse_fail_max`) — NOT written as
     # `_none_`, which would look like "genuinely no entities" forever.
     parse_failures: int = 0
-    # Rows that exhausted _PARSE_FAIL_MAX and were stamped `_parse_failed_`.
+    # Rows that exhausted `memory_entity_extract_parse_fail_max` and were stamped `_parse_failed_`.
     parse_poisoned: int = 0
     # Unlabelled rows whose value reads as a credential: never sent to the model, stamped
     # `_none_` so the scan stops picking them up (the sweep labels them `high`).
@@ -100,17 +101,16 @@ class EntityExtractorResult:
 # Sentinel written when the LLM returned a well-formed empty array: the row
 # genuinely has no entities and must leave the `empty(entities)` rescan.
 _NONE_SENTINEL = NONE_SENTINEL  # "_none_"
-# Sentinel written after _PARSE_FAIL_MAX consecutive unparseable replies for
+# Sentinel written after `memory_entity_extract_parse_fail_max` consecutive unparseable replies for
 # the SAME row. Distinct from `_none_` so an operator can tell "nothing to
 # extract" from "the model never answered in the requested shape", and so the
 # row stops burning LLM budget every pass. Reset by re-running extraction
 # (any write that empties `entities`).
 _PARSE_FAILED_SENTINEL = PARSE_FAILED_SENTINEL  # "_parse_failed_"
-_PARSE_FAIL_MAX = 3
 
 # In-process per-row parse-failure streaks. Keyed by the full identity tuple +
 # memory_key. Process-local on purpose: a restart grants the row another
-# _PARSE_FAIL_MAX attempts, which is the cheap and correct default (the
+# `memory_entity_extract_parse_fail_max` attempts, which is the cheap and correct default (the
 # alternative is a column on loom.memory for a worker-internal counter).
 # Bounded so a pathological corpus can't grow it without limit.
 _parse_fail_streaks: dict[tuple[str, ...], int] = {}
@@ -354,7 +354,7 @@ async def run_pass(
                 continue
             if entities is None:
                 # Parse failure — NOT "no entities". Leave the row for the
-                # next pass; after _PARSE_FAIL_MAX consecutive failures stamp
+                # next pass; after `memory_entity_extract_parse_fail_max` consecutive failures stamp
                 # the distinct `_parse_failed_` sentinel so it stops costing
                 # an LLM call per pass.
                 result.parse_failures += 1
@@ -380,7 +380,7 @@ async def run_pass(
                     "parse_failed",
                     item=r["memory_key"],
                 )
-                if streak < _PARSE_FAIL_MAX:
+                if streak < settings.memory_entity_extract_parse_fail_max:
                     log.warning(
                         "entity_extractor: unparseable LLM reply for %s/%s/%s "
                         "(attempt %d/%d); leaving row for next pass",
@@ -388,7 +388,7 @@ async def run_pass(
                         r["namespace"],
                         r["memory_key"],
                         streak,
-                        _PARSE_FAIL_MAX,
+                        settings.memory_entity_extract_parse_fail_max,
                     )
                     continue
                 record_drop(

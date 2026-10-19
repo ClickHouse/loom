@@ -18,6 +18,7 @@ import pytest
 
 from server.code.app.index import compiler_tier
 from server.code.app.index.entry_lock import EntryLockHeld, entry_lock, entry_lock_path
+from server.settings import settings
 from tests.unit.claims_fake import FakeLockTable, HeldLease, held_leases
 from tests.unit.code_fixtures import repo_config
 
@@ -348,7 +349,7 @@ async def test_a_cancelled_wait_for_the_entry_takes_no_key(keeper) -> None:
 async def test_a_lost_entry_lease_stops_the_pass(keeper, monkeypatch) -> None:
     from server.code.app.index import entry_lock as el
 
-    monkeypatch.setattr(el, "ENTRY_LEASE_TTL_S", 0.6)
+    monkeypatch.setattr(settings, "code_entry_lock_lease_ttl_s", 0.6)
     ran_on = False
     with pytest.raises(el.EntryLockLost):
         async with entry_lock("acme", "code-web", wait=False):
@@ -441,9 +442,8 @@ def test_entry_lock_wrapper_kills_the_command_group_when_the_lease_is_lost(
     import time
 
     from server.cli import code_scip
-    from server.code.app.index import entry_lock as el
 
-    monkeypatch.setattr(el, "ENTRY_LEASE_TTL_S", 0.6)
+    monkeypatch.setattr(settings, "code_entry_lock_lease_ttl_s", 0.6)
     monkeypatch.setattr(code_scip, "_ENTRY_STOP_GRACE_S", 60.0)
     pidfile = tmp_path / "child.pid"
     # A grandchild that ignores SIGTERM: killed at once, no grace to write in.

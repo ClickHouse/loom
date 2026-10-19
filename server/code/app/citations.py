@@ -55,7 +55,6 @@ from server.settings import settings
 
 logger = logging.getLogger(__name__)
 
-GIT_CALL_CAP = 20
 NAME_CONCURRENCY = 8
 MAX_CANDIDATES = 5
 EPISTEMIC: dict[str, str] = {
@@ -422,7 +421,7 @@ class _GitBudget:
 
     def take(self) -> bool:
         if (
-            self.calls >= GIT_CALL_CAP
+            self.calls >= settings.code_citations_git_call_cap
             or time.monotonic() - self.t0 > settings.code_citations_git_budget_s
         ):
             self.capped = True
@@ -582,7 +581,7 @@ def _note(ex: cit.Extraction, at: dict[str, Any], pr: dict[str, Any] | None = No
         )
     if at.get("capped"):
         parts.append(
-            f"mirror leg capped at {GIT_CALL_CAP} calls / "
+            f"mirror leg capped at {settings.code_citations_git_call_cap} calls / "
             f"{settings.code_citations_git_budget_s:.0f} s; "
             "unchecked paths say checked: false"
         )

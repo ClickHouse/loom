@@ -194,7 +194,7 @@ async def test_a_refresh_whose_lease_is_lost_stops_its_pass(
     ch = FakeLockTable()
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr(handler_mod, "_take_lease", real_take_lease)
-    monkeypatch.setattr(handler_mod, "_LEASE_TTL_S", 0.6)
+    monkeypatch.setattr(settings, "code_ingest_lease_ttl_s", 0.6)
     monkeypatch.setattr(handler_mod, "CodeRepo", _FakeCodeRepo)
     finished: list[str] = []
 

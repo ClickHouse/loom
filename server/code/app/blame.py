@@ -601,8 +601,8 @@ async def _introduced_stage(
     pre: IntroducedLeg,
 ) -> tuple[list[br.Candidate], IntroducedLeg]:
     """Mark and re-rank the first stage's candidates. Reads: the linked issues' titles when
-    `mentions` is given (one ledger read) and at most MAX_DIFF_CALLS bounded diffs;
-    everything else is already here."""
+    `mentions` is given (one ledger read) and at most `code_blame_introduced_max_diff_calls`
+    bounded diffs; everything else is already here."""
     t0 = time.monotonic()
     out = pre
     out.last_touched = _order_view(candidates)

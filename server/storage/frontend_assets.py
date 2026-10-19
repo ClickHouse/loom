@@ -41,8 +41,6 @@ MAX_ASSET_BYTES = 5 * 1024 * 1024
 _FRESH = timedelta(hours=6)
 # How often a running replica republishes, so a live build never ages out.
 _REPUBLISH_S = 12 * 3600.0
-# A round that failed is retried after this, doubling up to `storage_frontend_assets_retry_max_s`.
-_RETRY_S = 2.0
 # Vite's `[name]-[hash].[ext]`: the hash makes the name a version.
 _HASHED = re.compile(r"-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$")
 # Fetched bodies, by path (content-addressed, so never stale).
@@ -157,14 +155,14 @@ async def publish_loop(
     from server.core.ch import set_query_tag
 
     set_query_tag("frontend_assets.publish")
-    retry = _RETRY_S
+    retry = settings.storage_frontend_assets_retry_s
     while True:
         n = await publish(assets_dir, published_by=published_by, ch=ch)
         if n is None:
             await asyncio.sleep(retry)
             retry = min(retry * 2, settings.storage_frontend_assets_retry_max_s)
             continue
-        retry = _RETRY_S
+        retry = settings.storage_frontend_assets_retry_s
         if n:
             log.info("frontend assets: published %d bundle file(s)", n)
         if first_done is not None:

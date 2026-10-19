@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from server.memory.app import embedder_calibration as ec
+from server.settings import settings
 
 MODEL = "text-embedding-3-large"
 
@@ -164,7 +165,7 @@ async def test_a_found_namespace_row_expires_so_another_replicas_write_serves(
     ec.clear_ns_overrides()
     first = await ec.get_namespace_calibration("o", "n")
     assert first is not None and first.conflict_threshold == 0.8
-    clock["t"] += ec._NS_TTL_S + 1
+    clock["t"] += settings.memory_calibration_namespace_ttl_s + 1
     second = await ec.get_namespace_calibration("o", "n")
     assert second is not None and second.conflict_threshold == 0.6
     ec.clear_ns_overrides()

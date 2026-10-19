@@ -19,9 +19,6 @@ _ERROR_NAMES: dict[tuple[str, str], tuple[float, dict[str, int]]] = {}
 # a ClickHouse server error line: `Code: 9. DB::Exception: … (SIZES_OF_COLUMNS_DOESNT_MATCH)`
 _ERROR_LINE_PAT = r"Code: (\d{1,4})\. DB::Exception:[^\n]{0,400}?\(([A-Z][A-Z0-9_]{3,})\)"
 
-# The window-keys read's cap; a read that returns this many is incomplete.
-WINDOW_KEYS_LIMIT = 200_000
-
 
 class EmbedReads(SourceBase):
     """Readers behind loom's own tracker embeddings."""
@@ -39,7 +36,7 @@ class EmbedReads(SourceBase):
         `closed_days` — as (source_id, updated_at) only: the set the pass
         tombstones against. A range scan (~30k PRs, ~11k issues on the public
         record) under the widest budget; `stamp` keys the pass's own cache
-        entry so two passes never share one. At most WINDOW_KEYS_LIMIT rows,
+        entry so two passes never share one. At most `tracker_embed_window_keys_limit` rows,
         in key order: a read that returns that many may have stopped short,
         and the caller must not tombstone against it."""
         repos = self.repos()
@@ -56,7 +53,11 @@ class EmbedReads(SourceBase):
                        OR closed_at >= now64(3) - INTERVAL {{days:UInt32}} DAY)
                 ORDER BY source_id
                 LIMIT {{lim:UInt32}}""",
-            {"repos": repos, "days": max(1, int(closed_days)), "lim": WINDOW_KEYS_LIMIT},
+            {
+                "repos": repos,
+                "days": max(1, int(closed_days)),
+                "lim": settings.tracker_embed_window_keys_limit,
+            },
             cache_key=["embed_keys", kind, closed_days, stamp],
             budget_ms=int(settings.tracker_live_bisect_budget_ms),
             ttl_s=1.0,

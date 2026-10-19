@@ -63,10 +63,7 @@ server/code/app/answers_entry.py::_MAX_CONTEXT_UNITS
 server/code/app/answers_entry.py::_MAX_EXPANSION_UNITS
 server/code/app/answers_entry.py::_SYNTH_MAX_TOKENS
 server/code/app/backport.py::MAX_BRANCHES
-server/code/app/backport.py::_HISTORY_WALL_MS
 server/code/app/backport.py::_MAX_FIXES
-server/code/app/backport.py::_PATCH_WALL_MS
-server/code/app/backport.py::_PRESENCE_WALL_MS
 server/code/app/bisect_facts.py::RERANK_MIN_S
 server/code/app/bisect_facts.py::STAGE_MIN_S
 server/code/app/bisect_facts.py::_MAX_PATHS
@@ -74,7 +71,6 @@ server/code/app/blame.py::_LEDGER_LIMIT
 server/code/app/blame.py::_WIDE_MAX
 server/code/app/candidates.py::CANDIDATE_READ_CAP
 server/code/app/candidates.py::OVERRIDE_FANOUT_CAP
-server/code/app/citations.py::GIT_CALL_CAP
 server/code/app/citations.py::MAX_CANDIDATES
 server/code/app/citations.py::REGISTRATION_GREP_CAP
 server/code/app/common.py::ARGS_JSON_CAP
@@ -86,7 +82,6 @@ server/code/app/conventions.py::_MAX_SETTINGS
 server/code/app/conventions.py::_MAX_SRC_FILES
 server/code/app/conventions.py::_MAX_TOUCHED
 server/code/app/conventions.py::_MAX_WIDE
-server/code/app/coverage.py::_CONTROL_TTL_S
 server/code/app/coverage.py::_DEPTH2_MAX_INTERMEDIATES
 server/code/app/coverage.py::_EDGE_LIMIT
 server/code/app/coverage.py::_PART_LIMIT
@@ -94,9 +89,6 @@ server/code/app/grep.py::_GREP_RESERVE_MS
 server/code/app/grep.py::_LINE_SCAN_MAX_CHARS
 server/code/app/history.py::_HASH_MAX_WORDS
 server/code/app/history.py::_MAX_NUMBERS
-server/code/app/index/bootstrap.py::_EMBED_BREAKER_HOLD_S
-server/code/app/index/bootstrap.py::_MIRROR_AGAIN_S
-server/code/app/index/bootstrap.py::_MIRROR_RETRY_S
 server/code/app/index/commit_coverage.py::PATHS_CAP
 server/code/app/index/commit_coverage.py::_MEMO_MAX
 server/code/app/index/commit_coverage.py::_PATHS_MEMO_MAX
@@ -104,13 +96,9 @@ server/code/app/index/compaction.py::DEFAULT_POLL_S
 server/code/app/index/compaction.py::DEFAULT_TIMEOUT_S
 server/code/app/index/describe.py::_DESCRIBE_MAX_CHARS
 server/code/app/index/egress.py::MAX_TUNNELS
-server/code/app/index/egress.py::_IDLE_TIMEOUT_S
-server/code/app/index/egress.py::_SLOT_WAIT_S
 server/code/app/index/embed_text.py::EMBED_MAX_CHARS
 server/code/app/index/embed_text.py::EMBED_MAX_TOKENS
-server/code/app/index/entry_lock.py::ENTRY_LEASE_TTL_S
 server/code/app/index/entry_lock.py::_POLL_S
-server/code/app/index/fork_upstream.py::BUDGET_S
 server/code/app/index/fork_upstream.py::CACHE_TTL_S
 server/code/app/index/fork_upstream.py::MAX_CACHE
 server/code/app/index/fork_upstream.py::MAX_CANDIDATES
@@ -129,7 +117,6 @@ server/code/app/index/matrix.py::DEFAULT_MAX_ROWS
 server/code/app/index/merge_shas.py::SINCE_SLACK_S
 server/code/app/index/mirrors.py::_JITTER_S
 server/code/app/index/mirrors.py::_SWEEP_MIN_AGE_S
-server/code/app/index/mirrors.py::_WARMUP_RETRY_S
 server/code/app/index/packs.py::_DEFAULT_BUDGET_TOKENS
 server/code/app/index/pass_stream.py::_OLDEST_FIRST_HORIZON_S
 server/code/app/index/pr_overlay.py::MAX_DIFF_BYTES
@@ -151,9 +138,7 @@ server/code/app/index/review_brief.py::MAX_HISTORY_SYMBOLS
 server/code/app/index/review_brief.py::MAX_SETTINGS
 server/code/app/index/review_brief.py::MAX_SYMBOL_ROWS
 server/code/app/index/review_brief_sources.py::_MIRROR_CACHE_MAX
-server/code/app/index/review_brief_sources.py::_MIRROR_NEGATIVE_TTL_S
 server/code/app/index/sandbox.py::_REAP_GRACE_S
-server/code/app/index/sandbox.py::_STDOUT_LIMIT
 server/code/app/index/sql_names.py::GREP_LIMIT
 server/code/app/index/sql_names.py::SEED_CAP
 server/code/app/index/symbol_forms.py::TAIL_READ_LIMIT
@@ -165,7 +150,6 @@ server/code/app/index_status.py::_RECENT_COMMITS_TTL_S
 server/code/app/index_status.py::_SNAPSHOT_STATE_VALUE_MAX
 server/code/app/index_status.py::_STATUS_TTL_S
 server/code/app/index_status.py::_SYMBOL_STATS_CACHE_MAX_AGE_S
-server/code/app/ingest.py::_LEASE_TTL_S
 server/code/app/message_grep.py::ERROR_CODES_TTL_S
 server/code/app/message_grep.py::MAX_NEEDLES
 server/code/app/message_grep.py::WINDOW_LINES
@@ -245,7 +229,6 @@ server/code/domain/extract/tokenize.py::_MAX_TOKENS
 server/code/domain/extract/ts_config.py::_MAX_EXTENDS
 server/code/domain/extract/ts_reexports.py::MAX_DEPTH
 server/code/domain/facets.py::_MAX_FACET_ITEMS
-server/code/domain/index/blame_introduced.py::MAX_DIFF_CALLS
 server/code/domain/index/blame_range.py::CACHE_TTL_S
 server/code/domain/index/blame_range.py::MAX_COMMITS_SHOWN
 server/code/domain/index/blame_range.py::MAX_LINES
@@ -278,7 +261,6 @@ server/code/domain/successor.py::_MAX_LINES
 server/code/domain/successor.py::_MAX_TOKENS
 server/code/store/backport_gaps.py::MAX_ROWS
 server/code/store/index/rows.py::MAX_NAMESPACES_PER_INSERT
-server/code/workers/embed_recovery.py::_CHAIN_BUDGET_S
 server/code/workers/embed_recovery.py::_MAX_SCANS_PER_TABLE
 server/code/workers/graph_stats.py::_CARD_READ_BATCH
 server/code/workers/pr_history.py::_BUDGET_FRACTION
@@ -299,7 +281,6 @@ server/core/namespace_write_marks.py::KEY_WAIT_S
 server/core/naming.py::NAMESPACE_MAX_LEN
 server/core/ratelimit.py::MAX_BUCKETS
 server/core/ratelimit_shared.py::PROBE_WINDOW
-server/core/readiness.py::CHECK_TIMEOUT_S
 server/core/request_work.py::_MAX_SKIPPED
 server/core/rmt_carry.py::ACK_WAIT_S
 server/core/rmt_carry.py::_ACK_LIVE_S
@@ -352,7 +333,6 @@ server/insights/store/provider_cleanup.py::_IDLE_POLL_S
 server/insights/store/provider_lock.py::LOCK_TTL_S
 server/insights/store/provider_participants.py::STALE_AFTER_S
 server/insights/workers/audit_verifier.py::MAX_BREAK_KEYS
-server/insights/workers/audit_verifier.py::VERIFY_MAX_ROWS
 server/knowledge/app/download_routes.py::_BUFFER_MAX_BYTES
 server/knowledge/app/repo_docs.py::DOCS_SECTION_MAX_DOCS
 server/knowledge/app/repo_docs.py::DOCS_SECTION_MAX_TOKENS
@@ -395,8 +375,6 @@ server/memory/app/code_link_recheck.py::_MAX_EDITS
 server/memory/app/code_link_recheck.py::_MAX_ELSEWHERE
 server/memory/app/code_links.py::_MAX_LINKS
 server/memory/app/code_links.py::_MAX_MENTIONS
-server/memory/app/code_links.py::_SWEEP_EVERY_S
-server/memory/app/code_plane_reads.py::_PARSE_TIMEOUT_S
 server/memory/app/conflict_judge.py::_MAX_VALUE_CHARS
 server/memory/app/conflicts.py::_PEER_MAX_K
 server/memory/app/coverage_sweep_gate.py::_MAX_ENTRIES
@@ -408,9 +386,6 @@ server/memory/app/drops.py::_FLUSH_BATCH
 server/memory/app/drops.py::_FLUSH_DELAY_S
 server/memory/app/drops.py::_ITEM_MAX_LEN
 server/memory/app/durability_verifier.py::CONTEXT_LOOKUPS_MAX
-server/memory/app/durability_verifier.py::MAX_FACTS_PER_CALL
-server/memory/app/embedder_calibration.py::_NS_NEGATIVE_TTL_S
-server/memory/app/embedder_calibration.py::_NS_TTL_S
 server/memory/app/entity_projections.py::_SET_ENTITY_MAX_CANDIDATES
 server/memory/app/entity_resolution.py::_MAX_NAMESPACE_CANDIDATES
 server/memory/app/entity_resolution.py::_MAX_NORMALIZED_ENTROPY
@@ -422,14 +397,12 @@ server/memory/app/extract/models.py::MAX_DERIVED_PER_FACT
 server/memory/app/extract/parse.py::_MAX_TOPICS
 server/memory/app/extract/parse.py::_MAX_TOPIC_CHARS
 server/memory/app/extract/parse.py::_TRUNCATION_RETRY_MAX_TOKENS
-server/memory/app/facts.py::_OWN_PROJECTION_WAIT_S
 server/memory/app/graph_write_marks.py::STALE_PENDING_S
 server/memory/app/graph_write_marks.py::_FLUSH_S
 server/memory/app/graph_write_marks.py::_POLL_S
 server/memory/app/graph_write_marks.py::_RETRY_S
 server/memory/app/loom_search/answer_first.py::MAX_CHUNKS_BEHIND_FACT
 server/memory/app/namespace_health.py::CACHE_MAX_ENTRIES
-server/memory/app/namespace_health.py::FAILURE_TTL_SECONDS
 server/memory/app/namespace_retrieval_defaults.py::_MAX_ENTRIES
 server/memory/app/namespace_rollback.py::_INSERT_BATCH
 server/memory/app/observe.py::_ERROR_LIMIT
@@ -441,14 +414,10 @@ server/memory/app/pending_disclosure.py::_MAX_KEYS
 server/memory/app/procedure_evolve.py::MAX_AGENTS_TRACKED
 server/memory/app/procedure_evolve.py::MAX_REJECTED_KEPT
 server/memory/app/procedure_evolve.py::MAX_REVISIONS_KEPT
-server/memory/app/profile_search.py::_ON_THE_FLY_CAP
 server/memory/app/recent_writes.py::_RECENT_WRITES_MAX
-server/memory/app/retrieval/retry.py::_EMPTY_BLOCK_RETRY_MAX
-server/memory/app/retrieval/retry.py::_EMPTY_BLOCK_RETRY_SLEEP_S
 server/memory/app/runs_manifest.py::_MAX_FILES
 server/memory/app/search/query_spelling.py::_CACHE_HIT_GRACE_S
 server/memory/app/search/query_spelling.py::_CACHE_TTL_S
-server/memory/app/search/query_spelling.py::_LOOKUP_BOUND_S
 server/memory/app/search/query_spelling.py::_MAX_BACKOFF_S
 server/memory/app/search/query_spelling.py::_MAX_DOUBLINGS
 server/memory/app/search_llm.py::_QUERY_ENTITY_CACHE_MAX
@@ -501,13 +470,10 @@ server/memory/store/embeddings.py::_HEAD_READ_BATCH
 server/memory/store/entities.py::ENTITY_MIRROR_RETRY_DELAY_S
 server/memory/store/usage.py::_USAGE_BUFFER_MAX
 server/memory/store/usage.py::_USAGE_FLUSH_INTERVAL_S
-server/memory/workers/entity_extractor.py::_PARSE_FAIL_MAX
 server/memory/workers/entity_extractor.py::_PARSE_FAIL_STREAKS_CAP
 server/memory/workers/usage_fold.py::ACTED_EXPOSURE_LOOKBACK_SECONDS
-server/memory/workers/usage_fold.py::ACTED_MAX_ROWS_PER_PASS
 server/memory/workers/usage_fold.py::ACTED_WRITE_LAG_SECONDS
 server/memory/workers/usage_fold.py::MAX_MEMORIES_PER_PASS
-server/memory/workers/usage_fold.py::MAX_PENDING_MUTATIONS
 server/memory/workers/usage_fold.py::PASS_TIME_BUDGET_SECONDS
 server/memory/workers/usage_fold.py::_UINT32_MAX
 server/observability/budget_shape.py::_SHAPE_MAX
@@ -538,7 +504,6 @@ server/storage/frontend_assets.py::_CACHE_MAX_BYTES
 server/storage/frontend_assets.py::_MISSES_MAX
 server/storage/frontend_assets.py::_MISS_TTL_S
 server/storage/frontend_assets.py::_REPUBLISH_S
-server/storage/frontend_assets.py::_RETRY_S
 server/tasks/api/models_task.py::MAX_WAIT_SECONDS
 server/tasks/app/run.py::IDLE_CLOSE_BATCH
 server/tasks/app/run.py::IDLE_CLOSE_BUDGET_S
@@ -604,7 +569,6 @@ server/tracker/domain/test_signal.py::MAX_CANDIDATES
 server/tracker/domain/test_signal.py::MAX_FAIL_HOURS
 server/tracker/store/source/base.py::_MAX_CACHE
 server/tracker/store/source/contract_reports.py::_FAILED_TTL_S
-server/tracker/store/source/embed.py::WINDOW_KEYS_LIMIT
 server/tracker/store/source/items.py::CELL_LIMIT
 server/transport/action_schema.py::_MAX_DEPTH
 server/transport/arg_feedback.py::_MAX_ERRORS

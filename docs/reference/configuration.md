@@ -521,6 +521,24 @@ The code plane: ingest, indexes, search, ask, review.
 | `LOOM_CODE_SCIP_FULL_RETRY_S` | `int` | `21600` | live | Seconds before a failed compiler-tier full re-index of an entry is tried again. |
 | `LOOM_CODE_STATUS_BUILDING_COUNTS_TTL_S` | `float` | `60.0` | live | Seconds an entry's chunk counts are cached while it is still building: they move then without a watermark moving. |
 | `LOOM_CODE_STATUS_STEADY_COUNTS_TTL_S` | `float` | `600.0` | live | Seconds an indexed entry's chunk counts are cached once it is no longer building. |
+| `LOOM_CODE_BACKPORT_HISTORY_BUDGET_MS` | `int` | `8000` | live | Milliseconds the history stage of the backport-gap check may run: one grep per path and a few `-S` reads per undecided branch. |
+| `LOOM_CODE_BACKPORT_PATCH_BUDGET_MS` | `int` | `1000` | live | The hunk-level stage's wall — one chunk read per branch, all at once. |
+| `LOOM_CODE_BACKPORT_PRESENCE_BUDGET_MS` | `int` | `1200` | live | Milliseconds the presence stage of the backport-gap check may run. |
+| `LOOM_CODE_BLAME_INTRODUCED_MAX_DIFF_CALLS` | `int` | `10` | live | Most candidates the introduced-by diff test checks per request, blamed ones first, then ledger-only ones by recency. |
+| `LOOM_CODE_BOOTSTRAP_EMBED_BREAKER_HOLD_S` | `float` | `600.0` |  | After a slice in which the provider answered nothing, the next slices store stubs (the recovery worker fills them) rather than pay a timeout per file; the breaker closes by itself after the hold. |
+| `LOOM_CODE_BOOTSTRAP_MIRROR_REFRESH_S` | `float` | `5.0` | live | Seconds after a successful mirror fetch before another read may start one. |
+| `LOOM_CODE_BOOTSTRAP_MIRROR_RETRY_S` | `float` | `60.0` | live | Seconds after a failed mirror clone or fetch before it is tried again; a commit no fetch has brought waits this, doubled per fetch. |
+| `LOOM_CODE_CITATIONS_GIT_CALL_CAP` | `int` | `20` | live | Most git subprocesses code.verify_citations may start per request. |
+| `LOOM_CODE_COVERAGE_CONTROL_TTL_S` | `float` | `300.0` | live | The control is one read per namespace, not one per claim. The brief builder makes a claim per touched function, and each would re-run the same `arrayJoin` grep over the tests tree (176 MB a statement on the ClickHouse namespace). Its answer — is the tests corpus measurable from here — holds for a namespace across a brief, so it is kept per (org, namespace) for this long, in this process only. |
+| `LOOM_CODE_EGRESS_IDLE_TIMEOUT_S` | `float` | `300.0` | live | Seconds a repository job's egress tunnel may move no byte before it is closed. |
+| `LOOM_CODE_EGRESS_SLOT_WAIT_S` | `float` | `5.0` | live | Seconds a repository job's connection waits for a free egress tunnel slot. |
+| `LOOM_CODE_EMBED_RECOVERY_CHAIN_BUDGET_S` | `float` | `20.0` | live | Seconds one embed-recovery pass may spend chaining scans before it stops for the next pass. |
+| `LOOM_CODE_ENTRY_LOCK_LEASE_TTL_S` | `int` | `120` | live | A dead holder's lease is taken over after this long. |
+| `LOOM_CODE_FORK_UPSTREAM_BUDGET_S` | `float` | `1.5` | live | Seconds the lookup of a repository's fork upstream may take. |
+| `LOOM_CODE_INGEST_LEASE_TTL_S` | `int` | `120` | live | A refresh holds the namespace's lease while it runs, so CI calls that land on different replicas run one pass, not one each; a dead holder's lease expires. |
+| `LOOM_CODE_MIRROR_WARMUP_RETRY_S` | `float` | `60.0` | live | Seconds before a failed warm-up clone of a mirror is tried again. |
+| `LOOM_CODE_REVIEW_BRIEF_MIRROR_MISS_TTL_S` | `float` | `600.0` | live | A miss is re-tried after this long (the mirror fetches; a hit never changes). |
+| `LOOM_CODE_SANDBOX_STDOUT_LIMIT_BYTES` | `int` | `67108864` | live | Output the parent holds: a `keep_stdout` job's stdout whole up to this (a big repository's `ls-remote` of PR heads is ~6 MB), past it the job is killed; any other stream keeps only its last _TAIL_BYTES. The child's rlimits do not bound the parent. |
 
 ## Context
 
@@ -848,6 +866,19 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_PROPOSALS_POLICY_TTL_S` | `float` | `60.0` | live | Seconds a namespace's proposal policy is cached; a change applies within it. |
 | `LOOM_MEMORY_PROPOSALS_SCAN_CAP` | `int` | `2000` | live | A listing reads at most this many proposals before `only` / `limit` — the graded counts are one statement over them; a namespace holding more on trial than this is a queue nobody is deciding, not a page. |
 | `LOOM_MEMORY_SUMMARY_ENTITY_TTL_S` | `float` | `60.0` | live | Seconds the entity vocabulary of a namespace's summaries is cached for the summary read leg. |
+| `LOOM_MEMORY_CALIBRATION_NAMESPACE_MISS_TTL_S` | `float` | `60.0` | live | Seconds a namespace with no calibration row (or a failed read) is remembered as having none. |
+| `LOOM_MEMORY_CALIBRATION_NAMESPACE_TTL_S` | `float` | `60.0` | live | Seconds a namespace's calibration row is cached, so a row written on another replica serves here within it. |
+| `LOOM_MEMORY_CODE_LINKS_SWEEP_INTERVAL_S` | `int` | `3600` | live | Seconds between the starts of two cycles of the code-links sweep through the link table. |
+| `LOOM_MEMORY_CODE_PLANE_PARSE_TIMEOUT_S` | `float` | `0.2` | live | The branch's own read and parse, a share of the code plane's enrichment bound: past it the lesson is served as trunk last checked it. |
+| `LOOM_MEMORY_DURABILITY_VERIFIER_MAX_FACTS_PER_CALL` | `int` | `60` | live | One call judges at most this many facts; a longer capture is judged in slices (groups never span slices — a missed fold only keeps a paraphrase). |
+| `LOOM_MEMORY_ENTITY_EXTRACT_PARSE_FAIL_MAX` | `int` | `3` | live | Consecutive unparseable model replies for one memory before the entity extractor stamps it failed and moves on. |
+| `LOOM_MEMORY_FACTS_PROJECTION_WAIT_S` | `float` | `3.0` | live | How long a walk waits for the graph projections of its namespace in flight when it starts, its own process's and the server's other processes' together. |
+| `LOOM_MEMORY_NAMESPACE_HEALTH_FAILURE_TTL_S` | `int` | `300` | live | A failed lookup is remembered this long (bounded by the TTL) so the pack does not re-run six failing reads on every call while the store is down. |
+| `LOOM_MEMORY_PROFILE_SEARCH_EMBED_CAP` | `int` | `8` | live | The most sections one search embeds on the fly. |
+| `LOOM_MEMORY_RETRIEVAL_EMPTY_BLOCK_RETRIES` | `int` | `3` |  | Retries of a vector read that ClickHouse answers with an empty-block error (code 10 on a part still being written) before the search fails. |
+| `LOOM_MEMORY_RETRIEVAL_EMPTY_BLOCK_RETRY_SLEEP_S` | `float` | `0.2` |  | Seconds before the first such retry; each later one waits one more step of it. |
+| `LOOM_MEMORY_USAGE_FOLD_ACTED_MAX_ROWS_PER_PASS` | `int` | `5000` |  | Most exposure rows one usage-fold pass reads to credit acted-on memories; the watermark holds until a pass drains below it. |
+| `LOOM_MEMORY_USAGE_FOLD_MAX_PENDING_MUTATIONS` | `int` | `20` |  | Backpressure: a pass is skipped — watermark untouched — while the destination table already carries this many unfinished mutations on the connected replica. Every lightweight UPDATE is a patch part plus a Keeper log entry; enough of them pending on a large table can expire replicas' Keeper sessions and leave them read-only. |
 
 ## MemoryAsk
 
@@ -1014,6 +1045,7 @@ memory.search: legs, fusion, ranking and gates.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_SEARCH_BM25_CACHE_TTL_S` | `float` | `300.0` | live | Seconds the BM25 corpus statistics (document count, mean length) of a namespace are cached. |
+| `LOOM_MEMORY_SEARCH_SPELLING_LOOKUP_TIMEOUT_S` | `float` | `0.4` | live | The lookup reads every row of the namespace it may read: 100-300 ms server-side for 40k rows. On a cache miss it overlaps the embed. |
 
 ## Model
 
@@ -1154,6 +1186,7 @@ Telemetry, audit, tracing and the ops surface.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_INSIGHTS_AGENTS_CONNECTED_TTL_S` | `float` | `60.0` | live | The sidebar badge asks agents.connected every 30 s per tab, and the answer is a 24 h scan of agent_events. One answer per (org, namespace, window, caller scope) serves every asker for 60 s — "a new agent in the last day" does not change faster than that. |
+| `LOOM_AUDIT_VERIFY_MAX_ROWS_PER_PASS` | `int` | `500000` | live | Most audit rows one verifier pass checks; past it the newest go unchecked and the pass says so. |
 
 ## Provider
 
@@ -1251,6 +1284,7 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_WORKER_BACKOFF_BASE_S` | `float` | `1.0` | live | First wait, in seconds, after a worker's pass fails; it doubles per failure up to worker_backoff_cap_s. |
 | `LOOM_WORKER_BACKOFF_CAP_S` | `float` | `60.0` | live | Longest wait, in seconds, between a failing worker's passes (the wait doubles from worker_backoff_base_s). |
 | `LOOM_WORKER_PARTIAL_RETRY_S` | `float` | `3600.0` | live | A pass with a failed leg on a worker whose interval is longer than this retries after this long, doubling with each further such pass, up to the interval: a weekly pass must not leave one namespace's transient failure standing for a week. |
+| `LOOM_READINESS_CHECK_TIMEOUT_S` | `float` | `2.0` | live | Seconds one readiness check may take; a slower check fails. |
 
 ## Storage
 
@@ -1297,6 +1331,7 @@ Storage: document originals, per-table retention and warm-tier moves.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_STORAGE_FRONTEND_ASSETS_RETRY_MAX_S` | `float` | `60.0` | live | Longest wait, in seconds, between retries of a failed dashboard-asset publish (the wait doubles from storage_frontend_assets_retry_s). |
+| `LOOM_STORAGE_FRONTEND_ASSETS_RETRY_S` | `float` | `2.0` | live | A round that failed is retried after this, doubling up to `storage_frontend_assets_retry_max_s`. |
 
 ## Task
 
@@ -1487,3 +1522,4 @@ The tracker plane: records, duplicate checks, bisect.
 | `LOOM_TRACKER_ERROR_NAMES_TTL_S` | `float` | `21600.0` | live | Seconds a namespace's error-name to code map is cached. |
 | `LOOM_TRACKER_FRESHNESS_BUDGET_S` | `float` | `2.0` | live | Seconds the item-count read behind a tracker source's freshness may take. |
 | `LOOM_TRACKER_TEST_CANDIDATES_TIMEOUT_S` | `float` | `3.0` | live | Seconds the test-signal candidate read may take; it never holds up the answer. |
+| `LOOM_TRACKER_EMBED_WINDOW_KEYS_LIMIT` | `int` | `200000` | live | The window-keys read's cap; a read that returns this many is incomplete. |

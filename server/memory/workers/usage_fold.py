@@ -86,12 +86,6 @@ MAX_MEMORIES_PER_PASS = 1000
 PASS_TIME_BUDGET_SECONDS = 120.0
 # Rows per UPDATE statement; keeps the transform() arrays and the IN list bounded.
 UPDATE_CHUNK_ROWS = 500
-# Backpressure: a pass is skipped — watermark untouched — while
-# the destination table already carries this many unfinished mutations on the
-# connected replica. Every lightweight UPDATE is a patch part plus a Keeper log
-# entry; enough of them pending on a large table can expire replicas' Keeper
-# sessions and leave them read-only.
-MAX_PENDING_MUTATIONS = 20
 # ClickHouse error codes that mean "lightweight UPDATE is not available here"
 # (syntax / support disabled / not implemented). Only these earn the ALTER
 # UPDATE fallback; a read-only replica (242), a Keeper session (999) or an
@@ -491,13 +485,13 @@ async def _fold_batch(ch: _CHClient, cfg: UsageFoldConfig, result: UsageFoldResu
     # queue of unfinished mutations, folding more only lengthens it. Skip the
     # pass; the watermark stays, so the next pass folds the same rows.
     pending = await _pending_mutations(ch, "loom.memory")
-    if pending > MAX_PENDING_MUTATIONS:
+    if pending > settings.memory_usage_fold_max_pending_mutations:
         result.skipped_pending_mutations = pending
         log.warning(
             "usage_fold: %d unfinished mutations on loom.memory "
             "(cap %d); skipping this pass, watermark held at %s",
             pending,
-            MAX_PENDING_MUTATIONS,
+            settings.memory_usage_fold_max_pending_mutations,
             _watermark.isoformat(),
         )
         return False
@@ -593,8 +587,6 @@ ACTED_EXPOSURE_LOOKBACK_SECONDS = 24 * 3600
 # Writes are re-read this far behind the pass clock (async inserts, the
 # events-stream flush) before the watermark moves past them.
 ACTED_WRITE_LAG_SECONDS = 120
-# Bounds one pass; the watermark stays until a pass drains below it.
-ACTED_MAX_ROWS_PER_PASS = 5000
 
 _acted_watermark: datetime = _EPOCH
 _acted_watermark_derived: bool = False
@@ -751,7 +743,7 @@ async def acted_pass(
         params={
             "since": since,
             "since_exp": since - timedelta(seconds=ACTED_EXPOSURE_LOOKBACK_SECONDS),
-            "lim": ACTED_MAX_ROWS_PER_PASS,
+            "lim": settings.memory_usage_fold_acted_max_rows_per_pass,
         },
     )
     result.acted_candidates += len(rows)
@@ -785,7 +777,7 @@ async def acted_pass(
             result.acted_emitted += await record_usage_for_keys(
                 org, ns_keys, event_type="acted", agent=agent, ch=ch
             )
-    full = len(rows) >= ACTED_MAX_ROWS_PER_PASS
+    full = len(rows) >= settings.memory_usage_fold_acted_max_rows_per_pass
     if full:
         # A full page: hold the watermark at the last write credited so the
         # next pass continues from there (the remembered pairs stop the

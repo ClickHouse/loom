@@ -1335,6 +1335,57 @@ class CodeSettings(BaseModel):
     # Seconds an indexed entry's chunk counts are cached once it is no longer building.
     code_status_steady_counts_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
 
+    # ---- timeouts, budgets and caches ----
+    # Milliseconds the history stage of the backport-gap check may run: one grep per
+    # path and a few `-S` reads per undecided branch.
+    code_backport_history_budget_ms: Annotated[int, LIVE] = Field(default=8000, gt=0)
+    # The hunk-level stage's wall — one chunk read per branch, all at once.
+    code_backport_patch_budget_ms: Annotated[int, LIVE] = Field(default=1000, gt=0)
+    # Milliseconds the presence stage of the backport-gap check may run.
+    code_backport_presence_budget_ms: Annotated[int, LIVE] = Field(default=1200, gt=0)
+    # Most candidates the introduced-by diff test checks per request, blamed ones first,
+    # then ledger-only ones by recency.
+    code_blame_introduced_max_diff_calls: Annotated[int, LIVE] = Field(default=10, ge=0)
+    # After a slice in which the provider answered nothing, the next slices store stubs
+    # (the recovery worker fills them) rather than pay a timeout per file; the breaker
+    # closes by itself after the hold.
+    code_bootstrap_embed_breaker_hold_s: float = Field(default=600.0, ge=0)
+    # Seconds after a successful mirror fetch before another read may start one.
+    code_bootstrap_mirror_refresh_s: Annotated[float, LIVE] = Field(default=5.0, ge=0)
+    # Seconds after a failed mirror clone or fetch before it is tried again; a commit no
+    # fetch has brought waits this, doubled per fetch.
+    code_bootstrap_mirror_retry_s: Annotated[float, LIVE] = Field(default=60.0, ge=0)
+    # Most git subprocesses code.verify_citations may start per request.
+    code_citations_git_call_cap: Annotated[int, LIVE] = Field(default=20, ge=0)
+    # The control is one read per namespace, not one per claim. The brief builder makes a
+    # claim per touched function, and each would re-run the same `arrayJoin` grep over the
+    # tests tree (176 MB a statement on the ClickHouse namespace). Its answer — is the
+    # tests corpus measurable from here — holds for a namespace across a brief, so it is
+    # kept per (org, namespace) for this long, in this process only.
+    code_coverage_control_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
+    # Seconds a repository job's egress tunnel may move no byte before it is closed.
+    code_egress_idle_timeout_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
+    # Seconds a repository job's connection waits for a free egress tunnel slot.
+    code_egress_slot_wait_s: Annotated[float, LIVE] = Field(default=5.0, gt=0)
+    # Seconds one embed-recovery pass may spend chaining scans before it stops for the
+    # next pass.
+    code_embed_recovery_chain_budget_s: Annotated[float, LIVE] = Field(default=20.0, gt=0)
+    # A dead holder's lease is taken over after this long.
+    code_entry_lock_lease_ttl_s: Annotated[int, LIVE] = Field(default=120, gt=0)
+    # Seconds the lookup of a repository's fork upstream may take.
+    code_fork_upstream_budget_s: Annotated[float, LIVE] = Field(default=1.5, gt=0)
+    # A refresh holds the namespace's lease while it runs, so CI calls that land on
+    # different replicas run one pass, not one each; a dead holder's lease expires.
+    code_ingest_lease_ttl_s: Annotated[int, LIVE] = Field(default=120, gt=0)
+    # Seconds before a failed warm-up clone of a mirror is tried again.
+    code_mirror_warmup_retry_s: Annotated[float, LIVE] = Field(default=60.0, ge=0)
+    # A miss is re-tried after this long (the mirror fetches; a hit never changes).
+    code_review_brief_mirror_miss_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
+    # Output the parent holds: a `keep_stdout` job's stdout whole up to this (a big
+    # repository's `ls-remote` of PR heads is ~6 MB), past it the job is killed; any other
+    # stream keeps only its last _TAIL_BYTES. The child's rlimits do not bound the parent.
+    code_sandbox_stdout_limit_bytes: Annotated[int, LIVE] = Field(default=64 * 1024 * 1024, ge=0)
+
 
 # ===== Context ================================================================
 
@@ -2068,6 +2119,47 @@ class MemorySettings(BaseModel):
     # read leg.
     memory_summary_entity_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
 
+    # ---- timeouts, budgets and caches ----
+    # Seconds a namespace with no calibration row (or a failed read) is remembered as
+    # having none.
+    memory_calibration_namespace_miss_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # Seconds a namespace's calibration row is cached, so a row written on another
+    # replica serves here within it.
+    memory_calibration_namespace_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # Seconds between the starts of two cycles of the code-links sweep through the link
+    # table.
+    memory_code_links_sweep_interval_s: Annotated[int, LIVE] = Field(default=3600, ge=0)
+    # The branch's own read and parse, a share of the code plane's enrichment bound: past
+    # it the lesson is served as trunk last checked it.
+    memory_code_plane_parse_timeout_s: Annotated[float, LIVE] = Field(default=0.2, gt=0)
+    # One call judges at most this many facts; a longer capture is judged in slices
+    # (groups never span slices — a missed fold only keeps a paraphrase).
+    memory_durability_verifier_max_facts_per_call: Annotated[int, LIVE] = Field(default=60, ge=0)
+    # Consecutive unparseable model replies for one memory before the entity extractor
+    # stamps it failed and moves on.
+    memory_entity_extract_parse_fail_max: Annotated[int, LIVE] = Field(default=3, ge=0)
+    # How long a walk waits for the graph projections of its namespace in flight when it
+    # starts, its own process's and the server's other processes' together.
+    memory_facts_projection_wait_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
+    # A failed lookup is remembered this long (bounded by the TTL) so the pack does not
+    # re-run six failing reads on every call while the store is down.
+    memory_namespace_health_failure_ttl_s: Annotated[int, LIVE] = Field(default=300, gt=0)
+    # The most sections one search embeds on the fly.
+    memory_profile_search_embed_cap: Annotated[int, LIVE] = Field(default=8, ge=0)
+    # Retries of a vector read that ClickHouse answers with an empty-block error (code
+    # 10 on a part still being written) before the search fails.
+    memory_retrieval_empty_block_retries: int = Field(default=3, ge=0)
+    # Seconds before the first such retry; each later one waits one more step of it.
+    memory_retrieval_empty_block_retry_sleep_s: float = Field(default=0.2, ge=0)
+    # Most exposure rows one usage-fold pass reads to credit acted-on memories; the
+    # watermark holds until a pass drains below it.
+    memory_usage_fold_acted_max_rows_per_pass: int = Field(default=5000, ge=0)
+    # Backpressure: a pass is skipped — watermark untouched — while the destination table
+    # already carries this many unfinished mutations on the connected replica. Every
+    # lightweight UPDATE is a patch part plus a Keeper log entry; enough of them pending
+    # on a large table can expire replicas' Keeper sessions and leave them read-only.
+    memory_usage_fold_max_pending_mutations: int = Field(default=20, ge=0)
+
 
 # ===== MemoryAsk ==============================================================
 
@@ -2660,6 +2752,11 @@ class MemorySearchSettings(BaseModel):
     # are cached.
     memory_search_bm25_cache_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
 
+    # ---- timeouts, budgets and caches ----
+    # The lookup reads every row of the namespace it may read: 100-300 ms server-side for
+    # 40k rows. On a cache miss it overlaps the embed.
+    memory_search_spelling_lookup_timeout_s: Annotated[float, LIVE] = Field(default=0.4, gt=0)
+
 
 # ===== Model ==================================================================
 
@@ -2989,6 +3086,11 @@ class ObservabilitySettings(BaseModel):
     # every asker for 60 s — "a new agent in the last day" does not change faster than
     # that.
     insights_agents_connected_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+
+    # ---- timeouts, budgets and caches ----
+    # Most audit rows one verifier pass checks; past it the newest go unchecked and the
+    # pass says so.
+    audit_verify_max_rows_per_pass: Annotated[int, LIVE] = Field(default=500000, ge=0)
 
 
 # ===== Provider ===============================================================
@@ -3444,6 +3546,10 @@ class RuntimeSettings(BaseModel):
     # pass must not leave one namespace's transient failure standing for a week.
     worker_partial_retry_s: Annotated[float, LIVE] = Field(default=3600.0, ge=0)
 
+    # ---- timeouts, budgets and caches ----
+    # Seconds one readiness check may take; a slower check fails.
+    readiness_check_timeout_s: Annotated[float, LIVE] = Field(default=2.0, gt=0)
+
 
 # ===== Storage ================================================================
 
@@ -3518,6 +3624,11 @@ class StorageSettings(BaseModel):
     # Longest wait, in seconds, between retries of a failed dashboard-asset publish (the
     # wait doubles from storage_frontend_assets_retry_s).
     storage_frontend_assets_retry_max_s: Annotated[float, LIVE] = Field(default=60.0, ge=0)
+
+    # ---- timeouts, budgets and caches ----
+    # A round that failed is retried after this, doubling up to
+    # `storage_frontend_assets_retry_max_s`.
+    storage_frontend_assets_retry_s: Annotated[float, LIVE] = Field(default=2.0, ge=0)
 
 
 # ===== Task ===================================================================
@@ -3892,6 +4003,10 @@ class TrackerSettings(BaseModel):
     tracker_freshness_budget_s: Annotated[float, LIVE] = Field(default=2.0, gt=0)
     # Seconds the test-signal candidate read may take; it never holds up the answer.
     tracker_test_candidates_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
+
+    # ---- timeouts, budgets and caches ----
+    # The window-keys read's cap; a read that returns this many is incomplete.
+    tracker_embed_window_keys_limit: Annotated[int, LIVE] = Field(default=200000, ge=0)
 
 
 # ===== Operation latency budgets ===============================================

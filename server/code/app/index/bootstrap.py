@@ -45,10 +45,6 @@ CURSOR_KEY = "backfill_cursor:index"
 # takes its larger batch, status reads shorten their count cache).
 BUILDING_STAGES = frozenset({"queued", "cloning", "indexing", "embedding"})
 
-# After a slice in which the provider answered nothing, the next slices store stubs (the
-# recovery worker fills them) rather than pay a timeout per file; the breaker closes by
-# itself after the hold.
-_EMBED_BREAKER_HOLD_S = 600.0
 _embed_breaker_until = 0.0
 
 
@@ -90,7 +86,9 @@ def embed_breaker_open(now: float | None = None) -> bool:
 
 def open_embed_breaker(now: float | None = None) -> None:
     global _embed_breaker_until
-    _embed_breaker_until = (now if now is not None else time.monotonic()) + _EMBED_BREAKER_HOLD_S
+    _embed_breaker_until = (
+        now if now is not None else time.monotonic()
+    ) + settings.code_bootstrap_embed_breaker_hold_s
 
 
 def reset_embed_breaker() -> None:
@@ -275,15 +273,13 @@ async def _pin_ledger_merges(cfg: Any) -> None:
 
 
 # The clone or fetch running per (job, git_dir), with when it started: one per mirror
-# however many reads ask; after a failure not again for _MIRROR_RETRY_S, after a
-# success not for _MIRROR_AGAIN_S.
+# however many reads ask; after a failure not again for `code_bootstrap_mirror_retry_s`, after a
+# success not for `code_bootstrap_mirror_refresh_s`.
 _MIRROR_JOBS: dict[tuple[str, str], tuple[asyncio.Task[str], float]] = {}
-_MIRROR_RETRY_S = 60.0
-_MIRROR_AGAIN_S = 5.0
 # Indexed heads a mirror is known to hold (checked once).
 _HAVE: set[tuple[str, str]] = set()
 # (git_dir, sha) a mirror lacks → (no fetch for it before, fetches made for it). A
-# sha no fetch brings waits _MIRROR_RETRY_S, doubled per fetch up to
+# sha no fetch brings waits `code_bootstrap_mirror_retry_s`, doubled per fetch up to
 # `code_bootstrap_backoff_max_s`.
 _FOREIGN: dict[tuple[str, str], tuple[float, int]] = {}
 
@@ -316,7 +312,11 @@ def _current_job(key: tuple[str, str]) -> asyncio.Task[str] | None:
     task, started = _MIRROR_JOBS.get(key, (None, 0.0))
     if task is not None and task.done():
         failed = bool(_job_failure(task))
-        if time.monotonic() - started >= (_MIRROR_RETRY_S if failed else _MIRROR_AGAIN_S):
+        if time.monotonic() - started >= (
+            settings.code_bootstrap_mirror_retry_s
+            if failed
+            else settings.code_bootstrap_mirror_refresh_s
+        ):
             return None
     return task
 
@@ -404,13 +404,16 @@ async def holds(cfg: Any, want: str, *, fetchable: Any = None) -> bool:
         if len(_FOREIGN) > 1024:
             _FOREIGN.clear()
         if network_refusal(cfg) or (fetchable is not None and not await fetchable()):
-            _FOREIGN[key] = (now + _MIRROR_RETRY_S, 0)
+            _FOREIGN[key] = (now + settings.code_bootstrap_mirror_retry_s, 0)
             return False
         if tries and not until:
             # The fetch made for it ended without it (the remote lost it): back off.
             _FOREIGN[key] = (
                 now
-                + min(_MIRROR_RETRY_S * 2 ** (tries - 1), settings.code_bootstrap_backoff_max_s),
+                + min(
+                    settings.code_bootstrap_mirror_retry_s * 2 ** (tries - 1),
+                    settings.code_bootstrap_backoff_max_s,
+                ),
                 tries,
             )
             return False
@@ -569,7 +572,7 @@ def _note_embed_outcome(cfg: Any, embedder: Any | None, counters: dict[str, int]
         "%d s (the recovery worker fills them)",
         cfg.label,
         counters["embed_stubs"],
-        int(_EMBED_BREAKER_HOLD_S),
+        int(settings.code_bootstrap_embed_breaker_hold_s),
     )
 
 

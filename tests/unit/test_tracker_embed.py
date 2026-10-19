@@ -1597,9 +1597,8 @@ async def test_a_window_read_at_its_cap_tombstones_nothing(monkeypatch) -> None:
     """The window-keys read is capped; one that returns the cap may have
     stopped short, and an item past it would read as departed. The pass
     keeps every stored row and says so."""
-    import server.tracker.store.source.embed as se
 
-    monkeypatch.setattr(se, "WINDOW_KEYS_LIMIT", 1)
+    monkeypatch.setattr(settings, "tracker_embed_window_keys_limit", 1)
     stored = {
         ("issue", 1): {"text_sha256": "0" * 64, "tombstoned_at": None, **_MODEL},
         ("issue", 9): {"text_sha256": "1" * 64, "tombstoned_at": None, **_MODEL},
@@ -1623,11 +1622,10 @@ async def test_a_window_read_at_its_cap_tombstones_nothing(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_the_window_keys_read_is_ordered_and_capped(monkeypatch) -> None:
-    import server.tracker.store.source.embed as se
 
     up = _Rows([])
     monkeypatch.setattr(qi, "query_rows", up)
     await src.TrackerSource(ORG, NS).embed_window_keys(ORG, NS, kind="issue", closed_days=365)
     sql, params = up.calls[-1]
     assert "ORDER BY source_id" in sql and "LIMIT {lim:UInt32}" in sql
-    assert params["lim"] == se.WINDOW_KEYS_LIMIT
+    assert params["lim"] == settings.tracker_embed_window_keys_limit

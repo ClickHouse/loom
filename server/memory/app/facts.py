@@ -31,6 +31,7 @@ from server.memory.store.fact_graph import (
     _edge_set_sql,
     _traverse_hop_sql,
 )
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -324,13 +325,8 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
     return FactsRelatedOutput(entity=entity, related=related)
 
 
-# How long a walk waits for the graph projections of its namespace in flight when it
-# starts, its own process's and the server's other processes' together.
-_OWN_PROJECTION_WAIT_S = 3.0
-
-
 async def _after_own_projections(org: str, ns: str) -> tuple[datetime | None, datetime]:
-    """Wait (at most `_OWN_PROJECTION_WAIT_S`) for the graph projections of
+    """Wait (at most `memory_facts_projection_wait_s`) for the graph projections of
     (org, ns) in flight, so a walk sees the edges a write just made. Returns
     `graph_write_marks.last_write`'s (last write, server clock)."""
     import time
@@ -339,8 +335,10 @@ async def _after_own_projections(org: str, ns: str) -> tuple[datetime | None, da
     from server.memory.app import graph_write_marks as marks
 
     t0 = time.monotonic()
-    await after_write.settle(org, ns, timeout_s=_OWN_PROJECTION_WAIT_S)
-    return await marks.last_write(org, ns, wait_s=_OWN_PROJECTION_WAIT_S - (time.monotonic() - t0))
+    await after_write.settle(org, ns, timeout_s=settings.memory_facts_projection_wait_s)
+    return await marks.last_write(
+        org, ns, wait_s=settings.memory_facts_projection_wait_s - (time.monotonic() - t0)
+    )
 
 
 class _WalkMemo:

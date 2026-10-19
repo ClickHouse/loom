@@ -24,7 +24,6 @@ from server.settings import settings
 logger = logging.getLogger("loom.code.fork_upstream")
 
 CACHE_TTL_S = 24 * 3600.0
-BUDGET_S = 1.5
 MAX_CANDIDATES = 3
 
 MAX_CACHE = 4096
@@ -79,7 +78,7 @@ async def fork_upstreams(
     if missing:
         f = fetch or _github_upstreams
         tasks = [asyncio.ensure_future(_ask(s, f)) for s in missing]
-        bound = BUDGET_S if budget_s is None else budget_s
+        bound = settings.code_fork_upstream_budget_s if budget_s is None else budget_s
         try:
             await asyncio.wait(tasks, timeout=bound)
         finally:
