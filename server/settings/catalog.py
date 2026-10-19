@@ -4455,6 +4455,17 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
 # literal `max_tokens` at a call site and on a key no call uses.
 
 LLM_MAX_TOKENS: dict[str, int] = {
+    # code.ask: the synthesized answer; part of its cached answers' version, so a change
+    # marks them stale.
+    "code_answer_synth": 900,
+    # The ceiling a truncated extraction's one retry doubles its budget up to: bounds a
+    # pathological transcript while clearing the long-session case.
+    "extract_truncation_retry": 8192,
+    # session.brief: one window's revision (about 600-1,500 tokens); a cut-off answer is
+    # salvaged key by key.
+    "session_brief_revision": 3000,
+    # The session summary: one to three dated sentences.
+    "session_summary": 160,
     # memory.ask: the judge of an answer against its evidence.
     "ask_consistency": 200,
     # memory.ask: the split of a question into sub-questions.

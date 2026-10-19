@@ -61,7 +61,6 @@ server/code/api/models_search.py::QUERY_MAX_CHARS
 server/code/app/answers_cache.py::_MAX_RETRIEVAL_PATHS
 server/code/app/answers_entry.py::_MAX_CONTEXT_UNITS
 server/code/app/answers_entry.py::_MAX_EXPANSION_UNITS
-server/code/app/answers_entry.py::_SYNTH_MAX_TOKENS
 server/code/app/backport.py::MAX_BRANCHES
 server/code/app/backport.py::_MAX_FIXES
 server/code/app/bisect_facts.py::RERANK_MIN_S
@@ -396,7 +395,6 @@ server/memory/app/extract/evidence.py::_LEXICAL_MAX_MESSAGES
 server/memory/app/extract/models.py::MAX_DERIVED_PER_FACT
 server/memory/app/extract/parse.py::_MAX_TOPICS
 server/memory/app/extract/parse.py::_MAX_TOPIC_CHARS
-server/memory/app/extract/parse.py::_TRUNCATION_RETRY_MAX_TOKENS
 server/memory/app/graph_write_marks.py::STALE_PENDING_S
 server/memory/app/graph_write_marks.py::_FLUSH_S
 server/memory/app/graph_write_marks.py::_POLL_S
@@ -424,10 +422,8 @@ server/memory/app/search_llm.py::_QUERY_ENTITY_CACHE_MAX
 server/memory/app/search_llm.py::_VERB_SYNONYM_CACHE_MAX
 server/memory/app/search_pages.py::DEFAULT_TTL_S
 server/memory/app/session_brief.py::_MAX_SOURCE_SESSIONS
-server/memory/app/session_brief.py::_REVISION_MAX_TOKENS
 server/memory/app/session_summary.py::_SESSION_SUMMARY_MAX_INPUT_CHARS
 server/memory/app/session_summary.py::_SESSION_SUMMARY_MAX_KEY_FACTS
-server/memory/app/session_summary.py::_SESSION_SUMMARY_MAX_TOKENS
 server/memory/app/set_chunks.py::_MAX_CHUNKS_FALLBACK
 server/memory/app/trajectory_notes.py::_MAX_HINT_ENTITIES
 server/memory/app/trajectory_notes.py::_MAX_NARRATIVE_CHARS

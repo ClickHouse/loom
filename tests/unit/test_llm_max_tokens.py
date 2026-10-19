@@ -21,11 +21,21 @@ def _calls() -> tuple[list[str], set[str]]:
     literals, keys = [], set()
     for path in sorted((ROOT / "server").rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
+        constants = {
+            t.id
+            for st in tree.body
+            if isinstance(st, ast.Assign) and isinstance(st.value, ast.Constant)
+            for t in st.targets
+            if isinstance(t, ast.Name)
+        }
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             for kw in node.keywords:
-                if kw.arg == "max_tokens" and isinstance(kw.value, ast.Constant):
+                literal = isinstance(kw.value, ast.Constant) or (
+                    isinstance(kw.value, ast.Name) and kw.value.id in constants
+                )
+                if kw.arg == "max_tokens" and literal:
                     literals.append(f"{path.relative_to(ROOT)}:{node.lineno}")
             if ast.unparse(node.func) == "llm_max_tokens" and node.args:
                 arg = node.args[0]

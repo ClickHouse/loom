@@ -38,7 +38,6 @@ from server.code.app.answers_entry import (
     _MAX_CONTEXT_UNITS,
     _MAX_EXPANSION_UNITS,
     _MEMORY_NOTE,
-    _SYNTH_MAX_TOKENS,
     _SYNTH_SYSTEM,
     AskResult,
     _AskCtx,
@@ -409,7 +408,7 @@ async def _synthesize(
         # never as a substitute for the cited code.
         joined = "\n".join(f"- {m}" for m in memories)
         prompt += _MEMORY_NOTE + joined
-    res = await llm.complete(_SYNTH_SYSTEM, prompt, max_tokens=_SYNTH_MAX_TOKENS)
+    res = await llm.complete(_SYNTH_SYSTEM, prompt, max_tokens=llm_max_tokens("code_answer_synth"))
     return str(res.text).strip()[:8000]
 
 
