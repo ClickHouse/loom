@@ -22,10 +22,17 @@ describe("DraftSearch", () => {
   it("settle={ debounceMs } hands over the text once the keys pause, and ignores Enter", async () => {
     const onSearch = vi.fn();
     render(<DraftSearch settle={{ debounceMs: 50 }} onSearch={onSearch} aria-label="Search" />);
-    await waitFor(() => expect(onSearch).toHaveBeenCalledWith(""));
-    onSearch.mockClear();
     await userEvent.type(screen.getByLabelText("Search"), "lane{Enter}", { delay: null });
+    expect(onSearch).not.toHaveBeenCalled();
     await waitFor(() => expect(onSearch).toHaveBeenCalledWith("lane"));
+    await new Promise((r) => setTimeout(r, 100));
     expect(onSearch).toHaveBeenCalledTimes(1);
+  });
+
+  it("settle={ debounceMs } hands over nothing on mount", async () => {
+    const onSearch = vi.fn();
+    render(<DraftSearch settle={{ debounceMs: 20 }} onSearch={onSearch} aria-label="Search" />);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(onSearch).not.toHaveBeenCalled();
   });
 });

@@ -5,7 +5,7 @@ export interface DraftSearchProps extends Omit<SearchFieldProps, "value" | "onCh
   /** The settled text, handed over as `settle` says. */
   onSearch: (text: string) => void;
   /** "enter": on Enter, and when the box is emptied. `{ debounceMs }`: that long after the
-   *  last key. */
+   *  last key, when the text differs from what it last handed over (so not on mount). */
   settle: "enter" | { debounceMs: number };
 }
 
@@ -21,9 +21,13 @@ export const DraftSearch = forwardRef<HTMLInputElement, DraftSearchProps>(functi
   // The timer calls the latest render's handler.
   const onSearchRef = useRef(onSearch);
   onSearchRef.current = onSearch;
+  const handed = useRef(text);
   useEffect(() => {
-    if (debounceMs === null) return;
-    const t = setTimeout(() => onSearchRef.current(text), debounceMs);
+    if (debounceMs === null || text === handed.current) return;
+    const t = setTimeout(() => {
+      handed.current = text;
+      onSearchRef.current(text);
+    }, debounceMs);
     return () => clearTimeout(t);
   }, [text, debounceMs]);
   return (
