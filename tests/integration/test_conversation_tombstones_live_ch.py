@@ -32,7 +32,16 @@ def scope() -> dict[str, str]:
     return {"org": unique_org("conv-tomb"), "ns": f"ns-{tag}", "tid": f"t-{tag}"}
 
 
-async def _message(ch: Any, s: dict[str, str], agent: str, mid: str, text: str, ts: datetime):
+async def _message(
+    ch: Any,
+    s: dict[str, str],
+    agent: str,
+    mid: str,
+    text: str,
+    ts: datetime,
+    role: str = "user",
+    metadata: str = "{}",
+):
     await repo.append(
         repo.MessageInsert(
             org=s["org"],
@@ -40,8 +49,9 @@ async def _message(ch: Any, s: dict[str, str], agent: str, mid: str, text: str, 
             agent=agent,
             thread_id=s["tid"],
             msg_id=mid,
-            role="user",
+            role=role,
             content=text,
+            metadata=metadata,
             ts=ts,
         ),
         ch=ch,
@@ -101,19 +111,19 @@ class _PassThrough:
         return await self.ch.execute(sql, params, **kw)
 
 
-class _AfterFirstTombstone(_PassThrough):
-    """Runs `then` once the first embeddings tombstone has landed."""
+class _AfterFirstPass(_PassThrough):
+    """Runs `then` once the first embeddings pass is done, before the messages
+    mutation."""
 
     def __init__(self, ch: Any, then: Any) -> None:
         super().__init__(ch)
         self.then = then
 
     async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
-        out = await super().execute(sql, params, **kw)
-        if self.then and "INSERT INTO loom.conversation_embeddings" in sql:
+        if self.then and "ALTER TABLE loom.conversations\n" in sql:
             then, self.then = self.then, None
             await then()
-        return out
+        return await super().execute(sql, params, **kw)
 
 
 class _FailOnce(_PassThrough):
@@ -144,7 +154,7 @@ async def test_a_peer_row_written_after_the_tombstone_stays_live(ch, scope) -> N
 
     when = datetime.now(UTC).replace(tzinfo=None)
     await repo.tombstone_thread(
-        scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=_AfterFirstTombstone(ch, peer)
+        scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=_AfterFirstPass(ch, peer)
     )
     assert await _rows(ch, scope) == [("1", "theirs", True)]
 
@@ -163,7 +173,7 @@ async def test_a_turn_appended_during_the_delete_leaves_search(ch, scope) -> Non
 
     when = datetime.now(UTC).replace(tzinfo=None)
     out = await repo.tombstone_thread(
-        scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=_AfterFirstTombstone(ch, append)
+        scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=_AfterFirstPass(ch, append)
     )
     assert out["loom.conversations"] == 2  # the mid-delete turn's message was caught too
     assert out["loom.conversation_embeddings"] == 2
@@ -187,7 +197,7 @@ async def test_a_turn_embedded_during_compaction_leaves_search(ch, scope) -> Non
         scope["tid"],
         ["1"],
         when=when,
-        ch=_AfterFirstTombstone(ch, embed),
+        ch=_AfterFirstPass(ch, embed),
     )
     assert await _rows(ch, scope) == [("1", "slow embed", False)]
 
@@ -322,7 +332,7 @@ async def test_a_kept_row_passes_to_the_agent_that_still_holds_the_turn(ch, scop
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fail_at", [0, 1, 2, 3, 4])
+@pytest.mark.parametrize("fail_at", [0, 1, 2])
 async def test_a_failed_compaction_step_never_leaves_a_hidden_turn_searchable(
     ch, scope, fail_at
 ) -> None:
@@ -344,16 +354,16 @@ async def test_a_failed_compaction_step_never_leaves_a_hidden_turn_searchable(
     assert await _rows(ch, scope) == [("1", "retry me", False)]
 
 
-class _LateHandoff(_PassThrough):
-    """Runs the first hand-off as a read, then `meanwhile`, then the write of what it
-    read: a hand-off whose rows land after another agent's whole delete."""
+class _LateReconcile(_PassThrough):
+    """Runs the first embeddings reconcile as a read, then `meanwhile`, then the write
+    of what it read: a reconcile whose rows land after another agent's whole delete."""
 
     def __init__(self, ch: Any, meanwhile: Any) -> None:
         super().__init__(ch)
         self.meanwhile: Any = meanwhile
 
     async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
-        if self.meanwhile is None or "p.holder.1 AS agent" not in sql:
+        if self.meanwhile is None or "p.holder.1" not in sql:
             return await super().execute(sql, params, **kw)
         meanwhile, self.meanwhile = self.meanwhile, None
         select = sql.split("INSERT INTO loom.conversation_embeddings", 1)[1]
@@ -366,9 +376,9 @@ class _LateHandoff(_PassThrough):
 
 @pytest.mark.asyncio
 async def test_two_agents_deleting_a_shared_turn_at_once_both_remove_it(ch, scope) -> None:
-    """A's first hand-off reads B's copy as live, B's whole delete runs (keeping the
-    row for A's still-live copy), then A's hand-off lands it under B: A's second pass
-    finds no live copy left and tombstones it, so the turn leaves search."""
+    """A's first reconcile reads B's copy as live, B's whole delete runs (keeping the
+    row for A's still-live copy), then A's reconcile lands it under B: A's next read
+    finds B holds no live copy and tombstones it, so the turn leaves search."""
     await _message(ch, scope, "a", "1", "shared", T0)
     await _message(ch, scope, "b", "1", "shared", T0)
     await _embedding(ch, scope, "a", "1", "shared", T0)
@@ -378,21 +388,21 @@ async def test_two_agents_deleting_a_shared_turn_at_once_both_remove_it(ch, scop
         await repo.tombstone_thread(scope["org"], scope["ns"], "b", scope["tid"], when=when, ch=ch)
 
     await repo.tombstone_thread(
-        scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=_LateHandoff(ch, b_deletes)
+        scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=_LateReconcile(ch, b_deletes)
     )
     assert await _rows(ch, scope) == [("1", "shared", False)]
 
 
 class _PingPong(_PassThrough):
-    """After the first hand-off lands, runs `after_first`; runs the second hand-off as a
-    read, then `meanwhile`, then the write of what it read."""
+    """After the first reconcile lands, runs `after_first`; runs the second reconcile
+    as a read, then `meanwhile`, then the write of what it read."""
 
     def __init__(self, ch: Any, after_first: Any, meanwhile: Any) -> None:
         super().__init__(ch)
         self.after_first, self.meanwhile, self.handoffs = after_first, meanwhile, 0
 
     async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
-        if "p.holder.1 AS agent" not in sql:
+        if "p.holder.1" not in sql:
             return await super().execute(sql, params, **kw)
         self.handoffs += 1
         if self.handoffs == 1:
@@ -414,8 +424,9 @@ async def test_a_late_handoff_after_the_peer_hands_the_row_back_still_ends_tombs
     ch, scope
 ) -> None:
     """A hands the row to B; B's first pass hands it back (A's copy is still live);
-    A's second hand-off reads B's copy as live and lands after B's whole delete. Each
-    pass ends with a tombstone, so the turn both agents removed leaves search."""
+    A's second reconcile reads B's copy as live and lands after B's whole delete. A
+    reconcile repeats until a later read finds no unheld row, so the turn both agents
+    removed leaves search."""
     await _message(ch, scope, "a", "1", "shared", T0)
     await _message(ch, scope, "b", "1", "shared", T0)
     await _embedding(ch, scope, "a", "1", "shared", T0)
@@ -438,6 +449,74 @@ async def test_a_late_handoff_after_the_peer_hands_the_row_back_still_ends_tombs
         ch=_PingPong(ch, b_first_pass, b_deletes),
     )
     assert await _rows(ch, scope) == [("1", "shared", False)]
+
+
+async def _holders(ch: Any, s: dict[str, str]) -> list[tuple[str, bool]]:
+    rows = await ch.query_all(
+        "SELECT agent, tombstoned_at IS NULL AS live FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String}",
+        params={"org": s["org"], "ns": s["ns"], "tid": s["tid"]},
+    )
+    return [(r["agent"], bool(r["live"])) for r in rows]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("whole_delete", [True, False])
+async def test_a_late_reconcile_to_a_removed_peer_passes_to_the_one_left(
+    ch, scope, whole_delete
+) -> None:
+    """Three agents hold the turn. A's reconcile reads B's copy as live and lands after
+    B's whole delete: the row ends with C, the one agent still holding it, not with B.
+    A single pass shows the re-read alone catches it, with no later pass to help."""
+    for agent in "abc":
+        await _message(ch, scope, agent, "1", "shared", T0 + timedelta(seconds="cba".index(agent)))
+    await _embedding(ch, scope, "a", "1", "shared", T0)
+    when = datetime.now(UTC).replace(tzinfo=None)
+
+    async def b_deletes() -> None:
+        await repo.tombstone_thread(scope["org"], scope["ns"], "b", scope["tid"], when=when, ch=ch)
+
+    late = _LateReconcile(ch, b_deletes)
+    if whole_delete:
+        await repo.tombstone_thread(
+            scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=late
+        )
+    else:
+        await repo._tombstone_embeddings(
+            scope["org"], scope["ns"], "a", scope["tid"], msg_ids=None, when=when, ch=late
+        )
+    assert await _holders(ch, scope) == [("c", True)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["tool", "system"])
+@pytest.mark.parametrize("op", ["delete", "compact"])
+async def test_a_transcript_only_peer_turn_does_not_keep_the_row(ch, scope, role, op) -> None:
+    """A peer's tool or system turn with the same id and text is not indexed, so it
+    does not keep this agent's row: the delete or compaction tombstones it."""
+    await _message(ch, scope, "a", "1", "same text", T0, role="assistant")
+    await _message(ch, scope, "b", "1", "same text", T0, role=role)
+    await _embedding(ch, scope, "a", "1", "same text", T0, role="assistant")
+    if op == "delete":
+        await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=T0, ch=ch)
+    else:
+        await repo.tombstone_messages(
+            scope["org"], scope["ns"], "a", scope["tid"], ["1"], when=T0, ch=ch
+        )
+    assert await _holders(ch, scope) == [("a", False)]
+
+
+@pytest.mark.asyncio
+async def test_a_peer_compaction_summary_keeps_the_row(ch, scope) -> None:
+    """A compaction summary is indexed although its role is system: a peer's copy of
+    one keeps the row and takes it over."""
+    await _message(ch, scope, "a", "1", "summary", T0, role="system")
+    await _message(
+        ch, scope, "b", "1", "summary", T0, role="system", metadata='{"compacted_from": ["0"]}'
+    )
+    await _embedding(ch, scope, "a", "1", "summary", T0, role="system")
+    await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=T0, ch=ch)
+    assert await _holders(ch, scope) == [("b", True)]
 
 
 _LONG_IDS = [f"{i:04d}" + "x" * 508 for i in range(300)]  # 512-character ids

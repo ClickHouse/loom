@@ -803,56 +803,55 @@ _THREAD_TURNS = """(agent = {agent:String} OR msg_id IN (
 _SHORT_EXCERPT_CHARS = 240
 
 
-# Another agent's live copies of the thread's turns, by msg_id and the text a row would
-# hold for them at either excerpt length, with the latest copy's identity.
+# Another agent's live copies of the thread's turns that search indexes (user and
+# assistant turns, and compaction summaries), by msg_id and the text a row would hold
+# for them at either excerpt length.
 _PEER_COPIES = """
-    SELECT msg_id, excerpt, argMax((agent, role, run_id, user_id), ts) AS holder FROM (
-      SELECT msg_id, agent, role, run_id, user_id, ts, arrayJoin([
-        substringUTF8(content, 1, {embedded:UInt32}),
-        substringUTF8(content, 1, {short:UInt32})
-      ]) AS excerpt
-      FROM loom.conversations
-      WHERE org = {org:String} AND namespace = {ns:String}
-        AND thread_id = {tid:String} AND agent != {agent:String}
-        AND tombstoned_at IS NULL
-    )
-    GROUP BY msg_id, excerpt
+    SELECT msg_id, agent, role, run_id, user_id, ts, arrayJoin([
+      substringUTF8(content, 1, {embedded:UInt32}),
+      substringUTF8(content, 1, {short:UInt32})
+    ]) AS excerpt
+    FROM loom.conversations
+    WHERE org = {org:String} AND namespace = {ns:String}
+      AND thread_id = {tid:String} AND agent != {agent:String}
+      AND tombstoned_at IS NULL
+      AND (role IN ('user', 'assistant')
+           OR (role = 'system' AND notEmpty(JSONExtractArrayRaw(metadata, 'compacted_from'))))
 """
 
 
-def _live_embeddings(turns: str) -> str:
-    """The thread's live embedding rows of the turns `turns` selects."""
+_RECONCILE_ROUNDS = 8
+
+
+def _unheld_embeddings(turns: str) -> str:
+    """The thread's live embedding rows of the turns `turns` selects whose own agent
+    holds no peer copy of them: `agent`'s rows, and rows handed to a peer that has
+    since removed its copy."""
     return (
         "SELECT * FROM loom.conversation_embeddings FINAL"
         " WHERE org = {org:String} AND namespace = {ns:String}"
-        " AND thread_id = {tid:String} AND tombstoned_at IS NULL AND " + turns
+        " AND thread_id = {tid:String} AND tombstoned_at IS NULL AND "
+        + turns
+        + " AND (msg_id, content_excerpt, agent) NOT IN"
+        " (SELECT msg_id, excerpt, agent FROM (" + _PEER_COPIES + "))"
     )
 
 
-def _tombstone_sql(turns: str) -> str:
-    """A tombstone version row for each live row no peer holds. The live rows are
-    filtered in the inner query: in the outer one the REPLACE alias would shadow
-    `tombstoned_at`."""
-    return (
-        "INSERT INTO loom.conversation_embeddings"
-        " SELECT * REPLACE ({now:DateTime} AS tombstoned_at) FROM ("
-        + _live_embeddings(turns)
-        + " AND (msg_id, content_excerpt) NOT IN (SELECT msg_id, excerpt FROM ("
-        + _PEER_COPIES
-        + ")))"
-    )
-
-
-def _handoff_sql(turns: str) -> str:
-    """A version row moving each kept row `agent` wrote last to the peer copy that
-    holds it: its agent, role, run and user, so it answers that copy's searches and
-    erasure."""
+def _reconcile_sql(turns: str) -> str:
+    """A version row for each unheld row: passed to the latest peer copy that holds
+    it (its agent, role, run and user, so it answers that copy's searches and
+    erasure), or tombstoned when none does (a peer agent is never empty)."""
+    keep = "p.holder.1 != ''"
     return (
         "INSERT INTO loom.conversation_embeddings"
         " SELECT e.* REPLACE ("
-        "p.holder.1 AS agent, p.holder.2 AS role, p.holder.3 AS run_id, p.holder.4 AS user_id)"
-        " FROM (" + _live_embeddings(turns) + " AND agent = {agent:String}) AS e"
-        " INNER JOIN (" + _PEER_COPIES + ") AS p"
+        f"if({keep}, p.holder.1, e.agent) AS agent, if({keep}, p.holder.2, e.role) AS role,"
+        f" if({keep}, p.holder.3, e.run_id) AS run_id,"
+        f" if({keep}, p.holder.4, e.user_id) AS user_id,"
+        f" if({keep}, NULL, {{now:DateTime}}) AS tombstoned_at)"
+        " FROM (" + _unheld_embeddings(turns) + ") AS e"
+        " LEFT JOIN (SELECT msg_id, excerpt, argMax((agent, role, run_id, user_id), ts) AS holder"
+        " FROM (" + _PEER_COPIES + ") GROUP BY msg_id, excerpt) AS p"
         " ON e.msg_id = p.msg_id AND e.content_excerpt = p.excerpt"
     )
 
@@ -872,7 +871,7 @@ async def _tombstone_embeddings(
 
     The embeddings key has no agent, so a turn several agents logged is one row. It
     stays while another agent holds a live copy with the row's text, and passes to that
-    copy when `agent` wrote it last. Both writes copy the row with its `ts`, so they
+    copy when its own agent holds none. Both writes copy the row with its `ts`, so they
     replace it in its partition (the later insert wins a `ts` tie)."""
     params: dict[str, Any] = {
         "now": when,
@@ -883,20 +882,31 @@ async def _tombstone_embeddings(
         "embedded": EMBEDDED_EXCERPT_CHARS,
         "short": _SHORT_EXCERPT_CHARS,
     }
+    # Named turns are the agent's own (compaction reads them from its live turns).
+    parts: list[tuple[str, dict[str, Any]]] = (
+        [(_THREAD_TURNS, params)]
+        if msg_ids is None
+        else [
+            ("msg_id IN {ids:Array(String)}", {**params, "ids": p}) for p in param_slices(msg_ids)
+        ]
+    )
     # Sequential reads: on a multi-replica service a lagging replica could miss a turn
     # appended just before, leaving its embedding live once its message is tombstoned.
     with sequential_reads():
-        # The hand-off goes first, so a pass ends with a tombstone read taken after its
-        # own hand-off landed: a hand-off read while a peer's copy was live and landing
-        # after that peer's tombstone is then tombstoned by this pass or by the peer's.
-        for build in (_handoff_sql, _tombstone_sql):
-            if msg_ids is None:
-                await ch.execute(build(_THREAD_TURNS), params)
-                continue
-            # Named turns are the agent's own (compaction reads them from its live turns).
-            named = build("msg_id IN {ids:Array(String)}")
-            for part in param_slices(msg_ids):
-                await ch.execute(named, {**params, "ids": part})
+        for turns, bound in parts:
+            # A reconcile can read a peer's copy as live and land after that peer's whole
+            # delete. So it repeats until a read taken after its last write finds no
+            # unheld row: each round moves rows off agents that no longer hold them, and
+            # needs another agent's whole delete inside the last one to go again.
+            for _ in range(_RECONCILE_ROUNDS):
+                await ch.execute(_reconcile_sql(turns), bound)
+                left = await ch.query_one(
+                    "SELECT count() AS n FROM (" + _unheld_embeddings(turns) + ")", params=bound
+                )
+                if not left or not left["n"]:
+                    break
+            else:
+                raise RuntimeError(f"embeddings of thread {thread_id} still unheld")
 
 
 async def titler_candidates(
