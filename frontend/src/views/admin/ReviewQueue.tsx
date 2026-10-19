@@ -768,16 +768,12 @@ type UndoOutcome = "restored" | "gone";
 // One retirement record: a memory retired twice shows up once per record.
 const entryKey = (r: AutoResolvedRow) => `${r.memory_id}@${r.ts}>${r.superseded_by}`;
 
-// Audit times compared as instants: a whole second comes without a fraction
-// ("…12:00:00Z"), and as text "." sorts before "Z".
-const instant = auditInstant;
-
 /** Newest restore per id across two reads. */
 function mergeUndone(a: Map<string, string>, b: Map<string, string>): Map<string, string> {
   const out = new Map(a);
   for (const [id, ts] of b) {
     const prev = out.get(id);
-    if (!prev || instant(ts) > instant(prev)) out.set(id, ts);
+    if (!prev || auditInstant(ts) > auditInstant(prev)) out.set(id, ts);
   }
   return out;
 }
@@ -808,7 +804,7 @@ function AutoResolvedPanel() {
   // page added, else the last one in the list.
   const listBox = useRef<HTMLDivElement>(null);
   const focusAdded = useRef<number | null>(null);
-  const oldest = (rows ?? []).reduce((m, r) => (m === "" || instant(r.ts) < instant(m) ? r.ts : m), "");
+  const oldest = (rows ?? []).reduce((m, r) => (m === "" || auditInstant(r.ts) < auditInstant(m) ? r.ts : m), "");
 
   useEffect(() => {
     mounted.current = true;
@@ -861,9 +857,9 @@ function AutoResolvedPanel() {
     const at = undone.get(r.memory_id);
     const stillRetired =
       r.current == null || (r.current.status === "superseded" && r.current.superseded_by === r.superseded_by);
-    return at != null && instant(at) >= instant(r.ts) && !stillRetired;
+    return at != null && auditInstant(at) >= auditInstant(r.ts) && !stillRetired;
   };
-  const known = (r: AutoResolvedRow) => undoneSince != null && instant(r.ts) >= instant(undoneSince);
+  const known = (r: AutoResolvedRow) => undoneSince != null && auditInstant(r.ts) >= auditInstant(undoneSince);
 
   useEffect(() => {
     const at = focusAdded.current;
@@ -910,7 +906,7 @@ function AutoResolvedPanel() {
     setBusyFor(k, true);
     try {
       const out = await restoreMemory(
-        { org: identity.org, namespace: identity.namespace, agent: r.agent || "-" },
+        { org: identity.org, namespace: identity.namespace, agent: r.agent },
         r.memory_key,
         { user_id: r.user_id, session_id: r.session_id, if_superseded_by: r.superseded_by },
       );
