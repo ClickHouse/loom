@@ -293,3 +293,32 @@ async def test_bulk_get_answers_a_stored_key_shaped_like_a_chunk_id_with_its_own
         MemoryBulkGetInput(org="o", namespace="n", agent="clickgap", memory_keys=[key])
     )
     assert out.results[key].value == {"v": key} and out.results[key].canonical_key is None
+
+
+@pytest.mark.asyncio
+async def test_bulk_get_never_serves_or_audits_a_parent_nobody_asked_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The export holds a high row `x` home and never asks for it; a stored key shaped like one
+    # of its chunk ids must not bring `x`'s value (or a sensitive-read audit row) back.
+    from server.memory import store as memory_repo
+    from server.memory.api.models_bulk import MemoryBulkGetInput
+    from server.memory.app import query as Q
+    from server.observability import audit
+
+    async def fake_get_many(identity, keys, **kw):
+        high = {"sensitivity": "high", "memory_id": "00000000-0000-0000-0000-000000000002"}
+        return [_row(k).model_copy(update=high) if k == "x" else _row(k) for k in keys]
+
+    audited: list[Any] = []
+
+    async def _emit_many(_event: str, **kw: Any) -> None:
+        audited.extend(kw["subjects"])
+
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", fake_get_many)
+    monkeypatch.setattr(audit, "emit_many", _emit_many)
+    key = "chunk:memory.set:x:0"
+    out = await Q.handle_memory_bulk_get(
+        MemoryBulkGetInput(org="o", namespace="n", agent="clickgap", memory_keys=[key])
+    )
+    assert list(out.results) == [key] and audited == []

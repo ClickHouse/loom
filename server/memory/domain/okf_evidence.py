@@ -101,11 +101,12 @@ def evidence_is_high(item: ChunkLike | DigestLike, held_keys: set[str]) -> bool:
     reads as a credential: raw text has no sensitivity column, so the detector memory.set
     runs decides."""
     if isinstance(item, DigestLike):
-        # decoded: a key fact an earlier build stored as JSON hides a token after `\n`
-        text = "\n".join([item.summary_text, *(value_text(k) for k in item.key_facts)])
+        # each part on its own, as memory.digests and the outcome judge read them; a key fact
+        # an earlier build stored as JSON is decoded first
+        parts = [item.summary_text, *(value_text(k) for k in item.key_facts)]
     else:
-        text = item.content
-    return bool(set(evidence_keys(item)) & held_keys) or reads_high(text)
+        parts = [item.content]
+    return bool(set(evidence_keys(item)) & held_keys) or any(reads_high(p) for p in parts)
 
 
 def without_high(

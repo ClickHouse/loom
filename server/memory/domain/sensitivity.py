@@ -174,6 +174,11 @@ def detect_sensitivity(text: str) -> str:
     return ""
 
 
+# A line no pattern matches across: `;` ends the assignment shape's token class, and the
+# phone shape allows only one space, dot or dash between its groups.
+_SCALAR_SEP = "\n;\n"
+
+
 def value_text(value: Any) -> str:
     """Decoded text of a stored value for the detector: a JSON string is parsed, and each key
     and scalar is its own line, so a token after a newline keeps its word boundary. The lines
@@ -201,16 +206,17 @@ def value_text(value: Any) -> str:
     return _SCALAR_SEP.join(lines)
 
 
-# A line no pattern matches across: `;` ends the assignment shape's token class, and the
-# phone shape allows only one space, dot or dash between its groups.
-_SCALAR_SEP = "\n;\n"
-
 
 def reads_high(text: str) -> bool:
     """Whether `text` holds a credential shape, whatever the autodetect setting: the rule for
-    text copied from a row (a digest's key facts, an observation sent to a model), which has
-    no label of its own or carries one a later sweep may not have set yet."""
-    return detect_sensitivity(text) == HIGH
+    text copied from a row (a digest's key facts, an observation sent to a model, a raw
+    chunk), which has no label of its own or carries one a later sweep may not have set
+    yet. Text holding JSON (a chunk of an object value) is read with its string escapes
+    undone too, where a token after `\\n` or a quoted password keeps its word boundary."""
+    if detect_sensitivity(text) == HIGH:
+        return True
+    unescaped = text.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
+    return unescaped != text and detect_sensitivity(unescaped) == HIGH
 
 
 def resolve_sensitivity(requested: str | None, text: str) -> str:

@@ -557,7 +557,9 @@ leg returns it. The other reads that could serve its value follow three rules:
   the version before a sweep labelled the row holds the same value unlabelled; a redacted
   version, which served no value, is not) and `memory.evidence` each write a
   `memory.sensitive_read` row. The admin dumps `namespace.snapshot` and `erasure.export`
-  carry `high` rows on purpose and write one per row.
+  carry `high` rows on purpose and write one per row. `memory.copy_to` and
+  `memory.cross_promote` read a `high` row by key and copy it to another namespace with its
+  label; each writes its own audit row (both are `audit=True` ops), which records the copy.
 
 Raw evidence (conversation chunks, session digests, the passages `bodies: "source"` serves)
 has no sensitivity column. `memory.export_evidence` leaves out the chunks and digests linked
@@ -581,14 +583,15 @@ password, keeps the word boundary it matches on, and a secret held in a key is s
 are joined by a separator no pattern crosses, so two scalars never read as one: a config
 object (`{"password": "required"}`, a form label `Password:` before the next key, a list of
 numbers) reads as the stored JSON always did. Text that has no level of its own, or carries
-one a later sweep may not have set yet, is checked whatever the setting (`reads_high`):
-`memory.export_evidence` (chunks, and digests with their key facts decoded), `bodies:
-"source"`, the observations `observe_extract` sends its model, the entity extractor's input,
-the existing memories an extraction prompt shows, and a session digest's key facts when
-written, listed by `memory.digests` or read by the outcome judge. The `sensitivity_sweep`
-worker (on, daily) labels rows from paths that skip it, every high shape counting as
-`credential` for its default shape filter: a new version per row and, for `high`, tombstoned
-embedding rows and entity vectors.
+one a later sweep may not have set yet, is checked whatever the setting (`reads_high`, which
+also reads text holding JSON, such as a chunk of an object value, with its string escapes
+undone): `memory.export_evidence` (chunks, and digests with their key facts decoded),
+`bodies: "source"`, the observations `observe_extract` sends its model, the entity
+extractor's input, the existing memories an extraction prompt shows, and a session digest's
+key facts when written, listed by `memory.digests` or read by the outcome judge. The
+`sensitivity_sweep` worker (on, daily) labels rows from paths that skip it, every high shape
+counting as `credential` for its default shape filter: a new version per row and, for
+`high`, tombstoned embedding rows and entity vectors.
 
 ## Audit log
 

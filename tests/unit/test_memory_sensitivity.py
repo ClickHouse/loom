@@ -4,6 +4,7 @@ column riding every write path."""
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -328,6 +329,59 @@ def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
     from server.memory.domain.sensitivity import detect_sensitivity, value_text
 
     assert detect_sensitivity(value_text(value)) == ""
+
+
+@pytest.mark.asyncio
+async def test_memory_set_labels_and_tags_the_decoded_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # memory.set reads the decoded value for both: in the stored JSON a token or a protected
+    # attribute after `\n` has no word boundary.
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import blacklist_guard, write
+    from server.memory.app.set_commit import _SetWrite
+    from server.settings import settings
+
+    async def _allowed(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
+    monkeypatch.setattr(settings, "memory_attribute_tagging", True)
+    monkeypatch.setattr(blacklist_guard, "enforce_on_insert", _allowed)
+    value = {"note": "status update:\nmarried last spring", "token": "id:\n" + _TOKEN}
+    w = _SetWrite(
+        input=MemorySetInput(org="o", namespace="n", agent="a", memory_key="k", value=value),
+        version=1,
+        retyped_from="",
+        existing=None,
+        expires_at=None,
+    )
+    await write._set_prepare_value(w, False)
+    assert "sensitivity:high" in w.input.tags
+    assert any(t.startswith("attribute:") for t in w.input.tags)
+
+
+@pytest.mark.parametrize(
+    ("value", "level"),
+    [
+        ({"name": "Ann", "email": "ann@example.com"}, "medium"),
+        ({"phone": "415-555-0123", "n": 1}, "medium"),
+        ({"phone": 4155550123}, "medium"),
+    ],
+)
+def test_one_scalar_still_reads_as_what_it_holds(value: object, level: str) -> None:
+    from server.memory.domain.sensitivity import detect_sensitivity, value_text
+
+    assert detect_sensitivity(value_text(value)) == level
+
+
+def test_a_chunk_of_an_object_value_is_read_with_its_escapes_undone() -> None:
+    # memory.set writes an object's chunks as indented JSON; the raw-text check reads them.
+    from server.memory.app.set_chunks import human_text
+    from server.memory.domain.sensitivity import reads_high
+
+    assert reads_high(human_text({"notes": "deploy steps:\n" + _TOKEN}))
+    assert not reads_high(human_text({"label": "Password:", "placeholder": "Enter one"}))
 
 
 def test_a_protected_attribute_after_a_newline_is_tagged(monkeypatch: pytest.MonkeyPatch) -> None:

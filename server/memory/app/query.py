@@ -821,27 +821,40 @@ async def _handle_memory_bulk_get(
     # Same answer as memory.get, so a bulk reader (the OKF exporter, the dashboard preload)
     # sees identity, lifecycle, sensitivity and attestation without N gets. The conflict
     # verdict and code links cost a read per row and are left to memory.get.
-    results: dict[str, MemoryGetOutput] = {}
-    high: list[dict[str, Any]] = []
+    fetched: dict[str, tuple[Any, MemoryGetOutput]] = {}
     for r in rows:
         canonical_key = canonical.get(r.memory_key)
-        results[r.memory_key] = row_output(
+        out = row_output(
             r,
             sha=_row_content_sha256(r),
             canonical_key=canonical_key,
             duplicate_of=duplicate_of_shown(r, canonical_key),
             superseded_by=successors.get(str(r.memory_id), ""),
         )
-        if r.sensitivity == "high":
-            high.append({"memory_key": r.memory_key, "memory_id": str(r.memory_id)})
-        results[r.memory_key]._projection = keep
-    for chunk_id, parent in parent_of.items():
-        if parent in results and chunk_id not in results:
-            parent_row = results[parent]
-            canonical_key = parent_row.canonical_key or parent
-            row = parent_row.model_copy(update={"canonical_key": canonical_key})
-            row._projection = keep
-            results[chunk_id] = row
+        out._projection = keep
+        fetched[r.memory_key] = (r, out)
+    # Only the keys asked are served (and audited): a parent read to fill a chunk-id alias
+    # answers under that alias, never under its own key unless that was asked too.
+    results: dict[str, MemoryGetOutput] = {}
+    served_rows: dict[str, Any] = {}
+    for k in input.memory_keys:
+        if k in fetched:
+            row, results[k] = fetched[k]
+        elif parent_of.get(k) in fetched:
+            row, parent_out = fetched[parent_of[k]]
+            alias = parent_out.model_copy(
+                update={"canonical_key": parent_out.canonical_key or parent_of[k]}
+            )
+            alias._projection = keep
+            results[k] = alias
+        else:
+            continue
+        served_rows[str(row.memory_id)] = row
+    high = [
+        {"memory_key": r.memory_key, "memory_id": mid}
+        for mid, r in served_rows.items()
+        if r.sensitivity == "high"
+    ]
     # A key read of a 'high' row is audited, as memory.get audits it.
     await _audit.emit_many(
         "memory.sensitive_read",
