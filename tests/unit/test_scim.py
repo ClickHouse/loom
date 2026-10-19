@@ -1913,6 +1913,38 @@ def test_a_primary_entry_with_no_address_does_not_take_the_flag(client: TestClie
     assert created.json()["id"] == scim.user_id("b@example.com")
 
 
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "add", "path": 'emails[type eq "other"].primary', "value": True},  # a new entry
+        {"op": "add", "path": "emails", "value": [{"type": "other", "primary": True}]},
+    ],
+)
+def test_a_primary_moved_to_an_entry_with_no_address_moves_the_key(
+    client: TestClient, world, op: dict[str, Any]
+) -> None:
+    # The provider's one primary keys nothing: its first work entry keys the user now.
+    emails = [
+        {"value": "a@example.com", "type": "home", "primary": True},
+        {"value": "c@example.com", "type": "work"},
+    ]
+    uid = _user(client, emails)
+    r = _patch(client, uid, op)
+    assert r.status_code == 400 and r.json()["scimType"] == "mutability", r.text
+    shown = client.get(f"/scim/v2/Users/{uid}").json()["emails"]
+    assert [e["primary"] for e in shown] == [True, False]
+
+
+def test_a_blank_primary_entry_does_not_take_the_flag(client: TestClient, world) -> None:
+    emails = [
+        {"value": " ", "primary": True},
+        {"value": "a@example.com", "type": "work"},
+        {"value": "b@example.com", "primary": True},
+    ]
+    created = client.post("/scim/v2/Users", json={"userName": "x@example.com", "emails": emails})
+    assert created.json()["id"] == scim.user_id("b@example.com")
+
+
 def test_an_add_of_an_entry_already_there_keeps_one(client: TestClient, world) -> None:
     uid = _user(client, [{"value": "lee@example.com", "type": "work"}])
     again = {"op": "add", "path": "emails", "value": [{"value": "Lee@example.com", "type": "work"}]}

@@ -305,8 +305,8 @@ LOOM_SCIM_TOKEN="$OLD_TOKEN,$(openssl rand -hex 32)"
 ```
 
 Loom keys a SCIM user on an email: the request's `emails` entry marked
-primary, else its work entry, else its first, or its `userName` when it sends
-none (Loom logs a warning when a user is created or renamed with a `userName`
+primary that has an address, else its first work entry, else its first, or its
+`userName` when it sends none (Loom logs a warning when a user is created or renamed with a `userName`
 other than that address).
 That address must be the one the provider puts in the ID token's `email`
 claim, since that is what a sign-in carries.
@@ -378,8 +378,7 @@ What Loom does with each request:
   another email by the rule above: the person would sign in to another
   account, which a later deactivation of the old email would miss. An `add`
   or `replace` through a filter that selects no entry adds one, as Entra's
-  writes expect. Other
-  addresses may be added, changed or removed (see
+  writes expect. Other addresses may be added, changed or removed (see
   [Changing a person's email](#changing-a-persons-email)). A refused request
   that also sets `active: false` still deactivates: providers send a leaver's
   changes together and do not retry a 400. A `PUT` whose body names another

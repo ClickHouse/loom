@@ -3,9 +3,9 @@ deactivate and reactivate people (`server/auth/scim.py`).
 
 Mounted only when `LOOM_SCIM_TOKEN` is set, and that bearer token is the only
 credential these routes take. A user resource carries `userName`, the `emails`
-list (Loom keys the user on the entry marked primary, else the work one, else
-the first, else `userName`) and `active`; other attributes a provider sends
-are accepted and not kept.
+list (Loom keys the user on the entry marked primary that has an address,
+else the first work one, else the first, else `userName`) and `active`; other
+attributes a provider sends are accepted and not kept.
 """
 
 from __future__ import annotations
@@ -312,10 +312,13 @@ def _emails_path(attr: str) -> tuple[str | None, str]:
 
 
 def _one_primary(entries: list[dict[str, Any]], written: Iterable[int]) -> list[dict[str, Any]]:
-    """Only one entry may be primary (RFC 7643 §2.4): the first one just
-    written primary with an address takes the flag from every other. One with
-    no address keys nothing (`keyed_entry`) and takes it once it has one."""
-    first = next((i for i in written if entries[i]["primary"] and entries[i]["value"]), None)
+    """Only one entry may be primary (RFC 7643 §2.4): of those just written
+    primary, the first with an address, else the first, takes the flag from
+    every other."""
+    primaries = [i for i in written if entries[i]["primary"]]
+    first = next((i for i in primaries if _nonempty(entries[i]["value"])), None)
+    if first is None:
+        first = next(iter(primaries), None)
     if first is None:
         return entries
     return [{**e, "primary": i == first} for i, e in enumerate(entries)]
@@ -412,7 +415,7 @@ def user_name_and_email(body: dict[str, Any]) -> tuple[str, str, list[dict[str, 
         raise ScimError(400, "userName is required", "invalidValue")
     listed = body.get("emails") or []
     emails = _entries(listed if isinstance(listed, list) else [listed])
-    emails = _one_primary(emails, range(len(emails)))  # the first primary stays the key
+    emails = _one_primary(emails, range(len(emails)))  # the first primary with an address keys it
     entry = keyed_entry(emails) or {}
     email = scim.normalized(entry.get("value") or name)
     if "@" not in email:
