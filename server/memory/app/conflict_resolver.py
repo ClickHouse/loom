@@ -757,10 +757,11 @@ async def _judge_and_act(
 ) -> set[str]:
     """Judge the row and act on the answer; the ids of the peers it gave no verdict."""
     found = await _assertion_order(org, namespace, [row, *peers])
-    # A pair a person's Undo settled is not paid for; the check under the locks decides.
-    settled = [p for p in peers if _undone(row, p, found.order, found.undos)]
+    # A pair a person's Undo settled skips the judge call; for the others the re-read
+    # under the locks decides.
+    settled = {str(p["memory_id"]) for p in peers if _undone(row, p, found.order, found.undos)}
     counts.skipped_no_action += len(settled)
-    peers = [p for p in peers if p not in settled]
+    peers = [p for p in peers if str(p["memory_id"]) not in settled]
     if not peers:
         return set()
     new, notes = notes_for(row, peers, {mid: when for mid, (when, _) in found.order.items()})
