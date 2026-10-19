@@ -224,6 +224,7 @@ OpName = Literal[
     "memory.set",
     "memory.set_from_messages",
     "memory.stack",
+    "memory.statuses",
     "memory.sweep_expired",
     "memory.timeline",
     "memory.touch",
@@ -529,6 +530,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.set",
     "memory.set_from_messages",
     "memory.stack",
+    "memory.statuses",
     "memory.sweep_expired",
     "memory.timeline",
     "memory.touch",
@@ -2866,6 +2868,18 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "experimental",
         200,
+        False,
+        True,
+    ),
+    "memory.statuses": OpSpec(
+        "memory.statuses",
+        "MemoryStatusesInput",
+        "MemoryStatusesBody",
+        "MemoryStatusesOutput",
+        True,
+        "viewer",
+        "experimental",
+        80,
         False,
         True,
     ),
@@ -12765,6 +12779,32 @@ class StackEntry(TypedDict, total=False):
     recall_count: NotRequired[int]
     last_recalled_at: NotRequired[Optional[str]]
     actor: NotRequired[str]
+
+
+class MemoryStatusesInput(TypedDict, total=False):
+    "The current status of some memories, by id: which automatic retirements still"
+
+    org: Required[str]
+    namespace: Required[str]
+    memory_ids: Required[list[str]]
+
+
+class MemoryStatusesBody(TypedDict, total=False):
+    "The current status of some memories, by id: which automatic retirements still"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    memory_ids: Required[list[str]]
+
+
+class MemoryStatusesOutput(TypedDict, total=False):
+    rows: NotRequired[list["MemoryStatus"]]
+
+
+class MemoryStatus(TypedDict, total=False):
+    memory_id: Required[str]
+    status: Required[str]
+    superseded_by: NotRequired[str]
 
 
 class MemorySweepExpiredInput(TypedDict, total=False):

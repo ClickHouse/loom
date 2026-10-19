@@ -62,6 +62,27 @@ export interface AutoResolvedRow {
   reason: AutoResolveReason | string;
   /** When the retirement was recorded (the audit row's `ts`). */
   ts: string;
+  /** The retired row's status now, and the memory it is retired behind now
+   *  (`memory.statuses`); absent when that read failed. */
+  current?: { status: string; superseded_by: string };
+}
+
+/** memory_id -> its current status and the memory it is retired behind
+ *  (`memory.statuses`), for ids in the namespace. */
+export async function memoryStatuses(
+  id: Pick<Identity, "org" | "namespace">,
+  memoryIds: string[],
+  opts: RequestOpts = {},
+): Promise<Map<string, { status: string; superseded_by: string }>> {
+  const out = new Map<string, { status: string; superseded_by: string }>();
+  if (memoryIds.length === 0) return out;
+  const res: { rows?: { memory_id: string; status: string; superseded_by?: string }[] } = await post(
+    "/v1/memory.statuses",
+    { org: id.org, namespace: id.namespace, memory_ids: memoryIds },
+    opts.signal,
+  );
+  for (const r of res.rows || []) out.set(r.memory_id, { status: r.status, superseded_by: r.superseded_by ?? "" });
+  return out;
 }
 
 /** How far back the Auto-resolved tab looks by default. */
@@ -83,10 +104,10 @@ const str = (v: unknown): string => (v == null ? "" : String(v));
  *  per retired memory, flattened out of the `memory.auto_supersede` audit records. A page
  *  is `limit` records (default 20), each listing up to 200 retired memories. `since`
  *  defaults to 30 days back; pass the returned `next_cursor` as `cursor` for the next,
- *  older page. */
+ *  older page. `current`: each row's state now, unless `withCurrent` is false. */
 export async function listAutoResolved(
   id: Pick<Identity, "org" | "namespace">,
-  opts: { limit?: number; since?: string; cursor?: string } & RequestOpts = {},
+  opts: { limit?: number; since?: string; cursor?: string; withCurrent?: boolean } & RequestOpts = {},
 ): Promise<{ rows: AutoResolvedRow[]; next_cursor: string | null }> {
   const page = await listAuditLog(id, {
     event_type: "memory.auto_supersede",
@@ -119,6 +140,15 @@ export async function listAutoResolved(
       });
     }
   }
+  if (opts.withCurrent !== false && out.length > 0) {
+    try {
+      const now = await memoryStatuses(id, [...new Set(out.map((r) => r.memory_id))], { signal: opts.signal });
+      for (const r of out) r.current = now.get(r.memory_id);
+    } catch (e) {
+      if (opts.signal?.aborted) throw e;
+      // Unknown: the tab offers Undo, and undoing a live row answers "Changed since".
+    }
+  }
   return { rows: out, next_cursor: page.next_cursor ?? null };
 }
 
@@ -128,6 +158,6 @@ export async function hasAutoResolved(
   id: Pick<Identity, "org" | "namespace">,
   opts: RequestOpts = {},
 ): Promise<boolean> {
-  const page = await listAutoResolved(id, { limit: 1, signal: opts.signal });
+  const page = await listAutoResolved(id, { limit: 1, withCurrent: false, signal: opts.signal });
   return page.rows.length > 0;
 }

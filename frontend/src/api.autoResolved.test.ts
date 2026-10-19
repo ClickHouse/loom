@@ -96,6 +96,42 @@ describe("listAutoResolved", () => {
     expect(Date.now() - since).toBeLessThan(31 * 86_400_000);
   });
 
+  it("attaches each row's state now from memory.statuses", async () => {
+    const bodies = stubAudit([
+      {
+        rows: [
+          {
+            ts: "2026-10-02T00:00:00Z",
+            subject: JSON.stringify({ reason: "conflict_resolver", retired: [entry("a"), entry("b")] }),
+          },
+        ],
+      },
+      { rows: [{ memory_id: "a", status: "superseded", superseded_by: "new_a" }] },
+    ]);
+    const out = await listAutoResolved({ org: "o", namespace: "n" });
+    expect(bodies[1]).toMatchObject({ org: "o", namespace: "n", memory_ids: ["a", "b"] });
+    expect(out.rows.map((r) => r.current)).toEqual([{ status: "superseded", superseded_by: "new_a" }, undefined]);
+  });
+
+  it("leaves the state unknown when memory.statuses fails", async () => {
+    let call = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        call += 1;
+        if (call === 1) {
+          const subject = JSON.stringify({ reason: "conflict_resolver", retired: [entry("a")] });
+          const body = JSON.stringify({ rows: [{ ts: "2026-10-02T00:00:00Z", subject }] });
+          return new Response(body, { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        return new Response("{}", { status: 500 });
+      }),
+    );
+    const out = await listAutoResolved({ org: "o", namespace: "n" });
+    expect(out.rows).toHaveLength(1);
+    expect(out.rows[0]?.current).toBeUndefined();
+  });
+
   it("asks for the next page with the cursor", async () => {
     const bodies = stubAudit([{ rows: [], next_cursor: null }]);
     const out = await listAutoResolved({ org: "o", namespace: "n" }, { cursor: "c2" });

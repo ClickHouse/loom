@@ -20,6 +20,8 @@ from server.memory.api.models_crud import (
     MemoryRestoreOutput,
     MemorySetInput,
     MemorySetOutput,
+    MemoryStatusesInput,
+    MemoryStatusesOutput,
     MemorySweepExpiredInput,
     MemorySweepExpiredOutput,
     MemoryTouchInput,
@@ -47,7 +49,7 @@ from server.memory.app.handlers import (
     handle_memory_touch,
     handle_memory_unpin,
 )
-from server.memory.app.query import handle_memory_list
+from server.memory.app.query import handle_memory_list, handle_memory_statuses
 from server.memory.app.restore import handle_memory_restore
 from server.memory.app.update import handle_memory_update, handle_memory_update_by_id
 from server.memory.app.verify import handle_memory_verify
@@ -256,4 +258,17 @@ memory_verify = Operation(
     # memory_id addressing carries no namespace for the transport to check;
     # the handler re-checks access against the resolved row's namespace.
     skip_namespace_authz=True,
+)
+
+
+memory_statuses = Operation(
+    name="memory.statuses",
+    maturity="experimental",
+    input_model=MemoryStatusesInput,
+    output_model=MemoryStatusesOutput,
+    handler=handle_memory_statuses,
+    idempotent=True,
+    budget_p99_ms=80,
+    required_role=Role.VIEWER,
+    audit=False,
 )

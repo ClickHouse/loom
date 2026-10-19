@@ -222,6 +222,7 @@
 26f069d238ef	SELECT m.org AS org, m.namespace AS namespace, m.agent AS agent, m.user_id AS user_id, m.session_id AS session_id, m.memory_key AS memory_key, m.attested AS attested FROM (SELECT org, namespace, agent
 270a0244a658	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 270e5a49c245	SELECT argMax(resume_cursor, version) AS cursor FROM loom.worker_status WHERE worker = {worker:String} AND resume_cursor != ?
+270ebb03d82c	SELECT toString(memory_id) AS id, argMax(status, version) AS status, argMax(superseded_by, version) AS superseded_by, argMax(tombstoned_at, version) IS NOT NULL AS deleted FROM loom.memory PREWHERE or
 274731bf5be7	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, ? - cosineDistance(e.embedding, {qv:Array(Float32)}) AS similarity, toString(coalesce(e.temporal_
 2787684c7098	SELECT kind, tags FROM loom.namespaces FINAL WHERE org = {org:String} AND namespace = {ns:String} LIMIT ?
 279f36f14acc	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.session_id AS session_

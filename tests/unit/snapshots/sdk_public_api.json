@@ -1048,6 +1048,10 @@
               "body",
               "options"
             ],
+            "statuses": [
+              "body",
+              "options"
+            ],
             "sweep_expired": [
               "body",
               "options"

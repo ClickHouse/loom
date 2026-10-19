@@ -528,10 +528,14 @@ function AutoResolvedPanel() {
     [identity.org, identity.namespace, oldest],
   );
 
-  // A row retired again after an undo is retired, so the undo must be the later event.
+  // A row retired again after an undo is retired, so the undo must be the later event, and
+  // the row must no longer be retired behind that memory: an Undo record whose restore
+  // failed names a row still retired.
   const undoneBefore = (r: AutoResolvedRow) => {
     const at = undone.get(r.memory_id);
-    return at != null && instant(at) >= instant(r.ts);
+    const stillRetired =
+      r.current == null || (r.current.status === "superseded" && r.current.superseded_by === r.superseded_by);
+    return at != null && instant(at) >= instant(r.ts) && !stillRetired;
   };
   const known = (r: AutoResolvedRow) => undoneSince != null && instant(r.ts) >= instant(undoneSince);
 

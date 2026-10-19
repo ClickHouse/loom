@@ -122,6 +122,7 @@ from server.memory.store.reads import (
     list_by_namespace,
     memory_rows_by_identity_keys,
     namespace_version,
+    statuses_by_ids,
 )
 from server.memory.store.redaction import (
     delete_ask_precedents_by_key,
@@ -257,6 +258,7 @@ __all__ = [
     "reemit_embedding_rows_for_key",
     "reemit_embedding_rows_for_keys",
     "retire_copies_under_unembedded_heads",
+    "statuses_by_ids",
     "retire_vectors_for_keys",
     "reemit_shared_embedding_rows",
     "restamp_embedding_rows",

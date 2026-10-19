@@ -2958,3 +2958,31 @@ async def test_an_undo_whose_insert_answer_was_lost_finishes(ch, wired, monkeypa
         params={"o": org},
     )
     assert search and {r["status"] for r in search} == {"active"}
+
+
+async def test_memory_statuses_says_which_retirements_still_stand(ch, wired) -> None:
+    """The Review queue reads each retired row's state now: a retirement whose Undo
+    record outlived a failed restore still reads as retired behind its winner."""
+    from server.memory.api.models_crud import MemoryStatusesInput
+    from server.memory.app.query import handle_memory_statuses
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 2160)
+    assert (await run_pass())["retired"] == 1
+    rows = await _rows(ch, org)
+    loser, winner = rows["office_city"]["id"], rows["office_location"]["id"]
+
+    async def statuses() -> dict[str, tuple[str, str]]:
+        out = await handle_memory_statuses(
+            MemoryStatusesInput(org=org, namespace=NS, memory_ids=[loser, winner, "not-an-id"])
+        )
+        return {r.memory_id: (r.status, r.superseded_by) for r in out.rows}
+
+    assert await statuses() == {loser: ("superseded", winner), winner: ("active", "")}
+    assert (await _undo(org, "office_city", winner)).restored
+    assert (await statuses())[loser] == ("active", "")
+    other = await handle_memory_statuses(
+        MemoryStatusesInput(org=org, namespace="elsewhere", memory_ids=[loser])
+    )
+    assert other.rows == [], "another namespace holds none of them"

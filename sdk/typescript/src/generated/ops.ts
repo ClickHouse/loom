@@ -5625,6 +5625,22 @@ export interface MemoryStackOutput {
   section_counts: Record<string, number>;
 }
 
+export interface MemoryStatusesInput {
+  org: string;
+  namespace: string;
+  memory_ids: string[];
+}
+
+export interface MemoryStatus {
+  memory_id: string;
+  status: string;
+  superseded_by?: string;
+}
+
+export interface MemoryStatusesOutput {
+  rows?: MemoryStatus[];
+}
+
 export interface MemorySweepExpiredInput {
   org: string;
   namespace?: string | null;
@@ -8534,6 +8550,7 @@ export type OpName =
   | "memory.set"
   | "memory.set_from_messages"
   | "memory.stack"
+  | "memory.statuses"
   | "memory.sweep_expired"
   | "memory.timeline"
   | "memory.touch"
@@ -8839,6 +8856,7 @@ export interface OpMap {
   "memory.set": { input: MemorySetInput; output: MemorySetOutput };
   "memory.set_from_messages": { input: MemorySetFromMessagesInput; output: MemorySetFromMessagesOutput };
   "memory.stack": { input: MemoryStackInput; output: MemoryStackOutput };
+  "memory.statuses": { input: MemoryStatusesInput; output: MemoryStatusesOutput };
   "memory.sweep_expired": { input: MemorySweepExpiredInput; output: MemorySweepExpiredOutput };
   "memory.timeline": { input: MemoryTimelineInput; output: MemoryTimelineOutput };
   "memory.touch": { input: MemoryTouchInput; output: MemoryTouchOutput };
@@ -9144,6 +9162,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.set", group: "memory", method: "set", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 200, audit: false, readOnly: false },
   { name: "memory.set_from_messages", group: "memory", method: "setFromMessages", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 2500, audit: false, readOnly: false },
   { name: "memory.stack", group: "memory", method: "stack", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
+  { name: "memory.statuses", group: "memory", method: "statuses", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "memory.sweep_expired", group: "memory", method: "sweepExpired", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 2000, audit: true, readOnly: false },
   { name: "memory.timeline", group: "memory", method: "timeline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 120, audit: false, readOnly: true },
   { name: "memory.touch", group: "memory", method: "touch", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 40, audit: false, readOnly: false },
@@ -9267,4 +9286,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 302;
+export const GENERATED_OP_COUNT = 303;

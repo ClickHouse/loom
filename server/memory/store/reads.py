@@ -156,6 +156,39 @@ async def get_by_key(
     return await _overlay_usage_totals(hydrated, ch) if include_usage_totals else hydrated
 
 
+# Each id's newest version, without FINAL: memory_id is found by its bloom-filter skip
+# index, which FINAL re-expands to every granule of the key range.
+_STATUSES_SQL = """
+        SELECT toString(memory_id) AS id,
+               argMax(status, version) AS status,
+               argMax(superseded_by, version) AS superseded_by,
+               argMax(tombstoned_at, version) IS NOT NULL AS deleted
+        FROM loom.memory
+        PREWHERE org = {org:String} AND namespace = {ns:String}
+        WHERE memory_id IN {ids:Array(UUID)}%s
+        GROUP BY memory_id
+        SETTINGS select_sequential_consistency = 1
+        """
+
+
+async def statuses_by_ids(
+    org: str, namespace: str, ids: list[str], *, scope: ReadFilters, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """[{memory_id, status, superseded_by}] for the ids among `ids` the namespace holds
+    inside `scope`, read strongly; a tombstoned row's status is `deleted`."""
+    ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "ids": ids}
+    rows = await ch.query_all(_STATUSES_SQL % scope_and(scope, params), params)
+    return [
+        {
+            "memory_id": str(r["id"]),
+            "status": "deleted" if r["deleted"] else str(r["status"]),
+            "superseded_by": str(r["superseded_by"] or ""),
+        }
+        for r in rows
+    ]
+
+
 async def get_by_id(
     memory_id: str,
     *,

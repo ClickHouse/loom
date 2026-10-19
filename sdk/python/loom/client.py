@@ -1730,6 +1730,14 @@ class MemoryOps:
             "_ops.MemoryStackOutput", await self._agent.call("memory.stack", body, **options)
         )
 
+    async def statuses(
+        self, body: _ops.MemoryStatusesBody | None = None, /, **options: Any
+    ) -> _ops.MemoryStatusesOutput:
+        """`memory.statuses`."""
+        return cast(
+            "_ops.MemoryStatusesOutput", await self._agent.call("memory.statuses", body, **options)
+        )
+
     async def sweep_expired(
         self, body: _ops.MemorySweepExpiredBody | None = None, /, **options: Any
     ) -> _ops.MemorySweepExpiredOutput:

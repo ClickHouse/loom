@@ -500,6 +500,29 @@ class MemoryRestoreOutput(BaseModel):
     from_status: str = ""
 
 
+class MemoryStatusesInput(BaseModel):
+    """The current status of some memories, by id: which automatic retirements still
+    stand (the Review queue's Auto-resolved tab reads it)."""
+
+    org: str
+    namespace: str
+    # Memory ids in this namespace; an id the namespace does not hold is left out.
+    memory_ids: list[str] = Field(..., min_length=1, max_length=5000)
+
+
+class MemoryStatus(BaseModel):
+    memory_id: str
+    # The row's status now (`active`, `conflicted`, `superseded`, ...); `deleted` when
+    # tombstoned.
+    status: str
+    # The memory a `superseded` row is retired behind; empty otherwise.
+    superseded_by: str = ""
+
+
+class MemoryStatusesOutput(BaseModel):
+    rows: list[MemoryStatus] = Field(default_factory=list)
+
+
 class MemoryClearInput(BaseModel):
     """Bulk-tombstone memories in one scope.
 

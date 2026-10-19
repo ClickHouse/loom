@@ -375,6 +375,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_example",
         "plugin_hook",
     ),
+    "memory.statuses": ("plugin_hook",),
     "memory.timeline": ("sdk_method",),
     "memory.touch": (
         "sdk_method",

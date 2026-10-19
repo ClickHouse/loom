@@ -2042,6 +2042,22 @@ Compose a token-budgeted recall bundle for agent wake-up.
 | `truncated` | `bool` | true when at least one section was trimmed to fit |
 | `section_counts` | `dict[str, int]` | how many entries per section |
 
+## `memory.statuses`
+
+The current status of some memories, by id: which automatic retirements still stand (the Review queue's Auto-resolved tab reads it).
+
+`POST /v1/memory.statuses` · MCP `loom_memory_statuses` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `memory_ids` | `list[str]` | required | Memory ids in this namespace; an id the namespace does not hold is left out. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `rows` | `list[MemoryStatus]` |  |
+
 ## `memory.sweep_expired`
 
 Run one expiry-sweep pass now — the same pass the `memory_expiry_sweep` worker runs on its interval, scoped to an org and optionally a namespace.

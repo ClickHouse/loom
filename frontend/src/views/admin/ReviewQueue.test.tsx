@@ -94,6 +94,8 @@ const retired = (key: string, extra: Partial<AutoResolvedRow> = {}): AutoResolve
   superseded_by: `id-${key}-new`,
   reason: "conflict_resolver",
   ts: "2026-10-01T10:00:00Z",
+  // Served now: whether a record's Undo shows as Restored turns on the record.
+  current: { status: "active", superseded_by: "" },
   ...extra,
 });
 
@@ -355,6 +357,33 @@ describe("ReviewQueue", () => {
     expect(await screen.findByText("Restored", {}, WAIT)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Undo retirement of undone" })).toBeNull();
     expect(screen.getByRole("button", { name: "Undo retirement of again" })).toBeTruthy();
+  });
+
+  it("offers Undo for a row an Undo record names but that is still retired behind that memory", async () => {
+    // The record was written and its restore failed; or the row's state could not be read.
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(
+      page([
+        retired("orphan", { current: { status: "superseded", superseded_by: "id-orphan-new" } }),
+        retired("unknown", { current: undefined }),
+        retired("moved", { current: { status: "superseded", superseded_by: "id-elsewhere" } }),
+      ]),
+    );
+    vi.mocked(listUnsuperseded).mockResolvedValue(
+      new Map([
+        ["id-orphan", "2026-10-02T10:00:00Z"],
+        ["id-unknown", "2026-10-02T10:00:00Z"],
+        ["id-moved", "2026-10-02T10:00:00Z"],
+      ]),
+    );
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    expect(await screen.findByRole("button", { name: "Undo retirement of orphan" }, WAIT)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Undo retirement of unknown" })).toBeTruthy();
+    // Retired behind another memory since: this retirement is undone.
+    expect(screen.queryByRole("button", { name: "Undo retirement of moved" })).toBeNull();
+    expect(screen.getAllByText("Restored")).toHaveLength(1);
   });
 
   it("orders audit times by instant, not by their text", async () => {
