@@ -436,3 +436,28 @@ async def test_resetting_a_retired_setting_is_audited_with_no_value_before(
         "previous_source": None,
         "cleared": True,
     }
+
+
+async def test_a_native_command_chunks_as_the_http_op_does_under_an_override(
+    monkeypatch: pytest.MonkeyPatch, stored: dict
+) -> None:
+    """`loom rechunk` and knowledge.upsert share `_chunk_text`: inside a native command
+    it reads the stored override, not the startup default."""
+    from server.insights.app import provider_command as pc
+    from server.knowledge.app import writes
+
+    async def _noop(*_a: Any, **_k: Any) -> bool:
+        return True
+
+    for name in ("register_process", "load_active_configuration", "retire_process"):
+        monkeypatch.setattr(pc, name, _noop)
+    monkeypatch.setattr(pc, "drain_task_sets", _noop)
+    monkeypatch.setattr(pc, "flush_registered_buffers", _noop)
+    stored[("knowledge_chunk_size",)] = 0  # stored deployment-wide: one chunk per document
+    text = "words " * 1000
+    try:
+        assert len(writes._chunk_text(text)) > 1  # the startup default
+        async with pc.model_command():
+            assert len(writes._chunk_text(text)) == 1
+    finally:
+        so.adopt({})
