@@ -1045,13 +1045,15 @@ async def test_a_write_the_sweep_caught_stays_under_it_after_the_copy(
         MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
     )
     assert out.found is False
-    # The copy above delete_version's tombstone is its own, with no sweep marker.
-    copies = await ch.query_all(
+    # Above the sweep: delete_version's tombstone and the copy of the sweep's written above
+    # it, both delete_version's own, with no sweep marker.
+    above_sweep = await ch.query_all(
         "SELECT source_trace, expire_reason FROM loom.memory_versions "
-        "WHERE tombstoned_at IS NOT NULL AND version > {v:UInt64}",
+        "WHERE tombstoned_at IS NOT NULL AND version > {v:UInt64} ORDER BY version",
         {"v": caught["version"] + 1},
     )
-    assert {"source_trace": f"memory.delete_version:{head}", "expire_reason": ""} in copies
+    expected = {"source_trace": f"memory.delete_version:{head}", "expire_reason": ""}
+    assert above_sweep == [expected, expected]
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
     drawn = caught["version"]
     assert await lift_above_deletes("o", "n", [caught], [], ch=ch) == {}
