@@ -436,17 +436,26 @@ test("Library: typing in the search stays under the INP budget at 4x with 100 do
   await cdp.detach();
 });
 
-test("Conversations: typing in the search stays under the INP budget at 4x with a page of threads", async ({
+test("Conversations: typing, searching and clearing stay under the INP budget at 4x with a page of threads", async ({
   page,
 }) => {
   await installApi(page, { threadRows: 30 });
   const cdp = await watchInteractions(page);
   await page.goto("/conversations", { waitUntil: "domcontentloaded" });
-  await expect(page.locator("[data-thread-row]")).toHaveCount(30);
+  const threads = page.locator("[data-thread-row]");
+  await expect(threads).toHaveCount(30);
   await page.waitForTimeout(2000);
-  await worstInteraction(page, "type", () =>
-    typeInto(page.getByLabel("Search conversation transcripts"), "exporter backlog"),
-  );
+  const box = page.getByLabel("Search conversation transcripts");
+  await worstInteraction(page, "type", () => typeInto(box, "exporter backlog"));
+  // Enter renders the hits: one row per thread, up to three turns each.
+  await worstInteraction(page, "search", async () => {
+    await box.press("Enter");
+    await expect(page.getByText("replay 2 drained it", { exact: false }).first()).toBeVisible();
+  });
+  await worstInteraction(page, "clear", async () => {
+    await box.fill("");
+    await expect(threads).toHaveCount(30);
+  });
   await cdp.detach();
 });
 
@@ -474,7 +483,9 @@ test("Spaces: typing in the search stays under the INP budget at 4x with 200 nam
   await cdp.detach();
 });
 
-test("Recall Lab: typing over a table of 100 scores stays under the INP budget at 4x", async ({ page }) => {
+// The Recall Lab scores as the text settles and has no Enter of its own: typing and
+// clearing are its interactions over the table.
+test("Recall Lab: typing and clearing over a table of 100 scores stay under the INP budget at 4x", async ({ page }) => {
   await installApi(page, { memoryRows: 100 });
   const cdp = await watchInteractions(page);
   await page.goto("/recall", { waitUntil: "domcontentloaded" });
@@ -483,6 +494,7 @@ test("Recall Lab: typing over a table of 100 scores stays under the INP budget a
   await expect(page.getByRole("table", { name: "Recall scores" }).locator("tbody tr")).toHaveCount(100);
   await page.waitForTimeout(2000);
   await worstInteraction(page, "type", () => typeInto(box, " lane"));
+  await worstInteraction(page, "clear", () => box.fill(""));
   await cdp.detach();
 });
 

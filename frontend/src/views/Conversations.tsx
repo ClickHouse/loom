@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Switch } from "@clickhouse/click-ui/Switch";
@@ -231,6 +231,15 @@ export function Conversations() {
     },
     [identity.org, identity.namespace],
   );
+
+  // The threads come back in a transition, so the emptied box paints before a page of
+  // thread rows mounts (about 200 ms at 4x CPU).
+  const clearSearch = () =>
+    startTransition(() => {
+      setQ("");
+      setHits(null);
+      setSearchError(null);
+    });
 
   const run = async (text: string) => {
     if (!text.trim()) return;
@@ -498,12 +507,11 @@ export function Conversations() {
             ref={searchRef}
             settle="enter"
             onSearch={(text) => {
-              setQ(text);
               if (text) {
+                setQ(text);
                 void run(text);
               } else {
-                setHits(null);
-                setSearchError(null);
+                clearSearch();
               }
             }}
             placeholder="Search transcripts"
@@ -584,9 +592,8 @@ export function Conversations() {
             things="conversations"
             filter={`"${hitsFor}"`}
             onClear={() => {
-              setQ("");
               setSearchBox((n) => n + 1);
-              setHits(null);
+              clearSearch();
             }}
           />
           {renderRecentThreads("Or, the most recent threads")}

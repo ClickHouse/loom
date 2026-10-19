@@ -792,8 +792,8 @@ export interface InstallOptions {
   /** Answer `run.list` with this many runs, every field a run carries, projected by the
    *  request's `fields`. Default: none. */
   runRows?: number;
-  /** Answer `conversation.threads` with this many threads, cut to the request's `limit`.
-   *  Default: none. */
+  /** Answer `conversation.threads` with this many threads, cut to the request's `limit`,
+   *  and `conversation.search` with three turns of each. Default: none. */
   threadRows?: number;
   /** Answer `audit.list` with this many events. Default: none. */
   auditRows?: number;
@@ -1044,6 +1044,9 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
             "thread_id",
           ),
         });
+      case "/v1/conversation.search":
+        if (!options.threadRows) break;
+        return json({ hits: conversationHitsFixture(options.threadRows, Number(body.top_k ?? 50)) });
       case "/v1/run.get":
         return json(runGetFixture(runRowsFixture(options.runRows ?? 0, ns), String(body.run_id ?? "")));
       case "/v1/tracker.source.list":
@@ -1372,6 +1375,22 @@ function threadRowsFixture(n: number): Record<string, unknown>[] {
     last_role: i % 2 ? "assistant" : "user",
     last_content_excerpt: "Drained the lane and replayed from the last committed offset; the backlog is clear.",
   }));
+}
+
+/** `conversation.search` over `threadRowsFixture(n)`: three turns of each thread, cut to
+ *  `topK`. */
+function conversationHitsFixture(n: number, topK: number): Record<string, unknown>[] {
+  return threadRowsFixture(n)
+    .flatMap((t, i) =>
+      [0, 1, 2].map((k) => ({
+        thread_id: t.thread_id,
+        msg_id: `msg-${i}-${k}`,
+        role: k % 2 ? "assistant" : "user",
+        content_excerpt: `The lane ${i % 5} exporter backlog grew again; replay ${k} drained it.`,
+        ts: t.last_seen,
+      })),
+    )
+    .slice(0, topK);
 }
 
 // ---- Tasks: the inbox plane as the board reads it.
