@@ -907,7 +907,7 @@ interface DocRowProps {
 }
 
 // Memoised: a hundred rows of Click UI checkboxes, badges, icons and menus rendered again
-// on every keystroke in the search (the Memories cards' rule).
+// on every keystroke in the search.
 const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, activeTags, actions }: DocRowProps) {
   const name = r.title || r.original_filename || r.source_uri;
   const file = r.title ? r.original_filename || r.source_uri : "";
