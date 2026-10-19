@@ -489,12 +489,16 @@ async def restricted_allows(
     namespace: str,
     *,
     grants: GrantMap | None = None,
+    hides_answer: bool = True,
 ) -> bool:
-    """`_check_restricted` as a predicate, for the resolvers that build a
-    caller's namespace list (server/auth/context.py)."""
+    """`_check_restricted` as a predicate. A refusal made because a read it
+    needed failed marks the request the server's, as `row_in_scope` does
+    (`hides_answer` there)."""
     try:
-        await _check_restricted(auth, required_role, org, namespace, grants)
-    except PermissionError:
+        await marks_unverified(_check_restricted)(auth, required_role, org, namespace, grants)
+    except PermissionError as e:
+        if hides_answer and getattr(e, "unverified", False):  # the server's failure
+            note_answered_unverified()
         return False
     return True
 

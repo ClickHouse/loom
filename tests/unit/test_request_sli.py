@@ -1219,6 +1219,7 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
                     "_may_read_tracker",
                     "authorized_tracker_namespace",
                     "authorized_tracker_namespaces",
+                    "restricted_allows",
                 }:
                     continue  # fmt: skip
                 for kw in call.keywords:
@@ -1408,34 +1409,40 @@ def test_a_restricted_namespace_left_out_of_a_rollup_for_want_of_a_grant_is_the_
 
     class _Directory:
         def restricted_code_namespaces(self, org: str) -> set[str]:
-            return {"secret"}
+            return {"a-allowed", "b-secret"}
 
         async def restricted_set(self, org: str) -> list[str]:
             return []
 
-    grant_read_fails = {"value": False}
+    unreadable: set[str] = set()  # the namespaces whose grant read fails
 
-    async def _allows(*a: Any, **k: Any) -> bool:
-        if grant_read_fails["value"]:
+    async def _check(auth: Any, role: Any, org: str, ns: str, grants: Any) -> None:
+        if ns in unreadable:
             fail_closed.note_unreadable()
-        return False
+        if ns != "a-allowed":
+            raise PermissionError(f"cannot access {ns}")
 
     monkeypatch.setattr(context, "directory", lambda: _Directory())
-    monkeypatch.setattr(authz, "restricted_allows", _allows)
+    monkeypatch.setattr(authz, "_check_restricted", _check)
     eve = AuthInfo(
         subject="eve", org="o", namespaces=("n",), roles=(Role.VIEWER,), is_service_account=False
     )
 
-    async def _hidden() -> tuple[list[str], bool]:
+    async def _hidden(noted_before: bool = False) -> tuple[list[str], bool]:
         request_work.begin()
         context.set_current_auth(eve)
+        if noted_before:  # a check that passed despite a failed read
+            fail_closed.note_unreadable()
         return await context.restricted_namespaces_hidden_from(
             "o"
         ), fail_closed.answered_unverified()
 
-    assert asyncio.run(_hidden()) == (["secret"], False)  # no grant: the caller's
-    grant_read_fails["value"] = True
-    assert asyncio.run(_hidden()) == (["secret"], True)
+    assert asyncio.run(_hidden()) == (["b-secret"], False)  # no grant: the caller's
+    assert asyncio.run(_hidden(noted_before=True)) == (["b-secret"], False)
+    unreadable.add("a-allowed")  # allowed despite a failed read, then a plain refusal
+    assert asyncio.run(_hidden()) == (["b-secret"], False)
+    unreadable.add("b-secret")
+    assert asyncio.run(_hidden()) == (["b-secret"], True)
 
 
 def test_http_s_ledger_note_of_a_handler_error_keeps_its_cause() -> None:
