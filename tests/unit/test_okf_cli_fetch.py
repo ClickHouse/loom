@@ -253,3 +253,18 @@ async def test_include_high_cannot_export_a_tombstoned_high_row() -> None:
         include_high=True,
     )
     assert "gone-high" in unreadable
+
+
+@pytest.mark.asyncio
+async def test_a_tombstoned_high_row_is_counted_as_high_not_named_without_include_high() -> None:
+    rows, unreadable = await cli_okf._fetch_namespace(
+        _MixedClient(),  # type: ignore[arg-type]
+        "o",
+        "ns",
+        include_tombstoned=True,
+    )
+    assert "gone-high" not in unreadable
+    from server.memory.domain import okf_bundle
+
+    held = [r["memory_key"] for r in rows if not okf_bundle.is_exportable(r)]
+    assert "gone-high" in held

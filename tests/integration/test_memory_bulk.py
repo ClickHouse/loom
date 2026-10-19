@@ -205,9 +205,8 @@ async def test_bulk_set_per_entry_ttl_on_embedding_mirror(
 
 @pytest.mark.asyncio
 async def test_bulk_get_answers_each_row_as_memory_get_does(control_plane_url: str) -> None:
-    """bulk_get's default read once left sensitivity, valid_to, superseded_by and
-    duplicate_of empty, so export-okf published 'high' rows. Each answer now matches
-    memory.get's for the same row."""
+    """memory.bulk_get answers each row as memory.get does, sensitivity, valid_to,
+    superseded_by and duplicate_of included."""
     from loom import Agent
 
     ns = f"mb-shape-{uuid.uuid4().hex[:6]}"

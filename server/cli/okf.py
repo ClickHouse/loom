@@ -806,7 +806,8 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--include-tombstoned",
         action="store_true",
         help="Also export soft-deleted rows (status: deprecated); one the list does not "
-        "carry in full (a value past the preview, or a high row) is named and left out.",
+        "carry in full (a value past the preview, or a high row under --include-high) is "
+        "named and left out.",
     )
     p_exp.add_argument(
         "--limit",

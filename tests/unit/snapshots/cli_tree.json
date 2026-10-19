@@ -3514,7 +3514,7 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "Also export soft-deleted rows (status: deprecated); one the list does not carry in full (a value past the preview, or a high row) is named and left out.",
+       "help": "Also export soft-deleted rows (status: deprecated); one the list does not carry in full (a value past the preview, or a high row under --include-high) is named and left out.",
        "metavar": null
       },
       {
