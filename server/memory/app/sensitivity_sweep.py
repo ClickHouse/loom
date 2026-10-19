@@ -245,9 +245,10 @@ async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
     return len(out)
 
 
-async def _close_mined_facts(c: SweepCandidate, declared: list[Any], *, ch: _CHClient) -> None:
-    """A row relabelled high: what its value gave the graph closes (its triples, the edges
-    of entities its writer did not declare); the edges of the declared ones stay."""
+async def _close_mined_facts(c: SweepCandidate, row_entities: list[Any], *, ch: _CHClient) -> None:
+    """A row relabelled high: what its text gave the graph closes (its triples, the edges
+    of entities not on the row); the edges of the entities on the row stay, its writer's
+    or the extractor's when it tagged the row, as the row keeps those entities."""
     from types import SimpleNamespace
 
     from server.memory.app.entity_projections import (
@@ -257,7 +258,7 @@ async def _close_mined_facts(c: SweepCandidate, declared: list[Any], *, ch: _CHC
     )
 
     scope = SimpleNamespace(org=c.org, namespace=c.namespace, agent=c.agent)
-    keep = declared_entities(SimpleNamespace(entities=declared))
+    keep = declared_entities(SimpleNamespace(entities=row_entities))
     await drop_undeclared_edges(scope, c.memory_id, keep, ch=ch, op="sensitivity_sweep")
     await reconcile_row_facts(scope, [c.memory_id], reopen=False, op="sensitivity_sweep", ch=ch)
 
@@ -273,10 +274,14 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
     for c in candidates:
         try:
             version = memory_repo.next_version()  # the relabel's, which the high retire carries
-            declared: list[Any] = []  # the entities its writer gave the row
+            # The entities on the row: its writer's, or the extractor's when it tagged them.
+            row_entities: list[Any] = []
 
             def _relabel(
-                existing: Any, _c: SweepCandidate = c, _v: int = version, _d: list[Any] = declared
+                existing: Any,
+                _c: SweepCandidate = c,
+                _v: int = version,
+                _d: list[Any] = row_entities,
             ) -> dict[str, Any]:
                 _d[:] = list(getattr(existing, "entities", None) or [])
                 tags = list(getattr(existing, "tags", None) or [])
@@ -314,7 +319,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                     await memory_repo.retire_vectors_for_keys(
                         [(key, memory_repo.next_version())], ch=ch
                     )
-                await _close_mined_facts(c, declared, ch=ch)
+                await _close_mined_facts(c, row_entities, ch=ch)
             else:
                 result.medium += 1
                 result.embeddings_tagged += await _tag_embeddings(c, ch=ch)
