@@ -5,11 +5,11 @@ its org (or the one the screen authorized), subject and consumer, `-` for
 the rest, no arguments (`emit_token_refusal`). Within one JSON-RPC batch, a
 caller's refusal before a handler runs (these, and `mcp_call`'s argument,
 gate, read-scope, policy and rate-limit refusals, through `first_in_batch`)
-is written once per (op, code, org): they are written before or by the rate
-limiter and a batch has no length cap, so one POST of many refused entries
-could otherwise fill the ledger queue for every tenant. A server fault, a
-handler's failure, and an idempotency refusal after the limiter are always
-their own rows.
+is written once per (op, code, org), and a server fault at most
+`_SERVER_FAULT_ROWS` times: they are written before or by the rate limiter
+and a batch has no length cap, so one POST of many refused entries could
+otherwise fill the ledger queue for every tenant. A handler's failure and an
+idempotency refusal after the limiter are always their own rows.
 """
 
 from __future__ import annotations
@@ -23,16 +23,20 @@ from typing import Any
 from server.core.naming import SENTINEL
 from server.observability.sli import status_class
 
-# The refusals a batch has written, while one runs.
-_batch_refusals: contextvars.ContextVar[set[tuple[str, str, str, str]] | None] = (
+# How many rows of each refusal a batch has written, while one runs.
+_batch_refusals: contextvars.ContextVar[dict[tuple[str, str, str, str], int] | None] = (
     contextvars.ContextVar("mcp_batch_refusals", default=None)
 )
+# A batch writes a caller's refusal once and a server fault a few times: a
+# caller cannot repeat a server fault at will, but an outage must not flood
+# the queue with one row per entry either.
+_SERVER_FAULT_ROWS = 10
 
 
 @contextmanager
 def one_refusal_row_each() -> Iterator[None]:
     """For one batch: a refusal repeated across its entries is ledgered once."""
-    token = _batch_refusals.set(set())
+    token = _batch_refusals.set({})
     try:
         yield
     finally:
@@ -40,16 +44,16 @@ def one_refusal_row_each() -> Iterator[None]:
 
 
 def first_in_batch(op_name: str, code: str, org: str, status: str) -> bool:
-    """False when this batch has already written this refusal. Only a
-    caller's refusal is deduped: a server fault is not one a caller can
-    repeat at will, and each counts against availability."""
+    """Whether to write this refusal: False once the batch has written it
+    (a caller's) or `_SERVER_FAULT_ROWS` of it (the server's)."""
     seen = _batch_refusals.get()
-    if seen is None or status != "client":
+    if seen is None:
         return True
     key = (op_name, code, org, status)
-    if key in seen:
+    written = seen.get(key, 0)
+    if written >= (1 if status == "client" else _SERVER_FAULT_ROWS):
         return False
-    seen.add(key)
+    seen[key] = written + 1
     return True
 
 

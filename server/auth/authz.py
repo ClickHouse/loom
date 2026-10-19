@@ -669,10 +669,12 @@ async def row_in_scope(
     refusal so the caller can hide the row (`found=False`) rather than 403 —
     a 403 would confirm the id exists. A refusal that could not be verified
     marks the request the server's (`fail_closed`) when it refuses or hides
-    what the caller asked for. `hides_answer=False` where the answer is whole
-    without the namespace: one Loom adds on its own (code links, grounding,
-    repository documents, a trunk), one a listing filters, or a probe of
-    which side of a task the caller acts on."""
+    what the caller asked for. `hides_answer=False` in two cases: the answer
+    is whole without the namespace (one Loom adds on its own: code links,
+    grounding, repository documents, a trunk, a tracker enriching a code
+    answer), or the call filters a listing the caller did not scope, where
+    a dropped entry degrades a list rather than refuses a request (as
+    `CachedGate.admits` does for listings and default picks)."""
     from server.auth.context import current_auth
     from server.core.errors import IdentityIncompleteError
 

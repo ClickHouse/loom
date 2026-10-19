@@ -651,7 +651,8 @@ def _emit_refused(
     error: BaseException | None = None,
 ) -> bool:
     """A call's row when it is refused before its handler runs: within a
-    batch, once per (op, code, org, status class), as `mcp_ledger` explains.
+    batch, a caller's refusal once and a server fault a few times, as
+    `mcp_ledger` explains.
     False when the batch already wrote it, so the caller skips its other
     rows too."""
     from server.auth.fail_closed import answered_unverified

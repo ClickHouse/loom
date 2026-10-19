@@ -682,7 +682,9 @@ async def _handle_bisect(input: Any, started: float) -> Any:
         # report's text alone is enough: it ranks the window.
         raise ValidationError("name at least one of symbols, paths, issue_number, fix_pr, text")
     repo = CodeRepo()
-    tracker_ns = await authorized_tracker_namespace(org, ns, hides_answer=False)
+    # The tracker only enriches the answer, unless the caller named its issue or fix.
+    named = bool(input.issue_number or input.fix_pr)
+    tracker_ns = await authorized_tracker_namespace(org, ns, hides_answer=named)
     source = tracker_source(org, tracker_ns) if tracker_ns else None
     before, after = await _time_window(input, org, ns)
     facts = IssueFacts(

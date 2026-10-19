@@ -842,7 +842,7 @@ def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> N
     """A single POST can carry hundreds of thousands of refused entries; within
     the batch each caller's refusal (op, code, org) is ledgered once, so they
     cannot fill the ledger queue for every tenant; a server fault is written
-    each time, since a caller cannot repeat one at will."""
+    a few times, since a caller cannot repeat one at will."""
     from server.auth.jwt import AuthInfo
     from server.observability import events
     from server.operations.registry import OPERATIONS_BY_NAME
@@ -891,7 +891,7 @@ def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> N
         ("memory.set", "ORG_MISMATCH", "client"),
         ("memory.set", "UNKNOWN_ARGUMENT", "client"),
     ]
-    assert len(rows) == 4 + 1000  # each client refusal once, every server fault
+    assert len(rows) == 4 + 10  # each client refusal once, a server fault ten times
     # Outside a batch, each call is its own request.
     emitted.clear()
     emit_token_refusal("memory.set", eve, error_code="ORG_MISMATCH")
@@ -1180,7 +1180,7 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
 
     from server.core.paths import REPO_ROOT
 
-    unmarked: set[tuple[str, str]] = set()
+    unmarked: set[tuple[str, str, str]] = set()
     for path in (REPO_ROOT / "server").rglob("*.py"):
         tree = ast.parse(path.read_text())
         for fn in ast.walk(tree):
@@ -1200,36 +1200,71 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
                 }:
                     continue  # fmt: skip
                 for kw in call.keywords:
-                    if kw.arg == "hides_answer" and isinstance(kw.value, ast.Constant):
-                        if kw.value.value is False:
-                            rel = str(path.relative_to(REPO_ROOT))
-                            unmarked.add((rel, fn.name))
+                    if kw.arg != "hides_answer":
+                        continue
+                    rel = str(path.relative_to(REPO_ROOT))
+                    if isinstance(kw.value, ast.Name) and kw.value.id == "hides_answer":
+                        continue  # a gate passing its caller's choice through
+                    if not isinstance(kw.value, ast.Constant):
+                        unmarked.add((rel, fn.name, "unless the caller named it"))
+                    elif kw.value.value is False:
+                        unmarked.add((rel, fn.name, "never"))
+    never, named = "never", "unless the caller named it"
     assert unmarked == {
         # Namespaces Loom adds to the answer on its own.
-        ("server/code/app/answers.py", "_inject_memory_context"),
-        ("server/code/app/answers_cache.py", "reuse_allowed"),
-        ("server/code/app/search_fanout.py", "readable_subset"),
-        ("server/memory/app/code_link_reads.py", "readable_namespaces"),
-        ("server/memory/app/code_grounding.py", "_authorized_code_target"),
-        ("server/knowledge/app/repo_docs.py", "readable_docs_namespace"),
-        ("server/tracker/app/dupcheck_fanout.py", "readable_tracker_namespaces"),
-        ("server/tracker/app/test_signal.py", "_code_namespace_authorized"),
+        ("server/code/app/answers.py", "_inject_memory_context", never),
+        ("server/code/app/answers_cache.py", "reuse_allowed", never),
+        ("server/code/app/search_fanout.py", "readable_subset", never),
+        ("server/memory/app/code_link_reads.py", "readable_namespaces", never),
+        ("server/memory/app/code_grounding.py", "_authorized_code_target", never),
+        ("server/knowledge/app/repo_docs.py", "readable_docs_namespace", never),
+        ("server/tracker/app/dupcheck_fanout.py", "readable_tracker_namespaces", never),
         # A code answer the linked tracker only enriches.
-        ("server/code/app/backport.py", "run_backport_gap"),
-        ("server/code/app/bisect.py", "_handle_bisect"),
-        ("server/code/app/bisect_scan.py", "_linked_scan"),
-        ("server/code/app/blame.py", "_tracker_side"),
-        ("server/code/app/first_build.py", "handle_code_first_build"),
-        ("server/code/app/history.py", "_tracker_facts"),
-        ("server/code/app/symbol_history.py", "_tracker_side"),
-        ("server/code/workers/backport_gaps.py", "_wanted_from_tracker"),
-        ("server/memory/app/ask/records.py", "_append_tracker_facts"),
-        ("server/tracker/app/ask_route.py", "_searched_everywhere"),
-        ("server/tracker/app/ask_route.py", "qa_route_answer"),
-        # A listing's filter, and probes of which side of a task the caller acts on.
-        ("server/tasks/app/inboxes.py", "handle_inbox_list"),
-        ("server/tasks/app/transitions.py", "_load_for_reason_op"),
-        ("server/tasks/app/transitions.py", "handle_task_unblock"),
-        ("server/tasks/app/transitions.py", "handle_task_update"),
-        ("server/tasks/app/trust.py", "_poster_may_post"),
+        ("server/code/app/bisect_scan.py", "_linked_scan", never),
+        ("server/code/app/blame.py", "_tracker_side", never),
+        ("server/code/app/history.py", "_tracker_facts", never),
+        ("server/code/app/symbol_history.py", "_tracker_side", never),
+        ("server/memory/app/ask/records.py", "_append_tracker_facts", never),
+        ("server/tracker/app/ask_route.py", "_searched_everywhere", never),
+        ("server/tracker/app/ask_route.py", "qa_route_answer", never),
+        # ...unless the caller named the tracker's item or the namespace.
+        ("server/code/app/backport.py", "run_backport_gap", named),
+        ("server/code/app/bisect.py", "_handle_bisect", named),
+        ("server/code/app/first_build.py", "handle_code_first_build", named),
+        ("server/tracker/app/test_signal.py", "_code_namespace_authorized", named),
+        # A listing the caller did not scope, and a probe another check decides.
+        ("server/tasks/app/inboxes.py", "handle_inbox_list", never),
+        ("server/tasks/app/trust.py", "_poster_may_post", never),
     }
+
+
+def test_a_task_op_refused_on_its_own_side_without_a_readable_grant_is_the_server_s(
+    monkeypatch,
+) -> None:
+    """A task op names its task by id: when the owner-side check could not be
+    verified the 404 it answers is the server's, as the task reads' is."""
+    from server.auth import authz
+    from server.auth.context import set_current_auth
+    from server.auth.fail_closed import answered_unverified
+    from server.auth.jwt import AuthInfo
+    from server.core import request_work
+    from server.tasks.app import common
+
+    async def _unverified(*a: Any, **k: Any) -> None:
+        e = PermissionError("refused")
+        e.unverified = True  # type: ignore[attr-defined]
+        raise e
+
+    monkeypatch.setattr(authz, "check_authorized", _unverified)
+    eve = AuthInfo(
+        subject="eve", org="o", namespaces=("n",), roles=(Role.WRITER,), is_service_account=False
+    )
+
+    async def _side(**k: Any) -> bool:
+        request_work.begin()
+        set_current_auth(eve)
+        assert await common._in_scope("o", "owner", write=True, **k) is False
+        return answered_unverified()
+
+    assert asyncio.run(_side()) is True
+    assert asyncio.run(_side(hides_answer=False)) is False  # a listing's filter

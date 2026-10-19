@@ -23,7 +23,7 @@ _RANK = {"duplicate_of": 2, "related": 1, "none": 0}
 
 
 async def _may_read_tracker(
-    org: str, ns: str, code_kinds: dict[str, str], *, hides_answer: bool = True
+    org: str, ns: str, code_kinds: dict[str, str], *, hides_answer: bool
 ) -> bool:
     """Read gate for a tracker namespace the transport did not bind: a restricted one is
     read only with a grant on itself; a standard one by whoever may read it or any code
