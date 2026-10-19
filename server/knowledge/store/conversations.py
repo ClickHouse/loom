@@ -806,8 +806,8 @@ _SHORT_EXCERPT_CHARS = 240
 # Another agent's live copies of the thread's turns, by msg_id and the text a row would
 # hold for them at either excerpt length, with the latest copy's identity.
 _PEER_COPIES = """
-    SELECT msg_id, excerpt, argMax((agent, run_id, user_id), ts) AS holder FROM (
-      SELECT msg_id, agent, run_id, user_id, ts, arrayJoin([
+    SELECT msg_id, excerpt, argMax((agent, role, run_id, user_id), ts) AS holder FROM (
+      SELECT msg_id, agent, role, run_id, user_id, ts, arrayJoin([
         substringUTF8(content, 1, {embedded:UInt32}),
         substringUTF8(content, 1, {short:UInt32})
       ]) AS excerpt
@@ -845,11 +845,12 @@ def _tombstone_sql(turns: str) -> str:
 
 def _handoff_sql(turns: str) -> str:
     """A version row moving each kept row `agent` wrote last to the peer copy that
-    holds it: its agent, run and user, so it answers that copy's searches and
+    holds it: its agent, role, run and user, so it answers that copy's searches and
     erasure."""
     return (
         "INSERT INTO loom.conversation_embeddings"
-        " SELECT e.* REPLACE (p.holder.1 AS agent, p.holder.2 AS run_id, p.holder.3 AS user_id)"
+        " SELECT e.* REPLACE ("
+        "p.holder.1 AS agent, p.holder.2 AS role, p.holder.3 AS run_id, p.holder.4 AS user_id)"
         " FROM (" + _live_embeddings(turns) + " AND agent = {agent:String}) AS e"
         " INNER JOIN (" + _PEER_COPIES + ") AS p"
         " ON e.msg_id = p.msg_id AND e.content_excerpt = p.excerpt"
