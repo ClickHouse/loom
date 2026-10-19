@@ -29,7 +29,6 @@ from server.memory.api.models_bulk import (
     _RefusedFact,
     refused_facts,
 )
-from server.memory.api.models_common import entity_name_fits
 from server.memory.app.bulk_set import (
     detect_updates_override,
     handle_memory_bulk_set,
@@ -216,7 +215,7 @@ async def _set_record_from_messages(
                 memory_type="semantic",
                 source_trace="extract:messages+schema",
                 tags=list(input.extra_tags or []),
-                entities=[e for e in record.entities or [] if entity_name_fits(str(e))],
+                entities=list(record.entities or []),
                 relations=list(record.relations or []),
                 # Valid-time defaults to the conversation date so
                 # point-extracted records stay chronologically groupable.

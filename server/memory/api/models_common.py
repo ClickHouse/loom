@@ -8,9 +8,8 @@ than duplicating.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import BaseModel, Field
 
 from server.core.naming import SENTINEL
 
@@ -18,29 +17,6 @@ from server.core.naming import SENTINEL
 # tag_registry. Core four (semantic/procedural/preference = searchable+embedded,
 # episodic = session-scoped) remain a runtime convention the handlers key off.
 MemoryType = str
-
-# Same cap as facts.path's entity_a/entity_b, so every declared name can be queried.
-# Counted on the lowercased name too, which is what the graph stores ("İ" lowers to two).
-MAX_ENTITY_CHARS = 500
-
-
-def entity_name_fits(name: str) -> bool:
-    """Whether `name` is a storable entity name: not empty, and at most
-    MAX_ENTITY_CHARS as written and lowercased."""
-    return 0 < len(name) and max(len(name), len(name.lower())) <= MAX_ENTITY_CHARS
-
-
-def _fits(name: str) -> str:
-    if len(name.lower()) > MAX_ENTITY_CHARS:
-        raise ValueError(f"an entity name is at most {MAX_ENTITY_CHARS} characters, lowercased")
-    return name
-
-
-EntityName = Annotated[
-    str,
-    Field(max_length=MAX_ENTITY_CHARS, description="At most 500 characters."),
-    AfterValidator(_fits),
-]
 
 
 class _Identity(BaseModel):

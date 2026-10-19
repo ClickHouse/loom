@@ -1208,3 +1208,40 @@ async def test_a_drop_whose_edge_end_fails_leaves_its_links_for_the_replay(
     )
     assert results and all(r.resolved for r in results), results
     assert await _open_edge_pairs(ch, org) == {("alice smith", "bob lane")}
+
+
+async def test_a_bulk_made_high_with_a_huge_declared_entity_drops_and_ends_its_other_pairs(
+    ch, org
+) -> None:
+    """A row naming a 32 KB entity, re-set high declaring it and one other: each link
+    with the huge name binds alone if it must, the pairs with the undeclared name end,
+    and the declared pair stays."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write, intent_marks
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+    from server.memory.domain.graph_quality import canonical_entity_text
+
+    huge = "Rome" + " District" * 3600
+    big = canonical_entity_text(huge)
+
+    def write(sensitivity: str, entities: list[str]) -> MemoryBulkSetInput:
+        entry = {"memory_key": "k", "value": "Meeting", "entities": entities}
+        if sensitivity:
+            entry["sensitivity"] = sensitivity
+        return MemoryBulkSetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=[entry]
+        )
+
+    await handle_memory_bulk_set(write("", [huge, "Bob Lane", "Carol King"]))
+    await after_write.drain()
+    assert len(await _open_edge_pairs(ch, org)) == 3
+    await handle_memory_bulk_set(write("high", [huge, "Bob Lane"]))
+    await after_write.drain()
+    await intent_marks.drain()
+    assert await _open_edge_pairs(ch, org) == {tuple(sorted((big, "bob lane")))}
+    linked = await ch.query_all(
+        "SELECT DISTINCT entity_a, entity_b FROM loom.entity_edge_rows WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert {(r["entity_a"], r["entity_b"]) for r in linked} == {tuple(sorted((big, "bob lane")))}

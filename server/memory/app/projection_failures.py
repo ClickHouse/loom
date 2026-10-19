@@ -21,7 +21,6 @@ from server.identity.domain.read_scope import (
     replayed_read_scope,
 )
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
-from server.memory.api.models_common import entity_name_fits
 from server.memory.app.projection_errors import (
     LANDED_ENTRIES,
     LANDED_RESULTS,
@@ -959,13 +958,6 @@ def _session_from_source_resource_id(source_resource_id: str) -> str:
     return "-"
 
 
-def _fitting_entities(entry: dict[str, Any]) -> dict[str, Any]:
-    """A recorded entry with the entity names past the cap left out: one an older build
-    recorded would otherwise refuse the whole replay."""
-    names = entry.get("entities") or []
-    return {**entry, "entities": [e for e in names if entity_name_fits(str(e))]}
-
-
 async def _retry_graph_projection(
     failure: ProjectionFailureRow,
     *,
@@ -996,7 +988,7 @@ async def _retry_graph_projection(
         session_id=str(failure.payload.get("session_id") or "-"),
         run_id=str(failure.payload.get("run_id") or "-"),
         entries=[
-            _BulkSetEntry(**_fitting_entities(entry))
+            _BulkSetEntry(**entry)
             for entry in entries
             if isinstance(entry, dict) and entry.get("memory_key")
         ],

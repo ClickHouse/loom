@@ -18,13 +18,7 @@ from pydantic import (
     model_validator,
 )
 
-from server.memory.api.models_common import (
-    MAX_ENTITY_CHARS,
-    EntityName,
-    MemorySetPeer,
-    MemoryType,
-    _Identity,
-)
+from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.graph_quality import (
     MAX_TRIPLES_PER_ROW,
@@ -230,13 +224,12 @@ class MemoryGetOutput(ProjectedRow):
 
 
 # A (subject, relation, object) fact a point write names: at most MAX_TRIPLES_PER_ROW a
-# row. Its subject and object are graph names, capped as a declared entity is
-# (MAX_ENTITY_CHARS); its relation, a verb, at 256. The lengths the triple writer needs
-# are checked on the canonical form it stores, so "I" (stored as "user") is a subject
-# and "  " is refused rather than dropped. A bulk entry's `relations` stay unchecked: an
-# extractor's surplus is cut, not refused. When the canonical form dropped something, the
-# refusal says what it was stored as and why, since "has" and "is a" look long enough
-# until the copula is dropped; a part that is only too short ("x") just says so.
+# row, each part capped at 256. The lengths the triple writer needs are checked on the
+# canonical form it stores, so "I" (stored as "user") is a subject and "  " is refused
+# rather than dropped. A bulk entry's `relations` stay unchecked: an extractor's surplus
+# is cut, not refused. When the canonical form dropped something, the refusal says what
+# it was stored as and why, since "has" and "is a" look long enough until the copula is
+# dropped; a part that is only too short ("x") just says so.
 def _canonical_at_least(min_chars: int, canonical: Any, dropped: str, needs: str) -> AfterValidator:
     def check(raw: str) -> str:
         stored = canonical(raw)
@@ -256,7 +249,7 @@ def _relation_verb(raw: str) -> str:
 _ENTITY_DROPS = "articles, possessives and punctuation"
 _FactSubject = Annotated[
     str,
-    Field(max_length=MAX_ENTITY_CHARS),
+    Field(max_length=256),
     _canonical_at_least(
         2,
         canonical_entity_text,
@@ -276,7 +269,7 @@ _FactRelation = Annotated[
 ]
 _FactObject = Annotated[
     str,
-    Field(max_length=MAX_ENTITY_CHARS),
+    Field(max_length=256),
     _canonical_at_least(
         1, canonical_entity_text, _ENTITY_DROPS, "an object needs at least 1 character"
     ),
@@ -298,7 +291,7 @@ class MemorySetInput(_Identity):
     # Explicit entities for a point write. Stored (lowercased) on the embedding
     # row so memory.timeline / entity_filter can find it without waiting on LLM
     # extraction — which never tags a point write under a fake/keyless provider.
-    entities: list[EntityName] = Field(default_factory=list)
+    entities: list[str] = Field(default_factory=list)
     # The (subject, relation, object) facts the value states, written to the fact
     # graph and linked to the row as a `memory.bulk_set` entry's are: a single-valued
     # fact closes the older one it replaces and, under `newest_wins`, retires the rows
