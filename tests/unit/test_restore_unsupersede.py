@@ -164,7 +164,7 @@ async def test_an_undo_whose_record_fails_restores_nothing(monkeypatch):
         await restore_mod.handle_memory_restore(
             MemoryRestoreInput(org="o", namespace="n", agent="a", session_id="s1", memory_key="k")
         )
-    assert raised.value.status_code == 503
+    assert raised.value.status_code == 503 and "nothing was restored" in str(raised.value)
     assert ch.inserts == [], "nothing restored"
 
 

@@ -114,12 +114,20 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
                     "version": new_version,
                 },
             )
-            await insert_memory_versions([restore_row], ch=ch)
         except Exception as e:  # the Undo must not land without its record
             raise BackendUnavailableError(
-                "the Undo could not be written; nothing was restored, retry the Undo",
+                "the Undo could not be recorded; nothing was restored, retry the Undo",
                 operation="memory.restore",
             ) from e
+        try:
+            await insert_memory_versions([restore_row], ch=ch)
+        except Exception as e:  # an insert whose answer was lost may still have landed
+            if not await _restore_landed(input, new_version):
+                raise BackendUnavailableError(
+                    "the Undo may not have landed; retry the Undo",
+                    operation="memory.restore",
+                    outcome_unknown=True,
+                ) from e
         try:
             await memory_repo.unsupersede_embeddings(
                 input.org,
@@ -145,6 +153,17 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
         version=new_version,
         from_status="superseded",
     )
+
+
+async def _restore_landed(input: MemoryRestoreInput, version: int) -> bool:
+    """Whether the key's head is the restore's version, read again after its insert
+    failed: the insert may have landed with its answer lost. False when unreadable."""
+    try:
+        head = await _read_restorable(input)
+    except Exception:  # best effort: an unknown outcome answers the 503
+        log.warning("memory.restore: re-read after a failed insert failed", exc_info=True)
+        return False
+    return head is not None and int(head.version) == version
 
 
 async def _reopen_facts(

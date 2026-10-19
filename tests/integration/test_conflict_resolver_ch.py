@@ -2865,7 +2865,7 @@ async def test_an_undo_whose_restore_failed_does_not_hold_a_later_restatement(
 
     with monkeypatch.context() as m:
         m.setattr(restore, "insert_memory_versions", lost)
-        with pytest.raises(BackendUnavailableError):
+        with pytest.raises(BackendUnavailableError, match="may not have landed"):
             await _undo(org, "office_city", winner)
     assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
     await _later()
@@ -2924,3 +2924,32 @@ async def test_an_attest_of_a_retired_row_keeps_its_first_assertion(ch, wired, m
     out = await run_pass()
     rows = await _rows(ch, org)
     assert rows["office_city"]["superseded_by"] == rows["office_site"]["id"], out
+
+
+async def test_an_undo_whose_insert_answer_was_lost_finishes(ch, wired, monkeypatch) -> None:
+    """The restore's insert lands but its answer is lost: the re-read finds the restore,
+    so the Undo goes on (search row, facts) and answers restored."""
+    from server.memory.app import restore
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 2101)
+    assert (await run_pass())["retired"] == 1
+    winner = (await _rows(ch, org))["office_location"]["id"]
+    real = restore.insert_memory_versions
+
+    async def lost(rows: Any, **kw: Any) -> None:
+        await real(rows, **kw)
+        raise TimeoutError("answer lost")
+
+    with monkeypatch.context() as m:
+        m.setattr(restore, "insert_memory_versions", lost)
+        out = await _undo(org, "office_city", winner)
+    assert out.restored
+    assert (await _rows(ch, org))["office_city"]["status"] == "active"
+    search = await ch.query_all(
+        "SELECT status FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+        " AND memory_key = 'office_city' SETTINGS select_sequential_consistency = 1",
+        params={"o": org},
+    )
+    assert search and {r["status"] for r in search} == {"active"}
