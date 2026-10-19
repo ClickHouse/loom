@@ -1397,12 +1397,10 @@ async def test_the_lease_reconcile_reads_twice_whatever_the_number_of_leases() -
     """Every lease row and every task the reconcile weighs come in one read each, not one
     read of the tasks per thousand leases: 2,500 idle rows, one of an ended task, one
     todo task with no row."""
-    from datetime import datetime
-
     leases = [{"task_id": f"t{i}", "owner": "", "fence": 0, "settled": True} for i in range(2500)]
     tasks = [
         {
-            "task_id": f"t{i}",
+            "id": f"t{i}",
             "org": "o",
             "inbox": "q",
             "task_status": "todo",
@@ -1414,7 +1412,7 @@ async def test_the_lease_reconcile_reads_twice_whatever_the_number_of_leases() -
     tasks[7]["task_status"] = "cancelled"
     tasks.append(
         {
-            "task_id": "bare",
+            "id": "bare",
             "org": "o",
             "inbox": "q",
             "task_status": "todo",
@@ -1428,7 +1426,7 @@ async def test_the_lease_reconcile_reads_twice_whatever_the_number_of_leases() -
 
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
             self.reads += 1
-            return leases if "FROM loom.task_leases" in sql.split("WHERE")[0] else tasks
+            return leases if sql.startswith("SELECT task_id, owner, fence") else tasks
 
     ch = _CH()
     missing, stray = await repo.lease_strays(
