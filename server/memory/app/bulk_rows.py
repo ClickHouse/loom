@@ -9,7 +9,7 @@ import logging
 import uuid as _uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from fastapi import HTTPException
 
@@ -439,6 +439,25 @@ def _keep_row(state: _BulkWriteState, row: dict[str, Any], entry: Any) -> None:
     state.rewritten_ids.add(str(row["memory_id"]))
 
 
+class _Copy(NamedTuple):
+    """A restatement (result `res_i`) that copies the verdict of an earlier entry's `row`
+    (result `src_i`)."""
+
+    res_i: int
+    src_i: int
+    row: dict[str, Any]
+
+
+class _Landing(NamedTuple):
+    """A restatement whose earlier entry's `row` merged into `target`, a row the batch
+    rewrote in between: that row lands for it."""
+
+    res_i: int
+    src_i: int
+    row: dict[str, Any]
+    target: str
+
+
 @dataclass
 class _Replay:
     """What `settle_batch_rows` has replayed so far, by row `id()`. Once it is done,
@@ -453,12 +472,9 @@ class _Replay:
     outcome: dict[int, str] = field(default_factory=dict)  # landed | unchanged | pinned | verdict
     result_of: dict[int, int] = field(default_factory=dict)  # its result index
     index_of: dict[int, int] = field(default_factory=dict)  # its memory-row index
-    copies: list[tuple[int, int, dict[str, Any]]] = field(default_factory=list)
+    copies: list[_Copy] = field(default_factory=list)
     drop: set[int] = field(default_factory=set)  # memory-row indexes to keep out
-    # (restatement's result index, earlier entry's result index, earlier entry's row,
-    # merge target) for a restatement whose earlier entry merged into a row the batch
-    # rewrote in between: the earlier entry's row lands for it (`land_restated_merges`).
-    landings: list[tuple[int, int, dict[str, Any], str]] = field(default_factory=list)
+    landings: list[_Landing] = field(default_factory=list)  # `land_restated_merges`
 
     def land(self, row: dict[str, Any]) -> None:
         """`row` lands: it becomes its key's value and pin."""
@@ -472,20 +488,11 @@ class _Replay:
 
 
 def settle_batch_rows(state: _BulkWriteState, verdicts: dict[int, Any]) -> _Replay:
-    """Replay the batch in entry order as serial memory.set calls would see it, once the
-    `verdicts` (by memory-row index) are known.
-
-    Starting from the stored values and pins, each row that lands becomes its key's value
-    and pin. A later row is then refused if that landed pin is set and it does not pin
-    too, or is unchanged if it repeats the value its key now holds; both rows go in
-    `drop`. A merge or pinned
-    rejection keeps its row out too, unless its verdict is stale: an earlier row that
-    landed rewrote the stored row it matched, so serially it would have met the new value.
-    An entry that repeated an earlier row's value takes that row's outcome
-    (`_replay_restatement`). The replay it returns also holds the copies of verdicts it
-    makes, the `id()` of each row whose verdict is stale and of each row that lands (a
-    stale merge or rejection among them), and the restatements an earlier row lands for.
-    """
+    """Replay the batch in entry order as serial memory.set calls of the same key would
+    see it, once the `verdicts` (by memory-row index) are known: each landed row becomes
+    its key's value and pin, so a later row of that key is refused, unchanged or stale
+    as it would be serially. (A byte-identical value under another key is not replayed,
+    a gap the serial path has too.)"""
     replay = _Replay(
         sha=dict(state.existing_sha),
         pinned=dict(state.existing_pinned),
@@ -543,17 +550,9 @@ def _replay_restatement(
     res_i: int,
     row: dict[str, Any],
 ) -> None:
-    """An entry repeating an earlier `row` of the batch takes that row's outcome:
-    unchanged if it landed, pinned if it was refused, and the row's own merge or
-    rejection, recorded as (entry's result index, row's result index, row) to copy once
-    the verdicts are folded.
-
-    A merge whose target a landed row rewrote between the two entries is not copied:
-    serially the repeat meets the new value and lands, with no verdict of its own to
-    read, so clear. The earlier row lands for it (`replay.landings`): the two entries
-    are equal (`_bulk_skip_gate`), so it is the row this entry would build. A pinned
-    rejection is always copied: a batch never rewrites a stored pinned row, so its
-    blocker cannot change."""
+    """An entry repeating an earlier `row` of the batch takes that row's outcome. A merge
+    whose target a landed row rewrote in between lands instead, as the repeat would
+    serially (`replay.landings`)."""
     key = str(row["memory_key"])
     res = state.results[res_i]
     done = replay.outcome[id(row)]
@@ -561,9 +560,9 @@ def _replay_restatement(
     if done == "verdict" and target and target in replay.rewritten:
         replay.stale.add(id(row))
         replay.land(row)
-        replay.landings.append((res_i, replay.result_of[id(row)], row, target))
+        replay.landings.append(_Landing(res_i, replay.result_of[id(row)], row, target))
     elif done == "verdict":
-        replay.copies.append((res_i, replay.result_of[id(row)], row))
+        replay.copies.append(_Copy(res_i, replay.result_of[id(row)], row))
     elif done == PINNED:
         res.conflict_verdict = PINNED
         res.pinned_blocker_id = str(row["memory_id"])
@@ -576,11 +575,8 @@ def _replay_restatement(
 def land_restated_merges(
     state: _BulkWriteState, plan: BulkVerdictPlan, replay: _Replay, verdicts: dict[int, Any]
 ) -> None:
-    """Each restatement whose earlier entry merged into a row rewritten in between
-    answers what that row landing says (clear, its version and id), and the earlier
-    entry answers its merge, as serial memory.set calls would. `verdicts` are by
-    memory-row index. Runs before `copy_restated_verdicts`, so a repeat between the two
-    copies the merge."""
+    """Each `replay.landings` restatement answers its row landing (clear), and the earlier
+    entry its merge, as serially. Runs before `copy_restated_verdicts`."""
     verdict_of = {id(state.memory_rows[i]): v for i, v in verdicts.items()}
     for res_i, src_i, row, target in replay.landings:
         src, res = state.results[src_i], state.results[res_i]
@@ -641,7 +637,7 @@ def drop_built_rows(
 
 
 def copy_restated_verdicts(
-    state: _BulkWriteState, plan: BulkVerdictPlan, copies: list[tuple[int, int, Any]]
+    state: _BulkWriteState, plan: BulkVerdictPlan, copies: list[_Copy]
 ) -> None:
     """Each restatement of a merged or rejected row answers that row's verdict, as the
     same memory.set again would, and is listed under it in the `plan`; a merge's
