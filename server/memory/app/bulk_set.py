@@ -828,9 +828,9 @@ async def _close_overtaken_edges(
         if res.memory_id in revised and len(nodes) >= 2:
             version = (res.memory_id, res.memory_key, value_sha256(entry))
             by_nodes.setdefault(tuple(nodes), set()).add(version)
-    for nodes, versions in by_nodes.items():
+    for paired, versions in by_nodes.items():
         await end_overtaken_edges(
-            input, sorted(versions), op="memory.bulk_set", ch=ch, entities=nodes
+            input, sorted(versions), op="memory.bulk_set", ch=ch, entities=paired
         )
 
 
