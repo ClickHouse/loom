@@ -190,8 +190,8 @@ async def _fetch_namespace(
         for r in rows:
             g = full.get(r["memory_key"])
             if g is not None and _answered_by_parent(r["memory_key"], g, r.get("version")):
-                # A key shaped like a chunk id, gone since the list, falls back to its
-                # parent's row: that is not this row's value.
+                # A key shaped like a chunk id that bulk_get answered with its parent's row
+                # (no row held the key when it read): that is not this row's value.
                 g = None
             if g is None and r.get("value_truncated") and r["memory_key"] not in held:
                 # Not answered by bulk_get (a tombstoned row, or one deleted since the
@@ -211,12 +211,15 @@ async def _fetch_namespace(
     return out, unreadable
 
 
-def _answered_by_parent(memory_key: str, answer: dict[str, Any], listed_version: Any) -> bool:
+def _answered_by_parent(
+    memory_key: str, answer: dict[str, Any], listed_version: int | None
+) -> bool:
     """Whether bulk_get answered `memory_key` with another row: a chunk-id-shaped key
     (`chunk:memory.set:<parent>:<n>`) that no row holds reads its parent. This build marks
     that answer with `resolved_from`. An older one marks it only by `canonical_key`, which a
     duplicate parent sets to its own canonical, so a chunk-shaped key whose answer carries
-    another version than the listed row is taken as another row's too."""
+    another version than the listed row, with a canonical key set, is taken as another row's
+    too (this build's answer for the row itself carries no canonical key)."""
     if answer.get("resolved_from"):
         return True
     rest = memory_key.removeprefix("chunk:memory.set:")
@@ -225,7 +228,8 @@ def _answered_by_parent(memory_key: str, answer: dict[str, Any], listed_version:
         return False
     version = answer.get("version")
     other_version = listed_version is not None and version not in (None, listed_version)
-    return answer.get("canonical_key") == parent or other_version
+    canonical = answer.get("canonical_key")
+    return canonical == parent or (bool(canonical) and other_version)
 
 
 async def _fetch_evidence(

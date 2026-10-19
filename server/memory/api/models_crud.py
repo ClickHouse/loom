@@ -40,7 +40,8 @@ class MemoryGetInput(_Identity):
     as_of: datetime | None = None
     # A whitelist of output field names (`value`, `tags`,
     # `status`, `memory_type`, `recall_count`, `created_at`, …). The response
-    # carries only those plus `found` / `unchanged`; an unknown name is a 422.
+    # carries only those plus `found` / `unchanged` (and `resolved_from` when set);
+    # an unknown name is a 422.
     # Empty (the default) = every field.
     fields: list[str] = Field(default_factory=list, max_length=64)
     # Serve the live canonical a `status='duplicate'` row
@@ -80,7 +81,8 @@ class CodeLink(BaseModel):
 
 class MemoryGetOutput(ProjectedRow):
     # `_projection` (a ProjectedRow) is the requested field
-    # whitelist (plus `found` / `unchanged`), or None = every field. This
+    # whitelist (plus `found` / `unchanged`, and `resolved_from` when set), or
+    # None = every field. This
     # row's own serializer drops two unset optionals first.
     @model_serializer(mode="wrap")
     def _omit_unset_canonical_and_project(

@@ -356,7 +356,8 @@ class MemoryBulkGetInput(_Identity):
     # parent answers under the id it was asked by.
     memory_keys: list[str] = Field(..., min_length=1, max_length=1000)
     # Whitelist of output field names applied to every entry
-    # in `results` (each keeps `found`). Empty = every field. See
+    # in `results` (each keeps `found`, and `resolved_from` when set). Empty = every
+    # field. See
     # MemoryGetInput.fields.
     fields: list[str] = Field(default_factory=list, max_length=64)
 

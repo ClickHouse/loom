@@ -219,8 +219,9 @@ async def test_bulk_get_answers_a_chunk_id_with_its_parent_row(
     for k in ("chunk:memory.set:lesson_a:0", "chunk:memory.set:lesson_a:2"):
         assert out.results[k].value == {"v": "lesson_a"}
         assert out.results[k].canonical_key == "lesson_a"  # the fold target, on the wire
-        # and the alias says so on the wire, whatever the projection
-        assert out.results[k].model_dump()["resolved_from"] == k
+        # and the alias says so on the wire, whatever the projection, which it still applies
+        dumped = out.results[k].model_dump()
+        assert dumped["resolved_from"] == k and "tags" not in dumped
     assert "resolved_from" not in out.results["lesson_a"].model_dump()
     assert (
         out.results["lesson_a"].canonical_key is None

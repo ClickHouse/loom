@@ -314,3 +314,5 @@ def test_a_chunk_shaped_duplicate_rows_own_answer_is_kept() -> None:
     older = {"value": "v", "canonical_key": "notes-v2", "version": 9}
     assert cli_okf._answered_by_parent("chunk:memory.set:notes:0", older, 5)
     assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", {**older, "version": 5}, 5)
+    # this build's own answer for the row, rewritten since the list: kept
+    assert not cli_okf._answered_by_parent("chunk:memory.set:notes:0", {"version": 9}, 5)

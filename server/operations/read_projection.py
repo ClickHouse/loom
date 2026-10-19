@@ -5,9 +5,9 @@ whitelist of output field names. The handler resolves it against the output
 model once (an unknown name is a 422, never a silent drop), stores the set
 on the response model's private `_projection`, and the model's wrap
 serializer keeps only those keys plus the ones every reader relies on
-(`found` / `unchanged` on a get row, `memory_key` and `sensitivity` on a list
-entry). Unset, `_projection` is None and the payload is byte-identical to what
-every existing client sees.
+(`found` / `unchanged`, and `resolved_from` when set, on a get row; `memory_key` and
+`sensitivity` on a list entry). Unset, `_projection` is None and the payload is
+byte-identical to what every existing client sees.
 """
 
 from __future__ import annotations
