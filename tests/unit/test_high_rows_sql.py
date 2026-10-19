@@ -673,3 +673,18 @@ async def test_an_earlier_builds_escaped_key_fact_keeps_its_digest_home() -> Non
         key_facts=[json.dumps({"note": "token:\n" + token})],  # as an earlier build stored it
     )
     assert okf_evidence.evidence_is_high(digest, set())
+
+
+def test_a_digests_summary_and_key_facts_are_read_one_by_one() -> None:
+    # Joined, a summary ending in `password:` read the first key fact as its value; each
+    # part is checked on its own, as memory.digests and the outcome judge read them.
+    from server.memory.domain import okf_evidence
+
+    joined = okf_evidence.DigestRecord(
+        session_id="s", summary_text="set the db password:", key_facts=["abcdefgh12"]
+    )
+    assert not okf_evidence.evidence_is_high(joined, set())
+    inside = okf_evidence.DigestRecord(
+        session_id="s", summary_text="a session", key_facts=["the token is ghp_" + "a" * 36]
+    )
+    assert okf_evidence.evidence_is_high(inside, set())

@@ -769,7 +769,8 @@ async def handle_memory_bulk_get(
     input: MemoryBulkGetInput,
 ) -> MemoryBulkGetOutput:
     out = await _handle_memory_bulk_get(input)
-    _record_read_exposure("memory.bulk_get", input, list(out.results.keys()))
+    # the rows served, by their own keys: a chunk id answers with its parent's row
+    _record_read_exposure("memory.bulk_get", input, out._served_keys)
     return out
 
 
@@ -821,7 +822,7 @@ async def _handle_memory_bulk_get(
     # Same answer as memory.get, so a bulk reader (the OKF exporter, the dashboard preload)
     # sees identity, lifecycle, sensitivity and attestation without N gets. The conflict
     # verdict and code links cost a read per row and are left to memory.get.
-    fetched: dict[str, tuple[Any, MemoryGetOutput]] = {}
+    fetched: dict[str, tuple[MemoryRow, MemoryGetOutput]] = {}
     for r in rows:
         canonical_key = canonical.get(r.memory_key)
         out = row_output(
@@ -836,10 +837,11 @@ async def _handle_memory_bulk_get(
     # Only the keys asked are served (and audited): a parent read to fill a chunk-id alias
     # answers under that alias, never under its own key unless that was asked too.
     results: dict[str, MemoryGetOutput] = {}
-    served_rows: dict[str, Any] = {}
+    served_rows: dict[str, MemoryRow] = {}
     for k in input.memory_keys:
         if k in fetched:
-            row, results[k] = fetched[k]
+            row, served = fetched[k]
+            results[k] = served
         elif parent_of.get(k) in fetched:
             row, parent_out = fetched[parent_of[k]]
             alias = parent_out.model_copy(
@@ -864,4 +866,6 @@ async def _handle_memory_bulk_get(
         subjects=high,
     )
     missing = [k for k in input.memory_keys if k not in results]
-    return MemoryBulkGetOutput(results=results, missing=missing)
+    answer = MemoryBulkGetOutput(results=results, missing=missing)
+    answer._served_keys = list(dict.fromkeys(r.memory_key for r in served_rows.values()))
+    return answer

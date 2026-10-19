@@ -189,6 +189,10 @@ async def _fetch_namespace(
             full.update(got.get("results") or {})
         for r in rows:
             g = full.get(r["memory_key"])
+            if g is not None and _answered_by_parent(r["memory_key"], g):
+                # A key shaped like a chunk id, gone since the list, falls back to its
+                # parent's row: that is not this row's value.
+                g = None
             if g is None and r.get("value_truncated") and r["memory_key"] not in held:
                 # Not answered by bulk_get (a tombstoned row, or one deleted since the
                 # list), and the list does not carry its full value (a cut preview, or
@@ -205,6 +209,13 @@ async def _fetch_namespace(
             merged["agent"] = agent if agent != "*" else (r.get("agent") or "")
             out.append(merged)
     return out, unreadable
+
+
+def _answered_by_parent(memory_key: str, answer: dict[str, Any]) -> bool:
+    """Whether bulk_get answered `memory_key` with another row: a chunk-id-shaped key
+    (`chunk:memory.set:<parent>:<n>`) that no row holds reads its parent, and names it as
+    `canonical_key`."""
+    return memory_key.startswith("chunk:memory.set:") and bool(answer.get("canonical_key"))
 
 
 async def _fetch_evidence(

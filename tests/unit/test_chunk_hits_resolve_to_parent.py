@@ -322,3 +322,34 @@ async def test_bulk_get_never_serves_or_audits_a_parent_nobody_asked_for(
         MemoryBulkGetInput(org="o", namespace="n", agent="clickgap", memory_keys=[key])
     )
     assert list(out.results) == [key] and audited == []
+
+
+@pytest.mark.asyncio
+async def test_bulk_get_records_the_served_rows_own_keys_as_exposed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A chunk id answers with its parent's row: the exposure ledger names that row once,
+    # however many of its chunk ids were asked.
+    from server.memory import store as memory_repo
+    from server.memory.api.models_bulk import MemoryBulkGetInput
+    from server.memory.app import query as Q
+
+    async def fake_get_many(identity, keys, **kw):
+        ids = {
+            "x": "00000000-0000-0000-0000-00000000000a",
+            "y": "00000000-0000-0000-0000-00000000000b",
+        }
+        return [_row(k).model_copy(update={"memory_id": ids[k]}) for k in keys if k in ids]
+
+    exposed: list[list[str]] = []
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", fake_get_many)
+    monkeypatch.setattr(Q, "_record_read_exposure", lambda _op, _inp, keys: exposed.append(keys))
+    await Q.handle_memory_bulk_get(
+        MemoryBulkGetInput(
+            org="o",
+            namespace="n",
+            agent="clickgap",
+            memory_keys=["chunk:memory.set:x:0", "chunk:memory.set:x:1", "y"],
+        )
+    )
+    assert exposed == [["x", "y"]]

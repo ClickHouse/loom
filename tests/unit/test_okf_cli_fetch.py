@@ -269,3 +269,32 @@ async def test_a_tombstoned_high_row_is_counted_as_high_not_named_without_includ
 
     held = [r["memory_key"] for r in rows if not okf_bundle.is_exportable(r)]
     assert "gone-high" in held
+
+
+class _AliasClient:
+    """A stored key shaped like a chunk id, deleted between the list and bulk_get: bulk_get
+    answers it with its parent's row (`canonical_key` names the parent)."""
+
+    async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        key = "chunk:memory.set:x:0"
+        if op == "memory.list":
+            row = {"memory_key": key, "agent": "a", "user_id": "-", "session_id": "-"}
+            return {
+                "entries": [{**row, "value": "cut…", "value_truncated": True}],
+                "truncated": False,
+            }
+        if op == "memory.bulk_get":
+            return {
+                "results": {
+                    key: {"value": "x's own value", "canonical_key": "x", "sensitivity": ""}
+                }
+            }
+        raise AssertionError(op)
+
+
+@pytest.mark.asyncio
+async def test_export_never_writes_a_parents_value_under_a_chunk_shaped_key() -> None:
+    rows, unreadable = await cli_okf._fetch_namespace(  # type: ignore[arg-type]
+        _AliasClient(), "o", "ns", include_tombstoned=False
+    )
+    assert rows == [] and unreadable == ["chunk:memory.set:x:0"]

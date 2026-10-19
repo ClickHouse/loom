@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
 from server.memory.api.models_crud import MemoryGetOutput
@@ -352,7 +352,8 @@ class MemoryBulkGetInput(_Identity):
     """Fetch many memory entries by key in one CH round-trip."""
 
     # Keys to read under this identity; a `chunk:memory.set:<key>:<n>` id from a
-    # search reads its parent fact.
+    # search reads its parent fact when no row is stored under that key, and the
+    # parent answers under the id it was asked by.
     memory_keys: list[str] = Field(..., min_length=1, max_length=1000)
     # Whitelist of output field names applied to every entry
     # in `results` (each keeps `found`). Empty = every field. See
@@ -366,6 +367,9 @@ class MemoryBulkGetOutput(BaseModel):
     results: dict[str, MemoryGetOutput] = Field(default_factory=dict)
     # Asked keys with no live row under this identity.
     missing: list[str] = Field(default_factory=list)
+    # The keys of the rows served (a chunk id answers with its parent's row), for the
+    # exposure ledger; never on the wire.
+    _served_keys: list[str] = PrivateAttr(default_factory=list)
 
 
 # memory.import_curated — turn a curated doc (e.g. AGENTS.md / CLAUDE.md) into
