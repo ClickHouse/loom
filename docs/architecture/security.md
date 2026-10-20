@@ -657,14 +657,24 @@ or a bank account (number) counts as contact intent, so ranking does not demote 
 that answers it.
 
 A JSON value is read scalar by scalar (`detector_text`). A key whose last word names a
-payment or identity secret labels its value when the value has the secret's shape: `pin`,
-`passcode`, `cvv`, `cvc`, `cvv2`, `cvc2` or `security_code` with 3-8 digits, `ssn` with an
-SSN (dashes optional), `card_number` or `pan` with a card number. So `{"pin": "4471"}`,
-`{"badge_pin": "4471"}` and `{"ssn": "123456789"}` are `high`, and `{"pin_count": 4}` and
-`{"pin": "A1"}` are not. Any other key labels nothing: a `{"password": ...}` key does not
-label its value.
+PIN-like secret states its digits under that label, so the free-text rules above decide:
+`pin` reads as `pin is <value>` (3-5 digits), `pin_number` as `pin number is <value>`, and
+`passcode`, `cvv`, `cvc`, `cvv2`, `cvc2` and `security_code` as `passcode is <value>` (3-8
+digits). An `ssn` key states an SSN with its dashes optional. A card number is found under
+any key. So `{"pin": "4471"}`, `{"badge_pin": "4471"}` and `{"ssn": "123456789"}` are
+`high`, and `{"pin": "560001"}`, `{"pin_count": 4}` and `{"pin": "A1"}` are not. `pincode` is
+not one of these keys: in an address it is the postal code. A connector pin in a config
+(`{"pin": 115}`) reads as a PIN, as `GPIO pin: 115` does. Any other key labels nothing: a
+`{"password": ...}` key does not label its value. `reads_high` reads the same pairs in raw
+JSON text, such as a chunk of an object value. The sweep reads an object value as
+ClickHouse stores it, where a dotted key is nested (`security.code` is read as `code`).
 
-A caller-supplied level wins. Detection is `LOOM_MEMORY_SENSITIVITY_AUTODETECT`. A `high`
+A caller-supplied level wins for the stored label. Detection is
+`LOOM_MEMORY_SENSITIVITY_AUTODETECT`. The readers that send a value to a model still check
+the value itself (`value_reads_high`): consolidation, the profile fold, the existing
+memories an extraction prompt shows, `observe_extract` and the entity extractor leave out a
+value that reads as `high` even when its writer labelled it `low` or left it unset. This
+fails closed by design. A `high`
 row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so no search
 leg returns it. The other reads that could serve its value follow three rules:
 

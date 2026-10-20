@@ -132,7 +132,7 @@ def _is_card(digits: str) -> bool:
 
 
 def _has_card(text: str) -> bool:
-    """Whether a digit run holds a card number, ungrouped or in a printed grouping."""
+    """Whether `text` holds a card number, ungrouped or in a printed grouping."""
     for m in _DIGIT_GROUPS.finditer(text):
         groups = re.split(r"[ -]", m.group())
         if any(len(group) in (15, 16) and _is_card(group) for group in groups):
@@ -278,12 +278,17 @@ def attribute_tags(text: str, existing: Iterable[str] = ()) -> list[str]:
     ]
 
 
+def _reads_high_text(text: str) -> bool:
+    """Whether `text` holds a high shape: a credential, a card number, an SSN or a stated PIN."""
+    return any(pat.search(text) for pat in (*_HIGH_PATTERNS, _SSN, _STATED_PIN)) or _has_card(text)
+
+
 def detect_sensitivity(text: str) -> str:
     """Classify `text`: 'high' for a credential, card, SSN or stated PIN, 'medium' for
     contact details or an IBAN, '' otherwise. Order matters — a line with both is 'high'."""
     if not text:
         return ""
-    if any(pat.search(text) for pat in (*_HIGH_PATTERNS, _SSN, _STATED_PIN)) or _has_card(text):
+    if _reads_high_text(text):
         return HIGH
     if any(pat.search(text) for pat in _MEDIUM_PATTERNS) or _has_iban(text):
         return MEDIUM
@@ -294,30 +299,43 @@ def detect_sensitivity(text: str) -> str:
 # phone shape allows only one space, dot or dash between its groups.
 _SCALAR_SEP = "\n;\n"
 
-# A key that names a payment or identity secret, as its last word (`pin`, `badge_pin`,
-# `cardNumber`, `security-code`); `pin_count` and `spin` do not.
-_PIN_KEYS = {"pin", "passcode", "cvv", "cvc", "cvv2", "cvc2", "securitycode"}
-_CARD_KEYS = {"cardnumber", "pan"}
+# A key whose last word names a PIN-like secret, and the label its value is stated under,
+# so the free-text grammar decides the value's length ("pin is 560001", a postal code, stays
+# unlabelled). `pincode` is left out: in an address it is the postal code.
+_KEYED_LABELS = {
+    "pin": "pin is",
+    "pinnumber": "pin number is",
+    "passcode": "passcode is",
+    "cvv": "passcode is",
+    "cvc": "passcode is",
+    "cvv2": "passcode is",
+    "cvc2": "passcode is",
+    "securitycode": "passcode is",
+}
 _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")  # `PIN`, `badge`, `Pin`, `2`
 
 
 def _keyed_secret(key: str, value: Any) -> str:
-    """The stated form of a secret held under a key that names it ("passcode: 4471" for
-    `{"badge_pin": "4471"}`), for the detector to read; '' when the key names none or the
-    value lacks the secret's shape."""
+    """The stated form of a secret held under a key that names it ("pin is 4471" for
+    `{"badge_pin": "4471"}`), for the detector to read; '' when the key names none."""
+    words = [w.lower() for w in _KEY_WORDS.findall(key)]
+    tail_words = words[-1:] + ["".join(words[-2:])]  # `pin` and `badgepin` for `badge_pin`
+    label = next((_KEYED_LABELS[w] for w in tail_words if w in _KEYED_LABELS), "")
+    if not (label or "ssn" in tail_words):
+        return ""
     if not isinstance(value, str | int) or isinstance(value, bool):
         return ""
-    words = [w.lower() for w in _KEY_WORDS.findall(key)]
-    last = words[-1:] + ["".join(words[-2:])]
     v = str(value).strip()
-    if _PIN_KEYS.intersection(last) and re.fullmatch(r"[0-9]{3,8}", v):
-        return f"passcode: {v}"
-    if "ssn" in last and re.fullmatch(r"[0-9]{3}-?[0-9]{2}-?[0-9]{4}", v):
+    if label:
+        return f"{label} {v}" if v.isdigit() else ""
+    if re.fullmatch(r"[0-9]{3}-?[0-9]{2}-?[0-9]{4}", v):
         digits = v.replace("-", "")
         return f"{digits[:3]}-{digits[3:5]}-{digits[5:]}"
-    if _CARD_KEYS.intersection(last) and _has_card(v):
-        return v
     return ""
+
+
+# A `"key": value` pair in raw JSON text (a chunk of an object value), for `reads_high`.
+_KEYED_PAIR = re.compile(r'"([A-Za-z0-9_ .-]{1,64})"\s*:\s*"?\s*([0-9][0-9-]{0,15})"?', re.ASCII)
 
 
 def detector_text(value: Any) -> str:
@@ -325,8 +343,8 @@ def detector_text(value: Any) -> str:
     and scalar is its own line, so a token after a newline keeps its word boundary. The lines
     are joined by `_SCALAR_SEP`, which no pattern crosses, so two scalars never read as one
     (`Password:` then the next key, or `256`, `512`, `1024` as a phone number). A key that
-    names a PIN, SSN or card number adds its value's stated form (`_keyed_secret`), so
-    `{"pin": "4471"}` reads as `PIN is 4471` does; other keys label nothing. Iterative, so a
+    names a PIN-like secret or an SSN adds its value's stated form (`_keyed_secret`), so
+    `{"pin": "4471"}` reads as `pin is 4471` does; other keys label nothing. Iterative, so a
     deeply nested value cannot stop a worker pass."""
     if isinstance(value, str):
         text = value
@@ -357,7 +375,7 @@ def value_reads_high(value: Any) -> bool:
     PIN), read decoded (`detector_text`), whatever the autodetect setting. For a value; raw
     stored text (a chunk, a passage) goes through `reads_high`, which also undoes JSON
     escapes."""
-    return detect_sensitivity(detector_text(value)) == HIGH
+    return _reads_high_text(detector_text(value))
 
 
 # A JSON string escape, decoded once and in order (so `\\n`, an escaped backslash then `n`,
@@ -378,11 +396,14 @@ def reads_high(text: str) -> bool:
     text copied from a row (a digest's key facts, an observation sent to a model, a raw
     chunk), which has no label of its own or carries one a later sweep may not have set
     yet. Text holding JSON (a chunk of an object value) is read with its string escapes
-    undone too, where a token after `\\n` or a quoted password keeps its word boundary."""
-    if detect_sensitivity(text) == HIGH:
-        return True
+    undone too, where a token after `\\n` or a quoted password keeps its word boundary, and
+    its `"key": value` pairs are read as `detector_text` reads them (`{"badge_pin": "4471"}`)."""
     unescaped = _JSON_ESCAPE.sub(_json_unescape, text)
-    return unescaped != text and detect_sensitivity(unescaped) == HIGH
+    return any(
+        _reads_high_text(t)
+        or any(_reads_high_text(_keyed_secret(k, v)) for k, v in _KEYED_PAIR.findall(t))
+        for t in {text, unescaped}
+    )
 
 
 def resolve_sensitivity(requested: str | None, text: str) -> str:

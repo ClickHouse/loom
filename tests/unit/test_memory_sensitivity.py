@@ -4,13 +4,18 @@ column riding every write path."""
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
 from server.memory.domain.memory_types import is_embedded, is_searchable_type
-from server.memory.domain.sensitivity import detect_sensitivity, resolve_sensitivity
+from server.memory.domain.sensitivity import (
+    detect_sensitivity,
+    detector_text,
+    resolve_sensitivity,
+)
 from server.memory.store.rows import (
     _NON_NULLABLE_STRING_COLS,
     MEMORY_PERSISTED_COLS,
@@ -265,14 +270,12 @@ _TOKEN = "ghp_" + "a" * 36
     ids=["json-string", "own-line", "in-a-key", "quoted"],
 )
 def test_detector_text_lets_the_detector_read_what_the_value_holds(value: object) -> None:
-    from server.memory.domain.sensitivity import detector_text, reads_high
+    from server.memory.domain.sensitivity import reads_high
 
     assert reads_high(detector_text(value))
 
 
 def test_detector_text_reads_plain_values_as_written_and_never_recurses() -> None:
-    from server.memory.domain.sensitivity import detector_text
-
     assert [detector_text(v) for v in ["null", "123", "plain words", None]] == [
         "",
         "123",
@@ -326,8 +329,6 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
 def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
     # Each key and scalar is its own line, joined by a separator no pattern crosses: a config
     # object reads as the stored JSON always did, neither high nor medium.
-    from server.memory.domain.sensitivity import detect_sensitivity, detector_text
-
     assert detect_sensitivity(detector_text(value)) == ""
 
 
@@ -370,8 +371,6 @@ async def test_memory_set_labels_and_tags_the_decoded_value(
     ],
 )
 def test_one_scalar_still_reads_as_what_it_holds(value: object, level: str) -> None:
-    from server.memory.domain.sensitivity import detect_sensitivity, detector_text
-
     assert detect_sensitivity(detector_text(value)) == level
 
 
@@ -383,6 +382,11 @@ def test_a_chunk_of_an_object_value_is_read_with_its_escapes_undone() -> None:
     assert reads_high(human_text({"notes": "deploy steps:\n" + _TOKEN}))
     assert reads_high(human_text({"notes": "line\r" + _TOKEN}))  # a lone carriage return
     assert reads_high(human_text({"note": "PIN is\v4471"}))  # written as `\u000b`
+    # a key naming a secret, as `detector_text` reads it
+    assert reads_high(human_text({"badge_pin": "4471"}))
+    assert reads_high(human_text({"ssn": 123456789}))
+    assert not reads_high(human_text({"pin_count": 4471}))
+    assert not reads_high(human_text({"pin": "560001"}))
     # an escaped backslash before `n` stays a backslash and an `n`: no line starts there
     assert not reads_high(human_text({"note": "x\\n" + _TOKEN}))
     assert not reads_high(human_text({"label": "Password:", "placeholder": "Enter one"}))
@@ -391,7 +395,7 @@ def test_a_chunk_of_an_object_value_is_read_with_its_escapes_undone() -> None:
 def test_a_protected_attribute_after_a_newline_is_tagged(monkeypatch: pytest.MonkeyPatch) -> None:
     # The write path tags attributes on the decoded value: in the stored JSON `\nmarried` has
     # no word boundary before the word.
-    from server.memory.domain.sensitivity import attribute_tags, detector_text
+    from server.memory.domain.sensitivity import attribute_tags
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_attribute_tagging", True)
@@ -502,6 +506,18 @@ def test_lookalike_numbers_stay_unset(text: str) -> None:
 def test_a_connector_pin_written_as_an_assignment_reads_as_a_pin() -> None:
     # The price of reading "PIN: 4471" as a PIN; documented in docs/architecture/security.md.
     assert detect_sensitivity("GPIO pin: 115") == "high"
+    assert detect_sensitivity(detector_text({"led": {"pin": 115}})) == "high"
+
+
+def test_a_value_reading_high_is_left_out_of_a_model_prompt_whatever_its_label() -> None:
+    # A caller's explicit level sets the stored label, but the readers that send a value to a
+    # model check the value too: fail closed.
+    from server.memory.workers.observe_extract import _sendable
+
+    assert resolve_sensitivity("low", "badge PIN is 4471") == "low"
+    assert not _sendable("low", "badge PIN is 4471")
+    assert not _sendable("", {"badge_pin": "4471"})
+    assert _sendable("low", "the badge reader is by the door")
 
 
 @pytest.mark.parametrize(
@@ -519,24 +535,29 @@ def test_a_connector_pin_written_as_an_assignment_reads_as_a_pin() -> None:
         # a key naming a PIN, SSN or card number labels a value of that shape
         ({"pin": "4471"}, "high"),
         ({"badge_pin": "4471"}, "high"),
-        ({"badgePin": 908712}, "high"),
+        ({"badgePin": 9087}, "high"),
+        ({"pin_number": "4471"}, "high"),
+        ({"pinNumber": "908712"}, "high"),
         ({"PIN": "4471"}, "high"),
         ({"CVV2": "123"}, "high"),
         ({"door": {"security-code": "5512"}}, "high"),
         ({"ssn": "123-45-6789"}, "high"),
         ({"ssn": "123456789"}, "high"),
-        ({"card_number": "4111111111111111"}, "high"),
+        ({"card_number": "4111111111111111"}, "high"),  # a card under any key
+        ({"pin": "560001"}, ""),  # a 6-digit pin is a postal code, as in free text
+        ({"zip_pin": "560001"}, ""),
+        ({"pin_code": 4}, ""),
+        ({"pincode": "4471"}, ""),  # an address's postal code
         ({"pin": "A1"}, ""),
         ({"pin": "12"}, ""),
         ({"pin": True}, ""),
         ({"spin": "4471"}, ""),
         ({"ssn": "000-12-3456"}, ""),
         ({"pan": "4111111111111112"}, ""),
+        ({"pan": "4471"}, ""),
     ],
 )
 def test_a_json_value_reads_by_its_scalars(value: object, level: str) -> None:
-    from server.memory.domain.sensitivity import detector_text
-
     assert detect_sensitivity(detector_text(value)) == level
 
 
@@ -569,8 +590,6 @@ def test_a_long_digit_run_is_read_in_one_pass() -> None:
 def test_the_sweeps_coarse_filter_selects_every_new_shape(text: str) -> None:
     # The sweep narrows rows with RE2 `match()` before the detector runs, so the filter must
     # select whatever the detector labels; Python's `re` reads this RE2 subset the same way.
-    import re
-
     from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE, _shapes
 
     assert re.search(COARSE_SHAPE_RE, text)
@@ -581,8 +600,6 @@ def test_the_sweeps_coarse_filter_selects_every_new_shape(text: str) -> None:
 def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
     # A selected row the detector rejects stays unlabelled and is selected again on every
     # pass, so a bare word must not take a place under the pass's row limit.
-    import re
-
     from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE
 
     assert not re.search(COARSE_SHAPE_RE, "pin numpy to 1.26 in the lockfile")
@@ -592,8 +609,6 @@ def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
     assert not re.search(COARSE_SHAPE_RE, "pin 128 rows before the import")
     assert not re.search(COARSE_SHAPE_RE, "GPIO pin 115")
     # a backspace is not whitespace to the detector, so the filter does not take it as one
-    from server.memory.domain.sensitivity import detector_text
-
     stored = json.dumps({"note": "PIN:\b4471"})
     assert detect_sensitivity(detector_text(stored)) == ""
     assert not re.search(COARSE_SHAPE_RE, stored)
@@ -617,10 +632,7 @@ def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
 def test_the_sweeps_coarse_filter_reads_stored_json_text(value: object) -> None:
     # `match()` runs on the stored column, where an object value's line break is the two
     # characters `\n`; the detector reads the decoded text.
-    import re
-
     from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE
-    from server.memory.domain.sensitivity import detector_text
 
     stored = json.dumps(value)
     assert detect_sensitivity(detector_text(stored)) in ("high", "medium")
@@ -637,3 +649,62 @@ def test_a_question_for_a_bank_account_is_contact_intent() -> None:
     assert contact_intent("which bank account numbers do we pay into")
     assert not contact_intent("what did we decide about the deploy schedule")
     assert not contact_intent("what is the AWS account number for staging")
+
+
+_PREFILTER_OBJECTS = [
+    {"pin": "4471"},
+    {"badge_pin": " 4471"},
+    {"badgePin": 9087},
+    {"pin_number": "908712"},
+    {"CVV2": "123"},
+    {"door": {"security-code": "5512"}},
+    {"badge.pin": "4471"},  # ClickHouse nests it: `{"badge":{"pin":...}}`
+    {"ssn": 123456789},
+    {"note": "PIN is\v4471"},  # written `\u000B`
+    {"note": "“PIN is 4471”"},  # kept raw
+    {"note": "see https://x.example/a PIN: 4471"},  # `/` written `\/`
+    {"note": "door codes\nPIN: 4471"},
+    {"note": "bank:\nMT84 MALT 0110 0001 2345 MTLC AST0 01S"},
+    {"note": "visa 4000 0000 0000 0000 006"},
+    {"pin_count": 4},
+    {"pin": "A1"},
+    {"note": "pin 128 rows"},
+]
+_PREFILTER_TEXTS = [
+    "PIN is 4471",
+    "cvv2 123",
+    "card 4111 1111 1111 1111",
+    "SSN 123-45-6789",
+    "iban GB82 WEST 1234 5698 7654 32",
+    "pin 128 rows",
+    "GPIO pin 115",
+    "verify SHA256SUMS before the upload",
+]
+
+
+def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -> None:
+    # RE2 `match()` on the text the scan reads: `toString(value_json)` for an object value,
+    # the raw `value` for a string. Every case the detector labels is selected, and these
+    # unlabelled ones are not.
+    from tests.unit.clickhouse_local import CLICKHOUSE, run
+
+    if CLICKHOUSE is None:
+        pytest.skip("clickhouse binary not installed")
+    from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE
+
+    sql = (
+        "SELECT toString(CAST(j AS JSON)) AS t, match(t, {r:String}) AS hit"
+        " FROM (SELECT arrayJoin({js:Array(String)}) AS j)"
+        " UNION ALL SELECT j AS t, match(j, {r:String}) AS hit"
+        " FROM (SELECT arrayJoin({ts:Array(String)}) AS j)"
+    )
+    params = {
+        "r": COARSE_SHAPE_RE,
+        "js": [json.dumps(v) for v in _PREFILTER_OBJECTS],
+        "ts": _PREFILTER_TEXTS,
+    }
+    rows = run([], sql, params)
+    assert len(rows) == len(_PREFILTER_OBJECTS) + len(_PREFILTER_TEXTS)
+    for row in rows:
+        labelled = detect_sensitivity(detector_text(row["t"])) != ""
+        assert bool(int(row["hit"])) == labelled, row

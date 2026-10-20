@@ -322,8 +322,8 @@ async def _load_session_context(session: dict[str, Any], *, ch: Any) -> list[Any
 
 
 def _sendable(sensitivity: str, value: Any) -> bool:
-    """Whether an observation may go to the model: neither labelled 'high' nor reading as a
-    credential."""
+    """Whether an observation may go to the model: neither labelled 'high' nor reading as
+    high, whatever level its writer set."""
     return sensitivity != "high" and not value_reads_high(value)
 
 
