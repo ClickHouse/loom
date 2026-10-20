@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from types import FrameType
-from typing import Any
+from typing import Any, cast
 
 import clickhouse_connect
 from clickhouse_connect.driver.asyncclient import AsyncClient
@@ -39,6 +39,7 @@ from server.core.ch_errors import (
     is_unknown_quantized_setting,
     strip_quantized_setting,
 )
+from server.core.ch_names import NamedClient, split_table
 from server.core.ch_request_cost import note_result_summary, request_query_id
 from server.core.ch_schema_guard import guard_pending_schema
 from server.core.ch_statement_text import capture_statement, statement_digest
@@ -542,7 +543,7 @@ _STORED_KINDS = "('MATERIALIZED', 'ALIAS', 'EPHEMERAL')"  # as rmt_carry reads t
 def _stray_columns_sql(table: str, stored: frozenset[str]) -> str:
     """How many stored columns `table` has outside `stored`: 0 while the lists a
     carried write took still describe it."""
-    db, _, name = table.rpartition(".")
+    db, name = split_table(table)
     known = ", ".join(_sql_string(c) for c in sorted(stored))
     return (
         f"SELECT count() AS n FROM system.columns WHERE database = {_sql_string(db)} "
@@ -662,7 +663,7 @@ class CHClient:
         limit = int(settings.ch_pool_maxsize)
         # Streaming reads have connections of their own beside the pool; 0 is unbounded.
         connector_limit = limit + STREAM_SLOTS if limit > 0 else 0
-        client = await clickhouse_connect.get_async_client(
+        driver = await clickhouse_connect.get_async_client(
             **connection_kwargs(),
             compress=True,
             # The driver's read timeout is the outer backstop
@@ -696,6 +697,8 @@ class CHClient:
                 "session_timezone": "UTC",
             },
         )
+        # Statements name the `loom` alias; the wrapper names the configured database.
+        client = cast(AsyncClient, NamedClient(driver))
         # The driver learns the zone it binds aware params in from the server
         # default before the session setting applies; bind them in UTC too.
         # tz_source="server" reads a bare DateTime in that zone, so reads come

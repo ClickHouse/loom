@@ -491,6 +491,9 @@ class AuthSettings(BaseModel):
 
 # ===== ClickHouse =============================================================
 
+# A database name Loom writes into statements and KeeperMap paths unescaped.
+_DATABASE_NAME = r"^[A-Za-z0-9_][A-Za-z0-9_-]*$"
+
 
 class ClickHouseSettings(BaseModel):
     """ClickHouse connection, query shaping and vector storage."""
@@ -503,9 +506,16 @@ class ClickHouseSettings(BaseModel):
     ch_user: str = "loom"
     # Password for `ch_user`; the default only suits a local development server.
     ch_password: str = "loomdev"
-    # Default database of the ClickHouse connection. Loom's schema is always in `loom`,
-    # whatever this says (queries and migrations address `loom.<table>`): leave it.
-    ch_database: str = "loom"
+    # The database Loom's schema lives in: every table, view and the migrations ledger,
+    # and the connection's default database. Statements are written against `loom`
+    # and name this database where they reach ClickHouse (server/core/ch_names.py);
+    # KeeperMap paths move with it. Set it before the first migration: a name with no
+    # database while a schema is in `loom` refuses to start (create the database first
+    # to start a second schema). Letters, digits, `_` and `-`. Read once at startup.
+    ch_database: Annotated[str, Field(pattern=_DATABASE_NAME)] = "loom"
+    # The database the telemetry Loom derives from its own tables lives in
+    # (`sli_minute`), outside the schema so a reader can be granted it alone.
+    ch_telemetry_database: Annotated[str, Field(pattern=_DATABASE_NAME)] = "loom_telemetry"
     # The cluster `clusterAllReplicas` reads to find a stopped Loom process's
     # queries on every node (`default` on ClickHouse Cloud). A server without
     # it answers for itself; '' reads only the connected server.
@@ -627,6 +637,19 @@ class ClickHouseSettings(BaseModel):
     # Seconds the schema status (applied against shipped migrations) is cached for the
     # health probe.
     schema_status_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+
+    @model_validator(mode="after")
+    def _check_databases(self) -> ClickHouseSettings:
+        """Statements name `loom` and `loom_telemetry` and are mapped to these two;
+        a database named after the other alias would be mapped twice."""
+        if self.ch_database == self.ch_telemetry_database:
+            raise ValueError("LOOM_CH_DATABASE and LOOM_CH_TELEMETRY_DATABASE must differ")
+        if self.ch_database == "loom_telemetry" or self.ch_telemetry_database == "loom":
+            raise ValueError(
+                "LOOM_CH_DATABASE must not be 'loom_telemetry', nor "
+                "LOOM_CH_TELEMETRY_DATABASE 'loom'"
+            )
+        return self
 
 
 # ===== Code ===================================================================
@@ -1683,11 +1706,11 @@ class ErasureSettings(BaseModel):
     erasure_mutation_wait_s: int = 3600
 
     # ---- external erasure backends ----
-    # ClickStack erasure: direct ALTER TABLE DELETE on the OTel tables in the
-    # same CH service. `clickstack_database` = HyperDX's DB ("" skips the leg);
-    # `clickstack_user_id_keys` = comma-separated Map attribute keys that carry
-    # user_id (ORed; depends on the emitting SDK).
-    clickstack_database: str = ""  # empty → skip cascade
+    # The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse
+    # service: where `otel_exporter = "ch"` writes spans, logs and metrics, and where
+    # the erasure cascade deletes a user's rows with ALTER TABLE DELETE. "" = the
+    # `default` database for the exporter, and no erasure cascade.
+    clickstack_database: Annotated[str, Field(pattern=r"^[^`]*$")] = ""
     # Comma-separated OTel Map attribute keys holding user_id, ORed in the delete.
     clickstack_user_id_keys: str = "user_id,user.id,enduser.id"
     # Per-request seconds for external trace/chat backend lookups and deletes
@@ -3286,10 +3309,10 @@ class ObservabilitySettings(BaseModel):
     # Most windows one pass seals; a backlog is sealed over later passes.
     audit_checkpoint_max_seal_per_pass: int = 48
 
-    # OTel exporter, for spans and metrics: "ch" writes to `default.otel_traces`
-    # and `default.otel_metrics_*` on the same service, "otlp" ships to
-    # otel_exporter_otlp_endpoint (headers: comma-separated K=V), "" = auto
-    # (otlp when the endpoint is set, else ch).
+    # OTel exporter, for spans and metrics: "ch" writes to `otel_traces` and
+    # `otel_metrics_*` in `clickstack_database` (`default` when empty) on the same
+    # service, "otlp" ships to otel_exporter_otlp_endpoint (headers: comma-separated
+    # K=V), "" = auto (otlp when the endpoint is set, else ch).
     otel_exporter: Annotated[Literal["", "ch", "otlp"], CaseFolded] = ""
     # Seconds between refreshes of the per-namespace code-plane COUNT gauges
     # (one FINAL scan each of code_files, code_chunks, code_symbols and

@@ -1,10 +1,9 @@
 """A tunable number is a setting, not a module constant.
 
 A module-level constant whose name says it bounds or paces something (a TTL, a
-timeout, an interval, a limit, a batch, a budget, a retry count, a concurrency, a page
-or a threshold) and whose value is a number is
-an operator's knob hidden from the configuration reference and from `loom
-settings`. The ones that predate this rule are listed in
+timeout, an interval, a limit, a batch, a budget, a retry count, a concurrency, a
+page or a threshold) and whose value is a number is an operator's knob hidden from
+the configuration reference and from `loom settings`. The ones that predate this rule are listed in
 tests/unit/tunable_constants.txt. The list only shrinks: a new one goes into
 `server/settings/` instead, and one moved there leaves the list. A number that must
 not be a knob (another value is derived from it, or changing it breaks what is stored)

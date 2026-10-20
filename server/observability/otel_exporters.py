@@ -1,5 +1,5 @@
 """The ClickHouse OTel exporters: spans, logs and metrics INSERTed straight into
-ClickStack's `default.otel_*` tables, plus the sync client they write through.
+ClickStack's `otel_*` tables (LOOM_CLICKSTACK_DATABASE), plus the sync client they write through.
 
 `otel.py` builds the providers around these; the row shapes match what
 ClickStack's own collector writes, so the HyperDX UI renders them natively.
@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from datetime import UTC
 from typing import Any
 
+from server.core.ch_names import NamedClient, otel_database, otel_table
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -30,19 +31,23 @@ def _make_ch_client_for_otel() -> Any:
 
     from server.core.ch_target import connection_kwargs
 
-    return clickhouse_connect.get_client(
-        **connection_kwargs(database="default"),  # ClickStack tables live in `default`
-        # async_insert=0: rows visible immediately in HyperDX.
-        # insert_deduplicate=0: identical events aren't dropped.
-        settings={
-            "async_insert": 0,
-            "wait_for_async_insert": 1,
-            "insert_deduplicate": 0,
-            # This client bypasses server.core.ch, so it carries its own tag: every
-            # exporter insert is attributed in system.query_log. Gauge probes
-            # override it per query (`otel_probe_client._ProbeClient._call`).
-            "log_comment": OTEL_EXPORTER_QUERY_TAG,
-        },
+    # The OTel tables are named in full (`otel_table`); a probe through this client
+    # that reads Loom's tables names the `loom` alias, which the wrapper maps.
+    return NamedClient(
+        clickhouse_connect.get_client(
+            **connection_kwargs(database=otel_database()),
+            # async_insert=0: rows visible immediately in HyperDX.
+            # insert_deduplicate=0: identical events aren't dropped.
+            settings={
+                "async_insert": 0,
+                "wait_for_async_insert": 1,
+                "insert_deduplicate": 0,
+                # This client bypasses server.core.ch, so it carries its own tag: every
+                # exporter insert is attributed in system.query_log. Gauge probes
+                # override it per query (`otel_probe_client._ProbeClient._call`).
+                "log_comment": OTEL_EXPORTER_QUERY_TAG,
+            },
+        )
     )
 
 
@@ -56,7 +61,7 @@ def _disabled_level() -> int:
 
 
 def _unwritable(exc: BaseException) -> str:
-    """Why a `default.otel_*` target can never take a write, or '' for an error
+    """Why a ClickStack `otel_*` target can never take a write, or '' for an error
     worth retrying. The tables are created by ClickStack/HyperDX, not by Loom's
     migrations: on a ClickHouse-only deployment they are absent (code 60), and
     a Loom user scoped to `loom.*` may not write them (code 497). Either way the
@@ -73,7 +78,7 @@ def _unwritable(exc: BaseException) -> str:
 
 def _traces_backend_available(exporter_mode: str, endpoint: str | None) -> bool:
     """True only when spans have somewhere to go: an OTLP endpoint, or (ch mode)
-    the ClickStack `default.otel_traces` table actually exists.
+    the ClickStack ClickStack's `otel_traces` table actually exists.
 
     Gates FastAPI auto-instrumentation. Without a backend, instrumenting is pure
     overhead AND — on the opentelemetry-instrumentation-asgi version CI resolves
@@ -86,7 +91,7 @@ def _traces_backend_available(exporter_mode: str, endpoint: str | None) -> bool:
     try:
         client = _make_ch_client_for_otel()
         try:
-            return str(client.command("EXISTS TABLE default.otel_traces")).strip() == "1"
+            return str(client.command(f"EXISTS TABLE {otel_table('otel_traces')}")).strip() == "1"
         finally:
             client.close()
     except Exception:  # noqa: BLE001 — probe: any failure means no table
@@ -94,7 +99,7 @@ def _traces_backend_available(exporter_mode: str, endpoint: str | None) -> bool:
 
 
 def _make_clickhouse_span_exporter(service_name: str) -> Any:
-    """Build a SpanExporter that INSERTs into `default.otel_traces`."""
+    """Build a SpanExporter that INSERTs into ClickStack's `otel_traces`."""
     from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
     class ClickHouseSpanExporter(SpanExporter):
@@ -108,7 +113,7 @@ def _make_clickhouse_span_exporter(service_name: str) -> Any:
             try:
                 rows = [_span_to_row(s, service_name) for s in spans]
                 self._client.insert(
-                    "default.otel_traces",
+                    otel_table("otel_traces"),
                     data=[list(r.values()) for r in rows],
                     column_names=list(rows[0].keys()),
                 )
@@ -117,10 +122,11 @@ def _make_clickhouse_span_exporter(service_name: str) -> Any:
                 if why := _unwritable(e):
                     log.log(
                         _disabled_level(),
-                        "OTel span exporter: cannot write default.otel_traces: %s. "
+                        "OTel span exporter: cannot write %s: %s. "
                         "Self-disabling span export. To enable, deploy ClickStack "
                         "(or grant the user INSERT there) or set LOOM_OTEL_EXPORTER=otlp "
                         "+ LOOM_OTEL_EXPORTER_OTLP_ENDPOINT to ship spans elsewhere.",
+                        otel_table("otel_traces"),
                         why,
                     )
                     self._disabled = True
@@ -367,19 +373,19 @@ def _make_clickhouse_metric_exporter(service_name: str) -> Any:
                                     )
                 if sum_rows:
                     self._client.insert(
-                        "default.otel_metrics_sum",
+                        otel_table("otel_metrics_sum"),
                         data=[list(r.values()) for r in sum_rows],
                         column_names=list(sum_rows[0].keys()),
                     )
                 if hist_rows:
                     self._client.insert(
-                        "default.otel_metrics_histogram",
+                        otel_table("otel_metrics_histogram"),
                         data=[list(r.values()) for r in hist_rows],
                         column_names=list(hist_rows[0].keys()),
                     )
                 if gauge_rows:
                     self._client.insert(
-                        "default.otel_metrics_gauge",
+                        otel_table("otel_metrics_gauge"),
                         data=[list(r.values()) for r in gauge_rows],
                         column_names=list(gauge_rows[0].keys()),
                     )
@@ -388,8 +394,8 @@ def _make_clickhouse_metric_exporter(service_name: str) -> Any:
                 if why := _unwritable(e):
                     log.log(
                         _disabled_level(),
-                        "OTel metric exporter: cannot write default.otel_metrics_*: %s. "
-                        "Self-disabling metric export.",
+                        "OTel metric exporter: cannot write %s: %s. Self-disabling metric export.",
+                        otel_table("otel_metrics_*"),
                         why,
                     )
                     self._disabled = True
@@ -410,7 +416,7 @@ def _make_clickhouse_metric_exporter(service_name: str) -> Any:
 
 
 def _make_clickhouse_log_exporter(service_name: str) -> Any:
-    """Build a LogExporter that INSERTs into `default.otel_logs`.
+    """Build a LogExporter that INSERTs into ClickStack's `otel_logs`.
 
     Logs land alongside traces; the OTel logging handler attaches the
     active span's trace_id + span_id, so HyperDX can click-through from
@@ -430,7 +436,7 @@ def _make_clickhouse_log_exporter(service_name: str) -> Any:
             try:
                 rows = [_log_to_row(rec, service_name) for rec in batch]
                 self._client.insert(
-                    "default.otel_logs",
+                    otel_table("otel_logs"),
                     data=[list(r.values()) for r in rows],
                     column_names=list(rows[0].keys()),
                 )
@@ -439,8 +445,8 @@ def _make_clickhouse_log_exporter(service_name: str) -> Any:
                 if why := _unwritable(e):
                     log.log(
                         _disabled_level(),
-                        "OTel log exporter: cannot write default.otel_logs: %s. "
-                        "Self-disabling log export.",
+                        "OTel log exporter: cannot write %s: %s. Self-disabling log export.",
+                        otel_table("otel_logs"),
                         why,
                     )
                     self._disabled = True
@@ -490,7 +496,7 @@ def _attrs_to_map(attrs: Any) -> dict[str, str]:
 
 
 def _span_to_row(span: Any, service_name: str) -> dict[str, Any]:
-    """Convert a ReadableSpan to a `default.otel_traces` row dict.
+    """Convert a ReadableSpan to a ClickStack's `otel_traces` row dict.
 
     Column ordering matches the schema in
     `schemas/otel/clickstack_otel_tables.sql`. Nested columns are written
@@ -578,7 +584,7 @@ _SEVERITY_TEXT = {
 
 
 def _log_to_row(record: Any, service_name: str) -> dict[str, Any]:
-    """Convert an OTel LogData (record + resource) to a `default.otel_logs` row."""
+    """Convert an OTel LogData (record + resource) to a ClickStack's `otel_logs` row."""
     from datetime import datetime
 
     lr = record.log_record

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.core.ch_names import SCHEMA, database, logical, telemetry_database
 from server.core.repo_base import _CHClient, _default_client
 
 # ----------------------------------------------------------------------
@@ -16,15 +17,16 @@ from server.core.repo_base import _CHClient, _default_client
 
 
 async def list_loom_tables(*, ch: _CHClient | None = None) -> list[str]:
-    """Names of tables in the `loom` database, and `loom_telemetry.<name>` for
+    """Names of tables in the schema database, and `loom_telemetry.<name>` for
     the telemetry database (excluding CH MV inner_id bookkeeping). Backs
     /v1/admin/schema.status."""
     ch = ch or _default_client()
     rows = await ch.query_all(
-        "SELECT database, name FROM system.tables WHERE database IN ('loom', 'loom_telemetry')",
+        "SELECT database, name FROM system.tables WHERE database IN {dbs:Array(String)}",
+        {"dbs": [database(), telemetry_database()]},
     )
     return [
-        r["name"] if r["database"] == "loom" else f"{r['database']}.{r['name']}"
+        r["name"] if logical(r["database"]) == SCHEMA else f"{logical(r['database'])}.{r['name']}"
         for r in rows
         if not r["name"].startswith(".inner")
     ]

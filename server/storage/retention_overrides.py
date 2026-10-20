@@ -23,6 +23,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from server.core.ch_names import split_table
+
 log = logging.getLogger(__name__)
 
 
@@ -89,12 +91,6 @@ TARGETS: tuple[RetentionTarget, ...] = (
         lambda s: s.tiering_documents_warm_days,
     ),
 )
-
-
-def _split_table(table: str) -> tuple[str, str]:
-    """`db.name` → (db, name); a bare name is in `loom`."""
-    db, _, name = table.partition(".")
-    return (db, name) if name else ("loom", db)
 
 
 def _warm_volume_name(settings_obj: Any) -> str:
@@ -286,7 +282,7 @@ async def current_ttl_matches(ch: Any, table: str, alter_sql: str) -> bool | Non
     boot piles up TTL mutations per table and draws code 517 ("previous
     mutations not finished") once a rewrite outlives the next restart."""
     try:
-        db, name = _split_table(table)
+        db, name = split_table(table)
         row = await ch.query_one(
             "SELECT engine_full FROM system.tables "
             "WHERE database = {db:String} AND name = {name:String}",
@@ -328,7 +324,7 @@ async def unfinished_mutations(ch: Any, table: str) -> int | None:
     An ALTER assigned behind unfinished mutations is refused with
     `Code: 517` once the queue is deep; deferring to the next pass costs a
     retention policy nothing it promised."""
-    db, name = _split_table(table)
+    db, name = split_table(table)
     try:
         row = await ch.query_one(
             "SELECT count() AS n FROM system.mutations "

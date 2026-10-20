@@ -46,7 +46,7 @@ def _probe_state() -> dict[str, Any]:
             -- count, so a non-zero line here is a writer that UPDATEs the
             -- table again or a rebuild not yet run.
             (SELECT countIf(startsWith(name, 'patch')) FROM system.parts
-             WHERE database = 'loom' AND table = 'memory_embeddings' AND active)
+             WHERE database = {loom_db:String} AND table = 'memory_embeddings' AND active)
                 AS memory_embeddings_patch_parts,
             -- One-hour windows the audit checkpoint chain has yet to seal. A stalled sealer
             -- reads as a rising line, a backfill as a falling one; 0 when nothing has ever
@@ -76,8 +76,9 @@ def _probe_state() -> dict[str, Any]:
              WHERE event_time > now() - INTERVAL 30 MINUTE
                AND type = 'QueryFinish'
                AND query_kind = 'Select'
-               AND has(tables, 'loom.memory_embeddings')
-               AND has(columns, 'loom.memory_embeddings.embedding')) AS vector_reads_indexed_ratio
+               AND has(tables, concat({loom_db:String}, '.memory_embeddings'))
+               AND has(columns, concat({loom_db:String}, '.memory_embeddings.embedding')))
+               AS vector_reads_indexed_ratio
         """
     ).result_rows
     if not row:
@@ -179,7 +180,7 @@ def _invariants_sql() -> str:
             -- probe. A pending mutation is a level that moves at ALTER speed; it reads
             -- here, on the census clock, from the lease holder.
             (SELECT count() FROM system.mutations
-             WHERE database = 'loom' AND NOT is_done) AS mutations_pending,
+             WHERE database = {{loom_db:String}} AND NOT is_done) AS mutations_pending,
             -- Memories that cannot be found by search, for ANY reason: live memory
             -- rows minus live vectors. Not `embedding_dim = 0` alone, which is blind
             -- to a memory with no embedding row at all.
@@ -559,16 +560,16 @@ _STORAGE_PARTS_SQL = """
                sum(marks) AS mark_total,
                sum(bytes_on_disk) AS disk_bytes
         FROM system.parts
-        WHERE database = 'loom' AND active AND table IN {tables:Array(String)}
+        WHERE database = {loom_db:String} AND active AND table IN {tables:Array(String)}
         GROUP BY table
 """
 
-# A view outside `loom` is named with its database (loom_telemetry.sli_minute_refresh).
+# A view outside the schema is named with its database (loom_telemetry.sli_minute_refresh).
 _VIEW_REFRESH_SQL = """
-        SELECT if(database = 'loom', view, concat(database, '.', view)) AS view,
+        SELECT if(database = {loom_db:String}, view, concat(database, '.', view)) AS view,
                status, last_success_time, exception
         FROM system.view_refreshes
-        WHERE database IN ('loom', 'loom_telemetry')
+        WHERE database IN ({loom_db:String}, {telemetry_db:String})
 """
 
 

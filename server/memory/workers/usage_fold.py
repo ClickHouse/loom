@@ -74,6 +74,7 @@ from typing import Any, Protocol
 
 from clickhouse_connect.driver.external import ExternalData
 
+from server.core.ch_names import split_table
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import record_pass
@@ -209,7 +210,7 @@ async def _apply_update(
 async def _pending_mutations(ch: _CHClient, table: str) -> int:
     """Unfinished mutations on `table` at the connected replica; 0 when the
     probe itself fails (never block folding on an observability read)."""
-    db, _, name = table.partition(".")
+    db, name = split_table(table)
     try:
         row = await ch.query_one(
             "SELECT count() AS n FROM system.mutations "

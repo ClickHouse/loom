@@ -47,6 +47,7 @@
  "ch_replica_bound_retries": 2,
  "ch_secure": null,
  "ch_settings_by_traffic_class": "{\"production\": {\"priority\": 1}, \"interactive\": {\"priority\": 2}, \"bench\": {\"priority\": 10, \"max_threads\": 4}, \"background\": {\"priority\": 5, \"max_threads\": 3, \"read_from_filesystem_cache_if_exists_otherwise_bypass_cache\": 1}}",
+ "ch_telemetry_database": "loom_telemetry",
  "ch_timeout_ddl_s": 300.0,
  "ch_timeout_read_s": 30.0,
  "ch_timeout_write_s": 60.0,

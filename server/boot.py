@@ -301,7 +301,7 @@ async def _fenced_boot_migrations(
         return 0
     exists = await ch.query_one(
         "SELECT count() AS n FROM system.tables "
-        "WHERE database='loom' AND name='provider_configuration'"
+        "WHERE database=currentDatabase() AND name='provider_configuration'"
     )
     if exists is None or type(exists.get("n")) is not int or exists["n"] not in (0, 1):
         raise RuntimeError("Cannot establish provider configuration schema before boot DDL")

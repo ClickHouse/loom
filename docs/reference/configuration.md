@@ -117,7 +117,8 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_CH_PORT` | `int` | `8123` |  | ClickHouse HTTP port; 8443 (the Cloud HTTPS port) turns TLS on when `ch_secure` is unset. |
 | `LOOM_CH_USER` | `str` | `'loom'` |  | User name the server connects to ClickHouse as. |
 | `LOOM_CH_PASSWORD` | `str` | *(set)* |  | Password for `ch_user`; the default only suits a local development server. |
-| `LOOM_CH_DATABASE` | `str` | `'loom'` |  | Default database of the ClickHouse connection. Loom's schema is always in `loom`, whatever this says (queries and migrations address `loom.<table>`): leave it. |
+| `LOOM_CH_DATABASE` | `str` | `'loom'` |  | The database Loom's schema lives in: every table, view and the migrations ledger, and the connection's default database. Statements are written against `loom` and name this database where they reach ClickHouse (server/core/ch_names.py); KeeperMap paths move with it. Set it before the first migration: a name with no database while a schema is in `loom` refuses to start (create the database first to start a second schema). Letters, digits, `_` and `-`. Read once at startup. |
+| `LOOM_CH_TELEMETRY_DATABASE` | `str` | `'loom_telemetry'` |  | The database the telemetry Loom derives from its own tables lives in (`sli_minute`), outside the schema so a reader can be granted it alone. |
 | `LOOM_CH_CLUSTER` | `str` | `'default'` |  | The cluster `clusterAllReplicas` reads to find a stopped Loom process's queries on every node (`default` on ClickHouse Cloud). A server without it answers for itself; '' reads only the connected server. |
 | `LOOM_CH_SECURE` | `bool \| None` | `None` |  | Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off). |
 | `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST` | `bool` | `False` |  | Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment` ("<op> <request_id>"), so query_log rows group by shape. Off by default: readers that split log_comment on spaces gain tokens. |
@@ -713,7 +714,7 @@ Erasure: saga recovery, reclaim, purge and the external backends it cascades to.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_CLICKSTACK_DATABASE` | `str` | `''` |  | ClickStack erasure: direct ALTER TABLE DELETE on the OTel tables in the same CH service. `clickstack_database` = HyperDX's DB ("" skips the leg); `clickstack_user_id_keys` = comma-separated Map attribute keys that carry user_id (ORed; depends on the emitting SDK). empty → skip cascade |
+| `LOOM_CLICKSTACK_DATABASE` | `str` | `''` |  | The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse service: where `otel_exporter = "ch"` writes spans, logs and metrics, and where the erasure cascade deletes a user's rows with ALTER TABLE DELETE. "" = the `default` database for the exporter, and no erasure cascade. |
 | `LOOM_CLICKSTACK_USER_ID_KEYS` | `str` | `'user_id,user.id,enduser.id'` |  | Comma-separated OTel Map attribute keys holding user_id, ORed in the delete. |
 | `LOOM_EXTERNAL_ERASURE_TIMEOUT_S` | `float` | `30.0` |  | Per-request seconds for external trace/chat backend lookups and deletes during erasure. |
 
@@ -1359,7 +1360,7 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_AUDIT_CHECKPOINT_GRACE_SECONDS` | `int` | `600` |  | Seconds after a window closes before it is sealed. |
 | `LOOM_AUDIT_CHECKPOINT_VERIFY_WINDOWS` | `int` | `24` |  | Most recent sealed windows recounted every pass (at least 1). |
 | `LOOM_AUDIT_CHECKPOINT_MAX_SEAL_PER_PASS` | `int` | `48` |  | Most windows one pass seals; a backlog is sealed over later passes. |
-| `LOOM_OTEL_EXPORTER` | `'' \| 'ch' \| 'otlp'` | `''` |  | OTel exporter, for spans and metrics: "ch" writes to `default.otel_traces` and `default.otel_metrics_*` on the same service, "otlp" ships to otel_exporter_otlp_endpoint (headers: comma-separated K=V), "" = auto (otlp when the endpoint is set, else ch). |
+| `LOOM_OTEL_EXPORTER` | `'' \| 'ch' \| 'otlp'` | `''` |  | OTel exporter, for spans and metrics: "ch" writes to `otel_traces` and `otel_metrics_*` in `clickstack_database` (`default` when empty) on the same service, "otlp" ships to otel_exporter_otlp_endpoint (headers: comma-separated K=V), "" = auto (otlp when the endpoint is set, else ch). |
 | `LOOM_OTEL_CODE_COUNTS_CACHE_S` | `int` | `3600` |  | Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols and code_edges, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export. |
 | `LOOM_OTEL_CODE_GREP_REPLAY_CACHE_S` | `int` | `3600` |  | Seconds between recounts of the code.grep wrong-abstain gauge (a `content` scan per namespace with abstains). 0 = gauge off. |
 | `LOOM_OTEL_AGENT_LABELS_MAX_NAMESPACES` | `int` | `20` |  | Max namespaces `loom.memory.agent_labels_24h` names per probe (top N by label total); the rest sum under `loom.namespace = "other"`. 0 = no cap. |

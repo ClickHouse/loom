@@ -373,7 +373,7 @@ class VectorRebuild:
             return f"every replica must run one ClickHouse 26.7+; found {sorted(vers)}"
         self.q("SELECT 1", enable_quantized_codec=1)
         ro = self.q(
-            f"SELECT hostName(), is_readonly FROM {self.replicas('replicas')} WHERE database='loom' AND table='{self.t}'",
+            f"SELECT hostName(), is_readonly FROM {self.replicas('replicas')} WHERE database = currentDatabase() AND table='{self.t}'",
             skip_unavailable_shards=1,
         )
         if any(r[1] for r in ro):
@@ -476,7 +476,7 @@ class VectorRebuild:
         log(
             "twin created:",
             self.q(
-                f"SELECT name, type, compression_codec FROM system.columns WHERE database='loom' AND table='{self.twin}' AND name IN ({', '.join(repr(x) for x in self.cols)})"
+                f"SELECT name, type, compression_codec FROM system.columns WHERE database = currentDatabase() AND table='{self.twin}' AND name IN ({', '.join(repr(x) for x in self.cols)})"
             ),
         )
         return "", False
@@ -540,11 +540,11 @@ class VectorRebuild:
         while not stop.wait(60):
             try:
                 rep = mc.query(
-                    f"SELECT hostName(), is_readonly, is_session_expired FROM {self.replicas('replicas')} WHERE database='loom' AND table IN ('{self.t}','{self.twin}')",
+                    f"SELECT hostName(), is_readonly, is_session_expired FROM {self.replicas('replicas')} WHERE database = currentDatabase() AND table IN ('{self.t}','{self.twin}')",
                     settings={"skip_unavailable_shards": 1},
                 ).result_rows
                 prog = mc.query(
-                    f"SELECT count(), formatReadableSize(sum(bytes_on_disk)) FROM system.parts WHERE database='loom' AND table='{self.twin}' AND active"
+                    f"SELECT count(), formatReadableSize(sum(bytes_on_disk)) FROM system.parts WHERE database = currentDatabase() AND table='{self.twin}' AND active"
                 ).result_rows[0]
                 log("monitor replicas", rep, "twin parts/bytes", prog)
                 if any(r[1] == 1 for r in rep):
@@ -686,7 +686,7 @@ class VectorRebuild:
             live,
             "columns",
             self.q(
-                f"SELECT name, type, compression_codec FROM system.columns WHERE database='loom' AND table='{self.t}' AND name IN ({', '.join(repr(x) for x in self.cols)})"
+                f"SELECT name, type, compression_codec FROM system.columns WHERE database = currentDatabase() AND table='{self.t}' AND name IN ({', '.join(repr(x) for x in self.cols)})"
             ),
         )
         if not live or not self.exists(self.pre) or self.exists(self.twin):

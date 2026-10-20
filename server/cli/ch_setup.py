@@ -25,6 +25,7 @@ import sys
 from typing import Any, Literal, NamedTuple
 
 from server.core.ch_errors import error_code, error_line
+from server.core.ch_names import database, quote, telemetry_database
 from server.core.schema import preflight
 
 DEFAULT_READER = "loom_reader"
@@ -106,7 +107,7 @@ def reader_sql(reader: str, password: str) -> list[str]:
     return [
         f"CREATE SETTINGS PROFILE OR REPLACE `{reader}` SETTINGS {', '.join(settings)}",
         f"CREATE USER OR REPLACE `{reader}` IDENTIFIED BY {password} SETTINGS PROFILE '{reader}'",
-        f"GRANT SELECT ON {preflight.DATABASE}.* TO `{reader}`",
+        f"GRANT SELECT ON {quote(database())}.* TO `{reader}`",
     ]
 
 
@@ -120,9 +121,9 @@ def admin_sql(user: str, reader: str | None) -> list[str]:
         else []
     )
     return [
-        f"CREATE DATABASE IF NOT EXISTS {preflight.DATABASE}",
-        f"GRANT CURRENT GRANTS ON {preflight.DATABASE}.* TO `{user}`",
-        f"GRANT CURRENT GRANTS ON {preflight.TELEMETRY_DATABASE}.* TO `{user}`",
+        f"CREATE DATABASE IF NOT EXISTS {quote(database())}",
+        f"GRANT CURRENT GRANTS ON {quote(database())}.* TO `{user}`",
+        f"GRANT CURRENT GRANTS ON {quote(telemetry_database())}.* TO `{user}`",
         # system.query_log and system.processes among them show every user's past
         # and running queries; docs/operations/deployment.md says how to narrow them.
         f"GRANT {', '.join(f'SELECT ON system.{t}' for t in preflight.SYSTEM_TABLES)} TO `{user}`",
@@ -182,8 +183,8 @@ def reader_status(reader: str) -> tuple[bool | None, str]:
         return True, f"its login lands as {name!r}, not {reader!r}"
     if actual != profile:
         return True, PROFILE_DIFFERS
-    if grants != [f"GRANT SELECT ON {preflight.DATABASE}.* TO {reader}"]:
-        return True, f"its grants are not SELECT on {preflight.DATABASE}.* alone"
+    if grants != [f"GRANT SELECT ON {quote(database())}.* TO {reader}"]:
+        return True, f"its grants are not SELECT on {quote(database())}.* alone"
     return True, ""
 
 
@@ -315,7 +316,7 @@ def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
         print(f"✓ {reader} is defined by the server's config")
         return True
     if not problem:
-        print(f"✓ {reader} reads {preflight.DATABASE}.* under the current caps")
+        print(f"✓ {reader} reads {quote(database())}.* under the current caps")
         return True
     if found == "unknown":
         # It may be someone else's account: replace nothing that cannot be seen.
@@ -352,10 +353,10 @@ def _create_reader(ch: Any, user: str, reader: str, *, fresh: bool) -> bool:
             _drop_reader(ch, reader)
         if error_code(e) != preflight.ACCESS_DENIED:
             return _refuse(f"could not create {reader}: {error_line(e)}")
-        _refuse(f"{user!r} may not create the reader or grant it SELECT on {preflight.DATABASE}.*")
+        _refuse(f"{user!r} may not create the reader or grant it SELECT on {quote(database())}.*")
         _print_admin_sql(user, reader, existing=not fresh)
         return False
-    print(f"✓ {reader}: SELECT on {preflight.DATABASE}.* only, caps pinned")
+    print(f"✓ {reader}: SELECT on {quote(database())}.* only, caps pinned")
     return True
 
 
@@ -387,7 +388,7 @@ def _set_up(ch: Any, user: str, reader: str | None) -> int:
         if e.needs_admin:
             _print_admin_sql(user, reader)
         return 1
-    print(f"✓ ClickHouse {server.version}; database {preflight.DATABASE} ready for {user!r}")
+    print(f"✓ ClickHouse {server.version}; database {quote(database())} ready for {user!r}")
     # Strict, so only the telemetry tables can be left: name the grant itself.
     for table in server.unreadable:
         print(
@@ -396,9 +397,9 @@ def _set_up(ch: Any, user: str, reader: str | None) -> int:
         )
     if server.no_refresh:
         print(
-            f"· may not {preflight.REFRESH_GRANT} on {preflight.DATABASE}.*, so purged code "
+            f"· may not {preflight.REFRESH_GRANT} on {quote(database())}.*, so purged code "
             "stays in the refreshable views until their next refresh; an admin can run "
-            f"GRANT {preflight.REFRESH_GRANT} ON {preflight.DATABASE}.* TO `{user}`"
+            f"GRANT {preflight.REFRESH_GRANT} ON {quote(database())}.* TO `{user}`"
         )
 
     if reader is None:

@@ -48,15 +48,15 @@ async def code_tables_keyed_by_namespace(ch: Any) -> list[str]:
         f"""
         SELECT table, groupUniqArray(name) AS cols
         FROM system.columns
-        WHERE database = 'loom' AND table LIKE 'code\\_%'
+        WHERE database = currentDatabase() AND table LIKE 'code\\_%'
           AND table IN (
             SELECT name FROM system.tables
-            WHERE database = 'loom' AND engine NOT LIKE '%View%'
+            WHERE database = currentDatabase() AND engine NOT LIKE '%View%'
           )
           AND table NOT IN (
             SELECT extract(create_table_query, '{_REFRESH_TARGET}')
             FROM system.tables
-            WHERE database = 'loom' AND engine = 'MaterializedView'
+            WHERE database = currentDatabase() AND engine = 'MaterializedView'
               AND match(create_table_query, '{_REFRESH_TARGET}')
               AND NOT match(create_table_query, '{_REFRESH_APPEND}')
           )
@@ -81,7 +81,7 @@ async def refresh_code_views(ch: Any) -> list[str]:
         f"""
         SELECT name AS view
         FROM system.tables
-        WHERE database = 'loom' AND engine = 'MaterializedView'
+        WHERE database = currentDatabase() AND engine = 'MaterializedView'
           AND startsWith(extract(create_table_query, '{_REFRESH_TARGET}'), 'code_')
           AND NOT match(create_table_query, '{_REFRESH_APPEND}')
         ORDER BY name

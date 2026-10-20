@@ -24,7 +24,8 @@ from server.insights.store.provider_target import _identity, _target, target_mar
 
 async def _prepared(names: StagingNames, client: _CHClient) -> dict[str, Any] | None:
     return await client.query_one(
-        "SELECT uuid, comment FROM system.tables WHERE database = 'loom' AND name = {table:String}",
+        "SELECT uuid, comment FROM system.tables "
+        "WHERE database = currentDatabase() AND name = {table:String}",
         {"table": names.prepared},
     )
 
@@ -85,7 +86,7 @@ async def _ddl_plan(
 ) -> PreparedDDL:
     row = await client.query_one(
         "SELECT uuid, engine, create_table_query FROM system.tables "
-        "WHERE database = 'loom' AND name = {table:String}",
+        "WHERE database = currentDatabase() AND name = {table:String}",
         {"table": names.table},
     )
     if row is None or not isinstance(row.get("create_table_query"), str):

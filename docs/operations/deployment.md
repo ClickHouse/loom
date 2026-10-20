@@ -250,19 +250,27 @@ LOOM_REQUIRE_REAL_PROVIDERS=true            # a fake or keyless provider makes /
 
 ### ClickHouse connection
 
-| Variable           | Default     | Set it to                                                                                |
-| ------------------ | ----------- | ---------------------------------------------------------------------------------------- |
-| `LOOM_CH_HOST`     | `localhost` | Your service, outside the local stack.                                                   |
-| `LOOM_CH_PORT`     | `8123`      | `8443` for ClickHouse Cloud or any HTTPS endpoint.                                       |
-| `LOOM_CH_SECURE`   | unset       | `true` for HTTPS on a port other than `8443` (unset infers TLS from the port).           |
-| `LOOM_CH_USER`     | `loom`      | A user that may create tables in the `loom` database. Cloud's default user is `default`. |
-| `LOOM_CH_PASSWORD` | `loomdev`   | A real password. The default is a development placeholder.                               |
-| `LOOM_CH_DATABASE` | `loom`      | Leave it. It is only the connection's default database; see below.                       |
+| Variable           | Default     | Set it to                                                                            |
+| ------------------ | ----------- | ------------------------------------------------------------------------------------ |
+| `LOOM_CH_HOST`     | `localhost` | Your service, outside the local stack.                                               |
+| `LOOM_CH_PORT`     | `8123`      | `8443` for ClickHouse Cloud or any HTTPS endpoint.                                   |
+| `LOOM_CH_SECURE`   | unset       | `true` for HTTPS on a port other than `8443` (unset infers TLS from the port).       |
+| `LOOM_CH_USER`     | `loom`      | A user that may create tables in Loom's database. Cloud's default user is `default`. |
+| `LOOM_CH_PASSWORD` | `loomdev`   | A real password. The default is a development placeholder.                           |
+| `LOOM_CH_DATABASE` | `loom`      | The database Loom's schema lives in; set it before the first migration, see below.   |
 
-**The schema always lives in a database named `loom`.** The migrations ledger
-(`loom._migrations`) and the server's queries address `loom.<table>` directly, whatever
-`LOOM_CH_DATABASE` says. Two Loom deployments cannot share one ClickHouse service by
-renaming the database; give each its own service.
+`LOOM_CH_DATABASE` names the database that holds every table, view and the migrations
+ledger, and `LOOM_CH_TELEMETRY_DATABASE` (default `loom_telemetry`) the one that holds
+the telemetry Loom derives from its own tables. Statements and migrations are written
+against `loom.<table>` and `loom_telemetry.<table>`, and Loom maps both names to these
+settings where each statement reaches ClickHouse (`server/core/ch_names.py`); the
+KeeperMap tables' Keeper paths move with the schema (`/<database>/task_leases`). Two
+deployments can share one ClickHouse service with a database pair each.
+
+Choose the names before the first migration. A new name points Loom at an empty schema:
+a process that finds no database by that name while a Loom schema exists in `loom`
+refuses to start, and to start a second schema there on purpose, create the database
+first. Names are letters, digits, `_` and `-`.
 
 ### Identity and authentication
 

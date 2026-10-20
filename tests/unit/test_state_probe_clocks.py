@@ -61,7 +61,7 @@ def test_fast_probe_merges_the_cached_invariants(monkeypatch: pytest.MonkeyPatch
     ):
         assert whole_table not in sql
     # …and classifies vector reads by the columns they touched, not by text.
-    assert "has(columns, 'loom.memory_embeddings.embedding')" in sql
+    assert "has(columns, concat({loom_db:String}, '.memory_embeddings.embedding'))" in sql
     assert "position(query" not in sql
 
 

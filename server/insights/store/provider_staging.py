@@ -81,7 +81,7 @@ async def source_schema(names: StagingNames, *, ch: _CHClient | None = None) -> 
     client = ch or _default_client()
     table = await client.query_one(
         "SELECT uuid, engine, create_table_query FROM system.tables "
-        "WHERE database = 'loom' AND name = {table:String}",
+        "WHERE database = currentDatabase() AND name = {table:String}",
         {"table": names.table},
     )
     if table is None or not str(table["engine"]).endswith("MergeTree"):
@@ -91,7 +91,7 @@ async def source_schema(names: StagingNames, *, ch: _CHClient | None = None) -> 
         raise ValueError("Rebuild requires stable Atomic table identities")
     columns = await client.query_all(
         "SELECT name, type, default_kind, default_expression FROM system.columns "
-        "WHERE database = 'loom' AND table = {table:String} ORDER BY position",
+        "WHERE database = currentDatabase() AND table = {table:String} ORDER BY position",
         {"table": names.table},
     )
     writable = tuple(
@@ -177,7 +177,8 @@ async def _owned_snapshot(
     names: StagingNames, source_uuid: UUID, client: _CHClient
 ) -> dict[str, Any]:
     row = await client.query_one(
-        "SELECT uuid, comment FROM system.tables WHERE database = 'loom' AND name = {table:String}",
+        "SELECT uuid, comment FROM system.tables "
+        "WHERE database = currentDatabase() AND name = {table:String}",
         {"table": names.snapshot},
     )
     if row is None or not _owned_marker(str(row["comment"]), names.marker(source_uuid)):
@@ -192,7 +193,8 @@ async def snapshot_identity(
     client = ch or _default_client()
     marker = names.marker(source_uuid)
     row = await client.query_one(
-        "SELECT uuid, comment FROM system.tables WHERE database = 'loom' AND name = {table:String}",
+        "SELECT uuid, comment FROM system.tables "
+        "WHERE database = currentDatabase() AND name = {table:String}",
         {"table": names.snapshot},
     )
     if row is None:

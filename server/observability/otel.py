@@ -1,10 +1,11 @@
 """OpenTelemetry SDK initialization for Loom.
 
-Ships spans/logs/metrics into ClickStack's `default.otel_*` tables in two
+Ships spans/logs/metrics into ClickStack's `otel_*` tables (in LOOM_CLICKSTACK_DATABASE,
+`default` when unset) in two
 exporter modes:
 
   - **Direct CH** (default, `LOOM_OTEL_EXPORTER=ch`): batch and INSERT
-    straight into `default.otel_*` via Loom's ClickHouse client — no
+    straight into those tables via Loom's ClickHouse client — no
     collector. The schema matches what ClickStack's own collector writes,
     so the HyperDX UI renders them natively.
   - **OTLP/HTTP** (`LOOM_OTEL_EXPORTER=otlp`): ship to an external
@@ -26,6 +27,7 @@ import sys
 from collections.abc import Iterator
 from typing import Any
 
+from server.core.ch_names import otel_table
 from server.observability.otel_exporters import (
     _SPAN_SCHEDULE_DELAY_MS,
     _make_clickhouse_log_exporter,
@@ -113,7 +115,7 @@ def init_otel(app: Any | None = None, *, enable_metrics: bool = True) -> Any:
     # LOOM_CH_HOST pointed at production that means test runs write spans, logs
     # and metrics into the production observability tables: ERROR rows such as
     # "No real embedder configured" or "no CH in unit test" land in
-    # default.otel_logs, indistinguishable from a real incident on any
+    # ClickStack's otel_logs, indistinguishable from a real incident on any
     # dashboard.
     #
     # pytest is detected rather than configured because the failure is silent
@@ -205,8 +207,9 @@ def _start_tracing(exporter_mode: str, endpoint: str) -> tuple[Any, Any, Any] | 
             log.warning("ClickHouse OTel exporter init failed (%s); OTel disabled", e)
             return None
         log.info(
-            "OTel SDK initialized — writing spans+logs directly to %s/default.otel_{traces,logs}",
+            "OTel SDK initialized — writing spans+logs directly to %s/%s",
             settings.ch_host,
+            otel_table("otel_{traces,logs}"),
         )
     else:  # otlp
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
@@ -306,7 +309,7 @@ def _init_metrics(resource: Any, exporter_mode: str, endpoint: str) -> None:
             settings.otel_metrics_export_interval_s,
             "delta" if settings.otel_metrics_delta_temporality else "cumulative",
             heartbeat,
-            "default.otel_metrics_{sum,histogram,gauge}" if exporter_mode == "ch" else endpoint,
+            otel_table("otel_metrics_{sum,histogram,gauge}") if exporter_mode == "ch" else endpoint,
         )
     except Exception as e:  # noqa: BLE001 — metrics must not stop startup
         log.warning("OTel metrics init failed: %s", e)
@@ -347,8 +350,9 @@ def _instrument_http(app: Any | None, exporter_mode: str, endpoint: str) -> None
         _instrument_fastapi(app)
     elif app is not None:
         log.info(
-            "OTel: no traces backend (no default.otel_traces / OTLP endpoint) — "
-            "skipping FastAPI auto-instrumentation"
+            "OTel: no traces backend (no %s / OTLP endpoint) — "
+            "skipping FastAPI auto-instrumentation",
+            otel_table("otel_traces"),
         )
 
     # Auto-instrument outbound httpx calls as child spans of the request.

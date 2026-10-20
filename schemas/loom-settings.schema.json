@@ -211,8 +211,9 @@
         },
         "ch_database": {
           "default": "loom",
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]*$",
           "type": "string",
-          "description": "Default database of the ClickHouse connection. Loom's schema is always in `loom`, whatever this says (queries and migrations address `loom.<table>`): leave it."
+          "description": "The database Loom's schema lives in: every table, view and the migrations ledger, and the connection's default database. Statements are written against `loom` and name this database where they reach ClickHouse (server/core/ch_names.py); KeeperMap paths move with it. Set it before the first migration: a name with no database while a schema is in `loom` refuses to start (create the database first to start a second schema). Letters, digits, `_` and `-`. Read once at startup."
         },
         "ch_host": {
           "default": "localhost",
@@ -283,6 +284,12 @@
           "type": "string",
           "description": "JSON map {traffic class: ClickHouse settings} applied by `server.core.ch.statement_settings` to every read (an explicit per-call setting wins). `priority`: 1 served first, larger waits, 0 opts out; `max_threads` caps CPU per statement. Neither changes the rows returned. `background` (workers, operator CLIs) bypasses the filesystem cache on a miss so a backfill scan does not evict interactive data."
         },
+        "ch_telemetry_database": {
+          "default": "loom_telemetry",
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]*$",
+          "type": "string",
+          "description": "The database the telemetry Loom derives from its own tables lives in (`sli_minute`), outside the schema so a reader can be granted it alone."
+        },
         "ch_timeout_ddl_s": {
           "default": 300.0,
           "type": "number",
@@ -305,8 +312,9 @@
         },
         "clickstack_database": {
           "default": "",
+          "pattern": "^[^`]*$",
           "type": "string",
-          "description": "ClickStack erasure: direct ALTER TABLE DELETE on the OTel tables in the same CH service. `clickstack_database` = HyperDX's DB (\"\" skips the leg); `clickstack_user_id_keys` = comma-separated Map attribute keys that carry user_id (ORed; depends on the emitting SDK). empty → skip cascade"
+          "description": "The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse service: where `otel_exporter = \"ch\"` writes spans, logs and metrics, and where the erasure cascade deletes a user's rows with ALTER TABLE DELETE. \"\" = the `default` database for the exporter, and no erasure cascade."
         },
         "clickstack_user_id_keys": {
           "default": "user_id,user.id,enduser.id",
@@ -4592,7 +4600,7 @@
             "otlp"
           ],
           "type": "string",
-          "description": "OTel exporter, for spans and metrics: \"ch\" writes to `default.otel_traces` and `default.otel_metrics_*` on the same service, \"otlp\" ships to otel_exporter_otlp_endpoint (headers: comma-separated K=V), \"\" = auto (otlp when the endpoint is set, else ch)."
+          "description": "OTel exporter, for spans and metrics: \"ch\" writes to `otel_traces` and `otel_metrics_*` in `clickstack_database` (`default` when empty) on the same service, \"otlp\" ships to otel_exporter_otlp_endpoint (headers: comma-separated K=V), \"\" = auto (otlp when the endpoint is set, else ch)."
         },
         "otel_exporter_otlp_endpoint": {
           "default": "",
