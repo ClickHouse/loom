@@ -750,14 +750,14 @@ Source: `server/settings/_memory.py`
 
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `LOOM_MEMORY_SENSITIVITY_AUTODETECT` | `bool` | `True` | With no explicit `sensitivity`, detect it from the value with regexes: credential shapes -> 'high' (never embedded, key-only reads, audited); email/phone -> 'medium' (embedded, labelled). Off = every row stays ''. |
+| `LOOM_MEMORY_SENSITIVITY_AUTODETECT` | `bool` | `True` | With no explicit `sensitivity`, detect it from the value with regexes: credential shapes, card numbers, SSNs and stated PINs -> 'high' (never embedded, key-only reads, audited); email/phone/IBAN -> 'medium' (embedded, labelled). Off = every row stays ''. |
 | `LOOM_MEMORY_SENSITIVE_RETENTION_DAYS` | `int` | `0` | `medium`/`high` rows get expires_at = now + N days on the set and bulk paths (a shorter caller expiry wins) and, if the caller set none, this on_expire. 0 = off. |
 | `LOOM_MEMORY_SENSITIVE_ON_EXPIRE` | `'tombstone' \| 'demote' \| 'anonymize'` | `'anonymize'` | `on_expire` given to a sensitive row whose caller set none. |
 | `LOOM_SENSITIVITY_SWEEP_ENABLED` | `bool` | `True` | Daily sweep: re-label live rows written `sensitivity = ''` by a path that skipped the detector, as a new version per row; `high` rows' embeddings are tombstoned, never ALTER UPDATE. Covers the trailing window; the backlog is `loom sensitivity-sweep --apply`. |
 | `LOOM_SENSITIVITY_SWEEP_INTERVAL_SECONDS` | `int` | `86400` | Seconds between sensitivity sweep passes. |
 | `LOOM_SENSITIVITY_SWEEP_WINDOW_DAYS` | `int` | `2` | Days back the sweep re-labels rows created in. |
 | `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` | `int` | `500` | Rows one sweep pass re-labels (at least 1). |
-| `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` | Shapes the sweep applies (comma-separated: credential, email, phone, other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`. |
+| `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` | Shapes the sweep applies (comma-separated: credential, email, phone, other). Every high row is `credential`; an IBAN-only row is `other`. `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`. |
 
 ### Code-linked memories
 

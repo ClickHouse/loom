@@ -397,3 +397,119 @@ def test_a_protected_attribute_after_a_newline_is_tagged(monkeypatch: pytest.Mon
     stored = json.dumps({"note": "status update:\nmarried last spring"})
     assert attribute_tags(stored) == []
     assert attribute_tags(detector_text(stored)) != []
+
+
+# Payment and identity numbers. 4111 1111 1111 1111 and 5500 0000 0000 0004 are the
+# networks' published test cards; GB82 WEST ... and DE89 3704 ... are ISO 13616's examples.
+@pytest.mark.parametrize(
+    "text",
+    [
+        "card 4111 1111 1111 1111 exp 04/29",
+        "charge it to 4111-1111-1111-1111",
+        "mastercard 5500000000000004",
+        "amex 3782 822463 10005",
+        "SSN 123-45-6789 on the form",
+        "My employee badge PIN is 4471",
+        "pin: 4471",
+        "PIN code 0042",
+        "CVV 123",
+        "the cvc was 987",
+        "passcode = 908712",
+        "Security code: 55512",
+    ],
+)
+def test_payment_and_identity_numbers_are_high(text: str) -> None:
+    assert detect_sensitivity(text) == "high"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "iban GB82 WEST 1234 5698 7654 32",
+        "pay to DE89370400440532013000 by Friday",
+        # a phone number keeps its own tier: 13 digits after `+`, Luhn-valid or not
+        "call +49 1512 3456789",
+        "+1 415 555 0123",
+    ],
+)
+def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
+    assert detect_sensitivity(text) == "medium"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "card 4111 1111 1111 1112",  # fails the Luhn check
+        "order 4111111111111112 shipped",
+        "order 20240115103000 shipped",  # a yyyymmdd run: no card prefix
+        "build 18446744073709551615",  # 20 digits: longer than any card
+        "SSN 000-12-3456",  # never-issued area
+        "SSN 666-12-3456",
+        "SSN 912-34-5678",
+        "SSN 123-00-4567",  # group 00
+        "SSN 123-45-0000",  # serial 0000
+        "released 2024-01-15",
+        "PIN 3 of the header",
+        "pin 100 of the connector",
+        "pinned 4471 rows",
+        "the spinner took 1500 ms",
+        "a pin is 2 mm wide",
+        "iban GB82 WEST 1234 5698 7654 33",  # fails mod-97
+        "ticket AB12 CDEF GHIJ KLMN",
+    ],
+)
+def test_lookalike_numbers_stay_unset(text: str) -> None:
+    assert detect_sensitivity(text) == ""
+
+
+@pytest.mark.parametrize(
+    ("value", "level"),
+    [
+        ({"card": "4111 1111 1111 1111"}, "high"),
+        ({"card": 4111111111111111}, "high"),
+        ({"note": "badge PIN is 4471"}, "high"),
+        ({"iban": "GB82WEST12345698765432"}, "medium"),
+        # each scalar is its own line: a list of digit groups is not a card number, and a
+        # key is not a label for the next scalar (as with `password`)
+        ({"groups": [4111, 1111, 1111, 1111]}, ""),
+        ({"pin_count": 4471}, ""),
+        ({"pin": "4471"}, ""),
+    ],
+)
+def test_a_json_value_reads_by_its_scalars(value: object, level: str) -> None:
+    from server.memory.domain.sensitivity import detector_text
+
+    assert detect_sensitivity(detector_text(value)) == level
+
+
+def test_a_long_digit_run_is_read_in_one_pass() -> None:
+    from server.memory.domain.sensitivity import reads_high
+
+    assert detect_sensitivity("7" * 200_000) == ""
+    assert not reads_high("1 " * 100_000)
+    assert reads_high("x " * 100_000 + "CVV 123")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "card 4111 1111 1111 1111",
+        "amex 3782 822463 10005",
+        "SSN 123-45-6789",
+        "PIN is 4471",
+        "cvv: 123",
+        "passcode = 908712",
+        "Security code: 55512",
+        "iban GB82 WEST 1234 5698 7654 32",
+    ],
+)
+def test_the_sweeps_coarse_filter_selects_every_new_shape(text: str) -> None:
+    # The sweep narrows rows with RE2 `match()` before the detector runs, so the filter must
+    # select whatever the detector labels; Python's `re` reads this RE2 subset the same way.
+    import re
+
+    from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE, _shapes
+
+    assert re.search(COARSE_SHAPE_RE, text)
+    level = detect_sensitivity(text)
+    assert _shapes(text, level) == (("credential",) if level == "high" else ("other",))

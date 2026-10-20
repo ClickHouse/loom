@@ -51,10 +51,15 @@ COARSE_SHAPE_RE = (
     r"|bearer|client[_-]?secret|private[_-]?key)"
     r"|@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
     r"|[0-9]{3}[\s.()-]*[0-9]{3}[\s.-]*[0-9]{4}"
+    r"|[0-9](?:[ -]?[0-9]){12}"  # card number
+    r"|[0-9]{3}-[0-9]{2}-[0-9]{4}"  # SSN
+    r"|(?i:\bpin\b|passcode|\bcv[vc]|security code)"
+    r"|[A-Z]{2}[0-9]{2} ?[A-Z0-9]{4}"  # IBAN
 )
 
 # A probe shape reported beside the detector's levels, so a dry run says how many
-# e-mail-shaped rows it found (every high row is a credential).
+# e-mail-shaped rows it found (every high row is a `credential`, a card number, SSN or
+# stated PIN included).
 _PROBE_EMAIL = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
 
 
@@ -96,8 +101,9 @@ def _shapes(text: str, level: str) -> tuple[str, ...]:
     import re
 
     shapes: list[str] = []
-    # Every row the detector reads as high is a credential, whatever its shape: the scheduled
-    # pass applies `credential` and `email` rows by default.
+    # Every row the detector reads as high is a credential, whatever its shape (a key, a card
+    # number, an SSN, a stated PIN): the scheduled pass applies `credential` and `email` rows
+    # by default. An IBAN-only row is `other`, applied by the operator's run.
     if level == HIGH:
         shapes.append("credential")
     if re.search(_PROBE_EMAIL, text):

@@ -307,8 +307,9 @@ class MemorySettings(BaseModel):
 
     # ---- sensitivity and provenance ----
     # With no explicit `sensitivity`, detect it from the value with regexes:
-    # credential shapes -> 'high' (never embedded, key-only reads, audited);
-    # email/phone -> 'medium' (embedded, labelled). Off = every row stays ''.
+    # credential shapes, card numbers, SSNs and stated PINs -> 'high' (never
+    # embedded, key-only reads, audited); email/phone/IBAN -> 'medium' (embedded,
+    # labelled). Off = every row stays ''.
     memory_sensitivity_autodetect: bool = True
     # `medium`/`high` rows get expires_at = now + N days on the set and bulk
     # paths (a shorter caller expiry wins) and, if the caller set none, this
@@ -328,7 +329,8 @@ class MemorySettings(BaseModel):
     # Rows one sweep pass re-labels (at least 1).
     sensitivity_sweep_max_rows_per_pass: int = Field(default=500, ge=1)
     # Shapes the sweep applies (comma-separated: credential, email, phone,
-    # other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label
+    # other). Every high row is `credential`; an IBAN-only row is `other`.
+    # `phone` (a ten-digit run) mostly matches ids, and a `medium` label
     # demotes the row in ranking, so it is left to the operator's
     # `--only-shape phone`.
     sensitivity_sweep_shapes: str = "credential,email"

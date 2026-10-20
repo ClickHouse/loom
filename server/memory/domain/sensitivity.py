@@ -6,16 +6,23 @@ deterministic regexes — no LLM, no network:
 
   high    credential shapes: API keys with a known prefix, AWS access key
           ids, private-key blocks, JWTs, `password=` / `secret:` assignments
-          followed by a long token. A 'high' row is never embedded and is
-          readable by key only, with an audit row per read.
-  medium  contact details: an email address or a phone number. Embedded and
-          searchable, but labelled so a pack or an export can treat it.
+          followed by a long token. Also payment and identity numbers: a card
+          number that passes the Luhn check, a US Social Security number, and
+          a PIN, passcode, CVV or security code stated with its value. A
+          'high' row is never embedded and is readable by key only, with an
+          audit row per read.
+  medium  contact and account details: an email address, a phone number, or
+          an IBAN that passes its mod-97 check. Embedded and searchable, but
+          labelled so a pack or an export can treat it.
   ''      everything else (unset). Rows are not labelled 'low' by the
           detector; 'low' is a caller's explicit statement.
 
-The high patterns are the same family `scripts/gates/check_no_secrets.py` uses to
-keep credentials out of the repo; a memory row holding a live key must never
-be pulled into a prompt by similarity, which is what embedding it would do.
+The key and token patterns are the same family `scripts/gates/check_no_secrets.py`
+uses to keep credentials out of the repo; the card, SSN and PIN patterns are not
+repo secrets and live here only. A memory row holding a live key or a card number
+must never be pulled into a prompt by similarity, which is what embedding it would
+do. Every pattern is a single linear regex pass, and the Luhn and mod-97 checks
+run only on what a pattern matched, so the work stays linear in the text.
 """
 
 from __future__ import annotations
@@ -54,6 +61,65 @@ _MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (
     # "(415) 555 0123" match but a 4-digit year or a 6-digit count does not.
     re.compile(r"(?<![\w.])(?:\+?\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?![\w.])"),
 )
+
+# A card number: 13-19 digits, optionally grouped by single spaces or dashes, not part of a
+# longer digit run and not after `+` (an international phone number). `_is_card` then
+# requires an issuer's leading digits and the Luhn check, which a timestamp, an order
+# number or a phone number passes only by chance.
+_CARD = re.compile(r"(?<![\d+])(?<!\d[ -])\d(?:[ -]?\d){12,18}(?![ -]?\d)")
+# Leading digits of the card networks: Amex/Diners 3, Visa 4, Mastercard 51-55 and 22-27,
+# Discover/UnionPay 6. A run starting 0, 1, 7, 8, 9, 20 or 21 (epoch milliseconds,
+# yyyymmdd dates) is never a card.
+_CARD_PREFIXES = ("3", "4", "5", "6", "22", "23", "24", "25", "26", "27")
+# A US Social Security number written ddd-dd-dddd, without the never-issued ranges:
+# area 000, 666 or 9xx, group 00, serial 0000.
+_SSN = re.compile(r"(?<![\d-])(?!000|666|9)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d-])")
+# A PIN, passcode, CVV/CVC or security code followed by its 3-8 digit value, directly or
+# after `is`, `was`, `:`, `=` or `#`: "PIN is 4471", "cvv: 123". A value followed by `of`
+# names a position ("pin 100 of the header"), not a secret.
+_STATED_PIN = re.compile(
+    r"(?i)\b(?:pin(?: code| number)?|passcode|cvv2?|cvc2?|security code)\b"
+    r"(?:\s+(?:is|was))?\s*[:=#]?\s*\d{3,8}(?!\d)(?!\s+of\b)"
+)
+# An IBAN: country code, two check digits, then the BBAN in groups of four (spaced or
+# not) with a short last group; 15-34 characters once the spaces are gone.
+_IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?\b")
+
+
+def _luhn_ok(digits: str) -> bool:
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if i % 2 == 1:
+            d = d * 2 - 9 if d > 4 else d * 2
+        total += d
+    return total % 10 == 0
+
+
+def _is_card(match: str) -> bool:
+    digits = match.replace(" ", "").replace("-", "")
+    return digits.startswith(_CARD_PREFIXES) and _luhn_ok(digits)
+
+
+def _is_iban(match: str) -> bool:
+    """ISO 13616: move the first four characters to the end, letters become 10-35, and the
+    number is 1 mod 97."""
+    iban = match.replace(" ", "")
+    if not 15 <= len(iban) <= 34:
+        return False
+    moved = iban[4:] + iban[:4]
+    return int("".join(str(int(ch, 36)) for ch in moved)) % 97 == 1
+
+
+def _has_high_number(text: str) -> bool:
+    """A card number, an SSN or a stated PIN in `text`."""
+    if _SSN.search(text) or _STATED_PIN.search(text):
+        return True
+    return any(_is_card(m.group()) for m in _CARD.finditer(text))
+
+
+def _has_iban(text: str) -> bool:
+    return any(_is_iban(m.group()) for m in _IBAN.finditer(text))
 
 
 # --- Protected-attribute classes --------------------------------------------
@@ -161,16 +227,14 @@ def attribute_tags(text: str, existing: Iterable[str] = ()) -> list[str]:
 
 
 def detect_sensitivity(text: str) -> str:
-    """Classify `text`: 'high' for a credential shape, 'medium' for contact
-    details, '' otherwise. Order matters — a line with both is 'high'."""
+    """Classify `text`: 'high' for a credential, card, SSN or stated PIN, 'medium' for
+    contact details or an IBAN, '' otherwise. Order matters — a line with both is 'high'."""
     if not text:
         return ""
-    for pat in _HIGH_PATTERNS:
-        if pat.search(text):
-            return HIGH
-    for pat in _MEDIUM_PATTERNS:
-        if pat.search(text):
-            return MEDIUM
+    if any(pat.search(text) for pat in _HIGH_PATTERNS) or _has_high_number(text):
+        return HIGH
+    if any(pat.search(text) for pat in _MEDIUM_PATTERNS) or _has_iban(text):
+        return MEDIUM
     return ""
 
 

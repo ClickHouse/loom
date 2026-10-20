@@ -153,6 +153,47 @@ def test_a_high_row_is_written_without_an_embedding_row_and_the_gauge_reads_zero
     _wait(lambda: _sensitive_reads() >= 1)
 
 
+@pytest.mark.parametrize(
+    ("value", "level"),
+    [
+        ("My employee badge PIN is 4471", "high"),
+        ("the company card is 4111 1111 1111 1111", "high"),
+        ("her SSN is 123-45-6789", "high"),
+        ("salary goes to GB82 WEST 1234 5698 7654 32", "medium"),
+    ],
+    ids=["pin", "card", "ssn", "iban"],
+)
+def test_payment_and_identity_numbers_are_labelled_on_write(
+    control_plane_url: str, ch_client, token: str, value: str, level: str
+) -> None:
+    key = f"pii_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": NAMESPACE, "agent": "canary"}
+    r = _post(control_plane_url, token, "memory.set", {**ident, "memory_key": key, "value": value})
+    assert r.status_code == 200, r.text
+    r = _post(control_plane_url, token, "memory.get", {**ident, "memory_key": key})
+    assert r.status_code == 200 and r.json().get("found") is True, r.text
+    assert r.json().get("sensitivity") == level, r.text[:300]
+
+    def _embedding_rows() -> int:
+        return int(
+            ch_client.query(
+                "SELECT count() FROM loom.memory_embeddings FINAL WHERE org = {o:String} "
+                "AND namespace = {n:String} AND memory_key = {k:String} AND tombstoned_at IS NULL",
+                parameters={"o": ORG, "n": NAMESPACE, "k": key},
+            ).result_rows[0][0]
+        )
+
+    if level == "high":
+        assert _embedding_rows() == 0
+        r = _post(
+            control_plane_url, token, "memory.search", {**ident, "query": value, "fresh": True}
+        )
+        assert r.status_code == 200, r.text
+        assert key not in [h.get("memory_key") for h in r.json().get("results", [])]
+    else:
+        _wait(lambda: _embedding_rows() == 1)
+
+
 @pytest.mark.parametrize("op", ["memory.set", "memory.bulk_set"])
 def test_re_setting_an_embedded_key_as_high_retires_its_old_vector(
     control_plane_url: str, ch_client, token: str, op: str
