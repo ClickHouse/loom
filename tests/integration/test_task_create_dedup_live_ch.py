@@ -1211,3 +1211,25 @@ async def test_a_reopen_and_a_claim_right_after_a_cancel_keep_the_claimants_leas
     await transitions.handle_task_heartbeat(
         wire.TaskHeartbeatInput(org=org, namespace="private", agent="bot", task_id=tid, fence=fence)
     )
+
+
+@pytest.mark.asyncio
+async def test_the_lease_reconcile_repairs_no_more_rows_than_its_limit(ch: Any) -> None:
+    """Three stray idle rows of cancelled tasks and a limit of one: one pass repairs one,
+    and the next passes the rest."""
+    from server.tasks.app import sweep
+
+    await sweep.reconcile_leases(_later(), limit=10_000)  # what other tests left behind
+    org = f"itest-reclimit-{uuid.uuid4().hex[:8]}"
+    backend = await repo.lease_backend()
+    tids = []
+    for _ in range(3):
+        tid = await _todo_task(org)
+        await transitions.handle_task_cancel(_reason(org, tid))
+        task = await repo.fetch_task(org, tid)
+        await backend.ensure_row(tid, org, task["inbox"], int(task["fence"]))  # the stray row
+        tids.append(tid)
+    assert await sweep.reconcile_leases(_later(), limit=1) == 1
+    assert [await _lease(ch, tid) is None for tid in tids].count(True) == 1
+    assert await sweep.reconcile_leases(_later(), limit=10_000) >= 2
+    assert [await _lease(ch, tid) for tid in tids] == [None, None, None]

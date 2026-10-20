@@ -21,7 +21,12 @@ from server.memory.store import conflict_resolver as queue
 from server.settings import Settings, settings
 
 # What decided a retirement, as `_act_on_verdicts` passes it.
-_WHY = {"verdict": "update", "confidence": "0.99", "model": "m", "prompt_version": "v3"}
+_WHY = {
+    "judge_verdict": "update",
+    "judge_confidence": "0.99",
+    "judge_model": "m",
+    "judge_prompt_version": "v3",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -107,7 +112,7 @@ def test_cross_session_is_another_session_of_a_subject_with_no_user() -> None:
     # A user_id sent empty is stored as sent and is the anonymous user too.
     empty = NS(user_id="", agent="a", session_id="s1")
     assert resolver._cross_session(empty, {"agent": "a", "session_id": "s2"})
-    # Whitespace is a user, as the cluster SQL (`user_id NOT IN ('-', '')`) reads it.
+    # Whitespace is a user, as `_subject_params` reads it.
     blank = NS(user_id=" ", agent="a", session_id="s1")
     assert not resolver._cross_session(blank, {"agent": "a", "session_id": "s2"})
     # No session is '-' or sent empty: either spelling is the other.
@@ -351,7 +356,8 @@ async def test_the_cluster_keeps_the_floor_the_cap_and_the_rows_flags() -> None:
     # m8 (cosine 0.60) is the row's flag: it takes a place first; below 0.60 never.
     assert [p["memory_id"] for p in peers] == ["m1", "m2", "m8"]
     sql, params = ch.calls[0]
-    assert "NOT (agent = {a:String} AND session_id = {s:String} AND memory_key = {k:String})" in sql
+    own = "NOT (agent = {a:String} AND user_id = {u:String} AND session_id = {s:String}"
+    assert own + " AND memory_key = {k:String})" in " ".join(sql.split())
     assert "user_id IN {users:Array(String)} AND ({anon:UInt8} = 0 OR agent = {a:String})" in sql
     assert params["users"] == [str(_q()["user_id"])] and params["anon"] == 0
     assert params["org"] == "o" and params["ns"] == "ns" and params["lim"] == 12

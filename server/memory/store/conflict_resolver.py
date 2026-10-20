@@ -228,7 +228,10 @@ _LIVE_VECTORS = """
         FROM loom.memory_embeddings FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND user_id IN {users:Array(String)} AND ({anon:UInt8} = 0 OR agent = {a:String})
-          AND NOT (agent = {a:String} AND session_id = {s:String} AND memory_key = {k:String})
+          -- The row itself, by its full identity: a twin under the other spelling of no
+          -- user or no session is another row, and a peer.
+          AND NOT (agent = {a:String} AND user_id = {u:String} AND session_id = {s:String}
+                   AND memory_key = {k:String})
           AND scope = 'private' AND tombstoned_at IS NULL
           AND status IN ('active', 'conflicted') AND memory_type = {mt:String}
           AND (expires_at IS NULL OR expires_at > now())

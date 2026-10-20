@@ -42,18 +42,19 @@ _ENTRY_FIELDS = (
     "superseded_by_key",
     "label",
     "unconfirmed",
-    # The conflict resolver's grounds for a retirement.
-    "verdict",
-    "confidence",
-    "model",
-    "prompt_version",
+    # The conflict resolver's grounds for a retirement. Prefixed: a memory row has its own
+    # `confidence`, which an entry built from a whole row must not carry.
+    "judge_verdict",
+    "judge_confidence",
+    "judge_model",
+    "judge_prompt_version",
 )
 
 
 def retired_entry(row: Mapping[str, Any] | Any, **extra: Any) -> dict[str, str]:
     """The audit entry for one retired row (a dict or a `MemoryRow`): ids, keys,
-    identity, the label (the conflict resolver's `update`) and the resolver's verdict,
-    confidence, model and prompt version. Any other field, the value first, is
+    identity, the label (the conflict resolver's `update`) and the resolver's judge_*
+    fields. Any other field, the value and the row's own `confidence` first, is
     dropped."""
     src = dict(row) if isinstance(row, Mapping) else {f: getattr(row, f, "") for f in _ENTRY_FIELDS}
     src.update(extra)

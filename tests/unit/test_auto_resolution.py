@@ -1140,3 +1140,25 @@ async def test_an_anonymous_point_write_is_owed_nothing_for_a_key_another_sessio
         )
         assert mark is None, user
     assert reads == []
+
+
+def test_a_retired_entry_keeps_the_judges_fields_and_not_the_rows_confidence() -> None:
+    """An entry built from a whole written row (a value update's) leaves out the row's
+    text and its own extraction `confidence`; the resolver's grounds go under judge_*."""
+    from server.memory.app.auto_resolution import retired_entry
+
+    row = {
+        "memory_id": "m1",
+        "memory_key": "k",
+        "agent": "a",
+        "user_id": "u",
+        "session_id": "s",
+        "value": "secret text",
+        "confidence": 0.42,
+        "status": "superseded",
+    }
+    plain = retired_entry(row, superseded_by="m2", superseded_by_key="k")
+    assert "value" not in plain and "confidence" not in plain
+    judged = retired_entry(row, superseded_by="m2", judge_verdict="update", judge_confidence="0.99")
+    assert judged["judge_verdict"] == "update" and judged["judge_confidence"] == "0.99"
+    assert "confidence" not in judged

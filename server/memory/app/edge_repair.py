@@ -35,10 +35,10 @@ _REPAIR_READ_SETTINGS = "SETTINGS select_sequential_consistency = 1, apply_mutat
 
 
 async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch: Any) -> None:
-    """The close recorded without a value (a 'high' row's): end, one `end_edges` a page,
-    the pairs of the row's older values that can close (open, held by no live row, not
-    named by the row now). Each value read closes, so a pass that runs out of pages
-    raises and the next one, from the start, reads what is left."""
+    """Ends the pairs of the row's older values that can close (open, held by no live
+    row, not named by the row now), one `end_edges` call per page. Each value read
+    closes, so a pass that runs out of pages raises and the next pass reads what is
+    left."""
     params: dict[str, Any] = {"org": org, "ns": namespace, "id": memory_id}
     named = await ch.query_all(
         f"""

@@ -256,8 +256,8 @@ async def _retire(
     records and follows, or None. The record and the follow are owed to the repair
     before the supersede commits (FOLLOW_OWED, acted on only while the loser is retired
     behind the winner) and resolved once both land. No intent, no retirement. `why`: the
-    verdict, its confidence, the model and the prompt version, kept on each retired entry
-    so an Undo shows what decided it."""
+    judge's verdict, confidence, model and prompt version, kept on each retired entry for
+    the audit record."""
     from server.memory.app.auto_resolution import CONFLICT_RESOLVER, retired_entry
     from server.memory.app.conflicts import apply_refines
     from server.memory.app.projection_failures import FOLLOW_OWED, record_projection_failure
@@ -838,10 +838,10 @@ async def _act_on_verdicts(
                 counts.skipped_no_action += 1
                 continue
             why = {
-                "verdict": v.verdict,
-                "confidence": str(v.confidence),
-                "model": model,
-                "prompt_version": cr.PROMPT_VERSION,
+                "judge_verdict": v.verdict,
+                "judge_confidence": str(v.confidence),
+                "judge_model": model,
+                "judge_prompt_version": cr.PROMPT_VERSION,
             }
             taken = await _settle_pair(org, namespace, row, peer, action, counts, why=why)
             if taken is not None:

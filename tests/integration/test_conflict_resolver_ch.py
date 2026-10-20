@@ -457,10 +457,10 @@ async def test_two_rows_judged_at_once_retire_their_shared_peer_once(
     # One record of the retirement, and one versioned write of it.
     (record,) = await _audit(ch, org, "memory.auto_supersede")
     assert [e["memory_id"] for e in record["retired"]] == [rows["office_city"]["id"]]
-    # What decided it rides the entry, for the Undo to show.
+    # What decided it rides the entry, for the audit record.
     (entry,) = record["retired"]
-    assert entry["verdict"] == "update" and float(entry["confidence"]) >= 0.98
-    assert entry["model"] and entry["prompt_version"] == PROMPT_VERSION
+    assert entry["judge_verdict"] == "update" and float(entry["judge_confidence"]) >= 0.98
+    assert entry["judge_model"] and entry["judge_prompt_version"] == PROMPT_VERSION
     # Distinct versions: the ReplacingMergeTree keeps a repeat of one until a merge.
     versions = await ch.query_all(
         "SELECT uniqExact(version) AS n FROM loom.memory_versions WHERE org = {org:String}"
@@ -768,6 +768,22 @@ async def test_the_anonymous_users_two_spellings_are_one_subject(ch, wired, monk
     (row,) = [r for r in await queue.owed_rows(limit=50) if r["org"] == org]
     cluster = await queue.cluster_peers(row, floor=0.7, limit=8, ch=ch)
     assert [(p["memory_key"], p["user_id"]) for p in cluster.peers] == [("office_city", "-")]
+
+
+async def test_a_spelling_twin_of_the_row_is_its_peer(ch, wired, monkeypatch) -> None:
+    """The row ('-' user, '-' session) and its twin under the other spelling of no user
+    ("" user, '-' session) share agent, session and key, yet are two rows: the twin is
+    in the row's cluster, so the pair is judged."""
+    from server.memory.store import conflict_resolver as queue
+
+    org, _ = wired
+    await _set(org, "-", "office", "The office is in Paris", user="")
+    await _set(org, "-", "office", "The office moved to Rome", user="-")
+    await _place(ch, org, "-", "office", _vec((92, 1.0)), owed=False, user="")
+    await _place(ch, org, "-", "office", _vec((92, 0.8), (93, 0.6)), owed=True, user="-")
+    (row,) = [r for r in await queue.owed_rows(limit=50) if r["org"] == org]
+    cluster = await queue.cluster_peers(row, floor=0.6, limit=8, ch=ch)
+    assert [(p["memory_key"], p["user_id"]) for p in cluster.peers] == [("office", "")]
 
 
 async def test_a_point_write_of_a_key_another_session_holds_is_owed(ch, wired, monkeypatch) -> None:

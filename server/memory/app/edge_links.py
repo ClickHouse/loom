@@ -215,15 +215,20 @@ async def _drop_links_of(
             """,
             params={**params, "ids": sorted({memory_id for memory_id, *_ in part}), "links": part},
         )
-    await _restore_kept_links(input, drop, close_ids, ch=ch)
+    await _restore_kept_links(input, drop, set(deleted), close_ids, ch=ch)
 
 
 async def _restore_kept_links(
-    input: Any, drop: list[tuple[str, str, str, str]], close_ids: list[str], *, ch: Any
+    input: Any,
+    drop: list[tuple[str, str, str, str]],
+    deleted: set[tuple[str, str, str, str]],
+    close_ids: list[str],
+    *,
+    ch: Any,
 ) -> None:
-    """After the DELETE, write back the links of `drop` whose row holds them now (a write
-    landed since the drop read them) and undo the ends this drop's close (`close_ids`)
-    stamped on their pairs."""
+    """After the DELETE, for the links of `drop` whose row holds them now (a write landed
+    since the drop read them): write back those `deleted` took, and undo the ends this
+    drop's close (`close_ids`) stamped on their pairs."""
     rows = await query_all_sliced(
         ch,
         f"""
@@ -243,6 +248,7 @@ async def _restore_kept_links(
     )
     current = {str(r["id"]): r for r in rows}
     links = []
+    pairs = set()
     for memory_id, sha, a, b in drop:
         row = current.get(memory_id)
         if row is None or str(row["sha"]) != sha:
@@ -250,17 +256,16 @@ async def _restore_kept_links(
         named = set(set_entities.declared_entities(row["entities"]))
         if row["sensitivity"] == "high" and not {a, b} <= named:
             continue
-        writer = SimpleNamespace(org=input.org, namespace=input.namespace, user_id=row["user_id"])
-        links.append(projections.edge_row_link(writer, memory_id, sha, (a, b)))
-    if not links:
-        return
-    await ch.insert("loom.entity_edge_rows", links)
+        pairs.add((a, b))
+        if (memory_id, sha, a, b) in deleted:
+            writer = SimpleNamespace(
+                org=input.org, namespace=input.namespace, user_id=row["user_id"]
+            )
+            links.append(projections.edge_row_link(writer, memory_id, sha, (a, b)))
+    if links:
+        await ch.insert("loom.entity_edge_rows", links)
     await projections.reopen_closed_by(
-        ch,
-        org=input.org,
-        namespace=input.namespace,
-        close_ids=close_ids,
-        pairs=sorted({(link["entity_a"], link["entity_b"]) for link in links}),
+        ch, org=input.org, namespace=input.namespace, close_ids=close_ids, pairs=sorted(pairs)
     )
 
 

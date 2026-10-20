@@ -907,14 +907,10 @@ async def finish_interval_repair(
 # would rewrite the table over and over, in a mutation queue shared with erasure.
 # The closes of one write are folded into one UPDATE per table (per parameter's worth
 # of keys when the names are long): the row's key is matched by `IN` and its own
-# valid_to is looked up positionally with arrayElement/indexOf.
+# valid_to is looked up positionally with arrayElement/indexOf. A mutation is no
+# INSERT, so the client's graph-write mark does not see it: each one notes its write
+# (`graph_write_marks.note_write`).
 # ---------------------------------------------------------------------------
-def _note_graph_write(org: str, namespace: str) -> None:
-    """A graph mutation landed: a mutation is no INSERT, so the client's graph-write mark
-    does not see it."""
-    graph_write_marks.note_write(org, namespace)
-
-
 _GRAPH_KEY_SEP = "\x1f"
 _EDGE_KEY_EXPR = (
     "concat(entity_a, char(31), entity_b, char(31), "
@@ -979,7 +975,7 @@ async def close_triples(
             )
             issued += 1
     if issued:
-        _note_graph_write(org, namespace)
+        graph_write_marks.note_write(org, namespace)
     return issued
 
 
@@ -1018,7 +1014,7 @@ async def reopen_triples(
                 "closed_at": closed_at,
             },
         )
-    _note_graph_write(org, namespace)
+    graph_write_marks.note_write(org, namespace)
 
 
 async def end_triples_now(
@@ -1095,7 +1091,7 @@ async def _end_triples_slice(
         """,
         params=params,
     )
-    _note_graph_write(org, namespace)
+    graph_write_marks.note_write(org, namespace)
 
 
 # Each edge's own end in the parallel arrays `end_edges` passes, and the valid_to it
@@ -1330,7 +1326,7 @@ async def _end_edge_rows(
         """,
         params={**params, "ending": ending},
     )
-    _note_graph_write(params["org"], params["ns"])
+    graph_write_marks.note_write(params["org"], params["ns"])
 
 
 async def reopen_held_edges(
@@ -1389,7 +1385,7 @@ async def reopen_closed_by(
             """,
             params={"org": org, "ns": namespace, "close_ids": close_ids, "pairs": part},
         )
-    _note_graph_write(org, namespace)
+    graph_write_marks.note_write(org, namespace)
 
 
 async def open_triples_among(

@@ -202,10 +202,10 @@ time of the revision owed. Neither reads a namespace that
 **The cluster.** A row is judged against up to `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_PEERS`
 (8) live peers of its `memory_type`, nearest first, at cosine
 `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY` (0.60) or more, in its subject: the same
-`user_id`, or for the anonymous user `-` the same agent. Any session counts, so a row of
-the same key written by another session is a peer; the row's own identity is not. Peers
-join their rows by the full identity, never by key alone, since keys repeat across
-sessions. The type, liveness and expiry are applied in the vector read itself, before
+`user_id`, or for the anonymous user (`-` or a user_id sent empty) the same agent. Any
+session counts, so a row of the same key written by another session is a peer; the row's
+own identity is not. Peers join their rows by the full identity, never by key alone,
+since keys repeat across sessions. The type, liveness and expiry are applied in the vector read itself, before
 its limit, so closer rows of another type cannot take every place. The row's current
 flags (by id) and the nearest rows of its key in other sessions are read whatever the
 cutoff and the floor. The places go to the flags first, then to those same-key rows (at

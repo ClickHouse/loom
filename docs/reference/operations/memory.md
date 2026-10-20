@@ -2057,7 +2057,7 @@ The current status of some memories, by id: which automatic retirements still st
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `memory_ids` | `list[str]` | required | Memory ids in this namespace; an id the namespace does not hold is left out, as is one whose row a write of the same key replaced under another id (two first writes of a key racing) once the table's parts merge, as a read by id answers… |
+| `memory_ids` | `list[str]` | required | Ids this namespace does not hold are left out, including one replaced by a racing first write of the same key. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
