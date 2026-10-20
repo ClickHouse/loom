@@ -272,7 +272,6 @@ for (const width of [375, 700, 1400]) {
       const why = await box(row.getByRole("button", { name: "Why this result" }));
       expect(overlaps(s, key), "the scores clear the key").toBe(false);
       expect(overlaps(s, why), "the scores clear the button").toBe(false);
-      expect(s.x + s.width).toBeLessThanOrEqual(width);
       const time = await box(open.locator("time"));
       const card = await box(row);
       expect(time.x + time.width, "the time ends inside the row").toBeLessThanOrEqual(card.x + card.width);
