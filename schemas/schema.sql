@@ -1289,6 +1289,8 @@ CREATE TABLE IF NOT EXISTS loom.delete_version_checks
     `memory_key` String,
     `checked` UInt64,
     `tombstone` UInt64,
+    `actor` String DEFAULT '',
+    `request_id` String DEFAULT '',
     `done` UInt8 DEFAULT 0,
     `created_at` DateTime DEFAULT now(),
     `updated_at` DateTime64(3) DEFAULT now64(3)

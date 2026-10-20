@@ -680,6 +680,7 @@ async def handle_memory_delete_version(
             "memory_key": existing.memory_key,
             "checked": int(input.version),
             "tombstone": version,
+            **_calling(),
         }
         await memory_repo.record_delete_check(check, done=False)
         try:
@@ -689,6 +690,19 @@ async def handle_memory_delete_version(
             return await finish_delete_check(existing, check)
         except Exception as e:  # the check is recorded: a retry or the worker runs it
             raise _check_deferred(e) from e
+
+
+def _calling() -> dict[str, str]:
+    """The calling principal and request id, as the transport stamps the op's audit row:
+    kept with the check, so the worker's audit row for a delete it finishes names them."""
+    from server.auth.context import current_auth
+    from server.core.logging_config import request_id_var
+
+    auth = current_auth()
+    return {
+        "actor": str(getattr(auth, "subject", "") or "") if auth is not None else "",
+        "request_id": request_id_var.get() or "",
+    }
 
 
 def _check_deferred(e: Exception) -> BackendUnavailableError:

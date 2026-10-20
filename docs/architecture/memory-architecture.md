@@ -381,9 +381,11 @@ them, and copies another remover's tombstone on top unless the newest of them al
 carries that row in the same sense. A retry of the same delete runs the owed check and
 answers as the delete would have (when the tombstone's insert is what failed, the retry
 finds the row live and deletes it again); otherwise the `delete_version_check` worker runs
-it under the key lock (`memory/workers/delete_version_check.py`), by default within about
-six minutes (a 60-second grace, then a pass at most 300 seconds later). Until the check
-runs, `memory.get` and the list ops read the key as deleted (as live, when the tombstone's
+it under the key lock, and writes the op's audit row for a delete it finishes, under the
+deleting call's actor and request id (the 503 left none)
+(`memory/workers/delete_version_check.py`), by default within about six minutes (a
+60-second grace, then a pass at most 300 seconds later). Until the check runs,
+`memory.get` and the list ops read the key as deleted (as live, when the tombstone's
 insert failed), search can still return the removed value from its vectors and chunks, and
 a write the tombstone hid is not served; it comes back when the check runs. A write that
 lands under such a tombstone, aimed at an older version, writes itself again above it.

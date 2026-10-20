@@ -12,12 +12,35 @@ twice is harmless.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
+
+
+async def _audit_finished(check: dict[str, Any]) -> None:
+    """The memory.delete_version audit row of a delete this pass finished: its call answered
+    503, so the transport wrote none. Named by the deleting call's actor and request id."""
+    from server.observability import audit
+
+    await audit.emit(
+        "memory.delete_version",
+        org=check["org"],
+        namespace=check["namespace"],
+        actor=check.get("actor") or "-",
+        subject={
+            "agent": check["agent"],
+            "user_id": check["user_id"],
+            "session_id": check["session_id"],
+            "memory_key": check["memory_key"],
+            "version": str(check["checked"]),
+            "finished_by": "delete_version_check",
+        },
+        request_id=check.get("request_id") or "",
+    )
 
 
 async def run_pass() -> int:
@@ -42,7 +65,9 @@ async def run_pass() -> int:
                     check["session_id"],
                     check["memory_key"],
                 ):
-                    await rerun_delete_check(check)
+                    answer = await rerun_delete_check(check)
+                if answer is not None and answer.tombstoned:
+                    await _audit_finished(check)
                 finished += 1
             except Exception as e:  # noqa: BLE001 — one key's check must not stop the others
                 pass_context.note_failure(e, "delete_version_check")

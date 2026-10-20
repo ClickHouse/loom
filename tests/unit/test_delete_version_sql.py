@@ -1607,6 +1607,47 @@ async def test_a_check_whose_tombstone_is_missing_finishes_the_delete(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["the delete stands", "the key moved on"])
+async def test_the_worker_audits_a_delete_it_finishes(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    # The call answered 503, so the transport wrote no audit row. The worker writes the
+    # op's row when it finishes the delete, under the deleting call's actor and request
+    # id; a check that finds the key moved on deleted nothing and writes none.
+    from server.auth import context as auth_context
+    from server.core.logging_config import request_id_var
+    from server.memory.workers import delete_version_check
+    from server.observability import audit
+    from server.settings import settings
+
+    monkeypatch.setattr(auth_context, "current_auth", lambda: SimpleNamespace(subject="okf"))
+    rid = request_id_var.set("rid-1")
+    try:
+        if outcome == "the delete stands":
+            head, _commit_late = await _tombstone_held_back(ch, monkeypatch)
+        else:
+            head = await _owed_after_a_failed_check(ch, monkeypatch)
+    finally:
+        request_id_var.reset(rid)
+    emitted: list[tuple[str, dict[str, Any]]] = []
+
+    async def record(event_type: str, **kw: Any) -> str:
+        emitted.append((event_type, kw))
+        return ""
+
+    monkeypatch.setattr(audit, "emit", record)
+    monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
+    assert await delete_version_check.run_pass() == 1
+    if outcome == "the key moved on":
+        assert emitted == []
+        return
+    ((event, row),) = emitted
+    assert event == "memory.delete_version"
+    assert (row["actor"], row["request_id"]) == ("okf", "rid-1")
+    assert row["subject"]["memory_key"] == _KEY and row["subject"]["version"] == str(head)
+
+
+@pytest.mark.asyncio
 async def test_a_check_whose_tombstone_is_missing_leaves_a_later_set_alone(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
