@@ -823,7 +823,10 @@ ClickHouse filter selects only the shapes in the shape filter, so a ten-digit ru
 timestamp, a run id) the default filter leaves alone is never selected. Its card alternative
 selects only what can be a card: a lone 15- or 16-digit group or a printed grouping, each
 with a network's leading digit, so epoch milliseconds and 19-digit ids are not selected
-either. A selected row the detector leaves unlabelled is selected again on every pass, and
+either. Its credential-word alternative selects only an assignment, as the detector labels
+one: `password`, `secret`, `bearer`, `api_key` or another word of the detector's list, then
+`:` or `=` and eight characters of a value, so prose that names the word (`I forgot my
+password`, `cd $(pwd)`) is not selected. A selected row the detector leaves unlabelled is selected again on every pass, and
 paging past it keeps a run of them from hiding a later row that is high. A row behind more
 than that many pages of such rows waits for the operator's `loom sensitivity-sweep --apply`,
 which pages through its whole scope until `--limit` candidates are found. The sweep reads

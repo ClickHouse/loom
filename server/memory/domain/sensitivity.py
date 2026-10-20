@@ -41,6 +41,13 @@ HIGH: Final = "high"
 MEDIUM: Final = "medium"
 LEVELS: Final = ("", "low", "medium", "high")
 
+# The words a `password=…` style assignment starts with. The sweep's prefilter is built from
+# the same list.
+ASSIGNMENT_WORDS = (
+    r"password|passwd|pwd|api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|"
+    r"auth[_-]?token|bearer|client[_-]?secret|private[_-]?key"
+)
+
 _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsk-(?:proj-|ant-|lf-)?[A-Za-z0-9_-]{20,}"),  # OpenAI / Anthropic / Langfuse
     re.compile(r"\bpk-lf-[0-9a-fA-F-]{16,}"),
@@ -53,10 +60,7 @@ _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),  # Google API key
     # `password=…`, `api_key: …`, `secret := …`, `token = …` followed by a
     # token-shaped value of 8+ non-space characters.
-    re.compile(
-        r"(?i)\b(?:password|passwd|pwd|api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|"
-        r"auth[_-]?token|bearer|client[_-]?secret|private[_-]?key)\b\s*[:=]\s*[\"']?[^\s\"',;]{8,}"
-    ),
+    re.compile(rf"(?i)\b(?:{ASSIGNMENT_WORDS})\b\s*[:=]\s*[\"']?[^\s\"',;]{{8,}}"),
 )
 
 _MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (

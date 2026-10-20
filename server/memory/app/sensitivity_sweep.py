@@ -35,6 +35,7 @@ from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.app.high_fence import fence_high, tombstone_chunks_of
 from server.memory.domain.sensitivity import (
+    ASSIGNMENT_WORDS,
     HIGH,
     KEYED_SECRET_WORDS,
     MEDIUM,
@@ -83,6 +84,18 @@ _COARSE_KEYED = (
     rf"|(?:{_OTHER_KEYS}|{_key_words(SSN_KEYS)}){_KEY_VALUE}[0-9]{{3}})"
 )
 
+# The whitespace the detector's Unicode `\s` reads (`str.isspace`; U+3000 is the last), as
+# literal characters, since RE2's `\s` is ASCII and lacks `\v`; or a JSON escape.
+_UNICODE_SPACES = "".join(c for c in map(chr, range(0x3001)) if c.isspace())
+_ASSIGN_SPACE = rf"(?:[{_UNICODE_SPACES}]|\\[bfnrt]|\\u[0-9a-fA-F]{{4}})"
+# A `password=…` assignment, as the detector reads one: the word, `:` or `=`, then 8
+# characters of the value, which may start with a quote (`\"` in JSON text). So prose that
+# only names the word ("I forgot my password") is not selected.
+_COARSE_ASSIGNMENT = (
+    rf"(?i:{_JSON_BOUNDARY}(?:{ASSIGNMENT_WORDS})\b{_ASSIGN_SPACE}*[:=]{_ASSIGN_SPACE}*"
+    r"""(?:\\?"|')?[^\s"',;]{8})"""
+)
+
 # RE2, for ClickHouse `match()`: a superset of the shapes in
 # `memory/domain/sensitivity.py`'s high and medium patterns, by the shape `_shapes` gives
 # the row. Anything this misses the detector would miss too; anything it over-selects the
@@ -92,8 +105,7 @@ _COARSE_BY_SHAPE = {
         # the detector reads these prefixes at a word boundary, so `task-` and `disk-` are not
         rf"{_JSON_BOUNDARY}(?:sk-|pk-lf-|AKIA|gh[opusr]_|github_pat_|xox[abprs]-|eyJ|AIza)"
         r"|PRIVATE KEY"
-        r"|(?i:password|passwd|pwd|api[_-]?key|secret|access[_-]?token|auth[_-]?token"
-        r"|bearer|client[_-]?secret|private[_-]?key)"
+        rf"|{_COARSE_ASSIGNMENT}"
         # A card number, as `_has_card` reads one: a lone 15- or 16-digit group, or a
         # printed grouping that starts with a 4-digit group, each with a network's leading
         # digit. So epoch milliseconds and 19-digit ids are not selected.

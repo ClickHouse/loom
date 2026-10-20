@@ -447,6 +447,47 @@ async def test_phone_shaped_rows_in_one_org_never_hide_a_credential_in_another(
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_prose_naming_a_credential_word_never_hides_a_credential_in_another_org(
+    monkeypatch,
+) -> None:
+    # The first org holds more prose rows than a pass's pages, each naming a word the
+    # detector labels only as an assignment. The filter selects none of them, so the token in
+    # the next org is labelled.
+    from server.memory.workers import sensitivity_sweep as w
+    from server.settings import settings
+
+    prose = [
+        "I forgot my password",
+        "the secret of a good stew is time",
+        "cd $(pwd) && make",
+        "send the bearer the parcel",
+        "rotate the api key every month",
+        {"note": "the password: rules are in the wiki"},
+    ]
+    rows: list[_Row] = [
+        ("acme", "n", "-", _uuid(i), f"note_{i}", value, 60) for i, value in enumerate(prose)
+    ]
+    token = "gh" + "p_" + "Ab3" * 12
+    rows.append(("zeta", "n", "-", _uuid(99), "deploy_token", f"push with {token}", 60))
+    ch = _local_memory(rows)
+    applied: list[Any] = []
+
+    async def _apply(cands, *, ch=None):
+        applied.extend(cands)
+        return sweep.ApplyResult(relabelled=len(cands), high=len(cands))
+
+    monkeypatch.setattr(sweep, "apply", _apply)
+    monkeypatch.setattr(settings, "sensitivity_sweep_window_days", 2)
+    monkeypatch.setattr(settings, "sensitivity_sweep_max_rows_per_pass", 2)
+    monkeypatch.setattr(settings, "sensitivity_sweep_pages_per_pass", 2)
+    monkeypatch.setattr(settings, "sensitivity_sweep_shapes", "credential,email")
+    out = await w.run_pass(ch=ch)  # type: ignore[arg-type]
+    assert [(c.org, c.memory_key) for c in applied] == [("zeta", "deploy_token")]
+    assert out["scanned"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_the_cli_sweep_pages_through_its_whole_scope(capsys) -> None:
     # The operator's run reads past more than a page of selected-but-unlabelled rows and
     # reaches the PIN row behind them.
