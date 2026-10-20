@@ -134,7 +134,8 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   and hint notes. The block stays last, after any retry addendum. While a policy is in
   force, nothing adds what the model left out: the coverage sweep (a second reading of
   the turns no fact cites) and the deterministic passes (recovered preferences, costs,
-  ages, assistant-stated premises) do not run, whatever the request asks, since the
+  ages, assistant-stated premises, a forget request's correction kept in the user's own
+  words) do not run, whatever the request asks, since the
   model may have left those out because of the policy.
 - **Cache.** The extraction response cache keys on the whole prompt, so a changed policy
   never serves an answer cached under the old one.

@@ -167,11 +167,11 @@ def _extraction_system_prompt(
     existing_memories: list[dict[str, str]] | None,
     namespace_categories: list[dict[str, str]] | None,
     custom_instructions: str,
-    operator_policy: str = "",
 ) -> str:
     """The extractor's system prompt: the base prompt under the strict-examples
-    preamble, the fence note, the namespace's categories, the caller's
-    instructions and, last, the operator's policy, which outranks them."""
+    preamble, the fence note, the namespace's categories and the caller's
+    instructions. Each call appends the operator's policy after it
+    (`with_policy`)."""
     system_prompt = with_strict_examples_preamble(_extraction_base_prompt(compact))
     if existing_memories:
         from server.memory.domain.prompt_fence import FENCE_NOTE
@@ -203,7 +203,7 @@ def _extraction_system_prompt(
             "\n=============================================="
             f"\n{custom_instructions.strip()}\n"
         )
-    return with_policy(system_prompt, operator_policy)
+    return system_prompt
 
 
 def _parses(parse: Any, text: str) -> bool:
@@ -229,7 +229,7 @@ _FILTERED_STOPS = frozenset({"content_filter", "refusal"})
 async def _complete_and_parse(
     client: Any,
     *,
-    system_prompt: str,
+    base_prompt: str,
     user_prompt: str,
     max_tokens: int,
     json_format: dict[str, str],
@@ -239,8 +239,9 @@ async def _complete_and_parse(
     """The extraction call and its parse, with one retry on an unparseable
     answer: a larger budget when it reads as truncated (salvaging complete
     fact objects if it truncates again), else the stricter addendum. Returns
-    (accumulated LLM result, facts, truncation). `system_prompt` is the prompt
-    without the operator's policy: every call, retries included, ends with it."""
+    (accumulated LLM result, facts, truncation). `base_prompt` is the system
+    prompt without the operator's policy: every call, retries included, ends
+    with it."""
     calls: list[Any] = []
 
     async def complete(base: str, tokens: int) -> Any:
@@ -272,7 +273,7 @@ async def _complete_and_parse(
             calls.append(res)
         return res
 
-    result = await complete(system_prompt, max_tokens)
+    result = await complete(base_prompt, max_tokens)
     _parse = parse
     truncation = ""
     try:
@@ -285,7 +286,7 @@ async def _complete_and_parse(
             # the complete fact objects from the longer payload rather than
             # failing the whole ingest.
             retry_tokens = max(max_tokens, min(max_tokens * 2, _TRUNCATION_RETRY_MAX_TOKENS))
-            retry_result = await complete(system_prompt, retry_tokens)
+            retry_result = await complete(base_prompt, retry_tokens)
             try:
                 facts = _parse(retry_result.text)
                 truncation = "retried"
@@ -298,7 +299,7 @@ async def _complete_and_parse(
                 facts = _parse(json.dumps({"facts": salvaged}))
                 truncation = "salvaged"
         else:
-            retry_result = await complete(system_prompt + _RETRY_PROMPT_ADDENDUM, max_tokens)
+            retry_result = await complete(base_prompt + _RETRY_PROMPT_ADDENDUM, max_tokens)
             facts = _parse(retry_result.text)
     return _accumulate(calls), facts, truncation
 
@@ -525,7 +526,7 @@ async def extract_from_messages(
 
     accumulated, facts, truncation = await _complete_and_parse(
         client,
-        system_prompt=base_prompt,
+        base_prompt=base_prompt,
         user_prompt=user_prompt,
         max_tokens=max_tokens,
         json_format=json_format,
@@ -557,15 +558,18 @@ async def extract_from_messages(
     # result — "per_call" / "namespace" (the caller's or the namespace's
     # switch), "list:<n>" (the density
     # gate, n dense turns) — so the fire rate can be read per rule.
-    coverage_sweep_reason, _uncovered_fires = _coverage_sweep_reason(
-        coverage_sweep, coverage_sweep_source, messages, facts
-    )
     # Not under an operator policy, whatever asks for it: the sweep reads the
     # turns the first pass left without a fact, which the policy may have kept out.
+    swept_off = bool(operator_policy.strip())
+    coverage_sweep_reason, _uncovered_fires = (
+        ("", False)
+        if swept_off
+        else _coverage_sweep_reason(coverage_sweep, coverage_sweep_source, messages, facts)
+    )
     if (
-        (_sweep_effective(coverage_sweep, settings, messages) or _uncovered_fires)
+        not swept_off
+        and (_sweep_effective(coverage_sweep, settings, messages) or _uncovered_fires)
         and _is_nontrivial(messages)
-        and not operator_policy.strip()
     ):
         facts, _cs_result, coverage_swept = await _coverage_sweep(
             messages,

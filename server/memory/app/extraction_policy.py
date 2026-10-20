@@ -34,10 +34,12 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 # Every live policy by (org, namespace), namespace "" for the org's own; when it
-# was read (monotonic, 0.0 = never) and when the next read is due.
+# was read (monotonic, 0.0 = never), when the next read is due, and when a change
+# here last asked for one.
 _policies: dict[tuple[str, str], str] = {}
 _read_at = 0.0
 _next_read = 0.0
+_forgot_at = 0.0
 _lock = asyncio.Lock()
 
 
@@ -61,23 +63,29 @@ async def _read() -> None:
     global _policies, _read_at, _next_read
     from server.core.ch import own_write_reads
 
-    _next_read = time.monotonic() + settings.model_calls_policy_refresh_seconds
+    started = time.monotonic()
     try:
         # Sequentially consistent: the read after a change made here must see it.
         with own_write_reads():
             rows = await repo.live_rows()
     except Exception as e:  # noqa: BLE001 — the last copy serves until it is too old
         log.warning("extraction policy: read failed (%s); serving the last copy", e)
-        return
-    _policies = {(str(r["org"]), str(r["namespace"])): str(r["policy"]) for r in rows}
-    _read_at = time.monotonic()
+    else:
+        _policies = {(str(r["org"]), str(r["namespace"])): str(r["policy"]) for r in rows}
+        _read_at = time.monotonic()
+    # Due again only once this read is over, so a caller that arrives during the
+    # first one waits on the lock rather than finding no copy, and a cancelled read
+    # leaves the next caller to read. A change made here while it ran may postdate
+    # it, so the next caller reads again.
+    refresh = settings.model_calls_policy_refresh_seconds
+    _next_read = 0.0 if _forgot_at >= started else started + refresh
 
 
 def forget() -> None:
     """Make the next extraction read the policies again, for a change just made
     here. The copy in hand keeps its age, so a failed read serves it as before."""
-    global _next_read
-    _next_read = 0.0
+    global _next_read, _forgot_at
+    _next_read, _forgot_at = 0.0, time.monotonic()
 
 
 def _reset_for_tests(

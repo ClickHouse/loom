@@ -261,7 +261,7 @@ async def _write_session_summary(
             input,
             msgs,
             observation_date,
-            operator_policy=str(getattr(state, "operator_policy", "") or ""),
+            operator_policy=state.operator_policy,
         )
     if draft is None:
         return

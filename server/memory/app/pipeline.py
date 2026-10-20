@@ -767,7 +767,9 @@ async def _forget_plan(
         state, forget_requests
     )
     # What the user said instead is written, never retired.
-    facts, keep, linked_old = replacement_facts(facts, forget_requests, candidates, state.messages)
+    facts, keep, linked_old = replacement_facts(
+        facts, forget_requests, candidates, state.messages, keep_said=not state.operator_policy
+    )
     forget_keys = forget_targets(facts + forget_requests, candidates, keep) | linked_old
     # A replacement's own key is retired only when a live row holds it (the
     # old version); otherwise the "retire" would be a no-op reported as forgotten.

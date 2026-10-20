@@ -150,6 +150,8 @@ def replacement_facts(
     requests: list[dict[str, Any]],
     existing: list[dict[str, Any]],
     messages: list[dict[str, Any]],
+    *,
+    keep_said: bool = True,
 ) -> tuple[list[dict[str, Any]], set[str], set[str]]:
     """The facts that carry what the user said INSTEAD of what they asked to
     forget, the batch with any forget entry that also
@@ -229,14 +231,29 @@ def replacement_facts(
         out.append(copy)
         protected.add(copy["key"])
         kept_msgs |= src & msgs
-    # The replacement no fact of the batch carries — the extractor folded it
-    # into a request ("…not to keep Neovim, as they are now on Emacs") or
-    # dropped it — is kept in the user's own words, so a correction never
-    # ends with the old value retired and the new one nowhere.
+    # Not with `keep_said=False` (an operator's extraction policy is in force):
+    # only the model, given the policy, decides what of the user's words is written.
+    if keep_said:
+        said = _said_corrections(messages, kept_msgs, clauses + list(by_key.values()))
+        out.extend(said)
+        protected.update(str(f["key"]) for f in said)
+    return out, protected, retire
+
+
+def _said_corrections(
+    messages: list[dict[str, Any]], kept_msgs: set[int], known: list[str]
+) -> list[dict[str, Any]]:
+    """The replacement no fact of the batch carries — the extractor folded it
+    into a request ("…not to keep Neovim, as they are now on Emacs") or
+    dropped it — kept in the user's own words, so a correction never ends with
+    the old value retired and the new one nowhere. `kept_msgs`: the messages
+    whose replacement a fact already carries; `known`: what the request named
+    and the rows it may retire."""
+    out: list[dict[str, Any]] = []
     for i, said in forget_sentences(messages, same_sentence=True).items():
         if i in kept_msgs or not said or not _FIRST_PERSON_RE.match(said):
             continue
-        if not _new_content(said, clauses + list(by_key.values())):
+        if not _new_content(said, known):
             continue
         key = f"user_said_{i}_" + "_".join(sorted(_content_tokens(said)))[:40].strip("_")
         out.append(
@@ -247,8 +264,7 @@ def replacement_facts(
                 "source_message_indices": [i],
             }
         )
-        protected.add(key)
-    return out, protected, retire
+    return out
 
 
 def forget_requests_from_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

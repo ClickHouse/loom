@@ -81,11 +81,13 @@ HOLDS: tuple[type[LoomServerError], ...] = (Unattributed, ModelCallsDisabled, Sw
 
 
 # The orgs switched off, as this process last read them, when (monotonic; 0.0 =
-# never read), and when the next read is due (a failed read waits its turn too,
-# so the waiters do not each query in turn).
+# never read), when the next read is due (a failed read waits its turn too,
+# so the waiters do not each query in turn), and when a change here last asked
+# for one.
 _off: frozenset[str] = frozenset()
 _read_at = 0.0
 _next_read = 0.0
+_forgot_at = 0.0
 _lock = asyncio.Lock()
 
 
@@ -234,7 +236,7 @@ async def _read() -> None:
     global _off, _read_at, _next_read
     from server.core.ch import get_client, own_write_reads
 
-    _next_read = time.monotonic() + settings.model_calls_policy_refresh_seconds
+    started = time.monotonic()
     try:
         # Every org switched off, one row each: never cut short, which would fail open.
         # Sequentially consistent: the read after `forget_switch` must see the change
@@ -245,15 +247,21 @@ async def _read() -> None:
             )
     except Exception as e:  # noqa: BLE001 — the last copy serves until it is too old
         log.warning("model-call switch: read failed (%s); serving the last copy", e)
-        return
-    _off, _read_at = frozenset(str(r["org"]) for r in rows), time.monotonic()
+    else:
+        _off, _read_at = frozenset(str(r["org"]) for r in rows), time.monotonic()
+    # Due again only once this read is over: a call made meanwhile (the request's
+    # other model call, say) waits on the lock for it instead of finding the copy
+    # it replaces too old, and a cancelled read leaves the next call to read. A
+    # change made here while it ran may postdate it, so the next call reads again.
+    refresh = settings.model_calls_policy_refresh_seconds
+    _next_read = 0.0 if _forgot_at >= started else started + refresh
 
 
 def forget_switch() -> None:
     """Make the next call read the switch again, for a change just made here.
     The copy in hand keeps its age, so a failed read serves it as before."""
-    global _next_read
-    _next_read = 0.0
+    global _next_read, _forgot_at
+    _next_read, _forgot_at = 0.0, time.monotonic()
 
 
 def _reset_for_tests(off: frozenset[str] = frozenset(), *, read: bool = True) -> None:
