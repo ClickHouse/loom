@@ -66,7 +66,7 @@ async def _holds_plain_emptied(
     only: neither table is joined, and no page reads past its own ordinals."""
     # The `size0` subcolumn: the page reads the arrays' lengths, never the vectors.
     flags = [f"{_identifier(c)}.size0 = 0" for c in columns]
-    real = ", ".join(f"arrayExists(x -> x != 0, {_identifier(c)})" for c in columns)
+    has_vector = ", ".join(f"arrayExists(x -> x != 0, {_identifier(c)})" for c in columns)
     live = "isNull(tombstoned_at)" if "tombstoned_at" in schema.columns else "1"
     after = 0
     while True:
@@ -81,13 +81,13 @@ async def _holds_plain_emptied(
             emptied = {int(r["ordinal"]): r["emptied"] for r in page}
             sources = await client.query_all(
                 f"SELECT {_ORDINAL} AS ordinal, {_identifier(passage_text)} AS text,"
-                f" [{real}] AS real, {live} AS live FROM loom.{names.snapshot}"
+                f" [{has_vector}] AS has_vector, {live} AS live FROM loom.{names.snapshot}"
                 f" WHERE {_ORDINAL} IN {{ordinals:Array(UInt64)}}",
                 {"ordinals": sorted(emptied)},
             )
             for r in sources:
-                pairs = zip(emptied[int(r["ordinal"])], r["real"], strict=True)
-                lost_vector = any(empty and real for empty, real in pairs)
+                pairs = zip(emptied[int(r["ordinal"])], r["has_vector"], strict=True)
+                lost_vector = any(e and v for e, v in pairs)
                 if lost_vector and r["live"] and not reads_high(str(r["text"])):
                     return True
         if len(page) < _EMPTIED_PAGE:

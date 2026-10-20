@@ -68,7 +68,7 @@ def _emptied_rows(texts: list[str]) -> list[list[dict]]:
     return [
         [{"ordinal": o, "emptied": [True, False]} for o in ordinals],
         [
-            {"ordinal": o, "text": t, "real": [True, True], "live": True}
+            {"ordinal": o, "text": t, "has_vector": [True, True], "live": True}
             for o, t in zip(ordinals, texts, strict=True)
         ],
     ]
@@ -108,8 +108,11 @@ async def test_an_emptied_plain_passage_fails_verification(verification):
 @pytest.mark.parametrize(
     "source",
     [
-        {"real": [False, True], "live": True},  # an all-zero placeholder, which rebuilds empty
-        {"real": [True, True], "live": False},  # a tombstoned row, which rebuilds empty
+        {
+            "has_vector": [False, True],
+            "live": True,
+        },  # an all-zero placeholder, which rebuilds empty
+        {"has_vector": [True, True], "live": False},  # a tombstoned row, which rebuilds empty
     ],
 )
 async def test_an_emptied_row_that_lost_no_vector_is_not_counted(verification, source):
@@ -139,7 +142,7 @@ async def test_the_emptied_ordinals_are_read_a_page_at_a_time(verification, monk
         first,
         first_text,
         [{"ordinal": 12, "emptied": [True, False]}],
-        [{"ordinal": 12, "text": f"key {_KEY}", "real": [True, True], "live": True}],
+        [{"ordinal": 12, "text": f"key {_KEY}", "has_vector": [True, True], "live": True}],
     ]
     count = await verify_reembedded_target(
         *args, model="target", dimensions=3, passage_text="content", ch=client

@@ -293,8 +293,9 @@ def _insert_turns(
     for msg_id, content, saved in turns:
         ch_client.command(
             "INSERT INTO loom.conversations (org, namespace, agent, thread_id, msg_id, role, "
-            "content, user_id, is_saved, ts) VALUES ({o:String}, {n:String}, {a:String}, {t:String}, "
-            "{m:String}, {r:String}, {c:String}, 'u-1', {saved:Bool}, {ts:DateTime64(3)})",
+            "content, user_id, is_saved, ts) VALUES ({o:String}, {n:String}, {a:String}, "
+            "{t:String}, {m:String}, {r:String}, {c:String}, 'u-1', {saved:Bool}, "
+            "{ts:DateTime64(3)})",
             parameters={
                 "o": ORG,
                 "n": ns,
@@ -347,8 +348,8 @@ def test_a_saved_turn_an_earlier_build_kept_is_never_a_keyword_hit_or_listed(
 def test_the_thread_list_names_one_last_turn_on_a_ts_tie(
     control_plane_url: str, ch_client, token: str
 ) -> None:
-    """Two last turns at one `ts`: the listing's role and excerpt come from the same one
-    (`msg_id` breaks the tie), and that one is checked whole."""
+    """Two last turns at one `ts`: the listing's agent, role and excerpt come from the
+    same one (`msg_id` breaks the tie), and that one is checked whole."""
     thread = f"t-{uuid.uuid4().hex[:8]}"
     _insert_turns(
         ch_client,

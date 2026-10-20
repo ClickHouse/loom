@@ -135,27 +135,31 @@ async def test_the_thread_list_counts_turns_as_an_opened_thread_does() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("fields", "statements"), [(["title"], 1), (["last_role"], 2)])
+@pytest.mark.parametrize(
+    ("fields", "statements", "served"),
+    [(["title"], 1, ("", "", "Titled")), (["last_role"], 2, ("user", "hi", "Titled"))],
+)
 async def test_a_thread_list_reads_the_last_turn_only_when_asked(
-    monkeypatch, fields, statements
+    monkeypatch, fields, statements, served
 ) -> None:
     """`fields` without the agent, role, excerpt or count is one statement over the
     transcript; asking for any of them adds the keyed read."""
     from server.knowledge.api.models_conversations import ConversationThreadsInput
     from server.knowledge.app.conversations import handle_conversation_threads
 
-    ch = StubCH(
-        [
-            [{"thread_id": "t-1", "msg_count": 1, "first_seen": _AT, "last_seen": _AT}],
-            [{"thread_id": "t-1", "n": 1, "last_turn": ("bot", "user", "hi")}],
-        ]
-    )
+    grouped = [{"thread_id": "t-1", "msg_count": 1, "first_seen": _AT, "last_seen": _AT}]
+    keyed = [{"thread_id": "t-1", "n": 1, "last_turn": ("bot", "user", "hi")}]
+    titles = [{"thread_id": "t-1", "title": "Titled"}]
+    ch = StubCH([grouped, keyed, titles] if statements == 2 else [grouped, titles])
     monkeypatch.setattr(conversation_repo, "_default_client", lambda: ch)
-    await handle_conversation_threads(
+    out = await handle_conversation_threads(
         ConversationThreadsInput(org="o", namespace="ns", agent="a", fields=fields)
     )
     transcript = [sql for sql, _ in ch.calls if "FROM loom.conversations\n" in sql]
     assert len(transcript) == statements
+    [thread] = out.threads
+    # With only the title asked for, no last turn was read: its fields are empty.
+    assert (thread.last_role, thread.last_content_excerpt, thread.title) == served
 
 
 @pytest.mark.asyncio

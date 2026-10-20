@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Iterable
-from typing import Any, Final, NamedTuple
+from typing import Any, Final
 
 HIGH: Final = "high"
 MEDIUM: Final = "medium"
@@ -239,19 +239,6 @@ def reads_high(text: str) -> bool:
 # Spare rows a read asks for, so a passage it holds back for reading as a credential does
 # not leave the page short.
 HELD_MARGIN = 2
-
-
-class Embedded(NamedTuple):
-    """One raw passage's vector, [] when it has none; `held` when it reads as a credential
-    and so is stored with no vector."""
-
-    vector: list[float]
-    held: bool
-
-    @property
-    def written(self) -> bool:
-        """Stored: with its vector, or held without one. A failed embed is not."""
-        return self.held or bool(self.vector)
 
 
 def without_credentials[T](
