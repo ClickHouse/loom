@@ -691,7 +691,7 @@ def test_names_one_agrees_with_require(metered, monkeypatch, header, required, s
         elif scope == "system":
             stack.enter_context(customer.system())
         try:
-            customer.require()
+            asyncio.run(customer.require())
             accepted = True
         except customer.Unattributed:
             accepted = False
