@@ -7315,7 +7315,7 @@ export interface ProfileStructuredInput {
   user_id?: string;
   session_id?: string;
   run_id?: string;
-  read_scope?: "namespace" | "own_user" | "own_session";
+  read_scope?: "namespace" | "own_user";
 }
 
 export interface ProfileStructuredOutput {

@@ -10,11 +10,10 @@ in the current schema's shape and says whether it is current.
 from __future__ import annotations
 
 import json
-import time
 from datetime import UTC, datetime
 from typing import Any
 
-from server.core.errors import ValidationError
+from server.core.errors import AuthInsufficientError, ValidationError
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.api.models_profile import (
     ProfileSchemaInput,
@@ -23,20 +22,15 @@ from server.memory.api.models_profile import (
     ProfileStructuredInput,
     ProfileStructuredOutput,
 )
+from server.memory.app.provenance import writer_actor
 from server.memory.domain import profile_schema
 from server.memory.store import profile_schemas as repo
 from server.memory.store import profile_sources
+from server.memory.store.rows import next_version
 from server.settings import settings
 
 # A profile of 64 long properties is longer than a free-text section's default cap.
 STRUCTURED_CHAR_LIMIT = 32768
-
-
-def _caller() -> str:
-    from server.auth.context import current_auth
-
-    auth = current_auth()
-    return (auth.subject if auth is not None else "") or "admin"
 
 
 def _now() -> datetime:
@@ -53,10 +47,10 @@ async def handle_profile_schema_set(input: ProfileSchemaSetInput) -> ProfileSche
         "namespace": input.namespace,
         "schema_json": profile_schema.canonical(input.json_schema),
         "schema_sha256": profile_schema.schema_sha256(input.json_schema),
-        "updated_by": _caller(),
+        "updated_by": writer_actor(),
         "updated_at": now,
         "tombstoned_at": None,
-        "version": time.time_ns(),
+        "version": next_version(),
     }
     await repo.insert_row(row)
     return _output(row)
@@ -74,26 +68,27 @@ async def handle_profile_schema_get(input: ProfileSchemaInput) -> ProfileSchemaO
 async def handle_profile_schema_clear(input: ProfileSchemaInput) -> ProfileSchemaOutput:
     """Clear the schema: no profile is built or rebuilt for the namespace, and
     reads answer `no_schema`. The profiles already built stay, as memory rows
-    their users' erasure removes."""
+    their users' erasure removes. Answers the schema it cleared (`found` true), or
+    `found` false when there was none."""
     from server.core.ch import own_write_reads
 
     with own_write_reads():
         row = await repo.get(input.org, input.namespace)
     if row is None:
         return ProfileSchemaOutput(found=False)
-    await repo.insert_row(
-        {
-            "org": input.org,
-            "namespace": input.namespace,
-            "schema_json": row["schema_json"],
-            "schema_sha256": row["schema_sha256"],
-            "updated_by": _caller(),
-            "updated_at": _now(),
-            "tombstoned_at": _now(),
-            "version": time.time_ns(),
-        }
-    )
-    return ProfileSchemaOutput(found=False)
+    now = _now()
+    cleared = {
+        "org": input.org,
+        "namespace": input.namespace,
+        "schema_json": row["schema_json"],
+        "schema_sha256": row["schema_sha256"],
+        "updated_by": writer_actor(),
+        "updated_at": now,
+        "tombstoned_at": now,
+        "version": next_version(),
+    }
+    await repo.insert_row(cleared)
+    return _output(cleared)
 
 
 def _output(row: dict[str, Any]) -> ProfileSchemaOutput:
@@ -120,10 +115,10 @@ async def write_structured_profile(
     """Write a built profile as a new version of the user's profile row. The trace
     names the build and the memories it read, so provenance classes it `derived`;
     `valid_at` is when those memories were read, the point the profile is true as of."""
-    from server.memory.app.profile import _write_section
+    from server.memory.app.profile import write_section
 
     label = settings.structured_profile_label
-    await _write_section(
+    await write_section(
         MemorySetInput(
             org=org,
             namespace=namespace,
@@ -154,6 +149,11 @@ async def handle_profile_structured(input: ProfileStructuredInput) -> ProfileStr
         auth=current_auth(),
     )
     uid = rf.user_id
+    if rf.scope == "own_session":
+        raise AuthInsufficientError(
+            "profile.structured reads a user's profile, which spans their sessions; "
+            "a read bounded to one session cannot take it"
+        )
     if not uid or uid in ("-", "*"):
         raise ValidationError("profile.structured reads one user's profile: name user_id")
 
@@ -168,13 +168,14 @@ async def handle_profile_structured(input: ProfileStructuredInput) -> ProfileStr
             namespace=input.namespace,
             user_id=uid,
             label=settings.structured_profile_label,
+            scope=rf,
         )
         if row is None:
             return ProfileStructuredOutput(
                 status="pending", profile=profile_schema.project(props, {}), schema_sha256=sha
             )
         digest = await profile_sources.sources_digest(
-            org=input.org, namespace=input.namespace, user_id=uid
+            org=input.org, namespace=input.namespace, user_id=uid, scope=rf
         )
     current = profile_sources.is_current(list(row.get("tags") or []), sha, digest)
     return ProfileStructuredOutput(

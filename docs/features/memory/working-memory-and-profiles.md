@@ -161,10 +161,12 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   the free-text fold reads: never a `high` row, a fact about someone else
   (`about:other`), a protected attribute or a stored request to forget.
 - **Staleness.** Each profile carries the hash of its schema and a digest of its sources'
-  ids and content hashes. A new, edited or deleted fact changes the digest; a recall or a
-  reinforcement does not. A schema change is rebuilt on the next pass; new memories after
-  `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600). A user whose facts are all gone gets
-  an all-`null` profile without a model call.
+  ids and content hashes. A new or edited fact, a deleted one, one that turned `high`,
+  changed type or tags, expired or passed its `valid_to` changes the digest; a recall, a
+  reinforcement or a restatement does not. A schema change or a deletion is rebuilt on the
+  next pass; other changes after `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600). A user
+  whose facts are all gone gets an all-`null` profile without a model call. An expired or
+  redacted profile row reads as no profile (`pending`) and is rebuilt.
 - **Validation.** The model's answer is held to the schema before it is written: a value
   of the wrong type, outside its enum or constraints, a number that is not finite (or an
   integer past 2^53), or a property the schema does not declare is dropped (`null`).
@@ -172,13 +174,15 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   profiles. It reaches the namespaces with a schema in order from where the last pass
   stopped, and each gets an equal share. A user whose build failed (a model error, an
   answer that is not a JSON object) is skipped for 5 minutes, doubling up to 6 hours, and
-  tried again after; the wait is kept by the worker's process and starts over when another
-  process takes the worker lease.
+  tried again after. A build the profile row refuses (locked, pinned, over its size cap,
+  blacklisted) is not retried until the user's memories change. Both waits are kept by the
+  worker's process and start over when another process takes the worker lease.
 - **Erasure.** A build whose user's facts are erased while its model call runs writes
   nothing, so the profile cannot come back above the erasure.
 - **Scope.** The read is always for one `user_id`. A token pinned to a user
   (`read_user_id`, an end user's token) reads only that user's profile, with or without
-  `user_id` in the body; another user is 403.
+  `user_id` in the body; another user is 403. A token bounded to one session
+  (`own_session`) is refused with `AUTH_INSUFFICIENT`: a profile spans the user's sessions.
 - **Model calls.** Only the worker calls the model, only for a namespace with a schema,
   never for an org whose model calls are switched off
   ([`org.set_model_calls`](../../reference/operations.md#org)), and through the

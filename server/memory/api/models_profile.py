@@ -139,9 +139,8 @@ class ProfileActivityOutput(BaseModel):
 class ProfileSchemaSetInput(BaseModel):
     org: str
     namespace: str
-    # A JSON Schema object: `properties` (1-64), each with a `type` (string, number,
-    # integer, boolean, or array with `items`) and a `description` the profile builder
-    # reads; at most 16 KiB. Setting it again replaces it and marks every profile stale.
+    # A JSON Schema object of 1-64 `properties`, each with a `type` and a `description`
+    # (at most 16 KiB), replacing the namespace's schema and making every profile stale.
     json_schema: dict[str, Any]
 
 
@@ -164,23 +163,20 @@ class ProfileSchemaOutput(BaseModel):
 
 
 class ProfileStructuredInput(_Identity):
-    # How far the read reaches across users (same grammar as profile.render.read_scope;
-    # the token's claim is the ceiling). The profile read is always the one of
-    # `user_id`, which the read needs; a token pinned to a user reads only its own.
-    read_scope: Literal["namespace", "own_user", "own_session"] = "namespace"
+    # `own_user` reads only the caller's own profile; a session-bounded token is refused.
+    read_scope: Literal["namespace", "own_user"] = "namespace"
 
 
 class ProfileStructuredOutput(BaseModel):
-    # `ready`: built from the user's current memories under the current schema;
-    # `stale`: memories or the schema changed since it was built (a worker pass
-    # rebuilds it); `pending`: not built yet; `no_schema`: the namespace has none.
+    # `ready` (current), `stale` (memories or the schema changed since the build),
+    # `pending` (not built yet) or `no_schema` (the namespace has none).
     status: Literal["ready", "stale", "pending", "no_schema"]
-    # The profile in the schema's shape: every property, null when the user's
-    # memories do not settle it. All null while `pending`; {} under `no_schema`.
+    # Every property of the schema, null where the memories do not settle it ({} under
+    # `no_schema`).
     profile: dict[str, Any] = {}
     # When the profile was built; None while pending.
     built_at: datetime | None = None
-    # The memory row the profile is stored in; its history is the profile's history.
+    # The memory row that holds the profile, whose history is the profile's history.
     memory_id: str = ""
     # The row's version, higher for each rebuild; 0 while pending.
     version: int = 0

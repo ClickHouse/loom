@@ -231,8 +231,9 @@ another user's memories into the answer. `read_scope` bounds a read inside the n
 | `own_user`            | rows written under the `user_id` the request names    |
 | `own_session`         | rows written under the `session_id` the request names |
 
-`memory.search`, `memory.search_trace`, `memory.ask`, `memory.recall`, `context.pack` and
-`profile.render` take it. A token can carry a `read_scope` claim (and a pinned
+`memory.search`, `memory.search_trace`, `memory.ask`, `memory.recall`, `context.pack`,
+`profile.render` and `profile.structured` take it; `profile.structured` refuses
+`own_session`, since a user's profile spans their sessions. A token can carry a `read_scope` claim (and a pinned
 `read_user_id`) that is a ceiling: a request can narrow it but never widen it, and a
 scoped read without the `user_id` or `session_id` it binds to is refused with
 `IDENTITY_INCOMPLETE` instead of silently widening. Mint `own_user` tokens for

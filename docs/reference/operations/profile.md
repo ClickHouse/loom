@@ -154,14 +154,14 @@ The user's structured profile and whether it is current.
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `read_scope` | `Literal['namespace', 'own_user', 'own_session']` | `'namespace'` | How far the read reaches across users (same grammar as profile.render.read_scope; the token's claim is the ceiling). |
+| `read_scope` | `Literal['namespace', 'own_user']` | `'namespace'` | `own_user` reads only the caller's own profile; a session-bounded token is refused. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `status` | `Literal['ready', 'stale', 'pending', 'no_schema']` | `ready`: built from the user's current memories under the current schema; `stale`: memories or the schema changed since it was built (a worker pass rebuilds it); `pending`: not built yet; `no_schema`: the namespace has none. |
-| `profile` | `dict[str, Any]` | The profile in the schema's shape: every property, null when the user's memories do not settle it. |
+| `status` | `Literal['ready', 'stale', 'pending', 'no_schema']` | `ready` (current), `stale` (memories or the schema changed since the build), `pending` (not built yet) or `no_schema` (the namespace has none). |
+| `profile` | `dict[str, Any]` | Every property of the schema, null where the memories do not settle it ({} under `no_schema`). |
 | `built_at` | `datetime \| None` | When the profile was built; None while pending. |
-| `memory_id` | `str` | The memory row the profile is stored in; its history is the profile's history. |
+| `memory_id` | `str` | The memory row that holds the profile, whose history is the profile's history. |
 | `version` | `int` | The row's version, higher for each rebuild; 0 while pending. |
 | `schema_sha256` | `str` | The hash of the schema the namespace has now. |
 

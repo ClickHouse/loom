@@ -312,11 +312,13 @@ content). A profile is a `profile` memory row, so its history, erasure and read 
 memory's own. It carries two tags, the schema's hash and a digest of its sources'
 `(memory_id, content_sha256)` pairs, and `valid_at`, when the sources were read.
 `profile.structured` recomputes the digest to answer `stale` without a model call. The
-worker finds the users behind in two statements: one aggregate of `max(updated_at)` per
-user over every version, without `FINAL` (a recall or a backfill carries `updated_at`
-forward), lists those with a source row newer than their profile's `valid_at` or no
-profile under the schema, at most `LOOM_STRUCTURED_PROFILE_CANDIDATES_PER_NAMESPACE`;
-the digest of only those decides who is rebuilt ([structured profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).
+worker finds the users behind in two statements. The first reads
+`loom.memory_versions`, which keeps every version: a row's change time is the first time
+each of its states was written (content, live or deleted, status, sensitivity, type, the
+tags that exclude a fact), or the expiry or `valid_to` that passed, so a restatement never
+looks new. It lists users with a change since their profile's `valid_at` or no profile
+under the schema, at most `LOOM_STRUCTURED_PROFILE_CANDIDATES_PER_NAMESPACE`; the digest of
+only those decides who is rebuilt ([structured profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).
 
 `memory.consolidate` is an op, not a worker. It clusters similar active memories by
 cosine and entity overlap and asks the LLM to merge each cluster into one row. It writes

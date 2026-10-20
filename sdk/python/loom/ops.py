@@ -15441,7 +15441,7 @@ class ProfileStructuredInput(TypedDict, total=False):
     user_id: NotRequired[str]
     session_id: NotRequired[str]
     run_id: NotRequired[str]
-    read_scope: NotRequired[Literal["namespace", "own_user", "own_session"]]
+    read_scope: NotRequired[Literal["namespace", "own_user"]]
 
 
 class ProfileStructuredBody(TypedDict, total=False):
@@ -15451,7 +15451,7 @@ class ProfileStructuredBody(TypedDict, total=False):
     user_id: NotRequired[str]
     session_id: NotRequired[str]
     run_id: NotRequired[str]
-    read_scope: NotRequired[Literal["namespace", "own_user", "own_session"]]
+    read_scope: NotRequired[Literal["namespace", "own_user"]]
 
 
 class ProfileStructuredOutput(TypedDict, total=False):

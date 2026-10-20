@@ -353,7 +353,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # Not memory_schema.register / propose / approve: a schema is namespace-wide and
     # refuses every user's non-matching writes.
     "memory_schema.list": "value schemas",
-    "profile_schema.get": "the namespace's profile schema: configuration, no memory",
+    "profile_schema.get": "operator configuration: property names and descriptions",
     "admin.users": "the deployment's users",
     # Not agents.connected: no user axis; it lists every user's agents, their ops,
     # when they were seen and what they cost.

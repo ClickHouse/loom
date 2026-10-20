@@ -84,7 +84,7 @@ def _to_memory_set_input(
     )
 
 
-async def _write_section(mset: MemorySetInput) -> Any:
+async def write_section(mset: MemorySetInput) -> Any:
     """memory.set for a profile section, then a re-embed of its current text queued off the
     request: memory.set gives a profile row no inline vector, and the worker's reconcile
     only embeds a section that has none, so without this an edited section would keep the
@@ -107,7 +107,7 @@ async def handle_profile_set(input: ProfileSetInput) -> ProfileMutationOutput:
         char_limit=input.char_limit,
         if_match_sha256=input.if_match_sha256,
     )
-    out = await _write_section(mset)
+    out = await write_section(mset)
     return ProfileMutationOutput(
         version=out.version,
         memory_id=out.memory_id,
@@ -205,7 +205,7 @@ async def handle_profile_append(input: ProfileAppendInput) -> ProfileMutationOut
                 char_limit=char_limit,
                 if_match_sha256=existing.content_sha256,
             )
-            out = await _write_section(mset)
+            out = await write_section(mset)
             return ProfileMutationOutput(
                 version=out.version,
                 memory_id=out.memory_id,
@@ -285,7 +285,7 @@ async def handle_profile_replace(input: ProfileReplaceInput) -> ProfileMutationO
                 char_limit=char_limit,
                 if_match_sha256=existing.content_sha256,
             )
-            out = await _write_section(mset)
+            out = await write_section(mset)
             return ProfileMutationOutput(
                 version=out.version,
                 memory_id=out.memory_id,

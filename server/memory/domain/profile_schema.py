@@ -40,21 +40,10 @@ SCALAR_TYPES = ("string", "number", "integer", "boolean")
 MAX_SAFE_INTEGER = 2**53 - 1
 
 _SCHEMA_KEYS = {"type", "properties", "title", "description", "additionalProperties"}
-# `title` is accepted wherever JSON Schema puts it and ignored: the model reads `description`.
-_PROPERTY_KEYS = {
-    "type",
-    "title",
-    "description",
-    "enum",
-    "items",
-    "maxItems",
-    "pattern",
-    "minLength",
-    "maxLength",
-    "minimum",
-    "maximum",
-}
-_ITEM_KEYS = _PROPERTY_KEYS - {"description", "items", "maxItems"}
+# The keywords of an array's items, and with `description` of a scalar property. `title`
+# is accepted wherever JSON Schema puts it and ignored: the model reads `description`.
+_ITEM_KEYS = {"type", "title", "enum", "pattern", "minLength", "maxLength", "minimum", "maximum"}
+_SCALAR_KEYS = _ITEM_KEYS | {"description"}
 _ARRAY_KEYS = {"type", "title", "description", "items", "maxItems"}
 # JSON Schema keyword -> the typed-record constraint it is checked as.
 _CONSTRAINT_KEYS = {
@@ -179,9 +168,7 @@ def parse(schema: Any) -> list[ProfileProperty]:
                 )
             )
         else:
-            kind, enum, constraints = _scalar_spec(
-                name, spec, _PROPERTY_KEYS - {"items", "maxItems"}
-            )
+            kind, enum, constraints = _scalar_spec(name, spec, _SCALAR_KEYS)
             out.append(
                 ProfileProperty(
                     name=name,
@@ -243,9 +230,11 @@ def conform(props: list[ProfileProperty], answer: Any) -> tuple[dict[str, Any], 
             items = raw if isinstance(raw, list) else ([] if raw is None else [raw])
             kept = [v for v in (_scalar(prop, item) for item in items) if v is not None]
             dropped += len(items) - len(kept)
-            # Order kept, repeats dropped; an empty list says nothing, as null does.
-            unique = list(dict.fromkeys(kept))[: prop.max_items]
-            out[prop.name] = unique or None
+            # Order kept, repeats folded; items past maxItems count as dropped. An
+            # empty list says nothing, as null does.
+            unique = list(dict.fromkeys(kept))
+            dropped += max(0, len(unique) - prop.max_items)
+            out[prop.name] = unique[: prop.max_items] or None
         else:
             value = _scalar(prop, raw)
             dropped += int(raw is not None and value is None)

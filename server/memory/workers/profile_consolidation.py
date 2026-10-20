@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.llm import customer
+from server.memory.domain.profile_facts import render_fold_input
 from server.memory.domain.sensitivity import value_reads_high
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
@@ -134,27 +135,13 @@ async def run_pass(
     return result
 
 
-def render_fold_input(rows: list[dict[str, Any]]) -> str:
-    """The fold's input: one dated line per fact, oldest first, so the newest
-    statement of a changed preference is the last the model reads. Rows with
-    an empty value are dropped; "" when nothing remains."""
-    dated: list[tuple[str, str]] = []
-    for r in rows:
-        value = " ".join(str(r.get("value") or "").split())
-        if not value:
-            continue
-        since = str(r.get("since") or "")[:10] or "undated"
-        dated.append((since, value))
-    dated.sort(key=lambda t: (t[0] == "undated", t[0]))
-    return "\n".join(f"- [{since}] {value}" for since, value in dated)
-
-
 async def _consolidate_identity(
     ch: Any, row: dict[str, Any], cfg: ProfileConsolidationConfig
 ) -> bool:
     # The fold reads only what is current and sees each fact's date, oldest
     # first, so the prompt's recency rule has something to act on. FINAL
     # already keeps one live version per key.
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.store.profile_sources import user_facts
 
     rows = await user_facts(
@@ -164,6 +151,7 @@ async def _consolidate_identity(
         types=["preference", "decision"],
         limit=int(cfg.memory_limit),
         user_keys_only=True,
+        scope=WHOLE_NAMESPACE,
         ch=ch,
     )
     # An unlabelled row (copy_to, an import, before the sweep) holding a credential is never

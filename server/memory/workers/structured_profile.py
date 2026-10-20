@@ -16,21 +16,29 @@ gets an all-null profile without a model call.
 A pass reaches namespaces in (org, namespace) order from where the last one
 stopped (the pass cursor), and each gets an equal share of the pass's
 budget. A user whose build failed is skipped for a while, longer after each
-failure.
+failure; one whose profile row refuses the write (locked, pinned, over a
+limit, blacklisted) is skipped until their memories change.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import math
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
+from fastapi import HTTPException
+
+from server.core.errors import LoomServerError
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.llm import customer
-from server.memory.domain import profile_schema
+from server.memory.domain import lock, profile_schema
+from server.memory.domain.profile_facts import fact_text, render_fold_input
 from server.memory.domain.prompt_fence import FENCE_NOTE, fence, new_nonce
 from server.memory.domain.provenance import pipeline_actor
 from server.memory.domain.sensitivity import value_reads_high
@@ -49,9 +57,12 @@ WORKER_ACTOR = "process:structured-profile-worker"
 # A failed build waits this long before the user is tried again, doubling up to the cap.
 BACKOFF_BASE_SECONDS = 300.0
 BACKOFF_CAP_SECONDS = 6 * 3600.0
-# (org, namespace, user_id) -> (monotonic time it may be retried, its last wait). Kept in
-# this process only, so it starts over when the worker lease moves to another one.
+
+# Both kept in this process only, so they start over when the worker lease moves.
+# (org, namespace, user_id) -> (monotonic time it may be retried, its last wait).
 _backoff: dict[tuple[str, str, str], tuple[float, float]] = {}
+# (org, namespace, user_id) -> the sources digest a refused write was built from.
+_refused: dict[tuple[str, str, str], str] = {}
 
 _SYSTEM = (
     "You fill a structured profile of one user for an AI assistant. Given the "
@@ -63,6 +74,10 @@ _SYSTEM = (
     f"{FENCE_NOTE}\n\n"
     "Properties:\n"
 )
+
+
+class Refused(Exception):
+    """The user's profile row will not take this build: a lock, a pin or a 4xx refusal."""
 
 
 @dataclass
@@ -90,6 +105,8 @@ class StructuredProfileResult:
     profiles_written: int = 0
     # Builds dropped because the user's facts were erased while the model ran.
     skipped: int = 0
+    # Builds the profile row refused; the user waits for their memories to change.
+    refused: int = 0
     values_dropped: int = 0
     errors: int = 0
 
@@ -105,20 +122,9 @@ def system_prompt(props: list[profile_schema.ProfileProperty]) -> str:
     return _SYSTEM + "\n".join(lines)
 
 
-def _text(value: Any) -> str:
-    """A stored value (canonical JSON) as the text of its claim."""
-    try:
-        decoded = json.loads(value) if isinstance(value, str) else value
-    except ValueError:
-        return str(value)
-    return decoded if isinstance(decoded, str) else json.dumps(decoded, ensure_ascii=False)
-
-
 def render_facts(rows: list[dict[str, Any]]) -> str:
     """One dated line per fact, oldest first, so the newest statement is read last."""
-    from server.memory.workers.profile_consolidation import render_fold_input
-
-    return render_fold_input([{**r, "value": _text(r.get("value"))} for r in rows])
+    return render_fold_input([{**r, "value": fact_text(r.get("value"))} for r in rows])
 
 
 def parse_answer(text: str) -> Any:
@@ -148,26 +154,18 @@ def backing_off(org: str, namespace: str) -> tuple[str, ...]:
     return tuple(sorted(waiting))
 
 
-async def _namespaces(
-    off: list[str], limit: int, only: tuple[str, str] | None
-) -> list[dict[str, Any]]:
-    """At most `limit` namespaces with a schema, from just after the last pass's
-    cursor, wrapping around to the first."""
+def refused_digests(org: str, namespace: str) -> dict[str, str]:
+    """User -> the digest their refused build was made from, for the namespace."""
+    return {u: d for (o, n, u), d in _refused.items() if (o, n) == (org, namespace)}
+
+
+def _cursor() -> tuple[str, str] | None:
+    """The (org, namespace) the last pass stopped at; None for the first pass."""
     try:
         cursor = json.loads(pass_context.resume_cursor() or "[]")
     except ValueError:
-        cursor = []
-    after = (str(cursor[0]), str(cursor[1])) if len(cursor) == 2 else None
-    spaces = await profile_schemas.list_active(
-        exclude_orgs=off, after=after, limit=limit, only=only
-    )
-    if after is not None and len(spaces) < limit:
-        seen = {(s["org"], s["namespace"]) for s in spaces}
-        more = await profile_schemas.list_active(
-            exclude_orgs=off, after=None, limit=limit, only=only
-        )
-        spaces += [s for s in more if (s["org"], s["namespace"]) not in seen][: limit - len(spaces)]
-    return spaces
+        return None
+    return (str(cursor[0]), str(cursor[1])) if len(cursor) == 2 else None
 
 
 async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProfileResult:
@@ -177,7 +175,9 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
         off = sorted(await customer.switched_off_orgs())
         budget = max(1, int(cfg.max_users_per_pass))
         # Every namespace reached can build at least once, so a pass reaches at most `budget`.
-        spaces = await _namespaces(off, budget, cfg.only)
+        spaces = await profile_schemas.list_active(
+            exclude_orgs=off, after=_cursor(), limit=budget, only=cfg.only
+        )
         share = math.ceil(budget / len(spaces)) if spaces else 0
         for schema in spaces:
             if budget <= 0:
@@ -196,20 +196,27 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
                 limit=min(share, budget),
                 candidates=int(cfg.candidates),
                 skip=backing_off(org, ns),
+                refused=refused_digests(org, ns),
             )
             for user_id in users:
                 budget -= 1
+                key = (org, ns, user_id)
                 try:
                     dropped = await build_profile(schema, user_id, cfg)
                 except customer.HOLDS:
                     continue  # a held call is no failure: the user is built once the org is back
+                except Refused as e:
+                    result.refused += 1
+                    _refused[key] = str(e)
+                    continue
                 except Exception as e:  # one user's build never stops the pass
                     result.errors += 1
-                    _note_failure((org, ns, user_id))
+                    _note_failure(key)
                     log.exception("structured profile failed for %s/%s", ns, user_id)
                     pass_context.note_failure(e, ns)
                     continue
-                _backoff.pop((org, ns, user_id), None)
+                _backoff.pop(key, None)
+                _refused.pop(key, None)
                 if dropped is None:
                     result.skipped += 1
                 else:
@@ -217,14 +224,16 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
                     result.values_dropped += dropped
         if not result.profiles_written and not result.errors:
             pass_context.mark_idle()
-        rec.outcome = {
-            "namespaces_scanned": result.namespaces_scanned,
-            "profiles_written": result.profiles_written,
-            "skipped": result.skipped,
-            "values_dropped": result.values_dropped,
-            "errors": result.errors,
-        }
+        rec.outcome = dataclasses.asdict(result)
     return result
+
+
+def _refuses_a_write(row: dict[str, Any] | None) -> bool:
+    """Whether the live profile row refuses a changed value: pinned, or locked for it."""
+    if row is None:
+        return False
+    mode = lock.effective_mode(SimpleNamespace(**row))
+    return bool(row.get("pinned")) or "value" in lock.REFUSES.get(mode, frozenset())
 
 
 async def build_profile(
@@ -232,7 +241,8 @@ async def build_profile(
 ) -> int | None:
     """Build and write one user's profile; returns how many of the model's values
     broke the schema and were stored as null, or None when the user's facts were
-    erased while the model ran and nothing was written."""
+    erased while the model ran and nothing was written. Raises `Refused`, carrying
+    the sources digest, when the profile row will not take the write."""
     from server.memory.app.profile_schema import write_structured_profile
 
     org, ns = str(schema["org"]), str(schema["namespace"])
@@ -240,13 +250,21 @@ async def build_profile(
     # The digest and its time first: a fact written while the model runs leaves the
     # profile behind it, and the next pass rebuilds it.
     read_at = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-    digest = await profile_sources.sources_digest(org=org, namespace=ns, user_id=user_id)
+    digest = await profile_sources.sources_digest(
+        org=org, namespace=ns, user_id=user_id, scope=WHOLE_NAMESPACE
+    )
+    existing = await profile_sources.profile_row(
+        org=org, namespace=ns, user_id=user_id, label=cfg.label, scope=WHOLE_NAMESPACE
+    )
+    if _refuses_a_write(existing):
+        raise Refused(digest)  # checked before paying for the model call
     rows = await profile_sources.user_facts(
         org=org,
         namespace=ns,
         user_id=user_id,
         types=profile_sources.STRUCTURED_TYPES,
         limit=int(cfg.memory_limit),
+        scope=WHOLE_NAMESPACE,
     )
     # An unlabelled row holding a credential is never sent to the model either.
     rows = [r for r in rows if not value_reads_high(r.get("value"))]
@@ -258,20 +276,27 @@ async def build_profile(
         # The user's facts erased while the model ran: writing now would bring their
         # content back in a profile row above the erasure.
         if digest and not await profile_sources.sources_digest(
-            org=org, namespace=ns, user_id=user_id
+            org=org, namespace=ns, user_id=user_id, scope=WHOLE_NAMESPACE
         ):
             return None
         profile, dropped = profile_schema.conform(props, answer)
-        await write_structured_profile(
-            org=org,
-            namespace=ns,
-            user_id=user_id,
-            value=profile,
-            schema_sha256=str(schema["schema_sha256"]),
-            sources_digest=digest,
-            sources_read_at=read_at,
-            memory_ids=[str(r["memory_id"]) for r in rows],
-        )
+        try:
+            await write_structured_profile(
+                org=org,
+                namespace=ns,
+                user_id=user_id,
+                value=profile,
+                schema_sha256=str(schema["schema_sha256"]),
+                sources_digest=digest,
+                sources_read_at=read_at,
+                memory_ids=[str(r["memory_id"]) for r in rows],
+            )
+        except (HTTPException, LoomServerError) as e:
+            # A 4xx (a lock or pin set since the check, the char limit, the blacklist)
+            # refuses the same build again; anything else is a failure to retry.
+            if 400 <= int(getattr(e, "status_code", 500)) < 500:
+                raise Refused(digest) from e
+            raise
     return dropped
 
 

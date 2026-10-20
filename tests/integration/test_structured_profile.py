@@ -102,7 +102,7 @@ async def test_a_profile_is_built_in_the_schema_shape_and_kept_current(
     )
     assert out["found"] and out["json_schema"] == SCHEMA and len(out["schema_sha256"]) == 64
     got = _ok(_post(base, admin, "profile_schema.get", {"org": ORG, "namespace": ns}))
-    assert got["schema_sha256"] == out["schema_sha256"] and got["updated_by"] == "op"
+    assert got["schema_sha256"] == out["schema_sha256"] and got["updated_by"] == "process:op"
 
     tz = _remember(base, admin, ns, "u1", "u1_tz", "My timezone is Europe/Berlin.")
     lang = _remember(
@@ -170,7 +170,8 @@ async def test_a_profile_is_built_in_the_schema_shape_and_kept_current(
     await _build(ns)
     assert _read(base, admin, ns, "u1")["status"] == "ready"
 
-    _ok(_post(base, admin, "profile_schema.clear", {"org": ORG, "namespace": ns}))
+    cleared = _ok(_post(base, admin, "profile_schema.clear", {"org": ORG, "namespace": ns}))
+    assert cleared["found"] and cleared["json_schema"] == changed
     assert _read(base, admin, ns, "u1")["status"] == "no_schema"
     gone = _ok(_post(base, admin, "profile_schema.get", {"org": ORG, "namespace": ns}))
     assert gone["found"] is False
@@ -268,3 +269,19 @@ async def test_erasing_a_user_removes_their_profile(
     ).result_rows[0][0]
     assert live == 0
     assert _read(base, admin, ns, "carol")["status"] == "pending"
+
+
+def test_a_session_bounded_token_cannot_read_a_profile(control_plane_url: str, ns: str) -> None:
+    from server.auth.jwt import mint_token
+
+    token = mint_token(
+        subject="chat",
+        org=ORG,
+        namespaces=[ns],
+        roles=["viewer"],
+        read_scope="own_session",
+        ttl_seconds=600,
+    )
+    body = {"org": ORG, "namespace": ns, "agent": "bot", "user_id": "u1", "session_id": "s1"}
+    r = _post(control_plane_url, token, "profile.structured", body)
+    assert r.status_code == 403 and "sessions" in r.text
