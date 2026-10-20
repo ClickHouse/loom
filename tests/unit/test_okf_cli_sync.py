@@ -114,7 +114,8 @@ class _FakeLoom:
             )
             page = mine[body["offset"] : body["offset"] + body["limit"]]
             return {
-                "entries": [_project(r, body) for r in page],
+                # A high row's hash and entities are served by key only, as memory.list does.
+                "entries": [_project(_listed(r), body) for r in page],
                 "truncated": body["offset"] + len(page) < len(mine),
                 "total": len(mine),
                 "namespace_version": "1",
@@ -154,6 +155,8 @@ class _FakeLoom:
                 actor=_ACTOR,
                 entities=canonical_entities(body.get("entities") or []),
                 content_sha256=sha256_value(body["value"]),
+                # The target labels a value it reads as a secret high, as memory.set does.
+                sensitivity="high" if "test-secret" in str(body["value"]) else "",
                 # The server derives `imported` from an okf: trace when none is declared.
                 source_class=body.get("source_class")
                 or ("imported" if body["source_trace"].startswith("okf:") else "asserted"),
@@ -199,6 +202,13 @@ def _prune_read(op: str, body: dict[str, Any]) -> bool:
     return op == "memory.bulk_get" and body.get("fields") == cli_okf._PRUNE_FIELDS
 
 
+def _listed(row: dict[str, Any]) -> dict[str, Any]:
+    """The row as memory.list serves it: a high row without its hash and entities."""
+    if row.get("sensitivity") != "high":
+        return row
+    return {**row, "content_sha256": "", "entities": []}
+
+
 def _project(row: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
     """The row as a read with `fields` returns it: the key and the fields asked for."""
     if "fields" not in body:
@@ -241,6 +251,18 @@ def test_a_second_import_of_the_same_bundle_writes_nothing(tmp_path: Path, loom:
     root = _bundle(tmp_path, [_entry("a"), _entry("b")], edges=[edge])
     assert _run(root) == 0
     assert loom.writes() == ["memory.set", "memory.set", "memory.link"]
+    loom.calls.clear()
+    assert _run(root) == 0
+    assert loom.writes() == []
+
+
+def test_a_second_import_of_a_high_concept_writes_nothing(tmp_path: Path, loom: _FakeLoom):
+    # memory.list hides a high row's hash and entities; the import reads them by key.
+    secret = "the deploy key is test-secret-0000"
+    root = _bundle(tmp_path, [_entry("a", value=secret)])
+    assert _run(root) == 0
+    assert loom.writes() == ["memory.set"]
+    assert next(iter(loom.rows.values()))["sensitivity"] == "high"
     loom.calls.clear()
     assert _run(root) == 0
     assert loom.writes() == []
@@ -722,13 +744,13 @@ def test_a_complete_export_carries_rows_the_source_marked_duplicate(
     assert pointer["complete"] is True and pointer["concepts"] == 2
 
 
-_LIST = ["content_sha256", "memory_type", "source_trace", "tags", "confidence", "entities"]
+_LIST = ["memory_type", "source_trace", "tags", "confidence", "valid_at"]
+_BULK = ["valid_to", "source_class", "content_sha256", "entities"]
 
 
 @pytest.mark.parametrize(
     ("read", "field"),
-    [("_LIVE_FIELDS", f) for f in [*_LIST, "valid_at"]]
-    + [("_BULK_FIELDS", "valid_to"), ("_BULK_FIELDS", "source_class")],
+    [("_LIVE_FIELDS", f) for f in _LIST] + [("_BULK_FIELDS", f) for f in _BULK],
     ids=lambda v: str(v),
 )
 def test_a_field_the_import_does_not_read_would_rewrite_every_row(

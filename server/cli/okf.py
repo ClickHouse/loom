@@ -81,15 +81,14 @@ _LIVE_FIELDS = [
     "source_trace",
     "valid_at",
     "tags",
-    "entities",
-    "content_sha256",
     "verification",
     "expires_at",
     # prune deletes only the version this listing saw with the import's trace
     "version",
 ]
-# What memory.list does not return; read with memory.bulk_get.
-_BULK_FIELDS = ["valid_to", "source_class"]
+# What memory.list does not return, or blanks for a high row (its hash and entities are
+# served by key only); read with memory.bulk_get.
+_BULK_FIELDS = ["valid_to", "source_class", "content_sha256", "entities"]
 
 
 def _resolve_token(args: argparse.Namespace) -> str:
