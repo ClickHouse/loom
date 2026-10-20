@@ -425,10 +425,14 @@ def test_a_share_naming_no_grantee_fails_validation_over_mcp(monkeypatch, op: st
         "method": "tools/call",
         "params": {
             "name": "loom_op",
-            "arguments": {"op": op, "arguments": {"org": "acme", "namespace": "fleet-a"}},
+            # `agent` as a client fills it from the caller, and no grantee.
+            "arguments": {
+                "op": op,
+                "arguments": {"org": "acme", "namespace": "fleet-a", "agent": "a"},
+            },
         },
     }
-    r = TestClient(app).post("/mcp", json=call, headers={"X-Loom-Agent": "a"})
+    r = TestClient(app).post("/mcp", json=call)
     result = r.json()["result"]
     assert result["isError"] and "grantee" in json.dumps(result)
 

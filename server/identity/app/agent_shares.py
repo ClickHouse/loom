@@ -36,8 +36,8 @@ from server.identity.app.grants import create_grant, revoke_grant
 from server.identity.domain.grants import GrantState
 
 
-def _parties(org: str, namespace: str, agent: str) -> tuple[str, str, str]:
-    """(the caller's trust, the caller's subject, the subject of `agent` in
+def _parties(org: str, namespace: str, grantee: str) -> tuple[str, str, str]:
+    """(the caller's trust, the caller's subject, the subject of `grantee` in
     that trust); refused unless the caller is an agent acting on its own
     namespace."""
     from server.auth.context import current_auth
@@ -52,11 +52,11 @@ def _parties(org: str, namespace: str, agent: str) -> tuple[str, str, str]:
     own = agents.namespace(trust, me)
     if namespace != own:
         raise AuthInsufficientError(f"an agent shares only its own namespace, {own}")
-    if not agents.AGENT.fullmatch(agent):
+    if not agents.AGENT.fullmatch(grantee):
         raise ValidationError("grantee: lower-case letters, digits and '-', at most 63")
-    if agent == me:
+    if grantee == me:
         raise ValidationError("an agent already owns its namespace")
-    return trust, auth.subject, agents.subject(trust, agent)
+    return trust, auth.subject, agents.subject(trust, grantee)
 
 
 def _made_by(me: str, subject: str, namespace: str) -> Callable[[GrantState], None]:
