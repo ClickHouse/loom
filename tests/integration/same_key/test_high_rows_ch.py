@@ -1334,3 +1334,47 @@ async def test_values_whose_edges_stay_open_do_not_block_a_value_less_close(
     for _ in range(2):
         await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
     assert await _open_edge_pairs(ch, org) == {("alice smith", "bob lane")}
+
+
+async def test_values_another_row_holds_open_do_not_block_a_value_less_close(
+    ch, org, monkeypatch
+) -> None:
+    """Older values linking a pair another live row holds open stay open on every pass;
+    each pass starts after the ones read before, so the closable value behind them is
+    reached with one value a pass."""
+    from server.memory.app import edge_links, edge_repair, projections, triple_projections
+    from server.memory.app.projection_errors import ProjectionScope
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    async def nothing(*a: Any, **kw: Any) -> None:
+        return None
+
+    # Another live row holds the Alice-Dave edge open.
+    await _high_set(org, "s9", "other", "Alice and Dave met", entities=["Alice Smith", "Dave Ray"])
+    with monkeypatch.context() as m:  # every close and drop lost: all edges stay open
+        m.setattr(edge_links, "drop_undeclared_links", nothing)
+        m.setattr(projections, "end_edges", nothing)
+        m.setattr(triple_projections, "end_edges", nothing)
+        # Their hashes sort ahead of the closable value's.
+        for value in ("Alice and Dave note 6", "Alice and Dave note 22", "Alice and Dave note 37"):
+            await _high_set(org, "s1", "vault", value, entities=["Alice Smith", "Dave Ray"])
+        await _high_set(
+            org,
+            "s1",
+            "vault",
+            "Alice met Carol about the plan",
+            entities=["Alice Smith", "Carol King"],
+        )
+        out = await _high_set(
+            org, "s1", "vault", "Orchid", sensitivity="high", entities=["Alice Smith", "Bob Lane"]
+        )
+    assert ("alice smith", "carol king") in await _open_edge_pairs(ch, org)
+    monkeypatch.setattr(edge_repair, "_VALUES_PAGE", 1)
+    monkeypatch.setattr(edge_repair, "_VALUES_PAGES", 1)
+    scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    close = edge_repair.EdgeClose(str(out.memory_id), "vault", "-", [], high=True)
+    await edge_repair.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
+    for _ in range(4):  # the three held values, then the closable one
+        await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    assert ("alice smith", "carol king") not in await _open_edge_pairs(ch, org)
+    assert ("alice smith", "dave ray") in await _open_edge_pairs(ch, org)

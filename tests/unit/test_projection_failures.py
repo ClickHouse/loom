@@ -898,6 +898,29 @@ async def test_a_failed_late_edges_cleanup_records_when_the_value_ended(monkeypa
     assert recorded == [payload]
 
 
+class _ValuesCH(_GraphCH):
+    """The value-less close's reads over `shas`, every value staying open: a page after
+    the hash cursor and the offset, and the count of values up to the cursor."""
+
+    def __init__(self, shas: list[str]) -> None:
+        super().__init__()
+        self.shas = shas
+        self.payloads: list[dict[str, Any]] = []
+
+    async def execute(self, sql: str, params: Any = None) -> None:
+        if "UPDATE payload" in sql:
+            self.payloads.append(json.loads(params["payload"]))
+
+    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        if "GROUP BY content_sha256" in sql:
+            after, page, skip = params["after"], params["page"], params["skip"]
+            later = [s for s in self.shas if s > after][skip : skip + page]
+            return [{"sha": s, "entities": ["a", "b"]} for s in later]
+        if "uniqExact(content_sha256)" in sql:
+            return [{"n": len([s for s in self.shas if s <= params["after"]])}]
+        return []
+
+
 async def test_a_value_less_close_reads_every_page_of_values_once(monkeypatch) -> None:
     """A 'high' row with 250 values whose edges all stay open (pairs it still names): the
     repair reads them in pages by hash, each value once, and resolves."""
@@ -906,13 +929,6 @@ async def test_a_value_less_close_reads_every_page_of_values_once(monkeypatch) -
     shas = [f"{i:064x}" for i in range(250)]
     asked: list[str] = []
 
-    class _ValuesCH(_GraphCH):
-        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            if "GROUP BY content_sha256" in sql:
-                after, page = params["after"], params["page"]
-                return [{"sha": s, "entities": ["a", "b"]} for s in shas if s > after][:page]
-            return []
-
     async def close_late_edges(org: str, ns: str, memory_id: str, sha: str, **kw: Any) -> None:
         asked.append(sha)  # kept: its edges stay open, as a named pair's do
 
@@ -920,7 +936,7 @@ async def test_a_value_less_close_reads_every_page_of_values_once(monkeypatch) -
     failure = dataclasses.replace(
         _graph_failure("entity_edges_close"), payload={"memory_id": _ROW_ID}
     )
-    (out,) = await retry_failures([failure], ch=_ValuesCH())
+    (out,) = await retry_failures([failure], ch=_ValuesCH(shas))
     assert out.resolved and asked == shas
 
 
@@ -932,13 +948,6 @@ async def test_a_value_less_close_reads_at_most_twenty_pages_and_stays_active(mo
     shas = [f"{i:064x}" for i in range(2500)]
     asked: list[str] = []
 
-    class _ValuesCH(_GraphCH):
-        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            if "GROUP BY content_sha256" in sql:
-                after, page = params["after"], params["page"]
-                return [{"sha": s, "entities": ["a", "b"]} for s in shas if s > after][:page]
-            return []
-
     async def close_late_edges(org: str, ns: str, memory_id: str, sha: str, **kw: Any) -> None:
         asked.append(sha)
 
@@ -946,8 +955,41 @@ async def test_a_value_less_close_reads_at_most_twenty_pages_and_stays_active(mo
     failure = dataclasses.replace(
         _graph_failure("entity_edges_close"), payload={"memory_id": _ROW_ID}
     )
-    (out,) = await retry_failures([failure], ch=_ValuesCH())
+    ch = _ValuesCH(shas)
+    (out,) = await retry_failures([failure], ch=ch)
     assert not out.resolved and not out.abandoned and asked == shas[:2000]
+    # Only the count of values left open is kept, never a hash.
+    assert ch.payloads == [{"memory_id": _ROW_ID, "skip": 2000}]
+
+
+async def test_a_value_less_close_resumes_after_the_values_an_earlier_pass_left_open(
+    monkeypatch,
+) -> None:
+    """The next pass skips the 2,000 values the last one read and left open, reads the
+    other 500 and resolves."""
+    from server.memory.app import edge_repair
+
+    shas = [f"{i:064x}" for i in range(2500)]
+    asked: list[str] = []
+
+    async def close_late_edges(org: str, ns: str, memory_id: str, sha: str, **kw: Any) -> None:
+        asked.append(sha)
+
+    monkeypatch.setattr(edge_repair, "close_late_edges", close_late_edges)
+    failure = dataclasses.replace(
+        _graph_failure("entity_edges_close"), payload={"memory_id": _ROW_ID, "skip": 2000}
+    )
+    (out,) = await retry_failures([failure], ch=_ValuesCH(shas))
+    assert out.resolved and asked == shas[2000:]
+
+
+@pytest.mark.parametrize("skip", [-1, "10", 1.5])
+async def test_a_value_less_close_with_a_bad_skip_is_malformed(skip) -> None:
+    failure = dataclasses.replace(
+        _graph_failure("entity_edges_close"), payload={"memory_id": _ROW_ID, "skip": skip}
+    )
+    (out,) = await retry_failures([failure], ch=_GraphCH())
+    assert out.abandoned and out.reason == "malformed_payload"
 
 
 @pytest.mark.parametrize(

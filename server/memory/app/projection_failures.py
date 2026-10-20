@@ -91,7 +91,8 @@ TRIPLES_RECONCILE = "triples_reconcile"
 # updates) wrote for a value the row no longer holds, whose cleanup failed: payload
 # memory_id, the entities the edges paired and, for a row that is not 'high',
 # content_sha256 and (when it was read) ended_at. A 'high' row's names no value: the
-# repair closes each of the row's values it no longer holds.
+# repair closes each of the row's values it no longer holds, and a pass that runs out of
+# pages leaves `skip`, the count of values it read that stay open.
 EDGES_CLOSE = "entity_edges_close"
 # Rows a write made 'high' (or whose declared entities it narrowed) whose links to
 # undeclared pairs are not dropped yet: payload versions (memory_id -> the version of
@@ -644,15 +645,29 @@ async def _retry_triples_reopen(failure: ProjectionFailureRow, *, ch: Any) -> st
 async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
     """Run the failed cleanup of a late projection again. A payload no retry can
     read returns the reason that abandons it."""
-    from server.memory.app.edge_repair import close_late_edges, close_overtaken_values
+    from server.memory.app.edge_repair import (
+        ValuesLeftOpen,
+        close_late_edges,
+        close_overtaken_values,
+    )
 
     memory_id = str(failure.payload.get("memory_id") or "")
     content_sha256 = str(failure.payload.get("content_sha256") or "")
     if not memory_id:
         return "malformed_payload"
     if not content_sha256:
-        # A high row's close names no value: each one it no longer holds closes.
-        await close_overtaken_values(failure.org, failure.namespace, memory_id, ch=ch)
+        # A high row's close names no value: each one it no longer holds closes. `skip`
+        # counts the values an earlier pass read and left open.
+        skip = failure.payload.get("skip", 0)
+        if not isinstance(skip, int) or skip < 0:
+            return "malformed_payload"
+        try:
+            await close_overtaken_values(
+                failure.org, failure.namespace, memory_id, skip=skip, ch=ch
+            )
+        except ValuesLeftOpen as e:
+            await _record_changes(failure, {"skip": e.skip}, ch=ch)
+            raise
         return ""
     # When the revision ended the value; a payload recorded before it was known has none.
     ended = failure.payload.get("ended_at")
