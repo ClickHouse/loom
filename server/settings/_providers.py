@@ -154,6 +154,12 @@ class ProviderSettings(ModelSettings):
             name = getattr(self, field)
             if name and not _HEADER_NAME.fullmatch(name):
                 raise ValueError(f"LOOM_{field.upper()} must be an HTTP header name, got {name!r}")
+        customer, feature = self.inference_customer_header, self.inference_feature_header
+        if customer and feature and customer.lower() == feature.lower():
+            raise ValueError(
+                "LOOM_INFERENCE_FEATURE_HEADER must differ from LOOM_INFERENCE_CUSTOMER_HEADER, "
+                "or the feature overwrites the customer"
+            )
         if self.inference_customer_header and not self.inference_system_customer.strip():
             raise ValueError(
                 "LOOM_INFERENCE_SYSTEM_CUSTOMER must name a customer while "

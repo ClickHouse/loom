@@ -443,3 +443,67 @@ def test_settings_refuse_headers_a_call_could_not_send(monkeypatch, env, error) 
         monkeypatch.setenv(k, v)
     with pytest.raises(ValueError, match=error):
         Settings()
+
+
+@pytest.mark.parametrize("client", ["openai", "anthropic"])
+def test_a_chat_refusal_comes_before_the_gateway_and_provider_health(
+    metered, monkeypatch, client: str
+) -> None:
+    from server.llm import anthropic as anthropic_mod
+    from server.llm import gateway
+    from server.llm import openai as chat_mod
+
+    async def no_token(*a: Any) -> str:
+        raise AssertionError("asked the gateway for a token")
+
+    monkeypatch.setattr(gateway, "bearer", no_token)
+    monkeypatch.setattr(
+        "server.observability.provider_health.recording",
+        lambda name: pytest.fail("recorded as an outage"),
+    )
+    llm = (
+        chat_mod.OpenAILLMClient(model="gpt-4o-mini", api_key="k")
+        if client == "openai"
+        else anthropic_mod.AnthropicLLMClient(model="claude-haiku-4-5", api_key="k")
+    )
+    with pytest.raises(customer.Unattributed):
+        asyncio.run(llm.complete("s", "u"))
+
+
+def test_a_cached_answer_does_not_hide_a_missed_path(metered) -> None:
+    from server.llm.cache import CachedLLMClient
+    from server.llm.fake import FakeLLMClient
+
+    cached = CachedLLMClient(FakeLLMClient(), org="acme")
+    with pytest.raises(customer.Unattributed):
+        asyncio.run(cached.complete("s", "u"))
+
+
+def test_the_llm_reranker_lets_a_refusal_through_and_records_no_outage(
+    metered, monkeypatch
+) -> None:
+    from server.memory.app import rerank as rerank_mod
+    from server.observability import provider_health
+
+    class _Metered:
+        """A real-looking client: the reranker skips the fake one."""
+
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            customer.require()
+            raise AssertionError("not reached")
+
+    monkeypatch.setattr("server.llm.client.get_llm_client", lambda: _Metered())
+    provider_health._state.clear()
+    candidates = [rerank_mod.RerankCandidate("k", "ns", "v", "fact", 1.0)]
+    with pytest.raises(customer.Unattributed):
+        asyncio.run(rerank_mod._rerank_with_builtin_openai("builtin:openai", "q", candidates))
+    assert not provider_health._state.get("rerank:openai", {}).get("failing")
+
+
+def test_settings_refuse_one_name_for_both_headers(monkeypatch) -> None:
+    from server.settings import Settings
+
+    monkeypatch.setenv("LOOM_INFERENCE_CUSTOMER_HEADER", "X-Meter")
+    monkeypatch.setenv("LOOM_INFERENCE_FEATURE_HEADER", "x-meter")
+    with pytest.raises(ValueError, match="must differ"):
+        Settings()

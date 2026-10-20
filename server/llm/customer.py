@@ -68,6 +68,11 @@ class ModelCallsDisabled(LoomServerError):
     status_code = 403
 
 
+# What require() refuses with: callers that fail open (a reranker, classify)
+# re-raise these, since neither is a provider fault to work around.
+REFUSALS: tuple[type[LoomServerError], ...] = (Unattributed, ModelCallsDisabled)
+
+
 # The orgs switched off, as this process last read them, when (monotonic; 0.0 =
 # never read), and when the next read is due (a failed read waits its turn too,
 # so the waiters do not each query in turn).

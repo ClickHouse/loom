@@ -34,6 +34,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from server.core.background import TaskSet
+from server.llm import customer
 from server.llm.client import LLMClient, LLMResult
 
 log = logging.getLogger(__name__)
@@ -263,10 +264,8 @@ class CachedLLMClient:
         **kw: Any,
     ) -> LLMResult:
         global hits, misses, saved_usd
-        from server.llm import customer
-
-        # Before the lookup: a hit is never served to a call naming no customer
-        # or for an org whose model calls are switched off.
+        # A cached answer must not hide a path that names no customer, or an org
+        # whose model calls are switched off.
         await customer.require()
         if _BYPASS.get() or (
             self._deterministic_only and float(kw.get("temperature") or 0.0) != 0.0
