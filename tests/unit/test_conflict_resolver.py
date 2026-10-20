@@ -1987,7 +1987,9 @@ async def test_a_bulk_row_whose_key_another_session_holds_is_owed(monkeypatch) -
     current["policy"] = "auto_reinforce"
     for row in state.embedding_rows:
         row["conflict_checked_at"] = None
-    await bulk_set._bulk_mark_same_key(ch, NS(org="o", namespace="ns", user_id="-"), state)
+    for row in state.memory_rows:
+        row["user_id"] = "-"
+    await bulk_set._bulk_mark_same_key(ch, NS(org="o", namespace="ns"), state)
     assert ch.sql == [] and [e["conflict_checked_at"] for e in state.embedding_rows] == [None, None]
 
 

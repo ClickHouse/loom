@@ -291,8 +291,7 @@ async def _bulk_mark_same_key(ch: Any, input: MemoryBulkSetInput, state: _BulkWr
     earlier row of the batch of its type sits at the resolver floor (the verdicts
     never compare siblings), or when another session of the same subject holds its
     key live (outside `newest_wins`, which retires the older row itself after the
-    insert, and not for the anonymous user, whose other sessions are other tasks: as
-    `conflicts.same_key_mark`). Not under `append_only`. Fail-open."""
+    insert; `keys_held_elsewhere`). Not under `append_only`. Fail-open."""
     from server.memory.app.conflicts import namespace_conflict_policy
     from server.memory.app.key_supersession import keys_held_elsewhere
     from server.memory.domain.conflict_resolution import later_close_siblings
@@ -312,7 +311,7 @@ async def _bulk_mark_same_key(ch: Any, input: MemoryBulkSetInput, state: _BulkWr
             float(settings.memory_conflict_resolver_min_similarity),
         ):
             rows[i]["conflict_checked_at"] = OWED_MARK
-        if policy == "newest_wins" or str(getattr(input, "user_id", "") or "") == "-":
+        if policy == "newest_wins":
             return
         held = await keys_held_elsewhere(
             org=input.org, namespace=input.namespace, memory_rows=state.memory_rows, ch=ch

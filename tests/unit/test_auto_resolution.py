@@ -1117,19 +1117,19 @@ async def test_an_anonymous_point_write_is_owed_nothing_for_a_key_another_sessio
 ) -> None:
     """The anonymous user's other sessions are other tasks: the resolver could only
     clear a flag between them, and a fresh write has none, so no mark and no read."""
-    from server.memory.app import conflicts, key_supersession
+    from server.memory.app import conflicts
     from server.memory.domain.conflicts import ConflictResult
     from server.settings import settings
 
-    reads: list[str] = []
+    class NoRead:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            raise AssertionError("no read for the anonymous user")
 
-    async def keys_held_elsewhere(**kw: Any) -> set[str]:
-        reads.append("read")
-        return {"user_city"}
+    async def policy(org: str, namespace: str, ch: Any = None) -> str:
+        return "auto_reinforce"
 
     monkeypatch.setattr(settings, "memory_conflict_resolver_enabled", True)
-    monkeypatch.setattr(key_supersession, "keys_held_elsewhere", keys_held_elsewhere)
-    monkeypatch.setattr(conflicts, "get_client", lambda: object())
+    monkeypatch.setattr(conflicts, "get_client", lambda: NoRead())
     mark = await conflicts.same_key_mark(
         ConflictResult(verdict="clear", peers=[]),
         org="o",
@@ -1137,4 +1137,4 @@ async def test_an_anonymous_point_write_is_owed_nothing_for_a_key_another_sessio
         memory_row={**_live("n1"), "user_id": "-"},
         policy="auto_reinforce",
     )
-    assert mark is None and reads == []
+    assert mark is None

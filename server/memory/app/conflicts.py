@@ -148,17 +148,14 @@ async def same_key_mark(
     """`resolver_mark` for a point write, or the owed mark when another session of the
     same subject holds the row's key live: a shared key is not proof of one attribute,
     so the resolver judges the pair (as bulk writes do). Not under `newest_wins`, which
-    retires the older row itself, nor `append_only`, nor for the anonymous user, whose
-    other sessions are other tasks: the resolver could only clear a flag there, and
-    the pair has none. One query; fail-open."""
+    retires the older row itself, nor `append_only`, nor for the anonymous user
+    (`keys_held_elsewhere`). One query; fail-open."""
     from server.memory.app.key_supersession import keys_held_elsewhere
     from server.memory.store.conflict_resolver import OWED_MARK
 
     mark = resolver_mark(result)
     if mark is not None or not settings.memory_conflict_resolver_enabled:
         return mark
-    if str(memory_row.get("user_id") or "") == "-":
-        return None
     try:
         ch = get_client()
         policy = policy or await namespace_conflict_policy(org, namespace, ch=ch)

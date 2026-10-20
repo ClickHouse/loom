@@ -122,12 +122,13 @@ def _victim(row: Mapping[str, Any], superseded_by: str) -> dict[str, Any]:
 async def keys_held_elsewhere(
     *, org: str, namespace: str, memory_rows: list[dict[str, Any]], ch: Any
 ) -> set[str]:
-    """The keys among a bulk write's rows (one writer identity) that hold a live row
-    of the same subject from another session: the same user, and for the anonymous
-    user `-` the same agent. Outside `newest_wins` the conflict resolver judges such a
-    pair, since a shared key is not proof of one attribute. Inside the writer's read
-    scope only; a 'high' row is never a peer."""
-    if not memory_rows:
+    """The keys among a write's rows (one writer identity) that hold a live row of the
+    same user from another session. Outside `newest_wins` the conflict resolver judges
+    such a pair, since a shared key is not proof of one attribute. None for the
+    anonymous user `-`, whose sessions are separate tasks: a verdict there could only
+    clear a flag, and a fresh write has none. Inside the writer's read scope only; a
+    'high' row is never a peer."""
+    if not memory_rows or str(memory_rows[0].get("user_id") or "") == "-":
         return set()
     writer = memory_rows[0]
     params: dict[str, Any] = {
@@ -145,7 +146,6 @@ async def keys_held_elsewhere(
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND memory_key IN {{keys:Array(String)}} AND user_id = {{own_user:String}}
-          AND (user_id != '-' OR agent = {{own_agent:String}})
           AND NOT (agent = {{own_agent:String}} AND session_id = {{own_session:String}})
           AND tombstoned_at IS NULL AND sensitivity != 'high'
           AND status IN ('active', 'conflicted'){in_scope}

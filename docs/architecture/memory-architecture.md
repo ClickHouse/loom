@@ -432,9 +432,9 @@ chat-history namespaces 52 were different facts, 7 were restatements and 1 was a
 
 Those rows are judged by the conflict resolver like any other peers: under `auto_reinforce`
 and `manual_review`, a point write (`conflicts.same_key_mark`) and a bulk write mark each
-row whose key a live row of the same subject from another session holds
-(`key_supersession.keys_held_elsewhere`): the same `user_id`, or for the anonymous user
-`-` the same agent. Under `append_only` nothing is marked. The writer's own identity is never a peer: its stored
+row whose key a live row of the same `user_id` from another session holds
+(`key_supersession.keys_held_elsewhere`). The anonymous user `-` is never marked so: its
+sessions are separate tasks, where a verdict could only clear a flag. Under `append_only` nothing is marked. The writer's own identity is never a peer: its stored
 row is the one the write revises.
 
 **Which row is older.** Only the older statement of a pair ever retires, so two rows
