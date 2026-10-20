@@ -505,6 +505,7 @@ async def test_a_fast_read_makes_no_llm_call(
 def _assert_plans_no_llm(out: Any) -> None:
     # What the read reports it planned and costed shows no LLM step either.
     assert "hyde=off" in out.retrieval_plan and "hyde=on" not in out.score_explanation
+    assert "rerank=on" not in out.retrieval_plan  # a builtin:openai rerank is dropped
     assert out.retrieval_cost_estimate["llm_calls"] == 0
 
 

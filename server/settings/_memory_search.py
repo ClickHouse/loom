@@ -58,10 +58,6 @@ class MemorySearchSettings(BaseModel):
     # Vector queries one fallback round may issue before further ones are denied.
     memory_search_fallback_max_vector_queries: int = 12
 
-    # True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion
-    # embeddings, and rerank only as named, since a reranker is a model call.
-    reads_llm_free: bool = False
-
     # First-stage pool = top_k × multiplier, per retrieval profile, capped at
     # memory_search_max_pool_top_k (all_mine searches multiply by namespace
     # and sub-query count).

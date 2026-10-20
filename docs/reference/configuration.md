@@ -863,7 +863,6 @@ Source: `server/settings/_memory_search.py`
 | `LOOM_MEMORY_SEARCH_FALLBACK_MAX_WALL_MS` | `int` | `4000` | Wall-clock ms the fallback cascade may spend across all rounds before it stops. |
 | `LOOM_MEMORY_SEARCH_FALLBACK_MAX_LLM_CALLS` | `int` | `2` | Finer caps inside a round: LLM calls and vector queries a fallback may spend before it is denied. |
 | `LOOM_MEMORY_SEARCH_FALLBACK_MAX_VECTOR_QUERIES` | `int` | `12` | Vector queries one fallback round may issue before further ones are denied. |
-| `LOOM_READS_LLM_FREE` | `bool` | `False` | True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion embeddings, and rerank only as named, since a reranker is a model call. |
 | `LOOM_MEMORY_SEARCH_POOL_MULTIPLIER_STANDARD` | `int` | `3` | First-stage pool = top_k × multiplier, per retrieval profile, capped at memory_search_max_pool_top_k (all_mine searches multiply by namespace and sub-query count). |
 | `LOOM_MEMORY_SEARCH_POOL_MULTIPLIER_RERANK` | `int` | `6` | Rerank gets the widest pool: a reranker only reorders what the first stage surfaced (measured: items it should promote sat at rank 11-30). Affects rerank-enabled searches only. |
 | `LOOM_MEMORY_SEARCH_POOL_MULTIPLIER_DEEP` | `int` | `5` | A deep-budget search's pool multiplier (the budget class `deep`). |
@@ -1122,6 +1121,7 @@ Source: `server/settings/_runtime.py`
 | `LOOM_EVENTS_STREAM_FLUSH_BATCH` | `int` | `500` | Queued telemetry rows that trigger a flush before the interval elapses. |
 | `LOOM_TRAFFIC_CLASS_REGISTRY_TTL_SECONDS` | `int` | `300` | How long a namespace's registry class is kept in the process cache. |
 | `LOOM_DEFAULT_DAILY_COST_CAP_USD` | `float` | `1.0` | Daily LLM spend cap per namespace, USD: extraction workers skip a namespace whose rolling 24 h cost reached it. Overridden per namespace by loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers. |
+| `LOOM_READS_LLM_FREE` | `bool` | `False` | True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion embeddings, and rerank only as named, since a reranker is a model call. |
 | `LOOM_REPLICA_COUNT` | `int` | `1` | The rate limiter divides every cap by the deployment's replica count so the replicas' sum matches the target (approximate, not cluster-strict). The count is the hosts with a live serving loom.instances row; this is its floor, and the count while those rows cannot be read. |
 | `LOOM_SERVES_TRAFFIC` | `bool` | `True` | False for a process no load balancer routes to (a workers-only container): its instance row does not count as a replica. |
 | `LOOM_INSTANCE_HEARTBEAT_SECONDS` | `float` | `10.0` | Seconds between this process's loom.instances heartbeats, each of which also compares it with the deployment's published configuration. A row not renewed for three intervals is not live. |

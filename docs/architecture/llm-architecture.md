@@ -316,8 +316,9 @@ call a model reads `reads_llm_free()`:
   run; a reranker the request names runs, except `builtin:openai`, which keeps the fused order.
 - `tracker.duplicate_check` and `tracker.answer`: no rerank or uncertainty judge; `code.bisect_candidates`:
   no rerank. Each keeps the deterministic answer it already falls back to.
-- `memory.ask` and `code.ask` answer 409 `PRECONDITION_FAILED` naming the setting when they would
-  synthesize; `allow_synthesis=false` / `synthesize=false` return the recalled evidence with no LLM call.
+- `memory.ask` and `code.ask` answer 409 `PRECONDITION_FAILED` naming the setting unless the request
+  sets `allow_synthesis=false` / `synthesize=false`, even when a deterministic route could answer it;
+  with that flag they return the recalled evidence with no LLM call.
   A model's answer is the purpose of those calls, so the setting refuses it rather than answering
   without one. `memory.brief` asks for the evidence alone and returns it with its unknowns, no answer.
 - The sampled retrieval-quality judge queues nothing: both transports record a search's quality inside
