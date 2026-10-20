@@ -77,6 +77,34 @@ def test_cors_star_is_refused() -> None:
     ]
 
 
+# Built as server.main is (CORS inside the gate, both inside the header middleware); auth
+# off, so the gate checks the preflight's Origin too.
+@pytest.mark.usefixtures("auth_off")
+def test_a_cors_preflight_carries_the_security_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+
+    from server.auth.public_url import cors_origin_list
+    from server.main import attach_browser_middleware
+
+    monkeypatch.setattr(settings, "cors_origins", "https://app.example")
+    app = FastAPI()
+    app.post("/v1/memory.list")(lambda: {"ok": True})
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origin_list(settings.cors_origins),
+        allow_methods=["GET", "POST"],
+    )
+    attach_browser_middleware(app)
+    r = TestClient(app, base_url="http://localhost").options(
+        "/v1/memory.list",
+        headers={"origin": "https://app.example", "access-control-request-method": "POST"},
+    )
+    assert r.status_code == 200
+    assert r.headers["access-control-allow-origin"] == "https://app.example"
+    assert_security_headers(r)
+
+
 # ---- Host allowlist while auth is off ----
 
 
@@ -89,8 +117,7 @@ def auth_off(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _gated_client(base_url: str) -> TestClient:
-    """An app behind the web gate and the header middleware exactly as server.main
-    attaches them."""
+    """An app behind the web gate and the header middleware, as server.main attaches them."""
     from fastapi import FastAPI
 
     from server.main import attach_browser_middleware
@@ -151,29 +178,6 @@ def test_auth_off_refuses_a_cross_site_text_plain_post(headers: dict[str, str]) 
     r = _post(**{"content-type": "text/plain", **headers})
     assert r.status_code == 403
     assert r.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
-    assert_security_headers(r)
-
-
-@pytest.mark.usefixtures("auth_off")
-def test_a_refusal_while_draining_closes_the_connection(monkeypatch: pytest.MonkeyPatch) -> None:
-    from server.core import readiness
-
-    monkeypatch.setattr(readiness, "draining", lambda: True)
-    r = _post(**{"content-type": "text/plain", "origin": "https://evil.example"})
-    assert r.status_code == 403
-    assert r.headers["connection"] == "close"
-
-
-def test_a_body_limit_refusal_carries_the_security_headers() -> None:
-    from server.main import app
-
-    client = TestClient(app, base_url="http://localhost")
-    r = client.post(
-        "/v1/memory.list",
-        content=b"{}",
-        headers={"content-length": str(settings.max_request_bytes + 1)},
-    )
-    assert r.status_code == 413
     assert_security_headers(r)
 
 
@@ -285,6 +289,32 @@ def test_auth_on_with_a_public_url_compares_the_scheme_too(
     monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
     assert _post_to("http://loom.example", origin="https://loom.example") == 200
     assert _post_to("http://loom.example", origin="http://loom.example") == 403
+
+
+# ---- response headers ----
+
+
+@pytest.mark.usefixtures("auth_off")
+def test_a_refusal_while_draining_closes_the_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core import readiness
+
+    monkeypatch.setattr(readiness, "draining", lambda: True)
+    r = _post(**{"content-type": "text/plain", "origin": "https://evil.example"})
+    assert r.status_code == 403
+    assert r.headers["connection"] == "close"
+
+
+def test_a_body_limit_refusal_carries_the_security_headers() -> None:
+    from server.main import app
+
+    client = TestClient(app, base_url="http://localhost")
+    r = client.post(
+        "/v1/memory.list",
+        content=b"{}",
+        headers={"content-length": str(settings.max_request_bytes + 1)},
+    )
+    assert r.status_code == 413
+    assert_security_headers(r)
 
 
 # ---- generated URLs use the canonical base ----
@@ -454,31 +484,3 @@ def test_the_host_allowlist_and_the_bind_check_share_one_loopback_definition() -
         assert is_loopback_host(host)
         assert host_header_allowed(f"{host}:7777", "")
     assert not host_header_allowed("10.0.0.1:7777", "")
-
-
-@pytest.mark.usefixtures("auth_off")
-def test_a_cors_preflight_carries_the_security_headers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Built as server.main is (CORS inside the gate, both inside the header middleware), with
-    auth off so the gate checks the preflight's Origin too."""
-    from fastapi import FastAPI
-    from fastapi.middleware.cors import CORSMiddleware
-
-    from server.auth.public_url import cors_origin_list
-    from server.main import attach_browser_middleware
-
-    monkeypatch.setattr(settings, "cors_origins", "https://app.example")
-    app = FastAPI()
-    app.post("/v1/memory.list")(lambda: {"ok": True})
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=cors_origin_list(settings.cors_origins),
-        allow_methods=["GET", "POST"],
-    )
-    attach_browser_middleware(app)
-    r = TestClient(app, base_url="http://localhost").options(
-        "/v1/memory.list",
-        headers={"origin": "https://app.example", "access-control-request-method": "POST"},
-    )
-    assert r.status_code == 200
-    assert r.headers["access-control-allow-origin"] == "https://app.example"
-    assert_security_headers(r)
