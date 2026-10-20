@@ -274,7 +274,7 @@ async def test_a_read_runs_only_the_reranker_its_request_names(
         await _run(search_env, rerank="builtin:cohere")
         assert reranked == ["builtin:cohere"]  # named by the request: runs
         await _run(search_env, rerank="builtin:openai")
-    assert llm_attempts == []  # builtin:openai: never
+    assert "builtin:cohere" in reranked and llm_attempts == []  # builtin:openai: never
     await _run(search_env)  # off the setting, the namespace's reranker runs
     assert looked_up == ["ns"]
     await _run(search_env, rerank="builtin:openai")
@@ -402,6 +402,7 @@ async def test_both_transports_record_search_quality_inside_the_reads_mark(monke
     from types import SimpleNamespace
 
     import server.observability.otel as otel
+    from server.settings import settings
     from server.transport import http, mcp_outcome
 
     monkeypatch.setattr(http, "_emit_event", lambda *a, **k: None)
@@ -412,11 +413,7 @@ async def test_both_transports_record_search_quality_inside_the_reads_mark(monke
     payload = SimpleNamespace(query=_QUESTION)
     for on in (True, False):
         marks = _recording_funnel(monkeypatch)
-        with _serving(op, monkeypatch, on=on):
-            pass  # the handler's own mark has ended, as at the funnel
-        from server.settings import settings
-
-        monkeypatch.setattr(settings, "reads_llm_free", on)
+        monkeypatch.setattr(settings, "reads_llm_free", on)  # outside any handler's mark
         call = http._HttpCall(request_id="r", identity={"namespace": "ns", "org": "o"})
         with pytest.raises(_Recorded):
             await http._finish_success(op, call, payload, object(), 1, (None, None))
@@ -437,8 +434,8 @@ async def test_off_the_setting_the_model_steps_that_need_results_reach_the_model
     monkeypatch,
 ) -> None:
     # Positive controls for what the registry walk cannot reach over empty data: with the
-    # setting off, the tracker rerank, the tracker judge and the bisect rerank each ask
-    # for a model, and code search's model legs are on.
+    # setting off, the tracker rerank and the bisect rerank ask for a model client, the
+    # tracker's uncertainty judge reaches dup_judge, and code search's model legs are on.
     from types import SimpleNamespace
 
     import server.llm.client as llm_client
@@ -463,3 +460,25 @@ async def test_off_the_setting_the_model_steps_that_need_results_reach_the_model
         pool = [Candidate(pr_number=1, title="t", author="a", merged_at="", minor_version="")]
         await bisect_fusion.rerank_stage(pool, text="crash", force=True)
     assert asked == ["client", "client"]
+
+    from server.tracker.app import dup_judge
+
+    judged: list[str] = []
+
+    async def judge(*a: Any, **k: Any) -> Any:
+        judged.append("judge")
+        raise _Recorded
+
+    async def no_text(*a: Any, **k: Any) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(llm_client, "get_llm_client_for_model", lambda *a, **k: object())
+    monkeypatch.setattr(dup_judge, "judge", judge)
+    related = SimpleNamespace(items=[{"number": 1, "kind": "issue"}], verdict="related")
+    draft = SimpleNamespace(org="o", namespace="ns", title="t", body="b", top_k=5)
+    run = {"q": SimpleNamespace(text="t"), "unserved": []}
+    with _serving(_op("tracker.answer"), monkeypatch, on=False), pytest.raises(_Recorded):
+        await dupcheck_answer.judge_uncertain(
+            SimpleNamespace(embed_items_by_number=no_text), draft, run, related, object()
+        )
+    assert judged == ["judge"]
