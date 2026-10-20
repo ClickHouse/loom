@@ -1,13 +1,14 @@
 # yaml-language-server: $schema=schemas/loom-settings.schema.json
 #
 # Loom settings file: every setting, at its default. Generated from
-# server/settings/catalog.py by `python scripts/codegen/settings_example.py`; do not edit this copy.
+# server/settings/catalog.py by
+# `python scripts/codegen/settings_example.py`; do not edit this copy.
 #
-# To tune Loom, copy this file (for example to loom.yaml), point LOOM_SETTINGS_FILE at
-# it, and uncomment the lines you change; every other setting keeps its default.
-# Each key is a setting's LOOM_<NAME> environment variable in lowercase, so any line
-# here can also be set as LOOM_<NAME> in the environment or in .env, which win over
-# this file.
+# Each key is a setting's LOOM_<NAME> environment variable in lowercase: set any line
+# here as LOOM_<NAME> in the environment or in .env, which win over this file. A
+# deployment that mounts a config file can instead copy this file (for example to
+# loom.yaml), point LOOM_SETTINGS_FILE at it, and uncomment the lines it changes;
+# every other setting keeps its default.
 #
 # A setting marked `live` also changes while Loom runs, deployment-wide and without a
 # restart: `loom settings set <name> <value>` or the dashboard's Deployment settings
@@ -23,7 +24,409 @@
 version: 1
 settings:
 
-  # ===== Auth: Authentication, tokens and identity providers. ==========
+  # ===== ClickHouse connection, query shaping and vector storage =====
+
+  # Host name of the ClickHouse server Loom stores everything in. [restart]
+  # ch_host: "localhost"
+
+  # ClickHouse HTTP port; 8443 (the Cloud HTTPS port) turns TLS on when `ch_secure` is
+  # unset. [restart]
+  # ch_port: 8123
+
+  # User name the server connects to ClickHouse as. [restart]
+  # ch_user: "loom"
+
+  # Database that holds every Loom table and that migrations run against. [restart]
+  # ch_database: "loom"
+
+  # The cluster `clusterAllReplicas` reads to find a stopped Loom process's queries on
+  # every node (`default` on ClickHouse Cloud). A server without it answers for itself;
+  # '' reads only the connected server. [restart]
+  # ch_cluster: "default"
+
+  # Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off).
+  # [restart]
+  # ch_secure: null
+
+  # Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment`
+  # ("<op> <request_id>"), so query_log rows group by shape. Off by default: readers
+  # that split log_comment on spaces gain tokens. [restart]
+  # ch_log_comment_statement_digest: false
+
+  # A file path: append one JSON line (`digest`, `sql`) per executed statement, to
+  # collect the shapes an acceptance run executes for the analyzer corpus. '' = off;
+  # never set it in production. [restart]
+  # ch_capture_statements: ""
+
+  # HTTP connection pool size; the driver default (~8) exhausts under bulk writes plus
+  # workers. Size to expected request concurrency. [restart]
+  # ch_pool_maxsize: 64
+
+  # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load balancer's
+  # idle cutoff (8 s) so loom closes first: a peer-closed pooled TLS connection is never
+  # reaped under uvloop (`LOOM_UVICORN_LOOP=uvloop`). [restart]
+  # ch_keepalive_timeout: 5.0
+
+  # A point lookup that MISSES right after a write (get after set, verify, update_by_id,
+  # delete) re-reads once with select_sequential_consistency=1. Costs only on a miss; a
+  # no-op on single-node MergeTree. [restart]
+  # ch_read_your_writes: true
+
+  # memory.search on a namespace this process wrote within this many seconds reads with
+  # select_sequential_consistency from the start. 0 = off (the empty-pool retry remains
+  # the backstop). [restart]
+  # ch_read_your_writes_window_s: 20.0
+
+  # Per-class statement deadline, seconds, applied as `max_execution_time` and as a
+  # client-side bound that frees the pool slot. 0 = no bound for that class. [restart]
+  # ch_timeout_read_s: 30.0
+
+  # Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. [restart]
+  # ch_timeout_write_s: 60.0
+
+  # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. [restart]
+  # ch_timeout_ddl_s: 300.0
+
+  # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot
+  # gate. [restart]
+  # ch_pool_wait_ms: 500
+
+  # --- caller-shaped read ceilings ---
+  # Ceilings for the reads a caller shapes (code.grep, code.search with a pattern or
+  # globs, memory.aggregate, memory.record.query). A ceiling only lowers the statement's
+  # own value, so no request can widen it; 0 = none. The shipped loom_reader profile
+  # (nlp_user_settings.xml) caps these three at their defaults, with a floor no
+  # statement can go under (time: 0.05 s, code.grep's statement floor), so none can be
+  # set to 0 even in the SQL. Raising a setting above its cap needs the profile raised
+  # too; a 0 sends no ceiling, so the profile's cap applies (code.grep's deadline is
+  # then clamped to ch_timeout_read_s, which the profile's cap matches).
+
+  # Seconds one caller-shaped read may run (the read class default). [restart]
+  # ch_caller_shaped_max_execution_s: 30.0
+
+  # Bytes of memory one caller-shaped read may use. [restart]
+  # ch_caller_shaped_max_memory_bytes: 4000000000
+
+  # Rows one such read may scan; past it the read fails (422), never a partial answer.
+  # [restart]
+  # ch_caller_shaped_max_rows_to_read: 500000000
+
+  # ClickHouse user the caller-shaped reads run as, with `ch_password`; the shipped
+  # config defines `loom_reader` (SELECT only). Empty = `ch_user`. [restart]
+  # ch_reader_user: ""
+
+  # JSON map {traffic class: ClickHouse settings} applied by
+  # `server.core.ch.statement_settings` to every read (an explicit per-call setting
+  # wins). `priority`: 1 served first, larger waits, 0 opts out; `max_threads` caps CPU
+  # per statement. Neither changes the rows returned. `background` (workers, operator
+  # CLIs) bypasses the filesystem cache on a miss so a backfill scan does not evict
+  # interactive data. [restart]
+  # ch_settings_by_traffic_class: '{"production": {"priority": 1}, "interactive": {"priority": 2}, "bench": {"priority": 10, "max_threads": 4}, "background": {"priority": 5, "max_threads": 3, "read_from_filesystem_cache_if_exists_otherwise_bypass_cache": 1}}'
+
+  # Apply pending migrations at boot. Set False for any server started from a branch
+  # against a shared service, or it applies unmerged migrations. [restart]
+  # boot_migrate: true
+
+  # Seconds after which a holder that stopped renewing is replaced. [restart]
+  # boot_migrate_lease_ttl_s: 300
+
+  # Seconds a contender waits for the holder before boot fails (exit 1, the container
+  # restarts); also how long a booting process waits for the provider configuration lock
+  # (a sibling's rebuild step may hold it). [restart]
+  # boot_migrate_lease_wait_s: 900.0
+
+  # Seconds a migration file waits for the mutations it started (MATERIALIZE, UPDATE, a
+  # column type change) to finish on every replica; past it the file fails unrecorded.
+  # [restart]
+  # migrate_mutation_wait_s: 600
+
+  # HNSW candidate list size (`ef_search`) for the helper legs, emitted via
+  # vector_search_settings(); tracks ClickHouse's default. The main leg scales its own
+  # value with top_k. [restart]
+  # vector_search_ef_search: 256
+
+  # Post-filter over-fetch for a `vector_similarity` (HNSW) index: the index returns
+  # top-N before the tenant predicate drops rows. Sent on uncoded vector reads; coded
+  # reads use `vector_search_quantized_fetch_multiplier`. [restart]
+  # vector_search_index_fetch_multiplier: 10.0
+
+  # Send `vector_search_use_quantized_codes = 1` on vector-ranked reads whose column has
+  # a `Quantized(...)` codec and whose table has no patch parts: a codes-first scan plus
+  # full-precision rescore. A replica that rejects the setting (code 115) drops the
+  # fragment and retries. [restart]
+  # vector_search_quantized_codes: true
+
+  # Over-fetch for the codes-first read: stage 1 keeps LIMIT × this by code distance,
+  # stage 2 rescores. Only read when the codes setting is sent. [restart]
+  # vector_search_quantized_fetch_multiplier: 3.0
+
+  # Seconds between re-reads of which vector columns are coded and which coded tables
+  # carry patch parts. A write that embeds reads again on its own when the reading is
+  # older than a few seconds (codes_state.FRESH_READING_S). [restart]
+  # vector_codes_state_probe_seconds: 60
+
+  # --- timeouts, budgets and caches ---
+
+  # Seconds the schema status (applied against shipped migrations) is cached for the
+  # health probe. [live]
+  # schema_status_ttl_s: 60.0
+
+  # ===== Models: which model does each job =====
+
+  # --- defaults ---
+
+  # The deployment's LLM: memory extraction, the conflict judge, rerank and every job
+  # below left "". Empty takes the resolved provider's default model (gpt-6-luna /
+  # claude-haiku-4-5 / fake-echo-1). [restart]
+  # llm_model: ""
+
+  # Model to answer with when a client's provider is still unavailable after its retries
+  # (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted
+  # in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" =
+  # fail the op. [restart]
+  # llm_fallback_model: ""
+
+  # Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no network
+  # or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change it together with
+  # `embedding_dim`; a new embedding space needs a full re-embed. [restart]
+  # embedding_model: "fake-ngram-3072"
+
+  # --- memory ---
+
+  # memory.ask synthesis (the strong tier when the cascade is on). [restart]
+  # memory_ask_synth_model: ""
+
+  # memory.ask cheap tier. "" = off: every ask uses memory_ask_synth_model. When set,
+  # server/memory/domain/synth_policy.py routes easy asks cheap and hard ones strong; an
+  # empty, uncited or hedging cheap answer escalates to strong once. route_tier /
+  # route_reason / synth_model on the output record the choice. [restart]
+  # memory_ask_synth_model_cheap: ""
+
+  # memory.ask mid tier. "" = none. With a model set, strong-routed asks whose reason is
+  # in memory_ask_synth_mid_routes go mid; an empty, uncited or hedging mid answer
+  # escalates to strong once. [restart]
+  # memory_ask_mid_model: ""
+
+  # The durability check on a coding capture: one batched call per capture per listed
+  # model (CSV) judges each fact durable or not and folds same-claim paraphrases and
+  # replaced states. A fact is dropped only when every model says drop; folds come from
+  # the first. Fails open. "" turns it off. [restart]
+  # memory_extract_verify_models: "claude-opus-5-5"
+
+  # The profile fold. [restart]
+  # profile_consolidation_model: ""
+
+  # Reflection distillation: the outcome labeller and the contrast writer. [restart]
+  # reflection_distill_model: ""
+
+  # The code-link `revise` judge: does a memory's claim still hold for its code's new
+  # text. [restart]
+  # code_link_revise_model: ""
+
+  # Session briefs; without its provider's key the deployment's LLM writes them.
+  # [restart]
+  # session_brief_llm_model: "gpt-6-luna"
+
+  # --- code ---
+
+  # code.ask synthesis. Answers are memoized fleet-wide, so a stronger model costs once
+  # per unique question. [restart]
+  # code_ask_llm_model: ""
+
+  # code.search HyDE: writes a hypothetical indexed passage whose embedding runs a
+  # second vector list (see code_search_hyde_*). "" = off. [restart]
+  # code_search_hyde_model: ""
+
+  # code.search concept expansion: maps a prose, unconstrained question to likely code
+  # identifiers — via this model, or `cards` / `cards:<n>` (symbols of the n nearest
+  # file cards) — fused as a capped lexical list. "" = off. [restart]
+  # code_search_concept_expand_model: ""
+
+  # code.bisect_candidates' one-call rerank of the fused top 20. [restart]
+  # code_bisect_llm_rerank_model: "gpt-6-luna"
+
+  # File and module summary cards. [restart]
+  # code_summary_model: ""
+
+  # --- tracker ---
+
+  # tracker.duplicate_check's rerank call. [restart]
+  # tracker_dupcheck_rerank_model: "gpt-6-luna"
+
+  # tracker.duplicate_check's judge call. [restart]
+  # tracker_dupcheck_judge_model: ""
+
+  # --- observability ---
+
+  # The sampled retrieval judge (retrieval_judge_sample_rate). Deliberately a different
+  # model from the ones answering: a same-model judge measures agreement, not quality.
+  # [restart]
+  # retrieval_judge_model: "gpt-6.1-sol"
+
+  # ===== Embedding and LLM providers =====
+
+  # Vector width the embedder is asked for and the schema is sized from; the width
+  # probed from the embedder at boot wins when they differ. Change it together with
+  # `embedding_model`. Unset with a `local:*` model, it is that model's own width: leave
+  # it commented out for a local model. [restart]
+  # embedding_dim: 3072
+
+  # "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai,
+  # gemini* → gemini, local/local:* → local CPU embedder); or pin "openai", "gemini",
+  # "local", "fake". Switching providers changes the embedding space: a full re-embed is
+  # required. [restart]
+  # embedding_provider: ""
+
+  # API root for an explicitly selected OpenAI-compatible embedding service, e.g.
+  # https://provider.example/v1. Empty is invalid for compatible providers. [restart]
+  # embedding_base_url: ""
+
+  # Send the optional dimensions request parameter to a compatible endpoint. False uses
+  # its native output width; responses must still match embedding_dim. [restart]
+  # embedding_send_dimensions: false
+
+  # Attempts an embedding call makes on a retryable failure. [live]
+  # embedding_retry_attempts: 3
+
+  # Longest backoff, in seconds, between two attempts of an embedding call. [live]
+  # embedding_retry_max_wait_s: 10.0
+
+  # OpenAI's API root, for chat and embeddings: point it at an OpenAI-compatible
+  # inference gateway in front of OpenAI (its /v1 root). [restart]
+  # openai_base_url: "https://api.openai.com/v1"
+
+  # Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway
+  # in front of Anthropic. Off the default, the key also goes as a bearer, the scheme
+  # gateways take. [restart]
+  # anthropic_base_url: "https://api.anthropic.com"
+
+  # Model calls with no provider key: exchange an identity token (RFC 8693) at this
+  # token endpoint of the gateway, and send the answer as the bearer
+  # (server/llm/gateway.py). The gateway must trust the token's issuer. "" = the
+  # provider keys. [restart]
+  # inference_token_url: ""
+
+  # The workload's OIDC token, as a file its platform rotates (a projected
+  # service-account token on Kubernetes). With inference_token_url, this or
+  # inference_token_audience. [restart]
+  # inference_workload_token_file: ""
+
+  # With inference_token_url and no workload token: the audience of the identity token
+  # Loom signs (issuer <https public_base_url>/v1, newest RS256 key); never
+  # jwt_audience. [restart]
+  # inference_token_audience: ""
+
+  # The scope sent with that exchange; "" sends none. [restart]
+  # inference_token_scope: ""
+
+  # Seconds one token exchange with the inference gateway may take. [restart]
+  # inference_token_exchange_timeout_s: 10.0
+
+  # Shared query-embedding cache in loom.embedding_cache behind the per-process LRU,
+  # keyed (model, sha1 of normalised text). Only single-text (query) embeds up to
+  # `embedding_cache_shared_max_chars` (0 = no cap) use it. Off = process cache only.
+  # [restart]
+  # embedding_cache_shared: true
+
+  # Longest query text, characters, that uses the shared cache; 0 = no cap. [restart]
+  # embedding_cache_shared_max_chars: 2000
+
+  # Entries the per-process query-embedding LRU holds; 0 = cache nothing. [restart]
+  # embedding_cache_size: 10000
+
+  # Seconds one per-process LRU entry lives. [restart]
+  # embedding_cache_ttl_s: 3600.0
+
+  # Derive the similarity gates from this embedder's cosine distribution at boot
+  # (server/memory/app/embedder_calibration.py). False pins the scalar defaults (tuned
+  # for text-embedding-3-small) — re-bench after an embedder change. Fake embedders and
+  # probe failures always use the scalars. [restart]
+  # adaptive_thresholds: true
+
+  # Seconds between each replica's re-read of the shared calibration
+  # (loom.embedder_calibration), so every replica serves the same gates. [restart]
+  # calibration_refresh_seconds: 60.0
+
+  # "openai" | "anthropic" | "fake"; "" = infer from LOOM_LLM_MODEL's name
+  # (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from
+  # the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once
+  # at load; an explicit value is never overridden. Run `make bench-quick` before making
+  # anthropic a default. [restart]
+  # llm_provider: ""
+
+  # A fake or key-less provider is a `warn` in /v1/health `problems`; true (production)
+  # makes it an `error` and `status: degraded`, which preflight and monitors catch.
+  # Never changes the HTTP code (503 is ClickHouse-only). [restart]
+  # require_real_providers: false
+
+  # Reasoning effort sent to OpenAI models. "" = the lowest the model accepts (learned
+  # from its refusals, see server/llm/traits.py); set to pin one value for every call.
+  # [restart]
+  # llm_openai_reasoning_effort: ""
+
+  # Thinking effort sent to Claude models as `output_config.effort`: "low" | "medium" |
+  # "high"; "" = send none (the model's own default). A model that does not take it
+  # refuses it once and is not sent it again. [restart]
+  # llm_anthropic_effort: ""
+
+  # Most output tokens a call adds over the caller's cap for a model's hidden reasoning.
+  # The reserve per model is learned from the reasoning tokens its replies report (twice
+  # the most it has spent) and capped here. [restart]
+  # llm_hidden_reasoning_reserve_max: 16384
+
+  # Seconds an LLM call waits for its reply before the client retries. Generous on
+  # purpose: it only catches a hung connection, so a slow model or a long output never
+  # hits it. Calls that must be fast set their own, shorter deadline (HyDE, search
+  # budgets). [restart]
+  # llm_request_timeout_s: 300.0
+
+  # Attempts an LLM call makes on a retryable failure (a 429, a 5xx, a dropped
+  # connection) before the fallback model takes over. [live]
+  # llm_retry_attempts: 4
+
+  # Longest backoff, in seconds, between two attempts of an LLM call. [live]
+  # llm_retry_max_wait_s: 20.0
+
+  # JSON {call: tokens} over LLM_MAX_TOKENS (in server/settings/catalog.py): the most
+  # tokens one kind of LLM call may write, keyed as the cost ledger's stage series name
+  # it. A name that is no LLM call, or a count below 1, = the map is logged once and
+  # ignored. '' = the table as declared. [live]
+  # llm_max_tokens_overrides: ""
+
+  # JSON {class: {"llm_cache": bool, "strong": bool, "mid": bool}}: `llm_cache`
+  # overrides the class's cache default (a per-request pin wins); `strong`/`mid` false
+  # bars the cascade from that tier. Unlisted = every tier eligible. [restart]
+  # llm_policy_by_traffic_class: '{"bench": {"llm_cache": true}}'
+
+  # Skip the rerank when the vector top hit's cosine is ≥ this (strong matches rank
+  # reliably; the rerank costs ~500 ms). Fallback when the adaptive gate has no probe.
+  # [restart]
+  # llm_rerank_skip_above: 0.62
+
+  # Recovery worker: retries failed embeds and reconciles orphan scope='shared' rows
+  # (the write path embeds inline). [restart]
+  # embedding_worker_enabled: true
+
+  # Seconds between recovery worker passes while there is work. [restart]
+  # embedding_worker_interval_seconds: 5
+
+  # Sleep after an idle pass (nothing to embed); the 5 s interval resumes once a pass
+  # writes a row. [restart]
+  # embedding_worker_idle_interval_seconds: 30
+
+  # Orphan reconciliation: the full memory × embedding anti-join runs once per
+  # `full_scan_seconds`; other passes check only memories of the last `recent_seconds`.
+  # 0 = full join every pass. [restart]
+  # embedding_worker_orphan_full_scan_seconds: 1800
+
+  # Age window, seconds, of the memories a non-full orphan pass checks. [restart]
+  # embedding_worker_orphan_recent_seconds: 900
+
+  # The table the wrapper reads and writes; an isolated server whose boot migrations are
+  # off points this at its own scratch mirror. [restart]
+  # llm_response_cache_table: "loom.llm_response_cache"
+
+  # ===== Authentication, tokens and identity providers =====
 
   # Comma-separated login handles and emails promoted to platform_admin (org-wide
   # visibility). A handle matches a password account's subject; an email matches only an
@@ -105,8 +508,8 @@ settings:
   # signing-key rotate` waits out two of the slowest process's. [restart]
   # jwt_keyring_refresh_seconds: 30.0
 
-  # The `iss` Loom stamps on every token it mints and the `aud` every verified token
-  # must carry; a token naming another audience is refused. [restart]
+  # The `iss` Loom stamps on every token it mints; a verified token must carry it.
+  # [restart]
   # jwt_issuer: "loom"
 
   # The `aud` claim stamped on minted tokens and required on every verified token.
@@ -148,10 +551,10 @@ settings:
   # Default org for self-signed tokens. [restart]
   # self_signup_org: "dev"
 
-  # Identity mode; decides how callers authenticate. single-user    — no auth, one
-  # anonymous identity. trust-network  — self-signup, first-claim-wins. gateway        —
-  # an upstream proxy mints short-lived Loom JWTs with the shared HS256 secret; Loom
-  # only validates. Empty = inferred from auth_required + self_signup at boot. [restart]
+  # How callers authenticate: "single-user" (no auth, one anonymous identity),
+  # "trust-network" (self-signup, first claim wins) or "gateway" (an upstream proxy
+  # mints short-lived Loom JWTs with the shared HS256 secret; Loom only validates).
+  # Empty = inferred from auth_required and self_signup at boot. [restart]
   # identity_provider: ""
 
   # When set, a dashboard page load redirects (302) here instead of serving the SPA
@@ -203,152 +606,7 @@ settings:
   # Seconds the identity provider's OpenID configuration is cached. [live]
   # auth_oidc_discovery_ttl_s: 3600.0
 
-  # ===== ClickHouse: ClickHouse connection, query shaping and vector storage. ==========
-
-  # ch_secure=None → wrapper infers TLS from port (8443 → True). [restart]
-  # ch_host: "localhost"
-
-  # ClickHouse HTTP port; 8443 (the Cloud HTTPS port) turns TLS on when `ch_secure` is
-  # unset. [restart]
-  # ch_port: 8123
-
-  # User name the server connects to ClickHouse as. [restart]
-  # ch_user: "loom"
-
-  # Database that holds every Loom table and that migrations run against. [restart]
-  # ch_database: "loom"
-
-  # The cluster `clusterAllReplicas` reads to find a stopped Loom process's queries on
-  # every node (`default` on ClickHouse Cloud). A server without it answers for itself;
-  # '' reads only the connected server. [restart]
-  # ch_cluster: "default"
-
-  # Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off).
-  # [restart]
-  # ch_secure: null
-
-  # Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment`
-  # ("<op> <request_id>"), so query_log rows group by shape. Off by default: readers
-  # that split log_comment on spaces gain tokens. [restart]
-  # ch_log_comment_statement_digest: false
-
-  # A file path: append one JSON line (`digest`, `sql`) per executed statement, to
-  # collect the shapes an acceptance run executes for the analyzer corpus. '' = off;
-  # never set it in production. [restart]
-  # ch_capture_statements: ""
-
-  # HTTP connection pool size; the driver default (~8) exhausts under bulk writes plus
-  # workers. Size to expected request concurrency. [restart]
-  # ch_pool_maxsize: 64
-
-  # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load balancer's
-  # idle cutoff (8 s) so loom closes first: a peer-closed pooled TLS connection is never
-  # reaped under uvloop (`LOOM_UVICORN_LOOP=uvloop`). [restart]
-  # ch_keepalive_timeout: 5.0
-
-  # A point lookup that MISSES right after a write (get after set, verify, update_by_id,
-  # delete) re-reads once with select_sequential_consistency=1. Costs only on a miss; a
-  # no-op on single-node MergeTree. [restart]
-  # ch_read_your_writes: true
-
-  # memory.search on a namespace this process wrote within this many seconds reads with
-  # select_sequential_consistency from the start. 0 = off (the empty-pool retry remains
-  # the backstop). [restart]
-  # ch_read_your_writes_window_s: 20.0
-
-  # Per-class statement deadline, seconds, applied as `max_execution_time` and as a
-  # client-side bound that frees the pool slot. 0 = no bound for that class. [restart]
-  # ch_timeout_read_s: 30.0
-
-  # Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. [restart]
-  # ch_timeout_write_s: 60.0
-
-  # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. [restart]
-  # ch_timeout_ddl_s: 300.0
-
-  # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot
-  # gate. [restart]
-  # ch_pool_wait_ms: 500
-
-  # Ceilings for the reads a caller shapes (code.grep, code.search with a pattern or
-  # globs, memory.aggregate, memory.record.query). A ceiling only lowers the statement's
-  # own value, so no request can widen it; 0 = none. The shipped loom_reader profile
-  # (nlp_user_settings.xml) caps these three at their defaults, with a floor no
-  # statement can go under (time: 0.05 s, code.grep's statement floor), so none can be
-  # set to 0 even in the SQL. Raising a setting above its cap needs the profile raised
-  # too; a 0 sends no ceiling, so the profile's cap applies (code.grep's deadline is
-  # then clamped to ch_timeout_read_s, which the profile's cap matches). Seconds one
-  # such read may run (the read class default). [restart]
-  # ch_caller_shaped_max_execution_s: 30.0
-
-  # Bytes of memory one such read may use. [restart]
-  # ch_caller_shaped_max_memory_bytes: 4000000000
-
-  # Rows one such read may scan; past it the read fails (422), never a partial answer.
-  # [restart]
-  # ch_caller_shaped_max_rows_to_read: 500000000
-
-  # ClickHouse user the caller-shaped reads run as, with `ch_password`; the shipped
-  # config defines `loom_reader` (SELECT only). Empty = `ch_user`. [restart]
-  # ch_reader_user: ""
-
-  # JSON map {traffic class: ClickHouse settings} applied by
-  # `server.core.ch.statement_settings` to every read (an explicit per-call setting
-  # wins). `priority`: 1 served first, larger waits, 0 opts out; `max_threads` caps CPU
-  # per statement. Neither changes the rows returned. `background` (workers, operator
-  # CLIs) bypasses the filesystem cache on a miss so a backfill scan does not evict
-  # interactive data. [restart]
-  # ch_settings_by_traffic_class: "{\"production\": {\"priority\": 1}, \"interactive\": {\"priority\": 2}, \"bench\": {\"priority\": 10, \"max_threads\": 4}, \"background\": {\"priority\": 5, \"max_threads\": 3, \"read_from_filesystem_cache_if_exists_otherwise_bypass_cache\": 1}}"
-
-  # Apply pending migrations at boot. Set False for any server started from a branch
-  # against a shared service, or it applies unmerged migrations. [restart]
-  # boot_migrate: true
-
-  # Seconds after which a holder that stopped renewing is replaced. [restart]
-  # boot_migrate_lease_ttl_s: 300
-
-  # Seconds a contender waits for the holder before boot fails (exit 1, the container
-  # restarts); also how long a booting process waits for the provider configuration lock
-  # (a sibling's rebuild step may hold it). [restart]
-  # boot_migrate_lease_wait_s: 900.0
-
-  # Seconds a migration file waits for the mutations it started (MATERIALIZE, UPDATE, a
-  # column type change) to finish on every replica; past it the file fails unrecorded.
-  # [restart]
-  # migrate_mutation_wait_s: 600
-
-  # HNSW candidate list size (`ef_search`) for the helper legs, emitted via
-  # vector_search_settings(); tracks ClickHouse's default. The main leg scales its own
-  # value with top_k. [restart]
-  # vector_search_ef_search: 256
-
-  # Post-filter over-fetch for a `vector_similarity` (HNSW) index: the index returns
-  # top-N before the tenant predicate drops rows. Sent on uncoded vector reads; coded
-  # reads use `vector_search_quantized_fetch_multiplier`. [restart]
-  # vector_search_index_fetch_multiplier: 10.0
-
-  # Send `vector_search_use_quantized_codes = 1` on vector-ranked reads whose column has
-  # a `Quantized(...)` codec and whose table has no patch parts: a codes-first scan plus
-  # full-precision rescore. A replica that rejects the setting (code 115) drops the
-  # fragment and retries. [restart]
-  # vector_search_quantized_codes: true
-
-  # Over-fetch for the codes-first read: stage 1 keeps LIMIT × this by code distance,
-  # stage 2 rescores. Only read when the codes setting is sent. [restart]
-  # vector_search_quantized_fetch_multiplier: 3.0
-
-  # Seconds between re-reads of which vector columns are coded and which coded tables
-  # carry patch parts. A write that embeds reads again on its own when the reading is
-  # older than a few seconds (codes_state.FRESH_READING_S). [restart]
-  # vector_codes_state_probe_seconds: 60
-
-  # --- timeouts, budgets and caches ---
-
-  # Seconds the schema status (applied against shipped migrations) is cached for the
-  # health probe. [live]
-  # schema_status_ttl_s: 60.0
-
-  # ===== Code: The code plane: ingest, indexes, search, ask, review. ==========
+  # ===== The code plane: ingest, indexes, search, ask, review =====
 
   # Master kill switch, checked at the top of every code.* handler. [restart]
   # code_intel_enabled: true
@@ -495,10 +753,12 @@ settings:
   # the gc waits another interval. [restart]
   # code_mirror_gc_margin_gb: 5.0
 
+  # --- repository job sandbox ---
   # rlimits for each process of a sandboxed repository job (clone, fetch, dependency
   # install, compiler-tier harness; code/app/index/sandbox.py). They bound each process,
-  # not a job's total (max_pids aside): there is no cgroup. CPU seconds a process may
-  # use. [restart]
+  # not a job's total (max_pids aside): there is no cgroup.
+
+  # CPU seconds one process of a sandboxed repository job may use. [restart]
   # code_sandbox_cpu_seconds: 7200
 
   # Data memory (heap and private mappings, RLIMIT_DATA) a process may use, in MiB. Not
@@ -1307,7 +1567,8 @@ settings:
   # answers "high". [restart]
   # code_search_medium_risk_from: 0.4
 
-  # [restart]
+  # The calibrated confidence from which a code.search result reads `retrieval_risk`
+  # "low" (see code_search_medium_risk_from). [restart]
   # code_search_low_risk_from: 0.55
 
   # The question kinds the hypothetical answer votes on. [restart]
@@ -1422,9 +1683,10 @@ settings:
   # Jobs of one run start within this many hours of its newest job. [restart]
   # code_coverage_run_window_hours: 6
 
-  # Seconds between import passes, and the pass's hard deadline. [restart]
+  # Seconds between coverage import passes. [restart]
   # code_coverage_import_interval_seconds: 86400.0
 
+  # Seconds one coverage import pass may run before the supervisor abandons it.
   # [restart]
   # code_coverage_import_max_pass_seconds: 7200.0
 
@@ -1595,7 +1857,7 @@ settings:
   # (the mirror may have fetched it); a hit is kept. [live]
   # code_review_brief_mirror_miss_ttl_s: 600.0
 
-  # ===== Context: context.pack, context offload, session briefs and the mentor's hints. ==========
+  # ===== context.pack, context offload, session briefs and the mentor's hints =====
 
   # context.offload: largest single parked tool result, in bytes. [live]
   # context_offload_max_bytes: 8000000
@@ -1625,7 +1887,7 @@ settings:
   # At most this many hints per session, each code once. [live]
   # mentor_max_hints_per_session: 6
 
-  # ===== Erasure: Erasure: saga recovery, reclaim, purge and the external backends it cascades to. ==========
+  # ===== Erasure: saga recovery, reclaim, purge and the external backends it cascades to =====
 
   # --- saga recovery and reclaim ---
 
@@ -1671,7 +1933,7 @@ settings:
   # erasure. [restart]
   # external_erasure_timeout_s: 30.0
 
-  # ===== Extraction: Fact extraction from messages and observed events. ==========
+  # ===== Fact extraction from messages and observed events =====
 
   # Value-update supersession on the extraction write path (memory.app.value_updates): a
   # fresh memory restating an existing one with a different value token marks the older
@@ -1827,7 +2089,7 @@ settings:
   # in session-date order. At least 1: none would hang the pass. [live]
   # extraction_queue_namespace_concurrency: 4
 
-  # ===== Knowledge: Knowledge documents and conversations: chunking, search floor, thread titles. ==========
+  # ===== Knowledge documents and conversations: chunking, search floor, thread titles =====
 
   # --- conversations ---
 
@@ -1879,7 +2141,7 @@ settings:
   # [live]
   # knowledge_repo_docs_list_ttl_s: 60.0
 
-  # ===== Mcp: The MCP transport: tool listing, lean results, session runs. ==========
+  # ===== The MCP transport: tool listing, lean results, session runs =====
 
   # loom_search drops knowledge hits below this cosine similarity (the conversation
   # leg's floor, applied to the knowledge leg). [restart]
@@ -1958,7 +2220,7 @@ settings:
   # HTTP/SDK-only. [restart]
   # mcp_code_tools: false
 
-  # ===== Memory: The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers. ==========
+  # ===== The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers =====
 
   # --- prompt safety and search priors ---
 
@@ -2509,7 +2771,7 @@ settings:
   # [restart]
   # memory_usage_fold_max_pending_mutations: 20
 
-  # ===== MemoryAsk: memory.ask: evidence assembly and answer synthesis. ==========
+  # ===== memory.ask: evidence assembly and answer synthesis =====
 
   # memory.ask only: re-rank the synthesis window by similarity + weight * recency,
   # recency = 1/(1 + age_days/14), so the freshest copy of a fact reaches synthesis. 0.0
@@ -2702,11 +2964,11 @@ settings:
   # after the question's own grounding rows. 0 = off. [live]
   # memory_ask_code_hop_symbols: 4
 
-  # Token budgets of the code.symbol and code.search reads that ground a code-entity
-  # question in the code plane. [live]
+  # Token budget of the code.symbol read that grounds a code-entity question in the code
+  # plane. [live]
   # memory_ask_code_symbol_token_budget: 400
 
-  # [live]
+  # Token budget of the code.search read that grounds a code-entity question. [live]
   # memory_ask_code_search_token_budget: 1400
 
   # For each PR the query or grounding references, inject its authoritative
@@ -2862,7 +3124,7 @@ settings:
   # Characters of the whole recent-turns block; the oldest turns go first. [live]
   # memory_ask_recent_block_max_chars: 12000
 
-  # ===== MemorySearch: memory.search: legs, fusion, ranking and gates. ==========
+  # ===== memory.search: legs, fusion, ranking and gates =====
 
   # Default `namespace_scope` when a request leaves it unset. "this" reads the addressed
   # namespace only; "all_mine" also reads the caller's own namespaces (the MCP
@@ -3196,99 +3458,7 @@ settings:
   # miss. [live]
   # memory_search_spelling_lookup_timeout_s: 0.4
 
-  # ===== Model: Models: which model does each job. ==========
-
-  # --- defaults ---
-
-  # The deployment's LLM: memory extraction, the conflict judge, rerank and every job
-  # below left "". Empty takes the resolved provider's default model (gpt-6-luna /
-  # claude-haiku-4-5 / fake-echo-1). [restart]
-  # llm_model: ""
-
-  # Model to answer with when a client's provider is still unavailable after its retries
-  # (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted
-  # in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" =
-  # fail the op. [restart]
-  # llm_fallback_model: ""
-
-  # Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no network
-  # or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change it together with
-  # `embedding_dim`; a new embedding space needs a full re-embed. [restart]
-  # embedding_model: "fake-ngram-3072"
-
-  # --- memory ---
-
-  # memory.ask synthesis (the strong tier when the cascade is on). [restart]
-  # memory_ask_synth_model: ""
-
-  # memory.ask cheap tier. "" = off: every ask uses memory_ask_synth_model. When set,
-  # server/memory/domain/synth_policy.py routes easy asks cheap and hard ones strong; an
-  # empty, uncited or hedging cheap answer escalates to strong once. route_tier /
-  # route_reason / synth_model on the output record the choice. [restart]
-  # memory_ask_synth_model_cheap: ""
-
-  # memory.ask mid tier. "" = none. With a model set, strong-routed asks whose reason is
-  # in memory_ask_synth_mid_routes go mid; an empty, uncited or hedging mid answer
-  # escalates to strong once. [restart]
-  # memory_ask_mid_model: ""
-
-  # The durability check on a coding capture: one batched call per capture per listed
-  # model (CSV) judges each fact durable or not and folds same-claim paraphrases and
-  # replaced states. A fact is dropped only when every model says drop; folds come from
-  # the first. Fails open. "" turns it off. [restart]
-  # memory_extract_verify_models: "claude-opus-5-5"
-
-  # The profile fold. [restart]
-  # profile_consolidation_model: ""
-
-  # Reflection distillation: the outcome labeller and the contrast writer. [restart]
-  # reflection_distill_model: ""
-
-  # The code-link `revise` judge: does a memory's claim still hold for its code's new
-  # text. [restart]
-  # code_link_revise_model: ""
-
-  # Session briefs; without its provider's key the deployment's LLM writes them.
-  # [restart]
-  # session_brief_llm_model: "gpt-6-luna"
-
-  # --- code ---
-
-  # code.ask synthesis. Answers are memoized fleet-wide, so a stronger model costs once
-  # per unique question. [restart]
-  # code_ask_llm_model: ""
-
-  # code.search HyDE: writes a hypothetical indexed passage whose embedding runs a
-  # second vector list (see code_search_hyde_*). "" = off. [restart]
-  # code_search_hyde_model: ""
-
-  # code.search concept expansion: maps a prose, unconstrained question to likely code
-  # identifiers — via this model, or `cards` / `cards:<n>` (symbols of the n nearest
-  # file cards) — fused as a capped lexical list. "" = off. [restart]
-  # code_search_concept_expand_model: ""
-
-  # code.bisect_candidates' one-call rerank of the fused top 20. [restart]
-  # code_bisect_llm_rerank_model: "gpt-6-luna"
-
-  # File and module summary cards. [restart]
-  # code_summary_model: ""
-
-  # --- tracker ---
-
-  # tracker.duplicate_check's rerank call. [restart]
-  # tracker_dupcheck_rerank_model: "gpt-6-luna"
-
-  # tracker.duplicate_check's judge call. [restart]
-  # tracker_dupcheck_judge_model: ""
-
-  # --- observability ---
-
-  # The sampled retrieval judge (retrieval_judge_sample_rate). Deliberately a different
-  # model from the ones answering: a same-model judge measures agreement, not quality.
-  # [restart]
-  # retrieval_judge_model: "gpt-6.1-sol"
-
-  # ===== Namespace: Namespace registration, write marks and bench-namespace GC. ==========
+  # ===== Namespace registration, write marks and bench-namespace GC =====
 
   # --- namespace write marks ---
 
@@ -3345,7 +3515,7 @@ settings:
   # does. [live]
   # namespace_taxonomy_ttl_s: 300.0
 
-  # ===== Observability: Telemetry, audit, tracing and the ops surface. ==========
+  # ===== Telemetry, audit, tracing and the ops surface =====
 
   # Root log level. (Bind host/port are flags of `loom serve`, not settings.) [restart]
   # log_level: "info"
@@ -3461,11 +3631,11 @@ settings:
   # `otel_exporter` = "", it selects the otlp exporter. [restart]
   # otel_exporter_otlp_endpoint: ""
 
-  # OTel resource `service.name` and `deployment.environment` stamped on every span, log
-  # and metric. [restart]
+  # The OTel resource `service.name` stamped on every span, log and metric. [restart]
   # otel_service_name: "loom"
 
-  # The `deployment.environment` value. [restart]
+  # The OTel resource `deployment.environment` stamped on every span, log and metric.
+  # [restart]
   # otel_environment: "dev"
 
   # Comma-separated path regexes the FastAPI instrumentation opens no span for (health
@@ -3473,15 +3643,15 @@ settings:
   # always left out: their URLs carry codes. [restart]
   # otel_excluded_urls: "/v1/health"
 
-  # Scales every op's p99 budget (OP_BUDGETS_P99_MS below, tuned for local CH) at the
-  # comparison site; set e.g. 20.0 on Cloud so SLO alerts don't fire on baseline RTT.
-  # [restart]
+  # Scales every op's p99 budget (OP_BUDGETS_P99_MS in server/settings/catalog.py, tuned
+  # for local CH) at the comparison site; set e.g. 20.0 on Cloud so SLO alerts don't
+  # fire on baseline RTT. [restart]
   # latency_budget_multiplier: 1.0
 
-  # JSON map {op: ms | "<n>x"} over the op budgets table (OP_BUDGETS_P99_MS below): an
-  # integer replaces that op's budget, "3x" multiplies it. Checked after the
-  # per-consumer overrides and `admin/budget.set`; malformed = logged once and ignored.
-  # '' = the table as declared. [restart]
+  # JSON map {op: ms | "<n>x"} over the op budgets table (OP_BUDGETS_P99_MS in
+  # server/settings/catalog.py): an integer replaces that op's budget, "3x" multiplies
+  # it. Checked after the per-consumer overrides and `admin/budget.set`; malformed =
+  # logged once and ignored. '' = the table as declared. [restart]
   # latency_budget_overrides: ""
 
   # JSON map {consumer: {op | "*": ms | "<n>x"}}: an integer is a budget in ms, "3x"
@@ -3523,13 +3693,14 @@ settings:
   # the prompt evaluation reads. [live]
   # langfuse_timeout_s: 15.0
 
-  # How much LLM prompt/completion text is recorded, by what the prompt holds: "off"   —
-  # none (default; consent is given, not withdrawn). "query" — only legs whose prompt is
-  # the user's own search text (hyde, query_rewrite, enrichment, …). "all"   — also legs
-  # carrying retrieved memories or conversation turns (inline_rerank, iterative_judge,
-  # extract, session_summary, …). A namespace's `capture_generation_io` overrides it
-  # (false ⇒ off, true ⇒ all, NULL ⇒ this). It also gates loom.search_trace_log.query.
-  # Token counts, cost, latency and quality scores are never gated. [restart]
+  # How much LLM prompt and completion text is recorded, by what the prompt holds: "off"
+  # records none (the default; consent is given, not withdrawn); "query" only the legs
+  # whose prompt is the user's own search text (hyde, query_rewrite, enrichment, …);
+  # "all" also the legs carrying retrieved memories or conversation turns
+  # (inline_rerank, iterative_judge, extract, session_summary, …). A namespace's
+  # `capture_generation_io` overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also
+  # gates loom.search_trace_log.query. Token counts, cost, latency and quality scores
+  # are never gated. [restart]
   # langfuse_capture_io_level: "off"
 
   # Per-field cap on recorded prompt/completion text; truncation adds an explicit
@@ -3553,174 +3724,7 @@ settings:
   # pass says so. [live]
   # audit_verify_max_rows_per_pass: 500000
 
-  # ===== Provider: Embedding and LLM providers. ==========
-
-  # Inherits ModelSettings for `llm_model`, which the provider resolution below reads
-  # and fills. Vector width the embedder is asked for and the schema is sized from; the
-  # width probed from the embedder at boot wins when they differ. Change it together
-  # with `embedding_model`. Unset with a `local:*` model, it is that model's own width.
-  # [restart]
-  # embedding_dim: 3072
-
-  # "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai,
-  # gemini* → gemini, local/local:* → local CPU embedder); or pin "openai", "gemini",
-  # "local", "fake". Switching providers changes the embedding space: a full re-embed is
-  # required. [restart]
-  # embedding_provider: ""
-
-  # API root for an explicitly selected OpenAI-compatible embedding service, e.g.
-  # https://provider.example/v1. Empty is invalid for compatible providers. [restart]
-  # embedding_base_url: ""
-
-  # Send the optional dimensions request parameter to a compatible endpoint. False uses
-  # its native output width; responses must still match embedding_dim. [restart]
-  # embedding_send_dimensions: false
-
-  # Attempts an embedding call makes on a retryable failure, and the longest backoff
-  # between two of them, in seconds. [live]
-  # embedding_retry_attempts: 3
-
-  # [live]
-  # embedding_retry_max_wait_s: 10.0
-
-  # OpenAI's API root, for chat and embeddings: point it at an OpenAI-compatible
-  # inference gateway in front of OpenAI (its /v1 root). [restart]
-  # openai_base_url: "https://api.openai.com/v1"
-
-  # Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway
-  # in front of Anthropic. Off the default, the key also goes as a bearer, the scheme
-  # gateways take. [restart]
-  # anthropic_base_url: "https://api.anthropic.com"
-
-  # Model calls with no provider key: exchange an identity token (RFC 8693) at this
-  # token endpoint of the gateway, and send the answer as the bearer
-  # (server/llm/gateway.py). The gateway must trust the token's issuer. "" = the
-  # provider keys. [restart]
-  # inference_token_url: ""
-
-  # The workload's OIDC token, as a file its platform rotates (a projected
-  # service-account token on Kubernetes). With inference_token_url, this or
-  # inference_token_audience. [restart]
-  # inference_workload_token_file: ""
-
-  # With inference_token_url and no workload token: the audience of the identity token
-  # Loom signs (issuer <https public_base_url>/v1, newest RS256 key); never
-  # jwt_audience. [restart]
-  # inference_token_audience: ""
-
-  # The scope sent with that exchange; "" sends none. [restart]
-  # inference_token_scope: ""
-
-  # Seconds one token exchange with the inference gateway may take. [restart]
-  # inference_token_exchange_timeout_s: 10.0
-
-  # Shared query-embedding cache in loom.embedding_cache behind the per-process LRU,
-  # keyed (model, sha1 of normalised text). Only single-text (query) embeds up to
-  # `embedding_cache_shared_max_chars` (0 = no cap) use it. Off = process cache only.
-  # [restart]
-  # embedding_cache_shared: true
-
-  # Longest query text, characters, that uses the shared cache; 0 = no cap. [restart]
-  # embedding_cache_shared_max_chars: 2000
-
-  # The per-process query-embedding LRU: entries held (0 = cache nothing) and seconds
-  # each lives. [restart]
-  # embedding_cache_size: 10000
-
-  # Seconds one per-process LRU entry lives. [restart]
-  # embedding_cache_ttl_s: 3600.0
-
-  # Derive the similarity gates from this embedder's cosine distribution at boot
-  # (server/memory/app/embedder_calibration.py). False pins the scalar defaults (tuned
-  # for text-embedding-3-small) — re-bench after an embedder change. Fake embedders and
-  # probe failures always use the scalars. [restart]
-  # adaptive_thresholds: true
-
-  # Seconds between each replica's re-read of the shared calibration
-  # (loom.embedder_calibration), so every replica serves the same gates. [restart]
-  # calibration_refresh_seconds: 60.0
-
-  # "openai" | "anthropic" | "fake"; "" = infer from LOOM_LLM_MODEL's name
-  # (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from
-  # the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once
-  # at load; an explicit value is never overridden. Run `make bench-quick` before making
-  # anthropic a default. [restart]
-  # llm_provider: ""
-
-  # A fake or key-less provider is a `warn` in /v1/health `problems`; true (production)
-  # makes it an `error` and `status: degraded`, which preflight and monitors catch.
-  # Never changes the HTTP code (503 is ClickHouse-only). [restart]
-  # require_real_providers: false
-
-  # Reasoning effort sent to OpenAI models. "" = the lowest the model accepts (learned
-  # from its refusals, see server/llm/traits.py); set to pin one value for every call.
-  # [restart]
-  # llm_openai_reasoning_effort: ""
-
-  # Thinking effort sent to Claude models as `output_config.effort`: "low" | "medium" |
-  # "high"; "" = send none (the model's own default). A model that does not take it
-  # refuses it once and is not sent it again. [restart]
-  # llm_anthropic_effort: ""
-
-  # Most output tokens a call adds over the caller's cap for a model's hidden reasoning.
-  # The reserve per model is learned from the reasoning tokens its replies report (twice
-  # the most it has spent) and capped here. [restart]
-  # llm_hidden_reasoning_reserve_max: 16384
-
-  # Seconds an LLM call waits for its reply before the client retries. Generous on
-  # purpose: it only catches a hung connection, so a slow model or a long output never
-  # hits it. Calls that must be fast set their own, shorter deadline (HyDE, search
-  # budgets). [restart]
-  # llm_request_timeout_s: 300.0
-
-  # Attempts an LLM call makes on a retryable failure (a 429, a 5xx, a dropped
-  # connection) before the fallback model takes over, and the longest backoff between
-  # two of them, in seconds. [live]
-  # llm_retry_attempts: 4
-
-  # [live]
-  # llm_retry_max_wait_s: 20.0
-
-  # JSON {call: tokens} over LLM_MAX_TOKENS (below): the most tokens one kind of LLM
-  # call may write, keyed as the cost ledger's stage series name it. A name that is no
-  # LLM call, or a count below 1, = the map is logged once and ignored. '' = the table
-  # as declared. [live]
-  # llm_max_tokens_overrides: ""
-
-  # JSON {class: {"llm_cache": bool, "strong": bool, "mid": bool}}: `llm_cache`
-  # overrides the class's cache default (a per-request pin wins); `strong`/`mid` false
-  # bars the cascade from that tier. Unlisted = every tier eligible. [restart]
-  # llm_policy_by_traffic_class: "{\"bench\": {\"llm_cache\": true}}"
-
-  # Skip the rerank when the vector top hit's cosine is ≥ this (strong matches rank
-  # reliably; the rerank costs ~500 ms). Fallback when the adaptive gate has no probe.
-  # [restart]
-  # llm_rerank_skip_above: 0.62
-
-  # Recovery worker: retries failed embeds and reconciles orphan scope='shared' rows
-  # (the write path embeds inline). [restart]
-  # embedding_worker_enabled: true
-
-  # Seconds between recovery worker passes while there is work. [restart]
-  # embedding_worker_interval_seconds: 5
-
-  # Sleep after an idle pass (nothing to embed); the 5 s interval resumes once a pass
-  # writes a row. [restart]
-  # embedding_worker_idle_interval_seconds: 30
-
-  # Orphan reconciliation: the full memory × embedding anti-join runs once per
-  # `full_scan_seconds`; other passes check only memories of the last `recent_seconds`.
-  # 0 = full join every pass. [restart]
-  # embedding_worker_orphan_full_scan_seconds: 1800
-
-  # Age window, seconds, of the memories a non-full orphan pass checks. [restart]
-  # embedding_worker_orphan_recent_seconds: 900
-
-  # The table the wrapper reads and writes; an isolated server whose boot migrations are
-  # off points this at its own scratch mirror. [restart]
-  # llm_response_cache_table: "loom.llm_response_cache"
-
-  # ===== RateLimit: Rate limits: per-actor and per-traffic-class buckets, shared across web workers. ==========
+  # ===== Rate limits: per-actor and per-traffic-class buckets, shared across web workers =====
 
   # Per-actor rate-limit bucket, keyed (namespace, token subject), as a fraction of the
   # namespace limit. 1.0 = no actor bucket; 0.6 leaves a second credential budget while
@@ -3745,14 +3749,14 @@ settings:
   # fraction, so a bench sweep never spends production's budget. Class = token
   # `traffic_class` claim, else namespace row, else request hint, else interactive.
   # Absent class = 1.0 (base bucket). [restart]
-  # ratelimit_class_fractions: "{\"bench\": 0.5}"
+  # ratelimit_class_fractions: '{"bench": 0.5}'
 
   # Requests one org may have in flight at once, deployment-wide. Each process holds its
   # share (divided by replicas × web workers, at least 1); a call over it gets 429
   # RATE_LIMITED. 0 = no cap. [restart]
   # tenant_max_concurrent_requests: 256
 
-  # ===== Runtime: Process shape, deployment, event stream and cost budgets. ==========
+  # ===== Process shape, deployment, event stream and cost budgets =====
 
   # Deployed git commit, stamped at image build (ARG LOOM_BUILD_COMMIT) and shown in
   # /v1/health. Empty in a source run. [restart]
@@ -3893,7 +3897,7 @@ settings:
   # Seconds one readiness check may take; a slower check fails. [live]
   # readiness_check_timeout_s: 2.0
 
-  # ===== Storage: Storage: document originals, per-table retention and warm-tier moves. ==========
+  # ===== Storage: document originals, per-table retention and warm-tier moves =====
 
   # --- document originals (loom.document_blobs) ---
 
@@ -3984,7 +3988,7 @@ settings:
   # `storage_frontend_assets_retry_max_s`. [live]
   # storage_frontend_assets_retry_s: 2.0
 
-  # ===== Task: The task inbox workers and what run.complete does to a run's rows. ==========
+  # ===== The task inbox workers and what run.complete does to a run's rows =====
 
   # --- task inbox ---
 
@@ -4029,7 +4033,7 @@ settings:
   # Days until expiry for `memory_run_complete_retain = expire`. [restart]
   # memory_run_complete_expire_days: 7
 
-  # ===== Tracker: The tracker plane: records, duplicate checks, bisect. ==========
+  # ===== The tracker plane: records, duplicate checks, bisect =====
 
   # --- tracker record, read live ---
 

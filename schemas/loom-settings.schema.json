@@ -174,12 +174,12 @@
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,
           "type": "number",
-          "description": "Ceilings for the reads a caller shapes (code.grep, code.search with a pattern or globs, memory.aggregate, memory.record.query). A ceiling only lowers the statement's own value, so no request can widen it; 0 = none. The shipped loom_reader profile (nlp_user_settings.xml) caps these three at their defaults, with a floor no statement can go under (time: 0.05 s, code.grep's statement floor), so none can be set to 0 even in the SQL. Raising a setting above its cap needs the profile raised too; a 0 sends no ceiling, so the profile's cap applies (code.grep's deadline is then clamped to ch_timeout_read_s, which the profile's cap matches). Seconds one such read may run (the read class default)."
+          "description": "Seconds one caller-shaped read may run (the read class default)."
         },
         "ch_caller_shaped_max_memory_bytes": {
           "default": 4000000000,
           "type": "integer",
-          "description": "Bytes of memory one such read may use."
+          "description": "Bytes of memory one caller-shaped read may use."
         },
         "ch_caller_shaped_max_rows_to_read": {
           "default": 500000000,
@@ -205,7 +205,7 @@
         "ch_host": {
           "default": "localhost",
           "type": "string",
-          "description": "ch_secure=None → wrapper infers TLS from port (8443 → True)."
+          "description": "Host name of the ClickHouse server Loom stores everything in."
         },
         "ch_keepalive_timeout": {
           "default": 5.0,
@@ -648,11 +648,12 @@
         "code_coverage_import_interval_seconds": {
           "default": 86400.0,
           "type": "number",
-          "description": "Seconds between import passes, and the pass's hard deadline."
+          "description": "Seconds between coverage import passes."
         },
         "code_coverage_import_max_pass_seconds": {
           "default": 7200.0,
-          "type": "number"
+          "type": "number",
+          "description": "Seconds one coverage import pass may run before the supervisor abandons it."
         },
         "code_coverage_namespaces": {
           "default": "",
@@ -1304,7 +1305,7 @@
         "code_sandbox_cpu_seconds": {
           "default": 7200,
           "type": "integer",
-          "description": "rlimits for each process of a sandboxed repository job (clone, fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). They bound each process, not a job's total (max_pids aside): there is no cgroup. CPU seconds a process may use."
+          "description": "CPU seconds one process of a sandboxed repository job may use."
         },
         "code_sandbox_max_file_mb": {
           "default": 32768,
@@ -1692,7 +1693,8 @@
         },
         "code_search_low_risk_from": {
           "default": 0.55,
-          "type": "number"
+          "type": "number",
+          "description": "The calibrated confidence from which a code.search result reads `retrieval_risk` \"low\" (see code_search_medium_risk_from)."
         },
         "code_search_medium_risk_from": {
           "default": 0.4,
@@ -2085,7 +2087,7 @@
           "default": 10000,
           "minimum": 0,
           "type": "integer",
-          "description": "The per-process query-embedding LRU: entries held (0 = cache nothing) and seconds each lives."
+          "description": "Entries the per-process query-embedding LRU holds; 0 = cache nothing."
         },
         "embedding_cache_ttl_s": {
           "default": 3600.0,
@@ -2096,7 +2098,7 @@
           "default": 3072,
           "minimum": 1,
           "type": "integer",
-          "description": "Inherits ModelSettings for `llm_model`, which the provider resolution below reads and fills. Vector width the embedder is asked for and the schema is sized from; the width probed from the embedder at boot wins when they differ. Change it together with `embedding_model`. Unset with a `local:*` model, it is that model's own width."
+          "description": "Vector width the embedder is asked for and the schema is sized from; the width probed from the embedder at boot wins when they differ. Change it together with `embedding_model`. Unset with a `local:*` model, it is that model's own width: leave it commented out for a local model."
         },
         "embedding_model": {
           "default": "fake-ngram-3072",
@@ -2120,12 +2122,13 @@
           "default": 3,
           "minimum": 1,
           "type": "integer",
-          "description": "Attempts an embedding call makes on a retryable failure, and the longest backoff between two of them, in seconds."
+          "description": "Attempts an embedding call makes on a retryable failure."
         },
         "embedding_retry_max_wait_s": {
           "default": 10.0,
           "minimum": 0,
-          "type": "number"
+          "type": "number",
+          "description": "Longest backoff, in seconds, between two attempts of an embedding call."
         },
         "embedding_send_dimensions": {
           "default": false,
@@ -2364,7 +2367,7 @@
             "gateway"
           ],
           "type": "string",
-          "description": "Identity mode; decides how callers authenticate. single-user    — no auth, one anonymous identity. trust-network  — self-signup, first-claim-wins. gateway        — an upstream proxy mints short-lived Loom JWTs with the shared HS256 secret; Loom only validates. Empty = inferred from auth_required + self_signup at boot."
+          "description": "How callers authenticate: \"single-user\" (no auth, one anonymous identity), \"trust-network\" (self-signup, first claim wins) or \"gateway\" (an upstream proxy mints short-lived Loom JWTs with the shared HS256 secret; Loom only validates). Empty = inferred from auth_required and self_signup at boot."
         },
         "identity_provider_timeout_s": {
           "default": 10.0,
@@ -2418,7 +2421,7 @@
         "jwt_issuer": {
           "default": "loom",
           "type": "string",
-          "description": "The `iss` Loom stamps on every token it mints and the `aud` every verified token must carry; a token naming another audience is refused."
+          "description": "The `iss` Loom stamps on every token it mints; a verified token must carry it."
         },
         "jwt_keyring_refresh_seconds": {
           "default": 30.0,
@@ -2493,7 +2496,7 @@
             "all"
           ],
           "type": "string",
-          "description": "How much LLM prompt/completion text is recorded, by what the prompt holds: \"off\"   — none (default; consent is given, not withdrawn). \"query\" — only legs whose prompt is the user's own search text (hyde, query_rewrite, enrichment, …). \"all\"   — also legs carrying retrieved memories or conversation turns (inline_rerank, iterative_judge, extract, session_summary, …). A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token counts, cost, latency and quality scores are never gated."
+          "description": "How much LLM prompt and completion text is recorded, by what the prompt holds: \"off\" records none (the default; consent is given, not withdrawn); \"query\" only the legs whose prompt is the user's own search text (hyde, query_rewrite, enrichment, …); \"all\" also the legs carrying retrieved memories or conversation turns (inline_rerank, iterative_judge, extract, session_summary, …). A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token counts, cost, latency and quality scores are never gated."
         },
         "langfuse_circuit_cooldown_s": {
           "default": 30.0,
@@ -2535,12 +2538,12 @@
         "latency_budget_multiplier": {
           "default": 1.0,
           "type": "number",
-          "description": "Scales every op's p99 budget (OP_BUDGETS_P99_MS below, tuned for local CH) at the comparison site; set e.g. 20.0 on Cloud so SLO alerts don't fire on baseline RTT."
+          "description": "Scales every op's p99 budget (OP_BUDGETS_P99_MS in server/settings/catalog.py, tuned for local CH) at the comparison site; set e.g. 20.0 on Cloud so SLO alerts don't fire on baseline RTT."
         },
         "latency_budget_overrides": {
           "default": "",
           "type": "string",
-          "description": "JSON map {op: ms | \"<n>x\"} over the op budgets table (OP_BUDGETS_P99_MS below): an integer replaces that op's budget, \"3x\" multiplies it. Checked after the per-consumer overrides and `admin/budget.set`; malformed = logged once and ignored. '' = the table as declared."
+          "description": "JSON map {op: ms | \"<n>x\"} over the op budgets table (OP_BUDGETS_P99_MS in server/settings/catalog.py): an integer replaces that op's budget, \"3x\" multiplies it. Checked after the per-consumer overrides and `admin/budget.set`; malformed = logged once and ignored. '' = the table as declared."
         },
         "latency_budget_overrides_by_consumer": {
           "default": "",
@@ -2566,7 +2569,7 @@
         "llm_max_tokens_overrides": {
           "default": "",
           "type": "string",
-          "description": "JSON {call: tokens} over LLM_MAX_TOKENS (below): the most tokens one kind of LLM call may write, keyed as the cost ledger's stage series name it. A name that is no LLM call, or a count below 1, = the map is logged once and ignored. '' = the table as declared."
+          "description": "JSON {call: tokens} over LLM_MAX_TOKENS (in server/settings/catalog.py): the most tokens one kind of LLM call may write, keyed as the cost ledger's stage series name it. A name that is no LLM call, or a count below 1, = the map is logged once and ignored. '' = the table as declared."
         },
         "llm_model": {
           "default": "",
@@ -2608,12 +2611,13 @@
           "default": 4,
           "minimum": 1,
           "type": "integer",
-          "description": "Attempts an LLM call makes on a retryable failure (a 429, a 5xx, a dropped connection) before the fallback model takes over, and the longest backoff between two of them, in seconds."
+          "description": "Attempts an LLM call makes on a retryable failure (a 429, a 5xx, a dropped connection) before the fallback model takes over."
         },
         "llm_retry_max_wait_s": {
           "default": 20.0,
           "minimum": 0,
-          "type": "number"
+          "type": "number",
+          "description": "Longest backoff, in seconds, between two attempts of an LLM call."
         },
         "log_format": {
           "default": "text",
@@ -2789,7 +2793,8 @@
           "default": 1400,
           "maximum": 12000,
           "minimum": 200,
-          "type": "integer"
+          "type": "integer",
+          "description": "Token budget of the code.search read that grounds a code-entity question."
         },
         "memory_ask_code_staleness": {
           "default": true,
@@ -2801,7 +2806,7 @@
           "maximum": 12000,
           "minimum": 200,
           "type": "integer",
-          "description": "Token budgets of the code.symbol and code.search reads that ground a code-entity question in the code plane."
+          "description": "Token budget of the code.symbol read that grounds a code-entity question in the code plane."
         },
         "memory_ask_consistency_check": {
           "default": false,
@@ -4392,7 +4397,7 @@
         "otel_environment": {
           "default": "dev",
           "type": "string",
-          "description": "The `deployment.environment` value."
+          "description": "The OTel resource `deployment.environment` stamped on every span, log and metric."
         },
         "otel_excluded_urls": {
           "default": "/v1/health",
@@ -4442,7 +4447,7 @@
         "otel_service_name": {
           "default": "loom",
           "type": "string",
-          "description": "OTel resource `service.name` and `deployment.environment` stamped on every span, log and metric."
+          "description": "The OTel resource `service.name` stamped on every span, log and metric."
         },
         "password_link_ttl_seconds": {
           "default": 86400,

@@ -31,6 +31,24 @@ def comment_block(lines: list[str], lineno: int) -> tuple[str | None, str]:
     return heading, " ".join(reversed(out)).strip()
 
 
+def heading_note(lines: list[str], lineno: int) -> str:
+    """The comment block directly above the heading that governs the field at `lineno`:
+    a group's preamble, shown once under the heading rather than as one field's text."""
+    i = lineno - 2
+    while i >= 0 and lines[i].strip().startswith("#"):
+        if HEADING.match(lines[i].strip()):
+            out: list[str] = []
+            j = i - 1
+            while (
+                j >= 0 and lines[j].strip().startswith("#") and not HEADING.match(lines[j].strip())
+            ):
+                out.append(lines[j].strip().lstrip("#").strip())
+                j -= 1
+            return " ".join(reversed(out)).strip()
+        i -= 1
+    return ""
+
+
 def trailing(line: str) -> str:
     """A comment at the end of the field's last line."""
     m = re.search(r"\s#\s?(.*)$", line)

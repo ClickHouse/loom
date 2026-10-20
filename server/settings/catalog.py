@@ -177,8 +177,7 @@ class AuthSettings(BaseModel):
         warns, `loom doctor` grades WARN)."""
         return self.jwt_secret == DEV_JWT_SECRET
 
-    # The `iss` Loom stamps on every token it mints and the `aud` every
-    # verified token must carry; a token naming another audience is refused.
+    # The `iss` Loom stamps on every token it mints; a verified token must carry it.
     jwt_issuer: str = "loom"
     # The `aud` claim stamped on minted tokens and required on every verified token.
     jwt_audience: str = "loom-platform"
@@ -224,12 +223,10 @@ class AuthSettings(BaseModel):
     # Default org for self-signed tokens.
     self_signup_org: str = "dev"
 
-    # Identity mode; decides how callers authenticate.
-    #   single-user    — no auth, one anonymous identity.
-    #   trust-network  — self-signup, first-claim-wins.
-    #   gateway        — an upstream proxy mints short-lived Loom JWTs with the
-    #                    shared HS256 secret; Loom only validates.
-    # Empty = inferred from auth_required + self_signup at boot.
+    # How callers authenticate: "single-user" (no auth, one anonymous identity),
+    # "trust-network" (self-signup, first claim wins) or "gateway" (an upstream proxy
+    # mints short-lived Loom JWTs with the shared HS256 secret; Loom only validates).
+    # Empty = inferred from auth_required and self_signup at boot.
     identity_provider: Literal["", "single-user", "trust-network", "gateway"] = ""
 
     # When set, a dashboard page load redirects (302) here instead of serving the SPA (Loom
@@ -335,7 +332,7 @@ class AuthSettings(BaseModel):
 class ClickHouseSettings(BaseModel):
     """ClickHouse connection, query shaping and vector storage."""
 
-    # ch_secure=None → wrapper infers TLS from port (8443 → True).
+    # Host name of the ClickHouse server Loom stores everything in.
     ch_host: str = "localhost"
     # ClickHouse HTTP port; 8443 (the Cloud HTTPS port) turns TLS on when `ch_secure` is unset.
     ch_port: int = 8123
@@ -394,9 +391,10 @@ class ClickHouseSettings(BaseModel):
     # Raising a setting above its cap needs the profile raised too; a 0 sends
     # no ceiling, so the profile's cap applies (code.grep's deadline is then
     # clamped to ch_timeout_read_s, which the profile's cap matches).
-    # Seconds one such read may run (the read class default).
+    # --- caller-shaped read ceilings ---
+    # Seconds one caller-shaped read may run (the read class default).
     ch_caller_shaped_max_execution_s: float = 30.0
-    # Bytes of memory one such read may use.
+    # Bytes of memory one caller-shaped read may use.
     ch_caller_shaped_max_memory_bytes: int = 4_000_000_000
     # Rows one such read may scan; past it the read fails (422), never a partial answer.
     ch_caller_shaped_max_rows_to_read: int = 500_000_000
@@ -594,7 +592,8 @@ class CodeSettings(BaseModel):
     # rlimits for each process of a sandboxed repository job (clone, fetch,
     # dependency install, compiler-tier harness; code/app/index/sandbox.py).
     # They bound each process, not a job's total (max_pids aside): there is no cgroup.
-    # CPU seconds a process may use.
+    # --- repository job sandbox ---
+    # CPU seconds one process of a sandboxed repository job may use.
     code_sandbox_cpu_seconds: int = 7200
     # Data memory (heap and private mappings, RLIMIT_DATA) a process may use, in
     # MiB. Not address space: node reserves far more of that than it uses.
@@ -1196,6 +1195,8 @@ class CodeSettings(BaseModel):
     # conceptual question set every right top 3 scored 0.40–0.63, so the
     # memory plane's 0.55 / 0.75 labelled three in four right answers "high".
     code_search_medium_risk_from: float = 0.40
+    # The calibrated confidence from which a code.search result reads `retrieval_risk`
+    # "low" (see code_search_medium_risk_from).
     code_search_low_risk_from: float = 0.55
     # The question kinds the hypothetical answer votes on.
     code_search_hyde_kinds: str = "responsibility"
@@ -1282,8 +1283,9 @@ class CodeSettings(BaseModel):
     code_coverage_check_pattern: str = "%per_test_coverage%"
     # Jobs of one run start within this many hours of its newest job.
     code_coverage_run_window_hours: int = Field(default=6, ge=1)
-    # Seconds between import passes, and the pass's hard deadline.
+    # Seconds between coverage import passes.
     code_coverage_import_interval_seconds: float = 86400.0
+    # Seconds one coverage import pass may run before the supervisor abandons it.
     code_coverage_import_max_pass_seconds: float = 7200.0
 
     def code_coverage_namespace_set(self) -> frozenset[str]:
@@ -2353,9 +2355,10 @@ class MemoryAskSettings(BaseModel):
     # code index too, up to this many, one code.symbol definition each, appended after the
     # question's own grounding rows. 0 = off.
     memory_ask_code_hop_symbols: Annotated[int, LIVE] = 4
-    # Token budgets of the code.symbol and code.search reads that ground a code-entity
-    # question in the code plane.
+    # Token budget of the code.symbol read that grounds a code-entity question in the
+    # code plane.
     memory_ask_code_symbol_token_budget: Annotated[int, LIVE] = Field(default=400, ge=200, le=12000)
+    # Token budget of the code.search read that grounds a code-entity question.
     memory_ask_code_search_token_budget: Annotated[int, LIVE] = Field(
         default=1400, ge=200, le=12000
     )
@@ -3034,21 +3037,21 @@ class ObservabilitySettings(BaseModel):
     # Comma-separated K=V headers sent to that endpoint, e.g.
     # `Authorization=Bearer <token>`.
     otel_exporter_otlp_headers: str = ""
-    # OTel resource `service.name` and `deployment.environment` stamped on
-    # every span, log and metric.
+    # The OTel resource `service.name` stamped on every span, log and metric.
     otel_service_name: str = "loom"
-    # The `deployment.environment` value.
+    # The OTel resource `deployment.environment` stamped on every span, log and metric.
     otel_environment: str = "dev"
     # Comma-separated path regexes the FastAPI instrumentation opens no span
     # for (health polls). "" = instrument every path but the sign-in routes
     # (/oauth/), which are always left out: their URLs carry codes.
     otel_excluded_urls: str = "/v1/health"
 
-    # Scales every op's p99 budget (OP_BUDGETS_P99_MS below, tuned for local CH) at
-    # the comparison site; set e.g. 20.0 on Cloud so SLO alerts don't fire on
-    # baseline RTT.
+    # Scales every op's p99 budget (OP_BUDGETS_P99_MS in server/settings/catalog.py,
+    # tuned for local CH) at the comparison site; set e.g. 20.0 on Cloud so SLO alerts
+    # don't fire on baseline RTT.
     latency_budget_multiplier: float = 1.0
-    # JSON map {op: ms | "<n>x"} over the op budgets table (OP_BUDGETS_P99_MS below):
+    # JSON map {op: ms | "<n>x"} over the op budgets table (OP_BUDGETS_P99_MS in
+    # server/settings/catalog.py):
     # an integer replaces that op's budget, "3x" multiplies it. Checked after the
     # per-consumer overrides and `admin/budget.set`; malformed = logged once and
     # ignored. '' = the table as declared.
@@ -3090,12 +3093,11 @@ class ObservabilitySettings(BaseModel):
     # Seconds one Langfuse API call may take: posting a score, and the traces and
     # scores the prompt evaluation reads.
     langfuse_timeout_s: Annotated[float, LIVE] = Field(default=15.0, gt=0)
-    # How much LLM prompt/completion text is recorded, by what the prompt holds:
-    #   "off"   — none (default; consent is given, not withdrawn).
-    #   "query" — only legs whose prompt is the user's own search text (hyde,
-    #             query_rewrite, enrichment, …).
-    #   "all"   — also legs carrying retrieved memories or conversation turns
-    #             (inline_rerank, iterative_judge, extract, session_summary, …).
+    # How much LLM prompt and completion text is recorded, by what the prompt holds:
+    # "off" records none (the default; consent is given, not withdrawn); "query" only
+    # the legs whose prompt is the user's own search text (hyde, query_rewrite,
+    # enrichment, …); "all" also the legs carrying retrieved memories or conversation
+    # turns (inline_rerank, iterative_judge, extract, session_summary, …).
     # A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒
     # all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token
     # counts, cost, latency and quality scores are never gated.
@@ -3137,13 +3139,16 @@ RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
 class ProviderSettings(ModelSettings):
-    """Embedding and LLM providers."""
+    """Embedding and LLM providers.
 
-    # Inherits ModelSettings for `llm_model`, which the provider resolution below
-    # reads and fills.
+    It inherits ModelSettings for `llm_model`, which the provider resolution reads and
+    fills.
+    """
+
     # Vector width the embedder is asked for and the schema is sized from; the width probed from
     # the embedder at boot wins when they differ. Change it together with `embedding_model`.
-    # Unset with a `local:*` model, it is that model's own width.
+    # Unset with a `local:*` model, it is that model's own width: leave it commented out
+    # for a local model.
     embedding_dim: int = Field(3072, ge=1)
 
     # "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-*
@@ -3160,9 +3165,9 @@ class ProviderSettings(ModelSettings):
     # Send the optional dimensions request parameter to a compatible endpoint.
     # False uses its native output width; responses must still match embedding_dim.
     embedding_send_dimensions: bool = False
-    # Attempts an embedding call makes on a retryable failure, and the longest
-    # backoff between two of them, in seconds.
+    # Attempts an embedding call makes on a retryable failure.
     embedding_retry_attempts: Annotated[int, LIVE] = Field(default=3, ge=1)
+    # Longest backoff, in seconds, between two attempts of an embedding call.
     embedding_retry_max_wait_s: Annotated[float, LIVE] = Field(default=10.0, ge=0)
     # OpenAI's API root, for chat and embeddings: point it at an
     # OpenAI-compatible inference gateway in front of OpenAI (its /v1 root).
@@ -3194,8 +3199,7 @@ class ProviderSettings(ModelSettings):
     embedding_cache_shared: bool = True
     # Longest query text, characters, that uses the shared cache; 0 = no cap.
     embedding_cache_shared_max_chars: int = 2000
-    # The per-process query-embedding LRU: entries held (0 = cache nothing)
-    # and seconds each lives.
+    # Entries the per-process query-embedding LRU holds; 0 = cache nothing.
     embedding_cache_size: int = Field(10_000, ge=0)
     # Seconds one per-process LRU entry lives.
     embedding_cache_ttl_s: float = 3600.0
@@ -3331,12 +3335,12 @@ class ProviderSettings(ModelSettings):
     # deadline (HyDE, search budgets).
     llm_request_timeout_s: float = Field(300.0, gt=0)
     # Attempts an LLM call makes on a retryable failure (a 429, a 5xx, a dropped
-    # connection) before the fallback model takes over, and the longest backoff
-    # between two of them, in seconds.
+    # connection) before the fallback model takes over.
     llm_retry_attempts: Annotated[int, LIVE] = Field(default=4, ge=1)
+    # Longest backoff, in seconds, between two attempts of an LLM call.
     llm_retry_max_wait_s: Annotated[float, LIVE] = Field(default=20.0, ge=0)
-    # JSON {call: tokens} over LLM_MAX_TOKENS (below): the most tokens one kind of
-    # LLM call may write, keyed as the cost ledger's stage series name it. A name
+    # JSON {call: tokens} over LLM_MAX_TOKENS (in server/settings/catalog.py): the most
+    # tokens one kind of LLM call may write, keyed as the cost ledger's stage series name it. A name
     # that is no LLM call, or a count below 1, = the map is logged once and ignored.
     # '' = the table as declared.
     llm_max_tokens_overrides: Annotated[str, JsonObject, LIVE] = ""

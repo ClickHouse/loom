@@ -36,11 +36,11 @@ _RELAY_INSIDE = "/run/loom-relay.py"
 _EGRESS_INSIDE = "/run/loom-egress"
 _HOME_INSIDE = "/tmp/home"
 
-_TAIL_BYTES = 1024 * 1024
 # Output the parent holds: a `keep_stdout` job's stdout whole up to this (a big
 # repository's `ls-remote` of PR heads is ~6 MB), past it the job is killed; any other
 # stream keeps only its last _TAIL_BYTES. The child's rlimits do not bound the parent.
 _STDOUT_LIMIT = 64 * 1024 * 1024  # not a setting: the parent's memory bound against a hostile job
+_TAIL_BYTES = 1024 * 1024
 _READ_CHUNK = 64 * 1024
 # How long a killed job's pipes may stay open. Outside the sandbox a process that
 # left the job's session (setsid) can hold them for as long as it runs.
@@ -488,8 +488,7 @@ class JobOptions(TypedDict, total=False):
     environment is exactly `env` (inside the sandbox HOME and TMPDIR point into
     the job's scratch directory). `timeout_s` kills the tree (TimeoutError).
     `keep_stdout`: the caller parses stdout (ls-remote), so it is kept whole up to
-    _STDOUT_LIMIT and the job killed past it; otherwise only its tail is
-    kept."""
+    _STDOUT_LIMIT and the job killed past it; otherwise only its tail is kept."""
 
     env: Required[Mapping[str, str]]
     timeout_s: Required[float]
@@ -562,10 +561,7 @@ async def _result(proc: asyncio.subprocess.Process, job: JobOptions) -> JobResul
         await _kill_group(proc)
         raise
     if out is None:
-        logger.warning(
-            "repository job killed: stdout passed %d bytes",
-            _STDOUT_LIMIT,
-        )
+        logger.warning("repository job killed: stdout passed %d bytes", _STDOUT_LIMIT)
         reason = f"loom: job killed, its stdout passed {_STDOUT_LIMIT} bytes\n"
         return JobResult(-signal.SIGKILL, b"", err + reason.encode())
     return JobResult(proc.returncode or 0, out, err)
@@ -614,8 +610,8 @@ async def _read(
     proc: asyncio.subprocess.Process, stream: asyncio.StreamReader, *, keep_all: bool
 ) -> bytes | None:
     """A stream to EOF: with `keep_all` all of it, else only its last _TAIL_BYTES.
-    A `keep_all` stream past _STDOUT_LIMIT kills the job and gives None;
-    the rest is read and dropped, as asyncio's wait() waits for the pipes to close."""
+    A `keep_all` stream past _STDOUT_LIMIT kills the job and gives None; the rest
+    is read and dropped, as asyncio's wait() waits for the pipes to close."""
     buf = bytearray()
     overflowed = False
     while chunk := await stream.read(_READ_CHUNK):

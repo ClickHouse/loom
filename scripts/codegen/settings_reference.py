@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:  # run as a file
 
 from scripts.codegen.common import GeneratedFile, generator_main  # noqa: E402
 from server.settings import Settings  # noqa: E402
-from server.settings._describe import comment_block, trailing  # noqa: E402
+from server.settings._describe import comment_block, heading_note, trailing  # noqa: E402
 from server.settings._env import is_secret_field  # noqa: E402
 from server.settings._history import DEFAULT_CHANGES  # noqa: E402
 from server.settings._live import is_live  # noqa: E402
@@ -135,6 +135,9 @@ def _section(cls: ast.ClassDef, lines: list[str]) -> list[str]:
             out += _table(rows)
             rows, current = [], heading
             out.append(f"\n### {heading[:1].upper()}{heading[1:]}\n")
+            note = heading_note(lines, stmt.lineno)
+            if note:
+                out.append(f"{note}\n")
         tail = trailing(lines[(stmt.end_lineno or stmt.lineno) - 1])
         rows.append(_row(name, " ".join(t for t in (text, tail) if t)))
     return out + _table(rows)

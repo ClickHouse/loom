@@ -173,6 +173,18 @@ def test_the_example_file_is_current_and_names_every_setting_but_the_secrets_onc
     assert not any(f"\n  # {n}: " in text for n in Settings.model_fields if is_secret_field(n))
 
 
+def test_every_setting_in_the_example_says_what_it_does() -> None:
+    """A setting whose catalog comment is missing, or was left to a neighbour, shows up
+    here as a bare `[live]` or `[restart]` above its line."""
+    blocks = (ROOT / "loom.example.yaml").read_text().split("\n\n")
+    bare = [
+        block.splitlines()[-1].removeprefix("  # ").split(":")[0]
+        for block in blocks
+        if block.splitlines()[0].strip() in ("# [live]", "# [restart]")
+    ]
+    assert not bare, f"no description in server/settings/catalog.py: {bare}"
+
+
 def test_uncommenting_every_line_of_the_example_loads_every_default(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

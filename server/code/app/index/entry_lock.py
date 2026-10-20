@@ -48,11 +48,10 @@ from urllib.parse import quote
 from server.core import leases
 from server.settings import settings
 
-# The environment variable the `entry-lock` wrapper hands its command the holder in.
-HOLDER_ENV = "LOOM_ENTRY_LEASE_HOLDER"
-
 # A dead holder's lease is taken over after this long.
 ENTRY_LEASE_TTL_S = 120  # not a setting: the lease takeover protocol between replicas
+# The environment variable the `entry-lock` wrapper hands its command the holder in.
+HOLDER_ENV = "LOOM_ENTRY_LEASE_HOLDER"
 # How often a waiting pass retries the host's lock file.
 _POLL_S = 1.0
 

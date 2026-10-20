@@ -14,13 +14,10 @@ from server.tracker.store.embed import EmbedHit, TrackerEmbedRepo
 from server.tracker.store.source.base import SourceBase
 from server.tracker.store.source.rows import split_source, upstream_dt
 
-# The window-keys read's cap; a read that returns this many is incomplete. Not a
-# setting: the worker checks a read against it before it tombstones what left the
-# window, so it must be the one cap the read used.
-WINDOW_KEYS_LIMIT = 200_000  # not a setting: the completeness check reads it again
-
 # Error name → code, per (org, namespace)
 _ERROR_NAMES: dict[tuple[str, str], tuple[float, dict[str, int]]] = {}
+# The window-keys read's cap; a read that returns this many is incomplete.
+WINDOW_KEYS_LIMIT = 200_000  # not a setting: the worker checks a read against this cap
 # a ClickHouse server error line: `Code: 9. DB::Exception: … (SIZES_OF_COLUMNS_DOESNT_MATCH)`
 _ERROR_LINE_PAT = r"Code: (\d{1,4})\. DB::Exception:[^\n]{0,400}?\(([A-Z][A-Z0-9_]{3,})\)"
 
@@ -58,11 +55,7 @@ class EmbedReads(SourceBase):
                        OR closed_at >= now64(3) - INTERVAL {{days:UInt32}} DAY)
                 ORDER BY source_id
                 LIMIT {{lim:UInt32}}""",
-            {
-                "repos": repos,
-                "days": max(1, int(closed_days)),
-                "lim": WINDOW_KEYS_LIMIT,
-            },
+            {"repos": repos, "days": max(1, int(closed_days)), "lim": WINDOW_KEYS_LIMIT},
             cache_key=["embed_keys", kind, closed_days, stamp],
             budget_ms=int(settings.tracker_live_bisect_budget_ms),
             ttl_s=1.0,
