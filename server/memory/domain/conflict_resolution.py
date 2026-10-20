@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+import numpy as np
+
 UPDATE = "update"
 CONTRADICTION = "contradiction"
 ELABORATION = "elaboration"
@@ -274,8 +276,8 @@ def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
             memory_id=peer.memory_id,
             verdict=verdict,
             confidence=float(confidence),
-            same_entity=e.get("same_entity") is True,
-            same_attribute=e.get("same_attribute") is True,
+            same_entity=e["same_entity"],
+            same_attribute=e["same_attribute"],
             reason=str(e.get("reason") or "")[:300],
         )
     return {mid: v for mid, v in out.items() if mid not in torn}
@@ -322,8 +324,6 @@ def later_close_siblings(vectors: list[list[float]], types: list[str], floor: fl
     cosine >= `floor`. The verdicts compare each row with the store only, so an
     update inside one batch is marked here; the later row is the newer statement
     (the batch keeps reading order). Rows without a vector never pair."""
-    import numpy as np
-
     groups: dict[tuple[str, int], list[int]] = {}
     for i, (vec, kind) in enumerate(zip(vectors, types, strict=True)):
         if vec:
