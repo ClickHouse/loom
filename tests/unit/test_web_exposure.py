@@ -236,6 +236,16 @@ def test_auth_on_serves_same_origin_listed_and_originless_posts(
     assert _post(origin="http://localhost:7777").status_code == 403
 
 
+@pytest.mark.usefixtures("auth_on")
+def test_auth_on_refuses_a_post_with_origin_null() -> None:
+    # Origin: null is foreign even same-origin: a no-referrer page here, or a sandboxed
+    # frame on another site, sends it.
+    for site in ("same-origin", "cross-site"):
+        r = _post(origin="null", **{"sec-fetch-site": site})
+        assert r.status_code == 403
+        assert r.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
+
+
 def _post_to(base_url: str, **headers: str) -> int:
     client = _gated_client(base_url)
     return client.post("/v1/memory.list", content=b"{}", headers=headers).status_code
