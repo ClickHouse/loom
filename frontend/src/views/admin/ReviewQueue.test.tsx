@@ -645,6 +645,45 @@ describe("ReviewQueue", () => {
     await waitFor(() => expect(listLearnings).toHaveBeenCalledTimes(2), WAIT);
   });
 
+  it("shows a bot's rule with its agent, its users and sessions, and what promoting it does", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listLearnings).mockResolvedValue({
+      rows: [
+        {
+          ...learning("assistant_rule_refunds"),
+          source_kind: "assistant_turn",
+          agent: "support-bot",
+          supporter_count: 2,
+          supporter_users: 2,
+          supporter_sessions: 3,
+        },
+        // A server a release behind sends no agent and no user count.
+        { ...learning("assistant_rule_old"), source_kind: "assistant_turn", supporter_count: 1 },
+      ],
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Learnings/ }, WAIT));
+    await screen.findByText("assistant_rule_refunds", {}, WAIT);
+    expect(screen.getByText(/2 users, 3 sessions/)).toBeTruthy();
+    expect(screen.getByText(/agent support-bot/)).toBeTruthy();
+    expect(screen.getByText(/part of support-bot for every user it serves/)).toBeTruthy();
+    expect(screen.getByText(/1 supporter ·/)).toBeTruthy();
+    expect(screen.getByText(/part of the agent for every user it serves/)).toBeTruthy();
+  });
+
+  it("says what a learning is when the queue is empty", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listLearnings).mockResolvedValueOnce({ rows: [learning("k/pending")] });
+    vi.mocked(listLearnings).mockResolvedValue({ rows: [] });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Learnings/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Rejected" }, WAIT));
+    expect(await screen.findByText("No rejected learnings", {}, WAIT)).toBeTruthy();
+    expect(screen.getByText(/Nothing is promoted without a review/)).toBeTruthy();
+  });
+
   it("falls back to Conflicts when the new namespace hides the open sub-tab", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listLearnings).mockImplementation(async (id) => ({

@@ -208,8 +208,8 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("events.delete", ((D, "loom.events"),)),
     ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
-    # The fake answers no candidate ids, so the step deletes nothing.
-    ("learnings_queue.delete", ()),
+    # The fake answers no filed candidates: only the user's own support goes.
+    ("learnings_queue.delete", ((D, "loom.learnings_supporters"),)),
     ("consolidation_runs.delete", ((D, "loom.consolidation_runs"),)),
     ("idempotency.delete", ((D, "loom.idempotency"), (L, "loom.embedding_cache"))),
 ]
@@ -288,7 +288,7 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("events.delete", ((D, "loom.events"),)),
     ("memory_drops.delete", ((D, "loom.memory_drops"),)),
     ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
-    ("learnings_queue.delete", ((D, "loom.learnings_queue"),)),
+    ("learnings_queue.delete", ((D, "loom.learnings_supporters"), (D, "loom.learnings_queue"))),
     ("tasks.delete", ((D, "loom.tasks"), (D, "loom.task_events"))),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
     (
@@ -375,7 +375,7 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("events.delete", ((D, "loom.events"),)),
     ("memory_drops.delete", ((D, "loom.memory_drops"),)),
     ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
-    ("learnings_queue.delete", ((D, "loom.learnings_queue"),)),
+    ("learnings_queue.delete", ((D, "loom.learnings_supporters"), (D, "loom.learnings_queue"))),
     ("tasks.delete", ((D, "loom.tasks"), (D, "loom.task_events"))),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
     (

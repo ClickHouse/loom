@@ -76,7 +76,10 @@ def test_conversations_user_scope_uses_the_user_column() -> None:
         ),
         (ledger_steps.delete_events_by_namespace, ["loom.events"]),
         (ledger_steps.delete_memory_drops_by_namespace, ["loom.memory_drops"]),
-        (ledger_steps.delete_learnings_queue_by_namespace, ["loom.learnings_queue"]),
+        (
+            ledger_steps.delete_learnings_queue_by_namespace,
+            ["loom.learnings_supporters", "loom.learnings_queue"],
+        ),
         (ledger_steps.delete_consolidation_runs_by_namespace, ["loom.consolidation_runs"]),
         (ledger_steps.delete_projection_failures_by_namespace, ["loom.memory_projection_failures"]),
     ],
@@ -108,20 +111,22 @@ class _CandidatesCH(_StubCH):
         return await super().query_all(sql, params)
 
 
-def test_the_learnings_user_step_deletes_every_version_of_the_users_candidates() -> None:
+def test_the_learnings_user_step_deletes_the_users_support_and_filings() -> None:
     ch = _CandidatesCH(["c1", "c2"], count=3)
-    assert asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch)) == 3
+    assert asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch)) == 6
     read_sql, read_params = ch.counts[0]
-    assert "has(supporter_users, {uid:String})" in read_sql and read_params["uid"] == "alice"
-    ((sql, params),) = ch.commands
-    assert "ALTER TABLE loom.learnings_queue" in sql and "DELETE" in sql
-    assert "candidate_id IN {cids:Array(UUID)}" in sql and params["cids"] == ["c1", "c2"]
+    assert "filed_by_user = {uid:String}" in read_sql and read_params["uid"] == "alice"
+    assert _tables(ch) == ["loom.learnings_supporters", "loom.learnings_queue"]
+    (support_sql, params), (queue_sql, _) = ch.commands
+    # The user's own support, and every supporter of a candidate the user filed.
+    assert "(user_id = {uid:String} OR candidate_id IN {cids:Array(UUID)})" in support_sql
+    assert "candidate_id IN {cids:Array(UUID)}" in queue_sql and params["cids"] == ["c1", "c2"]
 
 
-def test_the_learnings_user_step_with_no_candidates_submits_nothing() -> None:
+def test_the_learnings_user_step_with_no_filings_deletes_only_the_users_support() -> None:
     ch = _CandidatesCH([])
-    assert asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch)) == 0
-    assert ch.commands == []
+    asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch))
+    assert _tables(ch) == ["loom.learnings_supporters"]
 
 
 def test_the_agent_runs_step_drops_the_runs_claims_too() -> None:

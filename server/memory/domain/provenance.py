@@ -43,6 +43,9 @@ CALLER_DECLARABLE: Final[frozenset[str]] = frozenset({"external", "imported", "d
 _TRACE_PREFIXES: Final[tuple[tuple[str, str], ...]] = (
     ("pipeline:set_from_messages", "extracted"),
     ("conversation:", "extracted"),
+    # A promoted learnings candidate (`learning:<candidate_id>`): the rule was
+    # extracted from conversations before a reviewer approved it.
+    ("learning:", "extracted"),
     ("observe.record", "observed"),
     # The observe-extract worker's step events and session
     # hints (`observe.extract:event:…`, `observe.extract:hint`) summarise tool

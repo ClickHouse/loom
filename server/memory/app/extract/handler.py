@@ -482,6 +482,29 @@ async def _project_extraction(
 async def handle_memory_set_from_messages(
     input: MemorySetFromMessagesInput,
 ) -> MemorySetFromMessagesOutput:
+    """Extract memorable facts from raw messages and bulk-write them. A token bound
+    to one end user cannot turn assistant-turn learnings on: its
+    `agent_learnings=true` is dropped and named in `ignored_args` unless the
+    deployment has them on."""
+    from server.memory.app.assistant_learnings import request_pin
+    from server.settings import settings as _settings
+
+    refused = (
+        bool(input.agent_learnings)
+        and request_pin().pinned
+        and not _settings.memory_extract_agent_learnings
+    )
+    if refused:
+        input = input.model_copy(update={"agent_learnings": None})
+    out = await _set_from_messages(input)
+    if refused:
+        out.ignored_args = [*out.ignored_args, "agent_learnings"]
+    return out
+
+
+async def _set_from_messages(
+    input: MemorySetFromMessagesInput,
+) -> MemorySetFromMessagesOutput:
     """Extract memorable facts from raw messages and bulk-write them.
 
     Extractor errors surface as 502 — silently writing zero memories is
@@ -717,10 +740,13 @@ __all__ = [
 def _extract_request_pins(input: Any) -> dict[str, Any]:
     """The per-call A/B pins the pipeline state carries: the coverage sweep and the
     extractor's response cache; None = the namespace's or the deployment's setting."""
+    from server.memory.app.assistant_learnings import request_pin
+
     return {
         "coverage_sweep": getattr(input, "coverage_sweep", None),
         "llm_cache": getattr(input, "llm_cache", None),
         "agent_learnings": getattr(input, "agent_learnings", None),
+        "learning_agent": request_pin().agent,
         # The keys the session's tools served ride into the workflow state so the echo filter
         # can judge against them.
         "recalled_keys": list(getattr(input, "recalled_keys", None) or []),

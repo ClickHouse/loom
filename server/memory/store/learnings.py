@@ -65,7 +65,7 @@ async def find_candidate(
 
     `seeded_from_*` is surfaced so lineage can point at the originating
     conversation turn; `supporter_count`, `confidence_avg`, `proposed_at`, `agent` and
-    `supporter_users` so a review's or a new supporter's version carries them forward.
+    `filed_by_user` so a review's new version carries them forward.
     """
     ch = ch or _default_client()
     return await ch.query_one(
@@ -74,7 +74,7 @@ async def find_candidate(
                status, supporters, rationale, source_kind,
                seeded_from_thread_id, seeded_from_msg_id,
                supporter_count, confidence_avg, proposed_at,
-               agent, supporter_users
+               agent, filed_by_user
         FROM loom.learnings_queue FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND candidate_id = {cid:UUID}
@@ -95,4 +95,47 @@ async def insert_row(
         "loom.learnings_queue",
         [row],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
+    )
+
+
+async def insert_supporter(
+    row: dict[str, Any],
+    *,
+    ch: _CHClient | None = None,
+) -> None:
+    """One session's support for an `assistant_turn` candidate; a repeat of the same
+    (candidate, user, session) collapses into it."""
+    ch = ch or _default_client()
+    await ch.insert(
+        "loom.learnings_supporters",
+        [row],
+        settings={"async_insert": 0, "wait_for_async_insert": 1},
+    )
+
+
+async def supporter_stats(
+    org: str,
+    namespace: str,
+    candidate_ids: list[str],
+    *,
+    limit: int = 50,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """Per candidate: distinct users, distinct sessions, the mean confidence and the
+    first `limit` (user_id, session_id) pairs by time."""
+    ch = ch or _default_client()
+    return await ch.query_all(
+        """
+        SELECT candidate_id,
+               uniqExact(user_id) AS users,
+               uniqExact(user_id, session_id) AS sessions,
+               avg(confidence) AS confidence,
+               arraySlice(arraySort(groupArray((created_at, user_id, session_id))),
+                          1, {lim:UInt32}) AS pairs
+        FROM loom.learnings_supporters FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND candidate_id IN {ids:Array(UUID)}
+        GROUP BY candidate_id
+        """,
+        params={"org": org, "ns": namespace, "ids": candidate_ids, "lim": int(limit)},
     )

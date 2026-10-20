@@ -60,12 +60,13 @@ a release changed is kept; whether its CI was green at the time is dropped.
 
 ## Rules the assistant states about itself
 
-A chat bot's replies carry rules about its own behaviour: "I escalate any refund over
-$500 to a human", "I always answer in bullet points". With `agent_learnings=true` on the
-request, or `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS=true` for the deployment, the extraction
-call also returns these, marked `"about": "agent"`, at no extra model call. Both are off
-by default: the switch adds a block to the extraction prompt, and extraction quality is
-benchmarked on the prompt without it. Coding captures never use it.
+Experimental. A chat bot's replies carry rules about its own behaviour: "I escalate any
+refund over $500 to a human", "I always answer in bullet points". With
+`agent_learnings=true` on the request, or `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS=true` for
+the deployment, the extraction call also returns these, marked `"about": "agent"`, at no
+extra model call. Both are off by default: the switch adds a block to the extraction
+prompt, and extraction quality has not been benchmarked with it on. Coding captures never
+use it.
 
 Such a rule is never written as a memory. An end user can talk a bot into saying
 anything, and a memory at the agent's level would reach every user of the bot. The rule
@@ -73,15 +74,24 @@ becomes a pending `assistant_turn` candidate in the
 [learnings review queue](./procedures-and-learnings.md#learnings-review-queue) for the
 request's `(org, namespace, agent)`:
 
-- The end user and session are recorded as a supporter, never as the candidate's owner.
-  The `rationale` quotes the assistant turn.
-- A candidate is keyed by the agent and the rule's memory key. The same rule stated in
-  another session adds a supporter to the pending candidate, so a reviewer sees how many
-  users and sessions back it. A decided candidate takes no new supporters.
+- A candidate is keyed by the agent, the rule's memory key and its text (case and
+  spacing folded). A different rule under the same key is a separate candidate, so a
+  first wording never collects the support of a later one. The extractor's key rewrites
+  leave a rule's key alone.
+- The end user and session are recorded as a supporter in `loom.learnings_supporters`,
+  one row per session. A supporter never rewrites the candidate's row, so a review is
+  never undone by a late supporter. A decided candidate takes no new supporters.
+- The `rationale` quotes the evidence span the extractor cited, or the assistant turn
+  when it cited none.
 - Support never promotes a candidate. An admin's `learnings.review` does, and the rule
-  becomes the agent's memory (`user_id` `-`) for every user of the bot.
+  becomes the agent's memory (`user_id` `-`) for every user of the bot, with
+  `source_trace` `learning:<candidate_id>`.
+- A token bound to one end user (an end-user token, or one with a `read_user_id` pin)
+  files for the agent its issuer signed, not the body's `agent`. It cannot turn filing
+  on: its `agent_learnings=true` is dropped and named in `ignored_args` unless the
+  deployment setting is on.
 
-`learning_candidates` in the response counts the rules filed or supported. A failed queue
+`learning_candidates` in the response counts the rules routed to the queue. A failed queue
 write is named in `pipeline_errors` and the rule is dropped.
 
 ## Echoes: `recalled_keys` and `session_values`
@@ -163,8 +173,9 @@ Field lists: [operations reference](../../reference/operations.md#memory) and
 - `tokens_in`, `tokens_out`, `cached_tokens_in`: cost attribution.
 - `segments`, `segmenter` (`whole` or `size`).
 - `forgotten`, `forgotten_keys`, `evidence_ids`.
-- `learning_candidates`: assistant rules filed to the learnings queue, or added as a
-  supporter of a candidate already pending.
+- `learning_candidates`: assistant rules routed to the learnings queue.
+- `ignored_args`: request fields not applied, such as `agent_learnings` from a token bound
+  to one end user.
 - `stage_ms`: wall time per stage (`step.<step_id>`, `bulk.<phase>`).
 - `observation_date_source`: `caller`, `request_time` or empty.
 - `stubbed_fields`: typed-record fields written as null after validation retries.
@@ -217,7 +228,7 @@ See the [Extraction section](../../reference/configuration.md#extraction) unless
 | `LOOM_MEMORY_EXTRACT_SIZE_SEGMENT_*`                      | When a long session is split into fixed windows, and their size.                               |
 | `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_*`                    | A second reading of turns the first pass cited nowhere (one more call).                        |
 | `LOOM_MEMORY_EXTRACT_VALUE_UPDATES`                       | Off by default: supersede an older memory when a fresh one restates it with a different value. |
-| `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS`                     | Off by default: file the assistant's rules about itself to the learnings queue.                |
+| `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS`                     | Experimental, off by default: file the assistant's rules about itself for review.              |
 | `LOOM_EXTRACTION_QUEUE_*`, `LOOM_EXTRACTION_DEFER_AGENTS` | The deferred queue: cadence, lease, attempts, concurrency, forced deferral.                    |
 | `LOOM_OBSERVE_EXTRACT_*`                                  | The observe plane's distillation worker (off by default; makes model calls).                   |
 | `LOOM_MEMORY_CHUNKS_MAX_PER_CALL`                         | Verbatim chunks one call writes ([Chunking](../../reference/configuration.md#chunking)).       |

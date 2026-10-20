@@ -180,7 +180,9 @@ def attach(result: Any, block: dict[str, Any]) -> Any:
     is returned as is."""
     if not block or not isinstance(result, dict):
         return result
-    return {**result, **block}
+    # An op may name a field it did not apply itself; keep both lists.
+    own = [k for k in result.get("ignored_args") or [] if k not in block["ignored_args"]]
+    return {**result, **block, "ignored_args": [*own, *block["ignored_args"]]}
 
 
 class ArgumentRefused:

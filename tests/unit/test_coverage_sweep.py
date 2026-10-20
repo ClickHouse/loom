@@ -323,8 +323,9 @@ async def test_sweep_tags_its_facts_and_filters_noise(monkeypatch) -> None:
 
 def test_pipeline_stores_sweep_facts_at_lower_confidence() -> None:
     from server.memory.app import pipeline as mp
+    from server.memory.domain.extracted_facts import UNCERTAIN_CONFIDENCE
 
-    assert mp._SWEEP_CONFIDENCE < 1.0 and mp._SWEEP_CONFIDENCE > mp._UNCERTAIN_CONFIDENCE
+    assert mp._SWEEP_CONFIDENCE < 1.0 and mp._SWEEP_CONFIDENCE > UNCERTAIN_CONFIDENCE
 
 
 FACT_LIST = [

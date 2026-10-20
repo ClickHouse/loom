@@ -11,7 +11,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
-from server.erasure.store.predicates import NS_EQ, NS_IN, UID, USER_SUPPORTED_LEARNINGS
+from server.erasure.store.predicates import NS_EQ, NS_IN, UID, USER_FILED_LEARNINGS
 
 log = logging.getLogger(__name__)
 
@@ -251,37 +251,42 @@ async def delete_tasks_by_namespace(
     return await _delete_many(_TASK_TABLES, org, NS_EQ, {"ns": namespace}, ch)
 
 
+_LEARNINGS_TABLES = ("loom.learnings_supporters", "loom.learnings_queue")
+
+
 async def delete_learnings_queue_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
-    """Promotion candidates quote the proposed value and its supporters."""
-    return await delete_scoped(
-        "loom.learnings_queue", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
-    )
+    """Promotion candidates quote the proposed value; their supporters name users."""
+    return await _delete_many(_LEARNINGS_TABLES, org, NS_EQ, {"ns": namespace}, ch)
 
 
 async def delete_learnings_queue_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
-    """Every version of each candidate the user's conversations back
-    (`predicates.USER_LEARNINGS`). The ids are read first, so the delete never
-    reads the table it mutates."""
+    """The user's support rows, and every version of each candidate the user filed
+    with all its supporters (`predicates.USER_LEARNING_SUPPORT`, `USER_LEARNINGS`).
+    The ids are read first, so no delete reads a table it mutates."""
     ch = ch or _default_client()
     rows = await ch.query_all(
         "SELECT DISTINCT candidate_id FROM loom.learnings_queue "
-        f"WHERE org = {{org:String}} AND {USER_SUPPORTED_LEARNINGS}",
+        f"WHERE org = {{org:String}} AND {USER_FILED_LEARNINGS}",
         params={"org": org, "uid": user_id},
     )
-    ids = [str(r["candidate_id"]) for r in rows]
-    if not ids:
-        return 0
-    return await delete_scoped(
-        "loom.learnings_queue",
+    params: dict[str, Any] = {"uid": user_id, "cids": [str(r["candidate_id"]) for r in rows]}
+    filed = "candidate_id IN {cids:Array(UUID)}"
+    n = await delete_scoped(
+        "loom.learnings_supporters",
         org=org,
-        scope_where="candidate_id IN {cids:Array(UUID)}",
-        params={"cids": ids},
+        scope_where=f"(user_id = {{uid:String}} OR {filed})",
+        params=params,
         ch=ch,
     )
+    if params["cids"]:
+        n += await delete_scoped(
+            "loom.learnings_queue", org=org, scope_where=filed, params=params, ch=ch
+        )
+    return n
 
 
 async def _delete_run_claims(

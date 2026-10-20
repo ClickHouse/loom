@@ -256,9 +256,12 @@ class MemorySetFromMessagesOutput(BaseModel):
     # The user's facts read from the assistant's premises ("since you enjoy
     # X…"), added to the batch.
     premise_facts: int = 0
-    # Rules the assistant stated about itself, each filed as a learnings queue
-    # candidate or counted as a new supporter of one; none is written as a memory.
+    # Rules the assistant stated about itself routed to the learnings queue, each
+    # filing a candidate or supporting one; none is written as a memory.
     learning_candidates: int = 0
+    # Request fields the server did not apply: `agent_learnings` from a token bound
+    # to one end user while the deployment has assistant-turn learnings off.
+    ignored_args: list[str] = Field(default_factory=list)
     # Which planner cut them: whole | size. With `segments`
     # this makes the segmentation fire rate one GROUP BY on agent_events
     # (out_segmenter / out_segments).

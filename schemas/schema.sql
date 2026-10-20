@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 164 tables + 18 materialized views.
+-- Counts: 165 tables + 18 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (164)
+-- Tables (165)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -1819,12 +1819,27 @@ CREATE TABLE IF NOT EXISTS loom.learnings_queue
     `seeded_from_msg_id` Nullable(String) DEFAULT NULL,
     `seeded_from_thread_id` Nullable(String) DEFAULT NULL,
     `agent` LowCardinality(String) DEFAULT '',
-    `supporter_users` Array(String) DEFAULT []
+    `filed_by_user` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(proposed_at)
 ORDER BY (org, namespace, candidate_id)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
+
+-- loom.learnings_supporters
+CREATE TABLE IF NOT EXISTS loom.learnings_supporters
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `candidate_id` UUID,
+    `user_id` String,
+    `session_id` String,
+    `confidence` Float32,
+    `created_at` DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(created_at)
+ORDER BY (org, namespace, candidate_id, user_id, session_id)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.llm_response_cache
 CREATE TABLE IF NOT EXISTS loom.llm_response_cache

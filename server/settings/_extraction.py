@@ -35,6 +35,7 @@ class ExtractionSettings(BaseModel):
     # $500") are filed as `assistant_turn` candidates in the learnings queue for an
     # admin to promote, never written as memories. On, the extraction prompt gains a
     # block; a request's `agent_learnings` overrides. Coding captures never use it.
+    # Experimental: extraction quality is not benchmarked with the block on.
     memory_extract_agent_learnings: bool = False
     # Current messages totalling at most this many characters are
     # extracted with the compact system prompt (every rule, the schema anchors a short

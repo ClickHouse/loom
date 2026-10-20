@@ -16,12 +16,14 @@ from server.core.datetimes import parse_iso_dt
 from server.core.hashing import hash_text
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry
 from server.memory.api.models_crud import MemoryDeleteInput
+from server.memory.app.assistant_learnings import file_assistant_rules
 from server.memory.app.pipeline_state import PipelineStep, StepCallable, WorkflowState
 from server.memory.domain.extracted_facts import (
     _disambiguate_key,
     _merge_extractions,
     _source_role_tags,
     foresight_end,
+    judged_confidence,
     keep_latest_per_key,
     keep_latest_relation_keyed,
 )
@@ -749,10 +751,6 @@ async def _newest_wins(state: WorkflowState) -> bool:
         return False
 
 
-# Stored confidence for facts the write-time judge graded UNCERTAIN.
-# An ordering nudge only — bounded by the +0.1*confidence retrieval
-# tiebreak, not a calibrated probability.
-_UNCERTAIN_CONFIDENCE = 0.75
 # Stored confidence for facts the coverage sweep added.
 _SWEEP_CONFIDENCE = 0.85
 
@@ -797,8 +795,6 @@ async def _file_agent_rules(state: WorkflowState) -> None:
     agent_rules = [f for f in state.extracted_facts if f.get("about") == "agent"]
     if not agent_rules:
         return
-    from server.memory.app.assistant_learnings import file_assistant_rules
-
     state.extracted_facts = [f for f in state.extracted_facts if f.get("about") != "agent"]
     state.learning_candidates = await file_assistant_rules(state, agent_rules)
 
@@ -892,7 +888,7 @@ async def _step_bulk_write(
         # Preserve the judge verdict in source_trace for audit/UI, and apply
         # a bounded ordering nudge to confidence (CORRECT / unjudged keep 1.0).
         verdict = str(fact.get("judge_verdict") or "").upper()
-        fact_confidence = _UNCERTAIN_CONFIDENCE if verdict == "UNCERTAIN" else 1.0
+        fact_confidence = judged_confidence(fact)
         # A coverage-sweep fact fills a gap; at equal similarity
         # the first pass's fact ranks first (0.1 * confidence in the score).
         if "coverage_sweep" in (fact.get("tags") or []):

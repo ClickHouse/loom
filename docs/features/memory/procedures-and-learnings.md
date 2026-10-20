@@ -193,14 +193,19 @@ A learning is a candidate fact with its supporters (`supporter_count`, `supporte
 `confidence_avg`, `rationale`, `source_kind`), waiting for a person to decide. Loom
 records the reviewer's choice and never makes it.
 
-Extraction files one kind of candidate itself. With assistant-turn learnings on, a rule
-a bot states about its own behaviour in a conversation becomes an `assistant_turn`
-candidate for that agent (`agent`), never a memory
-([extraction](./extraction.md#rules-the-assistant-states-about-itself)). Each user and
-session that states it again is one more supporter; promoting it writes the rule as the
-agent's memory for every user. A user erasure deletes every candidate that user's
-conversations back, since its rationale may quote them. Any other candidate is written by
-your own process to `loom.learnings_queue`.
+Extraction files one kind of candidate itself. With assistant-turn learnings on
+(experimental), a rule a bot states about its own behaviour in a conversation becomes an
+`assistant_turn` candidate for that agent (`agent`), never a memory
+([extraction](./extraction.md#rules-the-assistant-states-about-itself)). Its support is
+counted from `loom.learnings_supporters` when it is listed: `supporter_count` and
+`supporter_users` are the distinct end users, `supporter_sessions` the distinct sessions,
+and support never promotes it. Promoting it writes the rule as the agent's memory for
+every user. A user erasure deletes that user's supporter rows, and every candidate the
+user filed (its rationale quotes their conversation) with all its supporters. Any other
+candidate is written by your own process to `loom.learnings_queue`.
+
+`learnings.quality` counts the conversation seeder by default, since it reports
+extraction quality; pass `source_kind="assistant_turn"` for the bot rules.
 
 | Op                  | Role   | Does                                                                                                               |
 | ------------------- | ------ | ------------------------------------------------------------------------------------------------------------------ |

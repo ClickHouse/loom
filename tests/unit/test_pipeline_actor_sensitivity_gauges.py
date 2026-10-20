@@ -55,7 +55,15 @@ def _input(**kw: Any):
 
 
 def test_the_queue_payload_carries_the_enqueuer_and_the_rebuild_strips_it() -> None:
-    set_current_auth(SimpleNamespace(org="o", subject="b5-memo-bench", is_service_account=True))
+    set_current_auth(
+        SimpleNamespace(
+            org="o",
+            subject="b5-memo-bench",
+            is_service_account=True,
+            read_user_id="",
+            agent_principal="",
+        )
+    )
     try:
         payload, n_msgs, _chars = payload_for(_input(), scope=WHOLE_NAMESPACE)
     finally:
@@ -67,6 +75,9 @@ def test_the_queue_payload_carries_the_enqueuer_and_the_rebuild_strips_it() -> N
     assert enqueued_actor(row) == "process:b5-memo-bench"
     rebuilt = queue.rebuild_input(row)
     assert rebuilt.defer is False and not hasattr(rebuilt, ENQUEUED_BY_KEY)
+    # The token's learnings pin rides beside it and is stripped the same way.
+    assert data[queue.LEARNINGS_PIN_KEY] == {"pinned": False, "agent": ""}
+    assert not hasattr(rebuilt, queue.LEARNINGS_PIN_KEY)
     assert queue.replay_actor(row) == "process:b5-memo-bench"
     # no token at enqueue time → no key → the worker's own principal
     set_current_auth(None)

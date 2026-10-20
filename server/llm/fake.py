@@ -106,8 +106,9 @@ def _extract_facts_from_user_prompt(
     can assert on a non-empty round-trip. Picks the first 3 sentences
     that look declarative; with `agent_rules`, the assistant's "I always" /
     "I never" sentences come back as rules instead."""
-    facts: list[dict[str, object]] = _agent_rules(user) if agent_rules else []
-    rule_sentences = {str(f["evidence"]).rstrip(".") for f in facts}
+    rules = _agent_rules(user) if agent_rules else []
+    facts: list[dict[str, object]] = list(rules)
+    rule_sentences = {str(f["evidence"]).rstrip(".") for f in rules}
     seen: set[str] = set()
     # User prompt is "[role] content\n..." — strip role tags before splitting.
     stripped = re.sub(r"\[[^\]]+\]\s*", "", user).strip()
@@ -132,7 +133,7 @@ def _extract_facts_from_user_prompt(
                 "entities": entities,
             }
         )
-        if len(facts) == 3 + len(rule_sentences):
+        if len(facts) == 3 + len(rules):
             break
     return {"facts": facts}
 

@@ -36,8 +36,10 @@ async def handle_learnings_list(
         limit=input.limit,
         source_kind=input.source_kind,
     )
+    support = await _assistant_turn_support(input.org, input.namespace, rows)
     entries = []
     for r in rows:
+        r = {**r, **support.get(str(r["candidate_id"]), {})}
         try:
             proposed_value = json.loads(r["proposed_value"]) if r["proposed_value"] else None
         except (ValueError, TypeError):
@@ -49,6 +51,8 @@ async def handle_learnings_list(
                 memory_type=r["memory_type"],
                 proposed_value=proposed_value,
                 supporter_count=int(r["supporter_count"]),
+                supporter_users=int(r.get("supporter_users") or 0),
+                supporter_sessions=int(r.get("supporter_sessions") or 0),
                 confidence_avg=float(r["confidence_avg"]),
                 supporters=list(r["supporters"]),
                 rationale=r["rationale"],
@@ -62,6 +66,31 @@ async def handle_learnings_list(
             )
         )
     return LearningsListOutput(rows=entries)
+
+
+async def _assistant_turn_support(
+    org: str, namespace: str, rows: list[dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    """The support of each `assistant_turn` row, counted from
+    loom.learnings_supporters: the headline count is distinct users, with the
+    distinct sessions beside it and the six-part supporter entries."""
+    by_id = {str(r["candidate_id"]): r for r in rows if r.get("source_kind") == ASSISTANT_TURN}
+    if not by_id:
+        return {}
+    stats = await learnings_repo.supporter_stats(org, namespace, list(by_id))
+    out: dict[str, dict[str, Any]] = {}
+    for s in stats:
+        cid = str(s["candidate_id"])
+        row = by_id[cid]
+        prefix = f"{org}/{namespace}/{row.get('agent') or '-'}"
+        out[cid] = {
+            "supporter_count": int(s["users"]),
+            "supporter_users": int(s["users"]),
+            "supporter_sessions": int(s["sessions"]),
+            "confidence_avg": float(s["confidence"]),
+            "supporters": [f"{prefix}/{u}/{sid}/{row['memory_key']}" for _, u, sid in s["pairs"]],
+        }
+    return out
 
 
 async def handle_learnings_quality(
@@ -219,7 +248,7 @@ async def handle_learnings_review(
             "rationale": row["rationale"],
             "source_kind": row.get("source_kind", "memory_supporters"),
             "agent": str(row.get("agent") or ""),
-            "supporter_users": list(row.get("supporter_users") or []),
+            "filed_by_user": str(row.get("filed_by_user") or ""),
             "seeded_from_thread_id": row.get("seeded_from_thread_id"),
             "seeded_from_msg_id": row.get("seeded_from_msg_id"),
             "status": target_status,
@@ -336,7 +365,8 @@ async def _promote_via_memory_set(
     # Sentinel "-" puts the row at namespace scope; approver lands as
     # user_id so audit retains accountability. A rule an assistant stated about
     # itself becomes its agent's memory for every user (user_id "-"); the
-    # approver is the row's `actor`, stamped from the review's token.
+    # approver is the row's `actor`, stamped from the review's token, and the
+    # source_trace names the candidate, not one supporter's session.
     # Persist the originating conversation on the durable memory row's
     # source_trace (the seeded_from link otherwise lives only on the
     # learnings_queue candidate, which ages out) — so a promoted fact keeps a
@@ -358,7 +388,11 @@ async def _promote_via_memory_set(
             f"candidate-id:{candidate_row['candidate_id']}",
         ],
         confidence=float(candidate_row.get("confidence_avg") or 1.0),
-        source_trace=f"conversation:{seeded_thread}" if seeded_thread else "",
+        source_trace=(
+            f"learning:{candidate_row['candidate_id']}"
+            if agent_rule
+            else (f"conversation:{seeded_thread}" if seeded_thread else "")
+        ),
     )
     # 409 PINNED_CONFLICT bubbles up through learnings.review.
     await handle_memory_set(set_input)

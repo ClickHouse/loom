@@ -42,7 +42,13 @@ def _call(base_url: str, token: str, op: str, body: dict[str, Any]) -> dict[str,
 
 
 def _converse(
-    base_url: str, token: str, org: str, ns: str, user_id: str, session_id: str
+    base_url: str,
+    token: str,
+    org: str,
+    ns: str,
+    user_id: str,
+    session_id: str,
+    rule: str = _RULE,
 ) -> dict[str, Any]:
     return _call(
         base_url,
@@ -57,7 +63,7 @@ def _converse(
             "agent_learnings": True,
             "messages": [
                 {"role": "user", "content": "Please refund my order of $800 today."},
-                {"role": "assistant", "content": f"{_RULE} A colleague will reply soon."},
+                {"role": "assistant", "content": f"{rule} A colleague will reply soon."},
             ],
         },
     )
@@ -71,6 +77,10 @@ def _pending(base_url: str, token: str, org: str, ns: str) -> list[dict[str, Any
         {"org": org, "namespace": ns, "source_kind": "assistant_turn"},
     )
     return list(out["rows"])
+
+
+def _support(cand: dict[str, Any]) -> tuple[int, int, int]:
+    return cand["supporter_count"], cand["supporter_users"], cand["supporter_sessions"]
 
 
 @pytest.mark.usefixtures("fake_llm")
@@ -91,11 +101,11 @@ def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(
     assert cand["status"] == "pending"
     assert cand["agent"] == _AGENT
     assert cand["proposed_value"] == f"Assistant rule: {_RULE}"
-    assert cand["supporter_count"] == 1
+    assert _support(cand) == (1, 1, 1)
     assert cand["supporters"] == [f"{org}/{ns}/{_AGENT}/alice/s1/{cand['memory_key']}"]
-    assert _RULE in cand["rationale"]
+    assert cand["rationale"] == f'Stated in an assistant turn: "{_RULE}"'
 
-    # Not a memory: neither the user's search nor the agent-level read finds it.
+    # Not a memory: the user's search does not find it.
     hits = _call(
         base_url,
         token,
@@ -110,14 +120,18 @@ def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(
     )
     assert not [h for h in hits["results"] if "escalate any refund" in str(h.get("value"))]
 
-    # Another user's session states the same rule: one candidate, two supporters,
-    # still pending.
-    second = _converse(base_url, token, org, ns, "bob", "s2")
-    assert second["learning_candidates"] == 1
+    # The same session again changes nothing; another session of alice's and one of
+    # bob's: two users, three sessions, still pending.
+    _converse(base_url, token, org, ns, "alice", "s1")
+    _converse(base_url, token, org, ns, "alice", "s1b")
+    _converse(base_url, token, org, ns, "bob", "s2")
     (cand,) = _pending(base_url, token, org, ns)
-    assert cand["supporter_count"] == 2
-    assert [s.split("/")[3] for s in cand["supporters"]] == ["alice", "bob"]
-    assert cand["status"] == "pending"
+    assert _support(cand) == (2, 2, 3)
+    assert [s.split("/")[3:5] for s in cand["supporters"]] == [
+        ["alice", "s1"],
+        ["alice", "s1b"],
+        ["bob", "s2"],
+    ]
 
     review = _call(
         base_url,
@@ -134,6 +148,9 @@ def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(
     )
     assert review["new_status"] == "promoted"
     assert review["promoted_to_shared"] is True
+    assert _pending(base_url, token, org, ns) == []
+    # A supporter after the decision does not reopen it.
+    _converse(base_url, token, org, ns, "carol", "s3")
     assert _pending(base_url, token, org, ns) == []
 
     # The agent's memory now, for every user of the bot.
@@ -156,8 +173,27 @@ def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(
 
 
 @pytest.mark.usefixtures("fake_llm")
+def test_a_different_rule_under_one_key_is_its_own_candidate(
+    base_url: str, mint_test_token: Any
+) -> None:
+    org = unique_org("asst-sibling")
+    ns = f"bot-{uuid.uuid4().hex[:8]}"
+    token = mint_test_token(org=org, roles=["admin"])
+    other = "I always escalate any refund over $5 to nobody."
+    _converse(base_url, token, org, ns, "mallory", "s1", rule=other)
+    _converse(base_url, token, org, ns, "alice", "s2")
+
+    rows = {r["proposed_value"]: r for r in _pending(base_url, token, org, ns)}
+    assert set(rows) == {f"Assistant rule: {other}", f"Assistant rule: {_RULE}"}
+    assert len({r["memory_key"] for r in rows.values()}) == 1
+    # Neither wording collects the other's support.
+    assert _support(rows[f"Assistant rule: {_RULE}"]) == (1, 1, 1)
+    assert _support(rows[f"Assistant rule: {other}"]) == (1, 1, 1)
+
+
+@pytest.mark.usefixtures("fake_llm")
 @pytest.mark.asyncio
-async def test_a_user_erasure_removes_the_candidates_that_user_backs(
+async def test_a_user_erasure_removes_the_users_support_and_filings(
     base_url: str, mint_test_token: Any
 ) -> None:
     from server.core.ch import get_client
@@ -168,24 +204,50 @@ async def test_a_user_erasure_removes_the_candidates_that_user_backs(
     ns_a = f"bot-{uuid.uuid4().hex[:8]}"
     ns_b = f"bot-{uuid.uuid4().hex[:8]}"
     token = mint_test_token(org=org, roles=["admin"])
+    # alice files in A, bob supports it; bob files in B, alice supports it.
     _converse(base_url, token, org, ns_a, "alice", "s1")
     _converse(base_url, token, org, ns_a, "bob", "s2")
     _converse(base_url, token, org, ns_b, "bob", "s3")
+    _converse(base_url, token, org, ns_b, "alice", "s4")
+    (filed,) = _pending(base_url, token, org, ns_a)
 
     ch = get_client()
     await ch.connect()
     try:
+        # A review written by a build a release behind: no agent, no filed_by_user.
+        await ch.insert(
+            "loom.learnings_queue",
+            [
+                {
+                    "candidate_id": filed["candidate_id"],
+                    "org": org,
+                    "namespace": ns_a,
+                    "memory_key": filed["memory_key"],
+                    "memory_type": "semantic",
+                    "proposed_value": '"x"',
+                    "supporter_count": 0,
+                    "confidence_avg": 1.0,
+                    "supporters": [],
+                    "rationale": filed["rationale"],
+                    "source_kind": "assistant_turn",
+                    "status": "rejected",
+                    "version": 2**62,
+                }
+            ],
+            settings={"async_insert": 0, "wait_for_async_insert": 1},
+        )
         before = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
-        # The filing and bob's support: two versions, one once a merge collapses them.
-        assert before["loom.learnings_queue"] > 0
-        deleted = await steps_ledgers.delete_learnings_queue_by_user(org, "alice", ch=ch)
-        assert deleted == before["loom.learnings_queue"]
+        assert before["loom.learnings_queue"] > 0 and before["loom.learnings_supporters"] > 0
+        await steps_ledgers.delete_learnings_queue_by_user(org, "alice", ch=ch)
         after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
         assert after["loom.learnings_queue"] == 0
+        assert after["loom.learnings_supporters"] == 0
     finally:
         await ch.disconnect()
 
-    # The candidate alice backed is gone; bob's own one in the other namespace stays.
+    # alice's filing is gone with bob's support of it; bob's candidate stays, backed
+    # by bob alone.
     assert _pending(base_url, token, org, ns_a) == []
     (kept,) = _pending(base_url, token, org, ns_b)
+    assert _support(kept) == (1, 1, 1)
     assert kept["supporters"][0].split("/")[3] == "bob"

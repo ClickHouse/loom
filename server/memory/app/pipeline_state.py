@@ -55,7 +55,10 @@ class WorkflowState:
     llm_cache: bool | None = None
     # Per-call switch for assistant-turn learnings (None = the deployment setting).
     agent_learnings: bool | None = None
-    # Assistant rules filed to, or backing, a learnings queue candidate.
+    # The agent a filed rule is for: the token's agent principal when it names
+    # one, else '' (the body's `agent`).
+    learning_agent: str = ""
+    # Assistant rules routed to the learnings queue.
     learning_candidates: int = 0
     segments: int = 1
     # Facts written as time-bounded foresight.

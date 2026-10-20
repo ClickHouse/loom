@@ -74,8 +74,9 @@ def test_the_review_moved_the_named_tables_into_the_census() -> None:
         "loom.memory_exposures",
         "loom.events",
         "loom.code_search_trace",
-        # Through the candidates' supporter_users.
+        # The candidates the user filed, and the user's support rows.
         "loom.learnings_queue",
+        "loom.learnings_supporters",
     ):
         assert t in user, t
     assert "loom.search_trace_log" not in user  # no user axis

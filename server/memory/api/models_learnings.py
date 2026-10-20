@@ -26,7 +26,12 @@ class _LearningEntry(BaseModel):
     memory_key: str
     memory_type: str
     proposed_value: Any
+    # How many back it; for `assistant_turn`, the distinct end users.
     supporter_count: int
+    # `assistant_turn` only (0 otherwise): distinct end users and distinct
+    # (user, session) pairs that stated the rule.
+    supporter_users: int = 0
+    supporter_sessions: int = 0
     confidence_avg: float
     supporters: list[str]
     rationale: str
@@ -87,7 +92,8 @@ class LearningsQualityInput(BaseModel):
     org: str
     namespace: str | None = None  # None = org-wide rollup
     # Only candidates from this producer; the default counts the conversation
-    # seeder, None counts every producer.
+    # seeder, the extraction quality the Health panel reports. `assistant_turn`
+    # is a bot's rules about itself, not extraction quality; None counts every producer.
     source_kind: str | None = "conversation_seeder"
 
 

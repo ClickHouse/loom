@@ -537,6 +537,20 @@ const LEARNINGS_READ = 50;
 const LEARNING_STATUSES: readonly LearningStatus[] = ["pending", "promoted", "rejected"];
 const STATUS_LABEL: Record<LearningStatus, string> = { pending: "Pending", promoted: "Promoted", rejected: "Rejected" };
 
+const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
+
+// A rule a bot stated about itself in conversations (`assistant_turn`).
+const isAgentRule = (r: LearningEntry) => r.source_kind === "assistant_turn";
+
+// A bot's rule is backed by distinct users, its sessions beside them; every other
+// candidate by its supporters. A server a release behind sends no user count.
+function supportLabel(r: LearningEntry): string {
+  if (isAgentRule(r) && r.supporter_users !== undefined) {
+    return `${plural(r.supporter_users, "user")}, ${plural(r.supporter_sessions ?? 0, "session")}`;
+  }
+  return plural(r.supporter_count, "supporter");
+}
+
 function LearningsPanel({
   initialPending,
   onSeedUsed,
@@ -631,24 +645,33 @@ function LearningsPanel({
           kind="empty"
           icon="sparkle"
           title={`No ${status} learnings`}
-          description="Learnings are facts noticed across several agents in your organisation and proposed as shared knowledge for everyone. Solo and development setups usually have none."
+          description="A learning is a candidate waiting for a person's decision: a fact several writers back, or a rule a bot stated about itself in conversations (when the deployment files those). Nothing is promoted without a review."
         />
       )}
       {!error && rows !== null && rows.length > 0 && (
         <div className="space-y-2" aria-busy={refreshing || undefined}>
           {rows.map((r) => (
             <Panel key={r.candidate_id}>
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <span className="font-mono text-sm text-text-muted">{r.memory_key}</span>
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                <span className="min-w-0 break-all font-mono text-sm text-text-muted">{r.memory_key}</span>
                 <span className="text-xs text-text-muted tabular">
-                  {r.supporter_count} supporters · conf {(r.confidence_avg ?? 0).toFixed(2)} ·{" "}
+                  {supportLabel(r)} · conf {(r.confidence_avg ?? 0).toFixed(2)} ·{" "}
                   <ListTime time={r.proposed_at} quiet />
                 </span>
+              </div>
+              <div className="text-xs text-text-muted mb-2">
+                {r.source_kind || "memory_supporters"}
+                {r.agent && <> · agent {r.agent}</>}
               </div>
               <div className="text-sm text-text mb-2">{truncate(formatValue(r.proposed_value), 240)}</div>
               {r.rationale && <div className="text-sm text-text-muted mb-2 italic">{r.rationale}</div>}
               {status === "pending" && (
                 <>
+                  {isAgentRule(r) && (
+                    <div className="text-sm text-text-muted mb-2">
+                      Promote makes this rule part of {r.agent || "the agent"} for every user it serves.
+                    </div>
+                  )}
                   <TextAreaField
                     label="Reason for the decision"
                     value={reason[r.candidate_id] || ""}

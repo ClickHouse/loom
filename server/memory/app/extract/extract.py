@@ -368,7 +368,31 @@ def _settle_facts(
     stable and relation keys, citation repair, temporal anchors and
     timestamps, suffix and attribute normalisation, relative-date grounding,
     speakers, code facets, index links, the grounding grade and speaker
-    attribution. Pure."""
+    attribution. Pure. A rule the assistant states about itself only has its
+    citations repaired: a key rewrite (an identifier in the value, a relation)
+    would file one rule under a different key per session."""
+    rules = _repair([f for f in facts if f.about == "agent"], messages)
+    facts = [f for f in facts if f.about != "agent"]
+    return (
+        _settle_user_facts(
+            facts,
+            messages,
+            observation_date=observation_date,
+            existing_memories=existing_memories,
+            speaker_attribution=speaker_attribution,
+        )
+        + rules
+    )
+
+
+def _settle_user_facts(
+    facts: list[ExtractedFact],
+    messages: list[dict[str, object]],
+    *,
+    observation_date: str | None,
+    existing_memories: list[dict[str, str]] | None,
+    speaker_attribution: bool,
+) -> list[ExtractedFact]:
     # Entity-stable key rewrite: turn a concept-level key
     # (`user_task_status`) into an entity-prefixed one (`pr107585_status`)
     # when the fact carries a salient identifier. Applied here so every

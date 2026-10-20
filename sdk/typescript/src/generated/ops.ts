@@ -3381,6 +3381,8 @@ export interface LearningEntry {
   memory_type: string;
   proposed_value: unknown;
   supporter_count: number;
+  supporter_users?: number;
+  supporter_sessions?: number;
   confidence_avg: number;
   supporters: string[];
   rationale: string;
@@ -5720,6 +5722,7 @@ export interface MemorySetFromMessagesOutput {
   about_other?: number;
   premise_facts?: number;
   learning_candidates?: number;
+  ignored_args?: string[];
   segmenter?: string;
   cached_tokens_in?: number;
   ontology_warnings?: string[];
