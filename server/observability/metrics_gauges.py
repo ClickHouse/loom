@@ -49,8 +49,9 @@ class _TTLCache:
     `MetricsTimeoutError` and a dropped export cycle (all instruments, not just
     the gauges) on every cache expiry.
     `get()` returns the last value immediately (None before the first refresh
-    lands, which observers must render as "no observation", not 0) and kicks off
-    at most one refresh once the TTL has lapsed.
+    lands, and after the producer answers None (`_census_only` off the lease),
+    which observers must render as "no observation", not 0) and kicks off at
+    most one refresh once the TTL has lapsed.
     """
 
     def __init__(self, ttl_s: float, producer: Callable[[], Any]) -> None:
@@ -58,6 +59,8 @@ class _TTLCache:
         self._producer = producer
         self._value: Any = None
         self._fetched_at = 0.0
+        # Seconds after `_fetched_at` the next refresh is due.
+        self._due_s = ttl_s
         self._refreshing = False
         self._lock = threading.Lock()
 
@@ -69,14 +72,14 @@ class _TTLCache:
             log.debug("gauge producer failed: %s", e)
             v, failed = None, True
         with self._lock:
-            # A failed probe keeps the last reading. A producer that answers
-            # None (a census this process no longer takes, `_census_only`)
-            # clears it, or a process that lost the workers lease would go on
-            # exporting its last census next to the new holder's.
+            # A failed probe keeps the last reading; a None answer (off the lease) clears it.
             if not failed:
                 self._value = v
             # Stamped on failure too, so a down CH is re-probed at the TTL
-            # cadence — not with a new thread on every 3s export.
+            # cadence — not with a new thread on every 3s export. A census skipped
+            # off the lease is due in 30 s, so a new holder takes one soon after a handoff.
+            skipped = v is None and not failed
+            self._due_s = min(self._ttl, 30.0) if skipped else self._ttl
             self._fetched_at = time.monotonic()
             self._refreshing = False
 
@@ -89,7 +92,7 @@ class _TTLCache:
             # 15-minute cache would take no first refresh.
             never = self._fetched_at <= 0.0
             if not self._refreshing and (
-                never or (time.monotonic() - self._fetched_at) >= self._ttl
+                never or (time.monotonic() - self._fetched_at) >= self._due_s
             ):
                 self._refreshing = start = True
             value = self._value

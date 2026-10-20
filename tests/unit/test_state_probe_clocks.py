@@ -229,6 +229,49 @@ def test_a_process_that_loses_the_lease_stops_exporting_its_census(
     assert _observed(cache, "agent_trust_used_ratio") == []
 
 
+def test_a_census_skipped_off_the_lease_is_due_again_within_30_s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.workers import leader
+
+    calls: list[float] = []
+    now = [1000.0]
+    monkeypatch.setattr(metrics_gauges.time, "monotonic", lambda: now[0])
+
+    def probe() -> Any:
+        calls.append(now[0])
+        return {"agent_trust_agents": [(3.0, {})]}
+
+    cache = _census_cache(monkeypatch, probe)
+    monkeypatch.setattr(leader, "_CURRENT", _lease(False))
+    cache._refresh()  # skipped: this process does not hold the lease
+    # The lease arrives; the first census follows within 30 s, not a 300 s TTL later.
+    monkeypatch.setattr(leader, "_CURRENT", _lease(True))
+    now[0] = 1020.0
+    cache.get()
+    assert not cache._refreshing
+    now[0] = 1031.0
+    cache.get()
+    _drain(cache)
+    assert calls == [1031.0]
+    # A census taken keeps its TTL.
+    now[0] = 1062.0
+    cache.get()
+    assert not cache._refreshing and calls == [1031.0]
+
+
+def _drain(cache: Any) -> None:
+    import time
+
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        with cache._lock:
+            if not cache._refreshing:
+                return
+        time.sleep(0.005)
+    raise AssertionError("background refresh never completed")
+
+
 def test_a_failed_census_keeps_its_last_reading(monkeypatch: pytest.MonkeyPatch) -> None:
     answers: list[Any] = [{"agent_trust_agents": [(3.0, {})]}]
 
