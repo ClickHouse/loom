@@ -358,19 +358,19 @@ this tombstone. Only when the key did not move on does the delete stand and reti
 removed version's vectors and chunks: the chunks whose index and content hash its own value
 writes, so a newer value's chunks of the key stay. A newer value that repeats one of those
 chunks at the same index shares its row; the delete reads the key's newest value after the
-retire and puts the shared chunks back when it is a live write after the removed one. A
-`memory.delete` whose insert lands after that read can still answer `tombstoned` alongside
-it, as two racing `memory.delete` calls can. Between the tombstone and a write back, the
-key reads as deleted, and a `memory.delete` in that window answers `found=false`. Before
-its tombstone the delete records the check it owes in `loom.delete_version_checks`, and
-marks it done once the check has run; if the record fails, nothing is deleted. A check
-whose tombstone is not in the key's history (its insert failed, though one that timed out
-can still commit) writes the key's newest row above the tombstone before it closes, so a
-late tombstone lands under it and hides nothing; the row then has a new version, and a
-retry or a prune that names the version it listed answers `version_changed`. If the read
-after the tombstone fails, the delete answers 503 and retires nothing. A retry of the same
-delete runs the owed check and answers as the delete would have; otherwise the
-`delete_version_check` worker runs it under the key lock
+retire and puts the shared chunks back when search serves that value (live, and not
+`sensitivity: high`), reading the key again afterwards to retire them once more if a delete
+or a write landed in between. A `memory.delete` whose insert lands after that read can
+still answer `tombstoned` alongside it, as two racing `memory.delete` calls can. Between
+the tombstone and a write back, the key reads as deleted, and a `memory.delete` in that
+window answers `found=false`. Before its tombstone the delete records the check it owes in
+`loom.delete_version_checks`, and marks it done once the check has run; if the record
+fails, nothing is deleted. If the tombstone's insert or the read after it fails, the delete
+answers 503 and retires nothing. A check whose tombstone is not in the key's history (an
+insert that timed out can still commit) writes it at its recorded version first, so a late
+commit of the original is the same row, and then runs as after any tombstone: the delete
+finishes. A retry of the same delete runs the owed check and answers as the delete would
+have; otherwise the `delete_version_check` worker runs it under the key lock
 (`memory/workers/delete_version_check.py`), by default within about six minutes (a
 60-second grace, then a pass at most 300 seconds later). Until the check runs, `memory.get`
 and the list ops read the key as deleted, search can still return the removed value from

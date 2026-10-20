@@ -104,14 +104,22 @@ def _sha_text(value: Any) -> str:
     return str(value or "")
 
 
-async def _live_chunks(
-    ch: Any, *, org: str, namespace: str, memory_key: str, user_id: str, strong: bool = False
+async def _key_chunks(
+    ch: Any,
+    *,
+    org: str,
+    namespace: str,
+    memory_key: str,
+    user_id: str,
+    strong: bool = False,
+    tombstoned: bool = False,
 ) -> list[dict[str, Any]]:
     """The key's live memory.set chunks that belong to `user_id`: a primary-key
     read under FINAL so a chunk already tombstoned by an earlier write is not
     tombstoned twice. Every user holding the key shares its chunk session, so
     the read keeps to the writer's own chunks and those stamped '-' (no user;
-    they may be the writer's) — never another user's."""
+    they may be the writer's) — never another user's. `tombstoned` reads the
+    retired ones instead."""
     rows: list[dict[str, Any]] = await ch.query_all(
         f"""
         SELECT {", ".join(_CHUNK_COLUMNS)}, created_at
@@ -121,7 +129,7 @@ async def _live_chunks(
           AND session_id = {{sid:String}}
           AND parent_memory_key = {{key:String}}
           AND user_id IN ('-', {{uid:String}})
-          AND tombstoned_at IS NULL
+          AND tombstoned_at IS {"NOT NULL" if tombstoned else "NULL"}
         ORDER BY chunk_index ASC
         {_sequential() if strong else ""}
         """,
@@ -157,7 +165,7 @@ async def tombstone_set_chunks(
         from server.core.ch import get_client
 
         ch = get_client()
-    rows = await _live_chunks(
+    rows = await _key_chunks(
         ch, org=org, namespace=namespace, memory_key=memory_key, user_id=user_id, strong=strong
     )
     stamp = (now or datetime.now(UTC)).replace(tzinfo=None)
@@ -173,18 +181,22 @@ async def tombstone_set_chunks(
 
 
 def _chunk_state_row(
-    r: dict[str, Any], *, org: str, namespace: str, stamp: datetime, live: bool = False
+    r: dict[str, Any],
+    *,
+    org: str,
+    namespace: str,
+    stamp: datetime | None = None,
+    live: bool = False,
 ) -> dict[str, Any]:
-    """The replacing row that retires chunk row `r` (or, `live`, puts it back):
-    every persisted column carried forward and `tombstoned_at` set to `stamp`
-    (None when `live`). The version
-    column `created_at` is also the monthly partition key, so it keeps `r`'s
-    value: a tombstone in a later month's partition would never merge with the
-    row it retires, and every read without FINAL (and every merged part) would
-    keep the retired chunk. Inserted after `r` with an equal version, the
-    tombstone wins the merge and FINAL (the later insert of a tie).
-    `stamp` stands in only when `r` carries no `created_at`, and stamps
-    `tombstoned_at`."""
+    """The replacing row that retires chunk row `r` at `stamp`, or with `live`
+    puts it back: every persisted column carried forward and `tombstoned_at`
+    set to `stamp`, or None. The version column `created_at` is also the
+    monthly partition key, so it keeps `r`'s value: a tombstone in a later
+    month's partition would never merge with the row it retires, and every
+    read without FINAL (and every merged part) would keep the retired chunk.
+    Inserted after `r` with an equal version, the replacing row wins the merge
+    and FINAL (the later insert of a tie). `stamp` stands in for `created_at`
+    only when `r` carries none."""
     row = {c: r.get(c) for c in _CHUNK_COLUMNS}
     row.update(
         {
@@ -266,7 +278,7 @@ async def restore_set_chunks(
     memory_key: str,
     user_id: str,
     identities: frozenset[tuple[int, str]],
-    ch: Any = None,
+    ch: Any,
 ) -> int:
     """Put back, live, the key's tombstoned memory.set chunks among `identities` (under
     `user_id` and '-'), read with sequential consistency. Each copy keeps the tombstone's
@@ -274,37 +286,20 @@ async def restore_set_chunks(
     re-inserts later still wins on its own `created_at`. Returns the number put back."""
     if not identities:
         return 0
-    if ch is None:
-        from server.core.ch import get_client
-
-        ch = get_client()
-    rows: list[dict[str, Any]] = await ch.query_all(
-        f"""
-        SELECT {", ".join(_CHUNK_COLUMNS)}, created_at
-        FROM loom.memory_chunks FINAL
-        WHERE org = {{org:String}}
-          AND namespace = {{ns:String}}
-          AND session_id = {{sid:String}}
-          AND parent_memory_key = {{key:String}}
-          AND user_id IN ('-', {{uid:String}})
-          AND tombstoned_at IS NOT NULL
-        ORDER BY chunk_index ASC
-        {_sequential()}
-        """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "sid": set_chunk_session_id(memory_key),
-            "key": memory_key,
-            "uid": user_id or "-",
-        },
+    rows = await _key_chunks(
+        ch,
+        org=org,
+        namespace=namespace,
+        memory_key=memory_key,
+        user_id=user_id,
+        strong=True,
+        tombstoned=True,
     )
-    live = []
-    for r in rows:
-        if (int(r.get("chunk_index") or 0), _sha_text(r.get("content_sha256"))) in identities:
-            live.append(
-                _chunk_state_row(r, org=org, namespace=namespace, stamp=r["created_at"], live=True)
-            )
+    live = [
+        _chunk_state_row(r, org=org, namespace=namespace, live=True)
+        for r in rows
+        if (int(r.get("chunk_index") or 0), _sha_text(r.get("content_sha256"))) in identities
+    ]
     if live:
         await _insert_chunk_states(ch, live)
     return len(live)

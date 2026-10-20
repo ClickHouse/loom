@@ -1,10 +1,11 @@
 """Finish the checks memory.delete_version owes after its tombstone.
 
 A delete records its check before the tombstone and marks it done once it ran. One
-left open (the read after the tombstone failed) is run here, under the key lock, as
-the delete would have run it: a write that landed between the version check and the
-tombstone is written back above it, and what the removed version derived retires
-only when the delete stands. Running a check twice is harmless.
+left open (the tombstone's insert or the read after it failed) is run here, under the
+key lock, as the delete would have run it: a tombstone missing from the key's history is
+written at its recorded version first, a write that landed between the version check
+and the tombstone is written back above it, and what the removed version derived
+retires only when the delete stands. Running a check twice is harmless.
 """
 
 from __future__ import annotations

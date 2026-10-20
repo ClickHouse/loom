@@ -17,6 +17,10 @@ from server.operations.base import MCP_HIDDEN
 # ============================================================
 
 
+# The most entries one memory.bulk_set takes.
+MAX_BULK_ENTRIES = 1000
+
+
 class _BulkSetEntry(BaseModel):
     memory_key: str
     memory_type: MemoryType = "semantic"
@@ -93,7 +97,7 @@ class MemoryBulkSetInput(_Identity):
 
     # The entries to write, each with its own key, value and per-entry fields; all
     # share the caller's identity.
-    entries: list[_BulkSetEntry] = Field(..., min_length=1, max_length=1000)
+    entries: list[_BulkSetEntry] = Field(..., min_length=1, max_length=MAX_BULK_ENTRIES)
     # Treat this call's entries as one document and prepend a
     # model-written one-line context to what each entry EMBEDS and to its
     # content_excerpt (value untouched). One model call per entry; gated by

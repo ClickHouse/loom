@@ -25,6 +25,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from server.memory.api.models_bulk import MAX_BULK_ENTRIES
 from server.observability import degradations
 
 log = logging.getLogger(__name__)
@@ -33,6 +34,9 @@ log = logging.getLogger(__name__)
 # its key in the batch), offset by a hash of its own id and drawn version so two writes
 # lifted over one delete rarely share a version, whatever the clock's resolution.
 LIFT_SPREAD_NS = 1_000
+# How far above the tombstone a lifted row can reach: the spread, plus one per further row
+# of its key in a batch.
+LIFT_BAND_NS = LIFT_SPREAD_NS + MAX_BULK_ENTRIES
 
 Key = tuple[str, str, str, str]
 

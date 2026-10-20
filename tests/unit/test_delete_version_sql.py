@@ -1264,6 +1264,49 @@ async def test_a_set_after_the_check_keeps_the_chunks_it_shares_with_the_removed
     assert sorted(r["content"] for r in live) == sorted(expected)
 
 
+@pytest.mark.asyncio
+async def test_a_delete_racing_the_chunk_restore_leaves_no_chunk_live(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A memory.delete of the newer value commits after the restore read the key and before
+    # it put the shared chunks back: the read after the restore retires them again.
+    from server.memory.app import set_chunks
+
+    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_chunks")]
+    head = time.time_ns() - 10_000_000_000
+    opening = " ".join(f"old passage {i} about the deploy window." for i in range(60))
+    removed_value = opening + " " + " ".join(f"old tail {i} of the note." for i in range(300))
+    newer_value = opening + " " + " ".join(f"new tail {i} of the note." for i in range(300))
+    await ch.insert("loom.memory", [{**_row(removed_value, head), "memory_type": "semantic"}])
+    await ch.insert("loom.memory_chunks", _chunk_rows((await _read_back(ch)).value))
+    key_moved_on = hm._key_moved_on
+
+    async def set_lands_after_the_check(existing: Any, **kw: Any) -> Any:
+        answer = await key_moved_on(existing, **kw)
+        row = {**_row(newer_value, kw["tombstone"] + 1_000), "memory_type": "semantic"}
+        await ch.insert("loom.memory", [row])
+        await ch.insert("loom.memory_chunks", _chunk_rows((await _read_back(ch)).value))
+        return answer
+
+    restore = set_chunks.restore_set_chunks
+
+    async def delete_lands_first(**kw: Any) -> int:
+        out = await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
+        assert out.tombstoned is True
+        return await restore(**kw)
+
+    monkeypatch.setattr(hm, "_key_moved_on", set_lands_after_the_check)
+    monkeypatch.setattr(set_chunks, "restore_set_chunks", delete_lands_first)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is True
+    live = await ch.query_all(
+        "SELECT content FROM loom.memory_chunks FINAL WHERE tombstoned_at IS NULL"
+    )
+    assert live == []
+
+
 async def _owed_after_a_failed_check(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, *, clock_ahead_ns: int = 0
 ) -> int:
@@ -1347,7 +1390,10 @@ async def test_recovery_on_a_clock_behind_the_tombstone_writes_the_set_above_it(
     assert await delete_version_check.run_pass() == 1
     got = await _read_back(ch)
     assert got is not None and got.value == "Thursdays"
-    assert got.version > int(check["tombstone"])
+    # Above the band the fence lifts writes into, so it cannot tie with a lifted write.
+    from server.memory.app.write_fence import LIFT_BAND_NS
+
+    assert got.version > int(check["tombstone"]) + LIFT_BAND_NS
 
 
 async def _tombstone_held_back(ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch) -> tuple[int, Any]:
@@ -1366,9 +1412,11 @@ async def _tombstone_held_back(ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch)
         ((existing, kw),) = queued
         await write_row(existing, **kw)
 
+    from server.core.errors import BackendUnavailableError
+
     with monkeypatch.context() as m:
         m.setattr(hm, "_write_tombstone_row", times_out_queued)
-        with pytest.raises(RuntimeError):
+        with pytest.raises(BackendUnavailableError):
             await hm.handle_memory_delete_version(
                 MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
             )
@@ -1376,11 +1424,12 @@ async def _tombstone_held_back(ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.asyncio
-async def test_a_tombstone_that_lands_after_its_check_closed_hides_nothing(
+async def test_a_check_whose_tombstone_is_missing_finishes_the_delete(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The worker finds no tombstone and closes the check, writing the head above it first:
-    # the insert that commits later lands under the head, and the key keeps its value.
+    # The tombstone insert timed out (503). The worker finds no tombstone, writes it at its
+    # recorded version and runs the check: the delete stands, and the original insert
+    # committing later is the same row.
     from server.memory.workers import delete_version_check
     from server.settings import settings
 
@@ -1388,14 +1437,39 @@ async def test_a_tombstone_that_lands_after_its_check_closed_hides_nothing(
     monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
     assert await delete_version_check.run_pass() == 1
     assert [c["done"] for c in await _recorded_checks(ch)] == [1]
+    assert await _read_back(ch) is None
     await commit_late()
-    got = await _read_back(ch)
-    assert got is not None and got.value == "Tuesdays" and got.version > head
-    # The head has a new version: a retry naming the one it read answers version_changed.
-    out = await hm.handle_memory_delete_version(
-        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    assert await _read_back(ch) is None
+    (check,) = await _recorded_checks(ch)
+    versions = await ch.query_all(
+        "SELECT version FROM loom.memory FINAL WHERE memory_key = {k:String}", {"k": _KEY}
     )
-    assert out.tombstoned is False and out.reason == "version_changed"
+    assert [int(v["version"]) for v in versions] == [int(check["tombstone"])]
+
+
+@pytest.mark.asyncio
+async def test_a_set_landing_while_a_missing_tombstone_is_written_stays(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A plain set commits between the worker's read and its tombstone write, below the
+    # tombstone: the check after the tombstone writes the set back above it.
+    from server.memory.workers import delete_version_check
+    from server.settings import settings
+
+    _head, _commit_late = await _tombstone_held_back(ch, monkeypatch)
+    (check,) = await _recorded_checks(ch)
+    w = _in_flight_set(int(check["tombstone"]) - 1_000)
+    write_row = hm._write_tombstone_row
+
+    async def set_lands_first(existing: Any, **kw: Any) -> None:
+        await set_commit._set_plain_insert(w, ch)
+        await write_row(existing, **kw)
+
+    monkeypatch.setattr(hm, "_write_tombstone_row", set_lands_first)
+    monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
+    assert await delete_version_check.run_pass() == 1
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays"
 
 
 @pytest.mark.asyncio
