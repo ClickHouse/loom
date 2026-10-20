@@ -784,23 +784,24 @@ def _revocation_snapshot_loaded() -> Iterator[None]:
     import server.auth.keyring as keyring
     import server.auth.revocation as rev
     import server.auth.service_accounts as service_accounts
-    import server.llm.customer as customer
-    import server.memory.app.extraction_policy as extraction_policy
-    from tests.unit.switch_state import switch_read_now
+    from tests.unit.switch_state import (
+        policies_read_now,
+        policies_unread,
+        switch_read_now,
+        switch_unread,
+    )
 
     saved = rev._loaded, rev._loaded_at, keyring._view
     rev._loaded, rev._loaded_at = True, rev.time.monotonic()
     keyring._view = keyring._View(read_at=keyring.time.monotonic(), loaded=True)
     switch_read_now()
-    extraction_policy._policies._reset_for_tests(
-        {}, read_age_s=0.0, due_in_s=settings.model_calls_policy_refresh_seconds
-    )
+    policies_read_now({})
     delegation._account_active.clear()
     service_accounts._creators.clear()
     yield
     rev._loaded, rev._loaded_at, keyring._view = saved
-    customer._switch._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
-    extraction_policy._policies._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
+    switch_unread()
+    policies_unread()
 
 
 # The scalar repository the code-plane fixtures model, with its repository-shaped
