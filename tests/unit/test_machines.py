@@ -14,7 +14,8 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
-from server.auth import agents, machines, oauth, oidc, revocation
+from server.auth import agents, attempts, machines, oauth, oidc, revocation
+from server.core.errors import BackendUnavailableError
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
 pytestmark = pytest.mark.filterwarnings("default")
@@ -23,7 +24,7 @@ CI = "https://ci.example"
 
 
 @pytest.fixture
-def bots(monkeypatch) -> dict[str, Any]:
+def bots(monkeypatch, auth_attempts) -> dict[str, Any]:
     monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
     monkeypatch.setattr(oauth.settings, "oauth_issuer", "http://testserver")
     private, public = machines.generate_key()
@@ -99,6 +100,7 @@ def bots(monkeypatch) -> dict[str, Any]:
         "registered": registered,
         "active": active,
         "made": made,
+        "attempts": auth_attempts,
     }
 
 
@@ -727,3 +729,154 @@ def test_a_token_no_trust_takes_learns_nothing_of_the_trusts(bots, monkeypatch) 
     r = exchange(_ci_token(bots, repository="acme/elsewhere"))
     assert r.status_code == 400
     assert r.json()["error_description"] == "no trust of this issuer takes the subject token"
+
+
+def test_one_agent_over_its_exchange_limit_is_refused_alone(bots, monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_agent", 2)
+    c, token = TestClient(oauth_app()), _ci_token(bots, agent_id="a1")
+    assert [_exchange(c, token, "fleet").status_code for _ in range(2)] == [200, 200]
+    r = _exchange(c, token, "fleet")
+    assert r.status_code == 429 and r.json()["error"] == "temporarily_unavailable"
+    assert r.headers["Retry-After"] == "60"
+    assert bots["made"] == [("fleet", "a1")] * 2  # the refused one made nothing
+    assert _exchange(c, _ci_token(bots, agent_id="a2"), "fleet").status_code == 200
+
+
+def test_a_trust_without_agents_counts_only_against_the_trust(bots, monkeypatch) -> None:
+    # Every pull request job of a repository shares one `sub`.
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_agent", 1)
+    c = TestClient(oauth_app())
+    assert [_exchange(c, _ci_token(bots)).status_code for _ in range(3)] == [200] * 3
+
+
+def test_a_trust_over_its_exchange_limit_refuses_every_agent(bots, monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_trust", 2)
+    c = TestClient(oauth_app())
+    codes = [_exchange(c, _ci_token(bots, agent_id=f"a{i}"), "fleet").status_code for i in range(3)]
+    assert codes == [200, 200, 429]
+    assert _exchange(c, _ci_token(bots)).status_code == 200  # another trust counts its own
+
+
+def test_an_agent_refused_at_its_own_limit_spends_none_of_the_trusts(bots, monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_trust", 3)
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_agent", 1)
+    c, token = TestClient(oauth_app()), _ci_token(bots, agent_id="a1")
+    assert [_exchange(c, token, "fleet").status_code for _ in range(5)] == [200] + [429] * 4
+    codes = [_exchange(c, _ci_token(bots, agent_id=a), "fleet").status_code for a in "234"]
+    assert codes == [200, 200, 429]
+
+
+def test_an_exchange_this_process_is_too_busy_to_count_is_answered_busy(bots, monkeypatch) -> None:
+    monkeypatch.setattr(attempts, "_semaphore", lambda: asyncio.Semaphore(0))
+    monkeypatch.setattr(attempts, "_SLOT_WAIT_S", 0.01)
+    r = _exchange(TestClient(oauth_app()), _ci_token(bots))
+    assert r.status_code == 503 and r.json()["error"] == "temporarily_unavailable"
+    assert r.headers["Retry-After"] == "5"
+
+
+def test_exchanges_age_out_of_the_limit(bots, monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_trust", 1)
+    c = TestClient(oauth_app())
+    assert [_exchange(c, _ci_token(bots)).status_code for _ in range(2)] == [200, 429]
+    bots["attempts"].now += oauth._EXCHANGE_WINDOW_S + 1
+    assert _exchange(c, _ci_token(bots)).status_code == 200
+
+
+def test_a_refused_subject_token_spends_no_exchange(bots, monkeypatch) -> None:
+    # Anyone can send a token naming a trust; only one its issuer signed counts.
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_trust", 1)
+    c = TestClient(oauth_app())
+    stranger = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    claims = pyjwt.decode(_ci_token(bots), options={"verify_signature": False})
+    forged = pyjwt.encode(claims, stranger, algorithm="RS256")
+    for token in [forged, _ci_token(bots, repository="evil/app")] * 3:
+        assert _exchange(c, token).status_code == 400
+    assert _exchange(c, _ci_token(bots)).status_code == 200
+
+
+def test_overlapping_exchanges_refused_at_the_recount_spend_none_of_the_trusts(
+    auth_attempts, monkeypatch
+) -> None:
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_trust", 3)
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_agent", 1)
+    count = auth_attempts.query_all
+
+    async def overlapping() -> list[Any]:
+        # Three renewals of a1: each first count is read before any of them
+        # records, so all three find room, all three record, and each recount
+        # runs after all three have recorded.
+        together, calls = asyncio.Barrier(3), 0
+
+        async def held(sql: str, params: Any = None) -> list[dict[str, Any]]:
+            nonlocal calls
+            calls += 1
+            if calls <= 3:  # a first count
+                rows = await count(sql, params)
+                await together.wait()
+                return rows
+            if calls <= 6:  # a recount
+                await together.wait()
+            return await count(sql, params)
+
+        monkeypatch.setattr(auth_attempts, "query_all", held)
+        try:
+            renewals = [oauth._admit_exchange("fleet", "a1") for _ in range(3)]
+            return await asyncio.gather(*renewals, return_exceptions=True)
+        finally:
+            monkeypatch.setattr(auth_attempts, "query_all", count)
+
+    answers = [200 if r is None else r.status_code for r in asyncio.run(overlapping())]
+    # The first two recounts find a1 over and release their rows, so the last
+    # finds room. The refused ones are charged to no gate.
+    assert answers == [429, 429, 200]
+
+    def admitted(agent: str) -> bool:
+        try:
+            asyncio.run(oauth._admit_exchange("fleet", agent))
+        except oauth.OAuthError as e:
+            assert e.status_code == 429
+            return False
+        return True
+
+    # The trust's budget, less a1's one admitted renewal, is left for the others.
+    assert [admitted(a) for a in ("a2", "a3", "a4")] == [True, True, False]
+
+
+def test_a_release_that_fails_leaves_the_exchange_charged(auth_attempts, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_agent", 1)
+    count, insert = auth_attempts.query_all, auth_attempts.insert
+    # Another renewal of a1 that this one's first count missed (racing),
+    # stamped near the window's start so it ages out first.
+    other = {
+        "kind": "oauth.exchange.agent",
+        "key_sha256": attempts._digest("fleet:a1"),
+        "at": datetime.fromtimestamp(auth_attempts.now - 590, UTC).replace(tzinfo=None),
+    }
+    asyncio.run(insert("loom.auth_attempts", [other]))
+    first = True
+
+    async def racing(sql: str, params: Any = None) -> list[dict[str, Any]]:
+        nonlocal first
+        if first:  # read before the other replica's row landed
+            first = False
+            return []
+        return await count(sql, params)
+
+    async def no_release(table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        if any(r["kind"].endswith(".ok") for r in rows):
+            raise BackendUnavailableError("ClickHouse away")
+        await insert(table, rows, settings)
+
+    monkeypatch.setattr(auth_attempts, "query_all", racing)
+    monkeypatch.setattr(auth_attempts, "insert", no_release)
+    with pytest.raises(BackendUnavailableError):  # refused at its recount, then unreleased
+        asyncio.run(oauth._admit_exchange("fleet", "a1"))
+    monkeypatch.setattr(auth_attempts, "insert", insert)
+    # Once the other replica's row is out of the window, only this exchange's
+    # unreleased row is left, and it still counts: a1's next one is refused.
+    auth_attempts.now += 20
+    with pytest.raises(oauth.OAuthError) as refused:
+        asyncio.run(oauth._admit_exchange("fleet", "a1"))
+    assert refused.value.status_code == 429
