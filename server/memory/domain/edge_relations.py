@@ -15,6 +15,8 @@ contradiction reaches conflicts.list next to the ones loom detects itself.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 # Preferred verbs, in the order the MCP description lists them.
 CANONICAL_RELATIONS: tuple[str, ...] = (
     "supports",
@@ -155,3 +157,19 @@ def canonical_link_relation(raw: str) -> tuple[str, bool]:
         return "", False
     flip = verb in _REVERSED
     return _SYNONYMS.get(verb, verb), flip
+
+
+class CanonicalEdge(NamedTuple):
+    from_key: str
+    to_key: str
+    relation: str
+    defaulted: bool  # no verb was given, so the edge is `related_to`
+
+
+def canonical_edge(from_key: str, to_key: str, relation: str) -> CanonicalEdge:
+    """The edge as memory.link stores it: the canonical verb, `related_to` when there
+    is none, and from/to swapped for a reversed verb (`blocked_by` is stored as `blocks`)."""
+    verb, flip = canonical_link_relation(relation)
+    if flip:
+        from_key, to_key = to_key, from_key
+    return CanonicalEdge(from_key, to_key, verb or "related_to", defaulted=not verb)

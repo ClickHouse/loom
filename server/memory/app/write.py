@@ -38,6 +38,7 @@ from server.memory.app.set_commit import (
 )
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
+from server.memory.domain.expire_reasons import carried_reason
 from server.memory.domain.files import files_for_set
 from server.memory.domain.graph_quality import canonical_entities
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
@@ -573,7 +574,7 @@ def _set_build_memory_row(w: _SetWrite) -> None:
         # Expiry post-action: the caller's, else the row's.
         "on_expire": _sens_on_expire,
         "expire_reason": (input.expire_reason or "")[:512]
-        or ((getattr(existing, "expire_reason", "") or "") if existing is not None else ""),
+        or (carried_reason(getattr(existing, "expire_reason", "")) if existing is not None else ""),
         # Canonical, as search reads them; the embedding row copies them. This key must be
         # present: `ch.insert` derives its column list from `rows[0].keys()`, so an omission
         # silently writes the schema default. `find_unentitied_memories` selects on
@@ -651,6 +652,10 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     if input.proposed:
         await _refuse_proposal_over_fact(input)
     await _set_check_if_match(w)
+    if input.if_match_sha256:
+        # The precondition was read under the key lock just now: the version is drawn
+        # after it, so only a delete that lands after the check is above it (write_fence).
+        w.version = next_version()
     _set_build_memory_row(w)
 
     # Non-searchable type, or a 'high' sensitivity row: single insert is the

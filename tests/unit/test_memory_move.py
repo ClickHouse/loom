@@ -296,6 +296,16 @@ def test_a_declarable_source_class_is_carried_to_the_destination(
     assert h.set_inputs[0].source_class == "imported"
 
 
+def test_a_row_an_older_build_restored_with_the_delete_marker_moves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An older build's restore of a memory.delete_version tombstone kept its marker on the
+    # live row; memory.set refuses that trace, so the move's row drops it.
+    h = _Harness(monkeypatch, source=_source(source_trace="memory.delete_version:42"))
+    _move(_inp())
+    assert h.set_inputs[0].source_trace == ""
+
+
 def test_value_and_shape_overrides_reach_the_new_row_and_the_redirect_still_points_at_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

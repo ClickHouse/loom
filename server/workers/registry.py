@@ -288,6 +288,13 @@ _WORKERS: tuple[_Worker, ...] = (
         "memory_expiry_sweep_interval_seconds",
     ),
     _Worker(
+        "delete_version_check",
+        "server.memory.workers.delete_version_check",
+        "delete_version_check_enabled",
+        "delete_version_check_interval_seconds",
+        idle_interval="delete_version_check_idle_interval_seconds",
+    ),
+    _Worker(
         "observe_extract",
         "server.memory.workers.observe_extract",
         "observe_extract_enabled",

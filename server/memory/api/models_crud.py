@@ -13,12 +13,15 @@ from pydantic import (
     BaseModel,
     Field,
     SerializerFunctionWrapHandler,
+    field_validator,
     model_serializer,
     model_validator,
 )
 
 from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
 from server.memory.domain.code_change import CodeState
+from server.memory.domain.delete_marks import caller_trace
+from server.memory.domain.expire_reasons import caller_reason
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 from server.operations.read_projection import project as _project_fields
@@ -98,6 +101,11 @@ class MemoryGetOutput(ProjectedRow):
         # Then the caller's field whitelist, when one was sent.
         return _project_fields(data, self._projection)
 
+    @model_validator(mode="after")
+    def _version_text(self) -> MemoryGetOutput:
+        self.version_text = None if self.version is None else str(self.version)
+        return self
+
     # False when no live, unexpired row of this user holds the key.
     found: bool
     # True when `if_version` matched the live row: version below, no body.
@@ -113,12 +121,17 @@ class MemoryGetOutput(ProjectedRow):
     confidence: float | None = None
     # Nanosecond version of the live row; send it back as `if_version` to poll.
     version: int | None = None
+    # The same version as a decimal string, exact for a JavaScript caller (the number is
+    # above 2^53, which JSON.parse rounds): send this one to memory.delete_version. Set
+    # from `version`, so every answer carrying one carries both.
+    version_text: str | None = None
     # When the key was first written; kept across later versions.
     created_at: datetime | None = None
     # Last write to this key; distinct from created_at, which is preserved across updates.
     updated_at: datetime | None = None
-    # When the row expires (memory.get hides it after that; memory.list serves it until the
-    # expiry sweep, and memory.bulk_get does too, except a high one); None = no expiry.
+    # When the row expires (memory.get hides it after that, with `as_of` only a high one;
+    # memory.list serves it until the expiry sweep, and memory.bulk_get does too, except a
+    # high one); None = no expiry.
     expires_at: datetime | None = None
     # Post-action on expiry ('' = tombstone) and its reason.
     on_expire: str = ""
@@ -236,7 +249,8 @@ class MemorySetInput(_Identity):
     # The writer's own confidence in the fact, 0..1 (1.0 = certain).
     confidence: float = 1.0
     # Provenance tag of the write (`conversation:<id>`, `curated_doc://…`); a known
-    # prefix decides `source_class` (`conversation:` → extracted). Not in the MCP listing.
+    # prefix decides `source_class` (`conversation:` → extracted), and one starting with
+    # `memory.delete_version:` is refused. Not in the MCP listing.
     source_trace: str = Field(default="", json_schema_extra=MCP_HIDDEN)
     # Declare that this content came from outside (a tool result, a page, a
     # document): `external`, or `imported`. The server decides every other
@@ -256,7 +270,8 @@ class MemorySetInput(_Identity):
     # scales confidence down; 'anonymize' replaces the value with a marker
     # and drops the embeddings, keeping the shell row. Applied by the sweep.
     on_expire: Literal["", "tombstone", "demote", "anonymize"] = ""
-    # Why the expiry is set (at most 512 chars); '' keeps the row's current reason.
+    # Why the expiry is set (at most 512 chars, not starting with `blacklist.sweep:`); ''
+    # keeps the row's current reason.
     expire_reason: str = Field(default="", max_length=512)
     # Real-world time the fact became true (distinct from created_at and from
     # temporal_anchor). NULL = unknown; as-of reads fall through to created_at.
@@ -298,6 +313,16 @@ class MemorySetInput(_Identity):
     # that already holds one is refused (409 KEY_HOLDS_FACT) — propose under a
     # new key.
     proposed: bool = False
+
+    @field_validator("expire_reason")
+    @classmethod
+    def _expire_reason(cls, v: str) -> str:
+        return caller_reason(v)
+
+    @field_validator("source_trace")
+    @classmethod
+    def _source_trace(cls, v: str) -> str:
+        return caller_trace(v)
 
 
 class MemorySetOutput(BaseModel):
@@ -369,6 +394,27 @@ class MemoryDeleteInput(_Identity):
     memory_key: str
 
 
+class MemoryDeleteVersionInput(_Identity):
+    # The key to delete, under this exact identity: another agent's row of it is never read.
+    # `agent` must be concrete, not "*".
+    memory_key: str
+    # The version to delete, as memory.get answered it. A row rewritten since is kept. A
+    # decimal string is accepted: a nanosecond version is above 2^53, which a JavaScript
+    # number rounds.
+    version: int | str
+
+    @field_validator("version")
+    @classmethod
+    def _decimal(cls, v: int | str) -> int:
+        if isinstance(v, str):
+            if not (v.isascii() and v.isdigit()):
+                raise ValueError("`version` is a version number")
+            v = int(v)
+        if not 0 <= v < 2**64:
+            raise ValueError("`version` is a version number")
+        return v
+
+
 class MemoryUnpinInput(_Identity):
     """Remove the write-time pin from one live memory.
 
@@ -404,6 +450,23 @@ class MemoryDeleteOutput(BaseModel):
     # namespace under ANY identity — already deleted, or never written. The
     # delete looked past the caller's own (agent, user, session) first.
     found: bool = True
+    # Consolidated summaries built from this row (tag `src:<key>`): retired
+    # when none of their sources survive, else downgraded to `conflicted`.
+    dependents_tombstoned: int = 0
+    # Summaries built from this row that keep a live source: set to `conflicted`.
+    dependents_downgraded: int = 0
+
+
+class MemoryDeleteVersionOutput(BaseModel):
+    # True when the row still had `version` and a tombstone was written over it.
+    tombstoned: bool
+    # Nanosecond version of the tombstone row; 0 when nothing was deleted.
+    version: int = 0
+    # False when no live row of this key exists under this identity.
+    found: bool = True
+    # "version_changed" when the live row no longer carries `version`, or moved on while
+    # the delete ran (its tombstone then stays in the key's history, under the newer row).
+    reason: str = ""
     # Consolidated summaries built from this row (tag `src:<key>`): retired
     # when none of their sources survive, else downgraded to `conflicted`.
     dependents_tombstoned: int = 0
@@ -479,8 +542,14 @@ class MemoryTouchInput(_Identity):
     clear_expiry: bool = False
     # Optionally re-declare the post-action alongside the new expiry.
     on_expire: Literal["", "tombstone", "demote", "anonymize"] = ""
-    # Why the new expiry is set (at most 512 chars); '' keeps the row's reason.
+    # Why the new expiry is set (at most 512 chars, not starting with `blacklist.sweep:`);
+    # '' keeps the row's reason.
     expire_reason: str = Field(default="", max_length=512)
+
+    @field_validator("expire_reason")
+    @classmethod
+    def _expire_reason(cls, v: str) -> str:
+        return caller_reason(v)
 
     @model_validator(mode="after")
     def _shape(self) -> MemoryTouchInput:
@@ -589,6 +658,9 @@ class _MemoryListEntry(ProjectedRow):
     memory_type: MemoryType
     confidence: float
     version: int
+    # The same version as a decimal string, exact for a JavaScript caller; set from
+    # `version`.
+    version_text: str = ""
     # Provenance, e.g. "conversation:<thread_id>" for seeder-promoted facts.
     source_trace: str = ""
     created_at: datetime
@@ -625,6 +697,11 @@ class _MemoryListEntry(ProjectedRow):
     # Sensitivity tier ('' | low | medium | high); the server withholds a high row's value.
     sensitivity: str = ""
 
+    @model_validator(mode="after")
+    def _version_text(self) -> _MemoryListEntry:
+        self.version_text = str(self.version)
+        return self
+
 
 class MemoryListOutput(BaseModel):
     # The matching rows in the requested order; empty on an `unchanged` poll.
@@ -656,6 +733,34 @@ class MemoryListOutput(BaseModel):
 # ============================================================
 # memory.get_by_id / memory.update_by_id — opaque-UUID addressing
 # ============================================================
+
+
+# The most keys one memory.keys answer carries.
+MEMORY_KEYS_MAX = 100_000
+
+
+class MemoryKeysInput(BaseModel):
+    org: str
+    namespace: str
+    # The most keys to answer; `truncated` says when the namespace holds more.
+    limit: int = Field(default=MEMORY_KEYS_MAX, ge=1, le=MEMORY_KEYS_MAX)
+
+
+class MemoryKeyRef(BaseModel):
+    agent: str
+    user_id: str
+    session_id: str
+    memory_key: str
+
+
+class MemoryKeysOutput(BaseModel):
+    # Every live row's identity and key, read by one statement, so the set is the
+    # namespace at one moment (memory.list's pages are read one at a time). The rows
+    # memory.list serves with every identity at "*", superseded and duplicate rows included
+    # and proposed rows left out.
+    keys: list[MemoryKeyRef]
+    # True when the namespace holds more than `limit` live rows.
+    truncated: bool = False
 
 
 class MemoryGetByIdInput(BaseModel):

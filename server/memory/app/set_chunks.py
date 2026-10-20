@@ -104,14 +104,22 @@ def _sha_text(value: Any) -> str:
     return str(value or "")
 
 
-async def _live_chunks(
-    ch: Any, *, org: str, namespace: str, memory_key: str, user_id: str, strong: bool = False
+async def _key_chunks(
+    ch: Any,
+    *,
+    org: str,
+    namespace: str,
+    memory_key: str,
+    user_id: str,
+    strong: bool = False,
+    tombstoned: bool = False,
 ) -> list[dict[str, Any]]:
     """The key's live memory.set chunks that belong to `user_id`: a primary-key
     read under FINAL so a chunk already tombstoned by an earlier write is not
     tombstoned twice. Every user holding the key shares its chunk session, so
     the read keeps to the writer's own chunks and those stamped '-' (no user;
-    they may be the writer's) — never another user's."""
+    they may be the writer's) — never another user's. `tombstoned` reads the
+    retired ones instead."""
     rows: list[dict[str, Any]] = await ch.query_all(
         f"""
         SELECT {", ".join(_CHUNK_COLUMNS)}, created_at
@@ -121,7 +129,7 @@ async def _live_chunks(
           AND session_id = {{sid:String}}
           AND parent_memory_key = {{key:String}}
           AND user_id IN ('-', {{uid:String}})
-          AND tombstoned_at IS NULL
+          AND tombstoned_at IS {"NOT NULL" if tombstoned else "NULL"}
         ORDER BY chunk_index ASC
         {_sequential() if strong else ""}
         """,
@@ -152,12 +160,12 @@ async def tombstone_set_chunks(
     ones) except those in `keep` (`(chunk_index, content_sha256)` pairs the
     caller is about to re-insert live), or only those in `only` when given. `strong`
     reads them with sequential consistency. Each tombstone is a replacing row
-    (`_tombstone_row`). Returns the number of tombstones written."""
+    (`_chunk_state_row`). Returns the number of tombstones written."""
     if ch is None:
         from server.core.ch import get_client
 
         ch = get_client()
-    rows = await _live_chunks(
+    rows = await _key_chunks(
         ch, org=org, namespace=namespace, memory_key=memory_key, user_id=user_id, strong=strong
     )
     stamp = (now or datetime.now(UTC)).replace(tzinfo=None)
@@ -166,23 +174,29 @@ async def tombstone_set_chunks(
         ident = (int(r.get("chunk_index") or 0), _sha_text(r.get("content_sha256")))
         if ident in keep or (only is not None and ident not in only):
             continue
-        tombstones.append(_tombstone_row(r, org=org, namespace=namespace, stamp=stamp))
+        tombstones.append(_chunk_state_row(r, org=org, namespace=namespace, stamp=stamp))
     if tombstones:
-        await _insert_tombstones(ch, tombstones)
+        await _insert_chunk_states(ch, tombstones)
     return len(tombstones)
 
 
-def _tombstone_row(
-    r: dict[str, Any], *, org: str, namespace: str, stamp: datetime
+def _chunk_state_row(
+    r: dict[str, Any],
+    *,
+    org: str,
+    namespace: str,
+    stamp: datetime | None = None,
+    live: bool = False,
 ) -> dict[str, Any]:
-    """The replacing row that retires live chunk row `r`: every persisted
-    column carried forward and `tombstoned_at` set to `stamp`. The version
-    column `created_at` is also the monthly partition key, so it keeps `r`'s
-    value: a tombstone in a later month's partition would never merge with the
-    row it retires, and every read without FINAL (and every merged part) would
-    keep the retired chunk. Inserted after `r` with an equal version, the
-    tombstone wins the merge and FINAL (the later insert of a tie).
-    `stamp` stands in only when `r` carries no `created_at`."""
+    """The replacing row that retires chunk row `r` at `stamp`, or with `live`
+    puts it back: every persisted column carried forward and `tombstoned_at`
+    set to `stamp`, or None. The version column `created_at` is also the
+    monthly partition key, so it keeps `r`'s value: a tombstone in a later
+    month's partition would never merge with the row it retires, and every
+    read without FINAL (and every merged part) would keep the retired chunk.
+    Inserted after `r` with an equal version, the replacing row wins the merge
+    and FINAL (the later insert of a tie). `stamp` stands in for `created_at`
+    only when `r` carries none."""
     row = {c: r.get(c) for c in _CHUNK_COLUMNS}
     row.update(
         {
@@ -197,46 +211,105 @@ def _tombstone_row(
             "run_id": str(r.get("run_id") or "-"),
             "user_id": str(r.get("user_id") or "-"),
             "created_at": r.get("created_at") or stamp,
-            "tombstoned_at": stamp,
+            "tombstoned_at": None if live else stamp,
         }
     )
     return row
 
 
-async def _insert_tombstones(ch: Any, tombstones: list[dict[str, Any]]) -> None:
+async def _insert_chunk_states(ch: Any, rows: list[dict[str, Any]]) -> None:
     # Synchronous: the caller's next search must not lift the parent
     # through a chunk of the value it just replaced or deleted.
     await ch.insert(
         "loom.memory_chunks",
-        tombstones,
+        rows,
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
 
 
 async def tombstone_set_chunks_fail_open(
-    *, org: str, namespace: str, memory_key: str, user_id: str, ch: Any = None
+    *,
+    org: str,
+    namespace: str,
+    memory_key: str,
+    user_id: str,
+    ch: Any = None,
+    only: frozenset[tuple[int, str]] | None = None,
 ) -> int:
-    """`tombstone_set_chunks` for memory.delete: the fact's tombstone is the
-    record of the delete; a chunk failure is logged, never raised."""
+    """`tombstone_set_chunks` for a delete, a move or a consolidation: the fact's own new
+    version is the record of it; a chunk failure is logged, never raised."""
     try:
+        # Read with sequential consistency: a chunk another call just put back is retired.
         return await tombstone_set_chunks(
-            org=org, namespace=namespace, memory_key=memory_key, user_id=user_id, ch=ch
+            org=org,
+            namespace=namespace,
+            memory_key=memory_key,
+            user_id=user_id,
+            ch=ch,
+            only=only,
+            strong=True,
         )
-    except Exception as e:  # noqa: BLE001 — the delete stands
-        log.warning("memory.delete: chunk tombstones failed for %s (non-fatal): %s", memory_key, e)
+    except Exception as e:  # noqa: BLE001 — the fact's own new version stands
+        log.warning("chunk tombstones failed for %s (non-fatal): %s", memory_key, e)
         return 0
 
 
-async def tombstone_row_chunks_fail_open(row: Any, *, ch: Any = None) -> int:
+async def tombstone_row_chunks_fail_open(
+    row: Any, *, ch: Any = None, only_its_own: bool = False
+) -> int:
     """`tombstone_set_chunks_fail_open` for the memory row a delete or move
-    retires: its key, under its own user."""
+    retires: its key, under its own user. `only_its_own` retires only the chunks
+    this row's own value writes, so a newer value's chunks of the key stay."""
+    only = set_chunk_identities(row.value, row.memory_type) if only_its_own else None
     return await tombstone_set_chunks_fail_open(
         org=row.org,
         namespace=row.namespace,
         memory_key=row.memory_key,
         user_id=str(row.user_id or "-"),
         ch=ch,
+        only=only,
     )
+
+
+def set_chunk_identities(value: Any, memory_type: str) -> frozenset[tuple[int, str]]:
+    """The `(chunk_index, content_sha256)` of each chunk `write_set_chunks` writes for
+    `value`: the identities of that value's chunk rows."""
+    chunks, _truncated = plan_set_chunks(value, memory_type)
+    return frozenset((i, _chunk_sha(chunk)) for i, (chunk, _start, _end) in enumerate(chunks))
+
+
+async def restore_set_chunks(
+    *,
+    org: str,
+    namespace: str,
+    memory_key: str,
+    user_id: str,
+    identities: frozenset[tuple[int, str]],
+    ch: Any,
+) -> int:
+    """Put back, live, the key's tombstoned memory.set chunks among `identities` (under
+    `user_id` and '-'), read with sequential consistency. Each copy keeps the tombstone's
+    `created_at` and is inserted after it, so it wins the tie, while a chunk a newer write
+    re-inserts later still wins on its own `created_at`. Returns the number put back."""
+    if not identities:
+        return 0
+    rows = await _key_chunks(
+        ch,
+        org=org,
+        namespace=namespace,
+        memory_key=memory_key,
+        user_id=user_id,
+        strong=True,
+        tombstoned=True,
+    )
+    live = [
+        _chunk_state_row(r, org=org, namespace=namespace, live=True)
+        for r in rows
+        if (int(r.get("chunk_index") or 0), _sha_text(r.get("content_sha256"))) in identities
+    ]
+    if live:
+        await _insert_chunk_states(ch, live)
+    return len(live)
 
 
 async def _embed_chunks(embedder: Any, chunks: list[str]) -> list[list[float]]:

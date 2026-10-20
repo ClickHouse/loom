@@ -92,3 +92,12 @@ def test_the_memory_expiry_sweep_row() -> None:
     assert row.enabled == "memory_expiry_sweep_enabled"
     assert row.interval == "memory_expiry_sweep_interval_seconds"
     assert importlib.util.find_spec(row.module) is not None
+
+
+def test_the_delete_version_check_row() -> None:
+    row = _row("delete_version_check")
+    assert row.module == "server.memory.workers.delete_version_check"
+    assert row.enabled == "delete_version_check_enabled"
+    assert row.interval == "delete_version_check_interval_seconds"
+    assert row.idle_interval == "delete_version_check_idle_interval_seconds"
+    assert importlib.util.find_spec(row.module) is not None
