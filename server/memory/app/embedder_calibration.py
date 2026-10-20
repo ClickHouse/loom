@@ -398,11 +398,6 @@ _shared_read_warned = False
 
 # Per-namespace overrides, populated lazily by get_namespace_calibration.
 _ns_overrides: dict[tuple[str, str], CalibrationResult | None] = {}
-# Every answer is cached only this long — a None (no row yet, or a failed
-# read) and a found row alike — so code.calibrate run on another replica, or a
-# transient ClickHouse error, reaches this process within a minute.
-_NS_NEGATIVE_TTL_S = 60.0
-_NS_TTL_S = 60.0
 _ns_negative_at: dict[tuple[str, str], float] = {}
 _ns_found_at: dict[tuple[str, str], float] = {}
 
@@ -659,15 +654,21 @@ async def get_namespace_calibration(org: str, namespace: str) -> CalibrationResu
     """Per-namespace calibration override from
     `loom.namespace_calibration_result`, else None (caller falls through
     to the cluster-wide `get_calibration()`). Cached per process for
-    `_NS_TTL_S`, so a row written on another replica serves here within it.
+    `memory_calibration_namespace_ttl_s`, so a row written on another replica serves here within it.
     """
     key = (org, namespace)
     if key in _ns_overrides:
         cached = _ns_overrides[key]
         if cached is not None:
-            if time.monotonic() - _ns_found_at.get(key, 0.0) < _NS_TTL_S:
+            if (
+                time.monotonic() - _ns_found_at.get(key, 0.0)
+                < settings.memory_calibration_namespace_ttl_s
+            ):
                 return cached
-        elif time.monotonic() - _ns_negative_at.get(key, 0.0) < _NS_NEGATIVE_TTL_S:
+        elif (
+            time.monotonic() - _ns_negative_at.get(key, 0.0)
+            < settings.memory_calibration_namespace_miss_ttl_s
+        ):
             return None
 
     try:

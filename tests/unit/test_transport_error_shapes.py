@@ -62,7 +62,6 @@ def org_level_tool(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         output_model=_Out,
         handler=_handler,
         idempotent=True,
-        budget_p99_ms=10_000,
         required_role=Role.VIEWER,
         skip_namespace_authz=True,
     )
@@ -132,7 +131,6 @@ def test_http_internal_error_detail_carries_no_exception_text(
         output_model=_Out,
         handler=_boom,
         idempotent=True,
-        budget_p99_ms=10_000,
         required_role=Role.VIEWER,
     )
     call = http._HttpCall(request_id="rid-456", identity={"namespace": "ns"})

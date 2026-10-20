@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from server.core.ch_names import qualify, unqualify
 from server.core.repo_base import _CHClient, _default_client
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES, REBUILD_TABLES
 from server.insights.domain.provider_source_policy import MODEL_KEYED_SOURCES, SOURCE_POLICY_VERSION
@@ -81,7 +82,7 @@ async def source_schema(names: StagingNames, *, ch: _CHClient | None = None) -> 
     client = ch or _default_client()
     table = await client.query_one(
         "SELECT uuid, engine, create_table_query FROM system.tables "
-        "WHERE database = 'loom' AND name = {table:String}",
+        "WHERE database = currentDatabase() AND name = {table:String}",
         {"table": names.table},
     )
     if table is None or not str(table["engine"]).endswith("MergeTree"):
@@ -91,7 +92,7 @@ async def source_schema(names: StagingNames, *, ch: _CHClient | None = None) -> 
         raise ValueError("Rebuild requires stable Atomic table identities")
     columns = await client.query_all(
         "SELECT name, type, default_kind, default_expression FROM system.columns "
-        "WHERE database = 'loom' AND table = {table:String} ORDER BY position",
+        "WHERE database = currentDatabase() AND table = {table:String} ORDER BY position",
         {"table": names.table},
     )
     writable = tuple(
@@ -104,7 +105,7 @@ async def source_schema(names: StagingNames, *, ch: _CHClient | None = None) -> 
     fingerprint = hashlib.sha256(
         json.dumps(
             {
-                "ddl": table["create_table_query"],
+                "ddl": unqualify(table["create_table_query"]),
                 "columns": columns,
                 "source_policy_version": SOURCE_POLICY_VERSION,
             },
@@ -177,7 +178,8 @@ async def _owned_snapshot(
     names: StagingNames, source_uuid: UUID, client: _CHClient
 ) -> dict[str, Any]:
     row = await client.query_one(
-        "SELECT uuid, comment FROM system.tables WHERE database = 'loom' AND name = {table:String}",
+        "SELECT uuid, comment FROM system.tables "
+        "WHERE database = currentDatabase() AND name = {table:String}",
         {"table": names.snapshot},
     )
     if row is None or not _owned_marker(str(row["comment"]), names.marker(source_uuid)):
@@ -192,7 +194,8 @@ async def snapshot_identity(
     client = ch or _default_client()
     marker = names.marker(source_uuid)
     row = await client.query_one(
-        "SELECT uuid, comment FROM system.tables WHERE database = 'loom' AND name = {table:String}",
+        "SELECT uuid, comment FROM system.tables "
+        "WHERE database = currentDatabase() AND name = {table:String}",
         {"table": names.snapshot},
     )
     if row is None:
@@ -298,7 +301,7 @@ async def snapshot_query_running(names: StagingNames, *, ch: _CHClient | None = 
     client = ch or _default_client()
     result = await client.query_one(
         "SELECT count() AS running FROM system.processes WHERE startsWith(query, {prefix:String})",
-        {"prefix": f"CREATE TABLE loom.{names.snapshot} "},
+        {"prefix": qualify(f"CREATE TABLE loom.{names.snapshot} ")},
     )
     if result is None or type(result.get("running")) is not int or result["running"] < 0:
         raise ValueError("Cannot establish snapshot query status")

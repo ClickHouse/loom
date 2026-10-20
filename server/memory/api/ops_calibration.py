@@ -13,7 +13,6 @@ calibration_get = Operation(
     output_model=CalibrationGetOutput,
     handler=handle_calibration_get,
     idempotent=True,
-    budget_p99_ms=60,
     required_role=Role.VIEWER,
     audit=False,
 )

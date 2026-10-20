@@ -167,6 +167,7 @@ async def replay(
                         base_url + "/v1/memory.set_from_messages",
                         json=body,
                         headers=headers,
+                        # not a setting: the CLI waits on the server's synchronous replay
                         timeout=600,
                     )
                 if r.status_code >= 400:

@@ -265,9 +265,9 @@ def test_grounding_reads_the_memory_key(monkeypatch) -> None:
 def test_grounding_cap_default_and_comment() -> None:
     import inspect
 
-    from server.settings import Settings, _memory_search
+    from server.settings import Settings, catalog
 
     assert Settings.model_fields["memory_search_identifier_grounding_max_tokens"].default == 32
-    src = inspect.getsource(_memory_search)
+    src = inspect.getsource(catalog.MemorySearchSettings)
     i = src.index("memory_search_identifier_grounding_max_tokens")
     assert "#" in src[i - 900 : i]

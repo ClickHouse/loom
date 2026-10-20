@@ -181,3 +181,26 @@ async def test_apply_setting_gates_skip_their_step(monkeypatch) -> None:
         _settings(memory_ask_code_enrichment=False, memory_ask_code_staleness=False),
     )
     assert out == pool and sorted(calls) == ["gate", "pr"]
+
+
+async def test_the_grounding_reads_use_their_token_budget_settings(monkeypatch) -> None:
+    import server.code.app.search.handler as hs
+    import server.code.app.symbol as hy
+    import server.code.domain.idents as cs
+
+    budgets: dict[str, int] = {}
+    monkeypatch.setattr(cs, "embedded_idents", lambda q: {"FooBar"})
+
+    async def fake_symbol(inp: Any) -> Any:
+        budgets["symbol"] = inp.token_budget
+        return SimpleNamespace(definitions=[_unit("src/foo.py", 10, inp.name)])
+
+    async def fake_search(inp: Any) -> Any:
+        budgets["search"] = inp.token_budget
+        return SimpleNamespace(abstain=False, as_of={"branch": "main"}, results=[])
+
+    monkeypatch.setattr(hy, "handle_code_symbol", fake_symbol)
+    monkeypatch.setattr(hs, "handle_code_search", fake_search)
+    over = {"memory_ask_code_symbol_token_budget": 500, "memory_ask_code_search_token_budget": 900}
+    await g._inject_code_context("what does FooBar do", _input(), _settings(**over))
+    assert budgets == {"symbol": 500, "search": 900}

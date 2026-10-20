@@ -61,7 +61,7 @@ def test_fast_probe_merges_the_cached_invariants(monkeypatch: pytest.MonkeyPatch
     ):
         assert whole_table not in sql
     # …and classifies vector reads by the columns they touched, not by text.
-    assert "has(columns, 'loom.memory_embeddings.embedding')" in sql
+    assert "has(columns, concat({loom_db:String}, '.memory_embeddings.embedding'))" in sql
     assert "position(query" not in sql
 
 
@@ -118,7 +118,7 @@ def test_invariants_statement_is_the_whole_table_half() -> None:
 
 
 def test_census_clocks_default_to_an_hour() -> None:
-    from server.settings._observability import ObservabilitySettings
+    from server.settings.catalog import ObservabilitySettings
 
     fields = ObservabilitySettings.model_fields
     assert fields["otel_invariants_probe_s"].default == 3600

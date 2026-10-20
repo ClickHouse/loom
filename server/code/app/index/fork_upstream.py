@@ -19,12 +19,10 @@ import re
 from collections.abc import Awaitable, Callable
 
 from server.code.app.ttl_cache import TtlCache
+from server.settings import settings
 
 logger = logging.getLogger("loom.code.fork_upstream")
 
-CACHE_TTL_S = 24 * 3600.0
-FAILURE_TTL_S = 600.0
-BUDGET_S = 1.5
 MAX_CANDIDATES = 3
 
 MAX_CACHE = 4096
@@ -35,8 +33,11 @@ MAX_CACHE = 4096
 # (`../..`, `a/b?x=`) with the server's token.
 _SLUG = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,38})/(?!\.{1,2}$)[a-z0-9._-]{1,100}$")
 
-# slug -> upstream slugs; a failed read is kept FAILURE_TTL_S as "not a known fork".
-_cache: TtlCache[str, tuple[str, ...]] = TtlCache(CACHE_TTL_S, maxsize=MAX_CACHE)
+# slug -> upstream slugs; a failed read is kept `code_fork_upstream_miss_ttl_s` as "not a
+# known fork".
+_cache: TtlCache[str, tuple[str, ...]] = TtlCache(
+    lambda: settings.code_fork_upstream_cache_ttl_s, maxsize=MAX_CACHE
+)
 
 
 def valid_slug(slug: str) -> bool:
@@ -64,7 +65,7 @@ async def _ask(slug: str, fetch: Fetch) -> None:
         _cache.put(slug, ups)
     except Exception as e:  # noqa: BLE001 — a failed read is "not a known fork"
         logger.debug("fork_upstream: %s: %s", slug, e)
-        _cache.put(slug, (), ttl_s=FAILURE_TTL_S)
+        _cache.put(slug, (), ttl_s=settings.code_fork_upstream_miss_ttl_s)
 
 
 async def fork_upstreams(
@@ -78,7 +79,7 @@ async def fork_upstreams(
     if missing:
         f = fetch or _github_upstreams
         tasks = [asyncio.ensure_future(_ask(s, f)) for s in missing]
-        bound = BUDGET_S if budget_s is None else budget_s
+        bound = settings.code_fork_upstream_budget_s if budget_s is None else budget_s
         try:
             await asyncio.wait(tasks, timeout=bound)
         finally:
@@ -88,5 +89,5 @@ async def fork_upstreams(
                 t.cancel()
         for s in missing:
             if s not in _cache:
-                _cache.put(s, (), ttl_s=FAILURE_TTL_S)
+                _cache.put(s, (), ttl_s=settings.code_fork_upstream_miss_ttl_s)
     return [(s, u) for s in todo for u in (_cache.get(s) or ())]

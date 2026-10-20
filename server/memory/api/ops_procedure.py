@@ -40,7 +40,6 @@ procedure_add = Operation(
     output_model=ProcedureAddOutput,
     handler=handle_procedure_add,
     idempotent=False,
-    budget_p99_ms=120,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -51,7 +50,6 @@ procedure_match = Operation(
     output_model=ProcedureMatchOutput,
     handler=handle_procedure_match,
     idempotent=True,
-    budget_p99_ms=150,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -63,7 +61,6 @@ procedure_list = Operation(
     output_model=ProcedureListOutput,
     handler=handle_procedure_list,
     idempotent=True,
-    budget_p99_ms=100,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -76,7 +73,6 @@ procedure_record_run = Operation(
     output_model=ProcedureRecordRunOutput,
     handler=handle_procedure_record_run,
     idempotent=False,
-    budget_p99_ms=150,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -88,7 +84,6 @@ procedure_evolve = Operation(
     output_model=ProcedureEvolveOutput,
     handler=handle_procedure_evolve,
     idempotent=False,
-    budget_p99_ms=200,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -101,7 +96,6 @@ procedure_locate = Operation(
     output_model=ProcedureLocateOutput,
     handler=handle_procedure_locate,
     idempotent=True,
-    budget_p99_ms=150,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -114,7 +108,6 @@ procedure_revise = Operation(
     output_model=ProcedureReviseOutput,
     handler=handle_procedure_revise,
     idempotent=False,
-    budget_p99_ms=300,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -127,7 +120,6 @@ procedure_fork = Operation(
     output_model=ProcedureForkOutput,
     handler=handle_procedure_fork,
     idempotent=False,
-    budget_p99_ms=400,
     required_role=Role.WRITER,
     audit=True,
 )

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.core.ch_names import split_table
+
 _PARTS_SQL = """
 SELECT sum(rows) AS on_disk, sum(bytes_on_disk) AS bytes,
        countIf(has_lightweight_delete) AS masked_parts
@@ -20,7 +22,7 @@ WHERE database = {db:String} AND table = {t:String} AND is_done = 0
 async def masked_rows(ch: Any, table: str) -> tuple[int, int, int] | None:
     """(rows on disk, rows a read sees, bytes on disk) of a table with masked
     parts; None when nothing is masked or a mutation still runs there."""
-    db, name = table.split(".", 1)
+    db, name = split_table(table)
     parts = await ch.query_one(_PARTS_SQL, {"db": db, "t": name})
     if not parts or not int(parts.get("masked_parts") or 0):
         return None

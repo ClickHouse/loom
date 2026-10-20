@@ -10,6 +10,8 @@ row, an expired row — is a miss and the ask synthesizes.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -286,6 +288,27 @@ async def test_a_different_shape_is_a_different_precedent(prec_env) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_changed_answer_policy_setting_misses_the_precedent(
+    prec_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_ask_world_knowledge", "allow")
+    await _ask()
+    monkeypatch.setattr(settings, "memory_ask_world_knowledge", "forbid")
+    out = await _ask()
+    assert out.source == "synthesized" and len(prec_env.llm.calls) == 2
+    # Retrieval's fusion weights shape the window too.
+    monkeypatch.setattr(settings, "memory_rrf_lexical_weight_floor", 0.3)
+    out = await _ask()
+    assert out.source == "synthesized" and len(prec_env.llm.calls) == 3
+    # The precedent settings only decide reuse; they leave the stored answer valid.
+    monkeypatch.setattr(settings, "memory_ask_precedents_max_age_hours", 48)
+    out = await _ask()
+    assert out.source == "precedent" and len(prec_env.llm.calls) == 3
+
+
+@pytest.mark.asyncio
 async def test_unhashed_rows_never_anchor_a_precedent(prec_env) -> None:
     prec_env.hashes["m2"] = "0"
     await _ask()
@@ -322,19 +345,43 @@ async def test_uncited_or_hedged_answers_are_not_stored(prec_env) -> None:
 
 def test_ask_shape_carries_the_user_and_session_the_read_filters_on() -> None:
     from server.memory.app.ask.handler import ask_shape_sha256
+    from server.settings import settings
     from tests.unit.test_memory_ask import _input
 
-    base = ask_shape_sha256(_input())
+    base = ask_shape_sha256(_input(), settings)
     assert base == ask_shape_sha256(
-        _input(query="something else", org="o2", namespace="n2", run_id="r1")
+        _input(query="something else", org="o2", namespace="n2", run_id="r1"), settings
     )
     # A body user filters the read under namespace scope too: its own precedent.
-    assert base != ask_shape_sha256(_input(user_id="alice"))
-    assert ask_shape_sha256(_input(user_id="alice")) != ask_shape_sha256(_input(user_id="bob"))
-    assert base != ask_shape_sha256(_input(top_k=7))
-    assert base != ask_shape_sha256(_input(search_mode="semantic"))
-    own = ask_shape_sha256(_input(read_scope="own_user", user_id="alice"))
-    assert own != ask_shape_sha256(_input(read_scope="own_user", user_id="bob"))
+    assert base != ask_shape_sha256(_input(user_id="alice"), settings)
+    assert ask_shape_sha256(_input(user_id="alice"), settings) != ask_shape_sha256(
+        _input(user_id="bob"), settings
+    )
+    assert base != ask_shape_sha256(_input(top_k=7), settings)
+    assert base != ask_shape_sha256(_input(search_mode="semantic"), settings)
+    own = ask_shape_sha256(_input(read_scope="own_user", user_id="alice"), settings)
+    assert own != ask_shape_sha256(_input(read_scope="own_user", user_id="bob"), settings)
+
+
+def test_ask_shape_hashes_only_the_settings_off_their_default() -> None:
+    """A setting at its default leaves the shape as it was, so a release that adds one
+    keeps the stored precedents; a value off the default is a different shape."""
+    from server.memory.app.ask.handler import ask_shape_sha256
+    from server.settings import Settings
+    from tests.unit.test_memory_ask import _input
+
+    base = Settings(_env_file=None)  # type: ignore[call-arg]
+    at_default = base.model_copy(update={"memory_ask_world_knowledge": "forbid"})
+    allow = base.model_copy(update={"memory_ask_world_knowledge": "allow"})
+    assert Settings.model_fields["memory_ask_world_knowledge"].default == "forbid"
+    assert ask_shape_sha256(_input(), base) == ask_shape_sha256(_input(), at_default)
+    assert ask_shape_sha256(_input(), base) != ask_shape_sha256(_input(), allow)
+    # At every default the digest is the request's alone, as a build without the
+    # settings hashed it: an upgrade keeps the stored precedents.
+    excluded = {"query", "org", "namespace", "run_id", "precedents", "user_id", "session_id"}
+    request = _input().model_dump(exclude=excluded, exclude_defaults=True)
+    canonical = json.dumps(request, sort_keys=True, default=str, separators=(",", ":"))
+    assert ask_shape_sha256(_input(), base) == hashlib.sha256(canonical.encode()).hexdigest()
 
 
 @pytest.mark.asyncio
@@ -678,6 +725,26 @@ async def test_a_retrieving_hit_moves_the_retrieval_time_so_the_next_ask_is_fast
     assert fast_env.searches == 2 and third.route_reason == "precedent:unmoved:reused=2"
 
 
+def test_an_operational_setting_leaves_the_shape_as_it_was() -> None:
+    """A timeout, a wait or retry bound or a cache lifetime changes no stored answer:
+    raising one during an incident keeps every stored precedent."""
+    from server.memory.app.ask.handler import ask_shape_sha256
+    from server.settings import Settings
+    from tests.unit.test_memory_ask import _input
+
+    base = Settings(_env_file=None)  # type: ignore[call-arg]
+    for name, value in (
+        ("memory_search_rerank_timeout_s", 30.0),
+        ("memory_search_hyde_timeout_s", 30.0),
+        ("memory_search_page_ttl_s", 60),
+        ("memory_search_embed_bound_s", 9.0),
+        ("memory_search_embed_bound_retries", 3),
+        ("memory_search_fallback_max_wall_ms", 9000),
+    ):
+        changed = base.model_copy(update={name: value})
+        assert ask_shape_sha256(_input(), changed) == ask_shape_sha256(_input(), base), name
+
+
 def test_ask_shape_hashes_the_identity_the_token_pins() -> None:
     """Two tokens pinned to different end users, one body that names nobody: the read runs
     as each pinned user, so the shapes (and the precedent keys) must differ; a namespace
@@ -686,6 +753,7 @@ def test_ask_shape_hashes_the_identity_the_token_pins() -> None:
     from server.auth.jwt import AuthInfo
     from server.memory.app.ask.handler import ask_shape_sha256
     from server.operations.base import Role
+    from server.settings import settings
     from tests.unit.test_memory_ask import _input
 
     def _token(pinned: str) -> AuthInfo:
@@ -700,13 +768,13 @@ def test_ask_shape_hashes_the_identity_the_token_pins() -> None:
 
     try:
         set_current_auth(_token("alice"))
-        alice = ask_shape_sha256(_input())
+        alice = ask_shape_sha256(_input(), settings)
         set_current_auth(_token("bob"))
-        bob = ask_shape_sha256(_input())
+        bob = ask_shape_sha256(_input(), settings)
         set_current_auth(_token(""))
-        shared = ask_shape_sha256(_input())
+        shared = ask_shape_sha256(_input(), settings)
     finally:
         set_current_auth(None)
     assert alice != bob
-    assert shared == ask_shape_sha256(_input())
-    assert alice == ask_shape_sha256(_input(read_scope="own_user", user_id="alice"))
+    assert shared == ask_shape_sha256(_input(), settings)
+    assert alice == ask_shape_sha256(_input(read_scope="own_user", user_id="alice"), settings)

@@ -1,5 +1,5 @@
-"""CHClient retries a replica-bound server error (code 10) exactly once on a
-fresh connection; other database errors are not retried."""
+"""CHClient retries a replica-bound server error (code 10) on a fresh connection,
+`ch_replica_bound_retries` times; other database errors are not retried."""
 
 from __future__ import annotations
 
@@ -49,6 +49,20 @@ async def test_code_10_on_every_connection_is_raised_after_three() -> None:
     with pytest.raises(DatabaseError):
         await c._with_retry("query_all", fn)
     assert c.reconnects == 2
+
+
+async def test_the_retry_count_is_its_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "ch_replica_bound_retries", 4)
+    c = _client()
+
+    async def fn() -> str:
+        raise DatabaseError("Code: 10. DB::Exception: Not found column org")
+
+    with pytest.raises(DatabaseError):
+        await c._with_retry("query_all", fn)
+    assert c.reconnects == 4
 
 
 async def test_other_database_errors_are_not_retried() -> None:

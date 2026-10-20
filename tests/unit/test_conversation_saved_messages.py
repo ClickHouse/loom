@@ -530,6 +530,18 @@ def test_snippet_centres_a_deep_match_and_keeps_an_early_one_at_the_start() -> N
     assert _snippet(early, ["inc"]).startswith("INC-48213")
 
 
+def test_the_saved_message_cuts_follow_a_live_excerpt_length(monkeypatch) -> None:
+    """A saved listing's excerpt and a lexical hit's snippet read
+    conversation_search_excerpt_chars per call."""
+    from server.knowledge.app.conversations import _excerpt, _snippet
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "conversation_search_excerpt_chars", 12)
+    assert _excerpt("x" * 50) == "x" * 12 + "…"
+    window = _snippet("filler " * 400 + "ticket INC-48213 closed", ["inc"])
+    assert window.startswith("…") and len(window.strip("…")) == 12
+
+
 def test_saved_message_ops_are_registered_with_their_roles() -> None:
     from server.operations.base import Role
     from server.operations.registry import OPERATIONS_BY_NAME

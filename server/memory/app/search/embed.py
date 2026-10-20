@@ -12,6 +12,7 @@ from server.memory.app.search.budget import SearchBudget
 from server.memory.app.search.query_spelling import embed_query
 from server.memory.domain.search_prompts import _HYDE_PROMPT
 from server.observability.genai import llm_stage
+from server.settings.budgets import llm_max_tokens
 
 if TYPE_CHECKING:
     from server.embedding import Embedder
@@ -95,6 +96,7 @@ async def _embed_search_query(
     bounded hypothetical answer joins the embedded text (fail-open to the
     bare query). Returns the query vector."""
     from server.observability.otel import traced
+    from server.settings import settings as _s
 
     # HyDE is the planner's call, made before the first pass; nothing re-spends it after.
     hyde_active = bool(input.hyde)
@@ -118,9 +120,9 @@ async def _embed_search_query(
                     llm.complete(
                         system=_HYDE_PROMPT,
                         user=f"Question: {input.query}\n\nHypothetical answer:",
-                        max_tokens=128,
+                        max_tokens=llm_max_tokens("hyde"),
                     ),
-                    timeout=6.0,
+                    timeout=_s.memory_search_hyde_timeout_s,
                 )
             hyde_text = (hyde_result.text or "").strip()
             if hyde_text:

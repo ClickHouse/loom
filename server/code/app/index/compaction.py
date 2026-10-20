@@ -30,13 +30,13 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from server.code.store.index import compaction as compaction_store
+from server.settings import settings
 
 logger = logging.getLogger(__name__)
 
 PREFIX_TABLE = "loom.code_chunks_prefix"
 CHUNKS_TABLE = "loom.code_chunks"
 DEFAULT_POLL_S = 15.0
-DEFAULT_TIMEOUT_S = 900.0
 
 
 @dataclass
@@ -125,7 +125,7 @@ async def maybe_compact(
     *,
     min_ratio: float = 1.5,
     dry_run: bool = False,
-    timeout_s: float = DEFAULT_TIMEOUT_S,
+    timeout_s: float | None = None,
     poll_s: float = DEFAULT_POLL_S,
     sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
     clock: Callable[[], float] = time.monotonic,
@@ -133,6 +133,8 @@ async def maybe_compact(
     """OPTIMIZE ... FINAL `table` when its copies per key reach `min_ratio`,
     then wait for the merge to land. Raises only on a table outside the
     allowlist; a CH failure is reported in `error`."""
+    if timeout_s is None:
+        timeout_s = settings.code_compaction_timeout_s
     res = await copies_per_key(ch, table)
     if res.keys == 0 or res.ratio < min_ratio:
         res.reason = f"ratio {res.ratio} < {min_ratio}"

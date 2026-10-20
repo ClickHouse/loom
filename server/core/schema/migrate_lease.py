@@ -318,7 +318,7 @@ class KeeperLock:
     def release(self) -> None:
         self._stop.set()
         if self._beat is not None:
-            self._beat.join(timeout=5)
+            self._beat.join(timeout=5)  # not a setting: a heartbeat thread's exit on release
             self._beat = None
         with self._mutex:
             # A holder that counted the key lost still deletes it while it

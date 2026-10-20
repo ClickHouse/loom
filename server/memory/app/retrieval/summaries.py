@@ -12,6 +12,7 @@ from server.core.vectors.search_settings import vector_search_settings
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_types import SearchHit
 from server.memory.domain.sensitivity import HELD_MARGIN, without_credentials
+from server.settings import settings
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -236,7 +237,6 @@ async def fetch_session_summaries(
 # per-query round trip. Keyed by (org, sorted namespaces); values are lowercased
 # entity strings. Populated only while the read leg is enabled.
 _SUMMARY_ENTITY_CACHE: dict[tuple[str, tuple[str, ...]], tuple[float, frozenset[str]]] = {}
-_SUMMARY_ENTITY_TTL_SECONDS = 60.0
 
 
 async def summary_entities_present(ch: Any, org: str, namespaces: list[str]) -> frozenset[str]:
@@ -251,7 +251,7 @@ async def summary_entities_present(ch: Any, org: str, namespaces: list[str]) -> 
     key = (org, tuple(sorted(set(namespaces))))
     now = time.monotonic()
     cached = _SUMMARY_ENTITY_CACHE.get(key)
-    if cached is not None and (now - cached[0]) < _SUMMARY_ENTITY_TTL_SECONDS:
+    if cached is not None and (now - cached[0]) < settings.memory_summary_entity_ttl_s:
         return cached[1]
     try:
         rows = await ch.query_all(

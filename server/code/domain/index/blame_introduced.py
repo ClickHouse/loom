@@ -11,7 +11,7 @@ bound:
   PR, a revert (title or body), a PR another window PR
   reverted, and a PR whose change to the file is whitespace-only or an
   identifier-consistent rename (one `git diff -w -U0 parent..merge -- path`
-  per candidate, at most MAX_DIFF_CALLS per request, cached). A title that
+  per candidate, at most `code_blame_introduced_max_diff_calls` per request, cached). A title that
   says refactor / rename / style (`meta`) is a SOFT tier —
   such titles lie often enough that only the diff demotes outright.
 - PROMOTIONS from the function's record: the
@@ -44,17 +44,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.code.domain.index.blame_range import Candidate, unix_of
+from server.settings import settings
 
 STAGE_INTRODUCED = "introduced"
 STAGE_LAST_TOUCHED = "last_touched"
 STAGES = (STAGE_INTRODUCED, STAGE_LAST_TOUCHED)
 INTRODUCED_UNKNOWN = "introduced_unknown"
 
-# Bounds: the diff test runs for at most this many candidates per request — blamed ones
-# first, then ledger-only by recency — each one `git diff -w -U0 <merge>^1 <merge> --
-# <path>`, cached like the blame.
-MAX_DIFF_CALLS = 10
-DIFF_TIMEOUT_S = 5.0
 # how many candidates the first stage hands to the second before the caller's
 # limit cuts the list (a promoted PR may sit past `limit` in last-touched order)
 STAGE_POOL = 25
@@ -805,14 +801,14 @@ def rank_introduced(
 def diff_order(candidates: list[Candidate], marks: dict[int, Mark]) -> list[Candidate]:
     """Which candidates get one of the bounded diff calls: those not already
     demoted by title or body, blamed ones first, then ledger-only by
-    recency, at most MAX_DIFF_CALLS."""
+    recency, at most `code_blame_introduced_max_diff_calls`."""
     pool = [
         c
         for c in candidates
         if c.merge_commit_sha and not (marks.get(c.pr_number) or Mark()).demoted
     ]
     pool.sort(key=lambda c: (0 if c.lines_blamed else 1, -unix_of(c.merged_at), -c.pr_number))
-    return pool[:MAX_DIFF_CALLS]
+    return pool[: settings.code_blame_introduced_max_diff_calls]
 
 
 def is_blameless(*, blame_ok: bool, attributed_lines: int, noise_only: bool) -> bool:
@@ -834,9 +830,7 @@ NOTE_INTRODUCED = (
 
 
 __all__ = [
-    "DIFF_TIMEOUT_S",
     "INTRODUCED_UNKNOWN",
-    "MAX_DIFF_CALLS",
     "NOTE_INTRODUCED",
     "STAGES",
     "STAGE_INTRODUCED",

@@ -15,10 +15,6 @@ mentor_brief = Operation(
     output_model=MentorBriefOutput,
     handler=handle_mentor_brief,
     idempotent=True,
-    # One bounded ledger scan on the (org, namespace, agent)
-    # sort key, a handful of FINAL-scoped counts over the namespace, three of
-    # the audit's shape checks, and two adoption reads — cached an hour.
-    budget_p99_ms=3000,
     required_role=Role.VIEWER,
     audit=False,
 )

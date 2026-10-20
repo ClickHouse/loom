@@ -15,7 +15,6 @@ agents_connected = Operation(
     output_model=AgentsConnectedOutput,
     handler=handle_agents_connected,
     idempotent=True,
-    budget_p99_ms=120,
     required_role=Role.VIEWER,
     audit=False,
 )

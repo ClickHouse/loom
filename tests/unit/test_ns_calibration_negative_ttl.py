@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from server.memory.app import embedder_calibration as ec
+from server.settings import settings
 
 
 class _CH:
@@ -31,7 +32,7 @@ async def test_a_failed_read_is_retried_after_the_negative_ttl(monkeypatch) -> N
     assert await ec.get_namespace_calibration("o", "ns") is None
     assert await ec.get_namespace_calibration("o", "ns") is None
     assert ch.reads == 1  # cached, CH is not hammered
-    clock["t"] += ec._NS_NEGATIVE_TTL_S + 1
+    clock["t"] += settings.memory_calibration_namespace_miss_ttl_s + 1
     ch.fail = False
     assert await ec.get_namespace_calibration("o", "ns") is None
     assert ch.reads == 2  # read again once the miss aged out

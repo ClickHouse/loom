@@ -142,6 +142,10 @@ async def test_the_leg_runs_only_under_a_code_scope_for_a_defect_shape_and_fails
 
     monkeypatch.setattr("server.tracker.app.dupcheck.handle_tracker_duplicate_check", _slow)
     assert await ql.tracker_leg(DRAFT, timeout_s=0.01) is None, "a timeout is no section"
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "mcp_loom_search_tracker_timeout_s", 0.01)
+    assert await ql.tracker_leg(DRAFT) is None, "the setting bounds a leg that names no timeout"
 
 
 def test_the_text_block_leads_with_the_verdict() -> None:

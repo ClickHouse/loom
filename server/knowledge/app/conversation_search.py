@@ -18,9 +18,6 @@ from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.knowledge.domain.conversations import ConversationRole
 from server.memory.domain.sensitivity import HELD_MARGIN, reads_high
 
-# Characters of a turn a hit shows (the embedding row keeps the whole embedded text).
-HIT_EXCERPT_CHARS = 240
-
 
 class _CHClient(Protocol):
     async def query_all(
@@ -69,6 +66,8 @@ async def vector_search(
     """Vector search over loom.conversation_embeddings. Close-distance ties
     are ordered most-recent-first (ts DESC).
     """
+    from server.settings import settings
+
     ch = ch or _default_client()
     where = [
         "org = {org:String}",
@@ -127,12 +126,14 @@ async def vector_search(
         """,
         params=params,
     )
+    # The whole embedded text is read so the credential check below covers all of it.
+    excerpt_chars = int(settings.conversation_search_excerpt_chars)
     hits = [
         ConversationHit(
             thread_id=r["thread_id"],
             msg_id=r["msg_id"],
             role=r["role"],
-            content_excerpt=str(r["embedded_text"])[:HIT_EXCERPT_CHARS],
+            content_excerpt=str(r["embedded_text"])[:excerpt_chars],
             ts=r["ts"],
             distance=float(r["distance"]),
         )

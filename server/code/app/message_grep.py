@@ -41,6 +41,7 @@ from typing import Any
 from server.code.app.ttl_cache import TtlCache
 from server.core.caller_regex import compile_caller_regex
 from server.core.errors import ValidationError
+from server.settings import settings
 
 # Chunk-level pre-filter: a raising or logging statement carries one of these.
 STATEMENT_KEYWORDS: tuple[str, ...] = ("throw", "Exception(", "onError", "ErrorCodes::", "LOG_")
@@ -62,7 +63,6 @@ RAISED_AT_LONG_WORDS = 6
 ERROR_CODE_BONUS = 0.15
 # Where the repository keeps its error-code table (`M(N, NAME)` lines).
 ERROR_CODES_PATHS: tuple[str, ...] = ("src/Common/ErrorCodes.cpp",)
-ERROR_CODES_TTL_S = 600.0
 
 _BOUNDARY = "\x00"
 
@@ -442,7 +442,9 @@ def verdict_for(best: Statement | None) -> str:
 
 # ---------------------------------------------------------------- error codes
 
-_ERROR_CODES_CACHE: TtlCache[tuple[str, str], dict[int, str]] = TtlCache(ERROR_CODES_TTL_S)
+_ERROR_CODES_CACHE: TtlCache[tuple[str, str], dict[int, str]] = TtlCache(
+    lambda: settings.code_message_grep_error_codes_ttl_s
+)
 
 
 def parse_error_codes(chunks: list[dict[str, Any]]) -> dict[int, str]:
@@ -456,7 +458,7 @@ def parse_error_codes(chunks: list[dict[str, Any]]) -> dict[int, str]:
 
 async def error_code_name(repo: Any, org: str, ns: str, code: int | None) -> str:
     """The ErrorCodes name for `code` in this namespace, "" when the table
-    is not indexed or the number is unknown. Cached ERROR_CODES_TTL_S."""
+    is not indexed or the number is unknown. Cached `code_message_grep_error_codes_ttl_s`."""
     if code is None:
         return ""
     table = _ERROR_CODES_CACHE.get((org, ns))

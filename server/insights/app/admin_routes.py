@@ -10,7 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -38,6 +39,14 @@ from server.insights.app.admin_models import (
     RatelimitSetInput,
     RatelimitSetOutput,
     SchemaStatusOutput,
+    SettingChange,
+    SettingRow,
+    SettingSetInput,
+    SettingSetOutput,
+    SettingsHistoryInput,
+    SettingsHistoryOutput,
+    SettingsListInput,
+    SettingsListOutput,
     TokenMintInput,
     TokenMintOutput,
     WorkersStatusOutput,
@@ -427,7 +436,8 @@ async def admin_budget_set(input: BudgetSetInput) -> BudgetSetOutput:
     installs for that consumer only; {consumer, op, clear: true} removes it.
     """
     from server.core import runtime_overrides as ro
-    from server.observability.budgets import get_overrides, parse_value, stored_ms
+    from server.core.numbers import parse_budget_value
+    from server.observability.budgets import get_overrides, stored_ms
 
     set_query_tag("admin.budget_set")
     overrides = get_overrides()
@@ -445,7 +455,7 @@ async def admin_budget_set(input: BudgetSetInput) -> BudgetSetOutput:
                     "message": "budget_ms (ms) or budget ('<n>x') required when clear=false",
                 },
             )
-        if parse_value(value) is None:
+        if parse_budget_value(value) is None:
             raise HTTPException(
                 status_code=422,
                 detail={
@@ -581,6 +591,55 @@ async def admin_ratelimit_set(input: RatelimitSetInput) -> RatelimitSetOutput:
     )
 
 
+@admin_router.post("/v1/admin/settings.list")
+async def admin_settings_list(input: SettingsListInput) -> SettingsListOutput:
+    """Every setting with its value in force in this process, its default, where
+    the value came from (override, dashboard, env, env_file, settings_file,
+    inferred, default) and whether it is live."""
+    from server.core import settings_overrides
+
+    rows = settings_overrides.rows(prefix=input.prefix, changed=input.changed)
+    return SettingsListOutput(settings=[SettingRow(**r) for r in rows])
+
+
+@admin_router.post("/v1/admin/settings.set")
+async def admin_settings_set(
+    request: Request,
+    input: SettingSetInput,
+    # The router's own gate, cached for the request: the token is verified once.
+    info: Annotated[Any, Depends(require_admin)],
+) -> SettingSetOutput:
+    """Install a deployment-wide override of a live setting ({name, value}) or
+    remove it ({name, clear: true}); with `expected`, only while that is the value
+    in force. Every process applies it within `runtime_overrides_refresh_seconds`;
+    this one at once."""
+    from server.core.settings_overrides import NOT_GIVEN
+    from server.insights.app import settings_changes
+
+    set_query_tag("admin.settings_set")
+    refuse_browser_reach(request, "setting changes")
+    row = await settings_changes.change(
+        input.name,
+        input.value,
+        clear=input.clear,
+        expected=input.expected if "expected" in input.model_fields_set else NOT_GIVEN,
+        actor=info.subject if info is not None else "dev-admin",
+    )
+    return SettingSetOutput(ok=True, setting=SettingRow(**row) if row else None)
+
+
+@admin_router.post("/v1/admin/settings.history")
+async def admin_settings_history(input: SettingsHistoryInput) -> SettingsHistoryOutput:
+    """The recorded changes of one setting, or of every setting, newest first: who
+    made each, the value before and after. Undo one by setting `previous` back when
+    `previous_source` is `override`, by a reset when it is another source; a null one
+    (the reset of a setting this build lacks) has no undo."""
+    from server.insights.app import settings_changes
+
+    rows = await settings_changes.history(input.name, input.limit)
+    return SettingsHistoryOutput(changes=[SettingChange(**r) for r in rows])
+
+
 # ============================================================
 # Fleet observability — aggregate views over agent_events / audit_log
 # ============================================================
@@ -668,7 +727,7 @@ async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluate
         req = urllib.request.Request(list_url, headers={"Authorization": auth})
 
         def _fetch_traces() -> Any:
-            with urllib.request.urlopen(req, timeout=15.0) as r:
+            with urllib.request.urlopen(req, timeout=settings.langfuse_timeout_s) as r:
                 return _json.load(r)
 
         traces_body = await asyncio.to_thread(_fetch_traces)
@@ -732,7 +791,7 @@ async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluate
             req = urllib.request.Request(url, headers={"Authorization": auth})
 
             def _fetch_score(req: urllib.request.Request = req) -> Any:
-                with urllib.request.urlopen(req, timeout=10.0) as r:
+                with urllib.request.urlopen(req, timeout=settings.langfuse_timeout_s) as r:
                     return _json.load(r)
 
             body = await asyncio.to_thread(_fetch_score)
@@ -896,6 +955,25 @@ async def admin_token_mint(
             "ignored_args": ignored,
         }
     )
+
+
+def refuse_browser_reach(request: Request, what: str) -> None:
+    """Refuse a write a web page could send from the operator's browser: with auth
+    off, a Host that is not loopback (DNS rebinding of a keyless local install); always,
+    a cross-site Origin or Sec-Fetch-Site."""
+    if not settings.auth_actually_required() and request.url.hostname not in (
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    ):
+        raise HTTPException(403, f"Enable authentication for remote {what}")
+    origin = request.headers.get("origin")
+    if origin:
+        parsed = urlsplit(origin)
+        if (parsed.scheme, parsed.netloc) != (request.url.scheme, request.url.netloc):
+            raise HTTPException(403, f"Cross-origin {what} is not allowed")
+    if request.headers.get("sec-fetch-site", "none") not in ("same-origin", "none"):
+        raise HTTPException(403, f"Cross-origin {what} is not allowed")
 
 
 def refuse_foreign_org(info: AuthInfo | None, org: str, action: str) -> None:
