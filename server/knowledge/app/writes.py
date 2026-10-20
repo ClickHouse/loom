@@ -62,6 +62,18 @@ def _authorship() -> dict[str, str]:
     }
 
 
+_AUTHOR_COLUMNS = ("agent", "user_id", "actor", "source_class")
+
+
+def _author_for(prior: DocumentRow | None, content: str, author: dict[str, str]) -> dict[str, str]:
+    """`author`, unless the write leaves a live document's text as it was (a
+    re-save, a title or tag edit): then the document stays whoever wrote that
+    text, so the writer's erasure still finds it."""
+    if prior is not None and prior.superseded_at is None and prior.content == content:
+        return {c: str(getattr(prior, c)) for c in _AUTHOR_COLUMNS}
+    return author
+
+
 def _nano_version() -> int:
     return time.time_ns()
 
@@ -156,12 +168,9 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     `duplicate_chunk_count` (newly-inserted chunks whose hash already
     lives under a different source_uri).
     """
-    return await _upsert(input, _authorship())  # from the request's identity, never its body
-
-
-async def _upsert(input: KnowledgeUpsertInput, author: dict[str, str]) -> KnowledgeUpsertOutput:
-    """`knowledge.upsert`, the document and its chunks stamped with `author`."""
     from server.knowledge.store import chunks as knowledge_repo
+
+    author = _authorship()  # from the request's identity, never its body
 
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
@@ -210,6 +219,7 @@ async def _upsert(input: KnowledgeUpsertInput, author: dict[str, str]) -> Knowle
         if superseded_count > 0
         else None
     )
+    author = _author_for(prior, input.content, author)
     blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(input, prior)
 
     from server.knowledge.store import documents as documents_repo
@@ -305,6 +315,7 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
         input.source_uri,
         include_superseded=True,
     )
+    author = _author_for(prior, input.content, author)
     blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(input, prior)
 
     # The builder sets every loom.documents column, content_sha256 included
@@ -518,9 +529,8 @@ async def handle_knowledge_update_metadata(
             tags=list(next_tags),
             metadata=(json.loads(existing.metadata) if existing.metadata else {}),
         )
-        # The same text: its author stays whoever wrote it, not the editor.
-        author = {c: getattr(existing, c) for c in ("agent", "user_id", "actor", "source_class")}
-        upsert_out = await _upsert(upsert_in, author)
+        # The same text: `knowledge.upsert` keeps its author (`_author_for`).
+        upsert_out = await handle_knowledge_upsert(upsert_in)
         chunks_reindexed = upsert_out.chunks_superseded
 
     return KnowledgeUpdateMetadataOutput(
@@ -571,12 +581,13 @@ async def handle_knowledge_bulk_add(
         doc_id = str(uuid.uuid4())
         version = _nano_version()
         chunks = _chunk_text(entry.content)
+        entry_author = _author_for(priors.get(entry.source_uri), entry.content, author)
         prior = priors.get(entry.source_uri)
         prior = prior if documents_repo.serves_original(prior) else None
 
         doc_rows.append(
             documents_repo.build_document_row(
-                **author,
+                **entry_author,
                 org=input.org,
                 namespace=input.namespace,
                 source_uri=entry.source_uri,
@@ -618,7 +629,7 @@ async def handle_knowledge_bulk_add(
                 embedding_model=embedder.model_name,
                 embedding_dim=embedder.dim,
                 now=now,
-                user_id=author["user_id"],
+                user_id=entry_author["user_id"],
             )
         )
 

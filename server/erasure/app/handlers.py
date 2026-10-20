@@ -177,7 +177,7 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
                 raise AuthInsufficientError(
                     f"erasure.export scope_type={input.scope_type!r} requires org admin"
                 )
-            hidden = set(await auth_context.hidden_namespaces(input.org))
+            hidden = set(await auth_context.restricted_namespaces_hidden_from(input.org))
             if "*" in hidden:
                 raise AuthInsufficientError(
                     f"cannot export {input.org}: namespace classification unavailable"
@@ -335,7 +335,7 @@ async def _list_scope(org: str) -> tuple[str, dict[str, Any]] | None:
         return "", {}
     admin_view = _org_wide_admin(auth, org)
     if admin_view or (not auth.has_ns_roles() and "*" in (auth.namespaces or ())):
-        hidden = await auth_context.hidden_namespaces(org)
+        hidden = await auth_context.restricted_namespaces_hidden_from(org)
         if hidden == ["*"]:
             return None
         where = "" if admin_view else " AND scope_type = 'namespace'"

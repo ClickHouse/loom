@@ -22,7 +22,9 @@ flowchart LR
   `loom.collections` naming its parent. `collection.create` makes one (the creator holds
   `admin`), `collection.move` puts it under another collection or detaches it,
   `collection.list` lists the ones the caller can read, and `collection.delete` takes one
-  out of the directory and the tree (its children become top-level). A document lives in
+  out of the directory and the tree (its children become top-level). A deleted
+  collection's name is never used again, and its documents stay until an org admin's
+  erasure of the namespace removes them: no grant reaches it any more. A document lives in
   one collection and follows its grants from the moment it is written.
 - **Only grants open a collection**, and only one in the tree: a `col-` name that was
   deleted, or never created, admits no one but a platform admin. A collection is known by
@@ -152,9 +154,8 @@ Every document carries who wrote it (`agent`, `user_id`, `actor`, `source_class`
 provenance and for erasure; access never reads these columns. A user erasure (`scope_type
 = user_id`) supersedes the documents and chunks that user wrote in any namespace of the
 org (a gateway's end user, or a token minted with `--read-user-id`, stamps its `user_id`;
-a purge first supersedes the versions those writes replaced, so another writer's older
-version never reads as live again), deletes their uploaded originals that no other
-writer's document shares, revokes
+it supersedes and never purges, so no version another writer replaced reads as live
+again), deletes their uploaded originals that no other writer's document shares, revokes
 every grant naming `user:<id>`, removes them from every group, and retires their personal
 collection's directory row. Deleting a SCIM group revokes the grants that named it, so a
 group made later under the same id starts with none. Collections that hold other writers'

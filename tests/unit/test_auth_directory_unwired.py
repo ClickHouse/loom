@@ -56,6 +56,6 @@ async def test_the_namespace_lists_drop_everything(unwired: None) -> None:
     token = ctx.current_auth_var.set(_auth())
     try:
         assert await ctx._gate_readable(_auth(), ORG, [NS, "other"]) == []
-        assert await ctx.hidden_namespaces(ORG) == ["*"]
+        assert await ctx.restricted_namespaces_hidden_from(ORG) == ["*"]
     finally:
         ctx.current_auth_var.reset(token)

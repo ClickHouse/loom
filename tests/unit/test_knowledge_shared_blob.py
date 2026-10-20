@@ -71,6 +71,7 @@ def _prior(**over: object) -> SimpleNamespace:
         original_filename="a.pdf",
         superseded_at=None,
         blob_erased_at=None,
+        content="an earlier text",  # not the new one: the writer becomes its author
     )
     for k, v in over.items():
         setattr(row, k, v)

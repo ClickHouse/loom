@@ -338,7 +338,9 @@ async def _load(key: _Key, hit: _Entry | None, writes: int | None) -> GrantMap:
         raise BackendUnavailableError(
             "grants could not be read; retry shortly", operation="grant_map"
         ) from e
-    if _generation[(org, GRANTS)] == generation:
+    # A read on a stale watermark is not kept: it would replace the entry read
+    # at the last mark seen, the one a failed re-read may still fall back to.
+    if _generation[(org, GRANTS)] == generation and not _unread(writes):
         _keep(_entries, key, writes, fresh)
     return fresh
 

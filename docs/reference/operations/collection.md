@@ -29,7 +29,7 @@ Create a collection: a namespace read and written only through grants.
 
 ## `collection.delete`
 
-Delete a collection: it leaves the directory and the tree; its documents stay until an erasure of the namespace removes them.
+Delete a collection: it leaves the directory and the tree, and its name is never used again.
 
 `POST /v1/collection.delete` · MCP `loom_collection_delete` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 

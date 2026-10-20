@@ -451,7 +451,7 @@ def test_a_deleted_group_takes_no_grant_and_keeps_none(gw: Gateway) -> None:
     assert gw.call("bob", "knowledge.search", search).status_code == 403, "inherits nothing"
 
 
-def _erase_user(base: str, admin: str, org: str, user_id: str, *, purge: bool = False) -> None:
+def _erase_user(base: str, admin: str, org: str, user_id: str) -> None:
     r = httpx.post(
         f"{base}/v1/erasure.request",
         json={
@@ -459,7 +459,6 @@ def _erase_user(base: str, admin: str, org: str, user_id: str, *, purge: bool = 
             "scope_type": "user_id",
             "scope_value": user_id,
             "requester": "ops@x.io",
-            "purge": purge,
         },
         headers={"Authorization": f"Bearer {admin}"},
         timeout=180,
@@ -475,15 +474,15 @@ def _live_documents(ch_client: Any, org: str, namespace: str, uri: str) -> int:
     ).result_rows[0][0]
 
 
-def test_a_users_purge_never_brings_back_the_version_they_replaced(
+def test_a_users_erasure_never_brings_back_the_version_they_replaced(
     gw: Gateway, control_plane_url: str, mint_test_token: Any, ch_client: Any
 ) -> None:
-    col = _collection(gw, "alice", f"col-purge-{uuid.uuid4().hex[:6]}")
+    col = _collection(gw, "alice", f"col-redo-{uuid.uuid4().hex[:6]}")
     gw.ok("alice", "grants.create", {"namespace": col, "subject": "user:bob", "role": "writer"})
     _add(gw, "alice", col, f"alice's first draft {_nonce()}", uri="doc/plan")
     gw.ok("bob", "knowledge.upsert", {"namespace": col, "source_uri": "doc/plan", "content": "b"})
     admin = mint_test_token(org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="o")
-    _erase_user(control_plane_url, admin, gw.org, "bob", purge=True)
+    _erase_user(control_plane_url, admin, gw.org, "bob")
     # Bob's rewrite is gone; alice's draft it replaced does not read as live again.
     assert _live_documents(ch_client, gw.org, col, "doc/plan") == 0
 
@@ -525,3 +524,17 @@ def test_a_users_erasure_deletes_the_originals_no_one_else_shares(
         ).result_rows[0][0]
 
     assert (_stored(own), _stored(shared)) == (0, 1), "bob's own file goes; the shared one stays"
+
+
+def test_a_resave_of_the_same_text_keeps_the_document_its_writers(
+    gw: Gateway, control_plane_url: str, mint_test_token: Any, ch_client: Any
+) -> None:
+    col = _collection(gw, "alice", f"col-resave-{uuid.uuid4().hex[:6]}")
+    gw.ok("alice", "grants.create", {"namespace": col, "subject": "user:bob", "role": "writer"})
+    text = f"bob's notes {_nonce()}"
+    _add(gw, "bob", col, text, uri="doc/notes")
+    resave = {"namespace": col, "source_uri": "doc/notes", "content": text, "tags": ["synced"]}
+    gw.ok("alice", "knowledge.upsert", resave)
+    admin = mint_test_token(org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="o")
+    _erase_user(control_plane_url, admin, gw.org, "bob")
+    assert _live_documents(ch_client, gw.org, col, "doc/notes") == 0

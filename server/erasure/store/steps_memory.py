@@ -285,17 +285,8 @@ async def supersede_chunks_by_user(
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    """The chunks of every document the user wrote, in any namespace of the org."""
-    if purge_mode():
-        return await count_then_mutate(
-            "loom.chunks",
-            count_where=ORG_UID,
-            mutation="DELETE",
-            mutation_where=ORG_UID,
-            params={"org": org, "uid": user_id},
-            final=False,
-            ch=ch,
-        )
+    """The chunks of every document the user wrote, in any namespace of the org
+    (a user erasure supersedes; it never purges)."""
     return await count_then_mutate(
         "loom.chunks",
         count_where=ORG_UID + " AND " + LIVE_CHUNK_SQL,
@@ -754,43 +745,15 @@ async def tombstone_documents_by_namespace(
     )
 
 
-# Another writer's live versions of a document whose newest version is the user's:
-# what deleting the user's rows would otherwise bring back.
-_REPLACED_BY_USER = (
-    "org = {org:String} AND user_id != {uid:String} AND superseded_at IS NULL"
-    " AND (namespace, source_uri) IN ("
-    " SELECT namespace, source_uri FROM loom.documents FINAL"
-    " WHERE org = {org:String} AND user_id = {uid:String})"
-)
-
-
 async def tombstone_documents_by_user(
     org: str,
     user_id: str,
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    """Supersede the documents the user wrote, in any namespace of the org; a
-    purge deletes them instead, after superseding the versions their rewrite
-    replaced, so another writer's older version never reads as live again."""
-    if purge_mode():
-        await count_then_mutate(
-            "loom.documents",
-            count_where=_REPLACED_BY_USER,
-            mutation="UPDATE superseded_at = {now:DateTime}",
-            mutation_where=_REPLACED_BY_USER,
-            params={"org": org, "uid": user_id},
-            final=False,  # those versions are hidden under FINAL until the delete
-            ch=ch,
-        )
-        return await count_then_mutate(
-            "loom.documents",
-            count_where=ORG_UID,
-            mutation="DELETE",
-            mutation_where=ORG_UID,
-            params={"org": org, "uid": user_id},
-            ch=ch,
-        )
+    """Supersede the documents the user wrote, in any namespace of the org. A
+    user erasure never purges (only a `namespace_list` erasure does): the
+    versions stay, superseded, so none another writer replaced reads as live."""
     where = ORG_UID + " AND superseded_at IS NULL"
     return await count_then_mutate(
         "loom.documents",

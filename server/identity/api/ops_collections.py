@@ -33,6 +33,9 @@ collection_create = Operation(
     required_role=Role.VIEWER,
     audit=True,
     skip_namespace_authz=True,
+    # A scoped token is gated on its best namespace role, not refused for
+    # naming no namespace; the handler checks the parent through its claim.
+    deployment_scoped=True,
 )
 
 collection_move = Operation(
@@ -56,10 +59,12 @@ collection_list = Operation(
     handler=handle_collection_list,
     idempotent=True,
     budget_p99_ms=80,
-    # Lists only what the caller's grants reach.
+    # Lists only what the caller's grants reach (a scoped token: no further
+    # than its claim), so a scoped token is gated on its best namespace role.
     required_role=Role.VIEWER,
     audit=False,
     skip_namespace_authz=True,
+    deployment_scoped=True,
 )
 
 collection_delete = Operation(

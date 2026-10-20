@@ -544,8 +544,8 @@ def test_a_tree_or_group_row_outranks_the_row_it_replaces_whatever_the_clock() -
 def test_a_collection_delete_cut_short_is_closed_by_its_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The tree is retired before the directory row goes inactive, so a retry
-    after a failed retire finds the row still active and retires again."""
+    """The tree is retired on every delete, after the directory row: a retry
+    after a failed retire finds the row inactive and still closes the tree."""
     from contextlib import asynccontextmanager
 
     from server.identity.api.models import NamespaceDeleteInput
@@ -582,9 +582,9 @@ def test_a_collection_delete_cut_short_is_closed_by_its_retry(
     delete = NamespaceDeleteInput(org=ORG, namespace="col-hr")
     with pytest.raises(RuntimeError):
         asyncio.run(namespace.handle_namespace_delete(delete))
-    assert directory["active"] is True, "nothing closed the row while the tree stands"
-    assert asyncio.run(namespace.handle_namespace_delete(delete)).deleted is True
-    assert retired == ["failed", "col-hr"] and directory["active"] is False
+    assert directory["active"] is False and retired == ["failed"], "the tree still stands"
+    asyncio.run(namespace.handle_namespace_delete(delete))
+    assert retired == ["failed", "col-hr"], "the retry closes it"
 
 
 def test_a_grant_to_a_group_is_written_under_the_groups_claim(
@@ -661,3 +661,46 @@ def test_the_gate_never_takes_me_as_a_namespace_name(auth: str | None) -> None:
     target = gates.authz_target(op, org=ORG, namespace="@me", auth=who)
     with pytest.raises(PermissionError, match="personal collection"):
         asyncio.run(gates.authorize(op, who, target, transport="mcp"))
+
+
+def test_a_write_of_the_same_text_keeps_its_author_and_new_text_takes_the_writer() -> None:
+    from datetime import datetime
+
+    from server.knowledge.app.writes import _author_for
+    from server.knowledge.store.documents import DocumentRow
+
+    bobs = DocumentRow(
+        org=ORG,
+        namespace="col-hr",
+        source_uri="doc/1",
+        doc_id="d",
+        content="plan",
+        version=1,
+        ingested_at=datetime(2026, 1, 1),
+        agent="-",
+        user_id="bob",
+        actor="user:bob",
+        source_class="asserted",
+    )
+    alice = {"agent": "-", "user_id": "alice", "actor": "user:alice", "source_class": "asserted"}
+    assert _author_for(bobs, "plan", alice)["user_id"] == "bob"  # a re-save, a tag edit
+    assert _author_for(bobs, "new plan", alice) == alice
+    gone = bobs.model_copy(update={"superseded_at": datetime(2026, 1, 2)})
+    assert _author_for(gone, "plan", alice) == alice, "a deleted document's text is written anew"
+    assert _author_for(None, "plan", alice) == alice
+
+
+@pytest.mark.parametrize("op_name", ["collection.list", "collection.create"])
+def test_a_scoped_token_may_list_and_create_collections(op_name: str) -> None:
+    """Neither op names a namespace to gate; a scoped token is admitted on its
+    best namespace role rather than refused as IDENTITY_INCOMPLETE."""
+    from server.auth import authz
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    op = OPERATIONS_BY_NAME[op_name]
+    scoped = _person(namespaces=("col-q3",), ns_roles=(("col-q3", "viewer"),))
+    asyncio.run(
+        authz.check_authorized(
+            scoped, op.required_role, org=ORG, namespace=None, **authz.scope_flags(op)
+        )
+    )

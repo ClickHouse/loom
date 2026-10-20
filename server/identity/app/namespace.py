@@ -600,22 +600,23 @@ async def handle_namespace_delete(
     async with account_change(input.org, input.namespace):  # as register holds it
         existing = await namespaces_repo.fetch_row(input.org, input.namespace, ch=ch)
         now = naive_utc_now_seconds()
-        if existing is None or not bool(existing.get("active", False)):
-            return NamespaceDeleteOutput(
-                deleted=False,
-                namespace=input.namespace,
-                updated_at=now,
-            )
+        if existing is None:
+            return NamespaceDeleteOutput(deleted=False, namespace=input.namespace, updated_at=now)
+        active = bool(existing.get("active", False))
+        if active:
+            row = dict(existing)
+            row["active"] = False
+            row["updated_at"] = now
+            await ch.insert("loom.namespaces", [row])
         if existing.get("kind") in ("collection", "personal"):
-            # The tree first: only it decides access, and a delete cut short
-            # after it is retried while the directory row is still active.
+            # The tree last, and on every delete: only it decides access, so a
+            # delete cut short before it is retried (the gate still admits it)
+            # and closes the collection then. Retiring twice changes nothing.
             from server.identity.app.collections import retire
 
             await retire(input.org, input.namespace)
-        row = dict(existing)
-        row["active"] = False
-        row["updated_at"] = now
-        await ch.insert("loom.namespaces", [row])
+        if not active:
+            return NamespaceDeleteOutput(deleted=False, namespace=input.namespace, updated_at=now)
     # The claim cap reads which accounts tie a person's spellings from this table.
     await grant_cache.changed(input.org)
     return NamespaceDeleteOutput(

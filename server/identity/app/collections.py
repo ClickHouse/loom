@@ -12,6 +12,7 @@ from server.core.ch import get_client, own_write_reads
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.errors import AuthInsufficientError, PreconditionFailedError, ValidationError
 from server.core.naming import validate_namespace_name
+from server.core.principals import PERSONAL_PREFIX
 from server.identity.api.models import NamespaceDeleteInput, NamespaceRegisterInput
 from server.identity.api.models_collections import (
     CollectionCreateInput,
@@ -64,7 +65,11 @@ def _check_name(namespace: str) -> None:
         validate_namespace_name(namespace)
     except ValueError as e:
         raise ValidationError(str(e)) from e
-    if not sharing.is_collection(namespace) or sharing.is_personal(namespace):
+    if sharing.is_personal(namespace):
+        raise ValidationError(
+            f"the prefix {PERSONAL_PREFIX!r} is reserved for personal collections"
+        )
+    if not sharing.is_collection(namespace):
         raise ValidationError(f"a collection's name starts with {sharing.COLLECTION_PREFIX!r}")
 
 

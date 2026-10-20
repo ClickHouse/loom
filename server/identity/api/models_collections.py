@@ -66,8 +66,9 @@ class CollectionListOutput(BaseModel):
 
 
 class CollectionDeleteInput(BaseModel):
-    """Delete a collection: it leaves the directory and the tree; its documents
-    stay until an erasure of the namespace removes them."""
+    """Delete a collection: it leaves the directory and the tree, and its name is
+    never used again. Its documents stay until an org admin's erasure of the
+    namespace removes them: once deleted, the collection admits no one else."""
 
     org: str
     namespace: str

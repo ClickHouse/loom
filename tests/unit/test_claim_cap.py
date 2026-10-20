@@ -564,6 +564,24 @@ def test_a_failed_re_read_on_a_stale_watermark_serves_the_last_mark_s_entry(
     assert grants.rank("team") == grant_rank("writer"), "no watermark move was seen since"
 
 
+def test_a_read_on_a_stale_watermark_leaves_the_last_mark_s_entry_to_fall_back_on(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _watching(ch)
+    ch.grants["team"] = ("writer", "active", False)
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    monkeypatch.setattr(settings, "grant_cache_ttl_seconds", 0.0)  # the entry has aged
+    _stale_watermark(monkeypatch)
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))  # read while stale: answered, not kept
+
+    async def _down(*_a: Any, **_k: Any) -> dict | None:
+        raise RuntimeError("replica away")
+
+    monkeypatch.setattr(ch, "query_one", _down)
+    grants = asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    assert grants.rank("team") == grant_rank("writer"), "the last mark's entry still stands in"
+
+
 def test_a_failed_poll_turns_stale_past_the_bound(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:
     _watching(ch)
     asyncio.run(grant_cache.grant_map(ORG, "alice"))

@@ -231,7 +231,7 @@ async def delegated_reach(
     return writable, readable
 
 
-async def hidden_namespaces(org: str) -> list[str]:
+async def restricted_namespaces_hidden_from(org: str) -> list[str]:
     """Restricted namespaces of `org` the current caller may NOT read — the
     set an org-wide rollup must exclude even for an org admin (collections are
     left out by `collection_clause`). Empty with auth disabled; `["*"]` when it
@@ -323,7 +323,7 @@ async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeF
     ):
         # An org admin sees everything EXCEPT the restricted namespaces it
         # holds no grant + claim for, and the collections it cannot read.
-        hidden = await hidden_namespaces(org)
+        hidden = await restricted_namespaces_hidden_from(org)
         if hidden == ["*"]:
             return OrgScopeFilter(accessible=False, where="", params={})
         where, params = await collection_clause(org, column)
@@ -350,7 +350,7 @@ __all__ = [
     "readable_named_claims",
     "resolve_my_namespaces",
     "resolve_org_scope",
-    "hidden_namespaces",
+    "restricted_namespaces_hidden_from",
     "rollup_member_namespaces",
     "set_current_auth",
 ]

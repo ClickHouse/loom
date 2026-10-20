@@ -7080,14 +7080,14 @@ class CollectionCreateOutput(TypedDict, total=False):
 
 
 class CollectionDeleteInput(TypedDict, total=False):
-    "Delete a collection: it leaves the directory and the tree; its documents"
+    "Delete a collection: it leaves the directory and the tree, and its name is"
 
     org: Required[str]
     namespace: Required[str]
 
 
 class CollectionDeleteBody(TypedDict, total=False):
-    "Delete a collection: it leaves the directory and the tree; its documents"
+    "Delete a collection: it leaves the directory and the tree, and its name is"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
