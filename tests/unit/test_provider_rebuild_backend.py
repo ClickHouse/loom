@@ -138,3 +138,19 @@ async def test_failed_cache_verification_never_publishes(setup):
     assert failed["error_code"] == "rebuild_verify_failed"
     effects["publish_prepared_table"].assert_not_awaited()
     assert json.loads(writes[-1]["progress"])["manifest"] == manifest.to_dict()
+
+
+@pytest.mark.asyncio
+async def test_an_unread_switch_leaves_the_step_to_run_again_not_failed(setup):
+    from server.llm import customer
+
+    backend, manifest, effects, _, writes, current = setup
+    current.update(
+        state="validating",
+        progress=json.dumps(
+            {"phase": "verify", "table_index": len(REBUILD_TABLES), "manifest": manifest.to_dict()}
+        ),
+    )
+    effects["verify_staged_cache"].side_effect = customer.SwitchUnread("stale")
+    assert await runner.run_rebuild_step(current, backend) == current
+    assert writes == []  # no checkpoint: the job stays where it was

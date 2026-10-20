@@ -173,6 +173,8 @@ async def rebuild_batch(
             except customer.ModelCallsDisabled:
                 left.update(positions)  # switched off during the batch
                 break
+            except customer.SwitchUnread:
+                raise  # not a provider failure: the step waits for the switch to be read
             except Exception:  # noqa: BLE001 — provider errors must not expose keys or source text in status
                 raise RebuildBatchError("embedding_provider_failed") from None
             _validate_vectors(produced, len(part), target.dim)

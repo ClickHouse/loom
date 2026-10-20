@@ -399,8 +399,16 @@ async def test_the_extraction_queue_leaves_a_switched_off_orgs_requests_pending(
     assert done == ["q2", "q1"] and errors == []
 
 
+@pytest.mark.parametrize(
+    "error, waits",
+    [
+        (customer.ModelCallsDisabled, True),
+        (customer.SwitchUnread, True),  # the switch went unread after the claim
+        (customer.Unattributed, False),  # names no customer: it never will, so it fails
+    ],
+)
 async def test_a_request_switched_off_after_its_claim_spends_no_attempt(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, error: type[Exception], waits: bool
 ) -> None:
     from server.memory.app import extraction_queue as q
     from server.memory.workers import extraction_queue as w
@@ -411,7 +419,7 @@ async def test_a_request_switched_off_after_its_claim_spends_no_attempt(
         return [{"org": "acme", "namespace": "n", "queue_id": "q1", "enqueued_at": 1}]
 
     async def replay_row(row: dict[str, Any]) -> int:
-        raise customer.ModelCallsDisabled("switched off")
+        raise error("held")
 
     async def mark_error(row: dict[str, Any], **_: Any) -> str:
         errors.append(row["queue_id"])
@@ -422,7 +430,10 @@ async def test_a_request_switched_off_after_its_claim_spends_no_attempt(
     monkeypatch.setattr(q, "mark_error", mark_error)
     monkeypatch.setattr("server.core.ch.get_client", lambda: object())
     result = await w.run_pass(w.ExtractionQueueConfig())
-    assert errors == [] and result.skipped == 1
+    if waits:
+        assert errors == [] and result.skipped == 1
+    else:
+        assert errors == ["q1"] and result.skipped == 0
 
 
 async def test_the_entity_extractor_selects_no_row_of_a_switched_off_org(
@@ -932,6 +943,26 @@ def test_the_reembed_filter_leaves_out_switched_off_orgs() -> None:
         ["org", "tombstoned_at"], "m", org=None, namespace=None, exclude_orgs=frozenset({"acme"})
     )
     assert "NOT has({off:Array(String)}, org)" in sql and params["off"] == ["acme"]
+
+
+def test_a_switch_gone_unread_mid_rebuild_batch_is_no_provider_failure(monkeypatch) -> None:
+    from server.insights.app import provider_rebuild_batch as batch
+
+    monkeypatch.setattr(
+        batch,
+        "_inputs",
+        lambda table, rows, source: ([r["text"] for r in rows], [(0, "embedding")]),
+    )
+
+    class _E:
+        model_name, dim = "fake", 2
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            raise customer.SwitchUnread("stale")
+
+    _off()
+    with pytest.raises(customer.SwitchUnread):  # the step waits; the job does not fail
+        asyncio.run(batch.rebuild_batch("memory_embeddings", [{"org": "acme", "text": "a"}], _E()))
 
 
 def test_a_rebuild_stages_a_switched_off_orgs_rows_without_a_vector(monkeypatch) -> None:

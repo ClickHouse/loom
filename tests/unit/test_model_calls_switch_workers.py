@@ -668,6 +668,11 @@ def test_the_retrieval_judge_drops_a_switched_off_orgs_sample(monkeypatch) -> No
     assert sent == [] and scored == []
     asyncio.run(rj._judge_one({**item, "org": "beta"}))
     assert sent == ["beta"] and scored
+    sent.clear()
+    scored.clear()
+    _stale()
+    asyncio.run(rj._judge_one({**item, "org": "beta"}))  # maybe off: dropped, nothing raises
+    assert sent == [] and scored == []
 
 
 def test_the_code_link_policy_leaves_a_switched_off_orgs_links_due(monkeypatch) -> None:

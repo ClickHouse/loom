@@ -340,8 +340,8 @@ async def _rerank_with_builtin_openai(
                 user=user_prompt,
                 max_tokens=rerank_max_tokens,
             )
-    except customer.REFUSALS:
-        raise  # a missed path or a switched-off org: never "kept the input order"
+    except customer.HOLDS:
+        raise  # a refusal or an unread switch: never "kept the input order"
     except Exception as e:  # noqa: BLE001 — a failed LLM rerank keeps the input order
         log.warning("builtin:openai rerank failed (%s); fallback", e)
         _degradations.note("rerank:openai", "input_order_kept", e)

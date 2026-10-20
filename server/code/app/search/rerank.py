@@ -127,8 +127,8 @@ async def _rerank_units(
             candidates=candidates,
             excerpt_chars=excerpt_chars,
         )
-    except customer.REFUSALS:
-        raise  # a missed path or a switched-off org, not a provider fault
+    except customer.HOLDS:
+        raise  # a refusal or an unread switch, not a provider fault
     except Exception as e:  # noqa: BLE001 — fail-open keeps fused order
         logger.warning("code.search rerank failed (%s); fused order kept", e)
         return units, False

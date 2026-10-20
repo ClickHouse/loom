@@ -364,8 +364,8 @@ async def _judge_one(item: dict[str, Any]) -> None:
             out = await client.complete(
                 _JUDGE_SYSTEM, user, max_tokens=120, response_format={"type": "json_object"}
             )
-    except customer.ModelCallsDisabled:
-        return  # a sample, not owed work: an org switched off sends none of its text
+    except customer.HOLDS:
+        return  # a sample, not owed work: an org off, or maybe off, sends none of its text
     finally:
         from server.workers.cost_event import emit_worker_cost_event_for
 

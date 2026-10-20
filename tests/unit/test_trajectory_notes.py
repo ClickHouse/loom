@@ -266,6 +266,49 @@ async def test_a_call_the_switch_holds_propagates_from_events_and_notes(
         await tn.distill_notes(SESSION, obs, llm=_Held(), ch=_CH())
 
 
+_NOTES_REPLY = (
+    '{"procedure": {"name": "Fix and re-test", "situation": "a unit test fails after an edit",'
+    ' "steps": ["read the failing test", "edit", "pytest -q"]},'
+    ' "hint": {"title": "pytest in this repo", "content": "- run pytest -q from the repo root"}}'
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("write", ["procedure", "hint"])
+@pytest.mark.parametrize("held", ["switched_off", "stale"])
+async def test_a_call_the_switch_holds_propagates_from_the_procedure_and_hint_writes(
+    monkeypatch, write: str, held: str
+) -> None:
+    """The notes call went out; the write's own embed is then held."""
+    import server.memory.app.procedure as proc
+    from server.llm import customer
+    from server.memory.app import write as write_mod
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "observe_extract_notes_min_observations", 0)
+    error = customer.ModelCallsDisabled if held == "switched_off" else customer.SwitchUnread
+
+    async def fake_add(inp):
+        if write == "procedure":
+            raise error("held")
+        return SimpleNamespace(memory_key="procedure:x")
+
+    async def fake_set(inp):
+        if write == "hint":
+            raise error("held")
+        return SimpleNamespace(memory_key=inp.memory_key)
+
+    async def no_supersede(*a: Any, **k: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(proc, "handle_procedure_add", fake_add)
+    monkeypatch.setattr(write_mod, "handle_memory_set", fake_set)
+    monkeypatch.setattr(tn, "supersede_session_procedures", no_supersede)
+    obs = [tn.observation_from_row(r) for r in ROWS]
+    with pytest.raises(error):
+        await tn.distill_notes(SESSION, obs, llm=_LLM([_NOTES_REPLY]))
+
+
 @pytest.mark.asyncio
 async def test_distill_notes_writes_a_procedure_and_a_hint(monkeypatch) -> None:
     from server.settings import settings

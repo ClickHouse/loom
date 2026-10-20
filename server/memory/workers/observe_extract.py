@@ -336,10 +336,10 @@ async def _distill_extras(
     session: dict[str, Any], observations: list[Any], *, context: list[Any] | None = None
 ) -> Any:
     """Events + notes for one session; a missing model or any error leaves an
-    empty result. With
-    `context` the events are numbered over, and the notes
-    written from, the WHOLE session so far; only this pass's observations
-    get new events."""
+    empty result, except a call the switch holds (`customer.HOLDS`), which
+    propagates so the session is not marked done. With `context` the events
+    are numbered over, and the notes written from, the WHOLE session so far;
+    only this pass's observations get new events."""
     from server.memory.app import trajectory_notes as tn
     from server.settings import settings
 

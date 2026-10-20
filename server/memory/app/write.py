@@ -219,8 +219,8 @@ async def _set_resolve_type(input: MemorySetInput) -> tuple[MemorySetInput, str,
                     )
                 if classified:
                     input = input.model_copy(update={"memory_type": classified})
-        except customer.REFUSALS:
-            raise  # a missed path or a switched-off org, not a classifier fault
+        except customer.HOLDS:
+            raise  # a refusal or an unread switch, not a classifier fault
         except Exception as e:  # noqa: BLE001 — classify failure keeps the caller-supplied type
             log.warning("classify failed (non-fatal); using caller-supplied type: %s", e)
     resolved_memory_type = input.memory_type

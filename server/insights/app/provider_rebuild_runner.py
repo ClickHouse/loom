@@ -15,6 +15,7 @@ from uuid import UUID
 from server.insights.domain.provider_rebuild import REBUILD_TABLES
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest
 from server.insights.store.provider_configuration import write_configuration
+from server.llm import customer
 
 Write = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -184,6 +185,8 @@ async def run_rebuild_step(
     phase = progress["phase"]
     try:
         advanced = await _advance(UUID(str(row["config_id"])), progress, backend)
+    except customer.SwitchUnread:
+        return row  # the switch could not be read: the step runs again once it is
     except Exception:  # noqa: BLE001 — retain the last cursor and expose no provider/source secrets
         return await _checkpoint(write, row, _progress(row), "failed", f"rebuild_{phase}_failed")
     if not advanced:

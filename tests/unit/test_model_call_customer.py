@@ -518,17 +518,45 @@ def test_a_cached_answer_does_not_hide_a_missed_path(metered) -> None:
     cache_mod.reset_stats()  # the hit counts in the process-wide stats other tests read
 
 
-def test_code_search_rerank_lets_a_refusal_through(metered, monkeypatch) -> None:
+@pytest.mark.parametrize("held", ["unattributed", "stale"])
+def test_code_search_rerank_lets_a_refusal_through(metered, monkeypatch, held: str) -> None:
     from server.code.app.search import rerank as code_rerank
     from server.memory.app import rerank as rerank_mod
 
     async def refusing(**kw: Any) -> Any:
+        if held == "stale":
+            raise customer.SwitchUnread("stale")
         await customer.require()
         raise AssertionError("not reached")
 
+    error = customer.SwitchUnread if held == "stale" else customer.Unattributed
     monkeypatch.setattr(rerank_mod, "rerank", refusing)
-    with pytest.raises(customer.Unattributed):  # not "fused order kept"
+    with pytest.raises(error):  # not "fused order kept"
         asyncio.run(code_rerank._rerank_units("ops", "q", []))
+
+
+def test_inline_classify_lets_an_unread_switch_through(metered, monkeypatch) -> None:
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import classify as classify_mod
+    from server.memory.app import namespace_types, write
+
+    async def config(org: str, ns: str) -> tuple[str, str]:
+        return "https://classify.example", "t"
+
+    async def types(org: str, ns: str) -> list[Any]:
+        return [{"memory_type": "observation"}]
+
+    async def stale(**_: Any) -> str:
+        raise customer.SwitchUnread("stale")
+
+    monkeypatch.setattr(classify_mod, "get_namespace_classify_config", config)
+    monkeypatch.setattr(namespace_types, "list_type_configs", types)
+    monkeypatch.setattr(classify_mod, "classify", stale)
+    body = MemorySetInput(
+        org="acme", namespace="ns", agent="a", memory_key="k", value="v", classify=True
+    )
+    with customer.for_org("acme"), pytest.raises(customer.SwitchUnread):  # not the caller's type
+        asyncio.run(write._set_resolve_type(body))
 
 
 def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_header(
@@ -584,8 +612,9 @@ def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_heade
     provider_health.reset()  # classify recorded a success in the process-wide state
 
 
+@pytest.mark.parametrize("held", ["unattributed", "stale"])
 def test_the_llm_reranker_lets_a_refusal_through_and_records_no_outage(
-    metered, monkeypatch
+    metered, monkeypatch, held: str
 ) -> None:
     from server.memory.app import rerank as rerank_mod
     from server.observability import provider_health
@@ -594,13 +623,16 @@ def test_the_llm_reranker_lets_a_refusal_through_and_records_no_outage(
         """A real-looking client: the reranker skips the fake one."""
 
         async def complete(self, *a: Any, **k: Any) -> Any:
+            if held == "stale":
+                raise customer.SwitchUnread("stale")
             await customer.require()
             raise AssertionError("not reached")
 
+    error = customer.SwitchUnread if held == "stale" else customer.Unattributed
     monkeypatch.setattr("server.llm.client.get_llm_client", lambda: _Metered())
     provider_health.reset()
     candidates = [rerank_mod.RerankCandidate("k", "ns", "v", "fact", 1.0)]
-    with pytest.raises(customer.Unattributed):
+    with pytest.raises(error):
         asyncio.run(rerank_mod._rerank_with_builtin_openai("builtin:openai", "q", candidates))
     assert not provider_health.status()["providers"].get("rerank:openai", {}).get("failing")
 

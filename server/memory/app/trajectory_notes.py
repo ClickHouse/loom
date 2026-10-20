@@ -22,8 +22,10 @@ the other two pools at the same moment, when a session is distilled:
   `hint`).
 
 Everything is bounded (events per session, characters per prompt), every
-write is fail-open, and the pure parts (pairing, parsing, rendering) are
-testable without a model or a database.
+write is fail-open except for a call the switch holds (`customer.HOLDS`),
+which propagates so the caller leaves the session to distil again, and the
+pure parts (pairing, parsing, rendering) are testable without a model or a
+database.
 """
 
 from __future__ import annotations

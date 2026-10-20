@@ -236,7 +236,7 @@ async def _embed_batch(embedder: Any, texts: list[str]) -> list[tuple[list[float
                 len(vecs),
                 len(texts),
             )
-        except (customer.ModelCallsDisabled, customer.SwitchUnread):
+        except customer.HOLDS:
             raise  # the org is switched off, or may be: no row's attempt is spent
         except Exception as e:  # noqa: BLE001 — batch failure falls back to per-row
             log.info(
@@ -253,7 +253,7 @@ async def _embed_batch(embedder: Any, texts: list[str]) -> list[tuple[list[float
             if len(one) != 1:
                 raise RuntimeError(f"embed_many returned {len(one)} vectors for 1 input")
             out.append((one[0], ""))
-        except (customer.ModelCallsDisabled, customer.SwitchUnread):
+        except customer.HOLDS:
             raise
         except Exception as e:  # noqa: BLE001 — per-row isolation is the point
             out.append((None, f"{type(e).__name__}: {e}"[:512]))

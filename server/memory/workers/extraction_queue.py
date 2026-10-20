@@ -111,9 +111,11 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
     async def _replay_one(row: dict[str, Any]) -> None:
         try:
             written = await q.replay_row(row)
-        except customer.ModelCallsDisabled:
-            # Switched off after the claim: no attempt spent. The lease runs
-            # out and the row waits, unclaimed, until the org is back on.
+        except (customer.ModelCallsDisabled, customer.SwitchUnread):
+            # Switched off after the claim, or the switch went unread: no attempt
+            # spent. The lease runs out and the row waits, unclaimed, until the
+            # org is back on or the switch is read. Not `HOLDS`: a request naming
+            # no customer never will, so it spends its attempts and fails.
             result.skipped += 1
             return
         except Exception as e:
