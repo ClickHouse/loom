@@ -185,7 +185,7 @@ class ProviderSettings(ModelSettings):
         raw = self.inference_feature_map_json.strip()
         if not raw:
             return {}
-        return dict(json_map_items(raw, "LOOM_INFERENCE_FEATURE_MAP_JSON"))
+        return dict(json_map_items(raw, "LOOM_INFERENCE_FEATURE_MAP_JSON", strings_only=True))
 
     @model_validator(mode="after")
     def _check_customer_headers(self) -> ProviderSettings:

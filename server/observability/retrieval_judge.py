@@ -358,7 +358,7 @@ async def _judge_one(item: dict[str, Any]) -> None:
     started = time.monotonic()
     cost_accumulator.begin_op()
     try:
-        # The prompt is the org's query and memory text, so the call is the org's:
+        # The prompt is the org's query and memory text, so the call is the org's,
         # metered to it and refused while its model calls are off.
         with llm_stage("retrieval_judge"), customer.for_org(item["org"]):
             out = await client.complete(

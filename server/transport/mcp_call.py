@@ -282,7 +282,7 @@ async def _call_tool(
         except Exception:  # noqa: BLE001 — fail closed
             _ident["capture_level"] = "off"
         _otel_pre.set_loom_attributes(**_ident)
-    except Exception:  # noqa: BLE001 — attribution must not break a tool call
+    except Exception:  # noqa: BLE001 — an entry whose identity fails names no org
         from server.observability import genai as _genai
 
         # Not the previous batch entry's org: this entry's model calls name none and refuse.

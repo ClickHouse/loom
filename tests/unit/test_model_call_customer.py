@@ -643,19 +643,17 @@ def test_the_system_customer_is_named_as_configured_not_formatted(metered, monke
 
 
 def test_a_required_cell_without_its_header_refuses_rather_than_sends(monkeypatch) -> None:
-    # Load refuses this pairing; were it reached, no call goes out unmetered.
+    # Load refuses this pairing; set after load, no call goes out unmetered.
     monkeypatch.setattr(settings, "inference_customer_header", "")
     monkeypatch.setattr(settings, "inference_customer_required", True)
     with customer.for_org("acme"), pytest.raises(customer.Unattributed, match="REQUIRED"):
         asyncio.run(customer.require())
 
 
-def test_a_jwt_key_map_with_a_non_string_key_refuses_to_start(monkeypatch) -> None:
-    # json_map_items refuses a non-string value for every map setting; this one used
-    # to load and fail only the tokens of that kid.
+def test_a_feature_map_with_a_non_string_value_refuses_to_start(monkeypatch) -> None:
     from server.settings import Settings
 
-    monkeypatch.setenv("LOOM_JWT_PUBLIC_KEYS_JSON", '{"kid-1": null}')
+    monkeypatch.setenv("LOOM_INFERENCE_FEATURE_MAP_JSON", '{"hyde": null}')
     with pytest.raises(ValueError, match="map names to strings"):
         Settings()
 

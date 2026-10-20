@@ -6,11 +6,11 @@ classify request names its customer, the org whose data it carries, and
 names the org it addresses, as authorized for its token, through the identity
 the transports record for every op (`observability.genai`); a background job
 or a CLI names the org of the rows it works on with `for_org`, never
-inheriting a worker's identity; a call for the deployment itself (its startup probe, the
-recalibration worker's fixed pairs, a provider check) runs under `system()`
-and names `LOOM_INFERENCE_SYSTEM_CUSTOMER`. A call that names none is refused
-(`Unattributed`), never sent to be billed to no one: one call never carries two
-customers, so a job batching several orgs' rows splits them first.
+inheriting a worker's identity; a call for the deployment itself (its startup
+probe, the recalibration worker's fixed pairs, a provider check) runs under
+`system()` and names `LOOM_INFERENCE_SYSTEM_CUSTOMER`. A call that names none
+is refused (`Unattributed`), never sent to be billed to no one: one call never
+carries two customers, so a job batching several orgs' rows splits them first.
 
 An org an admin switched off (`org.set_model_calls`, loom.org_model_calls)
 gets no model call at all, header or not, and no cached vector or answer
@@ -123,7 +123,8 @@ async def require() -> str:
     if org and await switched_off(org):
         raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
     if not settings.inference_customer_header:
-        if settings.inference_customer_required:  # load refuses this; never send unmetered
+        # Load refuses this pairing; a value set after load still never sends unmetered.
+        if settings.inference_customer_required:
             raise Unattributed(
                 "LOOM_INFERENCE_CUSTOMER_REQUIRED is set without LOOM_INFERENCE_CUSTOMER_HEADER"
             )
@@ -163,7 +164,7 @@ def gateway_feature() -> str:
     """The feature as the gateway names it (`LOOM_INFERENCE_FEATURE_MAP_JSON`),
     else Loom's own name."""
     mine = feature()
-    names = settings.feature_map()  # decoded once per value (json_map_items)
+    names = settings.feature_map()  # decoded once per value
     return names.get(mine) or names.get("*") or mine
 
 
