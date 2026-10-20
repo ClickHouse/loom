@@ -707,6 +707,12 @@
           "type": "integer",
           "description": "The run's coverage is read in this many slices by file hash, two statements per slice. One slice must fit the source server's per-query memory, and a source with a per-statement-shape hourly quota (a public playground allows 100) must take a whole import plus a retry: a nightly run read in 16 slices is 16 statements of each shape."
         },
+        "code_coverage_source_connect_timeout_s": {
+          "default": 10.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the coverage import waits to connect to the source endpoint."
+        },
         "code_coverage_source_database": {
           "default": "default",
           "type": "string",
@@ -2428,7 +2434,7 @@
           "default": 20.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, GitHub, issuer discovery, the coverage source, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients."
+          "description": "Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, GitHub, issuer discovery, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients."
         },
         "identity_provider": {
           "default": "",

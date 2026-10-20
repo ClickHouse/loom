@@ -50,7 +50,9 @@ class HttpCoverageSource:
         self._url = url.rstrip("/") + "/"
         self._auth = httpx.BasicAuth(user, password) if user else None
         self._database = database
-        self._timeout = httpx.Timeout(timeout_s, connect=settings.http_client_connect_timeout_s)
+        self._timeout = httpx.Timeout(
+            timeout_s, connect=settings.code_coverage_source_connect_timeout_s
+        )
 
     async def rows(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         query: dict[str, str] = {"database": self._database, "default_format": "JSONEachRow"}
@@ -69,8 +71,6 @@ class HttpCoverageSource:
 
 def source_from_settings() -> HttpCoverageSource | None:
     """The configured source, None when `code_coverage_source_url` is empty."""
-    from server.settings import settings
-
     if not settings.code_coverage_source_url:
         return None
     return HttpCoverageSource(

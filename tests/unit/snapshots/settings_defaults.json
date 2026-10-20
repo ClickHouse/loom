@@ -123,6 +123,7 @@
  "code_coverage_notify_interval_seconds": 60,
  "code_coverage_run_window_hours": 6,
  "code_coverage_shards": 16,
+ "code_coverage_source_connect_timeout_s": 10.0,
  "code_coverage_source_database": "default",
  "code_coverage_source_timeout_s": 300.0,
  "code_coverage_source_url": "",

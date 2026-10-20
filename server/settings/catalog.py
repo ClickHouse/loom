@@ -1485,6 +1485,8 @@ class CodeSettings(BaseModel):
     # Seconds one source query may take before the import stops (no rows
     # are tombstoned by an import that did not finish).
     code_coverage_source_timeout_s: float = 300.0
+    # Seconds the coverage import waits to connect to the source endpoint.
+    code_coverage_source_connect_timeout_s: float = Field(default=10.0, gt=0)
     # Check names (a LIKE pattern) whose runs carry per-test coverage.
     code_coverage_check_pattern: str = "%per_test_coverage%"
     # Jobs of one run start within this many hours of its newest job.
@@ -4135,8 +4137,8 @@ class RuntimeSettings(BaseModel):
 
     # ---- outbound HTTP ----
     # Seconds the shared outbound HTTP clients (server/clients/_http.py: model and
-    # embedding APIs, GitHub, issuer discovery, the coverage source, provider checks) wait
-    # on a call that sets no timeout of its own. Read when a process builds the clients.
+    # embedding APIs, GitHub, issuer discovery, provider checks) wait on a call that sets
+    # no timeout of its own. Read when a process builds the clients.
     http_client_timeout_s: float = Field(default=20.0, gt=0)
     # Seconds the shared outbound HTTP clients wait to open a connection.
     http_client_connect_timeout_s: float = Field(default=5.0, gt=0)

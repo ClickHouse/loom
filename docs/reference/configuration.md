@@ -622,6 +622,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_COVERAGE_SHARDS` | `int` | `16` |  | The run's coverage is read in this many slices by file hash, two statements per slice. One slice must fit the source server's per-query memory, and a source with a per-statement-shape hourly quota (a public playground allows 100) must take a whole import plus a retry: a nightly run read in 16 slices is 16 statements of each shape. |
 | `LOOM_CODE_COVERAGE_SPECIFIC_MAX_TESTS` | `int` | `200` |  | A line executed by more tests than this names none of them (shared plumbing every query runs); a test-map row needs a line under the cap. |
 | `LOOM_CODE_COVERAGE_SOURCE_TIMEOUT_S` | `float` | `300.0` |  | Seconds one source query may take before the import stops (no rows are tombstoned by an import that did not finish). |
+| `LOOM_CODE_COVERAGE_SOURCE_CONNECT_TIMEOUT_S` | `float` | `10.0` |  | Seconds the coverage import waits to connect to the source endpoint. |
 | `LOOM_CODE_COVERAGE_CHECK_PATTERN` | `str` | `'%per_test_coverage%'` |  | Check names (a LIKE pattern) whose runs carry per-test coverage. |
 | `LOOM_CODE_COVERAGE_RUN_WINDOW_HOURS` | `int` | `6` |  | Jobs of one run start within this many hours of its newest job. |
 | `LOOM_CODE_COVERAGE_IMPORT_INTERVAL_SECONDS` | `float` | `86400.0` |  | Seconds between coverage import passes. |
@@ -1503,7 +1504,7 @@ Process shape, deployment, event stream and cost budgets.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_HTTP_CLIENT_TIMEOUT_S` | `float` | `20.0` |  | Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, GitHub, issuer discovery, the coverage source, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients. |
+| `LOOM_HTTP_CLIENT_TIMEOUT_S` | `float` | `20.0` |  | Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, GitHub, issuer discovery, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients. |
 | `LOOM_HTTP_CLIENT_CONNECT_TIMEOUT_S` | `float` | `5.0` |  | Seconds the shared outbound HTTP clients wait to open a connection. |
 | `LOOM_HTTP_CLIENT_MAX_CONNECTIONS` | `int` | `100` |  | Connections each shared outbound HTTP client keeps open at most, so one misbehaving downstream cannot exhaust the process's sockets. |
 | `LOOM_HTTP_CLIENT_MAX_KEEPALIVE_CONNECTIONS` | `int` | `20` |  | Idle connections each shared outbound HTTP client keeps for reuse. |

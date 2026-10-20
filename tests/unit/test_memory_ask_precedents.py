@@ -725,8 +725,9 @@ async def test_a_retrieving_hit_moves_the_retrieval_time_so_the_next_ask_is_fast
     assert fast_env.searches == 2 and third.route_reason == "precedent:unmoved:reused=2"
 
 
-def test_a_timeout_or_cache_lifetime_leaves_the_shape_as_it_was() -> None:
-    """Raising a reranker timeout during an incident keeps every stored precedent."""
+def test_an_operational_setting_leaves_the_shape_as_it_was() -> None:
+    """A timeout, a wait or retry bound or a cache lifetime changes no stored answer:
+    raising one during an incident keeps every stored precedent."""
     from server.memory.app.ask.handler import ask_shape_sha256
     from server.settings import Settings
     from tests.unit.test_memory_ask import _input

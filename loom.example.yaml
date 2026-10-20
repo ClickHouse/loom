@@ -1849,6 +1849,9 @@ settings:
   # an import that did not finish). [restart]
   # code_coverage_source_timeout_s: 300.0
 
+  # Seconds the coverage import waits to connect to the source endpoint. [restart]
+  # code_coverage_source_connect_timeout_s: 10.0
+
   # Check names (a LIKE pattern) whose runs carry per-test coverage. [restart]
   # code_coverage_check_pattern: "%per_test_coverage%"
 
@@ -4140,9 +4143,8 @@ settings:
   # --- outbound HTTP ---
 
   # Seconds the shared outbound HTTP clients (server/clients/_http.py: model and
-  # embedding APIs, GitHub, issuer discovery, the coverage source, provider checks) wait
-  # on a call that sets no timeout of its own. Read when a process builds the clients.
-  # [restart]
+  # embedding APIs, GitHub, issuer discovery, provider checks) wait on a call that sets
+  # no timeout of its own. Read when a process builds the clients. [restart]
   # http_client_timeout_s: 20.0
 
   # Seconds the shared outbound HTTP clients wait to open a connection. [restart]

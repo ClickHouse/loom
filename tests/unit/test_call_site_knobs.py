@@ -322,12 +322,12 @@ async def test_a_tracker_source_connects_within_its_setting(
     assert seen["connect_timeout"] == 2.5
 
 
-def test_the_coverage_source_connects_within_the_shared_clients_setting(
+def test_the_coverage_source_connects_within_its_setting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.clients.coverage_source import HttpCoverageSource
 
-    monkeypatch.setattr(settings, "http_client_connect_timeout_s", 1.25)
+    monkeypatch.setattr(settings, "code_coverage_source_connect_timeout_s", 1.25)
     source = HttpCoverageSource(
         "https://coverage.example", user="", password="", database="default", timeout_s=40.0
     )
@@ -371,6 +371,13 @@ _NEVER_ZERO = [
     "worker_backoff_cap_s",
     "worker_partial_retry_s",
 ]
+
+
+def test_the_replica_bound_retry_count_has_a_ceiling() -> None:
+    """More reconnects would only multiply a real SQL bug's round-trips."""
+    assert coerce(Settings, "ch_replica_bound_retries", 5) == 5
+    with pytest.raises(ValidationError):
+        coerce(Settings, "ch_replica_bound_retries", 6)
 
 
 @pytest.mark.parametrize("name", _NEVER_ZERO)
