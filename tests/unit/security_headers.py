@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+import httpx
 
 from server.settings import settings
 
 
-def assert_security_headers(r: Any) -> None:
+def assert_security_headers(r: httpx.Response) -> None:
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["x-frame-options"] == "DENY"
     assert "frame-ancestors 'none'" in r.headers["content-security-policy"]

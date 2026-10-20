@@ -93,12 +93,12 @@ def _gated_client(base_url: str) -> TestClient:
     attaches them."""
     from fastapi import FastAPI
 
-    from server.main import attach_web_gate
+    from server.main import attach_browser_middleware
 
     app = FastAPI()
     app.get("/")(lambda: {"ok": True})
     app.post("/v1/memory.list")(lambda: {"ok": True})
-    attach_web_gate(app)
+    attach_browser_middleware(app)
     return TestClient(app, base_url=base_url)
 
 
@@ -456,16 +456,15 @@ def test_the_host_allowlist_and_the_bind_check_share_one_loopback_definition() -
     assert not host_header_allowed("10.0.0.1:7777", "")
 
 
-# auth_off: the gate then checks the preflight's Origin as well (with auth on it lets
-# every OPTIONS through), so the listed origin has to pass the gate before CORS answers.
 @pytest.mark.usefixtures("auth_off")
 def test_a_cors_preflight_carries_the_security_headers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CORS is inside the web gate, and both are inside the header middleware, as in server.main."""
+    """Built as server.main is (CORS inside the gate, both inside the header middleware), with
+    auth off so the gate checks the preflight's Origin too."""
     from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
 
     from server.auth.public_url import cors_origin_list
-    from server.main import attach_web_gate
+    from server.main import attach_browser_middleware
 
     monkeypatch.setattr(settings, "cors_origins", "https://app.example")
     app = FastAPI()
@@ -475,7 +474,7 @@ def test_a_cors_preflight_carries_the_security_headers(monkeypatch: pytest.Monke
         allow_origins=cors_origin_list(settings.cors_origins),
         allow_methods=["GET", "POST"],
     )
-    attach_web_gate(app)
+    attach_browser_middleware(app)
     r = TestClient(app, base_url="http://localhost").options(
         "/v1/memory.list",
         headers={"origin": "https://app.example", "access-control-request-method": "POST"},

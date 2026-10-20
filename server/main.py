@@ -300,8 +300,8 @@ from server.observability import otel as _otel  # noqa: E402
 _otel.init_otel(app)
 
 # Request-body cap — the one bounded input at the front door (413 before any
-# parser runs; LOOM_MAX_REQUEST_BYTES, 0 disables). Added before CORS so an
-# oversize preflight-free POST is refused at the outermost layer.
+# parser runs; LOOM_MAX_REQUEST_BYTES, 0 disables). Added first, so it is the
+# innermost middleware: the 413 still passes out through the header middleware.
 from server.transport.body_limit import BodyLimitMiddleware as _BodyLimit  # noqa: E402
 
 app.add_middleware(_BodyLimit, max_bytes=settings.max_request_bytes)
@@ -311,8 +311,7 @@ from server.transport.model_maintenance import ModelMaintenanceMiddleware  # noq
 app.add_middleware(ModelMaintenanceMiddleware)
 
 # gzip here (nginx does not gzip proxied bodies): the dashboard bundle and
-# JSON bodies above 1 KB. A year-long immutable cache for content-hashed
-# /assets/* names — the hash is the version — so a load does not re-validate them.
+# JSON bodies above 1 KB.
 from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
 
 app.add_middleware(GZipMiddleware, minimum_size=1024)
@@ -408,8 +407,9 @@ async def _web_gate(request: Request, call_next: Any) -> Response:
 
 
 async def _cache_and_security_headers(request: Request, call_next: Any) -> Response:
-    """Cache-Control for /assets/*, the browser security headers (a route's own
-    value wins) and Connection: close while draining."""
+    """A year-long immutable cache for content-hashed /assets/* names (the hash is
+    the version, so a load does not re-validate them), the browser security
+    headers (a route's own value wins) and Connection: close while draining."""
     response: Response = await call_next(request)
     path = request.url.path
     if path.startswith("/assets/") and response.status_code == 200:
@@ -434,15 +434,15 @@ async def _cache_and_security_headers(request: Request, call_next: Any) -> Respo
     return response
 
 
-def attach_web_gate(target: FastAPI) -> None:
+def attach_browser_middleware(target: FastAPI) -> None:
     """The web gate, then the header middleware, which Starlette's insert-at-front
-    order puts outside it: the gate's refusals carry the headers too."""
+    order puts outside the gate and CORS: their refusals and preflights carry the
+    headers too."""
     target.middleware("http")(_web_gate)
     target.middleware("http")(_cache_and_security_headers)
 
 
-# Outside the web gate and CORS, so their refusals and preflights carry these headers too.
-attach_web_gate(app)
+attach_browser_middleware(app)
 
 http_transport.attach(app)
 mcp_transport.attach(app)

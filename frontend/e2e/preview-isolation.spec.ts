@@ -216,7 +216,7 @@ test("the download URL opened on its own cannot run script", async ({ page }) =>
       status: 200,
       headers: {
         "Content-Type": "text/html",
-        "Content-Security-Policy": "sandbox; default-src 'none'",
+        "Content-Security-Policy": "sandbox; default-src 'none'; frame-ancestors 'none'",
         "X-Content-Type-Options": "nosniff",
       },
       body: HTML,

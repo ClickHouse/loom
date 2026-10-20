@@ -143,7 +143,7 @@ _BINARY_MAGIC = {
     "image/webp": (b"RIFF",),
 }
 # Opening the URL on its own (not through the dashboard) still runs no script.
-_DOWNLOAD_CSP = "sandbox; default-src 'none'"
+_DOWNLOAD_CSP = "sandbox; default-src 'none'; frame-ancestors 'none'"
 
 
 def _base_type(content_type: str) -> str:

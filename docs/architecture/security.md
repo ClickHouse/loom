@@ -568,17 +568,16 @@ middleware. A route that sets one of them itself keeps its value.
 | --------------------------- | -------------------------------------------------------------------------- |
 | `X-Content-Type-Options`    | `nosniff`                                                                  |
 | `X-Frame-Options`           | `DENY`                                                                     |
-| `Content-Security-Policy`   | `frame-ancestors 'none'`, unless the route sends its own                   |
+| `Content-Security-Policy`   | `frame-ancestors 'none'`                                                   |
 | `Referrer-Policy`           | `same-origin`                                                              |
 | `Strict-Transport-Security` | `max-age=<LOOM_HSTS_MAX_AGE_SECONDS>`; one year by default, `0` sends none |
 
 - `nosniff`: no body is sniffed into a type it was not served as.
-- Frame denial: no other page can frame the dashboard or an API answer. The dashboard page
-  sends its own CSP (below) with `frame-ancestors 'none'`, and so do the sign-in pages,
-  which also set their own `Referrer-Policy`. The download CSP has no `frame-ancestors`, so
-  `X-Frame-Options: DENY` is what stops another page framing a download. Nothing in Loom
-  frames the dashboard; its document preview is a `blob:` frame inside the page, which
-  these headers do not govern.
+- Frame denial: no other page can frame the dashboard or an API answer. Every CSP Loom
+  sends has `frame-ancestors 'none'`, the routes' own (the dashboard page, downloads, the
+  sign-in pages) included; `X-Frame-Options: DENY` is the same rule for browsers without
+  CSP. Nothing in Loom frames the dashboard; its document preview is a `blob:` frame inside
+  the page, which these headers do not govern.
 - `same-origin`: a dashboard URL, which can name a record, is never sent to another origin,
   and a same-origin non-GET request still carries its real `Origin`, which the cross-site
   check reads. Under `no-referrer` a browser sends `Origin: null` on a form POST.
@@ -592,7 +591,7 @@ type, so `knowledge.download` previews inline only plain text (text, Markdown, C
 JSON, all served as `text/plain`) and PNG, JPEG, GIF and WebP whose bytes match their
 type; anything else (HTML, SVG, XML, PDF, unknown, mismatched) is an
 `application/octet-stream` attachment, and every download carries
-`Content-Security-Policy: sandbox; default-src 'none'`. The dashboard applies the same
+`Content-Security-Policy: sandbox; default-src 'none'; frame-ancestors 'none'`. The dashboard applies the same
 allowlist itself, because a `blob:` URL ignores the server's headers: it re-types text as
 `text/plain` in an `<iframe sandbox="">`, shows images with `<img>`, and downloads
 everything else, PDF and SVG included.
