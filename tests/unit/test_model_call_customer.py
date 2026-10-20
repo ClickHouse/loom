@@ -681,7 +681,7 @@ class _MeteredLLM:
         self.text = text
 
     async def complete(self, *a: Any, **k: Any) -> Any:
-        customer.require()
+        await customer.require()
         return type("Out", (), {"text": self.text, "tokens_in": 1, "tokens_out": 1})()
 
 
@@ -1042,7 +1042,7 @@ def test_the_retrieval_judge_is_the_deployments_own_call(metered, monkeypatch, c
 
     class _Client:
         async def complete(self, *a: Any, **k: Any) -> Any:
-            seen.append(customer.headers())
+            seen.append(customer.headers(await customer.require()))
             return type("Out", (), {"text": "{}"})()
 
     monkeypatch.setattr(retrieval_judge.settings, "retrieval_judge_model", "")
@@ -1081,7 +1081,7 @@ def test_an_http_request_names_the_org_it_addresses(metered, monkeypatch) -> Non
         sent: dict[str, str] = {}
 
     async def handler(_: _In) -> _Out:
-        return _Out(sent=customer.headers())
+        return _Out(sent=customer.headers(await customer.require()))
 
     op = Operation(
         name="probe.customer",
