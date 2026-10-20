@@ -115,3 +115,43 @@ async def test_a_cancelled_read_hands_over_to_the_first_queued_call(clock: Manua
     first.cancel()
     assert await asyncio.gather(*queued) == ["fresh", "fresh"]
     assert reads == 2
+
+
+@pytest.mark.parametrize("had_copy", [False, True], ids=["cold", "stale"])
+@pytest.mark.parametrize("failed", [False, True], ids=["success", "failure"])
+async def test_slow_refresh_waits_a_full_interval_before_reading_again(
+    clock: ManualClock, had_copy: bool, failed: bool
+) -> None:
+    """With no copy worth serving, a call made during a slow read waits for it; the next read is
+    due a full `refresh_s` after that read ended, whether it failed or not."""
+    entered, release = asyncio.Event(), asyncio.Event()
+    reads = 0
+
+    async def read() -> frozenset[str]:
+        nonlocal reads
+        reads += 1
+        entered.set()
+        await release.wait()
+        clock.advance(6)
+        if failed:
+            raise ConnectionError("policy store unavailable")
+        return frozenset({"disabled"})
+
+    copy = PolledCopy("policy", read, _LOG)
+    copy._reset_for_tests(
+        frozenset({"old"}) if had_copy else None,
+        read_age_s=61 if had_copy else None,
+        due_in_s=0.0,
+    )
+    first = asyncio.create_task(copy.get(refresh_s=5, max_stale_s=60))
+    await entered.wait()
+    second = asyncio.create_task(copy.get(refresh_s=5, max_stale_s=60))
+    await asyncio.sleep(0)
+    release.set()
+    expected = None if failed else frozenset({"disabled"})
+    assert await asyncio.gather(first, second) == [expected, expected]
+    assert await copy.get(refresh_s=5, max_stale_s=60) == expected
+    assert reads == 1
+    clock.advance(5)
+    assert await copy.get(refresh_s=5, max_stale_s=60) == expected
+    assert reads == 2

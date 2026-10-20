@@ -199,22 +199,31 @@ async def handle_conversation_append(
             msg_id=msg_id,
         ),
     )
-    await _store_embedding(msg_row, embedded)
-    # A save that ran while this turn was embedding flagged the rows it could see,
-    # not the embedding row that only just landed, which replaces the save's own row
-    # under FINAL when its ts is later (a save on a replica whose clock is behind).
-    # Asked after the insert, so either the save's mutation covered this row or this
-    # read sees the saved flag.
-    with traced("ch.query.conversation_saved_owner"):
-        owner = await conversation_repo.saved_message_owner(
-            input.org, input.namespace, input.agent, input.thread_id, msg_id
-        )
-    if owner is not None:
-        await _mark_saved(
-            _TurnKey(input.org, input.namespace, input.agent, input.thread_id, msg_id),
-            owner,
-            tables=("loom.conversation_embeddings",),
-        )
+    async with conversation_repo.saved_message_write_lock(
+        input.org, input.namespace, input.thread_id
+    ):
+        with traced("ch.query.conversation_message_exists"):
+            live = await conversation_repo.message_exists(
+                input.org, input.namespace, input.agent, input.thread_id, msg_id, live_only=True
+            )
+        if not live:
+            await conversation_repo.tombstone_embedding_if_message_gone(
+                input.org, input.namespace, input.agent, input.thread_id, msg_id
+            )
+            return ConversationAppendOutput(msg_id=msg_id, ts=now, stored=False, reason="deleted")
+        await _store_embedding(msg_row, embedded)
+        # A save can finish while embedding runs. Copy its saved state onto
+        # this embedding, which may replace the save's version under FINAL.
+        with traced("ch.query.conversation_saved_owner"):
+            owner = await conversation_repo.saved_message_owner(
+                input.org, input.namespace, input.agent, input.thread_id, msg_id
+            )
+        if owner is not None:
+            await _mark_saved(
+                _TurnKey(input.org, input.namespace, input.agent, input.thread_id, msg_id),
+                owner,
+                tables=("loom.conversation_embeddings",),
+            )
     return ConversationAppendOutput(msg_id=msg_id, ts=now)
 
 
@@ -281,6 +290,7 @@ async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn) -> None:
         "embed_last_error": embedded.error,
         "embed_failed_at": naive_utc_now() if embedded.error else None,
         "is_saved": msg.is_saved,
+        "saved_at": msg.saved_at,
         "ts": msg.ts,
     }
     with traced("ch.insert.conversation_embedding", embedded=embedded.dim > 0):
@@ -318,14 +328,16 @@ async def _mark_saved(key: _TurnKey, user_id: str, *, tables: tuple[str, ...]) -
 async def handle_conversation_save_message(
     input: ConversationSaveMessageInput,
 ) -> ConversationSaveMessageOutput:
-    """Persist one user's explicit search opt-in without enabling transcript capture.
+    """Persist one user's explicit search opt-in without enabling transcript capture."""
+    from server.knowledge.store import conversations as conversation_repo
 
-    The transcript row decides who owns the turn: its embedding row is written or
-    flagged only once that row reads back as the caller's. Safe to retry after any
-    partial failure: each call re-reads both tables and finishes what an interrupted,
-    racing or failed write left behind — a missing embedding row, a failed embed's
-    placeholder, or a row not yet flagged saved.
-    """
+    async with conversation_repo.saved_message_write_lock(
+        input.org, input.namespace, input.conversation_id
+    ):
+        return await _save_message(input)
+
+
+async def _save_message(input: ConversationSaveMessageInput) -> ConversationSaveMessageOutput:
     from server.knowledge.store import conversations as conversation_repo
 
     key = _TurnKey(input.org, input.namespace, input.agent, input.conversation_id, input.message_id)
@@ -404,7 +416,8 @@ async def handle_conversation_save_message(
                 user_id=user_id,
                 run_id=stored.run_id,
                 is_saved=True,
-                ts=stored.ts,
+                saved_at=stored.saved_at,
+                ts=max(stored.ts, emb.version_ts or stored.ts),
             ),
             embedded,
         )
@@ -452,6 +465,7 @@ async def _write_saved_turn(
                 content=input.content,
                 user_id=input.user_id,
                 is_saved=True,
+                saved_at=naive_utc_now(),
                 ts=naive_utc_now(),
             ),
             once_per_identity=once_per_identity,
@@ -497,11 +511,31 @@ async def handle_conversation_unsave_message(
     from server.knowledge.store import conversations as conversation_repo
 
     _conversation_read_scope()
+    async with conversation_repo.saved_message_write_lock(
+        input.org, input.namespace, input.conversation_id
+    ):
+        return await _unsave_message(input)
+
+
+async def _unsave_message(
+    input: ConversationUnsaveMessageInput,
+) -> ConversationUnsaveMessageOutput:
+    from server.knowledge.store import conversations as conversation_repo
+
     key = _TurnKey(input.org, input.namespace, input.agent, input.conversation_id, input.message_id)
     now = naive_utc_now()
     with traced("ch.query.conversation_saved_owner"):
         owner = await conversation_repo.saved_message_owner(
             key.org, key.namespace, key.agent, key.thread_id, key.msg_id
+        )
+    if owner is None:
+        owner = await conversation_repo.saved_message_owner(
+            key.org,
+            key.namespace,
+            key.agent,
+            key.thread_id,
+            key.msg_id,
+            table="loom.conversation_embeddings",
         )
     if owner != input.user_id:
         return ConversationUnsaveMessageOutput(
@@ -512,7 +546,8 @@ async def handle_conversation_unsave_message(
         )
     with traced("ch.query.conversation_logging_enabled"):
         recording = await conversation_repo.namespace_logging_enabled(input.org, input.namespace)
-    for table in conversation_repo.SAVED_MESSAGE_TABLES:
+    # Reconciliation needs the transcript to interpret older embedding excerpts.
+    for table in reversed(conversation_repo.SAVED_MESSAGE_TABLES):
         with traced("ch.mutate.conversation_unsave", table=table):
             await conversation_repo.unsave_message(
                 table,
@@ -636,13 +671,16 @@ async def handle_conversation_delete(
         )
 
     now = naive_utc_now()
-    counts = await conversation_repo.tombstone_thread(
-        input.org,
-        input.namespace,
-        input.agent,
-        input.thread_id,
-        when=now,
-    )
+    async with conversation_repo.saved_message_write_lock(
+        input.org, input.namespace, input.thread_id
+    ):
+        counts = await conversation_repo.tombstone_thread(
+            input.org,
+            input.namespace,
+            input.agent,
+            input.thread_id,
+            when=now,
+        )
     return ConversationDeleteOutput(
         tombstoned_at=now,
         thread_id=input.thread_id,
@@ -945,6 +983,8 @@ async def handle_conversation_search_saved_messages(
     from server.knowledge.store import conversations as conversation_repo
 
     scope = _conversation_read_scope()
+    # The internal fusion pool may exceed the 200-hit wire limit.
+    candidate_limit = max(input.top_k * 3, 20) if input.search_mode == "hybrid" else input.top_k
     semantic: list[_SavedMessageHit] = []
     lexical: list[_SavedMessageHit] = []
     if input.search_mode != "lexical":
@@ -959,7 +999,7 @@ async def handle_conversation_search_saved_messages(
                 user_id=input.user_id,
                 top_k=input.top_k,
                 namespace_scope="this",
-            ),
+            ).model_copy(update={"top_k": candidate_limit}),
             saved_only=True,
         )
         semantic = [
@@ -985,7 +1025,7 @@ async def handle_conversation_search_saved_messages(
                 user_id=input.user_id,
                 conversation_id=input.conversation_id,
                 role=input.role,
-                limit=input.top_k,
+                limit=candidate_limit,
             )
         lexical = [
             _SavedMessageHit(
@@ -1032,7 +1072,7 @@ def _fuse_saved(
         score[key(h)] += 1.0 / (_RRF_K + rank)
     for rank, h in enumerate(lexical, start=1):
         score[key(h)] += w_lex / (_RRF_K + rank)
-    order = {k: i for i, k in enumerate([*map(key, semantic), *map(key, lexical)])}
+    order = {k: i for i, k in enumerate(hits)}
     ranked = sorted(hits, key=lambda k: (-score[k], order[k]))
     return [hits[k] for k in ranked[:top_k]]
 
@@ -1276,14 +1316,17 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     live_ids = {str(r["msg_id"]) for r in rows}
     replaced_earlier = sorted({mid for r in rows for mid in _compacted_from(r)} - live_ids)
     if replaced_earlier:
-        await conversation_repo.tombstone_embeddings(
-            input.org,
-            input.namespace,
-            input.agent,
-            input.thread_id,
-            msg_ids=replaced_earlier,
-            when=naive_utc_now(),
-        )
+        async with conversation_repo.saved_message_write_lock(
+            input.org, input.namespace, input.thread_id
+        ):
+            await conversation_repo.tombstone_embeddings(
+                input.org,
+                input.namespace,
+                input.agent,
+                input.thread_id,
+                msg_ids=replaced_earlier,
+                when=naive_utc_now(),
+            )
 
     if len(rows) <= input.keep_recent:
         return ConversationCompactOutput(
@@ -1398,14 +1441,17 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     )
     await conversation_repo.append(summary)
     await _store_embedding(summary, embedded)
-    await conversation_repo.tombstone_messages(
-        input.org,
-        input.namespace,
-        input.agent,
-        input.thread_id,
-        sorted(candidate_ids),
-        when=now,
-    )
+    async with conversation_repo.saved_message_write_lock(
+        input.org, input.namespace, input.thread_id
+    ):
+        await conversation_repo.tombstone_messages(
+            input.org,
+            input.namespace,
+            input.agent,
+            input.thread_id,
+            sorted(candidate_ids),
+            when=now,
+        )
 
     return ConversationCompactOutput(
         compacted=True,
