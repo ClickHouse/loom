@@ -360,7 +360,12 @@ def test_the_dashboard_csp_admits_only_the_nonced_boot_script(
     assert "unsafe-inline" not in script_src and "unsafe-eval" not in csp
     inline = re.findall(r"<script(?![^>]*\bsrc=)([^>]*)>", html)
     assert inline == [f' nonce="{nonce.group(1)}"']
-    for directive in ("object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"):
+    for directive in (
+        "object-src 'none'",
+        "base-uri 'none'",
+        "frame-ancestors 'none'",
+        "frame-src 'none'",
+    ):
         assert directive in csp
     _, again = _dashboard(tmp_path, monkeypatch)
     assert again != csp  # a fresh nonce per response

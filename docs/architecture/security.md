@@ -566,16 +566,15 @@ a referrer, and their form POSTs carry the page's own `Origin`. Under `no-referr
 browser sends `Origin: null` on those POSTs, which the cross-site check above refuses. The
 dashboard page carries a Content-Security-Policy whose `script-src` admits the bundle's
 origin and the one boot snippet by a per-response nonce, never `unsafe-inline`, and whose
-`frame-src 'none'` allows no frame. An
-uploaded document is attacker-chosen bytes under an attacker-chosen type, so
-`knowledge.download` previews inline only plain text (text, Markdown, CSV and JSON, all
-served as `text/plain`) and PNG, JPEG, GIF and WebP whose bytes match their type; anything
-else (HTML, SVG, XML, PDF, unknown, mismatched) is an `application/octet-stream`
-attachment, and every download carries
+`frame-src 'none'` allows no frame. An uploaded document is attacker-chosen bytes under an
+attacker-chosen type, so `knowledge.download` previews inline only plain text (text,
+Markdown, CSV and JSON, all served as `text/plain`) and PNG, JPEG, GIF and WebP whose
+bytes match their type; anything else (HTML, SVG, XML, PDF, unknown, mismatched) is an
+`application/octet-stream` attachment, and every download carries
 `Content-Security-Policy: sandbox; default-src 'none'`. The dashboard applies the same
 allowlist to the bytes it fetches: it decodes the first 1 MB of text as UTF-8 into a text
-node in a `<pre>`, shows images with `<img>` from a re-typed `blob:` URL (which ignores the
-server's headers), and downloads everything else, PDF and SVG included.
+node in a `<pre>`, shows images with `<img>` from a re-typed `blob:` URL (which ignores
+the server's headers), and downloads everything else, PDF and SVG included.
 
 ## Rate limiting
 
