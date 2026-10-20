@@ -2299,8 +2299,9 @@ settings:
   # Most namespaces of one org that may hold their own extraction policy
   # (`extraction_policy.set` with scope `namespace` refuses one more). Every process
   # holds every org's policies (each at most 4,096 characters) and reads them all every
-  # `model_calls_policy_refresh_seconds`, so this bounds that read: the default holds
-  # one org to about 4 MiB. [live]
+  # `model_calls_policy_refresh_seconds`, so this bounds each org's share of that read
+  # (about 4 MiB at the default); the read grows with the number of orgs that hold a
+  # policy. [live]
   # extraction_policy_max_namespaces: 1000
 
   # ===== Knowledge documents and conversations: chunking, search floor, thread titles =====

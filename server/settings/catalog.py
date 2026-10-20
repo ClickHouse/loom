@@ -1679,9 +1679,9 @@ class ContextSettings(BaseModel):
     # session.brief_save. `session_brief_llm` off = every brief comes from the
     # deterministic builder (goal, status, files, errors, rules, pointers; no
     # decisions or dead ends), except under an operator's extraction policy,
-    # where a save of events alone with no model to call writes nothing. The model is the
-    # deployment's LLM when `session_brief_llm_model` has no key. A save
-    # condenses its events into windows of `session_brief_window_chars`
+    # where a save of events alone with no model to call writes nothing. The
+    # model is the deployment's LLM when `session_brief_llm_model` has no key.
+    # A save condenses its events into windows of `session_brief_window_chars`
     # (≈6k tokens each) and revises the brief once per window, at most
     # `session_brief_max_windows` calls per save (the last window takes the
     # remainder, condensed harder).
@@ -1896,8 +1896,9 @@ class ExtractionSettings(BaseModel):
     # Most namespaces of one org that may hold their own extraction policy
     # (`extraction_policy.set` with scope `namespace` refuses one more). Every process
     # holds every org's policies (each at most 4,096 characters) and reads them all
-    # every `model_calls_policy_refresh_seconds`, so this bounds that read: the
-    # default holds one org to about 4 MiB.
+    # every `model_calls_policy_refresh_seconds`, so this bounds each org's share of
+    # that read (about 4 MiB at the default); the read grows with the number of orgs
+    # that hold a policy.
     extraction_policy_max_namespaces: Annotated[int, LIVE] = Field(default=1000, ge=1)
 
 
@@ -4843,14 +4844,12 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # Multiple ALTER UPDATEs are slow; tolerated for compliance.
     "erasure.request": 2000,
     "erasure.status": 25,
-    # One insert of the policy row and its audit row, then a point read of the org's and
-    # the namespace's rows.
+    # One sync insert and its audit row, then two point reads.
     "extraction_policy.clear": 100,
-    # A point read of the org's and the namespace's rows.
+    # Two point reads.
     "extraction_policy.get": 50,
-    # One insert of the policy row and its audit row, then a point read of the org's and
-    # the namespace's rows.
-    "extraction_policy.set": 100,
+    # Cap check (a point read and a FINAL count), a sync insert and its audit row, two point reads.
+    "extraction_policy.set": 150,
     "facts.expire_by_adapter": 500,
     "facts.list": 80,
     # One frontier query per hop, at most max_hops of them.

@@ -4,12 +4,11 @@ each process's copy that the extraction paths read.
 An org admin sets one policy for the whole org and may add one per namespace,
 for at most `LOOM_EXTRACTION_POLICY_MAX_NAMESPACES` namespaces; an extraction
 runs under both (`domain.extraction_policy.combine`). Every process reads every
-live policy at most every
-`LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`, as it reads the model-call switch,
-and a change made here is read again at once. A copy older than
-`LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` is not trusted: `effective` raises
-`customer.SwitchUnread`, so an inline extraction is refused and queued work
-waits, rather than run without its policy.
+live policy at most every `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`, as it reads
+the model-call switch, and a change made here is read again at once. A copy
+older than `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` is not trusted:
+`effective` raises `customer.SwitchUnread`, so an inline extraction is refused
+and queued work waits, rather than run without its policy.
 """
 
 from __future__ import annotations

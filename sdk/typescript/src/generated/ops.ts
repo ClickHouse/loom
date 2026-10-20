@@ -9386,7 +9386,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "erasure.status", group: "erasure", method: "status", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 25, audit: false, readOnly: true },
   { name: "extraction_policy.clear", group: "extraction_policy", method: "clear", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "extraction_policy.get", group: "extraction_policy", method: "get", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: false },
-  { name: "extraction_policy.set", group: "extraction_policy", method: "set", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
+  { name: "extraction_policy.set", group: "extraction_policy", method: "set", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 150, audit: true, readOnly: false },
   { name: "facts.expire_by_adapter", group: "facts", method: "expireByAdapter", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 500, audit: true, readOnly: false },
   { name: "facts.list", group: "facts", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "facts.path", group: "facts", method: "path", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: true },
