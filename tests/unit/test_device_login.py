@@ -286,7 +286,7 @@ def test_the_server_headers_leave_the_sign_in_page_its_own_policies() -> None:
     assert page.status_code == 200
     for name in ("Referrer-Policy", "Content-Security-Policy"):
         assert page.headers.get_list(name) == [oauth._PAGE_HEADERS[name]]
-    assert page.headers["strict-transport-security"] == (f"max-age={settings.hsts_max_age_seconds}")
+    assert page.headers["strict-transport-security"] == f"max-age={settings.hsts_max_age_seconds}"
 
 
 def test_approval_needs_the_ticket_from_the_signed_in_page() -> None:

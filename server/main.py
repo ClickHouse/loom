@@ -407,11 +407,11 @@ async def _web_gate(request: Request, call_next: Any) -> Response:
 
 
 async def _cache_and_security_headers(request: Request, call_next: Any) -> Response:
-    """A year-long immutable cache for content-hashed /assets/* names (the hash is
-    the version, so a load does not re-validate them), the browser security
-    headers (a route's own value wins) and Connection: close while draining."""
+    """Asset caching, security headers (a route's own value wins), Connection: close on drain."""
     response: Response = await call_next(request)
     path = request.url.path
+    # A year-long immutable cache for content-hashed /assets/* names: the hash is the
+    # version, so a load does not re-validate them.
     if path.startswith("/assets/") and response.status_code == 200:
         from server.storage.frontend_assets import cache_control_for
 
@@ -435,9 +435,7 @@ async def _cache_and_security_headers(request: Request, call_next: Any) -> Respo
 
 
 def attach_browser_middleware(target: FastAPI) -> None:
-    """The web gate, then the header middleware, which Starlette's insert-at-front
-    order puts outside the gate and CORS: their refusals and preflights carry the
-    headers too."""
+    """The web gate, then the header middleware outside it and CORS, so refusals get headers."""
     target.middleware("http")(_web_gate)
     target.middleware("http")(_cache_and_security_headers)
 

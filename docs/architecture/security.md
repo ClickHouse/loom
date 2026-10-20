@@ -585,16 +585,16 @@ middleware. A route that sets one of them itself keeps its value.
   terminator, and a browser ignores the header over plain HTTP and honours it over HTTPS.
 
 **Browser.** The dashboard page carries a Content-Security-Policy whose `script-src` admits
-the bundle's origin and the one boot snippet by a per-response nonce, never
-`unsafe-inline`. An uploaded document is attacker-chosen bytes under an attacker-chosen
-type, so `knowledge.download` previews inline only plain text (text, Markdown, CSV and
-JSON, all served as `text/plain`) and PNG, JPEG, GIF and WebP whose bytes match their
-type; anything else (HTML, SVG, XML, PDF, unknown, mismatched) is an
-`application/octet-stream` attachment, and every download carries
-`Content-Security-Policy: sandbox; default-src 'none'; frame-ancestors 'none'`. The dashboard applies the same
-allowlist itself, because a `blob:` URL ignores the server's headers: it re-types text as
-`text/plain` in an `<iframe sandbox="">`, shows images with `<img>`, and downloads
-everything else, PDF and SVG included.
+the bundle's origin and the one boot snippet by a per-response nonce, never `unsafe-inline`.
+An uploaded document is attacker-chosen bytes under an attacker-chosen type, so
+`knowledge.download` previews inline only plain text (text, Markdown, CSV and JSON, all
+served as `text/plain`) and PNG, JPEG, GIF and WebP whose bytes match their type; anything
+else (HTML, SVG, XML, PDF, unknown, mismatched) is an `application/octet-stream`
+attachment, and every download carries
+`Content-Security-Policy: sandbox; default-src 'none'; frame-ancestors 'none'`. The
+dashboard applies the same allowlist itself, because a `blob:` URL ignores the server's
+headers: it re-types text as `text/plain` in an `<iframe sandbox="">`, shows images with
+`<img>`, and downloads everything else, PDF and SVG included.
 
 ## Rate limiting
 
