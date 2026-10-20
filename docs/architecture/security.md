@@ -559,22 +559,47 @@ host and port) when it is set; otherwise an `Origin` whose host and port match t
 request's `Host` counts, whatever its scheme, so a TLS proxy whose `X-Forwarded-Proto`
 is not trusted still works. `loom doctor` and `/v1/health` report each of these.
 
-**Browser.** Every response is `X-Content-Type-Options: nosniff`. The sign-in pages under
-`/oauth/` run no script, may not be framed, and send `Referrer-Policy: same-origin`: their
-URLs can carry a user code or an authorization request, so no other site receives them as
-a referrer, and their form POSTs carry the page's own `Origin`. Under `no-referrer` a
-browser sends `Origin: null` on those POSTs, which the cross-site check above refuses. The
-dashboard page carries a Content-Security-Policy whose `script-src` admits the bundle's
-origin and the one boot snippet by a per-response nonce, never `unsafe-inline`, and whose
-`frame-src 'none'` allows no frame. An uploaded document is attacker-chosen bytes under an
-attacker-chosen type, so `knowledge.download` previews inline only plain text (text,
-Markdown, CSV and JSON, all served as `text/plain`) and PNG, JPEG, GIF and WebP whose
-bytes match their type; anything else (HTML, SVG, XML, PDF, unknown, mismatched) is an
-`application/octet-stream` attachment, and every download carries
-`Content-Security-Policy: sandbox; default-src 'none'`. The dashboard applies the same
-allowlist to the bytes it fetches: it decodes the first 1 MB of text as UTF-8 into a text
-node in a `<pre>`, shows images with `<img>` from a re-typed `blob:` URL (which ignores
-the server's headers), and downloads everything else, PDF and SVG included.
+## Response headers
+
+Every response carries these except an unhandled 500, which Starlette's error middleware
+answers outside every middleware the app adds. A route that sets one of them itself keeps
+its value.
+
+| Header                      | Value                                                                      |
+| --------------------------- | -------------------------------------------------------------------------- |
+| `X-Content-Type-Options`    | `nosniff`                                                                  |
+| `X-Frame-Options`           | `DENY`                                                                     |
+| `Content-Security-Policy`   | `frame-ancestors 'none'`                                                   |
+| `Referrer-Policy`           | `same-origin`                                                              |
+| `Strict-Transport-Security` | `max-age=<LOOM_HSTS_MAX_AGE_SECONDS>`; one year by default, `0` sends none |
+
+- `nosniff`: no body is sniffed into a type it was not served as.
+- Frame denial: no other page can frame the dashboard or an API answer. Every CSP Loom
+  sends has `frame-ancestors 'none'`, the routes' own (the dashboard page, downloads, the
+  sign-in pages) included; `X-Frame-Options: DENY` is the same rule for browsers without
+  CSP. Nothing in Loom frames the dashboard, and the dashboard frames nothing: its own CSP
+  sets `frame-src 'none'`.
+- `same-origin`: a dashboard URL, which can name a record, is never sent to another origin,
+  and a same-origin non-GET request still carries its real `Origin`, which the cross-site
+  check reads. Under `no-referrer` a browser sends `Origin: null` on a form POST, which the
+  check refuses. The sign-in pages under `/oauth/` run no script and send the same policy:
+  their URLs can carry a user code or an authorization request, so no other site receives
+  them as a referrer, and their form POSTs carry the page's own `Origin`.
+- HSTS, without `includeSubDomains` or `preload`: Loom serves plain HTTP behind a TLS
+  terminator, and a browser ignores the header over plain HTTP and honours it over HTTPS.
+
+**Route policies.** The dashboard page carries a Content-Security-Policy whose
+`script-src` admits the bundle's origin and the one boot snippet by a per-response nonce,
+never `unsafe-inline`, and whose `frame-src 'none'` allows no frame. An uploaded document
+is attacker-chosen bytes under an attacker-chosen type, so `knowledge.download` previews
+inline only plain text (text, Markdown, CSV and JSON, all served as `text/plain`) and PNG,
+JPEG, GIF and WebP whose bytes match their type; anything else (HTML, SVG, XML, PDF,
+unknown, mismatched) is an `application/octet-stream` attachment, and every download
+carries `Content-Security-Policy: sandbox; default-src 'none'; frame-ancestors 'none'`.
+The dashboard applies the same allowlist to the bytes it fetches: it decodes the first 1
+MB of text as UTF-8 into a text node in a `<pre>`, shows images with `<img>` from a
+re-typed `blob:` URL (which ignores the server's headers), and downloads everything else,
+PDF and SVG included.
 
 ## Rate limiting
 
