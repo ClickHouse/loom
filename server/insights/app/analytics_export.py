@@ -59,6 +59,10 @@ async def export_day(
     out: list[Exported] = []
     for entity in ENTITIES:
         body = await parquet(entity, day, name_key=name_key, ch=ch)
+        # A body cut off mid-response would be kept for good: upload only a
+        # whole Parquet file, which starts and ends with its magic bytes.
+        if not (body.startswith(b"PAR1") and body.endswith(b"PAR1")):
+            raise ValueError(f"{entity} for {day}: not a whole Parquet file ({len(body)} bytes)")
         path = object_key(prefix, entity, day)
         out.append(Exported(entity, path, len(body), put(path, body)))
     return out

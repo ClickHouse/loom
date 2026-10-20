@@ -19,8 +19,10 @@ from server.core.ch import CHClient
 # class) of UTC day {day:Date}. `kind` is 'request', 'worker' (a worker pass),
 # 'verdict' or 'settle' (deferred ask and conflict judgements); `users` and
 # `sessions` leave out the '-' of a call that named none. `slow` and the
-# latency quantiles are the SLI rollup's (migration 045): `ok` requests only,
-# slow past their budget (a budget of 0 makes every one slow); 0 when none.
+# latency quantiles are the SLI rollup's (migration 045): over the rows it
+# reads, `ok` requests only, slow past their budget (a budget of 0 makes every
+# one slow); 0 when none. Rows outside it (`/v1/me/*`, a settle judgement, a
+# worker pass) carry no budget and count in neither.
 # A `/v1/me/*` row's operation is built from the request path, so it can hold
 # any string a caller sent: every `me.*` operation leaves as `me`. That happens
 # in the inner query, so the GROUP BY can only mean the collapsed operation,
@@ -28,6 +30,8 @@ from server.core.ch import CHClient
 # day's monthly partition, which a daily batch reads once (the ledger is a plain
 # MergeTree: no FINAL).
 USAGE_KEY = "org, namespace, agent, operation, kind, transport, traffic_class"
+# The SLI rollup's rows (its WHERE) that succeeded.
+SLI_OK = "kind = 'request' AND slo_class != '' AND status_class = 'ok'"
 USAGE_SQL = f"""
 SELECT
     {USAGE_KEY},
@@ -35,7 +39,7 @@ SELECT
     count() AS ops,
     countIf(NOT success) AS errors,
     countIf(status_class = 'server') AS server_errors,
-    countIf(status_class = 'ok' AND latency_ms > budget_ms) AS slow,
+    countIf({SLI_OK} AND latency_ms > budget_ms) AS slow,
     sum(toUInt64(input_tokens)) AS input_tokens,
     sum(toUInt64(output_tokens)) AS output_tokens,
     sum(toUInt64(embedding_tokens)) AS embedding_tokens,
@@ -43,13 +47,13 @@ SELECT
     sum(upstream_cost_usd) AS cost_usd,
     sum(bytes_written) AS bytes_written,
     toUInt32(ifNotFinite(
-        quantilesTDigestIf(0.5, 0.95, 0.99)(latency_ms, status_class = 'ok')[1], 0
+        quantilesTDigestIf(0.5, 0.95, 0.99)(latency_ms, {SLI_OK})[1], 0
     )) AS latency_p50_ms,
     toUInt32(ifNotFinite(
-        quantilesTDigestIf(0.5, 0.95, 0.99)(latency_ms, status_class = 'ok')[2], 0
+        quantilesTDigestIf(0.5, 0.95, 0.99)(latency_ms, {SLI_OK})[2], 0
     )) AS latency_p95_ms,
     toUInt32(ifNotFinite(
-        quantilesTDigestIf(0.5, 0.95, 0.99)(latency_ms, status_class = 'ok')[3], 0
+        quantilesTDigestIf(0.5, 0.95, 0.99)(latency_ms, {SLI_OK})[3], 0
     )) AS latency_p99_ms,
     uniqExactIf(user_id, user_id != '-') AS users,
     uniqExactIf(session_id, session_id != '-') AS sessions,
@@ -111,6 +115,7 @@ _WHOLE = ("group_by", "result", "timeout", "read", "sort", "join", "set", "disti
 STATEMENT_SETTINGS = (
     "SETTINGS limit = 0, offset = 0, "
     + ", ".join(f"{m}_overflow_mode = 'throw'" for m in _WHOLE)
+    + ", read_overflow_mode_leaf = 'throw', timeout_overflow_mode_leaf = 'throw'"
     + ", aggregate_functions_null_for_empty = 0, "
     "output_format_parquet_string_as_string = 1, output_format_parquet_date_as_uint16 = 0"
 )

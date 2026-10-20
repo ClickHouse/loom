@@ -102,6 +102,7 @@ def _event(org: str, ts: str, **kw: Any) -> dict[str, Any]:
         "success": True,
         "transport": "http",
         "status_class": "ok",
+        "slo_class": "write",
         "budget_ms": 100,
         "input_tokens": 0,
         "upstream_cost_usd": Decimal(0),
@@ -131,8 +132,32 @@ async def test_usage_sums_one_utc_day_per_operation(ch: CHClient) -> None:
             _event(org, "2026-01-03 00:00:00"),
             _event(org, "2026-01-02 08:00:00", operation="memory.get", transport="mcp"),
             # Ledgered from a raw /v1/me path: any string a caller sent.
-            _event(org, "2026-01-02 09:00:00", operation="me.alice@example.com"),
-            _event(org, "2026-01-02 09:30:00", operation="me.sharing-summary"),
+            # Ledgered as the transport writes them: no SLO class, no budget.
+            _event(
+                org,
+                "2026-01-02 09:00:00",
+                operation="me.alice@example.com",
+                slo_class="",
+                budget_ms=0,
+                latency_ms=40,
+            ),
+            _event(
+                org,
+                "2026-01-02 09:30:00",
+                operation="me.sharing-summary",
+                slo_class="",
+                budget_ms=0,
+                latency_ms=40,
+            ),
+            # A deferred conflict judgement: an LLM call, not a request.
+            _event(
+                org,
+                "2026-01-02 10:00:00",
+                kind="settle",
+                slo_class="",
+                budget_ms=0,
+                latency_ms=900,
+            ),
         ],
     )
     # A profile that resolves names to columns before aliases gives the same rows.
@@ -142,10 +167,22 @@ async def test_usage_sums_one_utc_day_per_operation(ch: CHClient) -> None:
             f"SETTINGS prefer_column_name_to_alias = {prefer_column}",
             {"day": DAY, "org": org},
         )
-        assert sorted(r["operation"] for r in rows) == ["me", "memory.get", "memory.set"]
-        by_op = {r["operation"]: r for r in rows}
-        assert by_op["me"]["ops"] == 2
-        s = by_op["memory.set"]
+        by_op = {(r["operation"], r["kind"]): r for r in rows}
+        assert sorted(by_op) == [
+            ("me", "request"),
+            ("memory.get", "request"),
+            ("memory.set", "request"),
+            ("memory.set", "settle"),
+        ]
+        # Outside the SLI rollup (no SLO class, no budget): neither slow nor timed.
+        for outside in (by_op[("me", "request")], by_op[("memory.set", "settle")]):
+            assert (outside["slow"], outside["latency_p50_ms"], outside["latency_p99_ms"]) == (
+                0,
+                0,
+                0,
+            )
+        assert by_op[("me", "request")]["ops"] == 2
+        s = by_op[("memory.set", "request")]
         assert (s["ops"], s["errors"], s["server_errors"], s["slow"]) == (4, 1, 1, 1)
         # Over the three `ok` requests (10, 10, 250 ms), not the 300 ms error.
         assert (s["latency_p50_ms"], s["latency_p99_ms"]) == (10, 250)
@@ -153,7 +190,7 @@ async def test_usage_sums_one_utc_day_per_operation(ch: CHClient) -> None:
         assert (s["input_tokens"], s["cost_usd"]) == (7, Decimal("0.25"))
         assert (s["namespace"], s["agent"], s["transport"], s["day"]) == ("ns", "a", "http", DAY)
         assert s["kind"] == "request"
-        assert by_op["memory.get"]["ops"] == 1
+        assert by_op[("memory.get", "request")]["ops"] == 1
     shipped = {r["operation"] for r in await _file_rows(ch, "usage")}
     assert "me" in shipped and not [op for op in shipped if op.startswith("me.")]
 

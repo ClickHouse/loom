@@ -356,3 +356,19 @@ def test_the_key_words_are_the_documented_sha256_halves() -> None:
     digest = hashlib.sha256(secret.encode()).digest()
     k0, k1 = name_hash_key(secret)
     assert k0.to_bytes(8, "little") + k1.to_bytes(8, "little") == digest[:16]
+
+
+async def test_a_body_that_is_not_a_whole_parquet_file_is_never_uploaded() -> None:
+    class _CutOff(_Ch):
+        async def raw_bytes(self, sql: str, params: dict[str, Any] | None = None) -> bytes:
+            return b"PAR1 then the stream stopped"
+
+    uploaded: list[str] = []
+
+    def put(key: str, body: bytes) -> bool:
+        uploaded.append(key)
+        return True
+
+    with pytest.raises(ValueError, match="not a whole Parquet file"):
+        await export_day(date(2026, 10, 9), prefix="", put=put, name_key=(1, 2), ch=_CutOff())  # type: ignore[arg-type]
+    assert uploaded == []

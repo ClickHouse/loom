@@ -36,11 +36,12 @@ deferred `memory.ask` consistency check and `settle` for a deferred conflict set
 `/v1/me/*` route is one `operation`, `me`: the ledger names those rows after the request
 path, which can carry any string a caller sent. `users` and `sessions` are distinct counts
 within the row that leave out the `-` of a call that named none; a sum over rows counts a
-user once per row. `slow` and the latency quantiles are the SLI rollup's: they count `ok`
-requests only, `slow` those past their latency budget (a budget of 0 makes every one slow),
-and a row with no `ok` request has latencies of 0. The `namespaces` file is the state at `snapshot_at`, whatever `--day`
-says: a backfill of an old day gets that day's usage and today's namespaces. An
-unregistered namespace has `registered = false` and NULL registry columns. `created_on` and
+user once per row. `slow` and the latency quantiles are the SLI rollup's: they count the
+`ok` requests that rollup reads (an operation with an SLO class), `slow` those past their
+latency budget (a budget of 0 makes every one slow), and a row with none has latencies of 0.
+A `/v1/me/*` route, a deferred judgement or a worker pass counts in neither. The
+`namespaces` file is the state at `snapshot_at`, whatever `--day` says: a backfill of an
+old day gets that day's usage and today's namespaces. An unregistered namespace has `registered = false` and NULL registry columns. `created_on` and
 `last_memory_on` are days, not times: an exact time beside a hashed personal namespace
 could be matched to the person who signed up or wrote then. Rows are sorted by the hashed
 names, never by the names themselves.
@@ -110,8 +111,9 @@ encrypted with a customer-managed KMS key also needs `kms:GenerateDataKey` on th
 the writer role, or every upload is refused. `--expected-bucket-owner` makes S3 refuse the
 write when another account owns the bucket.
 
-Pass `--region` (the bucket's, `analyticsExport.region` in the chart) unless the process's
-environment already names one in `AWS_REGION` or `AWS_DEFAULT_REGION`.
+Pass `--region` (the bucket's, `analyticsExport.region` in the chart) unless the process
+already has one from `AWS_DEFAULT_REGION` or the AWS config file; boto3 does not read
+`AWS_REGION` here.
 
 ## On Kubernetes
 
@@ -148,8 +150,8 @@ release name when it contains the chart name (`nameOverride`, else `loom`), else
 (`kubectl get sa` shows it). The job runs at 00:30 UTC (`schedule`), one run at a time,
 with up to 3 retries and a three-hour deadline over all attempts; each statement may run
 20 minutes, and the ClickHouse client may retry one, so a slow day can get fewer than four
-attempts. A refusal (exit 2) fails the Job at once instead
-of retrying. Its pod takes none of the web pods' `podLabels`, `podAnnotations` or `affinity`.
+attempts. A refusal (exit 2) fails the Job at once instead of retrying. Its pod takes none
+of the web pods' `podLabels`, `podAnnotations` or `affinity`.
 The web and workers pods keep their own ServiceAccount, so the role that may assume the
 writer role is bound to the export's pod only. With IRSA, that role's trust names
 `system:serviceaccount:<namespace>:<fullname>-analytics-export`. With `roleArn` set, its
