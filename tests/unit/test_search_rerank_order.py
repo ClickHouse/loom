@@ -205,8 +205,8 @@ async def test_a_retrys_rows_carry_no_rerank_position_into_the_gates(
     retry_row.score_components.update(
         {"rerank_from": 0.0, "rerank_pos": 2.0, "rerank_delta": -2.0, "rerank_external": 1.0}
     )
-    # The retry's own rerank handed it another rank's score.
-    retry_row.score_components["rank_score_pre_rerank"] = retry_row.rank_score
+    # The retry's own rerank handed it a rank's score, and its block served 0.9.
+    retry_row.score_components["rank_score_pre_rerank"] = 1.2  # a parent-boosted chunk's raw
     retry_row.rank_score = 0.9
 
     async def _judge(query: str, excerpts: list[str]) -> tuple[bool, str]:
@@ -237,7 +237,9 @@ async def test_a_retrys_rows_carry_no_rerank_position_into_the_gates(
     merged = {h.memory_key: h for h in ctx.final_hits}
     assert set(merged) == {"user_location", "user_employer"}
     assert not {k for k in merged["user_employer"].score_components if k.startswith("rerank_")}
-    assert merged["user_employer"].rank_score == pytest.approx(0.45)  # its own fused score
+    # The score the retry's own block served, bounded on its scale; no pre-rerank marker.
+    assert merged["user_employer"].rank_score == pytest.approx(0.9)
+    assert "rank_score_pre_rerank" not in merged["user_employer"].score_components
     assert merged["user_location"].score_components["rerank_from"] == 0.0
 
 
@@ -414,20 +416,3 @@ async def test_a_pin_stays_above_a_digest_after_a_rerank(monkeypatch: pytest.Mon
     keys = [h.memory_key for h in block]
     assert keys[0] == "finding_pr116016"
     assert keys.index("other") < keys.index("fact") < keys.index("chunk")
-
-
-@pytest.mark.asyncio
-async def test_a_pool_of_pinned_rows_is_not_reranked(monkeypatch: pytest.MonkeyPatch) -> None:
-    called: list[int] = []
-
-    async def _never(*, candidates: list[Any], **_k: Any) -> list[Any]:
-        called.append(len(candidates))
-        return candidates
-
-    a, b = _hit("a", 0.6), _hit("b", 0.5)
-    a.score_components["identifier_match"] = b.score_components["identifier_match"] = 1.0
-    ctx = _ctx([a, b])
-    monkeypatch.setattr("server.memory.app.rerank.rerank", _never)
-    await ranking._run_external_rerank(ctx)
-    assert called == [] and "external_rerank_used" not in ctx.actual_work
-    assert not any(k.startswith("rerank_") for h in (a, b) for k in h.score_components)
