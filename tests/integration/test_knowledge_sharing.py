@@ -291,7 +291,7 @@ def _remember(gw: Gateway, user: str, nonce: str) -> list[str]:
     return keys
 
 
-_STAMPED = ("namespace", "agent", "user_id", "session_id", "actor", "source_class")
+_STAMPED = ("namespace", "agent", "user_id", "session_id", "memory_key", "actor", "source_class")
 
 
 def test_an_end_user_writes_memories_to_me_and_reads_them_back(gw: Gateway) -> None:
@@ -306,6 +306,7 @@ def test_an_end_user_writes_memories_to_me_and_reads_them_back(gw: Gateway) -> N
         "chat",
         "alice",
         "-",
+        "pref/drink",
         "human:user:alice",
         "asserted",
     ), by_id
@@ -319,6 +320,7 @@ def test_an_end_user_writes_memories_to_me_and_reads_them_back(gw: Gateway) -> N
             "chat",
             "alice",
             "c1",
+            key,
             "human:user:alice",
             "extracted",
         ), by_id
@@ -352,15 +354,17 @@ def test_another_end_user_reads_none_of_my_memories(gw: Gateway) -> None:
         assert {h["namespace"] for h in search.json()["results"]} <= {bobs}, search.text
         packed = _chat_ok(gw, "bob", "context.pack", {"query": query})["rendered"]
         assert alice_nonce not in packed, packed
-        if query == bob_nonce:
-            hits = search.json()["results"]
-            assert any(h["memory_key"] == "pref/drink" for h in hits), search.text
-            assert bob_nonce in packed, packed
     for key in set(alice_keys) | set(bob_keys):
         evidence = _chat(gw, "bob", "memory.evidence", {"session_id": "c1", "memory_key": key})
         assert evidence.status_code == 200 and alice_nonce not in evidence.text, evidence.text
-        if key in bob_keys:
-            assert bob_nonce in evidence.text, evidence.text
+    # The same reads answer Bob with his own rows.
+    search = {"query": bob_nonce, "namespace_scope": "all_mine"}
+    hits = _chat_ok(gw, "bob", "memory.search", search)["results"]
+    assert any(h["memory_key"] == "pref/drink" for h in hits), hits
+    assert bob_nonce in _chat_ok(gw, "bob", "context.pack", {"query": bob_nonce})["rendered"]
+    for key in bob_keys:
+        evidence = _chat_ok(gw, "bob", "memory.evidence", {"session_id": "c1", "memory_key": key})
+        assert any(bob_nonce in item["content"] for item in evidence["items"]), evidence
     # Naming Alice's collection, or Alice in the body, is refused.
     r = _chat(gw, "bob", "memory.search", {"namespace": alices, "query": alice_nonce})
     assert r.status_code == 403, r.text
