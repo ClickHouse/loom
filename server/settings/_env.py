@@ -29,16 +29,19 @@ def _decode_json_or_b64(raw: str, field: str) -> object:
 
 
 @functools.lru_cache(maxsize=16)
-def json_map_items(raw: str, field: str) -> tuple[tuple[str, str], ...]:
+def json_map_items(
+    raw: str, field: str, *, strings_only: bool = False
+) -> tuple[tuple[str, str], ...]:
     """A string → string map setting (JWT kid → key, rerank name → URL), decoded once
     per raw value: signing and verification read it on every token. Keyed on the raw
-    string, so a changed value (a test override) is decoded afresh."""
+    string, so a changed value (a test override) is decoded afresh. `strings_only`
+    refuses a value that is not a string instead of converting it."""
     parsed = _decode_json_or_b64(raw, field)
     if not isinstance(parsed, dict):
         raise ValueError(f"{field} must be a JSON object")
-    if not all(isinstance(v, str) for v in parsed.values()):
+    if strings_only and not all(isinstance(v, str) for v in parsed.values()):
         raise ValueError(f"{field} must map names to strings")
-    return tuple(parsed.items())
+    return tuple((str(k), str(v)) for k, v in parsed.items())
 
 
 # The checked-in HS256 default. Fine for a single-user dev box (auth is off);
