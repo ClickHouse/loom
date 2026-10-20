@@ -284,7 +284,7 @@ _CENSUS: tuple[Substrate, ...] = (
         "delete_version_checks.delete",
         "delete_version_checks.delete",
     ),
-    # Memory webhook events: a row's identity, key and id, never its text; 30-day TTL.
+    # Memory webhook events: a row's identity, key and id, never its text; 3-day TTL.
     Substrate(
         "loom.memory_webhook_outbox",
         "1",
@@ -419,6 +419,9 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     # org-wide beside the replay bodies at both scopes but not counted, since any
     # search in the org refills them between the step and the census.
     "idempotency.delete": ("loom.embedding_cache",),
+    # The webhook worker's attempt rows (event ids, counters, HTTP statuses; no key or
+    # identity), deleted by the ids of the events the step deletes.
+    "memory_webhook_outbox.delete": ("loom.memory_webhook_attempts",),
 }
 
 # Every other `loom.*` table in schemas/schema.sql, with the reason it holds

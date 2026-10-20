@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 166 tables + 18 materialized views.
+-- Counts: 167 tables + 18 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (166)
+-- Tables (167)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -2636,6 +2636,24 @@ PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, agent, user_id, session_id, memory_key, version)
 SETTINGS index_granularity = 128, non_replicated_deduplication_window = 1000;
 
+-- loom.memory_webhook_attempts
+CREATE TABLE IF NOT EXISTS loom.memory_webhook_attempts
+(
+    `event_id` String,
+    `status` LowCardinality(String),
+    `attempts` UInt16,
+    `next_attempt_at` DateTime64(3),
+    `last_status` UInt16 DEFAULT 0,
+    `last_error` String DEFAULT '',
+    `recorded_at` DateTime64(3) DEFAULT now64(3),
+    `version` UInt64
+)
+ENGINE = MergeTree
+PARTITION BY toDate(recorded_at)
+ORDER BY (event_id, version)
+TTL toDateTime(recorded_at) + toIntervalDay(3)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.memory_webhook_outbox
 CREATE TABLE IF NOT EXISTS loom.memory_webhook_outbox
 (
@@ -2653,18 +2671,12 @@ CREATE TABLE IF NOT EXISTS loom.memory_webhook_outbox
     `actor` String,
     `request_id` String,
     `erasure_id` String DEFAULT '',
-    `occurred_at` DateTime64(3),
-    `status` LowCardinality(String) DEFAULT 'pending',
-    `attempts` UInt16 DEFAULT 0,
-    `next_try_at` DateTime64(3),
-    `lease_until` DateTime64(3) DEFAULT toDateTime64(0, 3),
-    `last_status` UInt16 DEFAULT 0,
-    `last_error` String DEFAULT '',
-    `version` UInt64
+    `occurred_at` DateTime64(3)
 )
-ENGINE = ReplacingMergeTree(version)
-ORDER BY (org, namespace, webhook_id, event_id)
-TTL toDateTime(occurred_at) + toIntervalDay(30)
+ENGINE = MergeTree
+PARTITION BY toDate(occurred_at)
+ORDER BY (occurred_at, event_id)
+TTL toDateTime(occurred_at) + toIntervalDay(3)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.memory_webhooks

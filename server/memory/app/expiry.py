@@ -238,6 +238,12 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
                 error=f"{type(e).__name__}: {e}",
             )
             return res
+        from server.memory.app import webhooks
+
+        pairs = list(zip(version_rows, mirrors, strict=True))
+        await webhooks.announce("memory.tombstoned", [r for r, m in pairs if m[0] == "tombstone"])
+        # A demoted or anonymized row is a new version of a live key.
+        await webhooks.announce("memory.revised", [r for r, m in pairs if m[0] != "tombstone"])
         try:
             await _mirror_embeddings_batch(mirrors, cfg=cfg)
         except Exception as e:  # noqa: BLE001 — the memory rows are authoritative

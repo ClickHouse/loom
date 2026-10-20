@@ -18,6 +18,8 @@ DeliveryStatus = Literal["pending", "delivered", "dead"]
 
 
 class WebhookRegisterInput(BaseModel):
+    """Register a URL that is told when memory in the namespace changes."""
+
     org: str
     namespace: str
     # Where events are POSTed: an https URL (http only where the deployment allows it)
@@ -44,19 +46,25 @@ class WebhookInfo(BaseModel):
 
 
 class WebhookRegisterOutput(BaseModel):
+    # The registration as stored.
     webhook: WebhookInfo
 
 
 class WebhookListInput(BaseModel):
+    """The namespace's memory webhooks."""
+
     org: str
     namespace: str
 
 
 class WebhookListOutput(BaseModel):
+    # The namespace's live registrations, oldest first.
     webhooks: list[WebhookInfo] = Field(default_factory=list)
 
 
 class WebhookRemoveInput(BaseModel):
+    """Remove one memory webhook; its undelivered events are not sent."""
+
     org: str
     namespace: str
     # The webhook_id webhook.register or webhook.list returned.
@@ -69,6 +77,8 @@ class WebhookRemoveOutput(BaseModel):
 
 
 class WebhookDeliveriesInput(BaseModel):
+    """The namespace's webhook events of the last 3 days and their delivery state."""
+
     org: str
     namespace: str
     # Only this webhook's events; "" = every webhook of the namespace.
@@ -90,8 +100,10 @@ class WebhookDelivery(BaseModel):
     # pending (waiting for its next try), delivered (a 2xx came back) or dead
     # (out of attempts).
     status: str
+    # POSTs made so far (a wait for a missing secret is not one).
     attempts: int
-    next_try_at: datetime
+    # When the next attempt is due (pending), or when the last one was made.
+    next_attempt_at: datetime
     # The last HTTP status the receiver answered; 0 when none arrived.
     last_status: int
     # Why the last attempt failed when no status arrived ("" otherwise).
@@ -99,4 +111,5 @@ class WebhookDelivery(BaseModel):
 
 
 class WebhookDeliveriesOutput(BaseModel):
+    # Events, newest first.
     deliveries: list[WebhookDelivery] = Field(default_factory=list)

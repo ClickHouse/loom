@@ -18,11 +18,11 @@ ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, webhook_id)
 SETTINGS non_replicated_deduplication_window = 1000;
 
--- The outbox the write path fills and the memory_webhook_deliver worker drains: one
--- row per (event, webhook), written beside the memory write, then a new version per
--- lease and per attempt. It holds ids and the identity tuple, never a value, tags or
--- evidence; the key and user id name a memory row, so erasure clears the rows
--- (erasure.store.steps_ledgers). A queue: rows expire 30 days after the event.
+-- One row per (event, webhook), written once by the write path and never rewritten:
+-- ids and the identity tuple, never a value, tags or evidence. The key and user id
+-- name a memory row, so erasure deletes the rows (erasure.store.steps_ledgers), and
+-- nothing the delivery worker writes can bring one back. Sorted by time so a pass
+-- reads only the recent days; a queue, so rows expire 3 days after the event.
 CREATE TABLE IF NOT EXISTS loom.memory_webhook_outbox
 (
     `org` LowCardinality(String),
@@ -39,16 +39,30 @@ CREATE TABLE IF NOT EXISTS loom.memory_webhook_outbox
     `actor` String,
     `request_id` String,
     `erasure_id` String DEFAULT '',
-    `occurred_at` DateTime64(3),
-    `status` LowCardinality(String) DEFAULT 'pending',
-    `attempts` UInt16 DEFAULT 0,
-    `next_try_at` DateTime64(3),
-    `lease_until` DateTime64(3) DEFAULT toDateTime64(0, 3),
+    `occurred_at` DateTime64(3)
+)
+ENGINE = MergeTree
+PARTITION BY toDate(occurred_at)
+ORDER BY (occurred_at, event_id)
+TTL toDateTime(occurred_at) + toIntervalDay(3)
+SETTINGS non_replicated_deduplication_window = 1000;
+
+-- The delivery worker's record of each event: one row per lease and per attempt,
+-- appended, the newest `version` of an event winning. Event ids, counts and HTTP
+-- statuses only, no key or identity.
+CREATE TABLE IF NOT EXISTS loom.memory_webhook_attempts
+(
+    `event_id` String,
+    `status` LowCardinality(String),
+    `attempts` UInt16,
+    `next_attempt_at` DateTime64(3),
     `last_status` UInt16 DEFAULT 0,
     `last_error` String DEFAULT '',
+    `recorded_at` DateTime64(3) DEFAULT now64(3),
     `version` UInt64
 )
-ENGINE = ReplacingMergeTree(version)
-ORDER BY (org, namespace, webhook_id, event_id)
-TTL toDateTime(occurred_at) + toIntervalDay(30)
+ENGINE = MergeTree
+PARTITION BY toDate(recorded_at)
+ORDER BY (event_id, version)
+TTL toDateTime(recorded_at) + toIntervalDay(3)
 SETTINGS non_replicated_deduplication_window = 1000;

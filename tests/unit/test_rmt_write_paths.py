@@ -37,7 +37,6 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     "scim_users": ("builder", "test_scim.py"),
     "delete_version_checks": ("builder", "test_delete_version_sql.py"),
     "memory_webhooks": ("builder", "test_memory_webhooks.py"),
-    "memory_webhook_outbox": ("builder", "test_memory_webhooks.py"),
     "machine_identities": ("builder", "test_machines.py"),
     "org_model_calls": ("builder", "test_model_calls_switch.py"),
     "deployment_config": ("builder", "test_deployment_config.py"),

@@ -479,15 +479,22 @@ After a write path's rows are in, it calls `announce` (`server/memory/app/webhoo
 with the event (`memory.written`, `memory.revised`, `memory.tombstoned`,
 `memory.restored`, `memory.redacted`; the erasure saga sends `memory.erased` after its
 census). For each webhook of the namespace that takes the event it inserts one
-`loom.memory_webhook_outbox` row holding ids and the identity tuple, never content; a
-namespace with no webhook pays no statement. Which namespaces have webhooks is a
-per-process copy of `loom.memory_webhooks`, read again every
-`LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`. The `memory_webhook_deliver` worker leases the due
-rows (a version with `lease_until`), POSTs each signed body
-(`server/core/webhooks.py`) and writes the outcome as a new version: `delivered`,
-`pending` with its next try, or `dead`. An outbox insert that fails never fails the
-write. During a rolling upgrade an N-1 replica writes no outbox rows, so its writes send
-no event; nothing else changes for N-1, which never reads the two tables.
+`loom.memory_webhook_outbox` row holding ids and the identity tuple, never content, and
+nothing rewrites it. Which namespaces have webhooks is a per-process copy of
+`loom.memory_webhooks`, read again every `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`: a
+namespace with no webhook pays no insert, and the first write after each interval waits
+for one registry read.
+
+The `memory_webhook_deliver` worker reads the due events of the last 3 days through the
+outbox's sort key (`occurred_at`), joined to the newest row of each in
+`loom.memory_webhook_attempts`. It appends a lease (an attempt row whose
+`next_attempt_at` is the lease's end), skips an event whose key has no history left in
+`loom.memory_versions` (erased), POSTs each signed body (`server/core/webhooks.py`) and
+appends the outcome: `delivered`, `pending` with its next attempt, or `dead`. Attempt rows
+hold event ids and counters only, so an erasure that deletes an event while a pass is in
+flight leaves nothing a later pass can send. An outbox insert that fails never fails the
+write. During a rolling upgrade an N-1 replica writes no outbox rows
+([rule 12](rolling-upgrades.md#the-rules)).
 [Change webhooks](../features/memory/writing.md#change-webhooks) has the caller's view.
 
 ## Invariants

@@ -705,14 +705,9 @@ async def _delete_version_locked(
         await _write_tombstone_row(
             existing, version=version, trace=delete_version_trace(input.version)
         )
-        answer = await finish_delete_check(existing, check)
+        return await finish_delete_check(existing, check)
     except Exception as e:  # a retry finishes it, or the worker once the check is recorded
         raise _check_deferred(e) from e
-    if answer.tombstoned:
-        from server.memory.app import webhooks
-
-        await webhooks.announce("memory.tombstoned", [webhooks.memory_change(existing, version)])
-    return answer
 
 
 async def _audit_deferred(input: MemoryDeleteVersionInput) -> None:
@@ -777,6 +772,11 @@ async def finish_delete_check(
             dependents_tombstoned=tombstoned,
             dependents_downgraded=downgraded,
         )
+        # Here, where every finish of the delete passes (the call itself, a retry of
+        # a deferred one, the delete_version_check worker).
+        from server.memory.app import webhooks
+
+        await webhooks.announce("memory.tombstoned", [webhooks.memory_change(existing, tombstone)])
     try:
         await memory_repo.record_delete_check(check, done=True)
     except Exception as e:  # noqa: BLE001 — a check left open runs again, harmlessly

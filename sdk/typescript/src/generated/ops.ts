@@ -8415,7 +8415,7 @@ export interface WebhookDelivery {
   occurred_at: string; // date-time
   status: string;
   attempts: number;
-  next_try_at: string; // date-time
+  next_attempt_at: string; // date-time
   last_status: number;
   last_error: string;
 }

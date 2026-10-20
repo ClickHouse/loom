@@ -240,25 +240,39 @@ async def delete_delete_version_checks_by_user(
     )
 
 
+async def _delete_webhook_events(
+    org: str, scope_where: str, params: dict[str, Any], ch: _CHClient | None
+) -> int:
+    """Memory webhook events name a row's identity, key and id: their attempt rows
+    (event ids and counters) go first, by the events' ids, then the events."""
+    events = (
+        "SELECT event_id FROM loom.memory_webhook_outbox "
+        f"WHERE org = {{org:String}} AND {scope_where}"
+    )
+    await erasure_mutations.count_then_mutate(
+        "loom.memory_webhook_attempts",
+        count_where=f"event_id IN ({events})",
+        mutation="DELETE",
+        mutation_where=f"event_id IN ({events})",
+        params={"org": org, **params},
+        final=False,
+        ch=ch,
+    )
+    return await delete_scoped(
+        "loom.memory_webhook_outbox", org=org, scope_where=scope_where, params=params, ch=ch
+    )
+
+
 async def delete_memory_webhook_outbox_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
-    """Memory webhook events name a row's identity, key and id; 30-day TTL."""
-    return await delete_scoped(
-        "loom.memory_webhook_outbox",
-        org=org,
-        scope_where=NS_EQ,
-        params={"ns": namespace},
-        ch=ch,
-    )
+    return await _delete_webhook_events(org, NS_EQ, {"ns": namespace}, ch)
 
 
 async def delete_memory_webhook_outbox_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
-    return await delete_scoped(
-        "loom.memory_webhook_outbox", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
-    )
+    return await _delete_webhook_events(org, UID, {"uid": user_id}, ch)
 
 
 _TASK_TABLES = ("loom.tasks", "loom.task_events")

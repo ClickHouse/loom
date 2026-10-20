@@ -147,6 +147,10 @@ async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:
         updated_at=now,
     )
     await memory_repo.insert_memory_versions([row], ch=ch)
+    from server.memory.app import webhooks
+
+    # The source key now reads as a redirect to the destination.
+    await webhooks.announce("memory.revised", [row])
     try:
         mirror = await memory_repo.embedding_mirror_for_keys(
             source.org, source.namespace, [source.memory_key], ch=ch

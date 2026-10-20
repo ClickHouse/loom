@@ -4,7 +4,9 @@ A write path calls `announce` after its rows are in. For every webhook of the
 row's namespace that takes the event, it inserts one outbox row — ids and the
 identity tuple, never content — and the memory_webhook_deliver worker POSTs it
 later (server/memory/workers/webhook_deliver.py). No network call is made on
-the request path; a namespace with no webhook pays no statement.
+the request path. A namespace with no webhook pays no outbox insert; the only
+cost is the registry read below, once per process per refresh interval, which
+the first write after the interval waits for.
 
 Which namespaces have webhooks is a per-process copy of loom.memory_webhooks,
 read again every `memory_webhook_refresh_seconds`: a webhook registered on
@@ -25,7 +27,7 @@ import os
 import time
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.core import webhooks as signed
@@ -133,13 +135,6 @@ def _outbox_row(
         "request_id": request_id_var.get() or "",
         "erasure_id": str(change.get("erasure_id") or ""),
         "occurred_at": now,
-        "status": "pending",
-        "attempts": 0,
-        "next_try_at": now,
-        "lease_until": datetime(1970, 1, 1),
-        "last_status": 0,
-        "last_error": "",
-        "version": next_version(),
     }
 
 
@@ -257,6 +252,7 @@ async def handle_webhook_deliveries(input: WebhookDeliveriesInput) -> WebhookDel
     rows = await store.namespace_deliveries(
         input.org,
         input.namespace,
+        since=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=store.KEEP_DAYS),
         webhook_id=input.webhook_id,
         status=input.status or "",
         limit=input.limit,
@@ -273,7 +269,7 @@ async def handle_webhook_deliveries(input: WebhookDeliveriesInput) -> WebhookDel
                 occurred_at=r["occurred_at"],
                 status=str(r["status"]),
                 attempts=int(r["attempts"]),
-                next_try_at=r["next_try_at"],
+                next_attempt_at=r["next_attempt_at"],
                 last_status=int(r["last_status"]),
                 last_error=str(r["last_error"]),
             )

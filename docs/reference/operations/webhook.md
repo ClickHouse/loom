@@ -10,6 +10,8 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `webhook.deliveries`
 
+The namespace's webhook events of the last 3 days and their delivery state.
+
 `POST /v1/webhook.deliveries` · MCP `loom_webhook_deliveries` · role `admin` · idempotent · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
@@ -22,9 +24,11 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `deliveries` | `list[WebhookDelivery]` |  |
+| `deliveries` | `list[WebhookDelivery]` | Events, newest first. |
 
 ## `webhook.list`
+
+The namespace's memory webhooks.
 
 `POST /v1/webhook.list` · MCP `loom_webhook_list` · role `admin` · idempotent · not listed under the MCP `all` toolset
 
@@ -35,9 +39,11 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `webhooks` | `list[WebhookInfo]` |  |
+| `webhooks` | `list[WebhookInfo]` | The namespace's live registrations, oldest first. |
 
 ## `webhook.register`
+
+Register a URL that is told when memory in the namespace changes.
 
 `POST /v1/webhook.register` · MCP `loom_webhook_register` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 
@@ -51,9 +57,11 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `webhook` | `WebhookInfo` |  |
+| `webhook` | `WebhookInfo` | The registration as stored. |
 
 ## `webhook.remove`
+
+Remove one memory webhook; its undelivered events are not sent.
 
 `POST /v1/webhook.remove` · MCP `loom_webhook_remove` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 

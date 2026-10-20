@@ -17202,6 +17202,8 @@ class UiVitalsOutput(TypedDict, total=False):
 
 
 class WebhookDeliveriesInput(TypedDict, total=False):
+    "The namespace's webhook events of the last 3 days and their delivery state."
+
     org: Required[str]
     namespace: Required[str]
     webhook_id: NotRequired[str]
@@ -17210,6 +17212,8 @@ class WebhookDeliveriesInput(TypedDict, total=False):
 
 
 class WebhookDeliveriesBody(TypedDict, total=False):
+    "The namespace's webhook events of the last 3 days and their delivery state."
+
     org: NotRequired[str]
     namespace: NotRequired[str]
     webhook_id: NotRequired[str]
@@ -17231,17 +17235,21 @@ class WebhookDelivery(TypedDict, total=False):
     occurred_at: Required[str]  # date-time as ISO-8601 text
     status: Required[str]
     attempts: Required[int]
-    next_try_at: Required[str]  # date-time as ISO-8601 text
+    next_attempt_at: Required[str]  # date-time as ISO-8601 text
     last_status: Required[int]
     last_error: Required[str]
 
 
 class WebhookListInput(TypedDict, total=False):
+    "The namespace's memory webhooks."
+
     org: Required[str]
     namespace: Required[str]
 
 
 class WebhookListBody(TypedDict, total=False):
+    "The namespace's memory webhooks."
+
     org: NotRequired[str]
     namespace: NotRequired[str]
 
@@ -17261,6 +17269,8 @@ class WebhookInfo(TypedDict, total=False):
 
 
 class WebhookRegisterInput(TypedDict, total=False):
+    "Register a URL that is told when memory in the namespace changes."
+
     org: Required[str]
     namespace: Required[str]
     url: Required[str]
@@ -17280,6 +17290,8 @@ class WebhookRegisterInput(TypedDict, total=False):
 
 
 class WebhookRegisterBody(TypedDict, total=False):
+    "Register a URL that is told when memory in the namespace changes."
+
     org: NotRequired[str]
     namespace: NotRequired[str]
     url: Required[str]
@@ -17303,12 +17315,16 @@ class WebhookRegisterOutput(TypedDict, total=False):
 
 
 class WebhookRemoveInput(TypedDict, total=False):
+    "Remove one memory webhook; its undelivered events are not sent."
+
     org: Required[str]
     namespace: Required[str]
     webhook_id: Required[str]
 
 
 class WebhookRemoveBody(TypedDict, total=False):
+    "Remove one memory webhook; its undelivered events are not sent."
+
     org: NotRequired[str]
     namespace: NotRequired[str]
     webhook_id: Required[str]

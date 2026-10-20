@@ -1,15 +1,21 @@
 """Memory webhooks: POST the outbox's due events to their webhooks.
 
 The write paths leave one loom.memory_webhook_outbox row per (event, webhook)
-(server/memory/app/webhooks.py). Each pass takes the due rows, leases them
-(a new version with `lease_until`, so an overlapping copy of the pass passes
-over them), POSTs each event's body signed as the task webhooks are
-(`server.core.webhooks`), and writes the outcome: `delivered` on a 2xx;
-otherwise the attempt is counted and the next try is scheduled with backoff,
-until `memory_webhook_max_attempts` marks it `dead` (`webhook.deliveries`
-lists it). The `webhook-id` header is the event id: two copies of a pass that
-overlap before a lease lands can send an event twice, and the receiver drops
-the second.
+(server/memory/app/webhooks.py), and nothing rewrites it. Each pass takes the
+due events, leases them (an attempt row whose `next_attempt_at` is the lease's
+end, so an overlapping copy of the pass passes over them), POSTs each body
+signed as the task webhooks are (`server.core.webhooks`), and appends the
+outcome to loom.memory_webhook_attempts: `delivered` on a 2xx; otherwise the
+attempt is counted and the next one scheduled with backoff, until
+`memory_webhook_max_attempts` marks it `dead`. An attempt row holds the event
+id and counters only, so an erasure that deletes an event's outbox row while a
+pass is in flight leaves nothing a later pass can send.
+
+Before sending, a pass skips (marks dead) an event whose memory has no history
+left in loom.memory_versions: an erasure removed it, possibly one run by an
+older build that does not know the outbox. The `webhook-id` header is the
+event id: two copies of a pass that overlap before a lease lands can send an
+event twice, and the receiver drops the second.
 """
 
 from __future__ import annotations
@@ -38,11 +44,12 @@ log = logging.getLogger(__name__)
 # Events POSTed per pass: each POST may wait the whole ack window and the pass
 # runs under a 120 s deadline, so ten always fit. The rest go next pass.
 MAX_POSTS_PER_PASS = 10
-# How long a leased row is passed over by another copy of the pass: past the
-# pass deadline, so a crashed pass's rows come back.
+# How long a leased event is passed over by another copy of the pass: past the
+# pass deadline, so a crashed pass's events come back.
 LEASE_SECONDS = 180
+# How long an event waits, its attempts uncounted, while its secret is not set.
+SECRET_WAIT_SECONDS = 60
 USER_AGENT = "loom-memory-webhook/1"
-_EPOCH = datetime(1970, 1, 1)
 
 
 @dataclass(frozen=True)
@@ -56,49 +63,54 @@ class DeliverResult:
         return self.delivered + self.failed + self.dead
 
 
-def _outcome(
-    row: Mapping[str, Any],
+def _attempt_row(
+    event_id: str,
     *,
+    status: str,
+    attempts: int,
+    next_attempt_at: datetime,
     now: datetime,
-    status: int,
-    error: str,
-    delivered: bool,
-    give_up: bool = False,
+    last_status: int = 0,
+    last_error: str = "",
 ) -> dict[str, Any]:
-    """The row's next version after one attempt, its lease released; `give_up`
-    marks it dead whatever attempts it has left."""
-    attempts = int(row["attempts"]) + 1
-    if delivered:
-        state, next_try = "delivered", now
-    elif give_up or attempts >= settings.memory_webhook_max_attempts:
-        state, next_try = "dead", now
-    else:
-        state, next_try = "pending", now + timedelta(seconds=backoff_seconds(attempts))
     return {
-        **row,
-        "status": state,
+        "event_id": event_id,
+        "status": status,
         "attempts": attempts,
-        "next_try_at": next_try,
-        "lease_until": _EPOCH,
-        "last_status": status,
-        "last_error": error[:512],
+        "next_attempt_at": next_attempt_at,
+        "last_status": last_status,
+        "last_error": last_error[:512],
+        "recorded_at": now,
         "version": next_version(),
     }
 
 
-async def _attempt(
+def _outcome(row: Mapping[str, Any], delivery: signed.Delivery, *, now: datetime) -> dict[str, Any]:
+    """The attempt row after one POST."""
+    attempts = int(row["attempts"]) + 1
+    if delivery.ok:
+        status, next_at = "delivered", now
+    elif attempts >= settings.memory_webhook_max_attempts:
+        status, next_at = "dead", now
+    else:
+        status, next_at = "pending", now + timedelta(seconds=backoff_seconds(attempts))
+    return _attempt_row(
+        str(row["event_id"]),
+        status=status,
+        attempts=attempts,
+        next_attempt_at=next_at,
+        now=now,
+        last_status=delivery.status,
+        last_error=delivery.error,
+    )
+
+
+async def _post(
     transport: httpx.AsyncBaseTransport | None,
     row: Mapping[str, Any],
-    hook: Mapping[str, Any] | None,
-    env: Mapping[str, str],
+    hook: Mapping[str, Any],
+    secret: bytes,
 ) -> signed.Delivery:
-    """POST one event; the delivery's outcome, or why it was not sent."""
-    if hook is None:
-        return signed.Delivery(0, "the webhook was removed")
-    org, ref = str(hook["org"]), str(hook["secret_ref"])
-    secret = signed.read_secret(org, ref, env)
-    if secret is None:
-        return signed.Delivery(0, f"no secret in env {ref}")
     body = event_body(row)
     headers = signed.signed_headers(
         secret,
@@ -117,44 +129,92 @@ async def _attempt(
     )
 
 
+async def _attempt(
+    transport: httpx.AsyncBaseTransport | None,
+    row: Mapping[str, Any],
+    hook: Mapping[str, Any] | None,
+    *,
+    erased: bool,
+    env: Mapping[str, str],
+    now: datetime,
+) -> dict[str, Any]:
+    """The attempt row for one event: sent, or why not."""
+    event_id, attempts = str(row["event_id"]), int(row["attempts"])
+    if hook is None or erased:
+        why = "the webhook was removed" if hook is None else "the memory was erased"
+        return _attempt_row(
+            event_id, status="dead", attempts=attempts, next_attempt_at=now, now=now, last_error=why
+        )
+    ref = str(hook["secret_ref"])
+    secret = signed.read_secret(str(hook["org"]), ref, env)
+    if secret is None:  # waits for the operator, as the task inbox webhook does
+        return _attempt_row(
+            event_id,
+            status="pending",
+            attempts=attempts,
+            next_attempt_at=now + timedelta(seconds=SECRET_WAIT_SECONDS),
+            now=now,
+            last_error=f"no secret in env {ref}",
+        )
+    try:
+        delivery = await _post(transport, row, hook, secret)
+    except Exception as e:  # noqa: BLE001 — one event's bad secret or URL must not stop the rest
+        # Type only: the message of a secret-decoding error must not reach a log line.
+        delivery = signed.Delivery(0, type(e).__name__)
+    return _outcome(row, delivery, now=now)
+
+
+def _key(row: Mapping[str, Any]) -> tuple[str, ...]:
+    return tuple(str(row[c]) for c in store.KEY_COLS)
+
+
 async def deliver_once(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
     now: datetime | None = None,
     env: Mapping[str, str] | None = None,
+    org: str = "",
+    namespace: str = "",
 ) -> DeliverResult:
-    """One pass over the due events. `transport` replaces the network (tests);
-    `now` is naive UTC."""
+    """One pass over the due events. `transport` replaces the network and
+    `org` / `namespace` narrow the pass (tests); `now` is naive UTC."""
     now = now or datetime.now(UTC).replace(tzinfo=None)
     env = os.environ if env is None else env
-    due = await store.due_outbox(now, limit=MAX_POSTS_PER_PASS)
+    due = await store.due_events(
+        now,
+        since=now - timedelta(days=store.KEEP_DAYS),
+        limit=MAX_POSTS_PER_PASS,
+        org=org,
+        namespace=namespace,
+    )
     if not due:
         return DeliverResult()
+    lease_end = now + timedelta(seconds=LEASE_SECONDS)
+    await store.insert_attempts(
+        [
+            _attempt_row(
+                str(r["event_id"]),
+                status="leased",
+                attempts=int(r["attempts"]),
+                next_attempt_at=lease_end,
+                now=now,
+            )
+            for r in due
+        ]
+    )
     hooks = {
         (str(h["org"]), str(h["namespace"]), str(h["webhook_id"])): h
         for h in await store.live_webhooks()
     }
-    lease = now + timedelta(seconds=LEASE_SECONDS)
-    leased = [{**r, "lease_until": lease, "version": next_version()} for r in due]
-    await store.insert_outbox(leased)
-    # By the status each row ends the pass in; `pending` is a failure to retry.
+    # memory.erased names no key; every other event names the memory it is about.
+    keyed = {_key(r) for r in due if r["memory_key"]}
+    kept = await store.keys_with_history(sorted(keyed))
     counts = {"delivered": 0, "pending": 0, "dead": 0}
-    for row in leased:
+    for row in due:
         hook = hooks.get((str(row["org"]), str(row["namespace"]), str(row["webhook_id"])))
-        try:
-            delivery = await _attempt(transport, row, hook, env)
-        except Exception as e:  # noqa: BLE001 — one event's bad secret or URL must not stop the rest
-            # Type only: the message of a secret-decoding error must not reach a log line.
-            delivery = signed.Delivery(0, type(e).__name__)
-        out = _outcome(
-            row,
-            now=now,
-            status=delivery.status,
-            error=delivery.error,
-            delivered=delivery.ok,
-            give_up=hook is None,  # removed: nothing will ever take it
-        )
-        await store.insert_outbox([out])
+        erased = bool(row["memory_key"]) and _key(row) not in kept
+        out = await _attempt(transport, row, hook, erased=erased, env=env, now=now)
+        await store.insert_attempts([out])
         counts[out["status"]] += 1
     return DeliverResult(
         delivered=counts["delivered"], failed=counts["pending"], dead=counts["dead"]

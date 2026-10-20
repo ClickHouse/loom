@@ -34,7 +34,7 @@ TRANSIENT_TABLES = {
     "memory_code_link_queue": "the code link worker's queue of memory writes (keys only)",
     "consolidation_runs": "the consolidation worker's run ledger",
     "delete_version_checks": "memory.delete_version's owed checks (identity and key only)",
-    "memory_webhook_outbox": "memory webhook events waiting or sent (identity, key and id only)",
+    "memory_webhook_outbox": "memory webhook events to send (identity, key and id only)",
 }
 
 # Objects that are gone and must not come back.
@@ -110,7 +110,7 @@ def test_the_journal_files() -> None:
         "056_org_model_calls.sql",
         "057_acl_versions.sql",
         "058_collections_and_groups.sql",
-        "064_memory_webhooks.sql",
+        "059_memory_webhooks.sql",
     ]
 
 

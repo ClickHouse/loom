@@ -105,7 +105,11 @@ schema. These rules keep that safe. The operator procedure is in
     perform it. A memory write served by an N-1 replica leaves no
     `loom.memory_webhook_outbox` row, so it sends no event; N's worker delivers what N's
     replicas wrote. A receiver that must see every change reads back what it holds once
-    the rollout ends.
+    the rollout ends. An erasure saga run by N-1 has no step for the outbox and its census
+    does not count it, so N's events for an erased user stay in the outbox; N's worker
+    sends none of them, because it skips an event whose key has no history left in
+    `loom.memory_versions`, which every build's erasure deletes. The rows expire with the
+    outbox's 3-day TTL.
 
 ## What checks them
 

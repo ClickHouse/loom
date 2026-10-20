@@ -184,6 +184,14 @@ async def apply_rollback(
 
     for i in range(0, len(memory_rows), _INSERT_BATCH):
         await insert_memory_versions(memory_rows[i : i + _INSERT_BATCH], ch=ch)
+    from server.memory.app import webhooks
+
+    await webhooks.announce(
+        "memory.tombstoned", [r for r in memory_rows if r.get("tombstoned_at") is not None]
+    )
+    await webhooks.announce(
+        "memory.revised", [r for r in memory_rows if r.get("tombstoned_at") is None]
+    )
     for i in range(0, len(embedding_rows), _INSERT_BATCH):
         await store.insert_embedding_rows(embedding_rows[i : i + _INSERT_BATCH], ch=ch)
     # After the memory insert, as memory.set does, so no reader sees the vector
