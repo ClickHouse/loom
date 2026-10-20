@@ -91,11 +91,10 @@ one that fails is not applied, its serving vector settings included
 (`provider_runtime.load_active_configuration`), and `/v1/health` reports
 `model_configuration_refused`. The check reads only the embedding, so a refused one always
 differs from the one in force and the vector tables may hold that other space; it fails
-closed: every data-plane request on that
-server answers 503 `GATEWAY_REQUIRED` with no `Retry-After` (the gate's `refusal`, which
-the maintenance middleware reads) and readiness fails, until a configuration the check
-accepts, or a reset to the environment, replaces it; the transition that replaces it takes
-the hold over. A rolling restart stops at such a server until then. A refusal
+closed: every data-plane request on that server answers 503 `GATEWAY_REQUIRED` with no
+`Retry-After` (the gate's `refusal`, which the maintenance middleware reads) and readiness
+fails, until a configuration the check accepts, or a reset to the environment, replaces
+it; the transition that replaces it takes the hold over. A rolling restart stops at such a server until then. A refusal
 (`GATEWAY_REQUIRED`) is a setting to fix, and neither SDK retries it.
 
 **Rotation.** `loom signing-key rotate [--algorithm HS256|RS256] [--activate-in 300]`

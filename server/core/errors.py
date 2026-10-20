@@ -142,10 +142,9 @@ class GatewayRequiredError(LoomServerError):
     token exchange); the message names the host. Also every data-plane request
     on a server whose saved model configuration the check refuses, until a
     replacement is saved or the configuration is reset; that answer names no
-    host. A
-    setting to fix, not an outage: never retried. A classifier or reranker
-    refused the same way fails open instead: the caller's type, or the input
-    order, stays."""
+    host. A setting to fix, not an outage: never retried. A classifier or
+    reranker refused the same way fails open instead: the caller's type, or
+    the input order, stays."""
 
     code = "GATEWAY_REQUIRED"
     status_code = 503
