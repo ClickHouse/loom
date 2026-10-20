@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import server.memory.store as memory_repo
-from server.core.naming import is_anonymous_user
+from server.core.naming import is_anonymous_user, session_spellings
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.app import conflicts
@@ -143,7 +143,7 @@ async def keys_held_elsewhere(
         "keys": sorted({str(r.get("memory_key") or "") for r in memory_rows} - {""}),
         "own_agent": str(writer["agent"]),
         "own_user": user,
-        "own_session": str(writer["session_id"]),
+        "own_sessions": session_spellings(str(writer["session_id"])),
     }
     in_scope = scope_and(request_scope(), params)
     rows = await ch.query_all(
@@ -152,7 +152,8 @@ async def keys_held_elsewhere(
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND memory_key IN {{keys:Array(String)}} AND user_id = {{own_user:String}}
-          AND NOT (agent = {{own_agent:String}} AND session_id = {{own_session:String}})
+          AND NOT (agent = {{own_agent:String}}
+                   AND session_id IN {{own_sessions:Array(String)}})
           AND tombstoned_at IS NULL AND sensitivity != 'high'
           AND status IN ('active', 'conflicted'){in_scope}
         """,

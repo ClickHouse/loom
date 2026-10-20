@@ -107,6 +107,9 @@ def test_cross_session_is_another_session_of_a_subject_with_no_user() -> None:
     # Whitespace is a user, as the cluster SQL (`user_id NOT IN ('-', '')`) reads it.
     blank = NS(user_id=" ", agent="a", session_id="s1")
     assert not resolver._cross_session(blank, {"agent": "a", "session_id": "s2"})
+    # No session is '-' or sent empty: either spelling is the other.
+    none = NS(user_id="-", agent="a", session_id="")
+    assert not resolver._cross_session(none, {"agent": "a", "session_id": "-"})
 
 
 @pytest.mark.parametrize(
@@ -2000,7 +2003,8 @@ async def test_a_bulk_row_whose_key_another_session_holds_is_owed(monkeypatch) -
     ch = CH()
     await bulk_set._bulk_mark_same_key(ch, NS(org="o", namespace="ns"), state)
     assert [e["conflict_checked_at"] for e in state.embedding_rows] == [queue.OWED_MARK, None]
-    assert "NOT (agent = {own_agent:String} AND session_id = {own_session:String})" in ch.sql[0]
+    own = "NOT (agent = {own_agent:String} AND session_id IN {own_sessions:Array(String)})"
+    assert own in " ".join(ch.sql[0].split())
     # Under newest_wins the insert retires the older row itself: nothing is read.
     current["policy"], ch.sql = "newest_wins", []
     await bulk_set._bulk_mark_same_key(ch, NS(org="o", namespace="ns"), state)

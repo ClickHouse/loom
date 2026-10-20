@@ -721,19 +721,19 @@ async def test_an_empty_user_is_the_anonymous_user_and_owes_no_other_session(
     assert {r["session_id"]: r["mark"] for r in rows} == {"s1": None, "s2": None}
 
 
-@pytest.mark.parametrize("session", ["", "-"])
+@pytest.mark.parametrize(("first", "second"), [("", ""), ("-", "-"), ("", "-"), ("-", "")])
 async def test_a_named_users_rewrite_in_its_own_session_is_owed_nothing(
-    ch, wired, monkeypatch, session
+    ch, wired, monkeypatch, first, second
 ) -> None:
-    """A named user rewriting a key in the one session it wrote it from (sent empty or
-    '-') holds the key nowhere else, so the rewrite owes no judgement."""
+    """A named user rewriting a key with no session (sent empty or '-', either spelling
+    each time) holds the key in no other session, so the rewrite owes no judgement."""
     from server.memory.app import after_write
 
     org, _ = wired
     _policy(monkeypatch, "auto_reinforce")
-    await _set(org, session, "office", "office: Paris", user="u1")
+    await _set(org, first, "office", "office: Paris", user="u1")
     await after_write.drain()
-    await _set(org, session, "office", "office: Rome", user="u1")
+    await _set(org, second, "office", "office: Rome", user="u1")
     await after_write.drain()
     rows = await ch.query_all(
         "SELECT toUnixTimestamp(conflict_checked_at) AS mark"
@@ -741,7 +741,7 @@ async def test_a_named_users_rewrite_in_its_own_session_is_owed_nothing(
         " AND tombstoned_at IS NULL SETTINGS select_sequential_consistency = 1",
         params={"org": org},
     )
-    assert [r["mark"] for r in rows] == [None]
+    assert rows and all(r["mark"] is None for r in rows), rows
 
 
 async def test_the_anonymous_users_two_spellings_are_one_subject(ch, wired, monkeypatch) -> None:
