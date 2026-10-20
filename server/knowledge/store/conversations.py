@@ -17,7 +17,7 @@ from typing import Any, NotRequired, TypedDict, cast
 from pydantic import BaseModel, ConfigDict
 
 from server.core import bm25
-from server.core.ch import caller_shaped, sequential_reads
+from server.core.ch import caller_shaped, own_write_reads, sequential_reads
 from server.core.errors import OverloadedError
 from server.core.repo_base import _CHClient, _default_client, param_slices
 from server.identity.domain.read_scope import ReadFilters, scope_where
@@ -204,24 +204,25 @@ async def message_exists(
     Append deduplication includes tombstones so a retry cannot recreate a deleted turn.
     """
     ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-        SELECT 1 AS ok FROM loom.conversations
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND agent = {agent:String} AND thread_id = {tid:String}
-          AND msg_id = {mid:String}
-          AND (tombstoned_at IS NULL OR NOT {live_only:Bool})
-        LIMIT 1
-        """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "agent": agent,
-            "tid": thread_id,
-            "mid": msg_id,
-            "live_only": live_only,
-        },
-    )
+    with own_write_reads():
+        row = await ch.query_one(
+            """
+            SELECT 1 AS ok FROM loom.conversations
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND agent = {agent:String} AND thread_id = {tid:String}
+              AND msg_id = {mid:String}
+              AND (tombstoned_at IS NULL OR NOT {live_only:Bool})
+            LIMIT 1
+            """,
+            params={
+                "org": org,
+                "ns": namespace,
+                "agent": agent,
+                "tid": thread_id,
+                "mid": msg_id,
+                "live_only": live_only,
+            },
+        )
     return bool(row and row.get("ok"))
 
 
@@ -257,31 +258,32 @@ async def message_state(
     when no row exists. Matches the rows `message_exists` dedupes on, so
     save_message decides on the same rows an append would skip over."""
     ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-        SELECT count() AS n,
-               argMax(role, ts) AS role,
-               argMax(content, ts) AS content,
-               argMax(run_id, ts) AS run_id,
-               max(ts) AS last_ts,
-               max(saved_at) AS last_saved_at,
-               groupUniqArray(user_id) AS owners,
-               countIf(tombstoned_at IS NOT NULL) > 0 AS tombstoned,
-               countIf(NOT is_saved OR user_id != {uid:String}) AS unsaved
-        FROM loom.conversations
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND agent = {agent:String} AND thread_id = {tid:String}
-          AND msg_id = {mid:String}
-        """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "agent": agent,
-            "tid": thread_id,
-            "mid": msg_id,
-            "uid": user_id,
-        },
-    )
+    with own_write_reads():
+        row = await ch.query_one(
+            """
+            SELECT count() AS n,
+                   argMax(role, ts) AS role,
+                   argMax(content, ts) AS content,
+                   argMax(run_id, ts) AS run_id,
+                   max(ts) AS last_ts,
+                   max(saved_at) AS last_saved_at,
+                   groupUniqArray(user_id) AS owners,
+                   countIf(tombstoned_at IS NOT NULL) > 0 AS tombstoned,
+                   countIf(NOT is_saved OR user_id != {uid:String}) AS unsaved
+            FROM loom.conversations
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND agent = {agent:String} AND thread_id = {tid:String}
+              AND msg_id = {mid:String}
+            """,
+            params={
+                "org": org,
+                "ns": namespace,
+                "agent": agent,
+                "tid": thread_id,
+                "mid": msg_id,
+                "uid": user_id,
+            },
+        )
     if not row or not int(row["n"]):
         return None
     return StoredMessage(
@@ -326,27 +328,29 @@ async def embedding_state(
     """Whether the message has an embedding row under `embedding_model`, and how
     many of its live rows still lack the saved flag or the owner."""
     ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-        WITH agent = {agent:String} AND tombstoned_at IS NULL AS live
-        SELECT countIf(live AND embedding_model = {model:String} AND embedding_dim > 0) AS current,
-               countIf(live AND (NOT is_saved OR user_id != {uid:String})) AS unsaved,
-               countIf(live AND user_id NOT IN ('-', '', {uid:String})) AS foreign,
-               maxOrNullIf(ts, embedding_model = {model:String}) AS version_ts
-        FROM loom.conversation_embeddings FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND thread_id = {tid:String} AND msg_id = {mid:String}
-        """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "agent": agent,
-            "tid": thread_id,
-            "mid": msg_id,
-            "uid": user_id,
-            "model": embedding_model,
-        },
-    )
+    with own_write_reads():
+        row = await ch.query_one(
+            """
+            WITH agent = {agent:String} AND tombstoned_at IS NULL AS live
+            SELECT countIf(live AND embedding_model = {model:String}
+                           AND embedding_dim > 0) AS current,
+                   countIf(live AND (NOT is_saved OR user_id != {uid:String})) AS unsaved,
+                   countIf(live AND user_id NOT IN ('-', '', {uid:String})) AS foreign,
+                   maxOrNullIf(ts, embedding_model = {model:String}) AS version_ts
+            FROM loom.conversation_embeddings FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND thread_id = {tid:String} AND msg_id = {mid:String}
+            """,
+            params={
+                "org": org,
+                "ns": namespace,
+                "agent": agent,
+                "tid": thread_id,
+                "mid": msg_id,
+                "uid": user_id,
+                "model": embedding_model,
+            },
+        )
     if not row:
         return StoredEmbedding(current=0, unsaved=0, foreign=0)
     return StoredEmbedding(
@@ -374,22 +378,23 @@ async def saved_message_owner(
         raise ValueError(f"not a saved-message table: {table}")
     ch = ch or _default_client()
     final = " FINAL" if table == "loom.conversation_embeddings" else ""
-    row = await ch.query_one(
-        f"""
-        SELECT user_id FROM {table}{final}
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND agent = {{agent:String}} AND thread_id = {{tid:String}}
-          AND msg_id = {{mid:String}} AND is_saved AND tombstoned_at IS NULL
-        LIMIT 1
-        """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "agent": agent,
-            "tid": thread_id,
-            "mid": msg_id,
-        },
-    )
+    with own_write_reads():
+        row = await ch.query_one(
+            f"""
+            SELECT user_id FROM {table}{final}
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND agent = {{agent:String}} AND thread_id = {{tid:String}}
+              AND msg_id = {{mid:String}} AND is_saved AND tombstoned_at IS NULL
+            LIMIT 1
+            """,
+            params={
+                "org": org,
+                "ns": namespace,
+                "agent": agent,
+                "tid": thread_id,
+                "mid": msg_id,
+            },
+        )
     return str(row["user_id"]) if row else None
 
 
