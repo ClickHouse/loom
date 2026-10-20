@@ -116,10 +116,12 @@ describe("Recent search why-line", () => {
     expect(button.closest("[data-memory-key]")).toHaveAttribute("data-memory-key", "coffee_pref");
     const scores = screen.getAllByTestId("search-score");
     expect(scores).toHaveLength(1);
-    expect(scores[0]).toHaveTextContent("similarity 0.70");
+    expect(scores[0]).toHaveTextContent("similarity 0.70 · score 0.80");
     const open = screen.getByRole("button", { name: "coffee_pref" });
     expect(open).toContainElement(scores[0]);
-    expect(open).toHaveAccessibleDescription(/similarity 0\.70/);
+    // jsdom drops the space that ends the similarity's own span; list-pages.spec.ts checks the
+    // description a browser gives.
+    expect(open).toHaveAccessibleDescription(/similarity 0\.70 · ?score 0\.80/);
     await userEvent.click(button);
     const why = await screen.findByTestId("search-why");
     expect(why).toHaveTextContent("#1");
