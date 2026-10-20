@@ -1,5 +1,5 @@
 """The sensitivity sweep's two reads of `loom.memory`: a page's sort keys, then the current
-version of each key in that page's range (the paging loop is `memory.app.sensitivity_sweep`).
+version of each of them (the paging loop is `memory.app.sensitivity_sweep`).
 """
 
 from __future__ import annotations
@@ -11,16 +11,15 @@ SORT_KEY = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
 _SCAN_TEXT = "if(length(toString(value_json)) > 2, toString(value_json), value)"
 
 
-def _key_bound(prefix: str, op: str, last_op: str) -> str:
-    """A sort key bound on `{<prefix>_<column>}`, as `a op x OR (a = x AND (...))`, with
-    `last_op` on the last column."""
+def _after_last_key() -> str:
+    """The sort key past `{after_<column>}`, as `a > x OR (a = x AND (...))`."""
     cond = ""
     for col in reversed(SORT_KEY):
-        param = f"{{{prefix}_{col}:String}}"
+        param = f"{{after_{col}:String}}"
         if cond:
-            cond = f"{col} {op} {param} OR ({col} = {param} AND ({cond}))"
+            cond = f"{col} > {param} OR ({col} = {param} AND ({cond}))"
         else:
-            cond = f"{col} {last_op} {param}"
+            cond = f"{col} > {param}"
     return cond
 
 
@@ -41,15 +40,15 @@ def _where(*, org: str | None, namespace: str | None, since_days: int | None) ->
 def keys_sql(
     *, org: str | None, namespace: str | None, since_days: int | None, after: bool = False
 ) -> str:
-    """The sort keys of one page, read without FINAL: any row version that meets the
-    conditions gives its key, so the page's keys include every key whose current version
-    meets them. Without FINAL the window prunes partitions, every thread reads, and a read
-    in key order stops at the LIMIT."""
+    """The sort keys of one page, `{lim}` distinct keys read without FINAL: any row version
+    that meets the conditions gives its key, so the page's keys include every key whose
+    current version meets them. Without FINAL the window prunes partitions, every thread
+    reads, and a read in key order stops at the LIMIT."""
     where = _where(org=org, namespace=namespace, since_days=since_days)
     if after:  # the next page, after the last key of the one before
-        where += f" AND ({_key_bound('after', '>', '>')})"
+        where += f" AND ({_after_last_key()})"
     return f"""
-        SELECT {", ".join(SORT_KEY)}
+        SELECT DISTINCT {", ".join(SORT_KEY)}
         FROM loom.memory
         WHERE {where}
         ORDER BY {", ".join(SORT_KEY)}
@@ -60,19 +59,17 @@ def keys_sql(
 def scan_sql(
     *, org: str | None, namespace: str | None, since_days: int | None, after: bool = False
 ) -> str:
-    """The current version of each key in one page's range that still meets the conditions:
-    after the last key of the page before and up to `{upto_<column>}`, this page's last key.
-    Every key whose current version meets them is in the page, so the range holds the same
-    rows as the page's key list, in at most twelve key parameters whatever the page size."""
+    """The current version of each of the page's keys that still meets the conditions. The
+    keys come from `keys_sql` as a subquery, so the statement binds no key list and the
+    FINAL read touches only the granules of the page's keys."""
     where = _where(org=org, namespace=namespace, since_days=since_days)
-    if after:
-        where += f" AND ({_key_bound('after', '>', '>')})"
-    where += f" AND ({_key_bound('upto', '<', '<=')})"
+    keys = keys_sql(org=org, namespace=namespace, since_days=since_days, after=after)
     return f"""
         SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key,
                {_SCAN_TEXT} AS value
         FROM loom.memory FINAL
         WHERE {where}
+          AND ({", ".join(SORT_KEY)}) IN ({keys})
         ORDER BY {", ".join(SORT_KEY)}
     """
 

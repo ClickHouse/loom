@@ -220,23 +220,22 @@ async def scan(
         params["ns"] = namespace
     if since_days:
         params["days"] = int(since_days)
-    last: dict[str, Any] | None = None
-    read = 0
-    while pages is None or read < pages:
-        read += 1
-        after = last is not None
+    last: dict[str, Any] = {}  # the last key of the page before
+    pages_read = 0
+    while pages is None or pages_read < pages:
+        pages_read += 1
+        after = bool(last)
         page_params = dict(params)
-        if last is not None:
+        if after:
             page_params |= {f"after_{col}": last[col] for col in SORT_KEY}
         sql = keys_sql(org=org, namespace=namespace, since_days=since_days, after=after)
         keys = await ch.query_all(sql, params=page_params)
         rows: list[dict[str, Any]] = []
         if keys:
-            # The page's key range, not its key list: a list of thousands of keys is a
-            # parameter too long for the request URL.
+            # The FINAL read takes the page's keys as a subquery, not as a list: a list of
+            # thousands of keys is a parameter too long for the request URL.
             sql = scan_sql(org=org, namespace=namespace, since_days=since_days, after=after)
-            upto = {f"upto_{col}": keys[-1][col] for col in SORT_KEY}
-            rows = await ch.query_all(sql, params=page_params | upto)
+            rows = await ch.query_all(sql, params=page_params)
         report.scanned += len(rows)
         report.truncated = len(keys) >= limit
         _add_candidates(report, rows, keep)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import time
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 
@@ -184,17 +184,18 @@ async def test_scan_labels_exactly_as_the_write_path_would() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_pages_current_versions_are_read_by_key_range_not_by_key_list() -> None:
+async def test_a_pages_current_versions_are_read_by_key_subquery_not_by_key_list() -> None:
     # A page of 20,000 keys bound as one array parameter outgrows the request URL; the
-    # FINAL read takes the page's first and last keys, the same parameters for any page size.
+    # FINAL read takes the page's keys as a subquery, the same parameters for any page size.
     ch = _CH([_mem(str(i), "secret") for i in range(2000)])
     await sweep.scan(limit=2000, pages=2, ch=ch)
-    finals = [params for sql, params in ch.calls if "FINAL" in sql]
+    finals = [(sql, params) for sql, params in ch.calls if "FINAL" in sql]
     assert len(finals) == 2
-    for params in finals:
+    for sql, params in finals:
+        assert "IN (" in sql and "SELECT DISTINCT" in sql
         assert not any(isinstance(v, list | tuple) for v in params.values())
-    assert finals[0]["upto_memory_key"] == "k1999" and "after_memory_key" not in finals[0]
-    assert finals[1]["after_memory_key"] == "k1999"
+    assert "after_memory_key" not in finals[0][1]
+    assert finals[1][1]["after_memory_key"] == "k1999"
 
 
 @pytest.mark.asyncio
@@ -301,44 +302,89 @@ class _LocalCH:
         return rows[0] if rows else None
 
 
-# (org, namespace, user_id, memory_id, memory_key, value, age seconds)
-_Row = tuple[str, str, str, str, str, Any, int]
+class _Row(NamedTuple):
+    """One loom.memory row version, under agent `a`, session `-`."""
+
+    org: str
+    ns: str
+    user: str
+    memory_id: str
+    key: str
+    value: Any
+    age: int  # seconds since created_at
+    sensitivity: str = ""
+    version: int = 0
+    tombstoned: bool = False
 
 
 def _local_memory(rows: list[_Row]) -> _LocalCH:
-    """loom.memory on clickhouse-local holding `rows`, all under agent `a`, session `-`."""
+    """loom.memory on clickhouse-local holding `rows`."""
     # Each query reruns the insert, so the timestamps are fixed here rather than `now()`.
     now = int(time.time())
     values, params = [], {}
-    for i, (org, ns, user, mid, key, value, age) in enumerate(rows):
+    for i, row in enumerate(rows):
         values.append(
             f"({{org{i}:String}}, {{ns{i}:String}}, 'a', {{user{i}:String}}, '-', "
-            f"{{id{i}:UUID}}, {{key{i}:String}}, {{value{i}:String}}, toDateTime({{at{i}:UInt32}}))"
+            f"{{id{i}:UUID}}, {{key{i}:String}}, {{value{i}:String}}, toDateTime({{at{i}:UInt32}}), "
+            f"{{sens{i}:String}}, {{ver{i}:UInt64}}, "
+            f"if({{tomb{i}:Bool}}, toDateTime({{at{i}:UInt32}}), NULL))"
         )
         params |= {
-            f"org{i}": org,
-            f"ns{i}": ns,
-            f"user{i}": user,
-            f"id{i}": mid,
-            f"key{i}": key,
-            f"value{i}": json.dumps(value),
-            f"at{i}": now - age,
+            f"org{i}": row.org,
+            f"ns{i}": row.ns,
+            f"user{i}": row.user,
+            f"id{i}": row.memory_id,
+            f"key{i}": row.key,
+            f"value{i}": json.dumps(row.value),
+            f"at{i}": now - row.age,
+            f"sens{i}": row.sensitivity,
+            f"ver{i}": row.version,
+            f"tomb{i}": row.tombstoned,
         }
     insert = (
         "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
-        f"memory_key, value, created_at) VALUES {', '.join(values)}"
+        "memory_key, value, created_at, sensitivity, version, tombstoned_at) "
+        f"VALUES {', '.join(values)}"
     )
     # the CLI's closing invariant reads memory_embeddings, whose vector column is quantized
     tables = ["SET enable_quantized_codec = 1", ddl("memory"), ddl("memory_embeddings")]
     return _LocalCH([*tables, insert], params)
 
 
+async def _run_pass_recording(
+    monkeypatch, ch: _LocalCH, *, rows_per_pass: int, pages: int
+) -> tuple[list[Any], dict[str, Any]]:
+    """The scheduled pass over `ch`'s rows, with `apply` recording its candidates: the
+    candidates it would label, and the pass's outcome."""
+    from server.memory.workers import sensitivity_sweep as w
+    from server.settings import settings
+
+    applied: list[Any] = []
+
+    async def _apply(cands, *, ch=None):
+        applied.extend(cands)
+        return sweep.ApplyResult(relabelled=len(cands), high=len(cands))
+
+    monkeypatch.setattr(sweep, "apply", _apply)
+    monkeypatch.setattr(settings, "sensitivity_sweep_window_days", 2)
+    monkeypatch.setattr(settings, "sensitivity_sweep_max_rows_per_pass", rows_per_pass)
+    monkeypatch.setattr(settings, "sensitivity_sweep_pages_per_pass", pages)
+    monkeypatch.setattr(settings, "sensitivity_sweep_shapes", "credential,email")
+    out = await w.run_pass(ch=ch)  # type: ignore[arg-type]
+    return applied, out
+
+
+def _token_row_in_another_org() -> _Row:
+    token = "gh" + "p_" + "Ab3" * 12
+    return _Row("zeta", "n", "-", _uuid(99), "deploy_token", f"push with {token}", 60)
+
+
 def _spin_rows_then_a_pin(spins: int) -> list[_Row]:
     """`spins` selected rows the detector leaves unlabelled, then a row holding a PIN."""
-    rows: list[_Row] = [
-        ("o", "n", "-", _uuid(i), f"spin_{i}", {"spin": "4471"}, 600 - i) for i in range(spins)
+    rows = [
+        _Row("o", "n", "-", _uuid(i), f"spin_{i}", {"spin": "4471"}, 600 - i) for i in range(spins)
     ]
-    rows.append(("o", "n", "-", _uuid(99), "vault_door", "badge PIN is 4471", 60))
+    rows.append(_Row("o", "n", "-", _uuid(99), "vault_door", "badge PIN is 4471", 60))
     return rows
 
 
@@ -351,23 +397,10 @@ def _uuid(i: int) -> str:
 async def test_a_pass_pages_past_selected_rows_it_leaves_unlabelled(monkeypatch) -> None:
     # More selected-but-unlabelled rows than one page sit ahead of a PIN row: the pass reads
     # on past them and labels the PIN row, instead of re-reading the same first page.
-    from server.memory.workers import sensitivity_sweep as w
-    from server.settings import settings
-
     ch = _local_memory(_spin_rows_then_a_pin(5))
     one_page = await sweep.scan(since_days=2, limit=2, pages=1, ch=ch)  # type: ignore[arg-type]
     assert one_page.truncated and one_page.candidates == []
-    applied: list[Any] = []
-
-    async def _apply(cands, *, ch=None):
-        applied.extend(cands)
-        return sweep.ApplyResult(relabelled=len(cands), high=len(cands))
-
-    monkeypatch.setattr(sweep, "apply", _apply)
-    monkeypatch.setattr(settings, "sensitivity_sweep_window_days", 2)
-    monkeypatch.setattr(settings, "sensitivity_sweep_max_rows_per_pass", 2)
-    monkeypatch.setattr(settings, "sensitivity_sweep_shapes", "credential, email")
-    out = await w.run_pass(ch=ch)  # type: ignore[arg-type]
+    applied, out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=2, pages=10)
     assert [c.memory_key for c in applied] == ["vault_door"] and applied[0].level == "high"
     assert out["scanned"] == 6 and not out["truncated"]
 
@@ -388,22 +421,45 @@ async def test_pages_cross_namespace_and_user_boundaries_without_a_gap() -> None
     # Pages of two rows end inside one user, at a user boundary and at a namespace boundary:
     # each selected row comes back exactly once, and the scan reaches the PIN row at the end.
     spin = {"spin": "4471"}
-    rows: list[_Row] = [
-        ("o", "n", "-", _uuid(1), "spin_1", spin, 60),
-        ("o", "n", "-", _uuid(2), "spin_2", spin, 60),
-        ("o", "n", "-", _uuid(3), "spin_3", spin, 60),
-        ("o", "n", "u2", _uuid(4), "spin_1", spin, 60),
-        ("o", "n", "u2", _uuid(5), "spin_2", spin, 60),
-        ("o", "n2", "-", _uuid(6), "spin_1", spin, 60),
-        ("o", "n2", "u2", _uuid(7), "spin_1", spin, 60),
-        ("o", "n2", "u2", _uuid(8), "vault_door", "badge PIN is 4471", 60),
+    rows = [
+        _Row("o", "n", "-", _uuid(1), "spin_1", spin, 60),
+        _Row("o", "n", "-", _uuid(2), "spin_2", spin, 60),
+        _Row("o", "n", "-", _uuid(3), "spin_3", spin, 60),
+        _Row("o", "n", "u2", _uuid(4), "spin_1", spin, 60),
+        _Row("o", "n", "u2", _uuid(5), "spin_2", spin, 60),
+        _Row("o", "n2", "-", _uuid(6), "spin_1", spin, 60),
+        _Row("o", "n2", "u2", _uuid(7), "spin_1", spin, 60),
+        _Row("o", "n2", "u2", _uuid(8), "vault_door", "badge PIN is 4471", 60),
     ]
     ch = _local_memory(rows)
     report = await sweep.scan(since_days=2, limit=2, pages=None, ch=ch)  # type: ignore[arg-type]
     returned = sorted(r["memory_id"] for r in ch.returned if "memory_id" in r)  # FINAL reads
-    assert returned == sorted(row[3] for row in rows)
+    assert returned == sorted(row.memory_id for row in rows)
     assert [c.memory_key for c in report.candidates] == ["vault_door"]
     assert report.scanned == 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_page_holds_distinct_keys_and_yields_only_current_unlabelled_versions() -> None:
+    # The key read has no FINAL, so it sees every version: `gone` is tombstoned and
+    # `vault_door` labelled `high` (what `apply` writes) in their current versions, and
+    # `twice` has two unlabelled versions. A page of three keys holds all three, and the
+    # FINAL read yields only `twice`, once.
+    pin = "badge PIN is 4471"
+    rows = [
+        _Row("o", "n", "-", _uuid(1), "gone", pin, 60, version=1),
+        _Row("o", "n", "-", _uuid(1), "gone", pin, 60, version=2, tombstoned=True),
+        _Row("o", "n", "-", _uuid(2), "twice", pin, 60, version=1),
+        _Row("o", "n", "-", _uuid(2), "twice", pin, 60, version=2),
+        _Row("o", "n", "-", _uuid(3), "vault_door", pin, 60, version=1),
+        _Row("o", "n", "-", _uuid(3), "vault_door", pin, 60, sensitivity="high", version=2),
+    ]
+    ch = _local_memory(rows)
+    report = await sweep.scan(since_days=2, limit=3, pages=1, ch=ch)  # type: ignore[arg-type]
+    keys = [r["memory_key"] for r in ch.returned if "memory_id" not in r]
+    assert keys == ["gone", "twice", "vault_door"]
+    assert [c.memory_key for c in report.candidates] == ["twice"] and report.scanned == 1
 
 
 @pytest.mark.asyncio
@@ -415,32 +471,16 @@ async def test_phone_shaped_rows_in_one_org_never_hide_a_credential_in_another(
     # milliseconds, which the detector reads as phone numbers, and 19-digit ids, which it
     # leaves unlabelled. The scheduled pass's filter selects none of them, so the token in
     # the next org is labelled.
-    from server.memory.workers import sensitivity_sweep as w
-    from server.settings import settings
-
     values = [
         *({"ts": 1760000000 + i} for i in range(6)),
         *({"ts": 1760000000000 + i} for i in range(6)),
         *({"id": 1234567890123456789 + i} for i in range(6)),
     ]
-    rows: list[_Row] = [
-        ("acme", "n", "-", _uuid(i), f"obs_{i}", value, 60) for i, value in enumerate(values)
+    rows = [
+        _Row("acme", "n", "-", _uuid(i), f"obs_{i}", value, 60) for i, value in enumerate(values)
     ]
-    token = "gh" + "p_" + "Ab3" * 12
-    rows.append(("zeta", "n", "-", _uuid(99), "deploy_token", f"push with {token}", 60))
-    ch = _local_memory(rows)
-    applied: list[Any] = []
-
-    async def _apply(cands, *, ch=None):
-        applied.extend(cands)
-        return sweep.ApplyResult(relabelled=len(cands), high=len(cands))
-
-    monkeypatch.setattr(sweep, "apply", _apply)
-    monkeypatch.setattr(settings, "sensitivity_sweep_window_days", 2)
-    monkeypatch.setattr(settings, "sensitivity_sweep_max_rows_per_pass", 2)
-    monkeypatch.setattr(settings, "sensitivity_sweep_pages_per_pass", 2)
-    monkeypatch.setattr(settings, "sensitivity_sweep_shapes", "credential,email")
-    out = await w.run_pass(ch=ch)  # type: ignore[arg-type]
+    ch = _local_memory([*rows, _token_row_in_another_org()])
+    applied, out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=2, pages=2)
     assert [(c.org, c.memory_key) for c in applied] == [("zeta", "deploy_token")]
     assert out["scanned"] == 1
 
@@ -453,9 +493,6 @@ async def test_prose_naming_a_credential_word_never_hides_a_credential_in_anothe
     # The first org holds more prose rows than a pass's pages, each naming a word the
     # detector labels only as an assignment. The filter selects none of them, so the token in
     # the next org is labelled.
-    from server.memory.workers import sensitivity_sweep as w
-    from server.settings import settings
-
     prose = [
         "I forgot my password",
         "the secret of a good stew is time",
@@ -464,24 +501,11 @@ async def test_prose_naming_a_credential_word_never_hides_a_credential_in_anothe
         "rotate the api key every month",
         {"note": "the password: rules are in the wiki"},
     ]
-    rows: list[_Row] = [
-        ("acme", "n", "-", _uuid(i), f"note_{i}", value, 60) for i, value in enumerate(prose)
+    rows = [
+        _Row("acme", "n", "-", _uuid(i), f"note_{i}", value, 60) for i, value in enumerate(prose)
     ]
-    token = "gh" + "p_" + "Ab3" * 12
-    rows.append(("zeta", "n", "-", _uuid(99), "deploy_token", f"push with {token}", 60))
-    ch = _local_memory(rows)
-    applied: list[Any] = []
-
-    async def _apply(cands, *, ch=None):
-        applied.extend(cands)
-        return sweep.ApplyResult(relabelled=len(cands), high=len(cands))
-
-    monkeypatch.setattr(sweep, "apply", _apply)
-    monkeypatch.setattr(settings, "sensitivity_sweep_window_days", 2)
-    monkeypatch.setattr(settings, "sensitivity_sweep_max_rows_per_pass", 2)
-    monkeypatch.setattr(settings, "sensitivity_sweep_pages_per_pass", 2)
-    monkeypatch.setattr(settings, "sensitivity_sweep_shapes", "credential,email")
-    out = await w.run_pass(ch=ch)  # type: ignore[arg-type]
+    ch = _local_memory([*rows, _token_row_in_another_org()])
+    applied, out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=2, pages=2)
     assert [(c.org, c.memory_key) for c in applied] == [("zeta", "deploy_token")]
     assert out["scanned"] == 1
 

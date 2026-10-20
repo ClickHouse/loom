@@ -55,6 +55,14 @@ def test_credential_shapes_are_high(text: str) -> None:
     assert detect_sensitivity(text) == "high"
 
 
+@pytest.mark.parametrize("text", _FAKE_CREDENTIALS)
+def test_the_scheduled_sweep_selects_every_credential_shape(text: str) -> None:
+    # The sweep labels only what its coarse filter selects: as written, and as the JSON text
+    # a scalar value is stored as.
+    assert re.search(_HIGH_SHAPE_RE, text)
+    assert re.search(_HIGH_SHAPE_RE, json.dumps(text))
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -789,6 +797,9 @@ _PREFILTER_OBJECTS = [
     {"pin_count": 4},
     {"pin": "A1"},
     {"note": "pin 128 rows"},
+    {"note": "deploy:\npassword=hunter2222"},  # written `\npassword`
+    {"note": "api_key = abcdefgh12345678"},
+    {"card": 4111111111111111},  # a lone card number
 ]
 _PREFILTER_TEXTS = [
     "PIN is 4471",
@@ -806,6 +817,10 @@ _PREFILTER_TEXTS = [
     "deploy key " + "sk-" + "proj-" + "Ab3" * 12,
     "eyJ" + "a1" * 8 + ".eyJ" + "b2" * 8 + "." + "Sf9" * 8,
     "task-1234 and disk-usage are done",
+    "db password: " + "Tr0ub4dor&3xyz",
+    "client_secret = " + "9f8e7d6c5b4a3210ffee",
+    "mastercard 5500000000000004",
+    "amex 378282246310005",
 ]
 
 
