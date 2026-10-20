@@ -406,6 +406,49 @@ async def mark_message_saved(
     )
 
 
+async def unsave_message(
+    table: str,
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    user_id: str,
+    remove: bool,
+    when: datetime,
+    ch: _CHClient | None = None,
+) -> None:
+    """Withdraw `user_id`'s saved rows of a turn in `table` (one of
+    SAVED_MESSAGE_TABLES): clear the flag, and with `remove` tombstone the rows
+    too. Only rows saved by that user change. A synchronous mutation, so the
+    next saved-message search no longer returns the turn."""
+    if table not in SAVED_MESSAGE_TABLES:
+        raise ValueError(f"not a saved-message table: {table}")
+    ch = ch or _default_client()
+    tombstone = ", tombstoned_at = {when:DateTime}" if remove else ""
+    await ch.execute(
+        f"""
+        ALTER TABLE {table}
+        UPDATE is_saved = false{tombstone}
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND agent = {{agent:String}} AND thread_id = {{tid:String}}
+          AND msg_id = {{mid:String}} AND tombstoned_at IS NULL
+          AND is_saved AND user_id = {{uid:String}}
+        SETTINGS mutations_sync = 2
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "tid": thread_id,
+            "mid": msg_id,
+            "uid": user_id,
+            "when": when,
+        },
+    )
+
+
 async def namespace_logging_enabled(
     org: str,
     namespace: str,

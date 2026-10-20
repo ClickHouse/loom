@@ -25,6 +25,8 @@ from server.knowledge.api.models_conversations import (
     ConversationSetLoggingOutput,
     ConversationThreadsInput,
     ConversationThreadsOutput,
+    ConversationUnsaveMessageInput,
+    ConversationUnsaveMessageOutput,
     ConversationUpdateInput,
     ConversationUpdateOutput,
 )
@@ -40,6 +42,7 @@ from server.knowledge.app.conversations import (
     handle_conversation_search_saved_messages,
     handle_conversation_set_logging,
     handle_conversation_threads,
+    handle_conversation_unsave_message,
     handle_conversation_update,
 )
 from server.operations.base import Operation, Role
@@ -73,6 +76,18 @@ conversation_save_message = Operation(
     input_model=ConversationSaveMessageInput,
     output_model=ConversationSaveMessageOutput,
     handler=handle_conversation_save_message,
+    idempotent=True,
+    budget_p99_ms=250,
+    required_role=Role.WRITER,
+    audit=False,
+)
+
+conversation_unsave_message = Operation(
+    name="conversation.unsave_message",
+    maturity="experimental",
+    input_model=ConversationUnsaveMessageInput,
+    output_model=ConversationUnsaveMessageOutput,
+    handler=handle_conversation_unsave_message,
     idempotent=True,
     budget_p99_ms=250,
     required_role=Role.WRITER,
@@ -192,6 +207,7 @@ OPERATIONS: list[Operation] = [
     conversation_create,
     conversation_append,
     conversation_save_message,
+    conversation_unsave_message,
     conversation_set_logging,
     conversation_get,
     conversation_update,

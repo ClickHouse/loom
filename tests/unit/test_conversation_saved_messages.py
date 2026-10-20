@@ -14,6 +14,7 @@ from server.knowledge.api.models_conversations import (
     ConversationSearchInput,
     ConversationSearchOutput,
     ConversationSearchSavedMessagesInput,
+    ConversationUnsaveMessageInput,
 )
 from server.knowledge.store.conversations import StoredEmbedding, StoredMessage
 
@@ -433,3 +434,77 @@ async def test_a_session_bounded_token_cannot_search_saved_messages() -> None:
                 org="o", namespace="n", agent="librechat", user_id="u-1", query="q"
             )
         )
+
+
+def _unsave_input(user_id: str = "u-1") -> ConversationUnsaveMessageInput:
+    return ConversationUnsaveMessageInput(
+        org="o",
+        namespace="n",
+        agent="librechat",
+        conversation_id="c-1",
+        message_id="m-1",
+        user_id=user_id,
+    )
+
+
+def _stub_unsave(
+    monkeypatch: pytest.MonkeyPatch, *, owner: str | None, recording: bool
+) -> list[dict[str, object]]:
+    from server.knowledge.store import conversations as conversation_repo
+
+    calls: list[dict[str, object]] = []
+
+    async def fake_owner(*_a: object, **_kw: object) -> str | None:
+        return owner
+
+    async def fake_logging(*_a: object, **_kw: object) -> bool:
+        return recording
+
+    async def fake_unsave(table: str, *_a: object, **kw: object) -> None:
+        calls.append({"table": table, **kw})
+
+    monkeypatch.setattr(conversation_repo, "saved_message_owner", fake_owner)
+    monkeypatch.setattr(conversation_repo, "namespace_logging_enabled", fake_logging)
+    monkeypatch.setattr(conversation_repo, "unsave_message", fake_unsave)
+    return calls
+
+
+@pytest.mark.parametrize("owner", [None, "u-2"])
+@pytest.mark.asyncio
+async def test_unsave_reports_not_found_for_a_message_this_user_never_saved(
+    monkeypatch: pytest.MonkeyPatch, owner: str | None
+) -> None:
+    """Another user's saved message reads as not found, never as theirs."""
+    from server.knowledge.app import conversations
+
+    calls = _stub_unsave(monkeypatch, owner=owner, recording=False)
+    out = await conversations.handle_conversation_unsave_message(_unsave_input())
+
+    assert out.found is False
+    assert out.removed is False
+    assert calls == []
+
+
+@pytest.mark.parametrize(("recording", "removed"), [(False, True), (True, False)])
+@pytest.mark.asyncio
+async def test_unsave_removes_the_turn_only_where_transcripts_are_not_recorded(
+    monkeypatch: pytest.MonkeyPatch, recording: bool, removed: bool
+) -> None:
+    from server.knowledge.app import conversations
+
+    calls = _stub_unsave(monkeypatch, owner="u-1", recording=recording)
+    out = await conversations.handle_conversation_unsave_message(_unsave_input())
+
+    assert out.found is True
+    assert out.removed is removed
+    assert [c["table"] for c in calls] == ["loom.conversations", "loom.conversation_embeddings"]
+    assert all(c["remove"] is removed and c["user_id"] == "u-1" for c in calls)
+
+
+def test_unsave_is_registered_as_an_idempotent_write() -> None:
+    from server.operations.base import Role
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    op = OPERATIONS_BY_NAME["conversation.unsave_message"]
+    assert op.required_role is Role.WRITER
+    assert op.idempotent is True

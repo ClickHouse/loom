@@ -384,6 +384,8 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # into or overwrite another user's row.
     "conversation.save_message": "a write: the turn is saved as the pinned user, and a "
     "stored turn another user owns is refused, not claimed",
+    "conversation.unsave_message": "a write: only the pinned user's saved row changes; "
+    "another user's reads as not found",
     "memory.set": "a write",
     "memory.pin": "a write",
     "memory.bulk_set": "a write",

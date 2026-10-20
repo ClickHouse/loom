@@ -604,6 +604,10 @@
               "body",
               "options"
             ],
+            "unsave_message": [
+              "body",
+              "options"
+            ],
             "update": [
               "body",
               "options"
