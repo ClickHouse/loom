@@ -36,6 +36,7 @@ from server.settings._runtime import RuntimeSettings
 from server.settings._storage import StorageSettings
 from server.settings._tasks import TaskSettings
 from server.settings._tracker import TrackerSettings
+from server.settings._webhooks import WebhookSettings
 
 
 class Settings(
@@ -56,6 +57,7 @@ class Settings(
     MemorySettings,
     KnowledgeSettings,
     TaskSettings,
+    WebhookSettings,
     NamespaceSettings,
     ErasureSettings,
     StorageSettings,

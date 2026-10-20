@@ -458,6 +458,15 @@ _WORKERS: tuple[_Worker, ...] = (
         idle_interval="task_webhook_deliver_idle_interval_seconds",
     ),
     _Worker(
+        "memory_webhook_deliver",
+        "server.memory.workers.webhook_deliver",
+        "memory_webhook_deliver_enabled",
+        "memory_webhook_deliver_interval_seconds",
+        # ten events × a 10 s ack window is past the four-interval default
+        max_pass_seconds=120.0,
+        idle_interval="memory_webhook_deliver_idle_interval_seconds",
+    ),
+    _Worker(
         "tracker_links",
         "server.tracker.workers.links",
         "tracker_links_enabled",

@@ -1386,3 +1386,19 @@ Source: `server/settings/_tracker.py`
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `LOOM_TRACKER_TEST_SIGNAL_SMELL_CHUNKS` | `int` | `6` | The static smell leg reads at most this many chunks of the test's home file(s) from the code plane (flaky-test smell tokens per category, counted). |
+
+## Webhook
+
+Memory webhooks: their delivery worker and the URLs they may reach.
+
+Source: `server/settings/_webhooks.py`
+
+| Variable | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `LOOM_MEMORY_WEBHOOK_DELIVER_ENABLED` | `bool` | `True` | Deliver the signed memory-change events of loom.memory_webhook_outbox to each namespace's registered webhooks (the memory_webhook_deliver worker). |
+| `LOOM_MEMORY_WEBHOOK_DELIVER_INTERVAL_SECONDS` | `int` | `5` | Seconds between passes while events are going out. |
+| `LOOM_MEMORY_WEBHOOK_DELIVER_IDLE_INTERVAL_SECONDS` | `int` | `30` | Seconds between passes that found nothing due. |
+| `LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS` | `int` | `8` | Delivery attempts per event before it is marked dead (listed by webhook.deliveries). |
+| `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS` | `float` | `10.0` | Seconds between each process's reads of the registered webhooks; a webhook registered or removed on another process applies to writes here within it. |
+| `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` | `bool` | `False` | True lets a memory webhook use plain http (a local receiver in development); false: https only. |
+| `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` | `str` | `''` | Comma-separated hostnames or IP literals (exact, any case) a memory webhook may reach although they resolve to a private, loopback or link-local address; "" = none. |

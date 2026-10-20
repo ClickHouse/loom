@@ -738,6 +738,28 @@ in scope fails the saga. The saga, the census registry and the rule for new tabl
 [retention and erasure](../features/memory/retention-and-erasure.md). Erasure and audit
 hashing are engineering primitives, not a compliance guarantee.
 
+## Outbound webhooks
+
+Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.py`).
+
+- **No content leaves.** A memory webhook event carries the event type, ids, the version,
+  the identity tuple, the actor, the request id and a timestamp, never a value, tags or
+  evidence (`server/memory/domain/webhook_events.py`); a task notice carries ids and
+  kinds, never task text. The receiver reads with its own token, so authorization stays
+  at read time.
+- **Signed.** HMAC-SHA256 over `"{id}.{timestamp}.{body}"` in the Standard Webhooks
+  headers; the timestamp lets a receiver refuse a replay. The secret is an environment
+  variable a registration names, never stored; only a name under the registering org's
+  own prefix (`webhook_secret_ref_ok`) is read, so no tenant can have Loom sign with
+  another's secret.
+- **No request forgery inward.** Each delivery resolves the host, refuses loopback,
+  private, link-local and multicast addresses (`server/core/hosts.py`), connects to the
+  address it vetted and follows no redirect. Memory webhooks also refuse plain `http`
+  and refuse an inward URL at registration; `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` and
+  `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` are the operator's exceptions.
+- **No network on the request path.** A memory write leaves outbox rows; a worker sends
+  them. The outbox holds keys and user ids, so erasure clears it.
+
 ## Secrets
 
 - **Dev signing secret.** A deployment (`LOOM_DEPLOYMENT=1`) that requires auth refuses
@@ -785,6 +807,7 @@ hashing are engineering primitives, not a compliance guarantee.
 | Sensitivity                 | `server/memory/domain/sensitivity.py`, `server/memory/app/sensitivity_sweep.py`                                             |
 | Audit                       | `server/observability/audit.py`, `server/insights/domain/audit_checkpoints.py`, `server/insights/workers/audit_verifier.py` |
 | Erasure                     | `server/erasure/app/saga.py`, `server/erasure/store/`, `server/erasure/workers/recovery.py`                                 |
+| Outbound webhooks           | `server/core/webhooks.py`, `server/memory/app/webhooks.py`, `server/memory/workers/webhook_deliver.py`                      |
 | Leakage gate                | `tests/integration/test_cross_principal_leakage.py`                                                                         |
 
 ## Related

@@ -419,6 +419,11 @@ jobs:
       # for CH Cloud over WAN. Per-op overrides at runtime go through
       # POST /v1/admin/budget.set, not env vars.
       LOOM_LATENCY_BUDGET_MULTIPLIER: "10"
+      # Memory webhook tests POST to a receiver on 127.0.0.1 over http, and wait one
+      # registry refresh after registering.
+      LOOM_MEMORY_WEBHOOK_ALLOW_HTTP: "true"
+      LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS: "127.0.0.1"
+      LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS: "1"
       # A pure web replica: tests that exercise a worker call its `run_pass`
       # in-process against their own namespace. A live supervisor's workers
       # have no namespace filter and would drain those tests' rows.

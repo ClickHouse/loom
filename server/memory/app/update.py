@@ -718,6 +718,9 @@ async def _write_revision(
 
     # Same-key supersession, exactly as memory.set runs it after its insert.
     await _revision_supersession(input.org, existing, serialized_value, ch, cfg.policy)
+    from server.memory.app import webhooks
+
+    await webhooks.announce("memory.revised", [memory_row])
     return MemoryUpdateByIdOutput(
         updated=True,
         new_version=new_version,

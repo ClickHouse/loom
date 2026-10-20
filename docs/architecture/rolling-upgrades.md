@@ -101,6 +101,11 @@ schema. These rules keep that safe. The operator procedure is in
     resumes a user purge without purging (it reads no `purge` column). Collections are
     created (`collection.create`, which N-1 does not serve) and end-user issuers
     registered (`LOOM_JWT_END_USER_ISSUERS_JSON`) only once no N-1 replica serves.
+12. **A new side effect of a write** (such as memory webhook events): N-1 does not
+    perform it. A memory write served by an N-1 replica leaves no
+    `loom.memory_webhook_outbox` row, so it sends no event; N's worker delivers what N's
+    replicas wrote. A receiver that must see every change reads back what it holds once
+    the rollout ends.
 
 ## What checks them
 

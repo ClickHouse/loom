@@ -376,6 +376,17 @@ async def run_saga(
         },
         request_id=erasure_id,
     )
+    # After the census: the event names the erasure only, never the user or a key.
+    from server.memory.app import webhooks
+
+    erased_namespaces: list[str] | None = None  # a user's erasure: every namespace
+    if input.scope_type != "user_id":
+        erased_namespaces = (
+            [census_scope_value]
+            if isinstance(census_scope_value, str)
+            else list(census_scope_value)
+        )
+    await webhooks.announce_erasure(input.org, erased_namespaces, erasure_id)
 
     return ErasureRequestOutput(
         erasure_id=erasure_id,

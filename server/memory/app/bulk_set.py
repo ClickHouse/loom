@@ -676,6 +676,7 @@ async def handle_memory_bulk_set(
 
     await _bulk_insert(ch, state)
     _bulk_clock.mark("insert")
+    await _bulk_announce(state)
 
     _value_links = await _bulk_post_insert_links(ch, input, state)
 
@@ -706,6 +707,19 @@ async def handle_memory_bulk_set(
         identity_duplicates=state.identity_duplicates,
         stage_ms=dict(_bulk_work.get("stage_ms", {})),
     )
+
+
+async def _bulk_announce(state: _BulkWriteState) -> None:
+    """The written rows, to the namespace's webhooks: a key the batch found live
+    is revised, any other is written."""
+    from server.memory.app import webhooks
+
+    revised = [r for r in state.memory_rows if str(r["memory_key"]) in state.existing_ids]
+    written = [r for r in state.memory_rows if str(r["memory_key"]) not in state.existing_ids]
+    if written:
+        await webhooks.announce("memory.written", written)
+    if revised:
+        await webhooks.announce("memory.revised", revised)
 
 
 def _supersede_pairs(plan: BulkVerdictPlan) -> list[tuple[str, str]]:

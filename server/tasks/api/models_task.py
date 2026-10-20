@@ -21,15 +21,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from server.tasks.domain.states import (
+from server.core.webhooks import (
     WEBHOOK_SECRET_PREFIX,
-    BlockedOn,
-    Disclosure,
-    PolicyMode,
-    TaskStatus,
     webhook_secret_org_prefix,
     webhook_secret_ref_ok,
 )
+from server.tasks.domain.states import BlockedOn, Disclosure, PolicyMode, TaskStatus
 
 # The long-poll ceiling: a pull or an updates read may hold this long.
 MAX_WAIT_SECONDS = 30

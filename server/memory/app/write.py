@@ -661,7 +661,10 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     # Non-searchable type, or a 'high' sensitivity row: single insert is the
     # only work — no embedding row means no search leg can return it.
     if not is_embedded(w.input.memory_type, w.effective_sensitivity):
-        return await _set_plain_insert(w, ch)
+        out = await _set_plain_insert(w, ch)
+        if not out.dry_run:
+            await _announce_set(w)
+        return out
 
     # Searchable: build + insert the embedding row too. The two inserts
     # hit different tables and don't depend on each other; parallelize to
@@ -690,7 +693,19 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
 
     await _set_dual_write(w, ch, _cfg, conflict_result)
 
-    return await _set_after_write(w, ch, _cfg, conflict_result, duplicate_of_id, peers_out)
+    out = await _set_after_write(w, ch, _cfg, conflict_result, duplicate_of_id, peers_out)
+    await _announce_set(w)
+    return out
+
+
+async def _announce_set(w: _SetWrite) -> None:
+    """The written row, to the namespace's webhooks: a new key is written, a new
+    version of one is revised."""
+    from server.memory.app import webhooks
+
+    await webhooks.announce(
+        "memory.revised" if w.had_existing_row else "memory.written", [w.memory_row]
+    )
 
 
 def _stamp_lifecycle(

@@ -605,6 +605,9 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     # or above it, so the later it is drawn the fewer late vector writes it leaves live.
     version = next_version()
     tombstoned, downgraded = await _tombstone(existing, version=version, op="memory.delete")
+    from server.memory.app import webhooks
+
+    await webhooks.announce("memory.tombstoned", [webhooks.memory_change(existing, version)])
     return MemoryDeleteOutput(
         tombstoned=True,
         version=version,
@@ -702,9 +705,14 @@ async def _delete_version_locked(
         await _write_tombstone_row(
             existing, version=version, trace=delete_version_trace(input.version)
         )
-        return await finish_delete_check(existing, check)
+        answer = await finish_delete_check(existing, check)
     except Exception as e:  # a retry finishes it, or the worker once the check is recorded
         raise _check_deferred(e) from e
+    if answer.tombstoned:
+        from server.memory.app import webhooks
+
+        await webhooks.announce("memory.tombstoned", [webhooks.memory_change(existing, version)])
+    return answer
 
 
 async def _audit_deferred(input: MemoryDeleteVersionInput) -> None:

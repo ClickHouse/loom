@@ -582,6 +582,20 @@
    }
   },
   {
+   "deadline_seconds()": 120.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 30,
+   "interval_seconds": 5,
+   "max_pass_seconds": 120.0,
+   "name": "memory_webhook_deliver",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.webhook_deliver:run_pass"
+   }
+  },
+  {
    "deadline_seconds()": 3600.0,
    "due_scope": {
     "id": "server.tracker.workers.links:due_scope"
@@ -1098,6 +1112,20 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.tasks.workers.webhook_deliver:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 120.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 30,
+   "interval_seconds": 5,
+   "max_pass_seconds": 120.0,
+   "name": "memory_webhook_deliver",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.webhook_deliver:run_pass"
    }
   },
   {
@@ -1703,6 +1731,20 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.tasks.workers.webhook_deliver:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 120.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 30,
+   "interval_seconds": 5,
+   "max_pass_seconds": 120.0,
+   "name": "memory_webhook_deliver",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.webhook_deliver:run_pass"
    }
   },
   {

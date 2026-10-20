@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 164 tables + 18 materialized views.
+-- Counts: 166 tables + 18 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (164)
+-- Tables (166)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -2635,6 +2635,55 @@ ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, agent, user_id, session_id, memory_key, version)
 SETTINGS index_granularity = 128, non_replicated_deduplication_window = 1000;
+
+-- loom.memory_webhook_outbox
+CREATE TABLE IF NOT EXISTS loom.memory_webhook_outbox
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `webhook_id` String,
+    `event_id` String,
+    `event_type` LowCardinality(String),
+    `agent` String,
+    `user_id` String,
+    `session_id` String,
+    `memory_key` String,
+    `memory_id` String,
+    `memory_version` UInt64,
+    `actor` String,
+    `request_id` String,
+    `erasure_id` String DEFAULT '',
+    `occurred_at` DateTime64(3),
+    `status` LowCardinality(String) DEFAULT 'pending',
+    `attempts` UInt16 DEFAULT 0,
+    `next_try_at` DateTime64(3),
+    `lease_until` DateTime64(3) DEFAULT toDateTime64(0, 3),
+    `last_status` UInt16 DEFAULT 0,
+    `last_error` String DEFAULT '',
+    `version` UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, webhook_id, event_id)
+TTL toDateTime(occurred_at) + toIntervalDay(30)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
+-- loom.memory_webhooks
+CREATE TABLE IF NOT EXISTS loom.memory_webhooks
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `webhook_id` String,
+    `url` String,
+    `secret_ref` String,
+    `events` Array(LowCardinality(String)),
+    `created_by` String DEFAULT '',
+    `created_at` DateTime64(3) DEFAULT now64(3),
+    `is_deleted` UInt8 DEFAULT 0,
+    `version` UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, webhook_id)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.namespace_calibration_result
 CREATE TABLE IF NOT EXISTS loom.namespace_calibration_result

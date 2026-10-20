@@ -284,6 +284,14 @@ _CENSUS: tuple[Substrate, ...] = (
         "delete_version_checks.delete",
         "delete_version_checks.delete",
     ),
+    # Memory webhook events: a row's identity, key and id, never its text; 30-day TTL.
+    Substrate(
+        "loom.memory_webhook_outbox",
+        "1",
+        UID,
+        "memory_webhook_outbox.delete",
+        "memory_webhook_outbox.delete",
+    ),
     Substrate("loom.entity_degree", "1", None, "entity_graph.delete", None),
     Substrate("loom.learnings_queue", "1", None, "learnings_queue.delete", None),
     # Task inbox plane: the brief and the notes quote source
@@ -463,6 +471,11 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.task_claims": (
         "A task claim arbitration log that no code path writes (task id, fence, "
         "claimant label, timestamp) — identifiers only, no task text."
+    ),
+    "loom.memory_webhooks": (
+        "A webhook a namespace admin registered (URL, the name of the environment "
+        "variable holding its signing secret, event types) — configuration keyed by "
+        "(org, namespace, webhook_id), holding no memory content."
     ),
     "loom.task_webhook_cursor": (
         "The signed-webhook delivery cursor per inbox (last acknowledged "

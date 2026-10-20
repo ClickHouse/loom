@@ -29,6 +29,7 @@ merge, duplicate, conflict or rejected. The verdicts and conflict policies are i
 | Store a row with exact typed fields                   | `memory.record.write`           | See [typed records](#typed-records).                                            |
 | Store a document                                      | `knowledge.add`                 | Not a memory; see [knowledge](../knowledge.md).                                 |
 | Park scratch state (a cursor, a lease)                | `working_memory.set`            | Not embedded or ranked; see [working memory](./working-memory-and-profiles.md). |
+| Learn when a namespace's memory changes               | `webhook.register`              | Admin; see [change webhooks](#change-webhooks).                                 |
 
 Each op is `POST /v1/<op>`, an SDK method, and, where exposed, the MCP tool
 `loom_<op with dots as underscores>`. The [operations reference](../../reference/operations.md#memory)
@@ -252,6 +253,82 @@ They answer predicate questions without parsing text.
   writes of one entity land on one record.
 - Each field value carries a `state` (`value`, `unknown`, `rejected`, `absent`).
 - `memory.set_from_messages` with `record_schema` and `memory_key` extracts one record.
+
+## Change webhooks
+
+A product built on Loom (a chat service that shows a user what the assistant remembers,
+say) can be told when memory in a namespace changes instead of polling for it. A
+namespace admin registers a URL with `webhook.register`; Loom then POSTs one signed event
+per change. The event names the change and never its content: the receiver reads the
+memory back with its own token (`memory.get_by_id`), so what it may read is decided when
+it reads, as for any other read.
+
+| Event               | Sent after                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `memory.written`    | `memory.set` or `memory.bulk_set` writes a key that held no live row                                         |
+| `memory.revised`    | `memory.set`, `memory.bulk_set`, `memory.update` or `memory.update_by_id` writes a new version of a live key |
+| `memory.tombstoned` | `memory.delete` or `memory.delete_version`                                                                   |
+| `memory.restored`   | `memory.restore` brings a tombstoned row back                                                                |
+| `memory.redacted`   | `memory.redact` scrubs a historical version                                                                  |
+| `memory.erased`     | an `erasure.request` saga completes                                                                          |
+
+A merge (`merged_into_key`) writes no version at your key and sends no event; neither does
+a dry run or a refused write.
+
+```json
+{
+  "type": "memory.revised",
+  "event_id": "5f0c…",
+  "org": "acme",
+  "namespace": "chat",
+  "agent": "assistant",
+  "user_id": "u-42",
+  "session_id": "-",
+  "memory_key": "user/pref/tea",
+  "memory_id": "0b7e…",
+  "version": 1790000000000000000,
+  "actor": "user:alice",
+  "request_id": "r-91c2…",
+  "erasure_id": "",
+  "occurred_at": "2026-09-20T12:00:00.000Z"
+}
+```
+
+`memory.erased` carries the `erasure_id` the request returned and no key, user or
+identity: a namespace erasure goes to that namespace's webhooks, a user's erasure to
+every webhook of the org that takes the event.
+
+| Operation            | Role  | What it does                                                                                                            |
+| -------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------- |
+| `webhook.register`   | admin | Registers `url`, `secret_ref` and `events` (default all six); the same URL again replaces it. At most 10 per namespace. |
+| `webhook.list`       | admin | The namespace's webhooks, with `secret_present` (whether the server holds the secret).                                  |
+| `webhook.remove`     | admin | Removes one by `webhook_id`; its pending events are not sent.                                                           |
+| `webhook.deliveries` | admin | Events by state: `pending`, `delivered`, `dead` (out of attempts), with the last HTTP status or error.                  |
+
+**Signing.** Each request carries the Standard Webhooks headers the task inbox webhook
+uses: `webhook-id` (the event id; drop a repeat), `webhook-timestamp` (unix seconds;
+refuse one more than a few minutes old to bound replay) and
+`webhook-signature: v1,<base64 HMAC-SHA256>` over `"{id}.{timestamp}.{body}"`. The secret
+lives only in the server's environment: `secret_ref` names the variable, one of the
+org's own, `LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, encoded as for
+[task inbox webhooks](../tasks-and-decisions.md); a `whsec_` prefix marks a base64 key.
+
+**URLs.** `https` only, unless `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` is set (a local receiver
+in development). The host must resolve to public addresses: loopback, private,
+link-local (cloud metadata) and multicast targets are refused at registration and at
+every delivery, unless `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` names the host. Each delivery
+connects to the address it checked and follows no redirect.
+
+**Delivery.** The write leaves one row per event and webhook in
+`loom.memory_webhook_outbox` and makes no network call; the `memory_webhook_deliver`
+worker sends it. Any 2xx within 10 s acknowledges it. Anything else is retried after 5 s,
+30 s, 2 min, 10 min, 30 min and then hourly, until `LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS`
+attempts mark it `dead`. Delivery is at least once and unordered: order events by
+`version`, and read the row back rather than trusting the event's age. An outbox insert
+that fails is logged and that event is not sent; the write still stands. A webhook
+registered on one server process applies to writes on the others within
+`LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`. Outbox rows expire 30 days after the event, and an
+erasure deletes the ones in its scope.
 
 ## Settings
 

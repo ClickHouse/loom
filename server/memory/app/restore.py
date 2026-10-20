@@ -370,6 +370,9 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
             e,
         )
 
+    from server.memory.app import webhooks
+
+    await webhooks.announce("memory.restored", [restore_row])
     return MemoryRestoreOutput(
         restored=True,
         from_status="tombstoned",

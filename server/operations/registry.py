@@ -44,6 +44,7 @@ from server.memory.api import ops_procedure as procedure
 from server.memory.api import ops_profile as profile
 from server.memory.api import ops_records as memory_records
 from server.memory.api import ops_session_brief as session_brief
+from server.memory.api import ops_webhook as webhook
 from server.memory.api import ops_working_memory as working_memory
 from server.operations.base import Operation
 from server.tasks.api import ops_run as run
@@ -61,6 +62,7 @@ _OPERATION_MODULES = (
     context_offload,
     learnings,
     blacklist,
+    webhook,
     conflicts,
     erasure,
     cost,

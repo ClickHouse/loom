@@ -473,6 +473,23 @@ Every write that creates or changes memory leaves one hash-only row in `loom.aud
 hash, source class and verdict. The row hash and the checkpoint chain are described in
 [audit](../features/observability/audit.md).
 
+## Change webhooks
+
+After a write path's rows are in, it calls `announce` (`server/memory/app/webhooks.py`)
+with the event (`memory.written`, `memory.revised`, `memory.tombstoned`,
+`memory.restored`, `memory.redacted`; the erasure saga sends `memory.erased` after its
+census). For each webhook of the namespace that takes the event it inserts one
+`loom.memory_webhook_outbox` row holding ids and the identity tuple, never content; a
+namespace with no webhook pays no statement. Which namespaces have webhooks is a
+per-process copy of `loom.memory_webhooks`, read again every
+`LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`. The `memory_webhook_deliver` worker leases the due
+rows (a version with `lease_until`), POSTs each signed body
+(`server/core/webhooks.py`) and writes the outcome as a new version: `delivered`,
+`pending` with its next try, or `dead`. An outbox insert that fails never fails the
+write. During a rolling upgrade an N-1 replica writes no outbox rows, so its writes send
+no event; nothing else changes for N-1, which never reads the two tables.
+[Change webhooks](../features/memory/writing.md#change-webhooks) has the caller's view.
+
 ## Invariants
 
 - Every new `memory` or `memory_embeddings` version carries every persisted column
