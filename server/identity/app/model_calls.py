@@ -1,5 +1,4 @@
-"""org.set_model_calls / org.model_calls handlers, and `switch_off` for the
-paths that switch an org off themselves (offboarding)."""
+"""org.set_model_calls / org.model_calls handlers."""
 
 from __future__ import annotations
 
@@ -47,14 +46,6 @@ async def handle_org_set_model_calls(input: OrgSetModelCallsInput) -> OrgModelCa
     return await _set(input.org, input.enabled, input.reason, by, input.locked, platform)
 
 
-async def switch_off(org: str, *, by: str, reason: str, locked: bool = True) -> None:
-    """Switch the org's model calls off, locked against its own admins unless
-    `locked` is false: for a path that ends an org's use (offboarding), which
-    acts with the platform's authority."""
-    _one_org(org)
-    await _set(org, False, reason, by, locked, True)
-
-
 async def _set(
     org: str, enabled: bool, reason: str, by: str, locked: bool | None, platform: bool
 ) -> OrgModelCallsOutput:
@@ -74,6 +65,10 @@ async def _set(
         lock = held if locked is None else locked
         locked_by = str(current["locked_by"]) if locked is None else by
         now = datetime.now(UTC).replace(tzinfo=None)
+        if not enabled and "enabled" in current and not current["enabled"]:
+            # Still off: the time it was switched off stays, since queued work
+            # waits from it (`extraction_queue.drop_waiting`).
+            now = current["updated_at"]
         row: dict[str, Any] = {
             "org": org,
             "enabled": int(enabled),
@@ -91,8 +86,11 @@ async def _set(
 
 async def handle_org_model_calls(input: OrgModelCallsInput) -> OrgModelCallsOutput:
     """The org's current setting; enabled and unlocked when it was never set."""
+    from server.core.ch import own_write_reads
+
     _one_org(input.org)
-    row = await repo.get(input.org)
+    with own_write_reads():  # an admin reads right after setting it, on any replica
+        row = await repo.get(input.org)
     if row is None:
         return OrgModelCallsOutput(org=input.org, enabled=True)
     return _output(input.org, row)

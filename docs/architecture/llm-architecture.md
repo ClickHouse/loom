@@ -284,8 +284,8 @@ the shared HTTP client also carries non-model calls, which name no customer.
   switched-off orgs (`customer.switched_off_orgs`). A cached vector or answer is refused
   too: the switch is a kill switch, so nothing model-made reaches the org. The copy is
   read at most every `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted no longer than
-  `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`, past which every call is refused. Every job leaves a
-  switched-off org out when it selects work (in the query, so its rows neither spend attempts
+  `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`, past which every model call for an org is
+  refused. Every job leaves a switched-off org out when it selects work (in the query, so its rows neither spend attempts
   nor fill the batch ahead of other orgs); code ingest skips its repositories, freezing its
   whole code index. A conflict mark older than the sweep's hour when the org comes back is
   past the sweep, as a judge lost in an outage is: the write stands as made. The check runs in

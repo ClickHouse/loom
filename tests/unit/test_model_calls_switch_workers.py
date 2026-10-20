@@ -5,6 +5,7 @@ fill no batch ahead of another org's, which still runs."""
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -166,6 +167,53 @@ def test_code_embed_recovery_scans_no_repository_of_a_switched_off_org(monkeypat
     assert scanned and all(r == [("beta", "code-b")] for r in scanned)
 
 
+def test_an_org_switched_off_mid_code_recovery_pass_keeps_its_stubs_and_attempts() -> None:
+    """acme is switched off after its stubs were read: its embed call is refused,
+    and its stubs are neither re-inserted nor charged an attempt; beta's are
+    embedded in the same pass."""
+    from server.code.workers import embed_recovery as w
+
+    class _Embedder:
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            await customer.require()
+            return [[0.5, 0.5] for _ in texts]
+
+        async def embed(self, text: str) -> list[float]:
+            await customer.require()
+            return [0.5, 0.5]
+
+    class _Repo:
+        rows: list[Any] = []
+
+        def tombstone_of(self, table: str, live: dict[str, Any]) -> dict[str, Any]:
+            return dict(live)
+
+        async def insert_rows(self, table: str, rows: list[Any]) -> None:
+            self.rows = self.rows + list(rows)
+
+    repo = _Repo()
+    rows = [
+        {"org": org, "namespace": f"code-{org}", "text": "def f(): pass", "embed_attempts": 4}
+        for org in ("acme", "beta")
+    ]
+    result = w.CodeEmbedRecoveryResult()
+    _off("acme")
+    embedded = asyncio.run(
+        w._embed_rows(
+            repo,
+            "code_chunks",
+            rows,
+            _Embedder(),
+            text_of=lambda r: r["text"],
+            max_attempts=5,
+            result=result,
+        )
+    )
+    assert embedded == 1 and result.failed == 0 and result.poisoned == 0
+    assert result.switched_off == 1
+    assert [r["org"] for r in repo.rows] == ["beta"]
+
+
 def test_code_summaries_and_ingest_skip_a_switched_off_orgs_repositories(monkeypatch) -> None:
     from server.code.workers import summary as w
 
@@ -270,6 +318,105 @@ def test_an_org_switched_off_mid_pass_keeps_its_stub_and_its_attempts(monkeypatc
     assert {r["org"] for r in written} == {"beta"}
     assert all(r["embedding_dim"] == 2 and r["embed_attempts"] == 2 for r in written)
     assert result.embedded_count == 1 and result.failed_count == 0
+
+
+def test_an_org_switched_off_mid_observe_extract_leaves_its_observations_to_distil(
+    monkeypatch,
+) -> None:
+    """The extras fail open on a refusal, so a switch-off between the facts and
+    the extras would mark the session DONE with its events and notes lost."""
+    import server.memory.store as memory_repo
+    from server.memory.workers import observe_extract as ox
+
+    done: list[Any] = []
+
+    async def replay(*a: Any, **k: Any) -> int:
+        return 1
+
+    async def context(*a: Any, **k: Any) -> list[Any]:
+        return []
+
+    async def extras(*a: Any, **k: Any) -> Any:
+        _off("acme")  # switched off while the extras ran: their calls were refused
+        return SimpleNamespace(events_written=0, procedure_written=0, hint_written=0, failures=[])
+
+    async def insert(rows: list[Any], **_: Any) -> None:
+        done.extend(rows)
+
+    monkeypatch.setattr(ox, "_extract_replay", replay)
+    monkeypatch.setattr(ox, "_load_session_context", context)
+    monkeypatch.setattr(ox, "get_client_for_context", lambda: None)
+    monkeypatch.setattr(ox, "_distill_extras", extras)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: None)
+    monkeypatch.setattr(memory_repo, "build_memory_version_row", lambda o, **_k: o)
+    monkeypatch.setattr(memory_repo, "insert_memory_versions", insert)
+    session = {"org": "acme", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "s"}
+    obs = SimpleNamespace(
+        value={"narrative": "ran the tests"}, sensitivity="", tags=[], valid_at=None
+    )
+    _off()
+    with pytest.raises(customer.ModelCallsDisabled):
+        asyncio.run(ox._distill_session(session, [obs]))
+    assert done == []  # not marked DONE: distilled again once the org is back on
+
+
+def _stale() -> None:
+    """A copy of the switch too old to trust, and not due to be read again."""
+    from server.settings import settings
+
+    _off()
+    customer._read_at = time.monotonic() - settings.model_calls_policy_max_stale_seconds - 1
+
+
+def test_a_stale_switch_stops_the_embedding_worker_before_any_write(monkeypatch) -> None:
+    """With no customer header too: the pass writes nothing rather than embed
+    for an org it cannot tell is off."""
+    import server.memory.store as memory_repo
+    from server.core.errors import BackendUnavailableError
+    from server.memory.workers import embedding as w
+
+    written: list[Any] = []
+
+    async def insert(rows: list[dict[str, Any]], **_: Any) -> None:
+        written.extend(rows)
+
+    async def none(*a: Any, **k: Any) -> list[Any]:
+        return []
+
+    monkeypatch.setattr(memory_repo, "find_memories_without_embedding_rows", none)
+    monkeypatch.setattr(memory_repo, "insert_embedding_rows", insert)
+    _stale()
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(w.run_pass(w.EmbeddingWorkerConfig()))
+    assert written == []
+
+
+def test_a_switch_gone_stale_mid_reembed_stops_the_page_before_its_write() -> None:
+    from server.core.errors import BackendUnavailableError
+    from server.memory.app import reembed
+
+    table = "conversation_embeddings"
+    text = reembed._TABLES[table]["text"]
+
+    class _Emb:
+        model_name, dim = "m", 2
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            raise AssertionError("no model call on a stale switch")
+
+    class _CH:
+        rows: list[Any] = []
+
+        async def insert(self, table: str, rows: list[Any], **_: Any) -> None:
+            self.rows = rows
+
+    ch = _CH()
+    _stale()
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(
+            reembed._rewrite_page(ch, _Emb(), table, [{"org": "acme", text: "a"}], key_only=False)
+        )
+    assert ch.rows == []
 
 
 def test_the_period_digest_selects_no_identity_of_a_switched_off_org() -> None:

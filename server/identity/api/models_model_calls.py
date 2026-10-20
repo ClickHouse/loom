@@ -37,7 +37,8 @@ class OrgModelCallsOutput(BaseModel):
     reason: str = ""
     # Who made the last change; "" when it was never set.
     updated_by: str = ""
-    # When the last change was written (UTC); None when it was never set.
+    # When the setting last changed (UTC), None when it was never set; while off,
+    # when it was switched off, whatever else changed since.
     updated_at: datetime | None = None
     # Whether a platform admin locked the setting: its admins cannot switch it on.
     locked: bool = False

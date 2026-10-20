@@ -733,6 +733,42 @@ def test_a_platform_admins_change_keeps_a_lock_it_does_not_name(store: _Store) -
         set_current_auth(None)
 
 
+def test_an_org_still_off_keeps_the_time_it_was_switched_off(store: _Store) -> None:
+    """Queued work waits from that time: a lock or a new reason must not restart it."""
+    from datetime import datetime
+
+    from server.auth.context import set_current_auth
+    from server.operations.base import Role
+
+    then = datetime(2026, 1, 1)
+    try:
+        _as("ops@acme.com", Role.ORG_ADMIN)
+        _set(org="acme", enabled=False)
+        store.rows[-1]["updated_at"] = then
+        _as("root@platform", Role.PLATFORM_ADMIN)
+        assert _set(org="acme", enabled=False, locked=True).updated_at == then
+        assert _set(org="acme", enabled=False, reason="offboarded").updated_at == then
+        assert _set(org="acme", enabled=True).updated_at != then
+        assert _set(org="acme", enabled=False).updated_at != then  # off again: a new wait
+    finally:
+        set_current_auth(None)
+
+
+def test_reading_the_setting_sees_the_change_just_made(monkeypatch) -> None:
+    from server.core import ch
+    from server.identity.api.models_model_calls import OrgModelCallsInput
+    from server.identity.app import model_calls
+
+    seen: list[bool] = []
+
+    async def get(org: str, **_: Any) -> None:
+        seen.append(ch.sequential_reads_var.get())
+
+    monkeypatch.setattr(model_calls.repo, "get", get)
+    asyncio.run(model_calls.handle_org_model_calls(OrgModelCallsInput(org="acme")))
+    assert seen == [True]
+
+
 def test_a_change_read_before_a_lock_cannot_write_the_lock_away(monkeypatch) -> None:
     """The org admin's change reads the switch (unlocked), then a platform admin
     locks it off. Held from read to write, the admin's change ends first and the
@@ -775,21 +811,6 @@ def test_a_change_read_before_a_lock_cannot_write_the_lock_away(monkeypatch) -> 
         set_current_auth(None)
     last = max(table.rows, key=lambda r: r["version"])
     assert (last["enabled"], last["locked"], last["locked_by"]) == (0, 1, "root@platform")
-
-
-def test_offboarding_switches_the_org_off_and_locks_it(store: _Store) -> None:
-    from server.identity.app import model_calls
-
-    asyncio.run(model_calls.switch_off("acme", by="offboarding", reason="org deleted"))
-    [row] = store.rows
-    assert (row["enabled"], row["locked"], row["locked_by"], row["reason"]) == (
-        0,
-        1,
-        "offboarding",
-        "org deleted",
-    )
-    with pytest.raises(Exception, match="org must name one org"):
-        asyncio.run(model_calls.switch_off("*", by="offboarding", reason="x"))
 
 
 def test_a_reembed_leaves_a_switched_off_orgs_rows_and_counts_them(monkeypatch) -> None:

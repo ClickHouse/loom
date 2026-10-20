@@ -520,6 +520,9 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
         )
         total += n
         print(f"  embedded {total} (+{n}); failed={result.failed} poisoned={result.poisoned}")
+        if result.switched_off:
+            print(f"  {org}'s model calls are switched off — stopping", file=sys.stderr)
+            return 1
         if n == 0 and result.failed:
             print("  stalling on failures — stopping; re-run to retry", file=sys.stderr)
             _note(phase="embed", embedded=total, failed=result.failed, poisoned=result.poisoned)

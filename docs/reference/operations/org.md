@@ -24,7 +24,7 @@ The org's current setting; enabled and unlocked when it was never set.
 | `enabled` | `bool` | Whether the org's data may go to a model; true when it was never set. |
 | `reason` | `str` | The note given with the last change; "" when none. |
 | `updated_by` | `str` | Who made the last change; "" when it was never set. |
-| `updated_at` | `datetime \| None` | When the last change was written (UTC); None when it was never set. |
+| `updated_at` | `datetime \| None` | When the setting last changed (UTC), None when it was never set; while off, when it was switched off, whatever else changed since. |
 | `locked` | `bool` | Whether a platform admin locked the setting: its admins cannot switch it on. |
 | `locked_by` | `str` | The platform admin who set the lock; "" when unlocked. |
 
@@ -47,7 +47,7 @@ Switch the org's model calls off or on.
 | `enabled` | `bool` | Whether the org's data may go to a model; true when it was never set. |
 | `reason` | `str` | The note given with the last change; "" when none. |
 | `updated_by` | `str` | Who made the last change; "" when it was never set. |
-| `updated_at` | `datetime \| None` | When the last change was written (UTC); None when it was never set. |
+| `updated_at` | `datetime \| None` | When the setting last changed (UTC), None when it was never set; while off, when it was switched off, whatever else changed since. |
 | `locked` | `bool` | Whether a platform admin locked the setting: its admins cannot switch it on. |
 | `locked_by` | `str` | The platform admin who set the lock; "" when unlocked. |
 

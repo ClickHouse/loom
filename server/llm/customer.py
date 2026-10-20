@@ -199,8 +199,10 @@ async def by_org(orgs: Iterable[str]) -> dict[str, list[int]]:
     an org among them is switched off: then each org is its own group, so the
     switch refuses that org's call and the others go on."""
     orgs = list(orgs)
-    if not settings.inference_customer_header and not set(orgs) & await switched_off_orgs():
-        return {"": list(range(len(orgs)))} if orgs else {}
+    if not orgs:
+        return {}
+    if not settings.inference_customer_header and set(orgs).isdisjoint(await switched_off_orgs()):
+        return {"": list(range(len(orgs)))}
     out: dict[str, list[int]] = {}
     for i, org in enumerate(orgs):
         out.setdefault(org, []).append(i)
