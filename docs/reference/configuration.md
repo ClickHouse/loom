@@ -1072,7 +1072,7 @@ Source: `server/settings/_providers.py`
 | `LOOM_INFERENCE_TOKEN_AUDIENCE` | `str` | `''` | With inference_token_url and no workload token: the audience of the identity token Loom signs (issuer <https public_base_url>/v1, newest RS256 key); never jwt_audience. |
 | `LOOM_INFERENCE_TOKEN_SCOPE` | `str` | `''` | The scope sent with that exchange; "" sends none. |
 | `LOOM_INFERENCE_CUSTOMER_HEADER` | `str` | `''` | Header naming the customer (the org) on every model call, for a gateway that meters by it; set, a call naming no customer is refused (server/llm/customer.py). |
-| `LOOM_INFERENCE_FEATURE_HEADER` | `str` | `''` | Header naming the feature that made the call (search, extraction, ...); "" sends none. |
+| `LOOM_INFERENCE_FEATURE_HEADER` | `str` | `''` | Header naming the feature that made the call (hyde, memory.search, worker.embedding, ...), with inference_customer_header only; "" sends none. |
 | `LOOM_INFERENCE_SYSTEM_CUSTOMER` | `str` | `'loom'` | The customer named on calls made for the deployment itself (startup probe, calibration, provider checks), which belong to no org. |
 | `LOOM_INFERENCE_CUSTOMER_REQUIRED` | `bool` | `False` | True (a cell serving several customers): refuse to start without inference_customer_header, so no model call goes out unattributed. |
 | `LOOM_INFERENCE_CUSTOMER_FORMAT` | `str` | `'{org}'` | How the customer header names an org, as the gateway knows it: `{org}` is the org id, around it letters, digits and . _ ~ : @ - only ("{org}" = the id as is). |

@@ -35,6 +35,19 @@ _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 _HEADER_TEXT = re.compile(r"[A-Za-z0-9._~:@-]*")
 # A customer or feature name sent as a header value: the same characters, at least one.
 _HEADER_VALUE = re.compile(r"[A-Za-z0-9._~:@-]+")
+# Headers the model-call senders set themselves, or the HTTP client does: a customer or
+# feature header of that name would overwrite them (the provider key, the body's type).
+_SENDER_HEADERS = frozenset(
+    {
+        "authorization",
+        "x-api-key",
+        "x-goog-api-key",
+        "anthropic-version",
+        "content-type",
+        "content-length",
+        "host",
+    }
+)
 
 
 class ProviderSettings(ModelSettings):
@@ -83,7 +96,8 @@ class ProviderSettings(ModelSettings):
     # Header naming the customer (the org) on every model call, for a gateway that
     # meters by it; set, a call naming no customer is refused (server/llm/customer.py).
     inference_customer_header: str = ""
-    # Header naming the feature that made the call (search, extraction, ...); "" sends none.
+    # Header naming the feature that made the call (hyde, memory.search, worker.embedding, ...),
+    # with inference_customer_header only; "" sends none.
     inference_feature_header: str = ""
     # The customer named on calls made for the deployment itself (startup probe,
     # calibration, provider checks), which belong to no org.
@@ -164,14 +178,23 @@ class ProviderSettings(ModelSettings):
 
     @model_validator(mode="after")
     def _check_customer_headers(self) -> ProviderSettings:
-        """A header name an HTTP client cannot send would fail every model call
-        as a provider outage; an empty system customer would bill the
-        deployment's own calls to no one."""
+        """Refuses a configuration under which a call could not name its customer
+        as the gateway reads it."""
         for field in ("inference_customer_header", "inference_feature_header"):
             name = getattr(self, field)
             if name and not _HEADER_NAME.fullmatch(name):
                 raise ValueError(f"LOOM_{field.upper()} must be an HTTP header name, got {name!r}")
+            if name.lower() in _SENDER_HEADERS:
+                raise ValueError(
+                    f"LOOM_{field.upper()} must not be {name!r}, a header the model-call "
+                    "senders set themselves"
+                )
         customer, feature = self.inference_customer_header, self.inference_feature_header
+        if feature and not customer:
+            raise ValueError(
+                "LOOM_INFERENCE_FEATURE_HEADER needs LOOM_INFERENCE_CUSTOMER_HEADER: "
+                "without it no metering header is sent"
+            )
         if customer and feature and customer.lower() == feature.lower():
             raise ValueError(
                 "LOOM_INFERENCE_FEATURE_HEADER must differ from LOOM_INFERENCE_CUSTOMER_HEADER, "

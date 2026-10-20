@@ -117,7 +117,6 @@ _KNOWN_STAGES: frozenset[str] = frozenset(
         "compact",
         "title",
         "profile_fold",
-        "classify",
         "code_answer",
         "ask_synthesize",
         "ask_synthesize_cheap",

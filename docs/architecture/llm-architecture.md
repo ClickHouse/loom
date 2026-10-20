@@ -262,8 +262,9 @@ the shared HTTP client also carries non-model calls, which name no customer.
   a CLI: `customer.for_org(org)` around the call, from the rows it works on; a CLI command
   with `--org` is scoped to it. A worker's own identity never counts, since a pass stamps the
   org of the row it last worked on and the next row's call must not inherit it. The
-  deployment's own calls run under `customer.system()` and name
-  `LOOM_INFERENCE_SYSTEM_CUSTOMER`.
+  deployment's own calls (the startup embedder probe, the recalibration worker's fixed
+  pairs, the provider checks, the sampled retrieval judge) run under `customer.system()`
+  and name `LOOM_INFERENCE_SYSTEM_CUSTOMER`.
 - **One customer per call.** A job that batches several orgs' rows (the embedding worker,
   `loom reembed`, a model rebuild) splits its batches by org before calling.
 - **The gateway's names.** `LOOM_INFERENCE_CUSTOMER_FORMAT` turns an org id into the gateway's
@@ -276,8 +277,8 @@ the shared HTTP client also carries non-model calls, which name no customer.
 
 **Why headers, not a token per customer.** The gateway already knows Loom as one service
 (its token); a credential per org would mean thousands to issue, rotate and revoke for no
-gain in what the gateway can check. The org in the header is the one Loom verified, never a
-value from the request body.
+gain in what the gateway can check. The org in the header is the org the request addresses,
+as authorized for its token.
 
 ## Fake providers
 
