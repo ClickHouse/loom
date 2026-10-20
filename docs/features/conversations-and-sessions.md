@@ -162,8 +162,8 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   between the summary and the recent turns. A summary that cannot be embedded compacts
   nothing (`reason: "embed-failed"`), and neither does one that reads as a credential
   anyway (`reason: "summary-reads-as-credential"`), since it would have no vector. A
-  window that holds only such turns, saved ones or both answers `reason:
-  "nothing-to-compact"`.
+  window that holds only such turns, saved ones or both, answers
+  `reason: "nothing-to-compact"`.
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
   logged in the thread keeps its embedding while that agent holds a live copy with the
