@@ -118,8 +118,8 @@ async def namespace_webhooks(
         return await ch.query_all(
             f"SELECT {', '.join(WEBHOOK_COLS)} FROM {WEBHOOKS} FINAL "
             "WHERE org = {org:String} AND namespace = {ns:String} AND is_deleted = 0 "
-            "ORDER BY created_at, webhook_id LIMIT 1000",
-            params={"org": org, "ns": namespace},
+            "ORDER BY created_at, webhook_id LIMIT {limit:UInt32}",
+            params={"org": org, "ns": namespace, "limit": REGISTRY_LIMIT},
         )
 
 

@@ -4322,7 +4322,7 @@
           "default": 120.0,
           "minimum": 30,
           "type": "number",
-          "description": "Seconds a delivery pass may run before the supervisor abandons it; it stops starting POSTs 20 s before, which leaves the reads before them and the insert after them their time. At least 30."
+          "description": "Seconds a memory webhook delivery pass may run before the supervisor abandons it; it stops starting POSTs 20 s before, which leaves the reads before them and the insert after them their time. At least 30."
         },
         "memory_webhook_failures_before_cooldown": {
           "default": 5,
@@ -4334,7 +4334,7 @@
           "default": 60,
           "minimum": 1,
           "type": "integer",
-          "description": "POSTs per event before it is marked dead (listed by webhook.deliveries). With the default backoff ceiling of an hour, 60 span about 2.3 days. The 2.75-day deadline marks any event still undelivered dead whatever this is, so a lower value only gives up sooner."
+          "description": "POSTs per memory webhook event before it is marked dead (listed by webhook.deliveries). With the default backoff ceiling of an hour, 60 span about 2.3 days. The 2.75-day deadline marks any event still undelivered dead whatever this is, so a lower value only gives up sooner."
         },
         "memory_webhook_max_backoff_seconds": {
           "default": 3600.0,
@@ -4352,7 +4352,7 @@
           "default": 40,
           "minimum": 1,
           "type": "integer",
-          "description": "Due events one delivery pass POSTs at most; the rest go next pass."
+          "description": "Due memory webhook events one delivery pass POSTs at most; the rest go next pass."
         },
         "memory_webhook_posts_per_webhook": {
           "default": 10,
@@ -4369,7 +4369,7 @@
           "default": 10.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds between each process's reads of the registered webhooks; a webhook registered or removed on another process applies to writes here within it."
+          "description": "Seconds between each process's reads of the registered memory webhooks; a webhook registered or removed on another process applies to writes here within it."
         },
         "memory_write_candidate_batch": {
           "default": 6,

@@ -3734,12 +3734,13 @@ settings:
   # Seconds between memory webhook delivery passes that found nothing due. [restart]
   # memory_webhook_deliver_idle_interval_seconds: 30
 
-  # Seconds a delivery pass may run before the supervisor abandons it; it stops starting
-  # POSTs 20 s before, which leaves the reads before them and the insert after them
-  # their time. At least 30. [restart]
+  # Seconds a memory webhook delivery pass may run before the supervisor abandons it; it
+  # stops starting POSTs 20 s before, which leaves the reads before them and the insert
+  # after them their time. At least 30. [restart]
   # memory_webhook_deliver_max_pass_seconds: 120.0
 
-  # Due events one delivery pass POSTs at most; the rest go next pass. [live]
+  # Due memory webhook events one delivery pass POSTs at most; the rest go next pass.
+  # [live]
   # memory_webhook_max_posts_per_pass: 40
 
   # Events of one memory webhook a delivery pass POSTs at most, so every webhook with
@@ -3760,10 +3761,10 @@ settings:
   # [live]
   # memory_webhook_max_backoff_seconds: 3600.0
 
-  # POSTs per event before it is marked dead (listed by webhook.deliveries). With the
-  # default backoff ceiling of an hour, 60 span about 2.3 days. The 2.75-day deadline
-  # marks any event still undelivered dead whatever this is, so a lower value only gives
-  # up sooner. [live]
+  # POSTs per memory webhook event before it is marked dead (listed by
+  # webhook.deliveries). With the default backoff ceiling of an hour, 60 span about 2.3
+  # days. The 2.75-day deadline marks any event still undelivered dead whatever this is,
+  # so a lower value only gives up sooner. [live]
   # memory_webhook_max_attempts: 60
 
   # Failed POSTs in a row after which the delivery worker passes a memory webhook over
@@ -3777,8 +3778,8 @@ settings:
   # Seconds a memory webhook's cooldown grows to at most. [live]
   # memory_webhook_max_cooldown_seconds: 3600
 
-  # Seconds between each process's reads of the registered webhooks; a webhook
-  # registered or removed on another process applies to writes here within it. [restart]
+  # Seconds between each process's reads of the registered memory webhooks; a webhook
+  # registered or removed on another process applies to writes here within it. [live]
   # memory_webhook_refresh_seconds: 10.0
 
   # True lets a memory webhook use plain http (a local receiver in development); false:

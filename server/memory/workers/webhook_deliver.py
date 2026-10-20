@@ -61,9 +61,12 @@ READS_AND_INSERT_SECONDS = 20.0
 # webhook.deliveries says why: for a usable secret, and for a receiver to take them (a
 # receiver that is down, or one whose backlog never reached its turn).
 # memory_webhook_max_attempts lets an operator give up sooner.
+# not a setting: both derived from the tables' 3-day TTL (store.KEEP_DAYS)
 SECRET_DEADLINE = timedelta(days=store.KEEP_DAYS) - timedelta(hours=12)
 DELIVERY_DEADLINE = timedelta(days=store.KEEP_DAYS) - timedelta(hours=6)
 USER_AGENT = "loom-memory-webhook/1"
+# not a setting: a margin past the pass deadline so a crashed pass's leases outlive it
+LEASE_MARGIN_SECONDS = 60.0
 
 
 def _post_budget_seconds() -> float:
@@ -82,7 +85,7 @@ def _post_budget_seconds() -> float:
 def _lease_seconds() -> float:
     """How long a leased event is passed over by another copy of the pass: past the
     pass deadline, so a crashed pass's events come back."""
-    return settings.memory_webhook_deliver_max_pass_seconds + 60
+    return settings.memory_webhook_deliver_max_pass_seconds + LEASE_MARGIN_SECONDS
 
 
 @dataclass

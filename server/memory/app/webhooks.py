@@ -59,7 +59,8 @@ from server.workers import pass_context
 log = logging.getLogger(__name__)
 
 # Live webhooks a namespace may hold.
-MAX_PER_NAMESPACE = 10  # not a setting: the cap webhook.register documents
+# not a setting: bounds the outbox rows a memory write inserts and each process's registry copy
+MAX_PER_NAMESPACE = 10
 
 # (org, namespace) → ((webhook_id, its event types), ...).
 Registry = dict[tuple[str, str], tuple[tuple[str, frozenset[str]], ...]]
