@@ -14,6 +14,8 @@ from typing import Any
 
 import pytest
 
+from tests.integration._resources import unique_org
+
 pytestmark = pytest.mark.skipif(
     not os.environ.get("LOOM_CH_HOST"),
     reason="LOOM_CH_HOST not set — integration tests require a live CH",
@@ -47,7 +49,7 @@ def _recording(monkeypatch: pytest.MonkeyPatch, on: bool) -> None:
     monkeypatch.setattr(conversation_repo, "namespace_logging_enabled", switch)
 
 
-async def _save(org: str, namespace: str, user_id: str = "u-1") -> None:
+async def _save(org: str, namespace: str, user_id: str = "u-1", *, content: str = _CONTENT) -> None:
     from server.knowledge.api.models_conversations import ConversationSaveMessageInput
     from server.knowledge.app.conversations import handle_conversation_save_message
 
@@ -59,7 +61,7 @@ async def _save(org: str, namespace: str, user_id: str = "u-1") -> None:
             conversation_id="c-1",
             message_id="m-1",
             role="assistant",
-            content=_CONTENT,
+            content=content,
             user_id=user_id,
         )
     )
@@ -178,3 +180,106 @@ async def test_erasure_by_user_removes_their_saved_messages(
     assert await _saved_ids(org, namespace, user_id="u-erase") == []
     for table in ("loom.conversations", "loom.conversation_embeddings"):
         assert await _live_rows(ch, org, namespace, table) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.parametrize(
+    ("content", "legacy_excerpt"),
+    [(_CONTENT, False), ((_CONTENT * 6)[:240], False), ((_CONTENT * 10)[:507], True)],
+    ids=["short", "exactly-240", "legacy-excerpt"],
+)
+async def test_unsave_keeps_the_shared_vector_for_another_agents_live_copy(
+    ch: Any,
+    namespace: str,
+    monkeypatch: pytest.MonkeyPatch,
+    content: str,
+    legacy_excerpt: bool,
+    interrupted: bool,
+) -> None:
+    from server.core.datetimes import naive_utc_now
+    from server.knowledge.api.models_conversations import ConversationSearchInput
+    from server.knowledge.app.conversations import handle_conversation_search
+    from server.knowledge.store import conversations as repo
+
+    org = unique_org("unsave-peer")
+    _recording(monkeypatch, False)
+    await _save(org, namespace, content=content)
+    await repo.append(
+        repo.MessageInsert(
+            org=org,
+            namespace=namespace,
+            agent="recorded-peer",
+            user_id="peer-user",
+            thread_id="c-1",
+            msg_id="m-1",
+            role="user",
+            content=content,
+            run_id="peer-run",
+            ts=naive_utc_now(),
+        )
+    )
+    if legacy_excerpt:
+        await ch.execute(
+            "ALTER TABLE loom.conversation_embeddings UPDATE content_excerpt = {excerpt:String} "
+            "WHERE org = {org:String} AND namespace = {ns:String} SETTINGS mutations_sync = 2",
+            params={"org": org, "ns": namespace, "excerpt": content[:240]},
+        )
+    before = await ch.query_one(
+        "SELECT ts FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String}",
+        params={"org": org, "ns": namespace},
+    )
+    assert before is not None
+
+    if interrupted:
+        real_unsave = repo.unsave_message
+
+        async def fail_transcript(table: str, *args: Any, **kwargs: Any) -> None:
+            if table == "loom.conversations":
+                raise ConnectionError("transcript delete interrupted")
+            await real_unsave(table, *args, **kwargs)
+
+        monkeypatch.setattr(repo, "unsave_message", fail_transcript)
+        with pytest.raises(ConnectionError, match="transcript delete interrupted"):
+            await _unsave(org, namespace)
+        assert await repo.saved_message_owner(org, namespace, "itest-client", "c-1", "m-1") == "u-1"
+        handed_off = await ch.query_one(
+            "SELECT agent FROM loom.conversation_embeddings FINAL "
+            "WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL",
+            params={"org": org, "ns": namespace},
+        )
+        assert handed_off == {"agent": "recorded-peer"}
+        monkeypatch.setattr(repo, "unsave_message", real_unsave)
+
+    assert (await _unsave(org, namespace)).removed
+    assert await _saved_ids(org, namespace) == []
+    result = await handle_conversation_search(
+        ConversationSearchInput(
+            org=org,
+            namespace=namespace,
+            agent="recorded-peer",
+            user_id="peer-user",
+            role="user",
+            query=content,
+            namespace_scope="this",
+        )
+    )
+    assert [hit.msg_id for hit in result.hits] == ["m-1"]
+    rows = await ch.query_all(
+        "SELECT agent, user_id, role, run_id, ts, is_saved, saved_at "
+        "FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL",
+        params={"org": org, "ns": namespace},
+    )
+    assert rows == [
+        {
+            "agent": "recorded-peer",
+            "user_id": "peer-user",
+            "role": "user",
+            "run_id": "peer-run",
+            "ts": before["ts"],
+            "is_saved": False,
+            "saved_at": None,
+        }
+    ]
