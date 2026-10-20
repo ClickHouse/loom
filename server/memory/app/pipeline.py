@@ -599,7 +599,6 @@ def _agent_learnings_on(state: WorkflowState) -> bool:
     agent)."""
     if _is_coding_capture(state) or not state.rule_agent:
         return False
-    # The deployment's setting turns them on; the request can only turn them off.
     return settings.memory_extract_agent_learnings and state.agent_learnings is not False
 
 

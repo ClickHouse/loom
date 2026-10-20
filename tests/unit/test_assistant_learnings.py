@@ -336,6 +336,24 @@ def test_a_quote_that_reads_as_a_credential_is_stored_blank() -> None:
     assert assistant_rules.quotes(_rule_fact(evidence=_RULE), leaky) == ("", _RULE)
 
 
+# Built at runtime too: a JWT the scanner would otherwise read as leaked.
+_JWT = (
+    "eyJhbGciOiJIUzI1NiJ9"
+    + ".eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+    + "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+)
+
+
+def test_a_credential_the_cut_would_split_still_blanks_the_quote() -> None:
+    # A key that starts before the user quote's 200th character and ends after it.
+    asked = "a" * 190 + " " + _KEY_ID + " please refund me"
+    # A token straddling the rule quote's 400th character.
+    said = "b" * 380 + " " + _JWT
+    messages = [{"role": "user", "content": asked}, {"role": "assistant", "content": said}]
+    # Cut first, neither half reads as a credential; read whole, both do.
+    assert assistant_rules.quotes(_rule_fact(), messages) == ("", "")
+
+
 @pytest.mark.asyncio
 async def test_a_rule_that_reads_as_a_credential_is_never_filed(queue: _Queue) -> None:
     leaky = _rule_fact(value=f"The assistant shares the key {_KEY_ID} on request.")
@@ -485,7 +503,7 @@ def test_the_transport_keeps_an_ops_own_ignored_args() -> None:
     assert header_value(op, {"typo": 1}, {"ignored_args": ["agent_learnings"]}) == (
         "agent_learnings,typo"
     )
-    assert header_value(op, {}) == ""
+    assert header_value(op, {}, None) == ""
 
 
 @pytest.mark.asyncio
@@ -627,12 +645,23 @@ async def test_reviewing_a_rule_an_erasure_blanked_answers_not_found(
     async def must_not_write(*_a: Any, **_kw: Any) -> None:
         raise AssertionError("a blanked rule is never reviewed")
 
+    async def no_support(*_a: Any) -> list[dict[str, Any]]:
+        return []
+
     monkeypatch.setattr(learnings_repo, "find_candidate", fake_find)
+    monkeypatch.setattr(learnings_repo, "supporter_stats", no_support)
     monkeypatch.setattr(learnings_repo, "insert_row", must_not_write)
     monkeypatch.setattr(h, "_do_promote", must_not_write)
     with pytest.raises(HTTPException) as e:
         await h.handle_learnings_review(
             LearningsReviewInput(org="o", namespace="ns", candidate_id=_cid(), decision="promote")
+        )
+    assert e.value.status_code == 404
+    # Pending, rule intact, but no supporter row left: nothing to review either.
+    blanked.update(status="pending", proposed_value=json.dumps(_VALUE))
+    with pytest.raises(HTTPException) as e:
+        await h.handle_learnings_review(
+            LearningsReviewInput(org="o", namespace="ns", candidate_id=_cid(), decision="reject")
         )
     assert e.value.status_code == 404
 

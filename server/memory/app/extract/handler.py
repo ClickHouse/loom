@@ -496,13 +496,13 @@ async def handle_memory_set_from_messages(
     from server.memory.app.assistant_learnings import request_rule_agent
     from server.settings import settings as _settings
 
-    refused = bool(input.agent_learnings) and not _settings.memory_extract_agent_learnings
-    if refused:
+    ignored = bool(input.agent_learnings) and not _settings.memory_extract_agent_learnings
+    if ignored:
         input = input.model_copy(update={"agent_learnings": None})
     if rule_agent is None:
         rule_agent = request_rule_agent(input.agent)
     out = await _set_from_messages(input, rule_agent)
-    if refused:
+    if ignored:
         out.ignored_args = [*out.ignored_args, "agent_learnings"]
     return out
 

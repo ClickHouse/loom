@@ -55,9 +55,12 @@ def quotes(fact: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[str, s
         (str(m.get("content") or "") for m in reversed(messages[:at]) if m.get("role") == "user"),
         "",
     )
-    asked = _bounded(asked, _USER_CHARS)
-    said = _bounded(said or str(fact.get("value") or ""), _RULE_CHARS)
-    return ("" if reads_high(asked) else asked), ("" if reads_high(said) else said)
+    said = said or str(fact.get("value") or "")
+    # Read whole: a credential the cut would split no longer reads as one.
+    return (
+        "" if reads_high(asked) else _bounded(asked, _USER_CHARS),
+        "" if reads_high(said) else _bounded(said, _RULE_CHARS),
+    )
 
 
 def rationale(asked: str, said: str) -> str:

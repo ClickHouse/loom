@@ -233,7 +233,7 @@ def response_body(op: Any, args: Any, result: Any) -> Any:
     return attach(body, block)
 
 
-def header_value(op: Any, args: Any, result: Any = None) -> str:
+def header_value(op: Any, args: Any, result: Any) -> str:
     """`X-Loom-Ignored-Args` for an HTTP answer ("" when none): the fields the op
     itself did not apply (its result's `ignored_args`), then the unknown keys."""
     found = (

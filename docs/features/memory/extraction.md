@@ -104,7 +104,8 @@ request's `(org, namespace, agent)`:
   files for the agent its issuer signed, never the body's `agent`, and files nothing
   when it names no agent.
 
-`learning_candidates` in the response counts the rules routed to the queue. A failed queue
+`learning_candidates` in the response counts the rules that wrote a new candidate or this
+session's support of one. A failed queue
 write is named in `pipeline_errors` and the rule is dropped.
 
 ## Echoes: `recalled_keys` and `session_values`
@@ -186,7 +187,7 @@ Field lists: [operations reference](../../reference/operations.md#memory) and
 - `tokens_in`, `tokens_out`, `cached_tokens_in`: cost attribution.
 - `segments`, `segmenter` (`whole` or `size`).
 - `forgotten`, `forgotten_keys`, `evidence_ids`.
-- `learning_candidates`: assistant rules routed to the learnings queue.
+- `learning_candidates`: rules that wrote a new candidate or this session's support of one.
 - `ignored_args`: request fields not applied: unknown keys, and `agent_learnings=true`
   while the setting is off.
 - `stage_ms`: wall time per stage (`step.<step_id>`, `bulk.<phase>`).

@@ -19,7 +19,6 @@ from server.memory.api.models_learnings import (
 )
 from server.memory.api.models_lifecycle import MemoryPromoteInput
 from server.memory.domain import assistant_rules
-from server.memory.domain.assistant_rules import SOURCE_KIND as ASSISTANT_TURN
 from server.memory.store import learnings as learnings_repo
 from server.memory.store.rows import next_version
 
@@ -75,7 +74,11 @@ async def _assistant_turn_support(
     loom.learnings_supporters: the headline count is distinct users, with the
     distinct sessions beside it, the six-part supporter entries, and the earliest
     remaining supporter's quotes as the rationale (the candidate row holds none)."""
-    by_id = {str(r["candidate_id"]): r for r in rows if r.get("source_kind") == ASSISTANT_TURN}
+    by_id = {
+        str(r["candidate_id"]): r
+        for r in rows
+        if r.get("source_kind") == assistant_rules.SOURCE_KIND
+    }
     if not by_id:
         return {}
     stats = await learnings_repo.supporter_stats(org, namespace, list(by_id))
@@ -183,14 +186,15 @@ async def handle_learnings_review(
         input.namespace,
         input.candidate_id,
     )
-    # A bot rule whose last supporter was erased keeps only its decision: there is
-    # no rule left to review, so it answers as a missing candidate does.
-    blanked = (
-        row is not None
-        and row.get("source_kind") == ASSISTANT_TURN
-        and not row.get("proposed_value")
-    )
-    if row is None or blanked:
+    # A bot rule with no supporter left (blanked once decided, deleted once pending
+    # by the erasure that took its last supporter): there is no rule left to review,
+    # so it answers as a missing candidate does.
+    support: dict[str, dict[str, Any]] = {}
+    if row is not None and row.get("source_kind") == assistant_rules.SOURCE_KIND:
+        support = await _assistant_turn_support(input.org, input.namespace, [row])
+        if not row.get("proposed_value") or not support:
+            row = None
+    if row is None:
         raise HTTPException(
             status_code=404,
             detail={
@@ -220,7 +224,6 @@ async def handle_learnings_review(
         # A bot rule is promoted with the confidence the reviewer saw: the mean over
         # its supporters, not the filing session's own. Only the promotion reads it;
         # the status row below keeps the candidate's own columns.
-        support = await _assistant_turn_support(input.org, input.namespace, [row])
         confidence = support.get(str(row["candidate_id"]), {}).get("confidence_avg")
         promoted = row if confidence is None else {**row, "confidence_avg": confidence}
         wants_memory = input.destination in ("memory", "both")
@@ -379,7 +382,7 @@ async def _promote_via_memory_set(
         deserialized = raw_value
 
     # In both cases the approver is the row's `actor`, stamped from the review's token.
-    if candidate_row.get("source_kind") == ASSISTANT_TURN:
+    if candidate_row.get("source_kind") == assistant_rules.SOURCE_KIND:
         # A bot's rule about itself: its agent's memory, for every user of the bot.
         agent, user_id = str(candidate_row.get("agent") or "-"), "-"
         # The candidate, not one supporter's session, is where it came from.
