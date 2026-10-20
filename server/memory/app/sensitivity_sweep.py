@@ -36,6 +36,7 @@ from server.core.repo_base import _CHClient, _default_client
 from server.memory.app.high_fence import fence_high, tombstone_chunks_of
 from server.memory.domain.sensitivity import (
     HIGH,
+    KEYED_SECRET_WORDS,
     MEDIUM,
     detect_sensitivity,
     detector_text,
@@ -58,6 +59,11 @@ _COARSE_PIN = (
     rf"|{_JSON_BOUNDARY}(?:pin number|pin code|passcode|cv[vc]2?|security code)"
     rf"{_JSON_SPACE}+[0-9]{{3}})"
 )
+# A JSON key naming a PIN-like secret (from the detector's own list, any separator between
+# its words) or an SSN, then a value starting with 3 digits. A dotted key is read as
+# ClickHouse stores it, nested: `security.code` is `code`, and is not selected.
+_KEYED_WORDS = "|".join("[_ -]?".join(words) for words in KEYED_SECRET_WORDS)
+_COARSE_KEYED = rf'(?i:(?:{_KEYED_WORDS}|ssn)"\s*:\s*"?\s*[0-9]{{3}})'
 
 # RE2, for ClickHouse `match()`: a superset of the shapes in
 # `memory/domain/sensitivity.py`'s high and medium patterns. Anything this misses
@@ -72,9 +78,7 @@ COARSE_SHAPE_RE = (
     r"|[0-9]{3}-[0-9]{2}-[0-9]{4}"  # SSN
     rf"|{_COARSE_PIN}"
     rf"|{_JSON_BOUNDARY}[A-Z]{{2}}[0-9]{{2}}(?: ?[A-Z0-9]{{4}}){{2}}"  # IBAN
-    # A JSON key naming a PIN-like secret or an SSN, then a value starting with 3 digits.
-    # A dotted key is read as ClickHouse stores it, nested (`security.code` is `code`).
-    r'|(?i:(?:pin(?:[_ -]?number)?|passcode|cv[vc]2?|security[_ -]?code|ssn)"\s*:\s*"?\s*[0-9]{3})'
+    rf"|{_COARSE_KEYED}"
 )
 
 # A probe shape reported beside the detector's levels, so a dry run says how many

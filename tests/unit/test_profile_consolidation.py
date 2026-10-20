@@ -175,3 +175,34 @@ async def test_an_unlabelled_credential_row_never_reaches_the_fold_model(monkeyp
     monkeypatch.setattr(profmod, "handle_profile_set", fake_set)
     await run_pass(ProfileConsolidationConfig(model=""))
     assert sent == ["- [2025-09-01] vim"]
+
+
+@pytest.mark.asyncio
+async def test_a_low_labelled_row_reading_as_high_never_reaches_the_fold_model(monkeypatch) -> None:
+    # A writer's explicit `low` sets the stored label, but the fold still checks the value.
+    sent: list[str] = []
+
+    class _RecLLM:
+        async def complete(self, system, user, max_tokens):
+            sent.append(user)
+            return _LLMOut()
+
+    ch = StubCH(
+        identities=[{"org": "dev", "namespace": "ns", "user_id": "u1", "n": 6}],
+        memories=[
+            {"value": "vim", "since": "2025-09-01"},
+            {"value": "badge PIN is 4471", "since": "2025-09-02", "sensitivity": "low"},
+        ],
+    )
+    _patch(monkeypatch, ch, llm=False)
+    import server.llm.client as llmmod
+    import server.memory.app.profile as profmod
+
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _RecLLM())
+
+    async def fake_set(inp):
+        return None
+
+    monkeypatch.setattr(profmod, "handle_profile_set", fake_set)
+    await run_pass(ProfileConsolidationConfig(model=""))
+    assert sent == ["- [2025-09-01] vim"]

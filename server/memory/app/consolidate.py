@@ -634,8 +634,8 @@ async def handle_memory_consolidate(
             "model": embedder.model_name,
         },
     )
-    # An unlabelled row (copy_to, an import, before the sweep) holding a credential never
-    # goes into the merge prompt, which is sent to the LLM.
+    # A row whose value reads as high, whatever its label (unset after copy_to or an import,
+    # or `low` from its writer), never goes into the merge prompt, which is sent to the LLM.
     rows = [r for r in rows if not value_reads_high(r.get("value"))]
 
     out = MemoryConsolidateOutput(examined=len(rows))

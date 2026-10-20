@@ -336,8 +336,8 @@ async def run_pass(
         for r in with_value:
             value_str = r.get("value") or ""
             if value_reads_high(value_str):
-                # An unlabelled row (copy_to, an import, before the sweep) holding a credential
-                # never goes to the model; the sentinel keeps the next pass from picking it up.
+                # A row whose value reads as high, whatever its label, never goes to the
+                # model; the sentinel keeps the next pass from picking it up.
                 updates.append(_entity_update(r, [_NONE_SENTINEL]))
                 result.skipped_sensitive += 1
                 continue

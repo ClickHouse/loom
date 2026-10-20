@@ -10,10 +10,12 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE
 from server.memory.domain.memory_types import is_embedded, is_searchable_type
 from server.memory.domain.sensitivity import (
     detect_sensitivity,
     detector_text,
+    reads_high,
     resolve_sensitivity,
 )
 from server.memory.store.rows import (
@@ -21,6 +23,7 @@ from server.memory.store.rows import (
     MEMORY_PERSISTED_COLS,
     MemoryRow,
 )
+from tests.unit.clickhouse_local import CLICKHOUSE, run
 
 # Credential SHAPES are assembled at runtime so no tracked file carries a
 # string the repo's secret guard (tests/unit/test_no_secrets_guard.py) would
@@ -270,8 +273,6 @@ _TOKEN = "ghp_" + "a" * 36
     ids=["json-string", "own-line", "in-a-key", "quoted"],
 )
 def test_detector_text_lets_the_detector_read_what_the_value_holds(value: object) -> None:
-    from server.memory.domain.sensitivity import reads_high
-
     assert reads_high(detector_text(value))
 
 
@@ -377,7 +378,6 @@ def test_one_scalar_still_reads_as_what_it_holds(value: object, level: str) -> N
 def test_a_chunk_of_an_object_value_is_read_with_its_escapes_undone() -> None:
     # memory.set writes an object's chunks as indented JSON; the raw-text check reads them.
     from server.memory.app.set_chunks import human_text
-    from server.memory.domain.sensitivity import reads_high
 
     assert reads_high(human_text({"notes": "deploy steps:\n" + _TOKEN}))
     assert reads_high(human_text({"notes": "line\r" + _TOKEN}))  # a lone carriage return
@@ -387,6 +387,10 @@ def test_a_chunk_of_an_object_value_is_read_with_its_escapes_undone() -> None:
     assert reads_high(human_text({"ssn": 123456789}))
     assert not reads_high(human_text({"pin_count": 4471}))
     assert not reads_high(human_text({"pin": "560001"}))
+    # the value ends where the number does: not read as a shorter number
+    assert not reads_high(human_text({"pin": "4471abc"}))
+    assert not reads_high(human_text({"pin": 4471.5}))
+    assert not reads_high(human_text({"pin": "4" * 20}))
     # an escaped backslash before `n` stays a backslash and an `n`: no line starts there
     assert not reads_high(human_text({"note": "x\\n" + _TOKEN}))
     assert not reads_high(human_text({"label": "Password:", "placeholder": "Enter one"}))
@@ -546,8 +550,10 @@ def test_a_value_reading_high_is_left_out_of_a_model_prompt_whatever_its_label()
         ({"card_number": "4111111111111111"}, "high"),  # a card under any key
         ({"pin": "560001"}, ""),  # a 6-digit pin is a postal code, as in free text
         ({"zip_pin": "560001"}, ""),
-        ({"pin_code": 4}, ""),
-        ({"pincode": "4471"}, ""),  # an address's postal code
+        ({"pin_code": "4471"}, "high"),
+        ({"pass_code": "4471"}, "high"),
+        ({"cvv_2": "123"}, "high"),
+        ({"address": {"pincode": "560001"}}, ""),  # a 6-digit pin code is a postal code
         ({"pin": "A1"}, ""),
         ({"pin": "12"}, ""),
         ({"pin": True}, ""),
@@ -562,8 +568,6 @@ def test_a_json_value_reads_by_its_scalars(value: object, level: str) -> None:
 
 
 def test_a_long_digit_run_is_read_in_one_pass() -> None:
-    from server.memory.domain.sensitivity import reads_high
-
     assert detect_sensitivity("7" * 200_000) == ""
     assert not reads_high("1 " * 100_000)
     assert reads_high("x " * 100_000 + "CVV 123")
@@ -590,7 +594,7 @@ def test_a_long_digit_run_is_read_in_one_pass() -> None:
 def test_the_sweeps_coarse_filter_selects_every_new_shape(text: str) -> None:
     # The sweep narrows rows with RE2 `match()` before the detector runs, so the filter must
     # select whatever the detector labels; Python's `re` reads this RE2 subset the same way.
-    from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE, _shapes
+    from server.memory.app.sensitivity_sweep import _shapes
 
     assert re.search(COARSE_SHAPE_RE, text)
     level = detect_sensitivity(text)
@@ -600,8 +604,6 @@ def test_the_sweeps_coarse_filter_selects_every_new_shape(text: str) -> None:
 def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
     # A selected row the detector rejects stays unlabelled and is selected again on every
     # pass, so a bare word must not take a place under the pass's row limit.
-    from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE
-
     assert not re.search(COARSE_SHAPE_RE, "pin numpy to 1.26 in the lockfile")
     assert not re.search(COARSE_SHAPE_RE, "the passcode screen and the CVV field")
     assert not re.search(COARSE_SHAPE_RE, "verify SHA256SUMS before the upload")
@@ -632,8 +634,6 @@ def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
 def test_the_sweeps_coarse_filter_reads_stored_json_text(value: object) -> None:
     # `match()` runs on the stored column, where an object value's line break is the two
     # characters `\n`; the detector reads the decoded text.
-    from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE
-
     stored = json.dumps(value)
     assert detect_sensitivity(detector_text(stored)) in ("high", "medium")
     assert re.search(COARSE_SHAPE_RE, stored)
@@ -657,6 +657,9 @@ _PREFILTER_OBJECTS = [
     {"badgePin": 9087},
     {"pin_number": "908712"},
     {"CVV2": "123"},
+    {"pass_code": "4471"},
+    {"cvv_2": "123"},
+    {"pin_code": "4471"},
     {"door": {"security-code": "5512"}},
     {"badge.pin": "4471"},  # ClickHouse nests it: `{"badge":{"pin":...}}`
     {"ssn": 123456789},
@@ -682,16 +685,11 @@ _PREFILTER_TEXTS = [
 ]
 
 
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -> None:
     # RE2 `match()` on the text the scan reads: `toString(value_json)` for an object value,
     # the raw `value` for a string. Every case the detector labels is selected, and these
     # unlabelled ones are not.
-    from tests.unit.clickhouse_local import CLICKHOUSE, run
-
-    if CLICKHOUSE is None:
-        pytest.skip("clickhouse binary not installed")
-    from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE
-
     sql = (
         "SELECT toString(CAST(j AS JSON)) AS t, match(t, {r:String}) AS hit"
         " FROM (SELECT arrayJoin({js:Array(String)}) AS j)"

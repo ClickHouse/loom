@@ -278,9 +278,12 @@ def attribute_tags(text: str, existing: Iterable[str] = ()) -> list[str]:
     ]
 
 
+_HIGH_SHAPES = (*_HIGH_PATTERNS, _SSN, _STATED_PIN)
+
+
 def _reads_high_text(text: str) -> bool:
     """Whether `text` holds a high shape: a credential, a card number, an SSN or a stated PIN."""
-    return any(pat.search(text) for pat in (*_HIGH_PATTERNS, _SSN, _STATED_PIN)) or _has_card(text)
+    return any(pat.search(text) for pat in _HIGH_SHAPES) or _has_card(text)
 
 
 def detect_sensitivity(text: str) -> str:
@@ -299,25 +302,29 @@ def detect_sensitivity(text: str) -> str:
 # phone shape allows only one space, dot or dash between its groups.
 _SCALAR_SEP = "\n;\n"
 
-# A key whose last word names a PIN-like secret, and the label its value is stated under,
-# so the free-text grammar decides the value's length ("pin is 560001", a postal code, stays
-# unlabelled). `pincode` is left out: in an address it is the postal code.
-_KEYED_LABELS = {
-    "pin": "pin is",
-    "pinnumber": "pin number is",
-    "passcode": "passcode is",
-    "cvv": "passcode is",
-    "cvc": "passcode is",
-    "cvv2": "passcode is",
-    "cvc2": "passcode is",
-    "securitycode": "passcode is",
+# The key words that name a PIN-like secret, split where a key may put a separator
+# (`pass_code`, `cvv_2`), and the label each is stated under: `{"pin_code": "4471"}` reads
+# as `pin is 4471`, so the free-text grammar decides the value's length ("pin is 560001", a
+# postal code, stays unlabelled). The sweep's prefilter is built from the same list.
+KEYED_SECRET_WORDS: dict[tuple[str, ...], str] = {
+    ("pin",): "pin",
+    ("pin", "code"): "pin",
+    ("pin", "number"): "pin number",
+    ("pass", "code"): "passcode",
+    ("cvv",): "cvv",
+    ("cvv", "2"): "cvv",
+    ("cvc",): "cvc",
+    ("cvc", "2"): "cvc",
+    ("security", "code"): "security code",
 }
+_KEYED_LABELS = {"".join(words): label for words, label in KEYED_SECRET_WORDS.items()}
 _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")  # `PIN`, `badge`, `Pin`, `2`
 
 
 def _keyed_secret(key: str, value: Any) -> str:
     """The stated form of a secret held under a key that names it ("pin is 4471" for
-    `{"badge_pin": "4471"}`), for the detector to read; '' when the key names none."""
+    `{"badge_pin": "4471"}`, "cvv is 123" for `{"cvv_2": "123"}`), for the detector to read;
+    '' when the key names none."""
     words = [w.lower() for w in _KEY_WORDS.findall(key)]
     tail_words = words[-1:] + ["".join(words[-2:])]  # `pin` and `badgepin` for `badge_pin`
     label = next((_KEYED_LABELS[w] for w in tail_words if w in _KEYED_LABELS), "")
@@ -327,15 +334,19 @@ def _keyed_secret(key: str, value: Any) -> str:
         return ""
     v = str(value).strip()
     if label:
-        return f"{label} {v}" if v.isdigit() else ""
+        return f"{label} is {v}" if v.isdigit() else ""
     if re.fullmatch(r"[0-9]{3}-?[0-9]{2}-?[0-9]{4}", v):
         digits = v.replace("-", "")
         return f"{digits[:3]}-{digits[3:5]}-{digits[5:]}"
     return ""
 
 
-# A `"key": value` pair in raw JSON text (a chunk of an object value), for `reads_high`.
-_KEYED_PAIR = re.compile(r'"([A-Za-z0-9_ .-]{1,64})"\s*:\s*"?\s*([0-9][0-9-]{0,15})"?', re.ASCII)
+# A `"key": value` pair in raw JSON text (a chunk of an object value) whose value is
+# digits and dashes, for `reads_high`. The value must end there, so `4471abc`, `4471.5` and
+# a 20-digit run are not read as a shorter number.
+_KEYED_PAIR = re.compile(
+    r'"([A-Za-z0-9_ .-]{1,64})"\s*:\s*"?\s*([0-9][0-9-]{0,15})"?(?![\w.-])', re.ASCII
+)
 
 
 def detector_text(value: Any) -> str:
@@ -397,13 +408,14 @@ def reads_high(text: str) -> bool:
     chunk), which has no label of its own or carries one a later sweep may not have set
     yet. Text holding JSON (a chunk of an object value) is read with its string escapes
     undone too, where a token after `\\n` or a quoted password keeps its word boundary, and
-    its `"key": value` pairs are read as `detector_text` reads them (`{"badge_pin": "4471"}`)."""
+    its `"key": value` pairs with a digits-and-dashes value are read as `detector_text`
+    reads them (`{"badge_pin": "4471"}`)."""
     unescaped = _JSON_ESCAPE.sub(_json_unescape, text)
-    return any(
-        _reads_high_text(t)
-        or any(_reads_high_text(_keyed_secret(k, v)) for k, v in _KEYED_PAIR.findall(t))
-        for t in {text, unescaped}
-    )
+    for t in {text, unescaped}:
+        stated = [s for s in (_keyed_secret(k, v) for k, v in _KEYED_PAIR.findall(t)) if s]
+        if _reads_high_text(t) or any(_reads_high_text(s) for s in stated):
+            return True
+    return False
 
 
 def resolve_sensitivity(requested: str | None, text: str) -> str:
