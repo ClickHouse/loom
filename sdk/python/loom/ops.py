@@ -144,6 +144,8 @@ OpName = Literal[
     "grants.list",
     "grants.pending_for_me",
     "grants.revoke",
+    "grants.share_agent",
+    "grants.unshare_agent",
     "inbox.list",
     "inbox.policy_list",
     "inbox.policy_set",
@@ -453,6 +455,8 @@ OP_NAMES: tuple[str, ...] = (
     "grants.list",
     "grants.pending_for_me",
     "grants.revoke",
+    "grants.share_agent",
+    "grants.unshare_agent",
     "inbox.list",
     "inbox.policy_list",
     "inbox.policy_set",
@@ -1912,6 +1916,30 @@ OPS: dict[str, OpSpec] = {
         "GrantsRevokeOutput",
         True,
         "admin",
+        "experimental",
+        80,
+        True,
+        False,
+    ),
+    "grants.share_agent": OpSpec(
+        "grants.share_agent",
+        "GrantsShareAgentInput",
+        "GrantsShareAgentBody",
+        "GrantsShareAgentOutput",
+        True,
+        "writer",
+        "experimental",
+        80,
+        True,
+        False,
+    ),
+    "grants.unshare_agent": OpSpec(
+        "grants.unshare_agent",
+        "GrantsUnshareAgentInput",
+        "GrantsUnshareAgentBody",
+        "GrantsUnshareAgentOutput",
+        True,
+        "writer",
         "experimental",
         80,
         True,
@@ -8706,6 +8734,44 @@ class GrantsRevokeBody(TypedDict, total=False):
 
 
 class GrantsRevokeOutput(TypedDict, total=False):
+    revoked: Required[bool]
+    revoked_at: NotRequired[Optional[str]]
+
+
+class GrantsShareAgentInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    grantee: Required[str]
+    role: NotRequired[Literal["viewer", "writer"]]
+
+
+class GrantsShareAgentBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    grantee: Required[str]
+    role: NotRequired[Literal["viewer", "writer"]]
+
+
+class GrantsShareAgentOutput(TypedDict, total=False):
+    namespace: Required[str]
+    subject: Required[str]
+    role: Required[Literal["viewer", "writer"]]
+    granted_at: Required[str]  # date-time as ISO-8601 text
+
+
+class GrantsUnshareAgentInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    grantee: Required[str]
+
+
+class GrantsUnshareAgentBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    grantee: Required[str]
+
+
+class GrantsUnshareAgentOutput(TypedDict, total=False):
     revoked: Required[bool]
     revoked_at: NotRequired[Optional[str]]
 

@@ -1038,6 +1038,24 @@ class GrantsOps:
             "_ops.GrantsRevokeOutput", await self._agent.call("grants.revoke", body, **options)
         )
 
+    async def share_agent(
+        self, body: _ops.GrantsShareAgentBody | None = None, /, **options: Any
+    ) -> _ops.GrantsShareAgentOutput:
+        """`grants.share_agent`."""
+        return cast(
+            "_ops.GrantsShareAgentOutput",
+            await self._agent.call("grants.share_agent", body, **options),
+        )
+
+    async def unshare_agent(
+        self, body: _ops.GrantsUnshareAgentBody | None = None, /, **options: Any
+    ) -> _ops.GrantsUnshareAgentOutput:
+        """`grants.unshare_agent`."""
+        return cast(
+            "_ops.GrantsUnshareAgentOutput",
+            await self._agent.call("grants.unshare_agent", body, **options),
+        )
+
 
 class InboxOps:
     """The `inbox.*` operations."""
