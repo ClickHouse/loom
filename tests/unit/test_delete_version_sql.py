@@ -243,6 +243,7 @@ async def test_a_key_a_sweep_caught_and_restore_brought_back_deletes_as_a_delete
         **_row("Tuesdays", head + 1),
         "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
         "expire_reason": "blacklist.sweep:p1",
+        "status": "tombstoned",  # as the sweep writes it
     }
     await ch.insert("loom.memory", [_row("Tuesdays", head), swept])
     out = await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
@@ -280,6 +281,7 @@ async def test_a_blacklist_sweeps_tombstone_keeps_the_write_under_it(ch: _Statef
         **_row("Tuesdays", time.time_ns()),
         "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
         "expire_reason": "blacklist.sweep:p1",
+        "status": "tombstoned",  # as the sweep writes it
     }
     await ch.insert("loom.memory", [swept])
     drawn = w.version
@@ -1033,6 +1035,7 @@ async def test_a_write_after_a_written_back_tombstone_lifts_over_it(
                     **_row("Wednesdays", time.time_ns()),
                     "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
                     "expire_reason": "blacklist.sweep:p1",
+                    "status": "tombstoned",  # as the sweep writes it
                 }
                 await ch.insert("loom.memory", [swept])
             write["version"] = time.time_ns()  # drawn now; its fence read sees nothing yet
@@ -1072,6 +1075,7 @@ async def test_a_sweep_above_the_tombstone_answers_not_found_and_retires_nothing
             **_row("Tuesdays", time.time_ns()),
             "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
             "expire_reason": "blacklist.sweep:p1",
+            "status": "tombstoned",  # as the sweep writes it
         }
         await ch.insert("loom.memory", [swept])
 
@@ -1097,7 +1101,8 @@ async def test_a_write_the_sweep_caught_stays_under_it(
     from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 
     head = time.time_ns() - 10_000_000_000
-    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    checked_row = _row("Tuesdays", head)
+    await ch.insert("loom.memory", [checked_row])
     caught: dict[str, Any] = {}
     get_by_key = memory_repo.get_by_key
 
@@ -1106,10 +1111,12 @@ async def test_a_write_the_sweep_caught_stays_under_it(
         if not caught:
             swept_at = time.time_ns()
             caught.update(_row("leaked token", swept_at - 1))  # drawn before the sweep
-            swept = {
-                **_row("Tuesdays", swept_at),
+            swept = {  # the sweep's tombstone carries the row it removes
+                **checked_row,
+                "version": swept_at,
                 "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
                 "expire_reason": "blacklist.sweep:p1",
+                "status": "tombstoned",  # as the sweep writes it
             }
             await ch.insert("loom.memory", [swept])
         return found
