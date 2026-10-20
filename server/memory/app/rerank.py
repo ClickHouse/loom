@@ -198,11 +198,12 @@ async def rerank(
         _degradations.note("rerank", "input_order_kept", "malformed payload")
         return candidates
 
-    by_key: dict[tuple[str, str], RerankCandidate] = {
-        (c.namespace, c.memory_key): c for c in candidates
-    }
+    # The endpoint names a candidate by (namespace, key), and a key can name several (one per
+    # session): each entry takes the key's next candidate in input order.
+    by_key: dict[tuple[str, str], list[RerankCandidate]] = {}
+    for c in candidates:
+        by_key.setdefault((c.namespace, c.memory_key), []).append(c)
     ordered: list[RerankCandidate] = []
-    seen: set[tuple[str, str]] = set()
     for entry in ranked:
         if not isinstance(entry, dict):
             continue
@@ -210,15 +211,11 @@ async def rerank(
         key = entry.get("memory_key")
         if not key:
             continue
-        cand = by_key.get((ns, key))
-        if cand is None:
-            continue
-        ordered.append(cand)
-        seen.add((ns, key))
-
-    for c in candidates:
-        if (c.namespace, c.memory_key) not in seen:
-            ordered.append(c)
+        queue = by_key.get((ns, key))
+        if queue:
+            ordered.append(queue.pop(0))
+    taken = {id(c) for c in ordered}
+    ordered.extend(c for c in candidates if id(c) not in taken)
     return ordered
 
 
