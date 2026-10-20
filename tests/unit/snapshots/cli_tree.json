@@ -5384,7 +5384,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "An IAM role to assume with the default credentials before each upload",
+       "help": "An IAM role to assume with the default credentials, once before reading and again before each upload",
        "metavar": null
       },
       {

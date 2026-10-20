@@ -11,6 +11,9 @@ from typing import Any
 
 from server.core.datetimes import utc_now as _now
 
+# The first botocore whose put_object takes IfNoneMatch (the `aws` extra's floor).
+BOTOCORE_FLOOR = (1, 35, 2)
+
 
 def _day(value: str) -> date:
     try:
@@ -31,10 +34,20 @@ def _refusal(day: date, today: date) -> str:
             f"export-analytics needs LOOM_ANALYTICS_EXPORT_NAME_KEY: a random string of at "
             f"least {MIN_NAME_KEY_CHARS} characters"
         )
+    from importlib.metadata import PackageNotFoundError, version
+
+    # put_object's IfNoneMatch: an older botocore fails at the first upload,
+    # after the month's read.
     try:
-        import boto3  # noqa: F401
-    except ImportError:
-        return "export-analytics needs boto3: pip install 'clickhouse-loom-server[aws]'"
+        found = tuple(int(part) for part in version("botocore").split(".")[:3])
+    except PackageNotFoundError:
+        found = ()
+    if found < BOTOCORE_FLOOR:
+        floor = ".".join(map(str, BOTOCORE_FLOOR))
+        return (
+            f"export-analytics needs botocore {floor} or later: "
+            "pip install 'clickhouse-loom-server[aws]'"
+        )
     return ""
 
 
@@ -60,9 +73,10 @@ def _cmd_export(args: argparse.Namespace) -> int:
     def new_client() -> Any:
         return s3_client(role_arn=args.role_arn, region=args.region)
 
-    # Assume the role once before any read: a trust policy or region that is
-    # wrong fails here, not after the month's read.
-    new_client()
+    # With --role-arn, assume the role once before any read: a role that cannot
+    # be assumed fails here, not after the month's read.
+    if args.role_arn:
+        new_client()
     put = s3_put(new_client, args.bucket, expected_owner=args.expected_bucket_owner)
 
     # No model calls and no writes to ClickHouse: a plain connection, outside
@@ -101,7 +115,8 @@ def register_analytics_export_cli(sub: Any) -> None:
     p.add_argument(
         "--role-arn",
         default="",
-        help="An IAM role to assume with the default credentials before each upload",
+        help="An IAM role to assume with the default credentials, once before reading and "
+        "again before each upload",
     )
     p.add_argument(
         "--region",

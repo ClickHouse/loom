@@ -93,8 +93,9 @@ same personal namespace in two orgs.
 ## Credentials
 
 The command uses the default AWS credentials of its process. With `--role-arn` it assumes
-that role with them before each upload and writes under the role's credentials, which fits
-a bucket in another account: the bucket's account grants `s3:PutObject` to a writer role,
+that role with them once before reading, so a role it cannot assume fails before any
+ClickHouse work, and again before each upload, and writes under the role's credentials.
+That fits a bucket in another account: the bucket's account grants `s3:PutObject` to a writer role,
 and the writer role trusts only the export's own identity. The export needs no read, list or
 delete permission on the bucket. `--expected-bucket-owner` makes S3 refuse the write when
 another account owns the bucket.
@@ -120,8 +121,11 @@ kubectl create secret generic loom-analytics-export-key \
   --from-literal=LOOM_ANALYTICS_EXPORT_NAME_KEY="$(openssl rand -hex 32)"
 ```
 
-Only the export's pod reads that Secret; the web and workers pods never see the key. The
-chart refuses to render without `nameKeySecret.name`.
+Only the export's pod reads that Secret. The chart refuses to render without
+`nameKeySecret.name`, and refuses `LOOM_ANALYTICS_EXPORT_NAME_KEY` in `env`, `extraEnv` and
+`secrets.extra`, which every web and workers pod reads. It cannot see into
+`secrets.existingSecret` or an `envFrom` source, which those pods read too: keep the key out
+of them.
 
 The chart creates a ServiceAccount `<fullname>-analytics-export` and a CronJob of the same
 name, where `<fullname>` is the chart's full name: the release name when it contains
@@ -139,3 +143,17 @@ and leave `annotations` empty.
 The job reads ClickHouse with the release's Secret, settings, `extraEnv` and
 `extraVolumes`, as the web pods do, and writes nothing to it. A failed run shows as a
 failed Job; alert on the CronJob's last successful run being more than a day old.
+
+A day whose run fails every attempt, or that misses its start window (`startingDeadlineSeconds`,
+one hour), is not exported later on its own: the next run exports only its own yesterday.
+Export it with a Job made from the CronJob, so it runs under the export's ServiceAccount
+and flags, with `--day` added to its command:
+
+```bash
+kubectl create job --from=cronjob/<fullname>-analytics-export analytics-export-backfill \
+  --dry-run=client -o yaml > backfill.yaml
+# add `- --day=YYYY-MM-DD` to the container's command in backfill.yaml, then:
+kubectl apply -f backfill.yaml
+```
+
+The usage file is that day's; the namespace file is the snapshot at the time of the run.

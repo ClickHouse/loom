@@ -278,3 +278,24 @@ def test_a_role_that_cannot_be_assumed_fails_before_any_read(
     with pytest.raises(PermissionError):
         cli._cmd_export(_args(role_arn="arn:aws:iam::123456789012:role/w"))
     assert fake.calls == [] and fake.read_timeout_at_connect == 0
+
+
+@pytest.mark.parametrize(
+    ("installed", "refused"),
+    [("1.35.1", True), ("1.35.2", False), ("1.43.102", False), (None, True)],
+)
+def test_a_botocore_without_if_none_match_is_refused(
+    monkeypatch: pytest.MonkeyPatch, installed: str | None, refused: bool
+) -> None:
+    import importlib.metadata
+
+    def version(name: str) -> str:
+        assert name == "botocore"
+        if installed is None:
+            raise importlib.metadata.PackageNotFoundError(name)
+        return installed
+
+    monkeypatch.setattr(settings, "analytics_export_name_key", "k" * 32)
+    monkeypatch.setattr(importlib.metadata, "version", version)
+    got = cli._refusal(date(2000, 1, 1), date(2000, 1, 2))
+    assert ("needs botocore 1.35.2 or later" in got) is refused

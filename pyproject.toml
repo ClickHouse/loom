@@ -95,12 +95,12 @@ dev = [
 # lazy-imports them with an actionable error message when missing.
 ingest = [
   "pypdf>=4.0",
-  "clickhouse-loom-server[aws]", # boto3, at the floor export-analytics needs
+  "boto3>=1.34",
   "trafilatura>=2.0",
 ]
 # `loom export-analytics` uploads to S3 under an assumed role; ships in the image.
 aws = [
-  "boto3>=1.35.17", # put_object's IfNoneMatch
+  "boto3>=1.35.2", # the first whose put_object takes IfNoneMatch
 ]
 # Code intelligence plane: tree-sitter parses C++ for
 # the fast tier, numpy runs the weekly PageRank. Needed only when the code
