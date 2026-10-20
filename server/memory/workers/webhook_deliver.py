@@ -198,12 +198,14 @@ def _hook(row: Mapping[str, Any]) -> store.Hook:
 
 
 def _wait_row(row: Mapping[str, Any], *, until: datetime, why: str) -> dict[str, Any]:
-    """An event passed over, its attempts uncounted, until `until`."""
+    """An event passed over, its attempts uncounted, until `until`; the receiver's
+    last status stays and `why` is the error."""
     return _attempt_row(
         str(row["event_id"]),
         status="pending",
         attempts=int(row["attempts"]),
         next_attempt_at=until,
+        last_status=int(row["last_status"]),
         last_error=why,
     )
 
@@ -325,11 +327,14 @@ async def deliver_once(
     lease_end = naive_utc_now() + timedelta(seconds=LEASE_SECONDS)
     await store.insert_attempts(
         [
+            # A lease keeps the last attempt's status and error for webhook.deliveries.
             _attempt_row(
                 str(r["event_id"]),
                 status="leased",
                 attempts=int(r["attempts"]),
                 next_attempt_at=lease_end,
+                last_status=int(r["last_status"]),
+                last_error=str(r["last_error"]),
             )
             for r in due
         ]

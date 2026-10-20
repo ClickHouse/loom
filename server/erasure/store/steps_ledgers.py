@@ -240,49 +240,22 @@ async def delete_delete_version_checks_by_user(
     )
 
 
-# Attempt rows deleted per statement, by event id.
-_ATTEMPT_ID_BATCH = 10_000
-
-
-async def _delete_webhook_events(
-    org: str, scope_where: str, params: dict[str, Any], ch: _CHClient | None
-) -> int:
-    """Memory webhook events name a row's identity, key and id. Their ids are read
-    once; the events go, then their attempt rows (event ids and counters) by
-    that list."""
-    rows = await (ch or _default_client()).query_all(
-        "SELECT DISTINCT event_id FROM loom.memory_webhook_outbox "
-        f"WHERE org = {{org:String}} AND {scope_where}",
-        params={"org": org, **params},
-    )
-    deleted = await delete_scoped(
-        "loom.memory_webhook_outbox", org=org, scope_where=scope_where, params=params, ch=ch
-    )
-    ids = [str(r["event_id"]) for r in rows]
-    for i in range(0, len(ids), _ATTEMPT_ID_BATCH):
-        await erasure_mutations.count_then_mutate(
-            "loom.memory_webhook_attempts",
-            count_where="event_id IN {ids:Array(String)}",
-            mutation="DELETE",
-            mutation_where="event_id IN {ids:Array(String)}",
-            params={"ids": ids[i : i + _ATTEMPT_ID_BATCH]},
-            final=False,
-            ch=ch,
-            tag_part=f"batch {i}",
-        )
-    return deleted
-
-
 async def delete_memory_webhook_outbox_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
-    return await _delete_webhook_events(org, NS_IN, {"ns": namespaces_of(namespace)}, ch)
+    """Memory webhook events name a row's identity, key and id; 3-day TTL. Their
+    attempt rows hold only event ids and counters and are left to expire."""
+    return await delete_scoped(
+        "loom.memory_webhook_outbox", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
 
 
 async def delete_memory_webhook_outbox_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
-    return await _delete_webhook_events(org, UID, {"uid": user_id}, ch)
+    return await delete_scoped(
+        "loom.memory_webhook_outbox", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+    )
 
 
 _TASK_TABLES = ("loom.tasks", "loom.task_events")

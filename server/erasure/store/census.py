@@ -419,9 +419,6 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     # org-wide beside the replay bodies at both scopes but not counted, since any
     # search in the org refills them between the step and the census.
     "idempotency.delete": ("loom.embedding_cache",),
-    # The webhook worker's attempt rows (event ids, counters, HTTP statuses; no key or
-    # identity), deleted by the ids of the events the step deletes.
-    "memory_webhook_outbox.delete": ("loom.memory_webhook_attempts",),
 }
 
 # Every other `loom.*` table in schemas/schema.sql, with the reason it holds
@@ -474,6 +471,11 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.task_claims": (
         "A task claim arbitration log that no code path writes (task id, fence, "
         "claimant label, timestamp) — identifiers only, no task text."
+    ),
+    "loom.memory_webhook_attempts": (
+        "The webhook worker's record per event (event id, status, attempt count, next "
+        "attempt, last HTTP status and error): it holds no key or identity, so an event's "
+        "erasure leaves nothing here to send or to read back, and it expires in 3 days."
     ),
     "loom.memory_webhooks": (
         "A webhook a namespace admin registered (URL, the name of the environment "

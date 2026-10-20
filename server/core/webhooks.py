@@ -17,10 +17,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import functools
 import hashlib
 import hmac
 import logging
-import re
+import ssl
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
@@ -28,38 +29,19 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 
 from server.core.hosts import vet_host
+from server.core.webhook_secrets import webhook_secret_ref_ok
 
 log = logging.getLogger(__name__)
 
-# A registration's secret ref must name an environment variable with this
-# prefix: any other name could hand a server secret to a URL the caller chose
-# as the signing key.
-WEBHOOK_SECRET_PREFIX = "LOOM_WEBHOOK_SECRET_"
 # How long a receiver has to answer before the delivery counts as failed.
 ACK_TIMEOUT_SECONDS = 10.0
-# One TLS context for every delivery: building one reads the CA bundle. Each
-# delivery still has its own client and so its own connections.
-_TLS = httpx.create_ssl_context()
 
 
-def webhook_secret_org_prefix(org: str) -> str:
-    """The start of every webhook secret name `org` may use:
-    `LOOM_WEBHOOK_SECRET_<ORG>__`, ORG the org id with a-z upper-cased, digits
-    kept and every other byte (A-Z too) as `_` and two hex digits, so no two
-    orgs share it (`acme-x` → `ACME_2DX`, `acme_x` → `ACME_5FX`). Without it
-    any tenant could name another tenant's secret and have Loom sign with it."""
-    encoded = "".join(
-        chr(b).upper() if chr(b) in "abcdefghijklmnopqrstuvwxyz0123456789" else f"_{b:02X}"
-        for b in org.encode()
-    )
-    return f"{WEBHOOK_SECRET_PREFIX}{encoded}__"
-
-
-def webhook_secret_ref_ok(org: str, ref: str) -> bool:
-    """Whether `ref` names one of `org`'s own webhook secrets: the org prefix,
-    then letters and digits only, so no other org's prefix can match it."""
-    name = ref.removeprefix(webhook_secret_org_prefix(org))
-    return name != ref and bool(re.fullmatch(r"[A-Za-z0-9]+", name))
+@functools.cache
+def _tls() -> ssl.SSLContext:
+    """One TLS context for every delivery, built on the first: building one reads
+    the CA bundle. Each delivery still has its own client and connections."""
+    return httpx.create_ssl_context()
 
 
 # Secret refs already reported as not usable: said once each, not on every pass.
@@ -188,7 +170,7 @@ async def post(
             extensions = {"sni_hostname": server_name} if server_name else {}
             async with (
                 httpx.AsyncClient(
-                    transport=transport, follow_redirects=False, verify=_TLS
+                    transport=transport, follow_redirects=False, verify=_tls()
                 ) as client,
                 client.stream(
                     "POST",

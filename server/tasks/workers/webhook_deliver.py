@@ -30,6 +30,7 @@ import httpx
 
 from server.core import webhooks
 from server.core.datetimes import to_naive_utc as _naive
+from server.core.webhook_secrets import webhook_secret_org_prefix
 from server.tasks.domain import cursors as task_cursors
 from server.tasks.store import repo as repo
 from server.tasks.store.rows import TaskEventRow, WebhookCursorRow, WebhookInboxRow
@@ -140,7 +141,7 @@ def _secret_for(inbox_row: WebhookInboxRow, env: Mapping[str, str]) -> bytes | N
                 key[0],
                 key[1],
                 ref or "<unset>",
-                webhooks.webhook_secret_org_prefix(key[0]),
+                webhook_secret_org_prefix(key[0]),
             )
     return secret
 

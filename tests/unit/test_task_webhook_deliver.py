@@ -532,13 +532,13 @@ async def test_another_orgs_secret_is_never_read(fake: FakeRepo) -> None:
     ],
 )
 def test_a_secret_ref_is_bound_to_one_org(org: str, ref: str, ok: bool) -> None:
-    from server.core.webhooks import webhook_secret_ref_ok
+    from server.core.webhook_secrets import webhook_secret_ref_ok
 
     assert webhook_secret_ref_ok(org, ref) is ok
 
 
 def test_orgs_that_differ_only_in_punctuation_or_case_get_distinct_prefixes() -> None:
-    from server.core.webhooks import webhook_secret_org_prefix
+    from server.core.webhook_secrets import webhook_secret_org_prefix
 
     orgs = ["acme-x", "acme_x", "acme.x", "ACME-X", "acme_2dx", "acmex"]
     assert len({webhook_secret_org_prefix(o) for o in orgs}) == len(orgs)

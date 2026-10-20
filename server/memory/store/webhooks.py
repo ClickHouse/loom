@@ -175,12 +175,13 @@ async def due_events(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Events of `hooks` since `since` with no attempt yet, or whose newest
-    attempt is pending (or a lease) and due, each with its `attempts` so far.
+    attempt is pending (or a lease) and due, each with its `attempts`, `last_status`
+    and `last_error` so far.
     Round robin: every webhook's oldest due event first, then every webhook's
     second, and so on, at most `per_webhook` of each and `limit` in all.
 
     Two statements: the events not settled or waiting (a set of ids, not a join
-    of every attempt), then the attempt counts of the few chosen."""
+    of every attempt), then the newest attempt state of the few chosen."""
     if not hooks:
         return []
     ch = ch or _default_client()
@@ -208,13 +209,22 @@ async def due_events(
         )
         if not rows:
             return []
-        counts = await ch.query_all(
-            f"SELECT event_id, argMax(attempts, version) AS attempts FROM {ATTEMPTS} "
+        tried = await ch.query_all(
+            "SELECT event_id, argMax(attempts, version) AS attempts, "
+            "argMax(last_status, version) AS last_status, "
+            f"argMax(last_error, version) AS last_error FROM {ATTEMPTS} "
             "WHERE event_id IN {ids:Array(String)} GROUP BY event_id",
             params={"ids": [str(r["event_id"]) for r in rows]},
         )
-    attempts = {str(c["event_id"]): int(c["attempts"]) for c in counts}
-    return [{**r, "attempts": attempts.get(str(r["event_id"]), 0)} for r in rows]
+    untried = {"attempts": 0, "last_status": 0, "last_error": ""}
+    state = {str(t["event_id"]): t for t in tried}
+    return [
+        {
+            **r,
+            **{k: state.get(str(r["event_id"]), untried)[k] for k in untried},
+        }
+        for r in rows
+    ]
 
 
 async def mark_dead(

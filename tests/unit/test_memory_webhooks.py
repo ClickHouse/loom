@@ -575,9 +575,11 @@ class FakeStore:
             if a is None or (a["status"] in ("pending", "leased") and a["next_attempt_at"] <= now):
                 turns[o["webhook_id"]] = turns.get(o["webhook_id"], 0) + 1
                 if turns[o["webhook_id"]] <= per_webhook:
-                    due.append(
-                        (turns[o["webhook_id"]], {**o, "attempts": a["attempts"] if a else 0})
+                    tried = (
+                        {k: a[k] for k in ("attempts", "last_status", "last_error")} if a else {}
                     )
+                    untried = {"attempts": 0, "last_status": 0, "last_error": ""}
+                    due.append((turns[o["webhook_id"]], {**o, **untried, **tried}))
         due.sort(key=lambda t: (t[0], t[1]["occurred_at"]))
         return [row for _turn, row in due][:limit]
 
@@ -860,26 +862,31 @@ async def test_turns_go_round_every_webhook_and_a_slow_one_holds_one_slot(
 
 
 @pytest.mark.asyncio
-async def test_the_erasure_step_reads_the_ids_once_then_deletes_events_and_attempts(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_the_receivers_last_status_survives_a_lease_and_a_cooldown_wait(
+    fake: FakeStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.erasure.store import steps_ledgers
+    await _pass(lambda r: httpx.Response(503))
+    assert fake.last()["last_status"] == 503
 
-    ch = (
-        RecordingCH(strict=False)
-        .on("SELECT DISTINCT event_id FROM loom.memory_webhook_outbox", [{"event_id": "e1"}])
-        .on("SELECT count()", [{"n": 1}])
-    )
-    ch.install(monkeypatch)
-    order: list[tuple[str, Any]] = []
+    # The retry's lease keeps it while the POST is out.
+    leases: list[dict[str, Any]] = []
 
-    async def mutate(table: str, *, mutation: str, where: str, params: Any, **_: Any) -> None:
-        order.append((table, params.get("ids")))
+    def handler(request: httpx.Request) -> httpx.Response:
+        leases.append(fake.last())
+        return httpx.Response(503)
 
-    monkeypatch.setattr(steps_ledgers.erasure_mutations, "run_mutation", mutate)
-    await steps_ledgers.delete_memory_webhook_outbox_by_user("acme", "u1", ch=ch)
-    assert len(ch.statements("SELECT DISTINCT event_id")) == 1
-    assert order == [("loom.memory_webhook_outbox", None), ("loom.memory_webhook_attempts", ["e1"])]
+    await _pass(handler, now=NOW + timedelta(seconds=6))
+    assert leases[0]["status"] == "leased" and leases[0]["last_status"] == 503
+
+    # A cooldown wait keeps it too, with its reason as the error: an older event fails
+    # first and cools the webhook down, then ev-1 waits.
+    monkeypatch.setattr(worker, "FAILURES_BEFORE_COOLDOWN", 1)
+    fake.outbox.append(_outbox_row(event_id="ev-0", occurred_at=NOW - timedelta(minutes=1)))
+    await _pass(lambda r: httpx.Response(502), now=NOW + timedelta(minutes=10))
+    assert fake.last("ev-0")["last_status"] == 502
+    waited = fake.last()
+    assert waited["last_error"] == "the webhook is cooling down"
+    assert waited["last_status"] == 503 and waited["attempts"] == 2
 
 
 @pytest.mark.asyncio
@@ -1026,50 +1033,6 @@ async def test_an_erasure_while_an_event_waits_for_a_slot_stops_its_post(
     assert seen == ["a.example"]
     assert fake.last("b-1")["status"] == "dead"
     assert fake.last("b-1")["last_error"] == "the memory was erased"
-
-
-@pytest.mark.asyncio
-async def test_the_erasure_step_takes_a_namespace_list_and_deletes_attempts_in_batches(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.erasure.store import steps_ledgers
-
-    monkeypatch.setattr(steps_ledgers, "_ATTEMPT_ID_BATCH", 2)
-    ch = (
-        RecordingCH(strict=False)
-        .on(
-            "SELECT DISTINCT event_id FROM loom.memory_webhook_outbox",
-            [{"event_id": f"e{i}"} for i in range(3)],
-        )
-        .on("SELECT count()", [{"n": 1}])
-    )
-    ch.install(monkeypatch)
-    mutations: list[tuple[str, str, Any]] = []
-
-    async def submitted(table: str, *, tag: str, params: Any, **_: Any) -> None:
-        mutations.append((table, tag, params.get("ids")))
-
-    monkeypatch.setattr(steps_ledgers.erasure_mutations, "_submit_and_wait", submitted)
-
-    async def run() -> None:
-        with steps_ledgers.erasure_mutations.saga_scope("er-1"):
-            await steps_ledgers.delete_memory_webhook_outbox_by_namespace("acme", ["a", "b"], ch=ch)
-
-    await run()
-    read = ch.statements("SELECT DISTINCT event_id")[0]
-    assert "namespace IN {ns:Array(String)}" in read.sql and read.params["ns"] == ["a", "b"]
-    assert [m[0] for m in mutations] == [
-        "loom.memory_webhook_outbox",
-        "loom.memory_webhook_attempts",
-        "loom.memory_webhook_attempts",
-    ]
-    assert [m[2] for m in mutations[1:]] == [["e0", "e1"], ["e2"]]
-    # Each batch has its own mutation tag, the same one when the step runs again.
-    tags = [m[1] for m in mutations]
-    assert len(set(tags)) == 3 and all(t.startswith("erasure:er-1:") for t in tags)
-    mutations.clear()
-    await run()
-    assert [m[1] for m in mutations] == tags
 
 
 @pytest.mark.asyncio

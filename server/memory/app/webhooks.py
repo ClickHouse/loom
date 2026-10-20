@@ -35,6 +35,7 @@ from server.core import webhooks as signed
 from server.core.datetimes import naive_utc_now
 from server.core.errors import ValidationError
 from server.core.logging_config import request_id_var
+from server.core.webhook_secrets import webhook_secret_org_prefix, webhook_secret_ref_ok
 from server.memory.api.models_webhook import (
     WebhookDeliveriesInput,
     WebhookDeliveriesOutput,
@@ -257,10 +258,10 @@ def _info(row: Mapping[str, Any]) -> WebhookInfo:
 
 
 async def handle_webhook_register(input: WebhookRegisterInput) -> WebhookRegisterOutput:
-    if not signed.webhook_secret_ref_ok(input.org, input.secret_ref):
+    if not webhook_secret_ref_ok(input.org, input.secret_ref):
         raise ValidationError(
             "secret_ref must be "
-            f"{signed.webhook_secret_org_prefix(input.org)}<letters and digits>, "
+            f"{webhook_secret_org_prefix(input.org)}<letters and digits>, "
             "the name of an environment variable this org owns"
         )
     try:

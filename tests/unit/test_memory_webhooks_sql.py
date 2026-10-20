@@ -96,11 +96,11 @@ async def test_due_events_are_the_unsettled_due_ones_in_turns() -> None:
     )
     got = await store.due_events(NOW, since=SINCE, hooks=HOOKS, per_webhook=5, limit=10, ch=ch)
     # turn 1 of each webhook (oldest first), then turn 2
-    assert [(r["event_id"], r["attempts"]) for r in got] == [
-        ("a1", 2),
-        ("b1", 0),
-        ("a4", 0),
-        ("b2", 0),
+    assert [(r["event_id"], r["attempts"], r["last_status"], r["last_error"]) for r in got] == [
+        ("a1", 2, 500, "e"),
+        ("b1", 0, 0, ""),
+        ("a4", 0, 0, ""),
+        ("b2", 0, 0, ""),
     ]
     one_each = await store.due_events(NOW, since=SINCE, hooks=HOOKS, per_webhook=1, limit=10, ch=ch)
     assert [r["event_id"] for r in one_each] == ["a1", "b1"]

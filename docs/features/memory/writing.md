@@ -371,7 +371,8 @@ sweep, the `delete_version` check).
 - **Keeping.** An outbox insert that fails is logged and that event is not sent; the
   write still stands. A webhook registered on one server process applies to writes on the
   others within `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`. Events and their delivery record
-  are kept 3 days, and an erasure deletes the events in its scope.
+  are kept 3 days. An erasure deletes the events in its scope; their delivery records
+  name no key or identity and expire with the rest.
 
 ## Settings
 

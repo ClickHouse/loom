@@ -107,7 +107,7 @@ class WebhookDelivery(BaseModel):
     next_attempt_at: datetime
     # The last HTTP status the receiver answered; 0 when none arrived.
     last_status: int
-    # Why the last attempt failed when no status arrived ("" otherwise).
+    # Why the event failed, waits or died when no HTTP status explains it ("" otherwise).
     last_error: str
 
 

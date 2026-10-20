@@ -21,7 +21,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from server.core.webhooks import (
+from server.core.webhook_secrets import (
     WEBHOOK_SECRET_PREFIX,
     webhook_secret_org_prefix,
     webhook_secret_ref_ok,

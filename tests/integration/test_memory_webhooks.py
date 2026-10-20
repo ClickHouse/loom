@@ -24,7 +24,7 @@ from typing import Any
 import httpx
 import pytest
 
-from server.core.webhooks import webhook_secret_org_prefix
+from server.core.webhook_secrets import webhook_secret_org_prefix
 from server.memory.domain.webhook_events import BODY_FIELDS
 from server.memory.workers import webhook_deliver
 from server.settings import settings
