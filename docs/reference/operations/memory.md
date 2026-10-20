@@ -1822,7 +1822,7 @@ Semantic search over the agent's own memory.
 
 ## `memory.search_trace`
 
-Same shape as memory.search; returns the per-candidate scoring breakdown instead of just the top-k.
+Same shape as memory.search; returns the vector leg's per-candidate scoring breakdown (no fusion, assembly or reranker), as the dashboard's Recall Lab shows it.
 
 `POST /v1/memory.search_trace` · MCP `loom_memory_search_trace` · role `viewer` · read · not listed under the MCP `all` toolset
 

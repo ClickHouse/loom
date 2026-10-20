@@ -142,7 +142,7 @@ class MemorySearchInput(BaseModel):
     include_proposed: bool = False
     # Carry per-hit `explanation` and `score_components`.
     # None = the server default: on at top_k <= memory_search_excerpt_bodies_k
-    # (15), off above it; the full breakdown is memory.search_trace. True / False
+    # (15), off above it; memory.search_trace scores the vector leg alone. True / False
     # pin it for this call. Above the same k an unpinned `bodies` serves the
     # excerpt tier (memory_search_excerpt_chars) instead of the full clip.
     explain: bool | None = None
@@ -639,7 +639,7 @@ class _MemorySearchHit(BaseModel):
     # For a digest hit (source="summary"): the memory keys it compressed;
     # empty for every other row.
     derived_from: list[str] = Field(default_factory=list)
-    # Compact score breakdown of the major ranking signals (full trace in search_trace).
+    # Score breakdown of the ranking signals and, after a reranker, its moves (rerank_*).
     score_components: dict[str, float] = Field(default_factory=dict)
     # When this hit is a canonical seated in the slot of a
     # `duplicate` row the legs ranked, the duplicate's memory_key; absent
@@ -863,9 +863,9 @@ class MemoryAggregateOutput(BaseModel):
 
 
 class MemorySearchTraceInput(MemorySearchInput):
-    """Same shape as memory.search; returns the per-candidate scoring
-    breakdown instead of just the top-k. Use this in the dashboard's Recall Lab
-    or any "why did this row rank where it did" debugging."""
+    """Same shape as memory.search; returns the vector leg's per-candidate scoring
+    breakdown (no fusion, assembly or reranker), as the dashboard's Recall Lab shows it.
+    Why a served row ranked where it did: memory.search with explain=true."""
 
 
 class _SearchTraceHit(BaseModel):

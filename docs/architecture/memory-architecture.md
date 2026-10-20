@@ -268,12 +268,13 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    soft tags, categories) and the correctness tail (demotions, reinforcement,
    provenance trust) from `_fact_rank_tail`. `rrf` mode fuses the lexical and semantic
    orders by reciprocal rank instead. Reinforcement is read from `memory_reinforcement`
-   after the fetch. A configured reranker reorders the pool and fails open.
+   after the fetch. A configured reranker reorders the pool and fails open:
+   identifier-pinned rows keep their slots and are not sent to it, and a changed order
+   hands out the pool's own scores in the new order.
 7. **Verdict** (`verdict.py`, `_finalize_abstain`): empty is `no_match`, a weak top hit
    is `below_threshold`, then the calibrator's `low_calibrated_confidence`. After a
    reranker, these gates read the served rows in fused order (`gate_order`), not the
-   reranker's order. A query
-   naming an identifier absent from every hit abstains too
+   reranker's order. A query naming an identifier absent from every hit abstains too
    (`LOOM_MEMORY_SEARCH_IDENTIFIER_GROUNDING`).
 8. **Assemble and record** (`assemble.py`, `output.py`, `telemetry.py`). The window is
    cut to budget; with `paging=true` a larger pool is parked in `loom.context_blobs`.

@@ -130,7 +130,7 @@ def _anchor_rank_score(similarity: float, pool_floor: float) -> float:
 def drop_rerank_trail(hit: Any) -> None:
     """Take a rerank's marks off a hit that joins another pool: every `rerank_*` entry
     `_record_rerank_trail` stamps and the pre-rerank score. The row keeps the score its own
-    block served, which is bounded and on that pool's scale."""
+    pool served it (after a rerank, that pool's handed-out score)."""
     comps = hit.score_components
     for key in [k for k in comps if k.startswith("rerank_") or k == RANK_SCORE_PRE_RERANK]:
         del comps[key]

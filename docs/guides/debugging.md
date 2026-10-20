@@ -72,8 +72,11 @@ OTLP endpoint. With Langfuse configured they also go to
 
 ## 3. Explain a search answer
 
-**Why did this rank here?** `memory.search_trace` takes the arguments of `memory.search`
-and returns, per hit, `similarity`, `distance`, `entity_boost`, `rank_score`, `rank` and
+**Why did this rank here?** `memory.search` with `explain=true` attaches `score_components`
+to each served hit: the ranking signals and, after a reranker, its move (`rerank_from`,
+`rerank_pos`, `rerank_delta`) and own fused score (`rank_score_pre_rerank`).
+`memory.search_trace` takes the arguments of `memory.search` and scores the vector leg alone
+(no fusion, assembly or reranker), returning, per hit, `similarity`, `distance`, `entity_boost`, `rank_score`, `rank` and
 `source`:
 
 ```python
