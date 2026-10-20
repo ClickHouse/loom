@@ -249,7 +249,7 @@ async def tombstone_set_chunks_fail_open(
             only=only,
             strong=True,
         )
-    except Exception as e:  # noqa: BLE001 — the delete stands
+    except Exception as e:  # noqa: BLE001 — the fact's tombstone stands
         log.warning("chunk tombstones failed for %s (non-fatal): %s", memory_key, e)
         return 0
 

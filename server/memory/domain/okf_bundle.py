@@ -812,8 +812,9 @@ def plan_concepts(
     """Entries → sorted, slug-deduped concepts carrying their typed edges."""
     concepts = [memory_to_concept(e) for e in entries]
     # Ties on a slug break on the key and the row id, never the listing's order, so the same
-    # rows keep the same files on every run. A new key with the same slug that sorts first
-    # takes the bare name once, and the copy of the key it moves is rewritten once.
+    # rows keep the same files on every run. A file moves only when the key holding its bare
+    # name changes (a new key sorts first, or the holder leaves and the next in order takes
+    # it), and the copy of the key that moved is rewritten once.
     concepts.sort(key=lambda c: (c.id, c.memory_key, str(c.loom.get("memory_id") or "")))
     _dedupe_slugs(concepts)
     typed = authored_relates_to(concepts, edges)
