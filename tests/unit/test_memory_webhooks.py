@@ -250,6 +250,31 @@ async def test_a_cold_read_that_fails_announces_nothing_and_the_next_write_reads
 
 
 @pytest.mark.asyncio
+async def test_a_change_made_during_a_read_reads_the_registry_again_on_the_next_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A register here while a read is in flight: that read may predate it, so
+    the next write reads again rather than waiting out the interval."""
+    answers = [[], [_registration("wh1")]]
+
+    async def live() -> list[dict[str, Any]]:
+        answer = answers.pop(0)
+        if answers:  # the first read: the register lands while it runs
+            app.forget_registry()
+        return answer
+
+    monkeypatch.setattr(store, "live_webhooks", live)
+    monkeypatch.setattr(app, "_hooks", {})
+    monkeypatch.setattr(app, "_loaded", False)
+    monkeypatch.setattr(app, "_next_read", 0.0)
+    monkeypatch.setattr(settings, "memory_webhook_refresh_seconds", 30.0)
+    assert await app.subscribers("acme", "chat", "memory.written") == []
+    assert app._next_read == 0.0
+    assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
+    assert 25 < app._next_read - time.monotonic() <= 30
+
+
+@pytest.mark.asyncio
 async def test_a_loaded_copy_serves_while_a_refresh_is_under_way(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -639,11 +664,13 @@ class FakeStore:
         return max(rows, key=lambda a: a["version"]) if rows else None
 
     def _of(self, hooks: list[Any]) -> list[dict[str, Any]]:
+        """The events of `hooks`, oldest first; of an event announced twice, the earliest."""
         wanted = set(hooks)
-        return sorted(
-            (o for o in self.outbox if (o["org"], o["namespace"], o["webhook_id"]) in wanted),
-            key=lambda o: o["occurred_at"],
-        )
+        events: dict[str, dict[str, Any]] = {}
+        for o in sorted(self.outbox, key=lambda o: o["occurred_at"]):
+            if (o["org"], o["namespace"], o["webhook_id"]) in wanted:
+                events.setdefault(o["event_id"], o)
+        return list(events.values())
 
     async def due_events(
         self, now: datetime, *, since: datetime, hooks: list[Any], per_webhook: int, limit: int
@@ -672,7 +699,13 @@ class FakeStore:
                 a is None or a["status"] in ("pending", "leased")
             ):
                 self.attempts.append(
-                    worker._attempt_row(o["event_id"], status="dead", attempts=0, last_error=reason)
+                    worker._attempt_row(
+                        o["event_id"],
+                        status="dead",
+                        attempts=a["attempts"] if a else 0,
+                        last_status=a["last_status"] if a else 0,
+                        last_error=reason,
+                    )
                 )
 
     async def live_webhooks(self) -> list[dict[str, Any]]:

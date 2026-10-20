@@ -124,18 +124,27 @@ async def test_mark_dead_settles_only_the_unsettled_events_of_its_webhooks(nulls
         NOW, since=SINCE, hooks=[HOOKS[0]], reason="the webhook was removed", version=99, ch=ch
     )
     rows = ch.after_execute(
-        "SELECT event_id, status, attempts, last_error FROM loom.memory_webhook_attempts "
-        "WHERE version = 99 ORDER BY event_id"
+        "SELECT event_id, status, attempts, last_status, last_error "
+        "FROM loom.memory_webhook_attempts WHERE version = 99 ORDER BY event_id"
     )
-    assert [(r["event_id"], r["status"], r["attempts"], r["last_error"]) for r in rows] == [
-        ("a1", "dead", 0, "the webhook was removed"),
-        ("a2", "dead", 1, "the webhook was removed"),
+    # A dead row keeps the count and HTTP status of the attempts before it.
+    assert [
+        (r["event_id"], r["status"], r["attempts"], r["last_status"], r["last_error"]) for r in rows
+    ] == [
+        ("a1", "dead", 0, 0, "the webhook was removed"),
+        ("a2", "dead", 1, 500, "the webhook was removed"),
     ]
 
 
 @pytest.mark.asyncio
 async def test_mark_dead_with_a_deadline_settles_only_the_older_events() -> None:
-    ch = _tables(_event("wa", "old", 61 * 60), _event("wa", "new", 5))
+    ch = _tables(
+        _event("wa", "old", 61 * 60),
+        _event("wa", "old_delivered", 61 * 60),
+        _attempt("old_delivered", "pending", 1),
+        _attempt("old_delivered", "delivered", 2),
+        _event("wa", "new", 5),
+    )
     await store.mark_dead(
         NOW,
         since=SINCE,
@@ -188,6 +197,23 @@ async def test_an_event_announced_twice_is_due_and_listed_once() -> None:
         "acme", "chat", since=SINCE, webhook_id="", status="", limit=10, ch=ch
     )
     assert [r["event_id"] for r in listed] == ["twice"]
+    await store.mark_dead(
+        NOW, since=SINCE, hooks=[HOOKS[0]], reason="the webhook was removed", version=99, ch=ch
+    )
+    dead = ch.after_execute("SELECT event_id FROM loom.memory_webhook_attempts WHERE version = 99")
+    assert [r["event_id"] for r in dead] == ["twice"]
+
+
+@pytest.mark.asyncio
+async def test_an_event_announced_at_two_times_reads_as_its_earliest() -> None:
+    ch = _tables(_event("wa", "twice", 10), _event("wa", "twice", 50))
+    earliest = _ts(NOW - timedelta(minutes=50)).strip("'")
+    due = await store.due_events(NOW, since=SINCE, hooks=HOOKS, per_webhook=5, limit=10, ch=ch)
+    assert [(r["event_id"], r["occurred_at"]) for r in due] == [("twice", earliest)]
+    listed = await store.namespace_deliveries(
+        "acme", "chat", since=SINCE, webhook_id="", status="", limit=10, ch=ch
+    )
+    assert [(r["event_id"], r["occurred_at"]) for r in listed] == [("twice", earliest)]
 
 
 @pytest.mark.asyncio

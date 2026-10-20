@@ -78,15 +78,8 @@ Hook = tuple[str, str, str]
 
 _COMMITTED = {"async_insert": 0, "wait_for_async_insert": 1}
 _HOOKS = "{hooks:Array(Tuple(String, String, String))}"
-
-
-def _hook_events(*, before: bool = False) -> str:
-    """The outbox events of {hooks} since {since}, and before {before} when asked."""
-    older = " AND occurred_at < {before:DateTime64(3)}" if before else ""
-    return (
-        f"SELECT event_id FROM {OUTBOX} WHERE (org, namespace, webhook_id) IN {_HOOKS} "
-        f"AND occurred_at >= {{since:DateTime64(3)}}{older}"
-    )
+# An event announced twice has two outbox rows of its webhook: keep the earliest.
+_EARLIEST = "ORDER BY org, namespace, webhook_id, occurred_at LIMIT 1 BY event_id"
 
 
 def _latest_attempts(events: str) -> str:
@@ -195,9 +188,9 @@ async def due_events(
             f"SELECT {cols} FROM ("
             f"SELECT {cols}, row_number() OVER "
             "(PARTITION BY org, namespace, webhook_id ORDER BY occurred_at, event_id) AS turn "
-            # An event announced twice has two outbox rows: one of them.
             f"FROM (SELECT {cols} FROM {OUTBOX} WHERE (org, namespace, webhook_id) IN {_HOOKS} "
-            "AND occurred_at >= {since:DateTime64(3)} LIMIT 1 BY event_id) "
+            "AND occurred_at >= {since:DateTime64(3)} "
+            f"{_EARLIEST}) "
             f"WHERE event_id NOT IN (SELECT event_id FROM {ATTEMPTS} "
             "WHERE recorded_at >= {since:DateTime64(3)} GROUP BY event_id "
             "HAVING argMax(status, version) IN ('delivered', 'dead') "
@@ -255,20 +248,22 @@ async def mark_dead(
         "reason": reason,
         "version": int(version),
     }
-    older = ""
+    events = (
+        f"SELECT event_id, occurred_at FROM {OUTBOX} WHERE (org, namespace, webhook_id) IN "
+        f"{_HOOKS} AND occurred_at >= {{since:DateTime64(3)}}"
+    )
     if before is not None:
-        older = "AND o.occurred_at < {before:DateTime64(3)}"
+        events += " AND occurred_at < {before:DateTime64(3)}"
         params["before"] = before
+    events += f" {_EARLIEST}"
     await ch.execute(
         f"INSERT INTO {ATTEMPTS} ({', '.join(ATTEMPT_COLS)}) "
         "SELECT o.event_id, 'dead', ifNull(a.attempts, 0), {now:DateTime64(3)}, "
         "ifNull(a.last_status, 0), {reason:String}, {now:DateTime64(3)}, {version:UInt64} "
-        f"FROM {OUTBOX} AS o "
-        f"LEFT JOIN ({_latest_attempts(_hook_events(before=before is not None))}) AS a "
+        f"FROM ({events}) AS o "
+        f"LEFT JOIN ({_latest_attempts(f'SELECT event_id FROM ({events})')}) AS a "
         "ON a.event_id = o.event_id "
-        f"WHERE (o.org, o.namespace, o.webhook_id) IN {_HOOKS} "
-        f"AND o.occurred_at >= {{since:DateTime64(3)}} {older} "
-        "AND (ifNull(a.event_id, '') = '' OR a.status IN ('pending', 'leased'))",
+        "WHERE ifNull(a.event_id, '') = '' OR a.status IN ('pending', 'leased')",
         params=params,
         settings=_COMMITTED,
     )
@@ -336,7 +331,10 @@ async def namespace_deliveries(
                        AS next_attempt_at,
                    ifNull(a.last_status, 0) AS last_status,
                    ifNull(a.last_error, '') AS last_error
-            FROM (SELECT {cols} FROM {OUTBOX} WHERE {scope} LIMIT 1 BY event_id) AS o
+            FROM (
+                SELECT {cols} FROM {OUTBOX} WHERE {scope}
+                {_EARLIEST}
+            ) AS o
             LEFT JOIN ({_latest_attempts(f"SELECT event_id FROM {OUTBOX} WHERE {scope}")}) AS a
                 ON a.event_id = o.event_id
         )

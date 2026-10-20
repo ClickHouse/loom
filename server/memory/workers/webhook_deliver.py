@@ -238,9 +238,9 @@ async def _send(
     secrets: Mapping[store.Hook, bytes],
 ) -> tuple[list[dict[str, Any]], int]:
     """POST the leased `due` events: CONCURRENCY at a time, one at a time per
-    webhook, within POST_BUDGET_SECONDS. Returns the finished events' attempt
-    rows, recorded as each finished, so a pass cut at its budget or by an error
-    still records what it sent, and how many POSTs failed and will be retried."""
+    webhook, within POST_BUDGET_SECONDS. Returns the attempt rows of the events
+    that finished (recorded even when the budget or an error cut the pass) and
+    the number of POSTs that failed and will be retried."""
     slots = asyncio.Semaphore(CONCURRENCY)
     finished: list[dict[str, Any]] = []
     failed = 0
@@ -336,8 +336,6 @@ async def deliver_once(
     due = await store.due_events(
         now, since=since, hooks=sendable, per_webhook=PER_WEBHOOK, limit=MAX_POSTS_PER_PASS
     )
-    # The same event announced twice (a re-run) has one id: send it once.
-    due = list({str(r["event_id"]): r for r in due}.values())
     waiting = len(live) - len(sendable)
     if not due:
         return DeliverResult(waiting=waiting)

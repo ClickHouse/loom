@@ -11,7 +11,8 @@ the first write after the interval waits for.
 Which namespaces have webhooks is a per-process copy of loom.memory_webhooks,
 read again every `memory_webhook_refresh_seconds`: a webhook registered on
 another process applies to this one's writes within that interval. A
-register or remove here reads it again on the next write.
+register or remove here reads it again on the next write, even one made while
+a read is under way.
 
 An event's id is derived from what it is (`event_id`), so a repeat of one
 event to one webhook shares its id. An announcement never fails the write it
@@ -66,6 +67,7 @@ Registry = dict[tuple[str, str], tuple[tuple[str, frozenset[str]], ...]]
 _hooks: Registry = {}  # this process's copy of the registry
 _loaded = False  # a read has landed; until one has, callers wait for it
 _reads = 0  # reads finished, so a caller queued behind one does not repeat it
+_changes = 0  # registry changes made here, so a read they overlap is not trusted
 _next_read = 0.0
 _lock = asyncio.Lock()
 
@@ -98,29 +100,31 @@ async def url_refusal(url: str) -> str:
 
 
 async def _read() -> None:
-    """Read the registry; the next read is due an interval after this one ends."""
+    """Read the registry; the next read is due an interval after this one ends,
+    or at once when a change made here overlapped it."""
     global _hooks, _loaded, _next_read, _reads
+    changes = _changes
     try:
         rows = await store.live_webhooks()
     except Exception as e:  # noqa: BLE001 — the last copy serves until a read lands
         # Before the first read lands there is no copy: this write announces nothing.
         degradations.note("memory.webhook", "registry_unread", e)
         log.warning("memory webhooks: registry read failed (%s); serving the last copy", e)
+    else:
+        hooks: dict[tuple[str, str], list[tuple[str, frozenset[str]]]] = {}
+        for r in rows:
+            key = (str(r["org"]), str(r["namespace"]))
+            hooks.setdefault(key, []).append((str(r["webhook_id"]), frozenset(r["events"])))
+        _hooks, _loaded = {k: tuple(v) for k, v in hooks.items()}, True
+    if _changes == changes:
         _next_read = time.monotonic() + settings.memory_webhook_refresh_seconds
-        _reads += 1
-        return
-    hooks: dict[tuple[str, str], list[tuple[str, frozenset[str]]]] = {}
-    for r in rows:
-        key = (str(r["org"]), str(r["namespace"]))
-        hooks.setdefault(key, []).append((str(r["webhook_id"]), frozenset(r["events"])))
-    _hooks, _loaded = {k: tuple(v) for k, v in hooks.items()}, True
-    _next_read = time.monotonic() + settings.memory_webhook_refresh_seconds
     _reads += 1
 
 
 def forget_registry() -> None:
     """Read the registry again on the next write, for a change made here."""
-    global _next_read
+    global _changes, _next_read
+    _changes += 1
     _next_read = 0.0
 
 
