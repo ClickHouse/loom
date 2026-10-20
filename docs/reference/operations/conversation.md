@@ -156,6 +156,31 @@ Enumerate stored conversation threads for an agent / namespace.
 | `rows` | `list[_ConversationEntry]` | The page of messages in chronological order. |
 | `next_cursor` | `str \| None` | Pass as `cursor` for the next page; None when this is the last page. |
 
+## `conversation.save_message`
+
+Save one chat message a user picked for search, whether or not the namespace records transcripts.
+
+`POST /v1/conversation.save_message` · MCP `loom_conversation_save_message` · role `writer` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `conversation_id` | `str` | required | The client's conversation id; this remains the thread id in Loom. |
+| `message_id` | `str` | required | The client's stable message id. |
+| `role` | `Literal['user', 'assistant']` | required | Only selectable user and assistant messages are embedded. |
+| `content` | `str` | required | The message text; ignored when the transcript already holds the message. |
+| `user_id` | `str` | required | The owner is a hard filter on the paired search operation. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `conversation_id` | `str` |  |
+| `message_id` | `str` |  |
+| `indexed` | `bool` | True when the turn is saved and has a vector the saved search ranks: a new write, a re-save (finishing what an interrupted save left behind), and a transcript turn that is now flagged saved. |
+| `reason` | `Literal['', 'duplicate', 'owner_mismatch', 'deleted', 'unsupported_role', 'embed_failed']` | "duplicate": already saved, nothing changed. "owner_mismatch": the stored turn belongs to another user. "deleted": the stored turn was tombstoned. "unsupported_role": the stored turn is a system or tool turn, which is not embedded.… |
+| `ts` | `datetime` | The stored turn's timestamp; the time of the refusal when one is refused. |
+
 ## `conversation.search`
 
 Rank conversation messages by embedding similarity to `query`.
@@ -171,6 +196,7 @@ Rank conversation messages by embedding similarity to `query`.
 | `thread_id` | `str \| None` | `None` | optional: scope to one thread |
 | `run_id` | `str \| None` | `None` | optional: filter by run_id |
 | `role` | `Literal['user', 'assistant', 'system', 'tool'] \| None` | `None` | Filter by speaker; system turns other than compaction summaries, and tool turns, are not embedded, so they match only on the substring fallback. |
+| `user_id` | `str \| None` | `None` | Optional owner filter. |
 | `top_k` | `int` | `20` | At most this many hits (1-200). |
 | `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | "all_mine" also reads the caller's own namespaces, up to `memory_search_fanout_max_namespaces`, as knowledge.search does. |
 
@@ -178,6 +204,27 @@ Rank conversation messages by embedding similarity to `query`.
 | --- | --- | --- |
 | `hits` | `list[_ConversationHit]` | Matching messages, most similar first and empty when none clears the similarity floor; newest first, with no floor, on the substring fallback. |
 | `namespaces_skipped` | `list[str]` | Namespaces of the caller an all_mine search did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
+
+## `conversation.search_saved_messages`
+
+Semantic search over only the messages one user saved with conversation.save_message, not the whole transcript.
+
+`POST /v1/conversation.search_saved_messages` · MCP `loom_conversation_search_saved_messages` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | required | The end user the row belongs to; `'-'` for none. |
+| `query` | `str` | required |  |
+| `conversation_id` | `str \| None` | `None` |  |
+| `role` | `Literal['user', 'assistant'] \| None` | `None` |  |
+| `top_k` | `int` | `20` |  |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `hits` | `list[_SavedMessageHit]` |  |
 
 ## `conversation.set_logging`
 

@@ -39,6 +39,9 @@ class ConversationVectorQuery:
     thread_id: str | None = None
     role: str | None = None
     run_id: str | None = None
+    user_id: str | None = None
+    # Only the turns a user saved through conversation.save_message.
+    saved_only: bool = False
     # Max cosine distance kept (1 - min_similarity). Default 2.0 = no gate
     # (full distance range), so callers that don't set it are unaffected.
     max_distance: float = 2.0
@@ -96,6 +99,11 @@ async def vector_search(
     if q.run_id is not None:
         where.append("run_id = {run_id:String}")
         params["run_id"] = q.run_id
+    if q.user_id is not None:
+        where.append("user_id = {user_id:String}")
+        params["user_id"] = q.user_id
+    if q.saved_only:
+        where.append("is_saved")
 
     # Single bare-distance sort key, ASC: a two-key sort (`ORDER BY distance
     # ASC, ts DESC`) disqualifies the query from CH's vector-search rewrite, so
