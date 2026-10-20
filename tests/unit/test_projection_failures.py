@@ -1,6 +1,6 @@
 import dataclasses
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -899,8 +899,8 @@ async def test_a_failed_late_edges_cleanup_records_when_the_value_ended(monkeypa
 
 
 class _ValuesCH(_GraphCH):
-    """The value-less close's page reads over `shas`, every value staying open: a page
-    after the hash cursor."""
+    """The value-less close's page reads over `shas`, each value linking one pair of its
+    own: a page after the hash cursor."""
 
     def __init__(self, shas: list[str]) -> None:
         super().__init__()
@@ -909,63 +909,85 @@ class _ValuesCH(_GraphCH):
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         if "GROUP BY content_sha256" in sql:
             after, page = params["after"], params["page"]
-            return [{"sha": s, "entities": ["a", "b"]} for s in self.shas if s > after][:page]
+            later = [s for s in self.shas if s > after][:page]
+            return [{"sha": s, "pairs": [("alice", s)]} for s in later]
         return []
 
 
-async def test_a_value_less_close_reads_every_page_of_values_once(monkeypatch) -> None:
-    """A 'high' row with 250 values whose edges all stay open (pairs it still names): the
-    repair reads them in pages by hash, each value once, and resolves."""
-    from server.memory.app import edge_repair
+def _record_value_less_closes(monkeypatch: pytest.MonkeyPatch) -> tuple[list[str], list[list]]:
+    """Every value asked and every end_edges call's ends; values that hold none stay
+    in the fake's read set, so each pass reads them again."""
+    from server.memory.app import edge_repair, projections
 
-    shas = [f"{i:064x}" for i in range(250)]
     asked: list[str] = []
+    calls: list[list] = []
 
-    async def close_late_edges(org: str, ns: str, memory_id: str, sha: str, **kw: Any) -> None:
-        asked.append(sha)  # kept: its edges stay open, as a named pair's do
+    async def value_ended(org: str, ns: str, memory_id: str, sha: str, pairs, **kw: Any):
+        asked.append(sha)
+        return datetime(2026, 1, 1) + timedelta(seconds=int(sha, 16))
 
-    monkeypatch.setattr(edge_repair, "close_late_edges", close_late_edges)
+    async def end_edges(ch: Any, **kw: Any) -> list[str]:
+        calls.append(kw["ends"])
+        return []
+
+    monkeypatch.setattr(edge_repair, "_value_ended", value_ended)
+    monkeypatch.setattr(projections, "end_edges", end_edges)
+    return asked, calls
+
+
+async def test_a_value_less_close_reads_every_page_of_values_once(monkeypatch) -> None:
+    """A 'high' row with 250 values: the repair reads them in pages by hash, each value
+    once, ends each page's pairs with one end_edges at their own ends, and resolves."""
+    shas = [f"{i:064x}" for i in range(250)]
+    asked, calls = _record_value_less_closes(monkeypatch)
     failure = dataclasses.replace(
         _graph_failure("entity_edges_close"), payload={"memory_id": _ROW_ID}
     )
     (out,) = await retry_failures([failure], ch=_ValuesCH(shas))
     assert out.resolved and asked == shas
+    assert [len(ends) for ends in calls] == [100, 100, 50]
+    assert calls[0][0] == ("alice", shas[0], datetime(2026, 1, 1))
 
 
 async def test_a_value_less_close_reads_at_most_twenty_pages_and_stays_active(monkeypatch) -> None:
-    """More values that can close than one repair reads (20 pages of 100): the failure
-    stays active for the next pass instead of resolving with values unread."""
-    from server.memory.app import edge_repair
-
+    """More values than one repair reads (20 pages of 100): the failure stays active for
+    the next pass instead of resolving with values unread."""
     shas = [f"{i:064x}" for i in range(2500)]
-    asked: list[str] = []
-
-    async def close_late_edges(org: str, ns: str, memory_id: str, sha: str, **kw: Any) -> None:
-        asked.append(sha)
-
-    monkeypatch.setattr(edge_repair, "close_late_edges", close_late_edges)
+    asked, calls = _record_value_less_closes(monkeypatch)
     failure = dataclasses.replace(
         _graph_failure("entity_edges_close"), payload={"memory_id": _ROW_ID}
     )
     (out,) = await retry_failures([failure], ch=_ValuesCH(shas))
     assert not out.resolved and not out.abandoned and asked == shas[:2000]
+    assert len(calls) == 20
 
 
-async def test_a_value_less_close_ignores_a_stray_skip(monkeypatch) -> None:
-    """A `skip` in the payload is ignored: the read starts at the first value."""
-    from server.memory.app import edge_repair
+async def test_a_value_less_page_ends_a_shared_pair_at_its_earliest_end(monkeypatch) -> None:
+    """Two values of one page link the same pair: it ends once, at the earlier end; a
+    value the row holds again ends nothing."""
+    from server.memory.app import edge_repair, projections
 
-    asked: list[str] = []
+    ended = {"a" * 64: datetime(2026, 3, 1), "b" * 64: datetime(2026, 2, 1), "c" * 64: None}
+    calls: list[list] = []
 
-    async def close_late_edges(org: str, ns: str, memory_id: str, sha: str, **kw: Any) -> None:
-        asked.append(sha)
+    async def value_ended(org: str, ns: str, memory_id: str, sha: str, pairs, **kw: Any):
+        return ended[sha]
 
-    monkeypatch.setattr(edge_repair, "close_late_edges", close_late_edges)
-    failure = dataclasses.replace(
-        _graph_failure("entity_edges_close"), payload={"memory_id": _ROW_ID, "skip": 2000}
-    )
-    (out,) = await retry_failures([failure], ch=_ValuesCH(["a" * 64]))
-    assert out.resolved and asked == ["a" * 64]
+    async def end_edges(ch: Any, **kw: Any) -> list[str]:
+        calls.append(kw["ends"])
+        return []
+
+    monkeypatch.setattr(edge_repair, "_value_ended", value_ended)
+    monkeypatch.setattr(projections, "end_edges", end_edges)
+    values = [
+        {"sha": "a" * 64, "pairs": [("alice", "bob")]},
+        {"sha": "b" * 64, "pairs": [("alice", "bob"), ("alice", "carol")]},
+        {"sha": "c" * 64, "pairs": [("alice", "dave")]},
+    ]
+    await edge_repair._close_page("o", "n", _ROW_ID, values, ch=None)
+    assert calls == [
+        [("alice", "bob", datetime(2026, 2, 1)), ("alice", "carol", datetime(2026, 2, 1))]
+    ]
 
 
 @pytest.mark.parametrize(

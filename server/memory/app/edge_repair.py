@@ -35,13 +35,14 @@ _REPAIR_READ_SETTINGS = "SETTINGS select_sequential_consistency = 1, apply_mutat
 
 
 async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch: Any) -> None:
-    """`close_late_edges` for a close recorded without its value (a 'high' row's): each
-    value of the row linked to an edge that can close, dated by its own end. A pair can
-    close when its edge is open, no live row holds it (`held_pairs_ctes`, as `end_edges`
-    reads it) and the row does not name both its entities now: a 'high' row keeps the
-    edges of the entities on it. The value the row still holds is the drop's. So every
-    value read closes and leaves the read set, and a pass that runs out of pages raises:
-    the failure stays active, and the next pass, from the start, reads what is left."""
+    """The close of a late projection recorded without its value (a 'high' row's): each
+    value of the row linked to an edge that can close, dated by its own end, with one
+    `end_edges` a page. A pair can close when its edge is open, no live row holds it
+    (`held_pairs_ctes`, as `end_edges` reads it) and the row does not name both its
+    entities now: a 'high' row keeps the edges of the entities on it. The value the row
+    still holds is the drop's. So every value read closes and leaves the read set, and
+    a pass that runs out of pages raises: the failure stays active, and the next pass,
+    from the start, reads what is left."""
     params: dict[str, Any] = {"org": org, "ns": namespace, "id": memory_id}
     named = await ch.query_all(
         f"""
@@ -71,8 +72,7 @@ async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch
             ),
             {held}
             SELECT toString(content_sha256) AS sha,
-                   arrayDistinct(arrayConcat(groupArray(entity_a), groupArray(entity_b)))
-                       AS entities
+                   groupUniqArray((entity_a, entity_b)) AS pairs
             FROM loom.entity_edge_rows
             WHERE org = {{org:String}} AND namespace = {{ns:String}} AND memory_id = {{id:UUID}}
               AND content_sha256 > {{after:String}}
@@ -94,22 +94,54 @@ async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch
             """,
             params={**params, "after": after},
         )
-        for value in values:
-            await close_late_edges(
-                org,
-                namespace,
-                memory_id,
-                str(value["sha"]),
-                entities=[str(e) for e in value["entities"]],
-                keep=keep,
-                ch=ch,
-            )
+        await _close_page(org, namespace, memory_id, values, ch=ch)
         if len(values) < _VALUES_PAGE:
             return
         # The cursor keeps a pass from reading again a value whose close a row written
         # meanwhile undid.
         after = str(values[-1]["sha"])
     raise RuntimeError(f"more than {_VALUES_PAGE * _VALUES_PAGES} values of row {memory_id}")
+
+
+async def _close_page(
+    org: str, namespace: str, memory_id: str, values: list[dict[str, Any]], *, ch: Any
+) -> None:
+    """One `end_edges` for a page of `values` (sha, pairs): each pair ends at the
+    earliest end of the values linking it."""
+    ends: dict[tuple[str, str], datetime] = {}
+    for value in values:
+        pairs = [(str(a), str(b)) for a, b in value["pairs"]]
+        ended_at = await _value_ended(org, namespace, memory_id, str(value["sha"]), pairs, ch=ch)
+        if ended_at is None:
+            continue  # the row holds the value again
+        for pair in pairs:
+            ends[pair] = min(ends.get(pair, ended_at), ended_at)
+    if ends:
+        await projections.end_edges(
+            ch,
+            org=org,
+            namespace=namespace,
+            ends=[(a, b, at) for (a, b), at in sorted(ends.items())],
+            open_only=True,
+        )
+
+
+async def _value_ended(
+    org: str,
+    namespace: str,
+    memory_id: str,
+    content_sha256: str,
+    pairs: Sequence[tuple[str, str]],
+    *,
+    ch: Any,
+) -> datetime | None:
+    """When the row stopped holding the value linking `pairs`, or None when it holds it
+    again (`edge_holder_sql` of their entities)."""
+    holder = edge_holder_sql(sorted({e for pair in pairs for e in pair}))
+    version = [(memory_id, content_sha256)]
+    if await graph_holders.rows_holding(org, namespace, version, ch=ch, holder=holder):
+        return None
+    return await value_ended_at(org, namespace, memory_id, content_sha256, ch=ch, holder=holder)
 
 
 async def close_late_edges(

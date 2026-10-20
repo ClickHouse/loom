@@ -607,25 +607,26 @@ flips the status: it ends none of the row's edges or triples.
 
 A `high` row holds the edges of the entities on the row and nothing else of the graph.
 Its value is never mined: `memory.set` and `memory.bulk_set` project only the edges of
-the entities a `high` row's writer declared, and the edge rules (`edge_holder_sql`)
-count a high row as an edge's holder only while it names every entity of the edge, while
-mined edges fence on `HOLDS_VALUE_SQL`, which never counts it. A row made `high` (by
+the entities a `high` row's writer declared, and the edge rules (`edge_holder_sql`) count
+a high row as an edge's holder only while it names every entity of the edge, while mined
+edges fence on `HOLDS_VALUE_SQL`, which never counts it. A row made `high` (by
 `memory.set`, `memory.bulk_set`, a by-id update or `loom sensitivity-sweep`), or a high
 row re-set naming fewer entities, drops its links to any other pair (a write, after its
 response, with one intent for the whole write), and those edges end, when that write
 landed, unless another row names them; a failed drop is left to `projection_repair`. The
 drop, and its replay, reads the row as it is then: a row no longer `high` is skipped (a
-later plain write's links are its own), and one still `high` keeps only the edges of
-the entities on it, whatever later write (a pin, a lock, a relabel) kept it high. A
-write of the row that lands during the drop keeps its links and edges: after its DELETE
-the drop reads the rows again, writes back the links a row still holds and undoes the
-ends its own close stamped on their edges, so a stated end or a weight stays. A close
-recorded for a high row names no value: its repair ends each of the row's values with an
-open edge that the row no longer holds, and keeps the edges between entities
-the row names. It reads only values with a pair that can close (no other live row holds
-it), 20 pages of 100 a pass, its own queued closes read as applied; each value it reads
-closes, so a pass that runs out leaves the failure active and the next pass reads what is
-left. Its triples close as for a row that holds none.
+later plain write's links are its own), and one still `high` keeps only the edges of the
+entities on it, whatever later write (a pin, a lock, a relabel) kept it high. A write of
+the row that lands during the drop keeps its links and edges: after its DELETE the drop
+reads the rows again, writes back the links a row still holds and undoes the ends its
+own close stamped on their edges, so a stated end or a weight stays. A close recorded
+for a high row names no value: its repair ends each of the row's values with an open
+edge that the row no longer holds, and keeps the edges between entities the row names.
+It reads only values with a pair that can close (no other live row holds it), 20 pages
+of 100 a pass, its own queued closes read as applied, and ends each page's pairs with
+one close, each pair at the earliest end of the values linking it. Every value it reads
+closes, so a pass that runs out leaves the failure active and the next pass reads what
+is left. Its triples close as for a row that holds none.
 
 A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`) of a row that
 existed before the write closes the facts its row held that no row holds any longer, and

@@ -1549,6 +1549,64 @@ async def test_values_another_row_holds_open_do_not_block_a_value_less_close(
     assert ("alice smith", "dave ray") in await _open_edge_pairs(ch, org)
 
 
+async def test_a_value_less_close_ends_a_page_of_values_with_one_close(
+    ch, org, monkeypatch
+) -> None:
+    """Thirty older values, each linking a pair the high row no longer names: one pass
+    ends them all with one end_edges (one page), each pair no later than the write that
+    replaced its value."""
+    from server.memory.app import edge_links, edge_repair, projections, triple_projections
+    from server.memory.app.projection_errors import ProjectionScope
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    async def nothing(*a: Any, **kw: Any) -> None:
+        return None
+
+    names = [f"Person{i} Zed{i}" for i in range(30)]
+    with monkeypatch.context() as m:  # every close and drop lost: all edges stay open
+        m.setattr(edge_links, "drop_undeclared_links", nothing)
+        m.setattr(projections, "end_edges", nothing)
+        m.setattr(triple_projections, "end_edges", nothing)
+        for name in names:
+            await _high_set(org, "s1", "vault", f"Alice met {name}", entities=["Alice Smith", name])
+        out = await _high_set(
+            org, "s1", "vault", "Orchid", sensitivity="high", entities=["Alice Smith", "Bob Lane"]
+        )
+    real = projections.end_edges
+    calls: list[int] = []
+
+    async def counted(*a: Any, **kw: Any) -> list[str]:
+        calls.append(len(kw["ends"]))
+        return await real(*a, **kw)
+
+    monkeypatch.setattr(projections, "end_edges", counted)
+    scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    close = edge_repair.EdgeClose(str(out.memory_id), "vault", "-", [], high=True)
+    await edge_repair.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
+    await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    assert calls == [30]
+    assert await _open_edge_pairs(ch, org) == {("alice smith", "bob lane")}
+    ended = await ch.query_all(
+        "SELECT entity_b, valid_to FROM loom.entity_edges WHERE org = {org:String}"
+        " AND entity_a = 'alice smith' AND entity_b != 'bob lane'"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    versions = await ch.query_all(
+        "SELECT value, updated_at FROM loom.memory_versions WHERE org = {org:String}"
+        " ORDER BY version SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    # Each value ended with the write after it: its pair's end is that write's time.
+    replaced = {
+        str(json.loads(v["value"])).removeprefix("Alice met ").lower(): nxt["updated_at"]
+        for v, nxt in zip(versions, versions[1:], strict=False)
+    }
+    assert {str(r["entity_b"]): r["valid_to"] for r in ended} == {
+        name.lower(): replaced[name.lower()] for name in names
+    }
+
+
 async def test_a_value_less_close_counts_its_own_queued_closes_as_applied(
     ch, org, monkeypatch
 ) -> None:
