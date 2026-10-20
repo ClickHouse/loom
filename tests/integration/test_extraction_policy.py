@@ -110,10 +110,28 @@ def test_each_policy_renders_its_own_prompt_and_a_clear_restores_the_first(
 def test_another_orgs_policy_never_reaches_this_org(
     control_plane_url: str, mint_test_token
 ) -> None:
+    """Org B's policy leaves org A's extraction prompt as it was."""
     mine, theirs = unique_org("xpol-a"), unique_org("xpol-b")
+    writer = mint_test_token(org=mine, namespaces=["*"], roles=["writer"])
+
+    def key() -> str:
+        body = {
+            "org": mine,
+            "namespace": _fresh(),
+            "agent": "chat",
+            "messages": _MESSAGES,
+            "observation_date": "2026-01-15",
+        }
+        [k] = _post(control_plane_url, writer, "memory.set_from_messages", body)[
+            "extract_prompt_keys"
+        ]
+        return str(k)
+
+    before = key()
     other_admin = mint_test_token(org=theirs, namespaces=["*"], roles=["org_admin"])
     body = {"org": theirs, "scope": "org", "policy": _POLICY}
     _post(control_plane_url, other_admin, "extraction_policy.set", body)
+    assert key() == before
     admin = mint_test_token(org=mine, namespaces=["*"], roles=["org_admin"])
     read = _post(
         control_plane_url,

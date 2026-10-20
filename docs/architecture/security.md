@@ -615,7 +615,8 @@ Everything an agent stores is untrusted input to later prompts. Two mechanisms b
   breaks ties. A request's `prior_cap` overrides it.
 
 Loom does not classify stored text as instruction-like and refuses nothing on that
-basis.
+basis. The read-side bounds (`read_scope`, `top_k`, the exposure ledger, breadth budgets)
+are in [SECURITY.md](../../SECURITY.md#retrieval-and-memory-leakage).
 
 ### Extraction policy
 
@@ -629,15 +630,14 @@ extraction answers 503 and queued requests wait.
 
 The handler reads the policy for the request's `(org, namespace)` itself; no request
 field carries it. Each model call that writes memory from raw text (fact extraction and
-its coverage sweep, the typed-record value stage, the session digest, observation
+its retries, the typed-record value stage, the session digest, observation
 distillation) ends its system prompt with it, after the request's
-`extraction_instructions`, in a delimited block that states it outranks them and the
-messages. The deterministic passes that would add rows the model left out do not run
-under a policy. The rule is given to the model, not checked against what it returns;
+`extraction_instructions` and any retry addendum, in a delimited block that states it
+outranks them and the messages. The coverage sweep and the deterministic passes that
+would add rows the model left out do not run under a policy. The rule is given to the model, not checked against what it returns;
 verbatim evidence, chunks and observations are stored as sent. The
 [extraction guide](../features/memory/extraction.md#operator-extraction-policy) lists
-the paths. The read-side bounds (`read_scope`, `top_k`, the exposure ledger, breadth budgets)
-are in [SECURITY.md](../../SECURITY.md#retrieval-and-memory-leakage).
+the paths.
 
 ## Sensitivity
 

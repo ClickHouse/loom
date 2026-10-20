@@ -24,13 +24,12 @@ Scope = Literal["org", "namespace"]
 
 class ExtractionPolicySetInput(BaseModel):
     org: str
-    # `org`: the org's own policy, which every namespace of the org follows (`namespace`
-    # is ignored). `namespace`: rules `namespace` adds to it.
+    # `org` sets the org's own policy, which every namespace follows (`namespace` ignored);
+    # `namespace` sets the rules that namespace adds to it.
     scope: Scope
     # The namespace a `namespace`-scoped policy is for; ignored for scope `org`.
     namespace: str = ""
-    # The rules, in plain language; replaces the scope's current policy. At most
-    # 4,096 characters.
+    # The rules in plain language, at most 4,096 characters; replaces the scope's policy.
     policy: str = Field(..., min_length=1, max_length=MAX_CHARS)
 
 
@@ -44,8 +43,8 @@ class ExtractionPolicyGetInput(BaseModel):
 
 class ExtractionPolicyClearInput(BaseModel):
     org: str
-    # `org` removes the org's own policy; `namespace` removes `namespace`'s, which
-    # leaves the org's in force.
+    # `org` removes the org's own policy; `namespace` removes that namespace's, leaving
+    # the org's in force.
     scope: Scope
     # The namespace whose policy to remove; ignored for scope `org`.
     namespace: str = ""

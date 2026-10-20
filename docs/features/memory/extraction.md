@@ -129,11 +129,13 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   carries or removes it.
 - **What follows it.** Every model call that writes memory from raw text:
   `memory.set_from_messages` inline and deferred (the queue reads the policy when it
-  replays the request), its coverage sweep, the typed-record value stage, the session
+  replays the request) with its retries, the typed-record value stage, the session
   digest, observation replays from the `observe_extract` worker, and that worker's event
-  and hint notes. While a policy is in force, the deterministic passes that add rows the
-  model left out (recovered preferences, costs, ages, assistant-stated premises) do not
-  run: the model may have left them out because of the policy.
+  and hint notes. The block stays last, after any retry addendum. While a policy is in
+  force, nothing adds what the model left out: the coverage sweep (a second reading of
+  the turns no fact cites) and the deterministic passes (recovered preferences, costs,
+  ages, assistant-stated premises) do not run, whatever the request asks, since the
+  model may have left those out because of the policy.
 - **Cache.** The extraction response cache keys on the whole prompt, so a changed policy
   never serves an answer cached under the old one.
 - **Propagation.** Every server reads the policies at most every

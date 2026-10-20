@@ -776,10 +776,10 @@ def _revocation_snapshot_loaded() -> Iterator[None]:
     """A unit test models a booted process: the revocation snapshot, the
     signing keyring, the model-call switch and the extraction policies have
     been read just now (all empty), and no creator's account state or
-    service-account row is cached yet. Tests of the not-yet-loaded state set them back to not loaded. Saved
-    and restored by hand, not through `monkeypatch`: requesting it here would
-    set it up before `_settings_left_as_found` and so tear it down after that
-    check."""
+    service-account row is cached yet. Tests of the not-yet-loaded state set
+    them back to not loaded. Saved and restored by hand, not through
+    `monkeypatch`: requesting it here would set it up before
+    `_settings_left_as_found` and so tear it down after that check."""
     import server.auth.delegation as delegation
     import server.auth.keyring as keyring
     import server.auth.revocation as rev

@@ -110,6 +110,56 @@ async def test_the_extractor_sends_the_policy_and_keys_its_cache_on_it(provider)
     assert plain.prompt_key != ruled.prompt_key, "a policy change misses the response cache"
 
 
+async def test_every_retry_ends_with_the_policy(provider, monkeypatch) -> None:
+    """The zero-fact retry, the unparseable-reply retry and the re-ask after a
+    provider's content filter all put their addendum before the block."""
+    from server.memory.app.extract import extract_from_messages
+
+    replies = iter(
+        [
+            ('{"facts": []}', "content_filter"),  # cut by a filter: asked without recitation
+            ("not json", ""),  # unparseable: the stricter addendum
+            ('{"facts": []}', ""),  # nothing on non-trivial input: the zero-fact retry
+            ('{"facts": []}', ""),
+        ]
+    )
+
+    async def complete(system: str, user: str, *args: Any, **kw: Any) -> LLMResult:
+        provider.systems.append(system)
+        text, stop = next(replies)
+        return LLMResult(
+            text=text, tokens_in=1, tokens_out=1, provider="f", model="m", stop_reason=stop
+        )
+
+    monkeypatch.setattr(provider, "complete", complete)
+    await extract_from_messages(
+        _MSGS, judge=False, org="o", namespace="n", llm_cache=False, operator_policy=_POLICY
+    )
+    assert len(provider.systems) == 4
+    block = policy_block(_POLICY)
+    assert all(
+        s.endswith(block) and s.count("OPERATOR EXTRACTION POLICY") == 1 for s in provider.systems
+    )
+    assert len(set(provider.systems)) == 3, "the plain prompt and two addenda, each before it"
+
+
+async def test_under_a_policy_no_coverage_sweep_runs_even_when_asked(provider) -> None:
+    from server.memory.app.extract import extract_from_messages
+
+    common: dict[str, Any] = {
+        "judge": False,
+        "org": "o",
+        "namespace": "n",
+        "llm_cache": False,
+        "coverage_sweep": True,
+    }
+    await extract_from_messages(_MSGS, **common)
+    assert any("SECOND READING" in s for s in provider.systems), "the sweep runs without one"
+    provider.systems.clear()
+    await extract_from_messages(_MSGS, operator_policy=_POLICY, **common)
+    assert provider.systems and not any("SECOND READING" in s for s in provider.systems)
+
+
 async def test_under_a_policy_no_row_is_recovered_past_the_model(provider) -> None:
     """The model was told the rules and wrote nothing about the age; the
     deterministic recovery would have added `user_age` from the turn."""

@@ -234,17 +234,20 @@ async def _complete_and_parse(
     max_tokens: int,
     json_format: dict[str, str],
     parse: Any,
+    operator_policy: str = "",
 ) -> tuple[Any, list[ExtractedFact], str]:
     """The extraction call and its parse, with one retry on an unparseable
     answer: a larger budget when it reads as truncated (salvaging complete
     fact objects if it truncates again), else the stricter addendum. Returns
-    (accumulated LLM result, facts, truncation)."""
+    (accumulated LLM result, facts, truncation). `system_prompt` is the prompt
+    without the operator's policy: every call, retries included, ends with it."""
     calls: list[Any] = []
 
-    async def complete(system: str, tokens: int) -> Any:
+    async def complete(base: str, tokens: int) -> Any:
         """One completion; a reply the provider's filter cut (a quoted passage)
         is asked again without the recitation, since a bigger budget is cut at
         the same place."""
+        system = with_policy(base, operator_policy)
         res = await client.complete(
             system=system, user=user_prompt, max_tokens=tokens, response_format=json_format
         )
@@ -261,7 +264,7 @@ async def _complete_and_parse(
             calls.append(res)
         if str(getattr(res, "stop_reason", "") or "") in _FILTERED_STOPS:
             res = await client.complete(
-                system=system + _NO_RECITATION_ADDENDUM,
+                system=with_policy(base + _NO_RECITATION_ADDENDUM, operator_policy),
                 user=user_prompt,
                 max_tokens=tokens,
                 response_format=json_format,
@@ -463,9 +466,9 @@ async def extract_from_messages(
     re-extract things you already know.
 
     `operator_policy` is the operator's extraction policy for the namespace
-    (`extraction_policy.effective`): it ends the system prompt, above
-    `custom_instructions`, and while it is set no row is recovered from the
-    turns past the model.
+    (`extraction_policy.effective`): it ends the system prompt of every call,
+    retries included, above `custom_instructions`. While it is set neither the
+    coverage sweep nor the row recovery adds what the model left out.
 
     `judge` enables the LLM-judge gate. After extraction, a second
     LLM call grades each fact CORRECT/UNCERTAIN/WRONG against the
@@ -500,13 +503,15 @@ async def extract_from_messages(
         last_messages,
     )
     compact = _use_compact_prompt(messages) if compact_prompt is None else compact_prompt
-    system_prompt = _extraction_system_prompt(
+    # The prompt without the operator's policy; each call appends the policy
+    # last, after any retry addendum, so nothing follows it.
+    base_prompt = _extraction_system_prompt(
         compact,
         existing_memories=existing_memories,
         namespace_categories=namespace_categories,
         custom_instructions=custom_instructions,
-        operator_policy=operator_policy,
     )
+    system_prompt = with_policy(base_prompt, operator_policy)
     # JSON mode constrains the model to valid JSON; the try/except below
     # is a single belt-and-suspenders parse-retry on top of it.
     json_format = {"type": "json_object"}
@@ -520,18 +525,19 @@ async def extract_from_messages(
 
     accumulated, facts, truncation = await _complete_and_parse(
         client,
-        system_prompt=system_prompt,
+        system_prompt=base_prompt,
         user_prompt=user_prompt,
         max_tokens=max_tokens,
         json_format=json_format,
         parse=_parse,
+        operator_policy=operator_policy,
     )
 
     # Validation gate: retry once on non-trivial-input + zero-facts.
     if not facts and _is_nontrivial(messages):
         facts, accumulated = await _zero_fact_retry(
             client,
-            system=system_prompt + _RETRY_PROMPT_ADDENDUM,
+            system=with_policy(base_prompt + _RETRY_PROMPT_ADDENDUM, operator_policy),
             user=user_prompt,
             max_tokens=max_tokens,
             response_format=json_format,
@@ -554,9 +560,13 @@ async def extract_from_messages(
     coverage_sweep_reason, _uncovered_fires = _coverage_sweep_reason(
         coverage_sweep, coverage_sweep_source, messages, facts
     )
+    # Not under an operator policy, whatever asks for it: the sweep reads the
+    # turns the first pass left without a fact, which the policy may have kept out.
     if (
-        _sweep_effective(coverage_sweep, settings, messages) or _uncovered_fires
-    ) and _is_nontrivial(messages):
+        (_sweep_effective(coverage_sweep, settings, messages) or _uncovered_fires)
+        and _is_nontrivial(messages)
+        and not operator_policy.strip()
+    ):
         facts, _cs_result, coverage_swept = await _coverage_sweep(
             messages,
             facts,

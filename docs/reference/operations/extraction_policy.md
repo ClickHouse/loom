@@ -17,7 +17,7 @@ Remove the scope's policy.
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
-| `scope` | `Literal['org', 'namespace']` | required | `org` removes the org's own policy; `namespace` removes `namespace`'s, which leaves the org's in force. |
+| `scope` | `Literal['org', 'namespace']` | required | `org` removes the org's own policy; `namespace` removes that namespace's, leaving the org's in force. |
 | `namespace` | `str` | `''` | The namespace whose policy to remove; ignored for scope `org`. |
 
 | Output field | Type | Meaning |
@@ -61,9 +61,9 @@ Set the scope's policy, replacing the one it held.
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
-| `scope` | `Literal['org', 'namespace']` | required | `org`: the org's own policy, which every namespace of the org follows (`namespace` is ignored). |
+| `scope` | `Literal['org', 'namespace']` | required | `org` sets the org's own policy, which every namespace follows (`namespace` ignored); `namespace` sets the rules that namespace adds to it. |
 | `namespace` | `str` | `''` | The namespace a `namespace`-scoped policy is for; ignored for scope `org`. |
-| `policy` | `str` | required | The rules, in plain language; replaces the scope's current policy. |
+| `policy` | `str` | required | The rules in plain language, at most 4,096 characters; replaces the scope's policy. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
