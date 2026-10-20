@@ -72,6 +72,8 @@ COARSE_SHAPE_RE = (
     r"|[0-9]{3}-[0-9]{2}-[0-9]{4}"  # SSN
     rf"|{_COARSE_PIN}"
     rf"|{_JSON_BOUNDARY}[A-Z]{{2}}[0-9]{{2}}(?: ?[A-Z0-9]{{4}}){{2}}"  # IBAN
+    # a JSON key naming a PIN or SSN, then a value starting with 3 digits
+    r'|(?i:(?:pin|passcode|cv[vc]2?|security[_ -]?code|ssn)"\s*:\s*"?[0-9]{3})'
 )
 
 # A probe shape reported beside the detector's levels, so a dry run says how many

@@ -409,6 +409,8 @@ def test_a_protected_attribute_after_a_newline_is_tagged(monkeypatch: pytest.Mon
         "charge it to 4111-1111-1111-1111",
         "mastercard 5500000000000004",
         "amex 3782 822463 10005",
+        "amex 378282246310005",  # ungrouped, 15 digits
+        "visa 4000 0000 0000 0000 006",  # 19 digits: the first 16 fail Luhn
         "mastercard 2221 0000 0000 0009",
         "diners 3056 930902 5904",
         "discover 6011111111111117",
@@ -448,6 +450,7 @@ def test_payment_and_identity_numbers_are_high(text: str) -> None:
         # a phone number keeps its own tier: 13 digits after `+`, Luhn-valid or not
         "call +49 1512 3456789",
         "whatsapp 4915123456787",  # the same number without `+`: 13 digits, Luhn-valid
+        "ts 1760000000000",  # epoch milliseconds: the phone shape's 13 digits, never a card
         "+1 415 555 0123",
     ],
 )
@@ -464,8 +467,9 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
         "build 18446744073709551615",  # 20 digits: longer than any card
         "dev stack ports 3000 5432 6379 9200",  # Luhn-valid, but no network's prefix and length
         "ports 4000 4001 4002 4003 4004 4005 4006 4007",  # a table, not a card in it
-        "IMEI 490154203237518",
-        "hash 6000000000000000004",  # a 19-digit id: only a printed grouping is 19 digits  # 15 digits, always Luhn-valid, no network issues 4 at 15
+        "IMEI 490154203237518",  # 15 digits, always Luhn-valid, no network issues 4 at 15
+        "hash 6000000000000000004",  # a 19-digit id with no network's prefix
+        "hash 4000000000000000006",  # Visa prefix, Luhn-valid: only a printed grouping is 19
         "SSN 000-12-3456",  # never-issued area
         "SSN 666-12-3456",
         "SSN 912-34-5678",
@@ -511,7 +515,23 @@ def test_a_connector_pin_written_as_an_assignment_reads_as_a_pin() -> None:
         # key is not a label for the next scalar (as with `password`)
         ({"groups": [4111, 1111, 1111, 1111]}, ""),
         ({"pin_count": 4471}, ""),
-        ({"pin": "4471"}, ""),
+        ({"pin_count": 4}, ""),
+        # a key naming a PIN, SSN or card number labels a value of that shape
+        ({"pin": "4471"}, "high"),
+        ({"badge_pin": "4471"}, "high"),
+        ({"badgePin": 908712}, "high"),
+        ({"PIN": "4471"}, "high"),
+        ({"CVV2": "123"}, "high"),
+        ({"door": {"security-code": "5512"}}, "high"),
+        ({"ssn": "123-45-6789"}, "high"),
+        ({"ssn": "123456789"}, "high"),
+        ({"card_number": "4111111111111111"}, "high"),
+        ({"pin": "A1"}, ""),
+        ({"pin": "12"}, ""),
+        ({"pin": True}, ""),
+        ({"spin": "4471"}, ""),
+        ({"ssn": "000-12-3456"}, ""),
+        ({"pan": "4111111111111112"}, ""),
     ],
 )
 def test_a_json_value_reads_by_its_scalars(value: object, level: str) -> None:
@@ -590,6 +610,8 @@ def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
         {"note": "PIN:\f4471"},  # stored as `PIN:\f4471`
         {"note": "PIN is\v4471"},  # stored as `PIN is\u000b4471`
         {"note": "\bPIN is 4471"},  # stored as `\bPIN`
+        {"badge_pin": "4471"},
+        {"ssn": 123456789},
     ],
 )
 def test_the_sweeps_coarse_filter_reads_stored_json_text(value: object) -> None:

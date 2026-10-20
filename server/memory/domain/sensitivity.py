@@ -21,9 +21,9 @@ The key and token patterns are the same family `scripts/gates/check_no_secrets.p
 uses to keep credentials out of the repo; the card, SSN and PIN patterns are not
 repo secrets and live here only. A memory row holding a live key or a card number
 must never be pulled into a prompt by similarity, which is what embedding it would
-do. Every pattern is a linear regex pass; the Luhn check runs on each digit group and on
-at most twelve grouped windows per run, and the mod-97 check on at most 55 runs per match,
-so the work stays linear in the text.
+do. Every pattern is a linear regex pass; the Luhn check runs on each 15- or 16-digit
+group and on at most sixteen grouped windows per run, and the mod-97 check on at most 55
+runs per match, so the work stays linear in the text.
 """
 
 from __future__ import annotations
@@ -90,8 +90,8 @@ _CARD_NETWORKS: tuple[tuple[tuple[str, ...], tuple[int, ...]], ...] = (
     (_numbers(51, 55) + _numbers(2221, 2720), (16,)),  # Mastercard
     (("34", "37"), (15,)),  # Amex
     (_numbers(300, 305) + ("3095", "36", "38", "39"), (14,)),  # Diners
-    (_numbers(3528, 3589), (16, 17, 18, 19)),  # JCB
-    (("6011", "62", *_numbers(644, 649), "65"), (16, 17, 18, 19)),  # Discover, UnionPay
+    (_numbers(3528, 3589), (16, 19)),  # JCB
+    (("6011", "62", *_numbers(644, 649), "65"), (16, 19)),  # Discover, UnionPay
 )
 # A US Social Security number written ddd-dd-dddd, without the never-issued ranges:
 # area 000, 666 or 9xx, group 00, serial 0000.
@@ -137,17 +137,17 @@ def _has_card(text: str) -> bool:
         groups = re.split(r"[ -]", m.group())
         if any(len(group) in (15, 16) and _is_card(group) for group in groups):
             return True
-        for i in range(min(len(groups), 4)):  # a grouped card starts within four groups
+        for i in range(4):  # a grouped card starts within the first four groups
             for grouping in _CARD_GROUPINGS:
-                window = groups[i : i + len(grouping)]
-                around = groups[:i] + groups[i + len(grouping) :]
-                if (
-                    tuple(map(len, window)) == grouping
-                    and len(groups) - (i + len(grouping)) <= 2
-                    and len(around) <= 3
-                    and all(len(g) <= 4 for g in around)
-                    and _is_card("".join(window))
-                ):
+                end = i + len(grouping)
+                after = len(groups) - end
+                if after < 0 or after > 2 or i + after > 3:
+                    continue
+                window = groups[i:end]
+                if tuple(map(len, window)) != grouping:
+                    continue
+                around = groups[:i] + groups[end:]
+                if all(len(g) <= 4 for g in around) and _is_card("".join(window)):
                     return True
     return False
 
@@ -294,13 +294,40 @@ def detect_sensitivity(text: str) -> str:
 # phone shape allows only one space, dot or dash between its groups.
 _SCALAR_SEP = "\n;\n"
 
+# A key that names a payment or identity secret, as its last word (`pin`, `badge_pin`,
+# `cardNumber`, `security-code`); `pin_count` and `spin` do not.
+_PIN_KEYS = {"pin", "passcode", "cvv", "cvc", "cvv2", "cvc2", "securitycode"}
+_CARD_KEYS = {"cardnumber", "pan"}
+_KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")  # `PIN`, `badge`, `Pin`, `2`
+
+
+def _keyed_secret(key: str, value: Any) -> str:
+    """The stated form of a secret held under a key that names it ("passcode: 4471" for
+    `{"badge_pin": "4471"}`), for the detector to read; '' when the key names none or the
+    value lacks the secret's shape."""
+    if not isinstance(value, str | int) or isinstance(value, bool):
+        return ""
+    words = [w.lower() for w in _KEY_WORDS.findall(key)]
+    last = words[-1:] + ["".join(words[-2:])]
+    v = str(value).strip()
+    if _PIN_KEYS.intersection(last) and re.fullmatch(r"[0-9]{3,8}", v):
+        return f"passcode: {v}"
+    if "ssn" in last and re.fullmatch(r"[0-9]{3}-?[0-9]{2}-?[0-9]{4}", v):
+        digits = v.replace("-", "")
+        return f"{digits[:3]}-{digits[3:5]}-{digits[5:]}"
+    if _CARD_KEYS.intersection(last) and _has_card(v):
+        return v
+    return ""
+
 
 def detector_text(value: Any) -> str:
     """Decoded text of a stored value for the detector: a JSON string is parsed, and each key
     and scalar is its own line, so a token after a newline keeps its word boundary. The lines
     are joined by `_SCALAR_SEP`, which no pattern crosses, so two scalars never read as one
-    (`Password:` then the next key, or `256`, `512`, `1024` as a phone number). Iterative, so
-    a deeply nested value cannot stop a worker pass."""
+    (`Password:` then the next key, or `256`, `512`, `1024` as a phone number). A key that
+    names a PIN, SSN or card number adds its value's stated form (`_keyed_secret`), so
+    `{"pin": "4471"}` reads as `PIN is 4471` does; other keys label nothing. Iterative, so a
+    deeply nested value cannot stop a worker pass."""
     if isinstance(value, str):
         text = value
         try:
@@ -315,6 +342,9 @@ def detector_text(value: Any) -> str:
             for k, x in reversed(list(v.items())):
                 stack.append(x)
                 stack.append(str(k))
+                stated = _keyed_secret(str(k), x)
+                if stated:
+                    lines.append(stated)
         elif isinstance(v, list | tuple):
             stack.extend(reversed(v))
         elif v is not None:

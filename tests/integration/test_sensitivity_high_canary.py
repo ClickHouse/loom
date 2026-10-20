@@ -9,6 +9,7 @@ Runs against a real Control Plane + ClickHouse (LOOM_BASE_URL, LOOM_CH_*).
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from collections.abc import Callable
@@ -160,11 +161,12 @@ def test_a_high_row_is_written_without_an_embedding_row_and_the_gauge_reads_zero
         ("the company card is 4111 1111 1111 1111", "high"),
         ("her SSN is 123-45-6789", "high"),
         ("salary goes to GB82 WEST 1234 5698 7654 32", "medium"),
+        ({"badge": "front door", "badge_pin": "4471"}, "high"),
     ],
-    ids=["pin", "card", "ssn", "iban"],
+    ids=["pin", "card", "ssn", "iban", "keyed-pin"],
 )
 def test_payment_and_identity_numbers_are_labelled_on_write(
-    control_plane_url: str, ch_client, token: str, value: str, level: str
+    control_plane_url: str, ch_client, token: str, value: object, level: str
 ) -> None:
     key = f"pii_{uuid.uuid4().hex[:6]}"
     ident = {"org": ORG, "namespace": NAMESPACE, "agent": "canary"}
@@ -183,26 +185,17 @@ def test_payment_and_identity_numbers_are_labelled_on_write(
     got = r.json()
     assert (got.get("value"), got.get("sensitivity")) == (value, level), r.text[:300]
     assert f"sensitivity:{level}" in got.get("tags", []), r.text[:300]
-
-    def _embedding_rows(k: str) -> int:
-        return int(
-            ch_client.query(
-                "SELECT count() FROM loom.memory_embeddings FINAL WHERE org = {o:String} "
-                "AND namespace = {n:String} AND memory_key = {k:String} AND tombstoned_at IS NULL",
-                parameters={"o": ORG, "n": NAMESPACE, "k": k},
-            ).result_rows[0][0]
-        )
-
-    _wait(lambda: _embedding_rows(fence) == 1)
+    _wait(lambda: _live_vectors(ch_client, fence) == 1)
     if level == "high":
-        assert _embedding_rows(key) == 0
+        assert _live_vectors(ch_client, key) == 0
+        query = value if isinstance(value, str) else json.dumps(value)
         r = _post(
-            control_plane_url, token, "memory.search", {**ident, "query": value, "fresh": True}
+            control_plane_url, token, "memory.search", {**ident, "query": query, "fresh": True}
         )
         assert r.status_code == 200, r.text
         assert key not in [h.get("memory_key") for h in r.json().get("results", [])]
     else:
-        _wait(lambda: _embedding_rows(key) == 1)
+        _wait(lambda: _live_vectors(ch_client, key) == 1)
 
 
 @pytest.mark.parametrize("op", ["memory.set", "memory.bulk_set"])

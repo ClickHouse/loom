@@ -640,7 +640,7 @@ The `high` shapes:
   13-digit phone number without its `+` do not. It has a card network's leading digits and
   length (Visa 4 at 16 or 19; Mastercard 51-55 and 2221-2720 at 16; Amex 34 and 37 at 15;
   Diners 300-305, 3095, 36, 38 and 39 at 14; JCB 3528-3589 and Discover/UnionPay 6011, 62,
-  644-649 and 65 at 16-19) and passes the Luhn check, so a 15-digit IMEI is not a card.
+  644-649 and 65 at 16 or 19) and passes the Luhn check, so a 15-digit IMEI is not a card.
 - Social Security number: `ddd-dd-dddd` outside the never-issued ranges (area 000, 666,
   9xx; group 00; serial 0000).
 - Stated PIN: a PIN, passcode, CVV/CVC or security code followed by its value after `is`,
@@ -656,9 +656,13 @@ An IBAN counts when it passes the ISO 13616 mod-97 check, and a question naming 
 or a bank account (number) counts as contact intent, so ranking does not demote the row
 that answers it.
 
-A JSON value is read scalar by scalar (`detector_text`): a key is not a label for the
-scalar after it, so `{"pin": "4471"}` stays unlabelled where `{"note": "PIN is 4471"}` is
-`high`, just as a `{"password": ...}` key does not label its value.
+A JSON value is read scalar by scalar (`detector_text`). A key whose last word names a
+payment or identity secret labels its value when the value has the secret's shape: `pin`,
+`passcode`, `cvv`, `cvc`, `cvv2`, `cvc2` or `security_code` with 3-8 digits, `ssn` with an
+SSN (dashes optional), `card_number` or `pan` with a card number. So `{"pin": "4471"}`,
+`{"badge_pin": "4471"}` and `{"ssn": "123456789"}` are `high`, and `{"pin_count": 4}` and
+`{"pin": "A1"}` are not. Any other key labels nothing: a `{"password": ...}` key does not
+label its value.
 
 A caller-supplied level wins. Detection is `LOOM_MEMORY_SENSITIVITY_AUTODETECT`. A `high`
 row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so no search
