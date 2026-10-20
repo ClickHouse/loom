@@ -34,6 +34,7 @@ function scoresOf(hit: SearchHit): { similarity: string | null; score: string | 
  *  with the similarity still read out. */
 export function SearchScores({ hit }: { hit: SearchHit }) {
   const { similarity, score } = scoresOf(hit);
+  if (similarity === null && score === null) return null;
   return (
     <span data-testid="search-score" className="tabular whitespace-nowrap">
       {similarity !== null && (

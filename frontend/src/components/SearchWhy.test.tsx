@@ -70,6 +70,11 @@ describe("SearchWhy", () => {
     expect(screen.getByTestId("search-score")).toHaveTextContent(/^similarity 0\.62$/);
   });
 
+  it("renders nothing when neither score is a number", () => {
+    render(<SearchScores hit={hit({ similarity: Number.NaN, rank_score: Number.NaN })} />);
+    expect(screen.queryByTestId("search-score")).toBeNull();
+  });
+
   it("marks a term that pushed the hit down", async () => {
     render(<SearchWhy rank={1} hit={hit({ score_components: { reinforcement: -0.2 } })} />);
     await open();

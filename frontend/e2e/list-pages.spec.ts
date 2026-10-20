@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import * as fs from "node:fs";
 import { violations } from "./axe";
 import { codeReposFixture, installApi, LOADED_ROW, trackerSourcesFixture } from "./fixtures";
@@ -216,61 +216,66 @@ test("a long memory value fills the card's two lines at 1400 px and ends in a cu
 // button: on one line beside the key and "Why this result", the similarity screen-reader
 // text under 640 px, read in the row's description, and a click on them opens the row.
 for (const width of [375, 700, 1400]) {
-  test(`a ranked hit's scores at ${width} px: one line, clear of the key and the button, and they open the row`, async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width, height: 800 });
-    await installApi(page, { memoryRows: 12 });
-    // No row holds the typed text, so both hits are ranked rows rather than keyword rows.
-    await page.route("**/v1/memory.list", (route) =>
-      route.request().postDataJSON()?.contains
-        ? route.fulfill({ json: { entries: [], total: 0, today: 0, truncated: false } })
-        : route.fallback(),
-    );
-    await page.route("**/v1/memory.search", (route) =>
-      route.fulfill({
-        json: {
-          embedding_model: "e2e",
-          results: [0, 1].map((i) => ({
-            memory_key: `alerts/2026-09-19/000${i}`,
-            memory_type: "semantic",
-            content_excerpt: "",
-            distance: 0.3,
-            similarity: 0.72 - i * 0.1,
-            rank_score: 0.81 - i * 0.1,
-            confidence: 1,
-          })),
-        },
-      }),
-    );
-    await page.goto("/memories");
-    await page.getByRole("textbox", { name: "Search memories" }).fill("partition lag");
-    const row = page.locator('main [data-memory-key="alerts/2026-09-19/0000"]');
-    const scores = row.getByTestId("search-score");
-    await expect(scores).toBeVisible();
-    const open = row.getByRole("button", { name: "alerts/2026-09-19/0000" });
-    await expect(open).toHaveAccessibleDescription(/similarity 0\.72 · score 0\.81/);
+  test.describe(`a ranked hit at ${width} px`, () => {
+    // A phone is measured with a touch pointer, as the other 375 px checks are.
+    const touch = width === 375;
+    test.use({ viewport: { width, height: 800 }, hasTouch: touch, isMobile: touch });
 
-    const box = async (l: ReturnType<Page["locator"]>) => must(await l.boundingBox());
-    const must = <T>(v: T | null) => {
-      expect(v).not.toBeNull();
-      return v as T;
-    };
-    const s = await box(scores);
-    const line = await scores.evaluate((el) => Number.parseFloat(getComputedStyle(el).lineHeight));
-    expect(s.height, "the scores sit on one line").toBeLessThan(1.5 * line);
-    const similarityShown = await scores.getByText(/similarity/).evaluate((el) => el.getBoundingClientRect().width > 1);
-    expect(similarityShown).toBe(width >= 640);
-    const overlaps = (a: { x: number; y: number; width: number; height: number }, b: typeof a) =>
-      a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
-    const key = await box(open.locator("span[aria-hidden='true']").filter({ hasText: "alerts/2026-09-19/0000" }));
-    const why = await box(row.getByRole("button", { name: "Why this result" }));
-    expect(overlaps(s, key), "the scores clear the key").toBe(false);
-    expect(overlaps(s, why), "the scores clear the button").toBe(false);
-    expect(s.x + s.width).toBeLessThanOrEqual(width);
+    test("its scores sit on one line, clear of the key and the button, and open the row", async ({ page }) => {
+      await installApi(page, { memoryRows: 12 });
+      // No row holds the typed text, so both hits are ranked rows rather than keyword rows.
+      await page.route("**/v1/memory.list", (route) =>
+        route.request().postDataJSON()?.contains
+          ? route.fulfill({ json: { entries: [], total: 0, today: 0, truncated: false } })
+          : route.fallback(),
+      );
+      await page.route("**/v1/memory.search", (route) =>
+        route.fulfill({
+          json: {
+            embedding_model: "e2e",
+            results: [0, 1].map((i) => ({
+              memory_key: `alerts/2026-09-19/000${i}`,
+              memory_type: "semantic",
+              content_excerpt: "",
+              distance: 0.3,
+              similarity: 0.72 - i * 0.1,
+              rank_score: 0.81 - i * 0.1,
+              confidence: 1,
+            })),
+          },
+        }),
+      );
+      await page.goto("/memories");
+      await page.getByRole("textbox", { name: "Search memories" }).fill("partition lag");
+      const row = page.locator('main [data-memory-key="alerts/2026-09-19/0000"]');
+      const scores = row.getByTestId("search-score");
+      await expect(scores).toBeVisible();
+      const open = row.getByRole("button", { name: "alerts/2026-09-19/0000" });
+      await expect(open).toHaveAccessibleDescription(/similarity 0\.72 · score 0\.81/);
 
-    await scores.click();
-    await expect(page.getByRole("dialog")).toBeVisible();
+      const box = async (l: Locator) => {
+        const b = await l.boundingBox();
+        if (!b) throw new Error("the element has no box");
+        return b;
+      };
+      const s = await box(scores);
+      const line = await scores.evaluate((el) => Number.parseFloat(getComputedStyle(el).lineHeight));
+      expect(s.height, "the scores sit on one line").toBeLessThan(1.5 * line);
+      const similarityShown = await scores
+        .getByText(/similarity/)
+        .evaluate((el) => el.getBoundingClientRect().width > 1);
+      expect(similarityShown).toBe(width >= 640);
+      const overlaps = (a: { x: number; y: number; width: number; height: number }, b: typeof a) =>
+        a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+      const key = await box(open.locator("span[aria-hidden='true']").filter({ hasText: "alerts/2026-09-19/0000" }));
+      const why = await box(row.getByRole("button", { name: "Why this result" }));
+      expect(overlaps(s, key), "the scores clear the key").toBe(false);
+      expect(overlaps(s, why), "the scores clear the button").toBe(false);
+      expect(s.x + s.width).toBeLessThanOrEqual(width);
+
+      await scores.click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+    });
   });
 }
 
