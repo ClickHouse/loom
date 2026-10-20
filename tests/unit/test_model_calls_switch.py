@@ -197,7 +197,7 @@ def test_switching_back_on_takes_effect_and_the_switch_is_read_at_most_every_int
     assert asyncio.run(customer.switched_off("beta")) is False
     assert switch.reads == 1  # one read serves the interval
     switch.off = set()
-    customer.forget_switch()  # a change written on this server
+    customer.note_switch_change()  # a change written on this server
     assert asyncio.run(customer.switched_off("acme")) is False and switch.reads == 2
     assert switch.sequential == [True, True]  # the read after a write sees it on any replica
 
@@ -290,7 +290,7 @@ def test_a_change_made_during_a_read_is_read_again(switch: _Switch, monkeypatch)
     async def write_meanwhile(sql: str, **kw: Any) -> list[dict[str, Any]]:
         rows = await plain(sql, **kw)
         switch.off = {"acme"}
-        customer.forget_switch()  # the write lands after this read took its rows
+        customer.note_switch_change()  # the write lands after this read took its rows
         return rows
 
     monkeypatch.setattr(switch, "query_all", write_meanwhile)
@@ -331,7 +331,7 @@ def test_an_org_admin_switches_its_org_and_reads_it_back(monkeypatch) -> None:
     monkeypatch.setattr(model_calls.repo, "insert_row", insert_row)
     monkeypatch.setattr(model_calls.repo, "get", get)
     forgot: list[bool] = []
-    monkeypatch.setattr(customer, "forget_switch", lambda: forgot.append(True))
+    monkeypatch.setattr(customer, "note_switch_change", lambda: forgot.append(True))
     admin = AuthInfo(
         subject="ops@acme.com",
         org="acme",

@@ -62,12 +62,13 @@ class PolledCopy[T]:
         changes = self._changes
         try:
             value = await self._read()
-        except Exception as e:  # noqa: BLE001 — the last copy serves until it is too old
+        except Exception as e:  # noqa: BLE001 — a failed read must not fail the call; the copy's age decides what is served
             self._log.warning("%s: read failed (%s)", self._name, e)
         else:
             self._value = value
             self._read_at = started
-        # Reached by a failed read too, so waiters do not each read in turn.
+        # Reached by a failed read too, so waiters do not each read in turn; a cancelled
+        # read skips it, so the next call reads.
         self._changes_read = changes
         self._next_read = time.monotonic() + refresh_s
 

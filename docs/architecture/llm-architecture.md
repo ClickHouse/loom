@@ -291,9 +291,9 @@ the shared HTTP client also carries non-model calls, which name no customer.
   a kill switch, so nothing model-made reaches the org. The copy is read at most every
   `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted no longer than
   `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`, past which every model call for an org is
-  refused (`customer.SwitchUnread`). A call made while the copy is being read waits for that
-  read when the copy is too old or a change made in this process waits to be read; otherwise
-  it is served the copy in hand. A job treats that as it treats a switch-off
+  refused (`customer.SwitchUnread`). A call made during a read waits for it when the copy is
+  too old or a change made in this process has not been read yet; otherwise it is served the
+  copy in hand. A job treats that as it treats a switch-off
   (`customer.HOLDS`): its rows stay as they are with no attempt spent, a rebuild step runs
   again, and a fail-open reranker, classifier or judge lets it through. Every job leaves a
   switched-off org out when it selects work (in the query, so its rows neither spend attempts
