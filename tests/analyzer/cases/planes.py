@@ -445,6 +445,7 @@ def _memory_ops_rows(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
     from server.knowledge.store import conversations as R
 
     f = c["filters"]
@@ -457,13 +458,18 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
         [NS],
         AGENT,
         "deploy",
+        scope=WHOLE_NAMESPACE,
         thread_id="t1" if f else None,
         role="user" if f else None,
         run_id="r1" if f else None,
         ch=ch,
     )
     await R.count_thread_msgs(ORG, NS, AGENT, "t1", ch=ch)
-    await R.search_substring(ORG, NS, AGENT, "deploy", user_id="u1", saved_only=f, ch=ch)
+    # Saved-message search under a token pinned to one user.
+    pinned = ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    await R.search_substring(
+        ORG, NS, AGENT, "deploy", scope=pinned, user_id="u1", saved_only=f, ch=ch
+    )
     await R.message_exists(ORG, NS, AGENT, "t1", "m1", ch=ch)
     await R.message_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", ch=ch)
     await R.embedding_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", embedding_model="m", ch=ch)

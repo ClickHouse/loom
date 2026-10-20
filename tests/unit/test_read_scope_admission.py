@@ -255,6 +255,7 @@ def test_a_write_under_an_unresolved_scope_is_refused() -> None:
 # does not resolve: written out, so a change to the predicate or a new op has to
 # be decided here rather than follow the rule it is checked against.
 _ACTS_AS_A_USER = [
+    "conversation.save_message",
     "cost.record_turns",
     "cost.summary",
     # A document records the session it was written in: under a session ceiling
