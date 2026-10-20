@@ -411,6 +411,18 @@ exchanged again while it lives (every client of the job, each renewal), and the 
 issued never outlives it. A CI trust must name at least one claim: any job on a platform
 can ask for any audience. A token is issued as of the moment before the bot is read, so a
 disable landing during the exchange still cuts it off.
+An exchange whose subject token verifies is counted, before an agent's namespace is made,
+against its trust (`LOOM_WORKLOAD_EXCHANGES_PER_TRUST`, 50,000) and, for a trust with an
+agent claim, its agent (`LOOM_WORKLOAD_EXCHANGES_PER_AGENT`, 300), per 10 minutes, as rows
+of `loom.auth_attempts`, so the limits hold across replicas. A trust without agents is one
+workload (every job of a repository shares one `sub`) and counts only against the trust.
+Past a limit the exchange is refused with 429 `temporarily_unavailable` and
+`Retry-After: 60`; a process with no free check slot answers 503, retryable. A token that
+fails verification counts nowhere, so a caller without the issuer's key cannot spend a
+trust's budget, and an agent's loop cannot spend the trust's beyond its own limit: an
+exchange refused at the first count is not recorded, and one recorded then refused at its
+recount (renewals of one agent racing, on any replica) is released under every gate it was
+counted under with an `.ok` row, as a sign-in is.
 Disabling a bot refuses later proofs and revokes its tokens; no refresh token exists to
 outlive it. The cutoffs an operator action writes (a bot replaced or disabled, an account
 adopted) sit in their own revocation row beside the subject's, so an outright revocation

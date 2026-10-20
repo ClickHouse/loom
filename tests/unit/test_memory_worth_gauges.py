@@ -337,10 +337,12 @@ def test_state_gauge_probes_name_every_probe_once() -> None:
         "retention_probe",
         "agent_labels_probe",
         "storage_probe",
+        "agent_trusts_probe",
     }
     # The censuses are wrapped to run where the lease is held.
     assert probes["storage_probe"].__wrapped__ is otel_probes._probe_storage
     assert probes["agent_labels_probe"].__wrapped__ is otel_probes._probe_agent_labels
+    assert probes["agent_trusts_probe"].__wrapped__ is otel_probes._probe_agent_trusts
     # every key is a parameter of the registrar
     import inspect
 
