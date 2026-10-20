@@ -32,7 +32,7 @@ TEXT_COLUMNS = {
 SPECIAL_TEXT_TABLES = frozenset({"categories", "code_chunks", "qa_item_embeddings"})
 # Raw passages the write path leaves without a vector when they read as a credential
 # (`passage_sensitivity`); a rebuild stages such a row without one too.
-PASSAGE_TABLES = frozenset({"memory_chunks", "session_summaries"})
+PASSAGE_TABLES = frozenset({"conversation_embeddings", "memory_chunks", "session_summaries"})
 _CALL_BATCH = 64
 
 

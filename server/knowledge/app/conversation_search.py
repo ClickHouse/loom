@@ -15,6 +15,7 @@ from typing import Any, Protocol
 from server.core.repo_base import _default_client
 from server.core.vectors.search_settings import vector_search_settings
 from server.knowledge.domain.conversations import ConversationRole
+from server.memory.domain.sensitivity import reads_high
 
 # Characters of a turn a hit shows (the embedding row keeps the whole embedded text).
 HIT_EXCERPT_CHARS = 240
@@ -104,7 +105,8 @@ async def vector_search(
     rows = await ch.query_all(
         f"""
         SELECT thread_id, msg_id, role,
-               substringUTF8(content_excerpt, 1, {{excerpt:UInt32}}) AS excerpt, ts,
+               substringUTF8(content_excerpt, 1, {{excerpt:UInt32}}) AS excerpt,
+               content_excerpt AS embedded_text, ts,
                cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
         FROM loom.conversation_embeddings FINAL
         WHERE {" AND ".join(where)}
@@ -124,6 +126,9 @@ async def vector_search(
             distance=float(r["distance"]),
         )
         for r in rows
+        # A turn that reads as a credential gets no embedding row; this holds back a row
+        # an earlier build wrote for one.
+        if not reads_high(str(r.get("embedded_text") or r["excerpt"]))
     ]
     # Recency breaks exact distance ties (newest first).
     hits.sort(key=lambda h: (h.distance, _ts_desc_key(h.ts)))

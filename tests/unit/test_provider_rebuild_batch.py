@@ -218,7 +218,7 @@ async def test_non_reembed_actions_cannot_accidentally_send_data(target, table):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("table", ["memory_chunks", "session_summaries"])
+@pytest.mark.parametrize("table", ["conversation_embeddings", "memory_chunks", "session_summaries"])
 async def test_a_passage_that_reads_as_a_credential_is_rebuilt_without_a_vector(table, target):
     labelled = {**row_for(table), "sensitivity": "high"}
     # Written before the label existed: unlabelled and embedded, its text holds a key.

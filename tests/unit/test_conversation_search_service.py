@@ -189,3 +189,87 @@ async def test_the_substring_fallback_cuts_a_hit_as_the_vector_path_does(monkeyp
     )
     [hit] = out.hits
     assert hit.content_excerpt == content[:240]
+
+
+@pytest.mark.asyncio
+async def test_vector_search_holds_back_a_row_whose_text_reads_as_a_credential() -> None:
+    """An embedding row an earlier build wrote for a credential turn is never a hit, even
+    when the credential sits past the excerpt a hit shows."""
+    key = "AKIA" + "IOSFODNN7EXAMPLE"
+    ch = StubCH()
+    ch.query_all_returns.append(
+        [
+            {**_row(), "msg_id": "m-key", "embedded_text": "deploy soon? " + "x" * 300 + " " + key},
+            {**_row(), "msg_id": "m-plain", "embedded_text": "deploy soon?"},
+        ]
+    )
+    out = await vector_search(_q(), ch=ch)
+    assert [h.msg_id for h in out] == ["m-plain"]
+    assert "content_excerpt AS embedded_text" in ch.query_all_calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_the_substring_fallback_holds_back_a_turn_that_reads_as_a_credential(
+    monkeypatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationSearchInput
+    from server.knowledge.app import conversations as h
+    from server.knowledge.store import conversations as conversation_repo
+
+    def turn(msg_id: str, content: str):
+        return conversation_repo.MessageRow(
+            org="o",
+            namespace="ns",
+            agent="a",
+            thread_id="t",
+            msg_id=msg_id,
+            role="user",
+            content=content,
+            ts=datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
+        )
+
+    async def fake_search_substring(*a, **k):
+        return [turn("m-key", "deploy with " + "sk-" + "proj-" + "Ab3" * 12), turn("m2", "deploy")]
+
+    monkeypatch.setattr(conversation_repo, "search_substring", fake_search_substring)
+    out = await h._search_substring_fallback(
+        ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy"), ["ns"], []
+    )
+    assert [hit.msg_id for hit in out.hits] == ["m2"]
+
+
+@pytest.mark.asyncio
+async def test_the_thread_list_shows_no_text_of_a_last_turn_that_reads_as_a_credential(
+    monkeypatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationThreadsInput
+    from server.knowledge.app import conversations as h
+    from server.knowledge.store import conversations as conversation_repo
+
+    def thread(tid: str, excerpt: str) -> dict[str, Any]:
+        at = datetime(2026, 5, 17, 10, 0, tzinfo=UTC)
+        return {
+            "thread_id": tid,
+            "last_agent": "a",
+            "msg_count": 2,
+            "first_seen": at,
+            "last_seen": at,
+            "last_role": "user",
+            "last_content_excerpt": excerpt,
+        }
+
+    async def recent(*a, **k):
+        return [thread("t-key", "use " + "AKIA" + "IOSFODNN7EXAMPLE"), thread("t2", "lunch?")]
+
+    async def titles(*a, **k):
+        return {}
+
+    monkeypatch.setattr(conversation_repo, "recent_threads", recent)
+    monkeypatch.setattr(conversation_repo, "thread_titles", titles)
+    out = await h.handle_conversation_threads(
+        ConversationThreadsInput(org="o", namespace="ns", agent="a")
+    )
+    assert [(t.thread_id, t.last_content_excerpt) for t in out.threads] == [
+        ("t-key", ""),
+        ("t2", "lunch?"),
+    ]

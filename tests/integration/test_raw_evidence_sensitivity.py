@@ -1,7 +1,9 @@
 """A conversation chunk that holds a credential is labelled 'high', stored as written with
 no embedding, never returned by `memory.search` or handed to `memory.ask`, and served by
 `memory.get` on its `chunk:` key only with a `memory.sensitive_read` audit row. A plain
-chunk of the same conversation is still found.
+chunk of the same conversation is still found. A `conversation.append` turn that holds a
+credential is stored as written with no embedding row, so `conversation.search` never
+returns it, while the thread's own read still lists it.
 
 Runs against a real server and ClickHouse (LOOM_BASE_URL, LOOM_CH_*).
 """
@@ -22,8 +24,8 @@ from tests.integration._resources import unique_org
 ORG = unique_org("raw-evidence")
 _NONCE = os.urandom(3).hex()
 # One namespace per test, so one test's identical passage never ranks in another's search.
-NS_LABELLED, NS_LEGACY, NS_DIGEST = (
-    f"raw-{name}-{_NONCE}" for name in ("labelled", "legacy", "digest")
+NS_LABELLED, NS_LEGACY, NS_DIGEST, NS_TURNS = (
+    f"raw-{name}-{_NONCE}" for name in ("labelled", "legacy", "digest", "turns")
 )
 
 # Credential shapes the detector reads as 'high', with nonce bodies. Never real secrets.
@@ -51,8 +53,8 @@ def token() -> str:
     return mint_token(
         subject="raw-evidence",
         org=ORG,
-        namespaces=[NS_LABELLED, NS_LEGACY, NS_DIGEST],
-        roles=["writer"],
+        namespaces=[NS_LABELLED, NS_LEGACY, NS_DIGEST, NS_TURNS],
+        roles=["admin", "writer"],  # admin: conversation.set_logging
         ttl_seconds=600,
     )
 
@@ -220,3 +222,49 @@ def test_a_session_digest_that_reads_as_a_credential_has_no_vector(
         assert (int(dim) == 0) == reads_high(str(text)), (text, dim)
     r = _search(control_plane_url, token, NS_DIGEST, "nightly export billing job key")
     assert _API_KEY not in r.text and _AWS_KEY_ID not in r.text
+
+
+def test_a_conversation_turn_holding_a_credential_is_never_a_search_hit(
+    control_plane_url: str, ch_client, token: str
+) -> None:
+    thread = f"t-{uuid.uuid4().hex[:8]}"
+    r = _post(control_plane_url, token, NS_TURNS, "conversation.set_logging", {"enabled": True})
+    assert r.status_code == 200, r.text
+    for msg_id, content in (("m-plain", _PLAIN_TURN), ("m-key", _SECRET_TURN)):
+        r = _post(
+            control_plane_url,
+            token,
+            NS_TURNS,
+            "conversation.append",
+            {"thread_id": thread, "msg_id": msg_id, "role": "user", "content": content},
+        )
+        assert r.status_code == 200 and r.json().get("reason", "") == "", r.text
+
+    embedded = {
+        str(msg_id)
+        for (msg_id,) in ch_client.query(
+            "SELECT msg_id FROM loom.conversation_embeddings FINAL WHERE org = {o:String} "
+            "AND namespace = {n:String} AND thread_id = {t:String} AND tombstoned_at IS NULL",
+            parameters={"o": ORG, "n": NS_TURNS, "t": thread},
+        ).result_rows
+    }
+    assert embedded == {"m-plain"}
+
+    def search(query: str) -> httpx.Response:
+        r = _post(
+            control_plane_url, token, NS_TURNS, "conversation.search", {"query": query, "top_k": 10}
+        )
+        assert r.status_code == 200, r.text
+        return r
+
+    for query in ("tomatoes along the south fence", "nightly export billing job key"):
+        r = search(query)
+        assert _API_KEY not in r.text and _AWS_KEY_ID not in r.text
+        assert "m-key" not in {h.get("msg_id") for h in r.json().get("hits", [])}
+    r = search("tomatoes along the south fence")
+    assert "m-plain" in {h.get("msg_id") for h in r.json().get("hits", [])}, r.text
+
+    # The thread's own read lists the turn as written.
+    r = _post(control_plane_url, token, NS_TURNS, "conversation.list", {"thread_id": thread})
+    assert r.status_code == 200, r.text
+    assert any(_API_KEY in row["content"] for row in r.json()["rows"])

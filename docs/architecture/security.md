@@ -686,14 +686,21 @@ column: `high` when its text reads as a credential (`passage_sensitivity`, which
 `reads_high` whatever `LOOM_MEMORY_SENSITIVITY_AUTODETECT` says), else empty. A `high` chunk
 is stored as written and never embedded (its text is never sent to the embedder), so no
 search leg returns it. A session digest whose text reads as a credential is likewise
-written without a vector. A provider rebuild stages either without a vector. Chunks and
-digests written before the label, or by a build that does not set it, may still hold a
+written without a vector. So is a `conversation.append` turn or a `conversation.compact`
+summary: the message is stored as written in `loom.conversations` and gets no row in
+`loom.conversation_embeddings`, so `conversation.search` never ranks it. The embedding row
+is the only place a turn is labelled, and its absence is the label: no column is needed. A
+provider rebuild stages any of these without a vector. Chunks, digests and turn embeddings
+written before these rules, or by a build that does not follow them, may still hold a
 vector, so the reads that serve passages check their text with `reads_high` too:
 
 - Left out: `memory.search`'s `chunk` and `summary` hits (and so what `memory.ask` hands
   its model and the context pack built from search), the chunks `memory.ask` injects for an
-  identifier or a session date, and the neighbours `memory.get` stitches around a
-  `chunk:` key.
+  identifier or a session date, the neighbours `memory.get` stitches around a `chunk:`
+  key, and `conversation.search`'s hits (the vector ranking and the substring fallback the
+  search takes when the embedder is down).
+- Listed without the text: `conversation.threads` shows an empty `last_content_excerpt`
+  for a thread whose last turn reads as a credential.
 - Read by key and audited: `memory.get` on the `chunk:` key of a chunk labelled `high` or
   reading as a credential serves it and writes a `memory.sensitive_read` row.
 - `memory.export_evidence` leaves out the chunks and digests linked to a key with any `high`
@@ -706,9 +713,13 @@ value that shares a chunk with a plain row (the chunk's own label comes from its
 from the rows it holds), the session digests `memory.digests` lists (their summary text; key
 facts that read as a credential are left out), what the session-summary draft (the
 conversation turns), the period-digest draft and the outcome judge (session digest text)
-send their model, `memory.recall`'s raw turns, and the turns `conversation.append` stores,
-which `conversation.search` embeds and ranks by similarity across the namespace. Raw text
-is stored as written, and erasure removes the chunk and digest rows whole.
+send their model, `memory.recall`'s raw turns, and a thread's own turns as
+`conversation.get` and `conversation.list` serve them. Those two read one thread by its id
+under the caller's read scope, as the thread's participants read their transcript, so they
+serve each turn as written. A `loom reembed` after a model change re-embeds an embedding
+row an earlier build wrote for a credential turn; search still holds it back. Raw text is
+stored as written, and erasure removes the chunk, digest, message and embedding rows
+whole.
 
 Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
@@ -786,8 +797,8 @@ hashing are engineering primitives, not a compliance guarantee.
 - A row-scoped op answers `found=False` outside the caller's scope, never 403.
 - A restricted namespace admits only a literal, same-org, directly granted caller, and
   denies when its classification cannot be read.
-- A `high`-sensitivity value has no embedding row, and a chunk or session digest whose
-  text reads as a credential is written without a vector.
+- A `high`-sensitivity value has no embedding row, and a chunk, session digest or
+  conversation turn whose text reads as a credential is written without a vector.
 - Every memory write leaves a hash-only audit row; no audit row carries a value.
 - An erasure saga succeeds only when its residue census finds nothing.
 

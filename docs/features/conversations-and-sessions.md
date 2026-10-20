@@ -45,6 +45,13 @@ up front.
 - **The embed is fail-open.** A failed embed still stores the turn, with the error
   recorded on its embedding row. Nothing retries it: the turn stays out of vector
   search and is found only by the substring fallback.
+- **A turn that holds a credential is not embedded.** A turn whose text reads as a
+  credential (a pasted API key, an access key id, a `password=` assignment) is stored as
+  written but gets no embedding row, and its text is never sent to the embedder.
+  `conversation.search` never returns it, by vector or by the substring fallback, and
+  `conversation.threads` lists such a last turn with an empty excerpt.
+  `conversation.get` and `conversation.list` still serve it in its thread
+  ([sensitivity](../architecture/security.md#sensitivity)).
 
 ### Reading and searching
 
@@ -82,7 +89,8 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   failed run left (its turns all still live and in the window, at the first one's `ts`)
   is replaced unread. A summary further into the window takes prompt budget like any
   turn and is replaced with it.
-  A summary that cannot be embedded compacts nothing (`reason: "embed-failed"`).
+  A summary that cannot be embedded compacts nothing (`reason: "embed-failed"`); one
+  that reads as a credential compacts with no embedding row, as an appended turn would.
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
   logged in the thread keeps its embedding while that agent holds a live copy with the

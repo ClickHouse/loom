@@ -106,3 +106,26 @@ async def test_a_failed_embed_stores_the_row_with_its_error(monkeypatch) -> None
     assert row["embed_last_error"] == "RuntimeError: embedder down"
     assert row["embed_failed_at"] is not None
     assert (row["content_excerpt"], row["embedding_model"]) == ("hi", "fake")
+
+
+# Split so the repository's secret scan does not read the fixture as a key.
+_KEY = "sk-" + "proj-" + "Ab3" * 12
+
+
+@pytest.mark.asyncio
+async def test_a_turn_holding_a_credential_is_stored_without_an_embedding_row(monkeypatch) -> None:
+    """The message is stored as written; it gets no embedding row and its text never
+    reaches the embedder, so conversation.search never ranks it."""
+    stored: list = []
+
+    async def ok_append(row, *a, **k):
+        stored.append(row)
+
+    async def embed(text):
+        raise AssertionError("a credential turn must not reach the embedder")
+
+    h, rows = _patch_append(monkeypatch, append=ok_append, embed=embed)
+    out = await h.handle_conversation_append(_turn(f"my key is {_KEY}, keep it safe"))
+    assert out.reason in ("", None)
+    assert [r.content for r in stored] == [f"my key is {_KEY}, keep it safe"]
+    assert rows == []

@@ -710,3 +710,56 @@ def test_a_summary_inside_the_window_is_replaced_but_not_counted(
         assert json.loads(summary["metadata"])["compacted_from"] == ["m1", "m2", "s"]
     else:
         assert out.reason == "below-min-to-compact" and llm.prompts == []
+
+
+def test_a_summary_that_reads_as_a_credential_compacts_without_a_vector(monkeypatch) -> None:
+    """The summary is stored and the turns it replaces are tombstoned, as for any summary,
+    but it gets no embedding row and its text never reaches the embedder."""
+    import server.core.ch
+    import server.llm.client
+
+    class _KeyLLM(_FakeLLM):
+        async def complete(self, **kw: Any) -> LLMResult:
+            self.prompts.append(kw["user"])
+            key = "sk-" + "proj-" + "Ab3" * 12
+            return LLMResult(
+                text=f"The user shared {key}",
+                tokens_in=1,
+                tokens_out=2,
+                provider="fake",
+                model="fake",
+            )
+
+    class _NoEmbedder:
+        model_name = "fake"
+        dim = 3
+
+        async def embed(self, text):
+            raise AssertionError("a credential summary must not reach the embedder")
+
+    rows = [
+        {
+            "msg_id": f"m{i}",
+            "role": "user",
+            "content": f"turn {i}",
+            "ts": T0 + timedelta(seconds=i),
+            "metadata": "{}",
+            "user_id": "alice",
+            "run_id": "run-1",
+        }
+        for i in range(6)
+    ]
+    fake = _FakeCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _KeyLLM())
+    monkeypatch.setattr(ch_mod, "get_embedder", lambda: _NoEmbedder())
+
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=2
+            )
+        )
+    )
+    assert out.compacted is True
+    assert fake.inserted and fake.embedded == []
