@@ -360,7 +360,7 @@ def test_a_trusted_caller_cannot_become_a_grant_principal(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(settings, "trusted_callers", "sa:proxy")
     proxy = _person(subject="sa:proxy", namespaces=("*",), roles=(Role.WRITER,))
-    for header in ("user:u-1", "group:finance", "agent:helper"):
+    for header in ("user:u-1", "group:finance", "agent:helper", "acme/user:u-1", "team/everyone"):
         with pytest.raises(PermissionError):
             gateway.effective_auth(proxy, header)
     assert gateway.effective_auth(proxy, "bob@acme.io").subject == "bob@acme.io"
@@ -459,8 +459,12 @@ def test_an_end_user_does_not_read_an_org_readable_code_namespace(
         asyncio.run(authz.check_authorized(_user("alice"), Role.VIEWER, ORG, "code-acme"))
 
 
-@pytest.mark.parametrize("subject", ["Group:Eng", "AGENT:helper", "User:Bob"])
+@pytest.mark.parametrize(
+    "subject", ["Group:Eng", "AGENT:helper", "User:Bob", "team/everyone", "acme/user:u-1"]
+)
 def test_a_grant_to_a_principal_in_another_case_is_refused(subject: str) -> None:
+    """In another case, or after a `/` (the shape of an end user's revocation
+    key): no token carries such a subject, so no grant names one."""
     from server.core.errors import ValidationError
     from server.identity.app.grants import _enforce_principal_target
 

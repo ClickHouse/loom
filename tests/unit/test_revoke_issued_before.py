@@ -496,15 +496,15 @@ def test_no_loom_token_carries_a_subject_spelled_like_an_end_user_key(subject: s
     Loom token never shares an end user's revocation key or escapes revocation."""
     with pytest.raises(ValueError, match="grant principal"):
         mint_token(subject, "acme", ["shop"], ["viewer"], secret=_SECRET)
-    from server.settings import settings
-
     claims = _claims(mint_token("sa:bot", "acme", ["shop"], ["viewer"], secret=_SECRET))
-    forged = pyjwt.encode(
-        {**claims, "sub": subject},
-        _SECRET,
-        algorithm="HS256",
-        headers={"kid": "default"},
-    )
-    assert claims["aud"] == settings.jwt_audience
+
+    def _signed(sub: str) -> str:
+        return pyjwt.encode(
+            {**claims, "sub": sub}, _SECRET, algorithm="HS256", headers={"kid": "default"}
+        )
+
+    # The same claims verify under an ordinary subject: the subject alone is refused.
+    assert verify_token(_signed("sa:bot"), secret=_SECRET).subject == "sa:bot"
+    forged = _signed(subject)
     with pytest.raises(TokenError, match="grant principal"):
         verify_token(forged, secret=_SECRET)
