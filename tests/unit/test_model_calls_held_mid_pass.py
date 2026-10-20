@@ -384,7 +384,9 @@ def test_the_conflict_sweep_leaves_a_mark_whose_judge_is_held_unstamped(monkeypa
     async def stamp(*a: Any, **k: Any) -> None:
         stamped.append(a)
 
-    customer._reset_for_tests()
+    customer._switch._reset_for_tests(
+        frozenset(), read_age_s=0.0, due_in_s=settings.model_calls_policy_refresh_seconds
+    )
     monkeypatch.setattr(settings, "memory_conflict_judge", True)
     monkeypatch.setattr(conflict_marks, "stale_pending_marks", marks)
     monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", rows)

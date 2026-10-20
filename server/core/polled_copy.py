@@ -1,16 +1,11 @@
 """One process's copy of a small table that a fail-closed check reads on
 every call.
 
-The whole table is read at most once per `refresh_s`, counted from the end of
-the last read. A change made in this process asks for the next read at once
-(`forget`). A copy older than `max_stale_s` is not served: `get` answers None
-and the caller refuses.
-
-While a read is in progress, a call is served the copy in hand when that copy
-is still young enough and no change made here is waiting to be read; otherwise
-it waits on the lock for the read. A cancelled read schedules nothing, so the
-next call reads. A change made here while a read ran may postdate what it
-read, so the next call reads again.
+It reads the whole table when a read is due: `refresh_s` after the last read
+ended, or at once after a change made in this process (`forget`). While a read
+runs, a call is served the copy in hand if that copy is young enough and no
+change made here waits; otherwise it waits for the read. `get` answers None
+when the copy is older than `max_stale_s`, and the caller refuses.
 """
 
 from __future__ import annotations
@@ -29,7 +24,7 @@ class PolledCopy[T]:
         self._value: T | None = None
         # When the copy was read (monotonic, from the start of its query; None =
         # never), when the next read is due, how many changes were made here, and
-        # how many of them the copy in hand was read after.
+        # how many of them the last read, failed or not, started after.
         self._read_at: float | None = None
         self._next_read = 0.0
         self._changes = 0
@@ -39,17 +34,23 @@ class PolledCopy[T]:
     def _fresh(self, now: float, max_stale_s: float) -> bool:
         return self._read_at is not None and now - self._read_at <= max_stale_s
 
+    def _change_waiting(self) -> bool:
+        return self._changes != self._changes_read
+
+    def _due(self, now: float) -> bool:
+        return now >= self._next_read or self._change_waiting()
+
     async def get(self, *, refresh_s: float, max_stale_s: float) -> T | None:
         """The copy, read first when a read is due; None when the copy is older
         than `max_stale_s`, counted from the start of the read that brought it
         (or it was never read)."""
         now = time.monotonic()
-        change_waiting = self._changes != self._changes_read
-        due = now >= self._next_read or change_waiting
-        serve_in_hand = self._lock.locked() and self._fresh(now, max_stale_s) and not change_waiting
-        if due and not serve_in_hand:
+        serve_in_hand = (
+            self._lock.locked() and self._fresh(now, max_stale_s) and not self._change_waiting()
+        )
+        if self._due(now) and not serve_in_hand:
             async with self._lock:
-                if time.monotonic() >= self._next_read or self._changes != self._changes_read:
+                if self._due(time.monotonic()):  # the read we waited for may have done it
                     await self._refresh(refresh_s)
         if not self._fresh(time.monotonic(), max_stale_s):
             return None
@@ -61,19 +62,16 @@ class PolledCopy[T]:
         try:
             value = await self._read()
         except Exception as e:  # noqa: BLE001 — the last copy serves until it is too old
-            self._log.warning("%s: read failed (%s); serving the last copy", self._name, e)
+            self._log.warning("%s: read failed (%s)", self._name, e)
         else:
             self._value = value
             self._read_at = started
-        # A failed read waits its turn too, so the waiters do not each query in
-        # turn. A change made here during the read stays waiting, so it is read
-        # again at once.
+        # Reached by a failed read too, so waiters do not each read in turn.
         self._changes_read = changes
         self._next_read = time.monotonic() + refresh_s
 
     def forget(self) -> None:
-        """Make the next call read again, for a change just made here. The copy
-        in hand keeps its age, so a failed read serves it as before."""
+        """Make the next call read again, for a change just made here."""
         self._changes += 1
 
     def _reset_for_tests(

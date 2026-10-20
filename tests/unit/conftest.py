@@ -790,13 +790,15 @@ def _revocation_snapshot_loaded() -> Iterator[None]:
     saved = rev._loaded, rev._loaded_at, keyring._view
     rev._loaded, rev._loaded_at = True, rev.time.monotonic()
     keyring._view = keyring._View(read_at=keyring.time.monotonic(), loaded=True)
-    customer._reset_for_tests()
+    customer._switch._reset_for_tests(
+        frozenset(), read_age_s=0.0, due_in_s=settings.model_calls_policy_refresh_seconds
+    )
     extraction_policy._reset_for_tests()
     delegation._account_active.clear()
     service_accounts._creators.clear()
     yield
     rev._loaded, rev._loaded_at, keyring._view = saved
-    customer._reset_for_tests(read=False)
+    customer._switch._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
     extraction_policy._reset_for_tests(read=False)
 
 

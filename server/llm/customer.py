@@ -239,15 +239,5 @@ async def switched_off_orgs() -> frozenset[str]:
 
 
 def forget_switch() -> None:
-    """Make the next call read the switch again, for a change just made here.
-    The copy in hand keeps its age, so a failed read serves it as before."""
+    """Make the next call read the switch again, for a change just made here."""
     _switch.forget()
-
-
-def _reset_for_tests(off: frozenset[str] = frozenset(), *, read: bool = True) -> None:
-    """The switch as just read (`off`), or never read when not `read`."""
-    _switch._reset_for_tests(
-        off if read else None,
-        read_age_s=0.0 if read else None,
-        due_in_s=settings.model_calls_policy_refresh_seconds if read else 0.0,
-    )
