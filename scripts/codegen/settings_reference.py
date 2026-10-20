@@ -136,8 +136,8 @@ def _section(cls: ast.ClassDef, lines: list[str]) -> list[str]:
             rows, current = [], heading
             # An op or field name (`code.pr_check`) keeps its case.
             first = heading.split(" ")[0]
-            title = heading if "." in first or "_" in first else heading[:1].upper() + heading[1:]
-            out.append(f"\n### {title}\n")
+            shown = heading if "." in first or "_" in first else heading[:1].upper() + heading[1:]
+            out.append(f"\n### {shown}\n")
             note = heading_note(lines, stmt.lineno)
             if note:
                 out.append(f"{note}\n")

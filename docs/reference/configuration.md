@@ -171,8 +171,6 @@ The code plane: ingest, indexes, search, ask, review.
 
 ### Switch, test gate and code.ask
 
-One code namespace indexes one repository. No repository is configured by default: set LOOM_CODE_REPO / ORG / NAMESPACE (or LOOM_CODE_REPOS_JSON, or add one from the Repositories page) before anything is indexed. The index-building workers (ingest, SCIP, PR history, graph stats, cards, embed recovery) default off and no-op on a namespace without a git_head watermark or pending work.
-
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_INTEL_ENABLED` | `bool` | `True` |  | Master kill switch, checked at the top of every code.* handler. |
@@ -185,39 +183,61 @@ One code namespace indexes one repository. No repository is configured by defaul
 
 ### Repositories
 
+One code namespace indexes one repository. No repository is configured by default: set LOOM_CODE_REPO / ORG / NAMESPACE (or LOOM_CODE_REPOS_JSON, or add one from the Repositories page) before anything is indexed. The index-building workers (ingest, SCIP, PR history, graph stats, cards, embed recovery) default off and no-op on a namespace without a git_head watermark or pending work.
+
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_ORG` | `str` | `''` |  | The scalar repository entry's loom org; empty is never a default for a code.* request, which then must name its own. |
 | `LOOM_CODE_NAMESPACE` | `str` | `''` |  | The scalar entry's code namespace, used by a code.* request or `loom code` command that names none; empty = the request must name one. |
 | `LOOM_CODE_REPO` | `str` | `''` |  | The scalar entry's GitHub `owner/name`; empty = no scalar entry, so nothing is indexed until a repository is configured. |
+
+### code.ask memory enrichment
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_CODE_ASK_MEMORY_NAMESPACE` | `str` | `''` |  | The memory namespace code.ask fuses decision/rationale memories (the "why") from into its answer; empty = no enrichment, never guessed. |
-| `LOOM_CODE_ASK_MEMORY_ORG` | `str` | `''` |  | The org of that namespace; empty = `code_org`. |
+| `LOOM_CODE_ASK_MEMORY_ORG` | `str` | `''` |  | The org of `code_ask_memory_namespace`; empty = `code_org`. |
+
+### Repository access
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_CODE_ORG_READABLE` | `bool` | `False` |  | Who may READ the code index. False: the namespace's own visibility and grants. True: every authenticated principal of the org reads every configured code namespace (right for public or org-internal repos). Writes stay grant-driven. Per-entry "org_readable" in LOOM_CODE_REPOS_JSON. |
 | `LOOM_CODE_REPO_PUBLIC` | `bool` | `False` |  | The scalar repo entry is public: its namespace registers join_policy=open and discoverable. Per-entry `"public": true` does the same. |
+
+### Checks and conventions
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_CODE_COVERAGE_CONTROL_SYMBOL` | `str` | `''` |  | Positive-control symbol code.test_home / code.coverage_claim grep for (one every test suite of the repository names); empty makes every claim `unknown`. |
 | `LOOM_CODE_SETTING_CONTROL` | `str` | `''` |  | The setting code.setting_facts must find before it claims `not_a_setting` for any other name; empty = it never claims it. |
 | `LOOM_CODE_CONVENTIONS_DIFF_MAX_BYTES` | `int` | `1500000` |  | Max bytes of a PR patch code.conventions reads from the mirror; a longer patch is cut at a file boundary and flagged `diff_truncated`. |
 | `LOOM_CODE_CONVENTIONS_WIDE_CALLER_DIRS` | `int` | `5` |  | A touched function is "widely called" when its hop-1 callers span more than this many `src/<dir>` directories (rule wide_callers_untested). |
+
+### Multi-repo and self-service
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_CODE_REPOS_JSON` | `str` | *(unset)* |  | Multi-repo: JSON array of repo configs (code/domain/index/repos.py); empty = the scalar single-repo settings. Missing per-entry fields fall back to the scalars. |
-| `LOOM_CODE_SELF_SERVICE_ENABLED` | `bool` | `True` |  | Repositories added from the Repositories page (loom.code_repos) merge with the entries above; the environment wins on a namespace collision. Off = the operator's JSON is the only source. |
+| `LOOM_CODE_SELF_SERVICE_ENABLED` | `bool` | `True` |  | Repositories added from the Repositories page (loom.code_repos) merge with the configured entries (`code_repos_json` and the scalar entry); the environment wins on a namespace collision. Off = the operator's JSON is the only source. |
 | `LOOM_CODE_REPOS_ROOT` | `str` | `'var/code_repos/self'` |  | Where the worker clones a self-service entry's bare mirror (one per GitHub repository, shared by its branches). |
 | `LOOM_CODE_SELF_SERVICE_MAX_REPOS` | `int` | `20` |  | Active self-service entries per org (branches count); past it the add refuses with a message. |
 | `LOOM_CODE_BOOTSTRAP_FILES_PER_PASS` | `int` | `400` |  | Files indexed per pass while a new entry's initial index builds; the cursor persists in code_index_state (400 ≈ 1 min at the live rate). |
 | `LOOM_CODE_REPOS_REFRESH_SECONDS` | `int` | `30` |  | Seconds between re-reads of loom.code_repos. |
 | `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S` | `float` | `1800.0` |  | Seconds a bare clone may take before the worker gives up for the pass and retries next pass. |
-| `LOOM_CODE_HISTORY_CLONE_ON_READ` | `bool` | `True` |  | Whether a history read (blame_range, bisect, first_build, lesson checks) on a host without a repository's mirror clones it there in the background. On: every serving host keeps its own full copy of every mirror it is asked about. Off: such a host answers `no_git_mirror` and only the worker's host clones. |
 
 ### Git history and mirrors
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
+| `LOOM_CODE_HISTORY_CLONE_ON_READ` | `bool` | `True` |  | Whether a history read (blame_range, bisect, first_build, lesson checks) on a host without a repository's mirror clones it there in the background. On: every serving host keeps its own full copy of every mirror it is asked about. Off: such a host answers `no_git_mirror` and only the worker's host clones. |
 | `LOOM_GIT_HISTORY` | `'local' \| 'none'` | `'local'` |  | Where git-history reads (blame, citation commit checks, PR history, commit coverage) come from. local = this host's mirrors; none = an edge host with no mirrors: those reads answer without history. |
 | `LOOM_CODE_MIRROR_WARMUP` | `bool` | `True` |  | Every serving process clones the configured entries' mirrors it lacks at boot, in the background (code/app/index/mirrors.py): a history read answers `no_git_mirror: cloning <entry>` until its mirror is there. A full bare clone per host, again on every new disk: keep code_repos_root on a volume that outlives a rollout. Off: a mirror is cloned only when a read asks for it. |
 | `LOOM_CODE_MIRROR_WARMUP_CONCURRENCY` | `int` | `2` |  | Clones the warm-up runs at once on one host (each after a random wait), so N replicas starting together do not all clone from the remote at once. |
 | `LOOM_CODE_MIRROR_FETCH_INTERVAL_S` | `float` | `300.0` |  | Seconds between this host's fetches of its mirrors and sweeps of the mirrors, checkouts and lock files no active entry names. A round fetches only the branch tips, open PR heads and ledger merges the leader's pass recorded in ClickHouse that the mirror lacks: nothing when it is current. 0 = no fetch loop and no sweep. |
 | `LOOM_CODE_GIT_TIMEOUT_S` | `float` | `120.0` | live | Seconds one git command on a mirror may run (log, show, rev-parse). |
 | `LOOM_CODE_GIT_FETCH_TIMEOUT_S` | `float` | `3600.0` | live | Seconds one fetch, full-tree `ls-tree`, forced checkout or whole-range diff may run; the first fetch after a shallow clone of a large repository can exceed ten minutes. |
-| `LOOM_CODE_MIRROR_GC_INTERVAL_H` | `float` | `168.0` |  | Hours between `git gc` runs of each mirror on this host (low CPU and IO priority, only with room for a second copy plus the margin below). 0 = never. |
+| `LOOM_CODE_MIRROR_GC_INTERVAL_H` | `float` | `168.0` |  | Hours between `git gc` runs of each mirror on this host (low CPU and IO priority, only with room for a second copy plus `code_mirror_gc_margin_gb`). 0 = never. |
 | `LOOM_CODE_MIRROR_GC_MARGIN_GB` | `float` | `5.0` |  | Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without it the gc waits another interval. |
 
 ### Repository job sandbox
@@ -240,12 +260,17 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_GIT_REMOTE` | `str` | `''` |  | The scalar entry's fetch remote; empty = `https://github.com/<owner>/<name>.git`. |
 | `LOOM_CODE_GIT_BRANCH` | `str` | `'main'` |  | The scalar entry's branch: the one the ingest worker fetches and indexes. |
 | `LOOM_CODE_GIT_EXTRA_BRANCHES` | `str` | `''` |  | Comma-separated fnmatch globs of extra remote branches the mirror fetches besides the configured one (`release/*` = release branches, `backport/*` = backport staging). Refs are never pruned. Empty = the configured branch only. |
-| `LOOM_CODE_GIT_FETCH_LEDGER_MERGES` | `bool` | `True` |  | Fetch ledger merge commits no branch reaches by sha and pin them under refs/loom/merges/<sha>: one ledger page and at most the batch below per entry per pass; the cursor wraps. Off = branches only. |
+| `LOOM_CODE_GIT_FETCH_LEDGER_MERGES` | `bool` | `True` |  | Fetch ledger merge commits no branch reaches by sha and pin them under refs/loom/merges/<sha>: one ledger page and at most `code_git_ledger_merge_batch` shas per entry per pass; the cursor wraps. Off = branches only. |
 | `LOOM_CODE_GIT_LEDGER_MERGE_PAGE` | `int` | `500` |  | Ledger merge rows checked for a missing sha per entry per pass. |
 | `LOOM_CODE_GIT_LEDGER_MERGE_BATCH` | `int` | `40` |  | Missing ledger merge shas fetched per entry per pass (40 take about 8.5 s). |
 | `LOOM_CODE_GIT_FETCH_PR_HEADS` | `bool` | `True` |  | The mirror carries `refs/pull/N/head` for every PR the ledger holds OPEN (refetched when the tip moves, never pruned), so pre-merge reads diff the PR's own head. Only open heads: fetching every PR head is too costly. Per-entry `git_fetch_pr_heads` overrides. Off = the overlay reports `head_not_in_mirror`. |
 | `LOOM_CODE_GIT_PR_HEAD_BATCH` | `int` | `200` |  | Max PR heads fetched per shared mirror per ingest pass. |
-| `LOOM_CODE_GH_ITEMS_HEAD_FILL_BATCH` | `int` | `200` |  | Open-PR rows per pass whose head_sha / base_sha / files the PR-history worker fills from the mirror; rows the mirror lacks fall back to GitHub (batch below). |
+
+### Open-PR fill
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_CODE_GH_ITEMS_HEAD_FILL_BATCH` | `int` | `200` |  | Open-PR rows per pass whose head_sha / base_sha / files the PR-history worker fills from the mirror; rows the mirror lacks fall back to GitHub (`code_gh_items_head_github_batch`). |
 | `LOOM_CODE_GH_ITEMS_HEAD_GITHUB_BATCH` | `int` | `20` |  | GitHub `GET /pulls/N` calls per pass for open PRs the mirror lacks; 0 = the mirror path only. |
 
 ### Ingest
@@ -257,16 +282,36 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_INGEST_ENABLED` | `bool` | `False` |  | Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark. |
 | `LOOM_CODE_INGEST_INTERVAL_SECONDS` | `int` | `120` |  | Seconds between fast-tier ingest passes; extra-branch fetches of a shared mirror are spaced by 0.9 of it (at least 30 s). |
 | `LOOM_CODE_INGEST_LIVE_PATHS_TTL_S` | `float` | `60.0` |  | Seconds an ingesting process caches the namespace's live path set (the import-resolution oracle); files it writes join at once. |
+
+### JIT risk model
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_CODE_JIT_RISK_REFIT_INTERVAL_S` | `int` | `604800` |  | Seconds after which the weekly pass refits the jit-risk model. |
 | `LOOM_CODE_JIT_RISK_WINDOW_MONTHS` | `int` | `12` |  | Months of merged PRs the fit reads. |
 | `LOOM_CODE_JIT_RISK_MAX_AGE_DAYS` | `int` | `183` |  | Days after which a fit is served as `scored_stale` / `fit_stale`. |
+
+### Staleness (as_of.stale)
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_CODE_STALE_AFTER_COMMITS` | `int` | `5` |  | as_of.stale is true when the fast tier is more than this many first-parent commits behind the fetched branch tip (60 s cache). |
 | `LOOM_CODE_FETCH_STALE_AFTER_SECONDS` | `int` | `3600` |  | as_of.stale is also true when the mirror has not fetched for this many seconds (lag is counted against the local mirror). 0 = off. |
+
+### code.callers
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_CODE_CALLERS_MAX_DISTINCT_SEEDS` | `int` | `5` |  | code.callers/callees: a bare name with more distinct definitions than this returns `ambiguous` + candidates instead of walking them all. |
+
+### Ingest pass budget
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_CODE_INGEST_MAX_COMMITS_PER_PASS` | `int` | `20` |  | Commits past the watermark one pass reads; later ones wait for the next pass. |
 | `LOOM_CODE_INGEST_SECONDS_PER_FILE` | `float` | `2.5` |  | Prior ingest cost per changed file (seconds), refined by observation. A commit predicted to overrun the pass deadline is not started unless it is the pass's first. |
 | `LOOM_CODE_INGEST_MAX_FILES_PER_COMMIT` | `int` | `500` |  | Changed files indexed per commit; past it the rest are skipped with a warning and heal on the next backfill. |
-| `LOOM_CODE_INGEST_MAX_PASS_SECONDS` | `int` | `900` |  | The ingest pass's own deadline (seconds), kept at the supervisor's cap; the budget below keeps a pass under it. |
+| `LOOM_CODE_INGEST_MAX_PASS_SECONDS` | `int` | `900` |  | The ingest pass's own deadline (seconds), kept at the supervisor's cap; `code_ingest_pass_budget_fraction` keeps a pass under it. |
 | `LOOM_CODE_INGEST_SLICE_SHARE` | `float` | `0.5` |  | Share of the commit phase one oversized commit may take per pass while other entries wait (it is sliced across passes). |
 | `LOOM_CODE_INGEST_PASS_BUDGET_FRACTION` | `float` | `0.75` |  | Fraction of the deadline after which the pass stops STARTING units, finishes the in-flight round, saves cursors and returns `partial: true`. |
 | `LOOM_CODE_INGEST_WALK_BUDGET_SHARE` | `float` | `0.3` |  | Share of that budget the commit phase leaves to the walk (reconcile heal, extractor re-chunk). 0 = commits may take it all. |
@@ -435,7 +480,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_GRAPH_STATS_ENABLED` | `bool` | `False` |  | Weekly graph statistics: PageRank, degrees, test_map rebuild. |
 | `LOOM_CODE_GRAPH_STATS_INTERVAL_SECONDS` | `int` | `604800` |  | Seconds between graph-statistics passes. |
 | `LOOM_CODE_GRAPH_STATS_MAX_PASS_SECONDS` | `int` | `3600` |  | This worker's pass deadline (seconds); a pass past it is cancelled and counted a failure. |
-| `LOOM_CODE_GRAPH_STATS_UNIT_RISK_BUDGET_S` | `int` | `2400` |  | Seconds from pass start the unit-risk leg may schedule rounds; past it the pass succeeds with `unit_risk_partial: true` and the next resumes. Must stay under the deadline above. |
+| `LOOM_CODE_GRAPH_STATS_UNIT_RISK_BUDGET_S` | `int` | `2400` |  | Seconds from the start of a graph-statistics pass during which its unit-risk leg may schedule rounds; past it the pass succeeds with `unit_risk_partial: true` and the next resumes. Must stay under `code_graph_stats_max_pass_seconds`. |
 | `LOOM_CODE_FAN_IN_PRIOR_CAP` | `float` | `0.25` |  | Cap of code.search's fan-in rank prior: score *= 1 + cap * log1p(fan_in) / log1p(max fan_in in the pool); skipped under test intent and on noise paths; inert without the stats. 0 = off. |
 | `LOOM_CODE_CALLERS_CANDIDATE_MIN_CONFIDENCE` | `float` | `0.2` |  | The floor below which a declined site code.callers / code.callees return is counted, not returned; a request may pass `candidate_min_confidence`. |
 | `LOOM_CODE_SYMBOL_USES_HUB_FAN_IN` | `int` | `200` |  | Fan-in at or above which the `uses` block says `skipped: hub` instead of listing sites. 0 = never. |
@@ -462,7 +507,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_SQL_CHUNK_TARGET_CHARS` | `int` | `2000` |  | Statement packing target (chars); a larger single statement splits at lines at `code_chunk_max_chars`. |
 | `LOOM_CODE_PY_SQL_ISLANDS` | `bool` | `False` |  | SQL a Python file runs (database-client call arguments and SQL-looking literals) becomes `statement` symbols, facets (confidence 0.7 with a format hole) and table edges. Off = functions only. Needs a `--paths-file` backfill of the Python tree. |
 | `LOOM_CODE_SQL_COLUMN_LINEAGE` | `bool` | `False` |  | Column-level SQL lineage: `<table>.<column>` symbols, `column_read` / `column_write` facets and statement → column edges, for `.sql` and Python SQL islands. Off = table-level lineage. Needs a `--paths-file` backfill. |
-| `LOOM_CODE_SHELL_ISLANDS` | `bool` | `False` |  | A shell test's SQL strings (`$CLICKHOUSE_CLIENT -q`, heredocs, `echo \|`) become `statement` symbols with facets; leftover chunks coalesce up to the target below, never across a function. Needs a `--paths-file` backfill. |
+| `LOOM_CODE_SHELL_ISLANDS` | `bool` | `False` |  | A shell test's SQL strings (`$CLICKHOUSE_CLIENT -q`, heredocs, `echo \|`) become `statement` symbols with facets; leftover chunks coalesce up to `code_shell_chunk_target_chars`, never across a function. Needs a `--paths-file` backfill. |
 | `LOOM_CODE_SHELL_CHUNK_TARGET_CHARS` | `int` | `2000` |  | Leftover coalescing target in chars for shell files. |
 | `LOOM_CODE_HOST_ISLANDS` | `bool` | `False` |  | Shell inside CI/build files (Actions `run:`, GitLab `script:`, Dockerfile `RUN`, Makefile recipes, Jenkinsfile `sh`) is parsed for facets, script `includes` edges and SQL; jobs, targets and stages become symbols, and extensionless Dockerfile / Makefile / Jenkinsfile index as config. Needs a `--paths-file` backfill. |
 
@@ -474,7 +519,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_CONTEXT_DESCRIPTION_PROMPT` | `'oneliner' \| 'questions'` | `'oneliner'` |  | Shape of the embedded chunk description: `oneliner` (what the code does) or `questions` (file card + chunk → what it does and the questions it answers). Changing it re-texts new rows only. |
 | `LOOM_CODE_DESCRIBE_CONCURRENCY` | `int` | `8` |  | A file's chunk descriptions in flight at once; 1 = serial. |
 | `LOOM_CODE_INGEST_ROUND_MODEL_CONCURRENCY` | `int` | `16` |  | Model calls one round runs at once. |
-| `LOOM_CODE_INGEST_ROUND_WRITE_ROWS` | `int` | `2000` |  | A round writes one INSERT per table (flushed when a read could see the rows, at the row count below, or at round end). Buffered rows at which a round writes a table early. |
+| `LOOM_CODE_INGEST_ROUND_WRITE_ROWS` | `int` | `2000` |  | Buffered rows at which an ingest round writes a table early. A round writes one INSERT per table, flushed when a read could see the rows, at this row count, or at round end. |
 
 ### Bot authors
 
@@ -505,7 +550,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_SEARCH_MEMO_MAX_PAYLOAD_BYTES` | `int` | `200000` |  | Max bytes of a response the memo stores; a larger one is not memoised. 0 = no cap. |
 | `LOOM_CODE_CORPUS_STATS_TTL_S` | `int` | `300` |  | Seconds the BM25 corpus statistics (term df, chunk count, mean length) are cached per process; 0 = no cache. Bounded by the term cap, oldest out. |
 | `LOOM_CODE_CORPUS_STATS_MAX_TERMS` | `int` | `50000` |  | Max terms whose df the per-process cache holds; the oldest goes first. |
-| `LOOM_CODE_SEARCH_CURSOR_ENABLED` | `bool` | `True` |  | A computed code.search / code.grep stores its ranked pool (no bodies) in loom.code_search_memo and issues `next_cursor`; the next page is a point read. The pool size is capped below. |
+| `LOOM_CODE_SEARCH_CURSOR_ENABLED` | `bool` | `True` |  | A computed code.search / code.grep stores its ranked pool (no bodies) in loom.code_search_memo and issues `next_cursor`; the next page is a point read. The pool size is `code_search_cursor_pool`. |
 | `LOOM_CODE_SEARCH_CURSOR_POOL` | `int` | `100` |  | Units kept in a cursor's ranked pool; capped at 200. |
 | `LOOM_CODE_SEARCH_FANOUT_TIMEOUT_MS` | `int` | `3000` |  | Wall deadline (ms) per namespace in a multi-namespace search; a late namespace is dropped and named in `fanout.dropped`. |
 | `LOOM_CODE_SEARCH_FANOUT_MAX_NAMESPACES` | `int` | `8` |  | Max namespaces one request fans out to; can only lower the wire cap of 8. |
@@ -520,7 +565,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_SEARCH_RERANK_KINDS` | `str` | `'responsibility'` |  | Prose question kinds the default rerank applies to (`any` = all); symbol-shaped or constrained searches are never default-reranked. |
 | `LOOM_CODE_SEARCH_RERANK_TOP` | `int` | `20` |  | How many fused units the default rerank reads. |
 | `LOOM_CODE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `300` |  | Characters of each candidate shown to the default rerank (path and signature first, then the body head). |
-| `LOOM_CODE_SEARCH_CATALOGUE_PENALTY` | `float` | `1.0` |  | Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the kinds below; 1.0 = off. |
+| `LOOM_CODE_SEARCH_CATALOGUE_PENALTY` | `float` | `1.0` |  | Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the question kinds `code_search_catalogue_kinds` names; 1.0 = off. |
 | `LOOM_CODE_SEARCH_PROSE_PENALTY` | `float` | `0.25` |  | Fusion multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths; 1.0 = off. |
 | `LOOM_CODE_SEARCH_CATALOGUE_KINDS` | `str` | `'responsibility'` |  | The question kinds the catalogue penalty applies to. |
 | `LOOM_CODE_SEARCH_RRF_LEXICAL_WEIGHT_RESPONSIBILITY` | `float` | `1.0` |  | Lexical list's RRF weight for a responsibility question (vector = 1.0). 1.0 = equal weights. |
@@ -670,17 +715,34 @@ Fact extraction from messages and observed events.
 | `LOOM_MEMORY_EXTRACT_EXISTING_SHORT_LIMIT` | `int` | `8` | live | Existing memories (fact rows only) an extraction in that short tier sees for update detection (sized on an extraction eval); 0 lets it see the caller's full limit. A longer transcript sees none: shown the namespace's facts, the extractor links later details to them instead of writing them. |
 | `LOOM_OBSERVE_EXTRACT_NOTES_MIN_OBSERVATIONS` | `int` | `15` | live | A session's procedure and hint (observe notes) are mined only once the session holds this many non-trivial observations. 0 = any. |
 | `LOOM_MEMORY_EXTRACT_CODING_SWEEP_MIN_USER_TURNS` | `int` | `4` | live | A coding capture keeps the coverage sweep's density / uncovered auto-gates only with at least this many user turns (on short sessions the sweep's output is mostly junk). 0 = always keep. An explicit namespace / per-call switch wins either way. |
-| `LOOM_MEMORY_EXTRACT_VERIFY_TIMEOUT_S` | `float` | `45.0` | live | Per verifier call; a timeout keeps every fact. |
-| `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_MIN_CHARS` | `int` | `40` | live | The coverage sweep: turns the first pass cited nowhere get a second reading of their own (one more call), when the namespace or the call turns it on or the density / uncovered gates below fire. `_min_chars` skips "thanks!"-sized turns; `_max_turns` bounds the call. |
-| `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_MAX_TURNS` | `int` | `60` | live | Most uncovered turns one sweep call reads; later ones are left out. 0 = no cap. |
+| `LOOM_MEMORY_EXTRACT_VERIFY_TIMEOUT_S` | `float` | `45.0` | live | Seconds one durability-check call (`memory_extract_verify_models`) may take; a timeout keeps every fact. |
+
+### Coverage sweep
+
+The coverage sweep gives the turns an extraction's first pass cited nowhere a second reading of their own (one more call), when the namespace or the call turns it on or its `_auto_min_statements` / `_auto_min_uncovered` gates fire.
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_MIN_CHARS` | `int` | `40` | live | Shortest turn, in characters, the coverage sweep reads; shorter "thanks!"-sized turns are skipped. |
+| `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_MAX_TURNS` | `int` | `60` | live | Most uncovered turns one coverage sweep call reads; later ones are left out. 0 = no cap. |
 | `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_MAX_SENTENCES` | `int` | `60` | live | Inside a turn the first pass cited, the individual statements no fact covers are swept too (a fact list, a long update), at most this many. |
-| `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_AUTO_MIN_STATEMENTS` | `int` | `10` | live | With the namespace and the call silent, the sweep still runs when the ingest is statement-dense — some turn holds at least this many statements (a fact list, a long update). 0 = never. Chatty conversation (one to four sentences a turn) never reaches it. |
-| `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_AUTO_MIN_UNCOVERED` | `int` | `0` | live | With the namespace and the call silent and no list-shaped turn, a conversation ingest still gets the sweep when the first pass left at least this many statements without a memory (lexical, LLM-free). 0 = never: on conversation the gate fires on nearly every session, so enabling it is the operator's token trade. |
-| `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_BATCH_ITEMS` | `int` | `0` | live | The listed turns and sentences are read in groups of this many items, one concurrent call each (more recall for more tokens). 0 = one call. |
-| `LOOM_MEMORY_EXTRACT_SIZE_SEGMENT_MESSAGES` | `int` | `60` | live | Size segments: a session longer than this many messages is extracted in fixed windows of `_turns` turns (a turn = one user message + the assistant replies that follow). 0 disables. One call per window, concurrently. |
+| `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_AUTO_MIN_STATEMENTS` | `int` | `10` | live | With the namespace and the call silent, the coverage sweep still runs when the ingest is statement-dense — some turn holds at least this many statements (a fact list, a long update). 0 = never. Chatty conversation (one to four sentences a turn) never reaches it. |
+| `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_AUTO_MIN_UNCOVERED` | `int` | `0` | live | With the namespace and the call silent and no list-shaped turn, a conversation ingest still gets the coverage sweep when the first pass left at least this many statements without a memory (lexical, LLM-free). 0 = never: on conversation the gate fires on nearly every session, so enabling it is the operator's token trade. |
+| `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_BATCH_ITEMS` | `int` | `0` | live | The coverage sweep reads its listed turns and sentences in groups of this many items, one concurrent call each (more recall for more tokens). 0 = one call. |
+
+### Size segments
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_EXTRACT_SIZE_SEGMENT_MESSAGES` | `int` | `60` | live | Size segments: a session longer than this many messages is extracted in fixed windows of `memory_extract_size_segment_turns` turns (a turn = one user message + the assistant replies that follow). 0 disables. One call per window, concurrently. |
 | `LOOM_MEMORY_EXTRACT_SIZE_SEGMENT_TURNS` | `int` | `20` | live | Turns per size segment window (a window never splits a turn). |
 | `LOOM_MEMORY_EXTRACT_SIZE_SEGMENT_MAX` | `int` | `16` | live | Most size segment windows per session; past it the last window takes the remainder (windows grow past `_turns` turns first). |
 | `LOOM_MEMORY_EXTRACT_SIZE_SEGMENT_CHARS` | `int` | `60000` | live | The same windows past this many characters of message content, whatever the message count; a window closes early once its turns carry this much (an agent transcript with tool results runs ~190K chars a session at the median). 0 disables the character budget (turn budget only). |
+
+### Observed events
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_OBSERVE_EXTRACT_BUFFER_CHARS` | `int` | `0` | live | Buffer threshold: a session whose un-distilled observations reach this many characters is distilled even without an explicit observe.crystallize, like a short-term buffer that flushes when full. 0 disables; the READY tag still works either way. |
 | `LOOM_OBSERVE_EXTRACT_BUFFER_MIN_OBSERVATIONS` | `int` | `8` | live | Observations a session needs before the buffer threshold can fire (at least 1); a per-namespace value wins. |
 | `LOOM_OBSERVE_EXTRACT_ENABLED` | `bool` | `False` |  | Deferred-extraction worker for the observe plane: distills READY rows (observe.record/crystallize) into durable memories through the memory.set_from_messages pipeline. Off by default (makes LLM calls). |
@@ -688,6 +750,11 @@ Fact extraction from messages and observed events.
 | `LOOM_OBSERVE_EXTRACT_MAX_PASS_SECONDS` | `float` | `900.0` |  | Seconds an observe-extract pass may run before the supervisor abandons it. |
 | `LOOM_OBSERVE_EXTRACT_MAX_EVENTS_PER_SESSION` | `int` | `12` | live | Most transition events written per distilled session. |
 | `LOOM_OBSERVE_SKIP_TOOLS` | `str` | `'mcp__loom__*,mcp__plugin_loom*,loom_memory_*,loom_knowle…` | live | Tool names (case-insensitive globs, comma-separated) whose observations are stored content-less and already distilled: loom's own MCP tools (observing one copies a memory outside the key the user can delete) and the harness's meta tools, which say nothing about the task. "" disables the skip. |
+
+### Extraction queue
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_EXTRACTION_QUEUE_ENABLED` | `bool` | `True` |  | Deferred set_from_messages replay. On by default: `defer` is opt-in per call, and an empty queue costs one SELECT per interval. |
 | `LOOM_EXTRACTION_DEFER_AGENTS` | `str` | `''` | live | Agents whose set_from_messages runs deferred without the flag: comma-separated agent names, "*" = every service-account caller, "" = nobody. A call that sets `record_schema` is never deferred by this list (it reads `written` back), and an explicit defer=false still wins. |
 | `LOOM_EXTRACTION_QUEUE_INTERVAL_SECONDS` | `int` | `15` |  | Seconds between deferred-extraction queue passes. |
@@ -971,7 +1038,7 @@ memory.ask: evidence assembly and answer synthesis.
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_ASK_RECENCY_WEIGHT` | `float` | `0.2` | live | memory.ask only: re-rank the synthesis window by similarity + weight * recency, recency = 1/(1 + age_days/14), so the freshest copy of a fact reaches synthesis. 0.0 = cosine only. |
 | `LOOM_MEMORY_ASK_SYNTH_BUDGET_CHEAP_RATIO` | `float` | `0.7` | live | Fraction of the namespace's 24 h cost cap at which the cascade routes every ask cheap, with no escalation. 0 = off. |
-| `LOOM_MEMORY_ASK_SYNTH_BUDGET_RATIO` | `float` | `0.75` | live | Adaptive synthesis output budget: max(window rule, ratio * evidence tokens), capped at memory_ask_synth_max_tokens_ceiling. The window rule (600 tokens at <= 15 memories, 900 above) is the floor; 0 = the window rule alone. |
+| `LOOM_MEMORY_ASK_SYNTH_BUDGET_RATIO` | `float` | `0.75` | live | Adaptive synthesis output budget: max(window rule, ratio * evidence tokens), capped at memory_ask_synth_max_tokens_ceiling. The window rule (600 tokens at <= 15 memories, 900 past 15) is the floor; 0 = the window rule alone. |
 | `LOOM_MEMORY_ASK_SYNTH_MAX_TOKENS_CEILING` | `int` | `8000` | live | Upper bound on the adaptive budget (a cost and p99 guard, not a target); the provider's own maximum still applies. |
 | `LOOM_MEMORY_ASK_SYNTH_MAX_TOKENS` | `int` | `0` | live | Fixed synthesis output-token budget; 0 = adaptive. |
 | `LOOM_MEMORY_ASK_SYNTH_CHEAP_MAX_EVIDENCE_TOKENS` | `int` | `2500` | live | The cheap tier answers only when the synthesis window holds at most this many evidence tokens (chars/4); above it the ask routes strong (cheap losses averaged 5.9k tokens). 0 = off. |
@@ -1006,7 +1073,7 @@ memory.ask: evidence assembly and answer synthesis.
 | `LOOM_MEMORY_ASK_DECOMPOSE_MAX_PARTS` | `int` | `4` | live | Question decomposition (request `decompose`, off when unset): most sub-questions a decomposed question splits into. |
 | `LOOM_MEMORY_ASK_DECOMPOSE_PART_TOP_K` | `int` | `8` | live | Rows retrieved for each decomposed sub-question. |
 | `LOOM_MEMORY_ASK_WORLD_KNOWLEDGE` | `'forbid' \| 'allow'` | `'forbid'` | live | memory.ask general-knowledge bridging: forbid (default) keeps the synthesizer memory-only; allow lets it combine a memory fact with widely known public facts, marking each bridged sentence, and the output's `grounding` says whether it did. Per-request `world_knowledge` overrides. Agents that must never answer beyond the store keep forbid. |
-| `LOOM_MEMORY_ASK_RELEVANCE_GATE_MIN_KEEP` | `int` | `3` | live | The fewest synthesis rows the similarity knee below may leave. |
+| `LOOM_MEMORY_ASK_RELEVANCE_GATE_MIN_KEEP` | `int` | `3` | live | The fewest synthesis rows memory.ask's relevance gate (a cut at the knee of the rows' similarity curve) may leave. |
 | `LOOM_MEMORY_ASK_COUNT_WINDOW` | `int` | `30` | live | Synthesis window for count-shaped questions ("how many X", op=count), whose answer set is scattered across sessions (a missed item sat at rank 18). 0 = no widening. |
 | `LOOM_MEMORY_ASK_CODE_ENRICHMENT` | `bool` | `True` | live | Kill-switch for code-plane enrichment: when a query names code-shaped identifiers (a symbol, a File.cpp, a snake_case setting), fuse the bound code index's file:line, symbol and recent PRs into the grounding pool. Additive and fail-open. The opt-in is the code namespace binding (_resolve_code_target): with no per-request override and no memory_ask_code_namespace, enrichment is skipped, hence default on. |
 | `LOOM_MEMORY_ASK_CODE_HOP_SYMBOLS` | `int` | `4` | live | Symbols the retrieved window names (not only the question) are looked up in the bound code index too, up to this many, one code.symbol definition each, appended after the question's own grounding rows. 0 = off. |
@@ -1078,7 +1145,7 @@ memory.search: legs, fusion, ranking and gates.
 | `LOOM_MEMORY_SEARCH_DEFAULT_MODE` | `'semantic' \| 'lexical' \| 'hybrid' \| 'bm25_hybrid' \| 'related' \| 'graph' \| 'rrf' \| 'temporal'` | `'semantic'` | live | search_mode used when the caller sets neither search_mode nor a recipe. The wire default stays "rrf"; planner shape rules still apply on top. |
 | `LOOM_MEMORY_SEARCH_REINFORCEMENT_WEIGHT` | `float` | `0.15` | live | Weight of the decayed-reinforcement rank term (recalls and positive memory.outcome signals, fading with time since last reinforcement). 0 disables; the term is capped below relevance. |
 | `LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE` | `float` | `0.1` | live | Additive penalty on rows tagged `sensitivity:medium\|high` unless the query has contact intent. 0.0 disables. |
-| `LOOM_MEMORY_SEARCH_REINFORCEMENT_HALF_LIFE_DAYS` | `float` | `90.0` | live | Days after which a use's reinforcement weighs half (the base half-life the use-scaled one below grows from). |
+| `LOOM_MEMORY_SEARCH_REINFORCEMENT_HALF_LIFE_DAYS` | `float` | `90.0` | live | Days after which a use's reinforcement weighs half: the base half-life, which grows with a row's use count. |
 | `LOOM_SEARCH_TRACE_LOG_ENABLED` | `bool` | `False` | live | Per-query recall telemetry into loom.search_trace_log (query, returned keys+scores, abstain, latency), fire-and-forget. Off by default: query text is logged, so it is an operator opt-in. |
 | `LOOM_MEMORY_QUERY_NODES_ENABLED` | `bool` | `False` | live | Past queries as nodes: one loom.query_nodes row per memory.search (normalised text, embedding, returned keys), gated on the namespace's capture consent; the erasure saga deletes the table. |
 | `LOOM_MEMORY_SEARCH_SET_EXPANSION_LEG_TOP_K` | `int` | `2` | live | Set-expansion instance legs (collective nouns -> "has a sister"): each phrase runs as a narrow sub-query leg of top_k rows; a row joins only above min_similarity, at most max_added per search, never above the main leg's best row. |
@@ -1088,7 +1155,7 @@ memory.search: legs, fusion, ranking and gates.
 | `LOOM_MEMORY_SEARCH_MIN_SIMILARITY` | `float` | `0.22` |  | Cosine floor: hits below it are dropped as noise (ANN always returns top_k). The backstop when rerank is bypassed or fails. |
 | `LOOM_MEMORY_SEARCH_FLOOR_MODE` | `'readmit' \| 'ids_only' \| 'drop'` | `'readmit'` | live | Sub-floor handling when the caller sets top_k: "readmit" (fill k, tag below_floor), "ids_only" (fill k with empty bodies), "drop". A request's floor_mode overrides. |
 | `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` | `float` | `2.5` | live | Per-attempt bound (seconds) on the query embedding; after the retries the search answers 503 EMBED_TIMEOUT. 0 = unbounded. |
-| `LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES` | `int` | `1` | live | Retries after a timed-out first attempt, each with the bound above. |
+| `LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES` | `int` | `1` | live | Retries of a query embedding after a timed-out first attempt, each bounded by `memory_search_embed_bound_s`. |
 | `LOOM_MEMORY_SEARCH_QUERY_SPELLING_MAX_WORDS` | `int` | `6` | live | A query of at most this many words embeds each all-lowercase word of 4+ letters in the identifier spelling the caller's rows in the addressed namespace use most ("datalakecatalog" -> "DataLakeCatalog"; never "what" -> "What"). One read of the namespace beside the embed (100-300 ms for 40k rows), reused for a minute; fail-open. 0 = off. |
 | `LOOM_MEMORY_SEARCH_EXCERPT_CHARS` | `int` | `200` | live | Body length (chars) for bodies="excerpt" (the MCP search default). |
 | `LOOM_MEMORY_SEARCH_EXCERPT_BODIES_K` | `int` | `15` | live | Above this top_k a search that pinned no `bodies` serves excerpts, and per-hit explanation / score_components ride only under `explain: true`. Keys, order and scores are unchanged. 0 = never. |
@@ -1138,7 +1205,7 @@ Models: which model does each job.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, the conflict judge, rerank and every job below left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1). |
+| `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, the conflict judge, rerank and every job whose own model setting (in this section) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1). |
 | `LOOM_LLM_FALLBACK_MODEL` | `str` | `''` |  | Model to answer with when a client's provider is still unavailable after its retries (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" = fail the op. |
 | `LOOM_EMBEDDING_MODEL` | `str` | `'fake-ngram-3072'` |  | Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no network or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change it together with `embedding_dim`; a new embedding space needs a full re-embed. |
 
@@ -1399,7 +1466,7 @@ Storage: document originals, per-table retention and warm-tier moves.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_TIERING_AUDIT_LOG_WARM_DAYS` | `int` | `0` |  | Per-table warm-tier move age, days (see retention and tiering above). |
+| `LOOM_TIERING_AUDIT_LOG_WARM_DAYS` | `int` | `0` |  | Days before `loom.audit_log` rows move to the warm volume; 0 = never. |
 | `LOOM_TIERING_AGENT_EVENTS_WARM_DAYS` | `int` | `0` |  | Days before `loom.agent_events` rows move to the warm volume; 0 = never. |
 | `LOOM_TIERING_MEMORY_WARM_DAYS` | `int` | `0` |  | Days before `loom.memory` rows move to the warm volume; 0 = never. |
 | `LOOM_TIERING_MEMORY_EMBEDDINGS_WARM_DAYS` | `int` | `0` |  | Days before `loom.memory_embeddings` rows move to the warm volume; 0 = never. |
@@ -1472,7 +1539,7 @@ The tracker plane: records, duplicate checks, bisect.
 | `LOOM_TRACKER_SOURCES_JSON` | `str` | `''` |  | Every tracker source and the namespaces that read them: {"sources": {"<name>": {"host": "x.clickhouse.cloud", "port": 8443, "secure": true, "database": "loom_tracker"}}, "namespaces": {"qa-<team>": {"source": "<name>", "repos": ["Org/repo"], "restricted": false}}}. A namespace naming an unknown source does not serve (one error line, never a guess). |
 | `LOOM_TRACKER_SOURCE_CHECK_TIMEOUT_S` | `float` | `8.0` | live | Seconds tracker.source_check waits for a source's contract check. |
 | `LOOM_TRACKER_RESTRICTED_REPOS_JSON` | `str` | `''` |  | The repositories whose numbers name a restricted namespace's escalations and core incidents, as `Org/repo`: {"escalation": "Org/escalations", "incident": "Org/incidents"}. `escalation_context` / `incident_context` read the record `Org/repo#<number>`; a kind with no repository here reads no record by number. |
-| `LOOM_TRACKER_CREDENTIALS_JSON` | `str` | *(unset)* |  | Credentials per source, kept apart from the map above: {"<name>": {"user": "...", "password": "..."}}. |
+| `LOOM_TRACKER_CREDENTIALS_JSON` | `str` | *(unset)* |  | Credentials per tracker source, kept apart from `tracker_sources_json`: {"<name>": {"user": "...", "password": "..."}}. |
 | `LOOM_TRACKER_CONTRACT_TTL_S` | `float` | `3600.0` |  | A source serves only while its schema meets the record contract (docs/features/tracker/record-contract.md), checked through its own credential once per this many seconds (at least 1 s); a failed check retries after 60 s. |
 
 ### Self-service tracker sources
@@ -1488,7 +1555,7 @@ The tracker plane: records, duplicate checks, bisect.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_TRACKER_SIMILAR_VECTOR_LEG` | `bool` | `True` |  | Whether tracker.similar's vector leg (over loom.qa_item_embeddings, filled by the `tracker_embed` pass) is in the default leg set; a caller naming `vector` in `legs` runs it regardless. The leg only adds candidates, after the ranked legs (the agreement boost below aside). |
+| `LOOM_TRACKER_SIMILAR_VECTOR_LEG` | `bool` | `True` |  | Whether tracker.similar's vector leg (over loom.qa_item_embeddings, filled by the `tracker_embed` pass) is in the default leg set; a caller naming `vector` in `legs` runs it regardless. The leg only adds candidates, after the ranked legs (`tracker_similar_agreement_weight` aside). |
 | `LOOM_TRACKER_SIMILAR_AGREEMENT_WEIGHT` | `float` | `1.0` |  | The agreement boost: a tracker.similar candidate found by a ranked leg AND the vector leg gains the vector leg's RRF contribution times this weight (1.0 = counts like a ranked leg, 0.5 = a tie-breaker) and the ranked set is re-sorted; vector-only candidates stay appended. |
 | `LOOM_TRACKER_SIMILAR_AGREEMENT_MAX_RANK` | `int` | `5` |  | The deepest vector-leg rank that may boost a ranked candidate; 0 = any rank. |
 | `LOOM_TRACKER_SIMILAR_CATCH_UP_BUDGET_MS` | `int` | `300` |  | Ms the vector leg waits for its query-time catch-up (embedding the items changed since the pass's cursor), run beside the cosine scan. Past it the call answers from the table (`query.fresh_pending = true`) and the embedding finishes in the background for the next call. |

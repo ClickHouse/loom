@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from server.settings import Settings
@@ -56,12 +58,27 @@ def test_a_load_error_names_the_field_never_the_environment(bad: dict[str, objec
     assert "input_value" not in text
 
 
-# Names with a secret's word in them that hold no secret.
-_NOT_SECRETS = {"password_link_ttl_seconds"}
+# Names with a secret's word in them that hold no secret: TTLs and the token-exchange
+# endpoint's parameters.
+_NOT_SECRETS = {
+    "password_link_ttl_seconds",
+    "oauth_access_token_ttl_seconds",
+    "inference_token_url",
+    "inference_workload_token_file",
+    "inference_token_audience",
+    "inference_token_scope",
+    "inference_token_exchange_timeout_s",
+}
 
 
-def test_every_field_named_for_a_secret_or_password_is_a_secret() -> None:
+def test_every_field_named_for_a_secret_is_a_secret() -> None:
     """A secret the classifier misses is printed by settings.list and accepted from the
-    settings file; a new field with the word in its name must be one or be listed here."""
-    named = {n for n in Settings.model_fields if "secret" in n or "password" in n}
+    settings file; a new field with one of these words in its name must be one or be
+    listed above. A `_tokens` or `_token_budget` field counts tokens."""
+    named = {
+        n
+        for n in Settings.model_fields
+        if re.search(r"secret|password|token", n)
+        and not re.search(r"_tokens(?:_|$)|_token_budget", n)
+    }
     assert {n for n in named if not is_secret_field(n)} == _NOT_SECRETS

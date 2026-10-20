@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -179,6 +180,14 @@ def test_every_setting_says_what_it_does() -> None:
     described = descriptions(Settings)
     bare = [n for n in Settings.model_fields if not described.get(n)]
     assert not bare, f"no comment above these fields in server/settings/catalog.py: {bare}"
+
+
+def test_no_description_points_at_a_neighbouring_field() -> None:
+    """settings.list and the schema show one field at a time, so "the bound above" names
+    nothing there: a description names the other setting instead."""
+    pointing = re.compile(r"\b(?:above|below)(?=\s*(?:[).,;:]|$))")
+    found = [n for n, text in descriptions(Settings).items() if pointing.search(text)]
+    assert not found, f"name the setting meant instead of above/below: {found}"
 
 
 def test_uncommenting_every_line_of_the_example_loads_every_default(

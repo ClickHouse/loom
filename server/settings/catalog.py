@@ -468,11 +468,6 @@ class ClickHouseSettings(BaseModel):
 class CodeSettings(BaseModel):
     """The code plane: ingest, indexes, search, ask, review."""
 
-    # One code namespace indexes one repository. No repository is configured by
-    # default: set LOOM_CODE_REPO / ORG / NAMESPACE (or LOOM_CODE_REPOS_JSON, or add
-    # one from the Repositories page) before anything is indexed. The index-building
-    # workers (ingest, SCIP, PR history, graph stats, cards, embed recovery) default off
-    # and no-op on a namespace without a git_head watermark or pending work.
     # --- switch, test gate and code.ask ---
     # Master kill switch, checked at the top of every code.* handler.
     code_intel_enabled: bool = True
@@ -500,6 +495,11 @@ class CodeSettings(BaseModel):
     # legs) read the per-namespace exact-prompt response cache; no_cache or a
     # traffic class with llm_cache off bypasses it.
     code_ask_llm_cache: bool = True
+    # One code namespace indexes one repository. No repository is configured by
+    # default: set LOOM_CODE_REPO / ORG / NAMESPACE (or LOOM_CODE_REPOS_JSON, or add
+    # one from the Repositories page) before anything is indexed. The index-building
+    # workers (ingest, SCIP, PR history, graph stats, cards, embed recovery) default off
+    # and no-op on a namespace without a git_head watermark or pending work.
     # --- repositories ---
     # The scalar repository entry's loom org; empty is never a default for a code.*
     # request, which then must name its own.
@@ -511,11 +511,13 @@ class CodeSettings(BaseModel):
     # indexed until a repository is configured.
     code_repo: str = ""
 
+    # --- code.ask memory enrichment ---
     # The memory namespace code.ask fuses decision/rationale memories (the
     # "why") from into its answer; empty = no enrichment, never guessed.
     code_ask_memory_namespace: str = ""
-    # The org of that namespace; empty = `code_org`.
+    # The org of `code_ask_memory_namespace`; empty = `code_org`.
     code_ask_memory_org: str = ""
+    # --- repository access ---
     # Who may READ the code index. False: the namespace's own visibility and
     # grants. True: every authenticated principal of the org reads every
     # configured code namespace (right for public or org-internal repos).
@@ -524,6 +526,7 @@ class CodeSettings(BaseModel):
     # The scalar repo entry is public: its namespace registers join_policy=open
     # and discoverable. Per-entry `"public": true` does the same.
     code_repo_public: bool = False
+    # --- checks and conventions ---
     # Positive-control symbol code.test_home / code.coverage_claim grep for (one
     # every test suite of the repository names); empty makes every claim
     # `unknown`.
@@ -537,12 +540,14 @@ class CodeSettings(BaseModel):
     # A touched function is "widely called" when its hop-1 callers span more
     # than this many `src/<dir>` directories (rule wide_callers_untested).
     code_conventions_wide_caller_dirs: int = 5
+    # --- multi-repo and self-service ---
     # Multi-repo: JSON array of repo configs (code/domain/index/repos.py);
     # empty = the scalar single-repo settings. Missing per-entry fields fall
     # back to the scalars.
     code_repos_json: Annotated[str, JsonArray] = ""
-    # Repositories added from the Repositories page (loom.code_repos) merge
-    # with the entries above; the environment wins on a namespace collision.
+    # Repositories added from the Repositories page (loom.code_repos) merge with the
+    # configured entries (`code_repos_json` and the scalar entry); the environment wins
+    # on a namespace collision.
     # Off = the operator's JSON is the only source.
     code_self_service_enabled: bool = True
     # Where the worker clones a self-service entry's bare mirror (one per
@@ -559,12 +564,12 @@ class CodeSettings(BaseModel):
     # Seconds a bare clone may take before the worker gives up for the pass
     # and retries next pass.
     code_bootstrap_clone_timeout_s: float = 1800.0
+    # --- git history and mirrors ---
     # Whether a history read (blame_range, bisect, first_build, lesson checks) on a
     # host without a repository's mirror clones it there in the background. On:
     # every serving host keeps its own full copy of every mirror it is asked about.
     # Off: such a host answers `no_git_mirror` and only the worker's host clones.
     code_history_clone_on_read: bool = True
-    # --- git history and mirrors ---
     # Where git-history reads (blame, citation commit checks, PR history, commit
     # coverage) come from. local = this host's mirrors; none = an edge host with
     # no mirrors: those reads answer without history.
@@ -590,20 +595,22 @@ class CodeSettings(BaseModel):
     # minutes.
     code_git_fetch_timeout_s: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
     # Hours between `git gc` runs of each mirror on this host (low CPU and IO
-    # priority, only with room for a second copy plus the margin below). 0 = never.
+    # priority, only with room for a second copy plus `code_mirror_gc_margin_gb`).
+    # 0 = never.
     code_mirror_gc_interval_h: float = 168.0
     # Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without
     # it the gc waits another interval.
     code_mirror_gc_margin_gb: float = 5.0
-    # Resource limits (rlimits) for each process of a sandboxed repository job (clone, fetch,
-    # dependency install, compiler-tier harness; code/app/index/sandbox.py).
-    # They bound each process, not a job's total (max_pids aside): there is no cgroup.
+    # Resource limits (rlimits) for each process of a sandboxed repository job
+    # (clone, fetch, dependency install, compiler-tier harness;
+    # code/app/index/sandbox.py). They bound each process, not a job's total
+    # (max_pids aside): there is no cgroup.
     # --- repository job sandbox ---
     # CPU seconds one process of a sandboxed repository job may use.
     code_sandbox_cpu_seconds: int = 7200
     # Data memory (heap and private mappings, RLIMIT_DATA) one process of a sandboxed
-    # repository job may use, in
-    # MiB. Not address space: node reserves far more of that than it uses.
+    # repository job may use, in MiB. Not address space: node reserves far more of
+    # that than it uses.
     code_sandbox_memory_mb: int = 16384
     # Processes and threads one job may run at once (RLIMIT_NPROC, set inside
     # the job's user namespace, so other jobs and the server do not count;
@@ -631,8 +638,8 @@ class CodeSettings(BaseModel):
     # configured branch only.
     code_git_extra_branches: str = ""
     # Fetch ledger merge commits no branch reaches by sha and pin them under
-    # refs/loom/merges/<sha>: one ledger page and at most the batch below per
-    # entry per pass; the cursor wraps. Off = branches only.
+    # refs/loom/merges/<sha>: one ledger page and at most
+    # `code_git_ledger_merge_batch` shas per entry per pass; the cursor wraps. Off = branches only.
     code_git_fetch_ledger_merges: bool = True
     # Ledger merge rows checked for a missing sha per entry per pass.
     code_git_ledger_merge_page: int = 500
@@ -646,9 +653,10 @@ class CodeSettings(BaseModel):
     code_git_fetch_pr_heads: bool = True
     # Max PR heads fetched per shared mirror per ingest pass.
     code_git_pr_head_batch: int = 200
+    # --- open-PR fill ---
     # Open-PR rows per pass whose head_sha / base_sha / files the PR-history
     # worker fills from the mirror; rows the mirror lacks fall back to GitHub
-    # (batch below).
+    # (`code_gh_items_head_github_batch`).
     code_gh_items_head_fill_batch: int = 200
     # GitHub `GET /pulls/N` calls per pass for open PRs the mirror lacks;
     # 0 = the mirror path only.
@@ -671,21 +679,25 @@ class CodeSettings(BaseModel):
     # Seconds an ingesting process caches the namespace's live path set (the
     # import-resolution oracle); files it writes join at once.
     code_ingest_live_paths_ttl_s: float = 60.0
+    # --- JIT risk model ---
     # Seconds after which the weekly pass refits the jit-risk model.
     code_jit_risk_refit_interval_s: int = 7 * 24 * 3600
     # Months of merged PRs the fit reads.
     code_jit_risk_window_months: int = 12
     # Days after which a fit is served as `scored_stale` / `fit_stale`.
     code_jit_risk_max_age_days: int = 183
+    # --- staleness (as_of.stale) ---
     # as_of.stale is true when the fast tier is more than this many
     # first-parent commits behind the fetched branch tip (60 s cache).
     code_stale_after_commits: int = 5
     # as_of.stale is also true when the mirror has not fetched for this many
     # seconds (lag is counted against the local mirror). 0 = off.
     code_fetch_stale_after_seconds: int = 3600
+    # --- code.callers ---
     # code.callers/callees: a bare name with more distinct definitions than
     # this returns `ambiguous` + candidates instead of walking them all.
     code_callers_max_distinct_seeds: int = 5
+    # --- ingest pass budget ---
     # Commits past the watermark one pass reads; later ones wait for the next pass.
     code_ingest_max_commits_per_pass: int = 20
     # Prior ingest cost per changed file (seconds), refined by observation. A
@@ -696,7 +708,7 @@ class CodeSettings(BaseModel):
     # and heal on the next backfill.
     code_ingest_max_files_per_commit: int = 500
     # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
-    # the budget below keeps a pass under it.
+    # `code_ingest_pass_budget_fraction` keeps a pass under it.
     code_ingest_max_pass_seconds: int = 900
     # Share of the commit phase one oversized commit may take per pass while
     # other entries wait (it is sliced across passes).
@@ -985,9 +997,9 @@ class CodeSettings(BaseModel):
     # This worker's pass deadline (seconds); a pass past it is cancelled and
     # counted a failure.
     code_graph_stats_max_pass_seconds: int = 3600
-    # Seconds from pass start the unit-risk leg may schedule
-    # rounds; past it the pass succeeds with `unit_risk_partial: true` and the
-    # next resumes. Must stay under the deadline above.
+    # Seconds from the start of a graph-statistics pass during which its unit-risk
+    # leg may schedule rounds; past it the pass succeeds with `unit_risk_partial: true` and the
+    # next resumes. Must stay under `code_graph_stats_max_pass_seconds`.
     code_graph_stats_unit_risk_budget_s: int = 2400
     # Cap of code.search's fan-in rank prior:
     # score *= 1 + cap * log1p(fan_in) / log1p(max fan_in in the pool);
@@ -1047,7 +1059,7 @@ class CodeSettings(BaseModel):
     code_sql_column_lineage: bool = False
     # A shell test's SQL strings (`$CLICKHOUSE_CLIENT -q`, heredocs, `echo |`)
     # become `statement` symbols with facets; leftover chunks coalesce up to
-    # the target below, never across a function. Needs a `--paths-file`
+    # `code_shell_chunk_target_chars`, never across a function. Needs a `--paths-file`
     # backfill.
     code_shell_islands: bool = False
     # Leftover coalescing target in chars for shell files.
@@ -1070,9 +1082,9 @@ class CodeSettings(BaseModel):
     code_describe_concurrency: int = Field(default=8, ge=1, le=64)
     # Model calls one round runs at once.
     code_ingest_round_model_concurrency: int = Field(default=16, ge=1, le=128)
-    # A round writes one INSERT per table (flushed when a read could see the
-    # rows, at the row count below, or at round end). Buffered rows at which a
-    # round writes a table early.
+    # Buffered rows at which an ingest round writes a table early. A round writes one
+    # INSERT per table, flushed when a read could see the rows, at this row count, or
+    # at round end.
     code_ingest_round_write_rows: int = Field(default=2000, ge=1, le=100_000)
     # --- bot authors -----------------------------------------------------------
     # Comma-separated GitHub logins of autonomous agents that author pull requests
@@ -1149,7 +1161,7 @@ class CodeSettings(BaseModel):
     code_corpus_stats_max_terms: int = 50_000
     # A computed code.search / code.grep stores its ranked pool (no bodies)
     # in loom.code_search_memo and issues `next_cursor`; the next page is a
-    # point read. The pool size is capped below.
+    # point read. The pool size is `code_search_cursor_pool`.
     code_search_cursor_enabled: bool = True
     # Units kept in a cursor's ranked pool; capped at 200.
     code_search_cursor_pool: int = Field(default=100, ge=1)
@@ -1188,8 +1200,8 @@ class CodeSettings(BaseModel):
     # Characters of each candidate shown to the default rerank (path and
     # signature first, then the body head).
     code_search_rerank_excerpt_chars: int = 300
-    # Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on
-    # the kinds below; 1.0 = off.
+    # Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the
+    # question kinds `code_search_catalogue_kinds` names; 1.0 = off.
     code_search_catalogue_penalty: float = 1.0
     # Fusion multiplier for prose files (documentation, release notes, changelogs)
     # unless the query asks for documentation or the search is constrained to paths;
@@ -1550,36 +1562,41 @@ class ExtractionSettings(BaseModel):
     # sweep's output is mostly junk). 0 = always keep. An explicit namespace /
     # per-call switch wins either way.
     memory_extract_coding_sweep_min_user_turns: Annotated[int, LIVE] = 4
-    # Per verifier call; a timeout keeps every fact.
+    # Seconds one durability-check call (`memory_extract_verify_models`) may take; a
+    # timeout keeps every fact.
     memory_extract_verify_timeout_s: Annotated[float, LIVE] = 45.0
-    # The coverage sweep: turns the first pass cited nowhere get a second
-    # reading of their own (one more call), when the namespace or the call turns it
-    # on or the density / uncovered gates below fire. `_min_chars` skips
-    # "thanks!"-sized turns; `_max_turns` bounds the call.
+    # The coverage sweep gives the turns an extraction's first pass cited nowhere a
+    # second reading of their own (one more call), when the namespace or the call turns
+    # it on or its `_auto_min_statements` / `_auto_min_uncovered` gates fire.
+    # --- coverage sweep ---
+    # Shortest turn, in characters, the coverage sweep reads; shorter "thanks!"-sized
+    # turns are skipped.
     memory_extract_coverage_sweep_min_chars: Annotated[int, LIVE] = Field(default=40, ge=1)
-    # Most uncovered turns one sweep call reads; later ones are left out. 0 = no cap.
+    # Most uncovered turns one coverage sweep call reads; later ones are left out.
+    # 0 = no cap.
     memory_extract_coverage_sweep_max_turns: Annotated[int, LIVE] = 60
     # Inside a turn the first pass cited, the individual statements no fact covers are
     # swept too (a fact list, a long update), at most this many.
     memory_extract_coverage_sweep_max_sentences: Annotated[int, LIVE] = Field(default=60, ge=1)
-    # With the namespace and the call silent, the
+    # With the namespace and the call silent, the coverage
     # sweep still runs when the ingest is statement-dense — some turn holds
     # at least this many statements (a fact list, a long update). 0 = never.
     # Chatty conversation (one to four sentences a turn) never reaches it.
     memory_extract_coverage_sweep_auto_min_statements: Annotated[int, LIVE] = 10
     # With the namespace and the call silent and no list-shaped
-    # turn, a conversation ingest still gets the sweep when the first pass left at least
+    # turn, a conversation ingest still gets the coverage sweep when the first pass left at least
     # this many statements without a memory (lexical, LLM-free). 0 = never: on
     # conversation the gate fires on nearly every session, so enabling it is the
     # operator's token trade.
     memory_extract_coverage_sweep_auto_min_uncovered: Annotated[int, LIVE] = 0
-    # The listed turns and sentences are read in groups of this
+    # The coverage sweep reads its listed turns and sentences in groups of this
     # many items, one concurrent call each (more recall for more tokens). 0 = one call.
     memory_extract_coverage_sweep_batch_items: Annotated[int, LIVE] = 0
 
-    # Size segments: a session longer than this many messages is
-    # extracted in fixed windows of `_turns` turns (a turn = one user message + the
-    # assistant replies that follow). 0 disables. One call per window, concurrently.
+    # --- size segments ---
+    # Size segments: a session longer than this many messages is extracted in fixed
+    # windows of `memory_extract_size_segment_turns` turns (a turn = one user message +
+    # the assistant replies that follow). 0 disables. One call per window, concurrently.
     memory_extract_size_segment_messages: Annotated[int, LIVE] = 60
     # Turns per size segment window (a window never splits a turn).
     memory_extract_size_segment_turns: Annotated[int, LIVE] = Field(default=20, ge=1)
@@ -1591,6 +1608,7 @@ class ExtractionSettings(BaseModel):
     # (an agent transcript with tool results runs ~190K chars a session at the median).
     # 0 disables the character budget (turn budget only).
     memory_extract_size_segment_chars: Annotated[int, LIVE] = 60000
+    # --- observed events ---
     # Buffer threshold: a session whose un-distilled
     # observations reach this many characters is distilled even without an
     # explicit observe.crystallize, like a short-term buffer that flushes when
@@ -1622,6 +1640,7 @@ class ExtractionSettings(BaseModel):
         "ReadMcpResourceDirTool,AskUserQuestion,TodoWrite,Skill,EnterPlanMode,"
         "ExitPlanMode,EnterWorktree,ExitWorktree"
     )
+    # --- extraction queue ---
     # Deferred set_from_messages replay. On by default: `defer`
     # is opt-in per call, and an empty queue costs one SELECT per interval.
     extraction_queue_enabled: bool = True
@@ -2233,7 +2252,7 @@ class MemoryAskSettings(BaseModel):
     memory_ask_synth_budget_cheap_ratio: Annotated[float, LIVE] = 0.7
     # Adaptive synthesis output budget: max(window rule, ratio * evidence tokens), capped at
     # memory_ask_synth_max_tokens_ceiling. The window rule (600 tokens at <= 15 memories,
-    # 900 above) is the floor; 0 = the window rule alone.
+    # 900 past 15) is the floor; 0 = the window rule alone.
     memory_ask_synth_budget_ratio: Annotated[float, LIVE] = 0.75
     # Upper bound on the adaptive budget (a cost and p99 guard, not a target); the
     # provider's own maximum still applies.
@@ -2357,7 +2376,8 @@ class MemoryAskSettings(BaseModel):
     # output's `grounding` says whether it did. Per-request `world_knowledge`
     # overrides. Agents that must never answer beyond the store keep forbid.
     memory_ask_world_knowledge: Annotated[Literal["forbid", "allow"], CaseFolded, LIVE] = "forbid"
-    # The fewest synthesis rows the similarity knee below may leave.
+    # The fewest synthesis rows memory.ask's relevance gate (a cut at the knee of the
+    # rows' similarity curve) may leave.
     memory_ask_relevance_gate_min_keep: Annotated[int, LIVE] = 3
     # Synthesis window for count-shaped questions ("how many X", op=count), whose answer set
     # is scattered across sessions (a missed item sat at rank 18). 0 = no widening.
@@ -2633,8 +2653,8 @@ class MemorySearchSettings(BaseModel):
     # Additive penalty on rows tagged `sensitivity:medium|high` unless the
     # query has contact intent. 0.0 disables.
     memory_search_sensitivity_demote: Annotated[float, LIVE] = 0.1
-    # Days after which a use's reinforcement weighs half (the base half-life
-    # the use-scaled one below grows from).
+    # Days after which a use's reinforcement weighs half: the base half-life, which
+    # grows with a row's use count.
     memory_search_reinforcement_half_life_days: Annotated[float, LIVE] = 90.0
     # Per-query recall telemetry into loom.search_trace_log (query, returned
     # keys+scores, abstain, latency), fire-and-forget. Off by default: query
@@ -2669,7 +2689,8 @@ class MemorySearchSettings(BaseModel):
     # Per-attempt bound (seconds) on the query embedding; after the retries
     # the search answers 503 EMBED_TIMEOUT. 0 = unbounded.
     memory_search_embed_bound_s: Annotated[float, LIVE] = 2.5
-    # Retries after a timed-out first attempt, each with the bound above.
+    # Retries of a query embedding after a timed-out first attempt, each bounded by
+    # `memory_search_embed_bound_s`.
     memory_search_embed_bound_retries: Annotated[int, LIVE] = 1
     # A query of at most this many words embeds each all-lowercase word of 4+
     # letters in the identifier spelling the caller's rows in the addressed
@@ -2834,8 +2855,8 @@ class ModelSettings(BaseModel):
 
     # --- defaults ---------------------------------------------------------------
     # The deployment's LLM: memory extraction, the conflict judge, rerank and every
-    # job below left "". Empty takes the resolved provider's default model
-    # (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
+    # job whose own model setting (in this section) is left "". Empty takes the
+    # resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
     llm_model: str = ""
     # Model to answer with when a client's provider is still unavailable after
     # its retries (429 / 5xx / transport / timeout) or rejected the request
@@ -3646,7 +3667,7 @@ class StorageSettings(BaseModel):
     retention_reconcile_interval_seconds: int = 300
 
     # ---- storage tiering ----
-    # Per-table warm-tier move age, days (see retention and tiering above).
+    # Days before `loom.audit_log` rows move to the warm volume; 0 = never.
     tiering_audit_log_warm_days: int = 0
     # Days before `loom.agent_events` rows move to the warm volume; 0 = never.
     tiering_agent_events_warm_days: int = 0
@@ -3770,7 +3791,7 @@ class TrackerSettings(BaseModel):
     # "Org/incidents"}. `escalation_context` / `incident_context` read the record
     # `Org/repo#<number>`; a kind with no repository here reads no record by number.
     tracker_restricted_repos_json: Annotated[str, JsonObject] = ""
-    # Credentials per source, kept apart from the map above:
+    # Credentials per tracker source, kept apart from `tracker_sources_json`:
     # {"<name>": {"user": "...", "password": "..."}}.
     tracker_credentials_json: Annotated[str, JsonObject] = ""
     # A source serves only while its schema meets the record contract
@@ -3797,7 +3818,7 @@ class TrackerSettings(BaseModel):
     # Whether tracker.similar's vector leg (over
     # loom.qa_item_embeddings, filled by the `tracker_embed` pass) is in the default
     # leg set; a caller naming `vector` in `legs` runs it regardless. The leg only adds
-    # candidates, after the ranked legs (the agreement boost below aside).
+    # candidates, after the ranked legs (`tracker_similar_agreement_weight` aside).
     tracker_similar_vector_leg: bool = True
     # The agreement boost: a tracker.similar candidate found by a ranked leg AND the
     # vector leg gains the vector leg's RRF contribution times this weight (1.0 = counts

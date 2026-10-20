@@ -52,7 +52,8 @@ HEADER = f"""\
 #
 # Features switch on and off with the settings ending in `_enabled`: search this file
 # for "_enabled:". Secrets (passwords, keys, tokens) are not here: they go in the
-# environment, .env or a secrets manager (.env.example lists them).
+# environment, .env or a secrets manager (docs/reference/configuration.md lists
+# every one).
 #
 # A secret, a key given twice, an unsupported version, or a value of the wrong type
 # or outside its bounds stops the server at startup, naming the key. A name no

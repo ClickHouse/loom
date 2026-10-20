@@ -211,11 +211,12 @@ first applies pending migrations ([upgrades](./upgrades.md#how-migrations-run)).
   at startup; a name no setting has is logged and ignored, so a replica of the previous
   build starts on a file that names a new setting. `LOOM_SETTINGS_FILE` can be set in
   the environment or in `.env`. Under compose it names a path inside the containers:
-  mount the file into every Loom service (`loom` in `compose.yaml`; `loom` and
-  `loom-workers` in `dev/docker-compose.cloud.yml`), with a `volumes:` entry such as
-  `./loom.yaml:/app/config/loom.yaml:ro` (`../loom.yaml:/app/config/loom.yaml:ro` in
-  `dev/docker-compose.cloud.yml`, whose relative paths resolve from `dev/`), or they
-  refuse to start on a file that does not exist.
+  mount the file into every Loom service, or they refuse to start on a file that does
+  not exist. In `compose.yaml`, add `./loom.yaml:/app/config/loom.yaml:ro` to the
+  `loom` service's `volumes:`. In `dev/docker-compose.cloud.yml`, add
+  `../loom.yaml:/app/config/loom.yaml:ro` (its relative paths resolve from `dev/`) to
+  `x-loom-common`'s `volumes:`, which both services share; a `volumes:` key on one
+  service replaces that list rather than adding to it.
 - The compose file's `environment:` wins over `.env`. `dev/docker-compose.dev.yml` pins
   the ClickHouse connection and `LOOM_SELF_SIGNUP=open`, so those lines in `.env` do
   nothing on the local stack. `compose.yaml` and `dev/docker-compose.cloud.yml` take

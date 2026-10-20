@@ -325,7 +325,7 @@
         "code_ask_memory_org": {
           "default": "",
           "type": "string",
-          "description": "The org of that namespace; empty = `code_org`."
+          "description": "The org of `code_ask_memory_namespace`; empty = `code_org`."
         },
         "code_ask_negative_cache_ttl_s": {
           "default": 3600,
@@ -858,7 +858,7 @@
         "code_gh_items_head_fill_batch": {
           "default": 200,
           "type": "integer",
-          "description": "Open-PR rows per pass whose head_sha / base_sha / files the PR-history worker fills from the mirror; rows the mirror lacks fall back to GitHub (batch below)."
+          "description": "Open-PR rows per pass whose head_sha / base_sha / files the PR-history worker fills from the mirror; rows the mirror lacks fall back to GitHub (`code_gh_items_head_github_batch`)."
         },
         "code_gh_items_head_github_batch": {
           "default": 20,
@@ -883,7 +883,7 @@
         "code_git_fetch_ledger_merges": {
           "default": true,
           "type": "boolean",
-          "description": "Fetch ledger merge commits no branch reaches by sha and pin them under refs/loom/merges/<sha>: one ledger page and at most the batch below per entry per pass; the cursor wraps. Off = branches only."
+          "description": "Fetch ledger merge commits no branch reaches by sha and pin them under refs/loom/merges/<sha>: one ledger page and at most `code_git_ledger_merge_batch` shas per entry per pass; the cursor wraps. Off = branches only."
         },
         "code_git_fetch_pr_heads": {
           "default": true,
@@ -940,7 +940,7 @@
         "code_graph_stats_unit_risk_budget_s": {
           "default": 2400,
           "type": "integer",
-          "description": "Seconds from pass start the unit-risk leg may schedule rounds; past it the pass succeeds with `unit_risk_partial: true` and the next resumes. Must stay under the deadline above."
+          "description": "Seconds from the start of a graph-statistics pass during which its unit-risk leg may schedule rounds; past it the pass succeeds with `unit_risk_partial: true` and the next resumes. Must stay under `code_graph_stats_max_pass_seconds`."
         },
         "code_history_clone_on_read": {
           "default": true,
@@ -1029,7 +1029,7 @@
         "code_ingest_max_pass_seconds": {
           "default": 900,
           "type": "integer",
-          "description": "The ingest pass's own deadline (seconds), kept at the supervisor's cap; the budget below keeps a pass under it."
+          "description": "The ingest pass's own deadline (seconds), kept at the supervisor's cap; `code_ingest_pass_budget_fraction` keeps a pass under it."
         },
         "code_ingest_pass_budget_fraction": {
           "default": 0.75,
@@ -1053,7 +1053,7 @@
           "maximum": 100000,
           "minimum": 1,
           "type": "integer",
-          "description": "A round writes one INSERT per table (flushed when a read could see the rows, at the row count below, or at round end). Buffered rows at which a round writes a table early."
+          "description": "Buffered rows at which an ingest round writes a table early. A round writes one INSERT per table, flushed when a read could see the rows, at this row count, or at round end."
         },
         "code_ingest_seconds_per_file": {
           "default": 2.5,
@@ -1135,7 +1135,7 @@
         "code_mirror_gc_interval_h": {
           "default": 168.0,
           "type": "number",
-          "description": "Hours between `git gc` runs of each mirror on this host (low CPU and IO priority, only with room for a second copy plus the margin below). 0 = never."
+          "description": "Hours between `git gc` runs of each mirror on this host (low CPU and IO priority, only with room for a second copy plus `code_mirror_gc_margin_gb`). 0 = never."
         },
         "code_mirror_gc_margin_gb": {
           "default": 5.0,
@@ -1579,7 +1579,7 @@
         "code_search_catalogue_penalty": {
           "default": 1.0,
           "type": "number",
-          "description": "Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the kinds below; 1.0 = off."
+          "description": "Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the question kinds `code_search_catalogue_kinds` names; 1.0 = off."
         },
         "code_search_concept_expand_cap": {
           "default": 0.5,
@@ -1609,7 +1609,7 @@
         "code_search_cursor_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "A computed code.search / code.grep stores its ranked pool (no bodies) in loom.code_search_memo and issues `next_cursor`; the next page is a point read. The pool size is capped below."
+          "description": "A computed code.search / code.grep stores its ranked pool (no bodies) in loom.code_search_memo and issues `next_cursor`; the next page is a point read. The pool size is `code_search_cursor_pool`."
         },
         "code_search_cursor_pool": {
           "default": 100,
@@ -1815,7 +1815,7 @@
         "code_self_service_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "Repositories added from the Repositories page (loom.code_repos) merge with the entries above; the environment wins on a namespace collision. Off = the operator's JSON is the only source."
+          "description": "Repositories added from the Repositories page (loom.code_repos) merge with the configured entries (`code_repos_json` and the scalar entry); the environment wins on a namespace collision. Off = the operator's JSON is the only source."
         },
         "code_self_service_max_repos": {
           "default": 20,
@@ -1836,7 +1836,7 @@
         "code_shell_islands": {
           "default": false,
           "type": "boolean",
-          "description": "A shell test's SQL strings (`$CLICKHOUSE_CLIENT -q`, heredocs, `echo |`) become `statement` symbols with facets; leftover chunks coalesce up to the target below, never across a function. Needs a `--paths-file` backfill."
+          "description": "A shell test's SQL strings (`$CLICKHOUSE_CLIENT -q`, heredocs, `echo |`) become `statement` symbols with facets; leftover chunks coalesce up to `code_shell_chunk_target_chars`, never across a function. Needs a `--paths-file` backfill."
         },
         "code_sql_chunk_target_chars": {
           "default": 2000,
@@ -2569,7 +2569,7 @@
         "llm_model": {
           "default": "",
           "type": "string",
-          "description": "The deployment's LLM: memory extraction, the conflict judge, rerank and every job below left \"\". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1)."
+          "description": "The deployment's LLM: memory extraction, the conflict judge, rerank and every job whose own model setting (in this section) is left \"\". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1)."
         },
         "llm_openai_reasoning_effort": {
           "default": "",
@@ -3072,7 +3072,7 @@
         "memory_ask_relevance_gate_min_keep": {
           "default": 3,
           "type": "integer",
-          "description": "The fewest synthesis rows the similarity knee below may leave."
+          "description": "The fewest synthesis rows memory.ask's relevance gate (a cut at the knee of the rows' similarity curve) may leave."
         },
         "memory_ask_set_full_scan": {
           "default": 300,
@@ -3097,7 +3097,7 @@
         "memory_ask_synth_budget_ratio": {
           "default": 0.75,
           "type": "number",
-          "description": "Adaptive synthesis output budget: max(window rule, ratio * evidence tokens), capped at memory_ask_synth_max_tokens_ceiling. The window rule (600 tokens at <= 15 memories, 900 above) is the floor; 0 = the window rule alone."
+          "description": "Adaptive synthesis output budget: max(window rule, ratio * evidence tokens), capped at memory_ask_synth_max_tokens_ceiling. The window rule (600 tokens at <= 15 memories, 900 past 15) is the floor; 0 = the window rule alone."
         },
         "memory_ask_synth_cheap_max_evidence_tokens": {
           "default": 2500,
@@ -3388,17 +3388,17 @@
         "memory_extract_coverage_sweep_auto_min_statements": {
           "default": 10,
           "type": "integer",
-          "description": "With the namespace and the call silent, the sweep still runs when the ingest is statement-dense — some turn holds at least this many statements (a fact list, a long update). 0 = never. Chatty conversation (one to four sentences a turn) never reaches it."
+          "description": "With the namespace and the call silent, the coverage sweep still runs when the ingest is statement-dense — some turn holds at least this many statements (a fact list, a long update). 0 = never. Chatty conversation (one to four sentences a turn) never reaches it."
         },
         "memory_extract_coverage_sweep_auto_min_uncovered": {
           "default": 0,
           "type": "integer",
-          "description": "With the namespace and the call silent and no list-shaped turn, a conversation ingest still gets the sweep when the first pass left at least this many statements without a memory (lexical, LLM-free). 0 = never: on conversation the gate fires on nearly every session, so enabling it is the operator's token trade."
+          "description": "With the namespace and the call silent and no list-shaped turn, a conversation ingest still gets the coverage sweep when the first pass left at least this many statements without a memory (lexical, LLM-free). 0 = never: on conversation the gate fires on nearly every session, so enabling it is the operator's token trade."
         },
         "memory_extract_coverage_sweep_batch_items": {
           "default": 0,
           "type": "integer",
-          "description": "The listed turns and sentences are read in groups of this many items, one concurrent call each (more recall for more tokens). 0 = one call."
+          "description": "The coverage sweep reads its listed turns and sentences in groups of this many items, one concurrent call each (more recall for more tokens). 0 = one call."
         },
         "memory_extract_coverage_sweep_max_sentences": {
           "default": 60,
@@ -3409,13 +3409,13 @@
         "memory_extract_coverage_sweep_max_turns": {
           "default": 60,
           "type": "integer",
-          "description": "Most uncovered turns one sweep call reads; later ones are left out. 0 = no cap."
+          "description": "Most uncovered turns one coverage sweep call reads; later ones are left out. 0 = no cap."
         },
         "memory_extract_coverage_sweep_min_chars": {
           "default": 40,
           "minimum": 1,
           "type": "integer",
-          "description": "The coverage sweep: turns the first pass cited nowhere get a second reading of their own (one more call), when the namespace or the call turns it on or the density / uncovered gates below fire. `_min_chars` skips \"thanks!\"-sized turns; `_max_turns` bounds the call."
+          "description": "Shortest turn, in characters, the coverage sweep reads; shorter \"thanks!\"-sized turns are skipped."
         },
         "memory_extract_existing_short_limit": {
           "default": 8,
@@ -3445,7 +3445,7 @@
         "memory_extract_size_segment_messages": {
           "default": 60,
           "type": "integer",
-          "description": "Size segments: a session longer than this many messages is extracted in fixed windows of `_turns` turns (a turn = one user message + the assistant replies that follow). 0 disables. One call per window, concurrently."
+          "description": "Size segments: a session longer than this many messages is extracted in fixed windows of `memory_extract_size_segment_turns` turns (a turn = one user message + the assistant replies that follow). 0 disables. One call per window, concurrently."
         },
         "memory_extract_size_segment_turns": {
           "default": 20,
@@ -3473,7 +3473,7 @@
         "memory_extract_verify_timeout_s": {
           "default": 45.0,
           "type": "number",
-          "description": "Per verifier call; a timeout keeps every fact."
+          "description": "Seconds one durability-check call (`memory_extract_verify_models`) may take; a timeout keeps every fact."
         },
         "memory_facts_projection_wait_s": {
           "default": 3.0,
@@ -3708,7 +3708,7 @@
         "memory_search_embed_bound_retries": {
           "default": 1,
           "type": "integer",
-          "description": "Retries after a timed-out first attempt, each with the bound above."
+          "description": "Retries of a query embedding after a timed-out first attempt, each bounded by `memory_search_embed_bound_s`."
         },
         "memory_search_embed_bound_s": {
           "default": 2.5,
@@ -3960,7 +3960,7 @@
         "memory_search_reinforcement_half_life_days": {
           "default": 90.0,
           "type": "number",
-          "description": "Days after which a use's reinforcement weighs half (the base half-life the use-scaled one below grows from)."
+          "description": "Days after which a use's reinforcement weighs half: the base half-life, which grows with a row's use count."
         },
         "memory_search_reinforcement_weight": {
           "default": 0.15,
@@ -4871,7 +4871,7 @@
         "tiering_audit_log_warm_days": {
           "default": 0,
           "type": "integer",
-          "description": "Per-table warm-tier move age, days (see retention and tiering above)."
+          "description": "Days before `loom.audit_log` rows move to the warm volume; 0 = never."
         },
         "tiering_chunks_warm_days": {
           "default": 0,
@@ -5303,7 +5303,7 @@
         "tracker_similar_vector_leg": {
           "default": true,
           "type": "boolean",
-          "description": "Whether tracker.similar's vector leg (over loom.qa_item_embeddings, filled by the `tracker_embed` pass) is in the default leg set; a caller naming `vector` in `legs` runs it regardless. The leg only adds candidates, after the ranked legs (the agreement boost below aside)."
+          "description": "Whether tracker.similar's vector leg (over loom.qa_item_embeddings, filled by the `tracker_embed` pass) is in the default leg set; a caller naming `vector` in `legs` runs it regardless. The leg only adds candidates, after the ranked legs (`tracker_similar_agreement_weight` aside)."
         },
         "tracker_snapshot_ttl_s": {
           "default": 60.0,
