@@ -51,6 +51,8 @@ class MessageInsert(BaseModel):
     run_id: str = "-"
     metadata: str = "{}"
     tokens: int = 0
+    # Set by conversation.save_message: the user picked this turn for search.
+    is_saved: bool = False
     ts: datetime | None = None  # CH supplies now() when None
 
 
@@ -101,6 +103,7 @@ class ConversationEmbeddingRow(TypedDict):
     embed_attempts: int
     embed_last_error: str
     embed_failed_at: datetime | None
+    is_saved: bool
     ts: datetime
 
 
@@ -142,6 +145,7 @@ async def append(
         "run_id": msg.run_id,
         "metadata": msg.metadata,
         "tokens": int(msg.tokens),
+        "is_saved": msg.is_saved,
     }
     if msg.ts is not None:
         row["ts"] = msg.ts
@@ -186,6 +190,197 @@ async def message_exists(
         },
     )
     return bool(row and row.get("ok"))
+
+
+class StoredMessage(BaseModel):
+    """What conversation.save_message judges a stored (thread_id, msg_id) by,
+    over every row it has (a racing append can leave two)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    role: str
+    content: str
+    run_id: str
+    ts: datetime
+    # Every distinct owner on the rows; '-' is an unowned transcript turn.
+    owners: tuple[str, ...]
+    tombstoned: bool
+    # Rows not yet saved for `user_id` (unflagged, or owned by '-').
+    unsaved: int
+
+
+async def message_state(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    user_id: str,
+    ch: _CHClient | None = None,
+) -> StoredMessage | None:
+    """The stored rows of (thread_id, msg_id) folded into one verdict, or None
+    when no row exists. Matches the rows `message_exists` dedupes on, so
+    save_message decides on the same rows an append would skip over."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        """
+        SELECT count() AS n,
+               argMax(role, ts) AS role,
+               argMax(content, ts) AS content,
+               argMax(run_id, ts) AS run_id,
+               max(ts) AS ts,
+               groupUniqArray(user_id) AS owners,
+               countIf(tombstoned_at IS NOT NULL) > 0 AS tombstoned,
+               countIf(NOT is_saved OR user_id != {uid:String}) AS unsaved
+        FROM loom.conversations
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND agent = {agent:String} AND thread_id = {tid:String}
+          AND msg_id = {mid:String}
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "tid": thread_id,
+            "mid": msg_id,
+            "uid": user_id,
+        },
+    )
+    if not row or not int(row["n"]):
+        return None
+    return StoredMessage(
+        role=str(row["role"]),
+        content=str(row["content"]),
+        run_id=str(row["run_id"]),
+        ts=row["ts"],
+        owners=tuple(sorted(str(o) for o in row["owners"])),
+        tombstoned=bool(row["tombstoned"]),
+        unsaved=int(row["unsaved"]),
+    )
+
+
+class StoredEmbedding(BaseModel):
+    """The live embedding rows of one message, as save_message repairs them."""
+
+    model_config = ConfigDict(frozen=True)
+
+    # Rows under the embedder the saved search ranks with.
+    current: int
+    # Rows of any model not yet saved for `user_id`.
+    unsaved: int
+
+
+async def embedding_state(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    user_id: str,
+    embedding_model: str,
+    ch: _CHClient | None = None,
+) -> StoredEmbedding:
+    """Whether the message has an embedding row under `embedding_model`, and how
+    many of its live rows still lack the saved flag or the owner."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        """
+        SELECT countIf(embedding_model = {model:String}) AS current,
+               countIf(NOT is_saved OR user_id != {uid:String}) AS unsaved
+        FROM loom.conversation_embeddings
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND agent = {agent:String} AND thread_id = {tid:String}
+          AND msg_id = {mid:String} AND tombstoned_at IS NULL
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "tid": thread_id,
+            "mid": msg_id,
+            "uid": user_id,
+            "model": embedding_model,
+        },
+    )
+    if not row:
+        return StoredEmbedding(current=0, unsaved=0)
+    return StoredEmbedding(current=int(row["current"]), unsaved=int(row["unsaved"]))
+
+
+async def saved_message_owner(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> str | None:
+    """The owner of a live, saved row of (thread_id, msg_id), or None. A
+    transcript append asks after its embedding row landed: a save that ran
+    while the append was embedding marked the rows it could see, not this one."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        """
+        SELECT user_id FROM loom.conversations
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND agent = {agent:String} AND thread_id = {tid:String}
+          AND msg_id = {mid:String} AND is_saved AND tombstoned_at IS NULL
+        LIMIT 1
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "tid": thread_id,
+            "mid": msg_id,
+        },
+    )
+    return str(row["user_id"]) if row else None
+
+
+SAVED_MESSAGE_TABLES = ("loom.conversations", "loom.conversation_embeddings")
+
+
+async def mark_message_saved(
+    table: str,
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    user_id: str,
+    ch: _CHClient | None = None,
+) -> None:
+    """Flag the live rows of a stored turn in `table` (one of
+    SAVED_MESSAGE_TABLES) as saved by `user_id`, leaving every other column —
+    run_id included — as written. A synchronous mutation, so the next
+    saved-message search sees it; rows already saved for the user are skipped."""
+    if table not in SAVED_MESSAGE_TABLES:
+        raise ValueError(f"not a saved-message table: {table}")
+    ch = ch or _default_client()
+    await ch.execute(
+        f"""
+        ALTER TABLE {table}
+        UPDATE is_saved = true, user_id = {{uid:String}}
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND agent = {{agent:String}} AND thread_id = {{tid:String}}
+          AND msg_id = {{mid:String}} AND tombstoned_at IS NULL
+          AND (NOT is_saved OR user_id != {{uid:String}})
+        SETTINGS mutations_sync = 2
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "tid": thread_id,
+            "mid": msg_id,
+            "uid": user_id,
+        },
+    )
 
 
 async def namespace_logging_enabled(
@@ -398,6 +593,8 @@ async def search_substring(
     thread_id: str | None = None,
     role: str | None = None,
     run_id: str | None = None,
+    user_id: str | None = None,
+    saved_only: bool = False,
     limit: int = 50,
     ch: _CHClient | None = None,
 ) -> list[MessageRow]:
@@ -434,6 +631,11 @@ async def search_substring(
     if run_id is not None:
         where.append("run_id = {run_id:String}")
         params["run_id"] = run_id
+    if user_id is not None:
+        where.append("user_id = {user_id:String}")
+        params["user_id"] = user_id
+    if saved_only:
+        where.append("is_saved")
 
     columns = """org, namespace, agent, thread_id, msg_id, role, content,
                reasoning, user_id, run_id, metadata, tokens, ts"""

@@ -78,6 +78,47 @@ class ConversationAppendOutput(BaseModel):
     reason: Literal["", "duplicate", "logging_disabled"] = ""
 
 
+class ConversationSaveMessageInput(BaseModel):
+    """Save one chat message a user picked for search, whether or not the
+    namespace records transcripts.
+
+    `conversation.append` records a transcript and stores nothing while the
+    namespace's logging switch (`conversation.set_logging`) is off; this op is
+    one user's opt-in for one message and never changes that switch. The
+    message is flagged saved for its owner, and
+    `conversation.search_saved_messages` searches only flagged messages. A
+    message the transcript already holds is flagged in place (its run_id and
+    content stay as recorded), not written twice.
+    """
+
+    org: str
+    namespace: str
+    agent: str
+    # The client's conversation id; this remains the thread id in Loom.
+    conversation_id: str = Field(min_length=1, max_length=256)
+    # The client's stable message id. Re-saving it is idempotent.
+    message_id: str = Field(min_length=1, max_length=256)
+    # Only selectable user and assistant messages are embedded.
+    role: Literal["user", "assistant"]
+    # The message text; ignored when the transcript already holds the message.
+    content: str = Field(min_length=1, max_length=120_000)
+    # The owner is a hard filter on the paired search operation.
+    user_id: str = Field(min_length=1, max_length=256)
+
+
+class ConversationSaveMessageOutput(BaseModel):
+    conversation_id: str
+    message_id: str
+    # True on a new write, a re-save (repairing what an interrupted save left
+    # behind), and a transcript turn that is now flagged saved; false when the
+    # message cannot be saved (`reason`), never for a disabled logging switch.
+    indexed: bool
+    # "duplicate": already saved, nothing changed. "owner_mismatch": the stored
+    # turn belongs to another user. "deleted": the stored turn was tombstoned.
+    reason: Literal["", "duplicate", "owner_mismatch", "deleted"] = ""
+    ts: datetime
+
+
 class ConversationSetLoggingInput(BaseModel):
     """Toggle whether this namespace records conversation transcripts. When
     disabled, conversation.append accepts calls but stores nothing."""
@@ -264,6 +305,9 @@ class ConversationSearchInput(BaseModel):
     # Filter by speaker; system turns other than compaction summaries, and tool turns,
     # are not embedded, so they match only on the substring fallback.
     role: ConversationRole | None = None
+    # Optional owner filter. Integrations that serve many users from one
+    # namespace set it so a search cannot cross their user boundary.
+    user_id: str | None = None
     # At most this many hits (1-200). Across agents ("*" or "-") a turn several agents
     # logged is one hit: the embeddings hold one row per turn, and the substring path
     # collapses its copies before the limit.
@@ -289,6 +333,37 @@ class ConversationSearchOutput(BaseModel):
     # Namespaces of the caller an all_mine search did not read because it stops
     # at `memory_search_fanout_max_namespaces`; address one by name to search it.
     namespaces_skipped: list[str] = Field(default_factory=list)
+
+
+class ConversationSearchSavedMessagesInput(BaseModel):
+    """Semantic search over only the messages one user saved with
+    conversation.save_message, not the whole transcript.
+
+    `conversation.search` ranks every recorded turn of a namespace (or of all
+    the caller's namespaces); this op stays in one namespace and returns only
+    turns flagged saved and owned by `user_id`.
+    """
+
+    org: str
+    namespace: str
+    agent: str
+    user_id: str = Field(min_length=1, max_length=256)
+    query: str = Field(min_length=1, max_length=20_000)
+    conversation_id: str | None = Field(default=None, max_length=256)
+    role: Literal["user", "assistant"] | None = None
+    top_k: int = Field(default=20, ge=1, le=200)
+
+
+class _SavedMessageHit(BaseModel):
+    conversation_id: str
+    message_id: str
+    role: Literal["user", "assistant"]
+    content_excerpt: str
+    ts: datetime
+
+
+class ConversationSearchSavedMessagesOutput(BaseModel):
+    hits: list[_SavedMessageHit]
 
 
 # conversation.threads — recent thread list (grouped over loom.conversations),

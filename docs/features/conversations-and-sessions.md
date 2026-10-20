@@ -46,6 +46,31 @@ up front.
   recorded on its embedding row. Nothing retries it: the turn stays out of vector
   search and is found only by the substring fallback.
 
+### Saving single messages
+
+A chat client can let a user save one message for later search without recording the
+namespace's transcripts. `conversation.save_message` (writer) is that opt-in, and
+`conversation.search_saved_messages` (viewer) is its search. They differ from
+`conversation.append` and `conversation.search` in four ways:
+
+- **The logging switch does not apply.** The save is stored even when
+  `conversation.set_logging` is off, and it does not turn logging on.
+- **The message is flagged, not re-labelled.** The transcript row and its embedding row
+  carry `is_saved`. A message the transcript already holds is flagged in place: its
+  `run_id` and content stay as recorded.
+- **The search is per user.** `conversation.search_saved_messages` returns only flagged
+  messages owned by `user_id`, in the one namespace named. `conversation.search` ranks
+  every recorded turn and fans out over the caller's namespaces by default.
+- **Ownership and deletion are checked on every save.** Saving a message stored under
+  another `user_id` answers `indexed: false, reason: "owner_mismatch"`. A tombstoned
+  message answers `reason: "deleted"`. Both checks also apply to a message that is
+  already saved.
+
+A save can be retried safely. Each call re-reads the message and repairs what an
+interrupted or concurrent write left behind: it writes a missing embedding row and flags
+any row still unflagged. A transcript append whose embedding lands after a concurrent
+save flags its own embedding row.
+
 ### Reading and searching
 
 | Operation              | Role   | Does                                                                                                                       |
