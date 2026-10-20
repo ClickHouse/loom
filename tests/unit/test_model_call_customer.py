@@ -819,6 +819,44 @@ def test_code_embed_recovery_embeds_each_group_for_its_org(metered, caplog) -> N
     _no_refusal_logged(caplog)
 
 
+def test_code_embed_recovery_gives_up_on_a_row_naming_no_customer_without_a_call(
+    metered, caplog
+) -> None:
+    from server.code.workers import embed_recovery
+
+    class _Embedder:
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            raise AssertionError("a row naming no customer is never sent")
+
+    class _Repo:
+        rows: list[Any] = []
+
+        def tombstone_of(self, table: str, live: dict[str, Any]) -> dict[str, Any]:
+            return dict(live)
+
+        async def insert_rows(self, table: str, rows: list[Any]) -> None:
+            self.rows = rows
+
+    repo = _Repo()
+    rows = [{"org": "", "namespace": "code-a", "text": "def f(): pass", "embed_attempts": 0}]
+    result = embed_recovery.CodeEmbedRecoveryResult()
+    embedded = asyncio.run(
+        embed_recovery._embed_rows(
+            repo,
+            "code_chunks",
+            rows,
+            _Embedder(),
+            text_of=lambda r: r["text"],
+            max_attempts=5,
+            result=result,
+        )
+    )
+    assert embedded == 0 and result.poisoned == 1
+    (row,) = repo.rows
+    assert row["embed_last_error"] == customer.NO_CUSTOMER and row["embed_failed_at"]
+    assert row["embed_attempts"] == 1
+
+
 def test_the_conversation_titler_names_the_threads_org(metered, monkeypatch, caplog) -> None:
     import server.knowledge.store.conversations as repo
     from server.knowledge.workers.conversation_titler import run_pass

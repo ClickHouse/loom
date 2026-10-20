@@ -181,7 +181,13 @@ async def _embed_rows(
     out: list[tuple[list[float] | None, str]] = [(None, "")] * len(rows)
     for org, positions in customer.by_org(str(r.get("org") or "") for r in rows).items():
         with customer.for_org(org):
-            embedded = await _embed_batch(embedder, [rows[i]["content_excerpt"] for i in positions])
+            embedded: list[tuple[list[float] | None, str]]
+            if not customer.names_one():
+                embedded = [(None, customer.NO_CUSTOMER)] * len(positions)
+            else:
+                embedded = await _embed_batch(
+                    embedder, [rows[i]["content_excerpt"] for i in positions]
+                )
         for i, one in zip(positions, embedded, strict=True):
             out[i] = one
     return out
@@ -455,7 +461,7 @@ async def run_pass(
                 if vec is None:
                     new_attempts = int(r.get("embed_attempts") or 0) + 1
                     err = embed_err
-                    is_poisoned = new_attempts >= cfg.max_attempts
+                    is_poisoned = new_attempts >= cfg.max_attempts or err == customer.NO_CUSTOMER
                     # Re-insert the stub with bumped failure state (stays embedding_dim=0).
                     retries.append(
                         memory_repo.build_embedding_row(

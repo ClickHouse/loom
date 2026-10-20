@@ -109,6 +109,21 @@ def require() -> str:
     )
 
 
+def names_one() -> bool:
+    """Whether the current model call names a customer, as `require` checks,
+    for a job that records a row naming none instead of calling."""
+    try:
+        require()
+    except Unattributed:
+        return False
+    return True
+
+
+# The error a job records on a row that names no customer: retrying cannot
+# help until the row has an org, so the row is given up on at once.
+NO_CUSTOMER = "MODEL_CALL_UNATTRIBUTED: the row names no org to bill"
+
+
 def headers() -> dict[str, str]:
     """The customer and feature headers for one model request; {} with no
     customer header configured. Raises Unattributed when the call names no

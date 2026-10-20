@@ -149,3 +149,23 @@ async def test_a_stub_of_the_served_model_gets_no_tombstone(worker_env) -> None:
     await w.run_pass(EmbeddingWorkerConfig(batch_size=10))
     rows = [r for batch in worker_env["inserted"] for r in batch]
     assert all(r["tombstoned_at"] is None for r in rows)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("org", ["", "-", "*"])
+async def test_a_stub_naming_no_customer_is_given_up_on_without_a_model_call(
+    worker_env, monkeypatch, org: str
+) -> None:
+    from server.llm import customer
+    from server.observability import genai
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "inference_customer_header", "X-Customer")
+    genai._identity.set(None)
+    worker_env["stubs"][0]["org"] = org
+    worker_env["embedder"].fail = True  # a call would be a provider failure
+    result = await w.run_pass(EmbeddingWorkerConfig(batch_size=10, max_attempts=5))
+    assert result.poisoned_count == 1 and result.failed_count == 0
+    (retry,) = [r for batch in worker_env["inserted"] for r in batch if r["embedding_dim"] == 0]
+    assert retry["embed_last_error"] == customer.NO_CUSTOMER
+    assert retry["embed_attempts"] == 1 and retry["embed_failed_at"] is not None
