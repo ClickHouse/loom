@@ -29,7 +29,8 @@ import itertools
 import logging
 import time
 from collections import OrderedDict, defaultdict
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -190,6 +191,18 @@ def invalidate(org: str, subjects: Iterable[str] | None = None, *, kind: str = G
             del _entries[key]
     for key in [k for k in _loading if k[0] == org]:
         del _loading[key]
+
+
+@asynccontextmanager
+async def announced(
+    org: str, subjects: Iterable[str] | None = None, *, kind: str = GRANTS
+) -> AsyncIterator[None]:
+    """Run a change's writes, then `changed`, even when one raises: a write
+    whose reply was lost may have landed, and the retry finds nothing to do."""
+    try:
+        yield
+    finally:
+        await changed(org, subjects, kind=kind)
 
 
 async def changed(org: str, subjects: Iterable[str] | None = None, *, kind: str = GRANTS) -> None:

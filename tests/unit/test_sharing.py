@@ -1541,8 +1541,13 @@ def test_a_tree_write_whose_reply_is_lost_still_moves_the_watermark(
     from server.identity.api.models_collections import CollectionMoveInput
     from server.identity.app import collections
 
-    row = {"namespace": "col-q3-docs", "parent": "col-q3", "owner": "user:alice"}
-    row.update({"created_at": 0, "version": 1})
+    row = {
+        "namespace": "col-q3-docs",
+        "parent": "col-q3",
+        "owner": "user:alice",
+        "created_at": 0,
+        "version": 1,
+    }
     moved: list[str] = []
 
     @asynccontextmanager

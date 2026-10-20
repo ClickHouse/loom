@@ -162,17 +162,23 @@ async def fetch_group(org: str, group_id: str) -> dict[str, Any] | None:
 
 
 async def _write(row: dict[str, Any], *, event: str, actor: str) -> None:
-    await get_client().insert(
-        "loom.principal_groups", [row], settings={"async_insert": 0, "wait_for_async_insert": 1}
-    )
-    await grant_cache.changed(row["org"], kind=grant_cache.GROUPS)
-    await audit.emit(
-        event,
-        org=row["org"],
-        namespace="-",
-        actor=actor,
-        subject={"group": row["group_id"], "members": len(row["members"])},
-    )
+    """The group's row, announced and audited even when the insert's reply is
+    lost: it may have landed, and a client that does not retry never asks again."""
+    try:
+        async with grant_cache.announced(row["org"], kind=grant_cache.GROUPS):
+            await get_client().insert(
+                "loom.principal_groups",
+                [row],
+                settings={"async_insert": 0, "wait_for_async_insert": 1},
+            )
+    finally:
+        await audit.emit(
+            event,
+            org=row["org"],
+            namespace="-",
+            actor=actor,
+            subject={"group": row["group_id"], "members": len(row["members"])},
+        )
 
 
 def _members(value: Any) -> list[str]:

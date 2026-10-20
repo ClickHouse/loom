@@ -1,6 +1,7 @@
 """A user erasure's identity steps (server/erasure/app/saga_steps.py): each
 holds the claims an online writer of the same rows holds, in the documented
-order, and moves the watermark only when it changed something."""
+order, and moves the watermark once it tried to change something (a write
+whose reply was lost may have landed)."""
 
 from __future__ import annotations
 
@@ -55,6 +56,25 @@ def test_groups_are_left_one_claim_each_and_moved_once(
     assert held == ["group eng", "group ops", "changed groups"]
 
 
+def test_a_removal_whose_reply_is_lost_still_moves_the_watermark(
+    monkeypatch: pytest.MonkeyPatch, held: list[str]
+) -> None:
+    """The saga's retry finds the user in no group and would announce nothing."""
+    _returns(monkeypatch, "groups_of_user", ["eng", "ops"])
+    calls: list[str] = []
+
+    async def _remove(org: str, group_id: str, user_id: str) -> int:
+        calls.append(group_id)
+        if group_id == "ops":
+            raise TimeoutError("reply lost")
+        return 1
+
+    monkeypatch.setattr(saga_steps.principal_steps, "remove_from_group", _remove)
+    with pytest.raises(TimeoutError):
+        asyncio.run(saga_steps._step_remove_from_groups_by_user(ORG, "bob"))
+    assert calls == ["eng", "ops"] and held == ["group eng", "group ops", "changed groups"]
+
+
 def test_no_group_listing_the_user_moves_no_watermark(
     monkeypatch: pytest.MonkeyPatch, held: list[str]
 ) -> None:
@@ -79,4 +99,5 @@ def test_the_creators_id_goes_under_each_directory_claim_then_the_trees(
     _returns(monkeypatch, "forget_collection_owner_by_user", rewritten)
     assert asyncio.run(saga_steps._step_forget_collection_owner_by_user(ORG, "bob")) == rewritten
     claims = [f"account {ns}" for ns in created] + [f"tree {ORG}"]
-    assert held == claims + (["changed collections"] if rewritten else [])
+    # Announced once the rewrite is attempted: a lost reply may hide one that landed.
+    assert held == [*claims, "changed collections"]

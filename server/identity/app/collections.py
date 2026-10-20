@@ -163,12 +163,9 @@ async def handle_collection_move(input: CollectionMoveInput) -> CollectionMoveOu
 
 
 async def _announced(org: str, write: Awaitable[None]) -> None:
-    """Run a tree write, then move the org's watermark, even when the write's
-    reply is lost: the row may have landed, and a retry finds nothing to do."""
-    try:
+    """A tree write, announced even when its reply is lost (`grant_cache.announced`)."""
+    async with grant_cache.announced(org, kind=grant_cache.COLLECTIONS):
         await write
-    finally:
-        await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
 
 
 async def handle_collection_list(input: CollectionListInput) -> CollectionListOutput:

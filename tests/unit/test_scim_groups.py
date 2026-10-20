@@ -230,3 +230,38 @@ def test_a_list_takes_eq_in_any_case_and_any_start(store: _Store) -> None:
     assert [g["id"] for g in listed["Resources"]] == ["ops"]
     far = c.get("/scim/v2/Groups", params={"startIndex": str(10**30)})
     assert far.status_code == 200 and far.json()["Resources"] == []
+
+
+def test_a_group_write_whose_reply_is_lost_is_still_announced_and_audited(
+    store: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The row may have landed; a provider that does not retry never asks again."""
+    from server.identity.app import scim_groups
+
+    c = _client()
+    c.post("/scim/v2/Groups", json={"externalId": "ops", "members": [{"value": "bob"}]})
+    watermarks, audited = len(store.watermarks), []
+
+    real = scim_groups.get_client()
+
+    class _Lost:
+        """The store, but the group's insert loses its reply after it lands."""
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(real, name)
+
+        async def insert(self, table: str, rows: list[dict[str, Any]], **k: Any) -> None:
+            await real.insert(table, rows, **k)
+            if table == "loom.principal_groups":
+                raise TimeoutError("reply lost")
+
+    async def _emit(event: str, **_k: Any) -> str:
+        audited.append(event)
+        return "h"
+
+    monkeypatch.setattr(scim_groups, "get_client", lambda: _Lost())
+    monkeypatch.setattr(scim_groups.audit, "emit", _emit)
+    patch = {"Operations": [{"op": "remove", "path": "members"}]}
+    assert c.patch("/scim/v2/Groups/ops", json=patch).status_code == 503
+    assert store.rows[(ORG, "ops")]["members"] == [], "the row landed"
+    assert len(store.watermarks) == watermarks + 1 and audited == ["scim.group_changed"]
