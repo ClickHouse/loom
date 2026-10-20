@@ -24,7 +24,7 @@ Put = Callable[[str, bytes], bool]
 # Reading a month partition of the ledger, or every live memory row, can take
 # far longer than the 30-second read deadline. The CLI connects inside
 # `statement_timeout(STATEMENT_TIMEOUT_S)`, so the driver's read timeout covers it too.
-STATEMENT_TIMEOUT_S = 1200
+STATEMENT_TIMEOUT_S = 1200  # not a setting: the chart's Job deadline is sized from it
 
 # A shorter key can be searched offline from one known name and its hash.
 MIN_NAME_KEY_CHARS = 32

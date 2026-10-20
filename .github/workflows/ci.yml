@@ -345,6 +345,7 @@ jobs:
           refused "$key" --set env.LOOM_ANALYTICS_EXPORT_NAME_KEY=x
           refused "$key" --set secrets.extra.LOOM_ANALYTICS_EXPORT_NAME_KEY=x
           refused "$key" --set "extraEnv[0].name=LOOM_ANALYTICS_EXPORT_NAME_KEY"
+          refused "$key" --set settingsFile.analytics_export_name_key=x
           refused "needs analyticsExport.bucket" "${on[@]}" --set analyticsExport.bucket=
           refused "needs analyticsExport.nameKeySecret.name" "${on[@]}" --set analyticsExport.nameKeySecret.name=
           refused "expectedBucketOwner must be a quoted string" "${on[@]}" --set analyticsExport.expectedBucketOwner=123456789012

@@ -106,8 +106,8 @@ restarts mid-rollout keeps its own config instead of booting with the new one. *
 {{- end }}
 {{- /* The analytics export's name key reaches the export pod only. */}}
 {{- $nameKey := "LOOM_ANALYTICS_EXPORT_NAME_KEY" }}
-{{- $nameKeyRefused := printf "set %s through analyticsExport.nameKeySecret, which only the export pod reads, not env, extraEnv or secrets.extra" $nameKey }}
-{{- if or (hasKey .Values.env $nameKey) (hasKey .Values.secrets.extra $nameKey) }}
+{{- $nameKeyRefused := printf "set %s through analyticsExport.nameKeySecret, which only the export pod reads, not env, extraEnv, secrets.extra or settingsFile" $nameKey }}
+{{- if or (hasKey .Values.env $nameKey) (hasKey .Values.secrets.extra $nameKey) (hasKey (.Values.settingsFile | default dict) "analytics_export_name_key") }}
 {{- fail $nameKeyRefused }}
 {{- end }}
 {{- range .Values.extraEnv }}
