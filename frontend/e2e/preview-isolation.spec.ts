@@ -64,7 +64,7 @@ async function serveUnderDashboardCsp(page: Page) {
       window.__cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`),
     );
   });
-  // Dashboard page loads only: an API document (a preview frame's download URL) keeps its own headers.
+  // Dashboard page loads only: an API document (the download URL opened on its own) keeps its own headers.
   await page.route(
     (url) => !url.pathname.startsWith("/v1/"),
     async (r) => {
