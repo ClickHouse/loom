@@ -399,6 +399,10 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "groups.remove_member": ("loom.principal_groups",),
     "personal.retire": ("loom.namespaces",),
     "collections.forget_owner": ("loom.collections", "loom.namespaces"),
+    # The org's other cache: its cached query vectors (never their text), deleted
+    # org-wide beside the replay bodies at both scopes but not counted, since any
+    # search in the org refills them between the step and the census.
+    "idempotency.delete": ("loom.embedding_cache",),
 }
 
 # Every other `loom.*` table in schemas/schema.sql, with the reason it holds
@@ -462,10 +466,6 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "(org, namespace), holding no memory or source content; retired by active=false."
     ),
     # -- no tenant axis: cannot be scoped by namespace or user -----------------
-    "loom.embedding_cache": (
-        "no org/namespace column; a vector keyed by sha1(model, text) — the text is "
-        "not stored; 30-day TTL. The compliance bench counts the canary's key."
-    ),
     "loom.audit_checkpoints": "hash-chain checkpoints over the audit log; digests only.",
     "loom.blacklist_version": "singleton version counter for the blacklist cache.",
     "loom.acl_versions": (

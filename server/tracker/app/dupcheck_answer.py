@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.datetimes import to_naive_utc
+from server.core.llm_free import reads_llm_free
 from server.settings import settings
 from server.tracker.api.models import (
     TrackerDuplicateCheckOutput,
@@ -193,7 +194,7 @@ async def judge_uncertain(src: Any, input: Any, run: dict[str, Any], out: Any, f
     on a `duplicate_of` or an empty answer."""
     from server.tracker.app import dup_judge
 
-    if not bool(settings.tracker_dupcheck_judge_enabled):
+    if not bool(settings.tracker_dupcheck_judge_enabled) or reads_llm_free():
         return out
     if fit is None or not out.items or out.verdict not in ("related", "duplicate_of"):
         return out

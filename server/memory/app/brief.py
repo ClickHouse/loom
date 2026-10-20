@@ -4,6 +4,7 @@ has the wire models)."""
 
 from __future__ import annotations
 
+from server.core.llm_free import reads_llm_free
 from server.memory.api.models_ask import MemoryAskInput
 from server.memory.api.models_brief import BriefEvidence, MemoryBriefInput, MemoryBriefOutput
 from server.memory.api.models_common import _Identity
@@ -29,7 +30,8 @@ async def handle_memory_brief(input: MemoryBriefInput) -> MemoryBriefOutput:
         query=input.query,
         top_k=input.top_k,
         tags=list(input.tags),
-        allow_synthesis=True,
+        # LLM-free reads (LOOM_READS_LLM_FREE): the evidence and unknowns, no answer
+        allow_synthesis=not reads_llm_free(),
         reinforce=False,  # orientation read, not reliance
     )
     out = await handle_memory_ask(ask)

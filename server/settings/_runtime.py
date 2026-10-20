@@ -24,6 +24,9 @@ class RuntimeSettings(BaseModel):
     # namespace whose rolling 24 h cost reached it. Overridden per namespace by
     # loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers.
     default_daily_cost_cap_usd: float = 1.0
+    # True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion
+    # embeddings, and rerank only as named, since a reranker is a model call.
+    reads_llm_free: bool = False
 
     # The rate limiter divides every cap by the deployment's replica count so
     # the replicas' sum matches the target (approximate, not cluster-strict).

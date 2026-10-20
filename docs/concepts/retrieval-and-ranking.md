@@ -63,9 +63,10 @@ costs roughly twice the bytes, and it only helps where keys carry meaning.
 expensive legs run. Under `standard`, cheap recall runs first and the LLM legs
 (HyDE, query decomposition, the iterative retry) spend only when the first pass is
 weak, bounded by `LOOM_MEMORY_SEARCH_FALLBACK_MAX_ROUNDS` and
-`LOOM_MEMORY_SEARCH_FALLBACK_MAX_WALL_MS`. HyDE embeds an LLM-written hypothetical answer
-instead of the question, which closes the gap between how questions and stored claims
-are phrased; `hyde=false` forces the raw query.
+`LOOM_MEMORY_SEARCH_FALLBACK_MAX_WALL_MS`. Under `fast` (or the `fast` recipe) a read
+makes no LLM call; it costs embeddings and ClickHouse reads. HyDE embeds an LLM-written
+hypothetical answer instead of the question, which closes the gap between how questions
+and stored claims are phrased; `hyde=false` forces the raw query.
 
 ## Fusion
 

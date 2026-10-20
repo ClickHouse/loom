@@ -56,7 +56,9 @@ async def test_the_cache_row_carries_the_window_keys_the_call_rendered() -> None
     ch = _CH()
     lc.set_window_keys(["k1", "k2", "k1", "", None])
     try:
-        await CachedLLMClient(_Inner(), ch=ch, table="loom.t").complete("sys", "u", max_tokens=100)
+        await CachedLLMClient(_Inner(), org="o", ch=ch, table="loom.t").complete(
+            "sys", "u", max_tokens=100
+        )
         await _settle()
         assert len(ch.inserts) == 1
         row = ch.inserts[0][1][0]
@@ -64,7 +66,7 @@ async def test_the_cache_row_carries_the_window_keys_the_call_rendered() -> None
         # a narrowed scope is what one call stores; the enclosing window returns
         with lc.window_keys_scope(["k9"]):
             assert lc.current_window_keys() == ("k9",)
-            await CachedLLMClient(_Inner(), ch=ch, table="loom.t").complete(
+            await CachedLLMClient(_Inner(), org="o", ch=ch, table="loom.t").complete(
                 "sys", "v", max_tokens=100
             )
         assert lc.current_window_keys() == ("k1", "k2")
@@ -73,7 +75,9 @@ async def test_the_cache_row_carries_the_window_keys_the_call_rendered() -> None
     finally:
         lc.set_window_keys([])
     # outside an ask there is no window: the row has no key axis
-    await CachedLLMClient(_Inner(), ch=ch, table="loom.t").complete("sys", "w", max_tokens=100)
+    await CachedLLMClient(_Inner(), org="o", ch=ch, table="loom.t").complete(
+        "sys", "w", max_tokens=100
+    )
     await _settle()
     assert ch.inserts[2][1][0]["window_keys"] == []
 
@@ -97,7 +101,7 @@ async def test_synthesize_publishes_exactly_the_keys_it_rendered() -> None:
     try:
         window = [_mem("k1", "The dose is 20 mg."), _mem("k2", "Taken at breakfast.")]
         await synthesis._synthesize(
-            CachedLLMClient(_Inner(), ch=ch, table="loom.t"), "dose?", list(window)
+            CachedLLMClient(_Inner(), org="o", ch=ch, table="loom.t"), "dose?", list(window)
         )
         await _settle()
         assert ch.inserts[0][1][0]["window_keys"] == ["k1", "k2"]

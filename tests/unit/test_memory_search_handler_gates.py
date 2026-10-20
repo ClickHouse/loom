@@ -388,6 +388,18 @@ async def test_parser_gate_skips_enrichment_llm_on_confident_spec(search_env) ->
     assert out.retrieval_work["llm_calls_total"] == 0
 
 
+async def test_a_standard_read_estimates_no_llm_call_for_its_parser(search_env) -> None:
+    # Enrichment is the deterministic parser: a standard read that planned no LLM step
+    # (no HyDE, graph triples or LLM reranker) estimates no LLM call.
+    search_env.hits = [_svc_hit("a", sim=0.80, rank=1.0), _svc_hit("b", sim=0.70, rank=0.5)]
+    out = await _run(
+        search_env, query="how many books did I buy last month?", observation_date="2023-07-15"
+    )
+    assert out.retrieval_work["intent_parser_used"] is True
+    assert "hyde=off" in out.retrieval_plan
+    assert out.retrieval_cost_estimate["llm_calls"] == 0
+
+
 async def test_parser_gate_abstention_stays_llm_free_on_fast(search_env) -> None:
     search_env.hits = [_svc_hit("a", sim=0.80, rank=1.0)]
     out = await _run(
@@ -414,6 +426,237 @@ async def test_parser_abstention_takes_the_empty_signal(
         top_k=1,
     )
     assert out.retrieval_work["query_enrichment_used"] is False
+
+
+@pytest.fixture
+def llm_attempts(search_env, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every LLM call a search tries, each refused: the model client, the
+    derived-intent extractor and the judge record and raise. The real derived
+    aggregate runs (on the empty fake ClickHouse), so its synonym expansion
+    would reach the client, with an empty synonym cache."""
+    import server.llm.client as llm_client
+    import server.memory.app.retrieval as msearch
+    import server.memory.app.search_llm as sllm
+    from server.memory.app.retrieval.derived import fetch_derived_aggregate
+
+    attempts: list[str] = []
+
+    class _RefusingLLM:
+        model = "refusing"
+
+        async def complete(self, system: str = "", user: str = "", **kw: Any) -> Any:
+            attempts.append(f"complete: {user[:60]}")
+            raise AssertionError("an LLM call")
+
+    async def refused(name: str) -> Any:
+        attempts.append(name)
+        raise AssertionError("an LLM call")
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _RefusingLLM())
+    monkeypatch.setattr(llm_client, "get_llm_client_for_model", lambda *a, **k: _RefusingLLM())
+    monkeypatch.setattr(sllm, "extract_derived_intent_llm", lambda *a, **k: refused("intent"))
+    monkeypatch.setattr(sllm, "judge_results_iteratively", lambda *a, **k: refused("judge"))
+
+    async def no_triples(*a: Any, **k: Any) -> list[tuple[str, str, str]]:
+        attempts.append("triples")  # recorded; empty, as the extractor fails open
+        return []
+
+    monkeypatch.setattr(sllm, "extract_query_triples_llm", no_triples)
+    monkeypatch.setattr(sllm, "_VERB_SYNONYM_CACHE", type(sllm._VERB_SYNONYM_CACHE)())
+    monkeypatch.setattr(msearch, "fetch_derived_aggregate", fetch_derived_aggregate)
+    search_env.hits = [_svc_hit("a", sim=0.80, rank=0.8), _svc_hit("b", sim=0.40, rank=0.4)]
+    return attempts
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "what is my favorite color",
+        "how many model kits have I bought?",  # a count: the parser's intent
+        "how much did I spend on books in total?",
+        # A date difference the parser gives no aggregate intent for.
+        "how many days passed between the day I got my binoculars and the day I "
+        "noticed the goldfinches?",
+        "what changed about my job since last year?",
+    ],
+)
+@pytest.mark.parametrize(
+    "posture",
+    [
+        {"retrieval_budget": "fast"},
+        {"recipe": "fast"},
+        {"retrieval_budget": "fast", "recipe": "quality"},  # quality turns HyDE on
+        {"retrieval_budget": "fast", "recipe": "graph"},  # graph extracts triples
+        {"recipe": "fast", "hyde": True},
+        {"recipe": "fast", "rerank": "builtin:openai"},
+    ],
+    ids=["budget", "recipe", "budget-quality", "budget-graph", "recipe-hyde", "builtin-rerank"],
+)
+async def test_a_fast_read_makes_no_llm_call(
+    search_env, llm_attempts, query: str, posture: dict[str, Any]
+) -> None:
+    out = await _run(search_env, query=query, observation_date="2023-07-15", **posture)
+    assert llm_attempts == []
+    assert out.retrieval_work["llm_calls_total"] == 0
+    _assert_plans_no_llm(out)
+    assert out.results  # still answered, from the vector query alone
+
+
+def _assert_plans_no_llm(out: Any) -> None:
+    # What the read reports it planned and costed shows no LLM step either.
+    assert "hyde=off" in out.retrieval_plan and "hyde=on" not in out.score_explanation
+    assert "rerank=on" not in out.retrieval_plan  # a builtin:openai rerank is dropped
+    assert out.retrieval_cost_estimate["llm_calls"] == 0
+
+
+_PACK_QUESTIONS = [
+    "what is my favorite color",  # plain
+    "how many model kits have I bought?",  # a count
+    "how much did I spend on books in total?",  # a sum
+    # A date difference the parser gives no aggregate intent for.
+    "how many days passed between the day I got my binoculars and the day I "
+    "noticed the goldfinches?",
+    "what changed about my job since last year?",  # a change over time
+    # Multi-hop: two clauses, compared.
+    "which city did my sister move to, and how far is it from where my brother lives?",
+]
+
+
+@pytest.mark.parametrize("query", _PACK_QUESTIONS)
+@pytest.mark.parametrize("mode", ["task", "startup", "debug", "handoff"])
+@pytest.mark.parametrize(
+    "reranker",
+    ["", "builtin:openai", "builtin:cohere"],
+    ids=["no-rerank", "llm-rerank", "service-rerank"],
+)
+async def test_a_context_pack_makes_no_llm_call(
+    search_env,
+    llm_attempts,
+    monkeypatch: pytest.MonkeyPatch,
+    query: str,
+    mode: str,
+    reranker: str,
+) -> None:
+    # A chat client packs context on every turn in the default task mode, whose
+    # balanced recipe (and debug's quality recipe) would otherwise spend LLM calls.
+    import server.memory.app.rerank as rerank_mod
+    from server.memory.api.models_context import ContextPackInput
+    from server.memory.app.context_pack import handle_context_pack
+
+    async def namespace_rerank(org: str, ns: str) -> tuple[str, str]:
+        return (reranker, "")  # builtin:openai is an LLM; builtin:cohere a rerank service
+
+    monkeypatch.setattr(rerank_mod, "get_namespace_rerank_config", namespace_rerank)
+    import server.knowledge.app.conversations as conversations_mod
+    import server.knowledge.app.knowledge_search as knowledge_mod
+    import server.memory.app.search as search_mod
+
+    searched: list[Any] = []
+    ran: list[str] = []
+
+    def recorded(name: str, handler: Any, outputs: list[Any] | None = None) -> Any:
+        async def _h(*a: Any, **k: Any) -> Any:
+            ran.append(name)
+            out = await handler(*a, **k)
+            if outputs is not None:
+                outputs.append(out)
+            return out
+
+        return _h
+
+    for mod, name in (
+        (knowledge_mod, "handle_knowledge_search"),
+        (conversations_mod, "handle_conversation_search"),
+    ):
+        monkeypatch.setattr(mod, name, recorded(name, getattr(mod, name)))
+    search = search_mod.handle_memory_search
+    monkeypatch.setattr(
+        search_mod, "handle_memory_search", recorded("memory_search", search, searched)
+    )
+    out = await handle_context_pack(
+        ContextPackInput(
+            org="o",
+            namespace="ns",
+            agent="a",
+            query=query,
+            mode=mode,
+            include_knowledge=True,
+            include_conversations=True,
+        )
+    )
+    assert llm_attempts == []
+    assert "memories" in out.sections  # answered from the vector query alone
+    # The opt-in sections ran (an empty one that raised would pass the check above).
+    assert {"handle_knowledge_search", "handle_conversation_search"} <= set(ran)
+    assert searched  # the memories search, and the procedures section's
+    for search_out in searched:
+        _assert_plans_no_llm(search_out)
+
+
+async def test_a_debug_pack_never_asks_the_retry_judge(search_env, llm_attempts) -> None:
+    # Mid-range hits open the judge on the quality recipe (debug mode's) off the
+    # LLM-free posture; the pack keeps it closed.
+    from server.memory.api.models_context import ContextPackInput
+    from server.memory.app.context_pack import handle_context_pack
+
+    search_env.hits = [_svc_hit("mid", sim=0.50, rank=1.0), _svc_hit("other", sim=0.48, rank=0.2)]
+    await handle_context_pack(
+        ContextPackInput(org="o", namespace="ns", agent="a", query="what is my plan", mode="debug")
+    )
+    assert "judge" not in llm_attempts
+
+
+async def test_off_the_llm_free_posture_the_judge_runs_on_the_same_hits(
+    search_env, llm_attempts
+) -> None:
+    search_env.hits = [_svc_hit("mid", sim=0.50, rank=1.0), _svc_hit("other", sim=0.48, rank=0.2)]
+    with pytest.raises(AssertionError, match="an LLM call"):  # the judge does not fail open
+        await _run(search_env, recipe="quality", query="what is my plan")
+    assert "judge" in llm_attempts
+
+
+async def test_off_the_llm_free_posture_graph_mode_extracts_triples(
+    search_env, llm_attempts
+) -> None:
+    await _run(search_env, recipe="graph")
+    assert "triples" in llm_attempts
+
+
+async def test_off_the_llm_free_posture_a_count_expands_its_verb(search_env, llm_attempts) -> None:
+    await _run(
+        search_env, query="how many model kits have I bought?", observation_date="2023-07-15"
+    )
+    assert any(a.startswith('complete: verb: "buy"') for a in llm_attempts)
+
+
+async def test_off_the_llm_free_posture_the_llm_reranker_runs(search_env, llm_attempts) -> None:
+    # A positive control: without the fast posture or the pack's flag, a requested
+    # builtin:openai rerank reaches the model client.
+    await _run(search_env, recipe="balanced", rerank="builtin:openai")
+    assert any(a.startswith("complete: Query:") for a in llm_attempts)
+
+
+async def test_off_the_llm_free_posture_the_quality_recipe_runs_hyde_once(
+    search_env, llm_attempts
+) -> None:
+    await _run(search_env, recipe="quality")
+    hyde = [a for a in llm_attempts if a.startswith("complete: Question:")]
+    assert len(hyde) == 1
+
+
+async def test_the_standard_budget_still_asks_the_llm_for_a_count_intent(
+    search_env, llm_attempts
+) -> None:
+    # The same date-difference question off the fast posture keeps its LLM leg.
+    await _run(
+        search_env,
+        query=(
+            "how many days passed between the day I got my binoculars and the day I "
+            "noticed the goldfinches?"
+        ),
+        observation_date="2023-07-15",
+    )
+    assert "intent" in llm_attempts
 
 
 def _canonical_recorder(monkeypatch: pytest.MonkeyPatch) -> list[dict]:

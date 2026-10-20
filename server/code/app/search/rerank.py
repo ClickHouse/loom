@@ -9,6 +9,7 @@ from typing import Any
 
 from server.code.app.spans import code_span
 from server.code.domain.units import CodeUnit
+from server.core.llm_free import reads_llm_free
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -73,13 +74,18 @@ _RERANK_MIN_MS = 500
 
 def _default_rerank(work: dict[str, Any]) -> tuple[str, int, int]:
     """(endpoint, top, excerpt_chars) of the deployment's default rerank for this
-    question's kind, or ("", 0, 0) when none applies."""
+    question's kind, or ("", 0, 0) when none applies or reads are LLM-free (a reranker
+    is a model call, and such a read runs only the one its request names)."""
     from server.code.domain.index.question_kind import kind_allowed
 
     endpoint = str(settings.code_search_rerank_default).strip()
-    if not endpoint or not kind_allowed(
-        str(work.get("question_kind") or "other"),
-        settings.code_search_rerank_kinds,
+    if (
+        not endpoint
+        or reads_llm_free()
+        or not kind_allowed(
+            str(work.get("question_kind") or "other"),
+            settings.code_search_rerank_kinds,
+        )
     ):
         return "", 0, 0
     work["rerank_default"] = 1

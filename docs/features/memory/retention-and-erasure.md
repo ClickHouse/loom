@@ -129,6 +129,12 @@ flowchart TD
   document version that named an original may have been replaced and merged away) and
   through their documents; then their rows of `loom.blob_uploads` go. The census counts
   both tables.
+- **Org-wide caches.** `loom.idempotency` (replayed responses) and `loom.embedding_cache`
+  (query vectors, never their text) carry the org but no namespace or end user, so an
+  erasure at either scope deletes all of the org's rows in both tables. The cost is cache
+  misses. The census counts `loom.idempotency` org-wide but not `loom.embedding_cache`,
+  which any search in the org refills; each replica's process cache of vectors expires
+  within `LOOM_EMBEDDING_CACHE_TTL_S`.
 
 ### The federated cascade
 
