@@ -232,25 +232,29 @@ def test_calls_made_during_a_read_wait_for_it(switch: _Switch, monkeypatch) -> N
         return list(await asyncio.gather(*(customer.switched_off("acme") for _ in range(3))))
 
     async def first_then_stale() -> None:
-        assert await together() == [False] * 3 and switch.reads == 1
+        assert await together() == [False] * 3
+        assert switch.reads == 1
         stale = settings.model_calls_policy_max_stale_seconds + 1
         customer._switch.read_at, customer._switch.next_read = time.monotonic() - stale, 0.0
-        assert await together() == [False] * 3 and switch.reads == 2
+        assert await together() == [False] * 3
+        assert switch.reads == 2
 
     asyncio.run(first_then_stale())  # one loop, as a server process has
 
 
 def test_a_cancelled_read_leaves_the_next_call_to_read(switch: _Switch, monkeypatch) -> None:
     plain = switch.query_all
+    reading = asyncio.Event()
 
     async def hang(sql: str, **kw: Any) -> list[dict[str, Any]]:
+        reading.set()
         await asyncio.sleep(10)
         return []
 
     async def cancelled_then_read() -> bool:
         monkeypatch.setattr(switch, "query_all", hang)
         first = asyncio.ensure_future(customer.switched_off("acme"))
-        await asyncio.sleep(0.01)
+        await reading.wait()
         first.cancel()  # the request that made the read went away
         with pytest.raises(asyncio.CancelledError):
             await first
@@ -258,6 +262,31 @@ def test_a_cancelled_read_leaves_the_next_call_to_read(switch: _Switch, monkeypa
         return await customer.switched_off("acme")
 
     assert asyncio.run(cancelled_then_read()) is False
+
+
+def test_a_call_made_during_a_read_is_served_the_copy_in_hand(switch: _Switch, monkeypatch) -> None:
+    """A read is due and in progress; the copy in hand is young enough and no
+    change made here waits to be read, so a second call does not wait for it."""
+    reading, release = asyncio.Event(), asyncio.Event()
+    plain = switch.query_all
+
+    async def slow(sql: str, **kw: Any) -> list[dict[str, Any]]:
+        reading.set()
+        await release.wait()
+        return await plain(sql, **kw)
+
+    async def second_call_during_the_read() -> bool:
+        customer._reset_for_tests(frozenset({"acme"}))
+        customer._switch.next_read = time.monotonic() - 1  # due, not asked for by a change
+        monkeypatch.setattr(switch, "query_all", slow)
+        first = asyncio.ensure_future(customer.switched_off("acme"))
+        await reading.wait()
+        second = await asyncio.wait_for(customer.switched_off("acme"), timeout=1.0)
+        release.set()
+        await first
+        return second
+
+    assert asyncio.run(second_call_during_the_read()) is True  # the copy in hand
 
 
 def test_a_change_made_during_a_read_is_read_again(switch: _Switch, monkeypatch) -> None:
