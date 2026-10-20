@@ -2654,7 +2654,7 @@ ENGINE = MergeTree
 PARTITION BY toDate(recorded_at)
 ORDER BY (event_id, version)
 TTL toDateTime(recorded_at) + toIntervalDay(3)
-SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+SETTINGS non_replicated_deduplication_window = 1000, ttl_only_drop_parts = 1, index_granularity = 8192;
 
 -- loom.memory_webhook_outbox
 CREATE TABLE IF NOT EXISTS loom.memory_webhook_outbox
@@ -2677,9 +2677,9 @@ CREATE TABLE IF NOT EXISTS loom.memory_webhook_outbox
 )
 ENGINE = MergeTree
 PARTITION BY toDate(occurred_at)
-ORDER BY (occurred_at, event_id)
+ORDER BY (org, namespace, webhook_id, occurred_at, event_id)
 TTL toDateTime(occurred_at) + toIntervalDay(3)
-SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+SETTINGS non_replicated_deduplication_window = 1000, ttl_only_drop_parts = 1, index_granularity = 8192;
 
 -- loom.memory_webhooks
 CREATE TABLE IF NOT EXISTS loom.memory_webhooks
