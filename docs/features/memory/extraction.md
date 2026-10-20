@@ -144,8 +144,9 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   run: recovered preferences, costs and ages; facts an assistant turn states as the
   user's premise; a forget request's correction kept in the user's own words; code file
   paths and concepts taken from the cited turns rather than the fact (a fact keeps those
-  in its own text); and the action and file paths an observe event copies from the raw
-  tool call. The model may have left those out because of the policy, and
+  in its own text); a fact's `speaker:<name>` tag and name entity taken from the cited
+  turns; and the action and file paths that an observe event or a hint note copies from
+  the raw tool calls. The model may have left those out because of the policy, and
   these passes cannot read it. An extraction under a policy can therefore keep fewer
   facts than the same extraction without one. `memory.set_from_messages` answers
   `under_operator_policy: true` when it ran under one (a deferred request answers

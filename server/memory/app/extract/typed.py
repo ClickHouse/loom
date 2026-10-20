@@ -250,9 +250,9 @@ async def extract_typed_record_iterative(
     messages: list[dict[str, object]],
     schema: Mapping[str, object],
     *,
+    operator_policy: str,
     max_tokens: int = 1024,
     observation_date: str | None = None,
-    operator_policy: str,
 ) -> tuple[ExtractedRecord, LLMResult]:
     """Gated, per-field schema-aware extraction.
 

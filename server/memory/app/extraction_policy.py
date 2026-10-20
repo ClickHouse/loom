@@ -69,17 +69,6 @@ def forget() -> None:
     _policies.forget()
 
 
-def _reset_for_tests(
-    policies: dict[tuple[str, str], str] | None = None, *, read: bool = True
-) -> None:
-    """The policies as just read, or never read when not `read`."""
-    _policies._reset_for_tests(
-        dict(policies or {}) if read else None,
-        read_age_s=0.0 if read else None,
-        due_in_s=settings.model_calls_policy_refresh_seconds if read else 0.0,
-    )
-
-
 def _scope(
     input: ExtractionPolicySetInput | ExtractionPolicyGetInput | ExtractionPolicyClearInput,
 ) -> tuple[str, str]:
@@ -111,8 +100,10 @@ async def _write(org: str, namespace: str, policy: str) -> None:
 
 
 async def handle_extraction_policy_set(input: ExtractionPolicySetInput) -> ExtractionPolicyOutput:
-    """Set the scope's policy, replacing the one it held. Every process extracts
-    under it within `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`. While a policy is
+    """Set the scope's policy, replacing the one it held; under it, an
+    extraction can keep fewer facts, since the passes that add what the model
+    left out do not run. Every process extracts under it within
+    `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`. While a policy is
     in force, the passes that add rows the model left out (recovered
     preferences, costs and ages, assistant-stated premises, a forget request's
     correction in the user's words) do not run; `memory.set_from_messages`

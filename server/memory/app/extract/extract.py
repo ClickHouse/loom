@@ -412,7 +412,9 @@ def _settle_facts(
     # anchor is what gets written.
     if facts:
         facts = _apply_relative_date_grounding(facts, observation_date or "")
-    facts = apply_message_speakers(facts, messages)
+    # A speaker's name is copied from the raw turns, not written by the model.
+    if recover_rows:
+        facts = apply_message_speakers(facts, messages)
 
     # Deterministic code-native facets: populates files[] + concepts[]
     # without touching the atomic fact value.

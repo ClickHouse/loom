@@ -484,7 +484,7 @@ async def distill_events(
                         with_action=not policy,
                     ),
                     tags=tags,
-                    # Under a policy the row carries only what the model wrote.
+                    # Under a policy no path from the raw call is stored.
                     entities=[] if policy else list(after.file_paths[:12]),
                     confidence=0.9,
                     source_trace=f"{EVENT_SOURCE_TRACE}:{before.memory_key}>{after.memory_key}",
@@ -544,9 +544,8 @@ async def distill_notes(
         return res
     from server.memory.app import extraction_policy
 
-    system = with_policy(
-        _NOTES_SYSTEM, await extraction_policy.effective(session["org"], session["namespace"])
-    )
+    policy = await extraction_policy.effective(session["org"], session["namespace"])
+    system = with_policy(_NOTES_SYSTEM, policy)
     try:
         with llm_stage("observe_extract.notes"):
             out = await llm.complete(system, notes_prompt(observations), max_tokens=900)
@@ -600,7 +599,8 @@ async def distill_notes(
             # entity-overlap credit when the question names one ("what about
             # server/main.py"): reachable by cosine, but un-boosted. The
             # hint's entities are the session's paths.
-            hint_entities = hint_entities_for(observations)
+            # Under a policy no path from the raw calls is stored.
+            hint_entities = [] if policy else hint_entities_for(observations)
             await handle_memory_set(
                 MemorySetInput(
                     org=session["org"],

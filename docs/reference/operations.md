@@ -334,7 +334,7 @@ Fields for every `extraction_policy` op: [operations/extraction_policy.md](opera
 | --- | --- | --- | --- | --- | --- |
 | [`extraction_policy.clear`](operations/extraction_policy.md#extraction_policyclear) | Remove the scope's policy. | org_admin | idempotent | no | yes |
 | [`extraction_policy.get`](operations/extraction_policy.md#extraction_policyget) | The scope's policy and the one its extractions run under. | org_admin | idempotent | no |  |
-| [`extraction_policy.set`](operations/extraction_policy.md#extraction_policyset) | Set the scope's policy, replacing the one it held. | org_admin | idempotent | no | yes |
+| [`extraction_policy.set`](operations/extraction_policy.md#extraction_policyset) | Set the scope's policy, replacing the one it held; under it, an extraction can keep fewer facts, since the passes that add what the model left out do not run. | org_admin | idempotent | no | yes |
 
 ### facts
 

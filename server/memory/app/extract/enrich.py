@@ -103,7 +103,8 @@ def _apply_code_facets(
     changed = False
     for f in facts:
         surfaces = [f.value]
-        for idx in (f.source_message_indices or []) if from_turns else []:
+        cited = (f.source_message_indices or []) if from_turns else []
+        for idx in cited:
             if 0 <= idx < len(messages):
                 surfaces.append(str(messages[idx].get("content") or ""))
         files: list[str] = []
