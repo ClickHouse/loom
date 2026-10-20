@@ -848,6 +848,33 @@ async def test_promoting_a_rule_publishes_it_where_every_users_reads_find_it(
     assert status["agent"] == "support-bot"
 
 
+@pytest.mark.asyncio
+async def test_a_rule_for_every_agent_is_promoted_with_no_agent_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The agent '-' is every agent in the namespace: `agent:-` would name no bot."""
+    from server.memory.app import learnings as h
+
+    docs: list[Any] = []
+
+    async def fake_upsert(doc: Any) -> None:
+        docs.append(doc)
+
+    monkeypatch.setattr("server.knowledge.app.writes.handle_knowledge_upsert", fake_upsert)
+    row = {
+        "candidate_id": _cid(agent="-"),
+        "agent": "-",
+        "memory_key": "assistant_rule_refund_escalation",
+        "proposed_value": json.dumps(_VALUE),
+        "source_kind": "assistant_turn",
+    }
+    await h._do_promote_to_knowledge("o", "ns", row, "admin", "")
+
+    (doc,) = docs
+    assert "source-kind:assistant_turn" in doc.tags
+    assert not [tag for tag in doc.tags if tag.startswith("agent:")]
+
+
 def test_a_supporter_row_carries_every_column_of_loom_learnings_supporters() -> None:
     from tests.unit.schema_ddl import column_names
 

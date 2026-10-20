@@ -62,9 +62,9 @@ class LearningsReviewInput(BaseModel):
     decision: ReviewDecision
     # Why; stored as `decision_reason` and carried into the promoted row's provenance.
     reason: str = ""
-    # Where a promotion lands; unset, 'knowledge' for an `assistant_turn` rule and
-    # 'memory' otherwise: 'memory' → loom.shared (a supporters candidate) or a
-    # memory row, 'knowledge' → knowledge.upsert, 'both' → both in sequence.
+    # Where a promotion lands: 'memory' (loom.shared for a supporters candidate, the
+    # agent's row for a bot rule), 'knowledge' (knowledge.upsert) or 'both'; unset is
+    # 'knowledge' for an `assistant_turn` rule and 'memory' otherwise.
     destination: PromotionDestination | None = None
     # Captured into the audit subject + shared.promoted_by.
     approver: str = "learnings-reviewer"

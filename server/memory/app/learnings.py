@@ -456,7 +456,8 @@ async def _do_promote_to_knowledge(
     agent = (
         str(candidate_row.get("agent") or "") if source_kind == assistant_rules.SOURCE_KIND else ""
     )
-    if agent:
+    # The agent '-' is every agent in the namespace, so it names no bot to tag.
+    if agent and agent != "-":
         tags.append(f"agent:{agent}")
     rationale = f"reviewed-and-promoted-to-knowledge by {approver}" + (
         f": {reason}" if reason else ""

@@ -1163,9 +1163,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     # ---- Learnings (high-confidence promotions) ----
     "learnings.list": (
         "List candidate learnings waiting for review: memories several writers "
-        "back (promoted to shared), and rules a bot stated about itself in "
-        "conversations (source_kind=assistant_turn). Use when the user wants "
-        "to review the promotion queue."
+        "back (promoting one writes it to shared), and rules a bot stated about "
+        "itself in conversations (source_kind=assistant_turn). Use when the user "
+        "wants to review the promotion queue."
     ),
     "learnings.review": (
         "Approve or reject a pending learning. Approving promotes a memory "
