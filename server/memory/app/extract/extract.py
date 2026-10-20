@@ -366,7 +366,7 @@ def _settle_facts(
     observation_date: str | None,
     existing_memories: list[dict[str, str]] | None,
     speaker_attribution: bool,
-    recover_rows: bool,
+    from_turns: bool,
 ) -> list[ExtractedFact]:
     """The deterministic passes between the model's answer and the judge:
     stable and relation keys, citation repair, temporal anchors and
@@ -400,7 +400,7 @@ def _settle_facts(
         facts = _apply_temporal_anchor_backstop(facts, observation_date, messages)
     # The rows the model left out are recovered from the turns, unless an
     # operator policy is in force: the model may have left them out for it.
-    if recover_rows:
+    if from_turns:
         facts = _recover_rows(facts, messages)
     facts = apply_message_timestamps(facts, messages)
     facts = strip_variant_suffixes(facts)
@@ -412,14 +412,14 @@ def _settle_facts(
     # anchor is what gets written.
     if facts:
         facts = _apply_relative_date_grounding(facts, observation_date or "")
-    # A speaker's name is copied from the raw turns, not written by the model.
-    if recover_rows:
+    # Under a policy no speaker is copied from the turns.
+    if from_turns:
         facts = apply_message_speakers(facts, messages)
 
     # Deterministic code-native facets: populates files[] + concepts[]
     # without touching the atomic fact value.
     if facts:
-        facts = _apply_code_facets(facts, messages, from_turns=recover_rows)
+        facts = _apply_code_facets(facts, messages, from_turns=from_turns)
 
     if facts and existing_memories:
         facts = _resolve_index_links(facts, existing_memories)
@@ -471,7 +471,7 @@ async def extract_from_messages(
     `operator_policy` is the operator's extraction policy for the namespace
     (`extraction_policy.effective`): it ends the system prompt of every call,
     retries and the coverage sweep included, above `custom_instructions`. While
-    it is set, no row is recovered from the turns past the model.
+    it is set, nothing is copied from the turns past what the model wrote.
 
     `judge` enables the LLM-judge gate. After extraction, a second
     LLM call grades each fact CORRECT/UNCERTAIN/WRONG against the
@@ -601,7 +601,7 @@ async def extract_from_messages(
         observation_date=observation_date,
         existing_memories=existing_memories,
         speaker_attribution=speaker_attribution,
-        recover_rows=not operator_policy,
+        from_turns=not operator_policy,
     )
 
     # Judge gate: drop WRONG, keep CORRECT/UNCERTAIN. observation_date

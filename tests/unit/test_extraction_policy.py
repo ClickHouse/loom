@@ -863,28 +863,65 @@ async def test_unreadable_conversation_compact_is_refused(unreadable, monkeypatc
     assert fake.inserted == []
 
 
-async def test_unreadable_session_brief_falls_back_to_the_deterministic_builder(
-    unreadable, monkeypatch
-) -> None:
+def _brief_input() -> Any:
     from types import SimpleNamespace
 
-    from server.memory.app import session_brief
     from server.memory.domain.session_brief import BriefEvent
 
-    llm = _System("{}")
-    monkeypatch.setattr(session_brief, "_use_llm", lambda inp: (True, llm))
-    inp = SimpleNamespace(
+    return SimpleNamespace(
         org="acme",
         namespace="dev",
-        events=[BriefEvent(kind="user", text="Fix the login bug.")],
+        events=[
+            BriefEvent(kind="user", text="My card number is 4111 1111 1111 1111."),
+            BriefEvent(kind="edit", text="stored the card", path="src/billing/cards.py"),
+        ],
         project="",
         branch="",
         head_sha="",
         use_llm=True,
     )
-    rev = await session_brief._revise_from_events(inp, None)
-    assert rev.author == "deterministic"
+
+
+def _prev_brief() -> Any:
+    from server.memory.domain.session_brief import BriefSections
+
+    return BriefSections(goal="Ship the login fix.")
+
+
+async def test_unreadable_session_brief_keeps_the_brief_it_had(unreadable, monkeypatch) -> None:
+    """The deterministic builder copies the raw events: with the policy unread
+    the brief is saved as it was, and no model is called."""
+    from server.memory.app import session_brief
+
+    llm = _System("{}")
+    monkeypatch.setattr(session_brief, "_use_llm", lambda inp: (True, llm))
+    prev = _prev_brief()
+    rev = await session_brief._revise_from_events(_brief_input(), prev)
+    assert rev.author == "unchanged"
+    assert rev.sections == prev
     assert llm.systems == []
+
+
+async def test_a_failing_model_under_a_policy_keeps_the_brief_it_had(monkeypatch) -> None:
+    from server.memory.app import session_brief
+
+    class _Down:
+        model = "real"
+
+        async def complete(self, **kw: Any) -> Any:
+            raise ConnectionError("provider away")
+
+    monkeypatch.setattr(session_brief, "_use_llm", lambda inp: (True, _Down()))
+    prev = _prev_brief()
+    _read_now({("acme", ""): _POLICY})
+    rev = await session_brief._revise_from_events(_brief_input(), prev)
+    assert rev.author == "unchanged"
+    assert rev.sections == prev
+    assert "4111" not in rev.sections.model_dump_json()
+    _read_now({})  # without a policy the builder revises the window
+    plain = await session_brief._revise_from_events(_brief_input(), prev)
+    assert plain.author == "deterministic"
+    assert [f.path for f in plain.sections.files] == ["src/billing/cards.py"]
 
 
 async def test_unreadable_titler_holds_the_thread_and_titles_it_once_read(
@@ -1026,7 +1063,7 @@ async def test_under_a_policy_code_facets_come_from_the_fact_alone(provider) -> 
     assert all(f.files == [] for f in ruled.facts)
 
 
-async def test_under_a_policy_an_event_keeps_only_what_the_model_wrote(
+async def test_under_a_policy_an_event_stores_no_action_or_path_from_the_raw_call(
     monkeypatch, settings_override
 ) -> None:
     """The event's action prefix and file-path entities come from the raw tool
@@ -1122,3 +1159,80 @@ async def test_under_a_policy_a_fact_carries_no_speaker_from_the_turns(provider)
     assert "speaker:dana" in p.tags and "dana" in p.entities
     assert "speaker:dana" not in r.tags
     assert "dana" not in r.entities
+
+
+async def test_set_from_messages_under_a_policy_writes_no_speaker_or_path_from_the_turns(
+    provider, monkeypatch
+) -> None:
+    """Through the handler and the write step: the model's fact cites a named
+    turn that holds a path. Without a policy the written row carries the
+    speaker tag, the name entity and the file; under one, none of them."""
+    from types import SimpleNamespace
+
+    import server.identity.app.namespace_ontology as ont
+    import server.memory.app.bulk_set as bulk_set
+    import server.memory.app.extract.handler as mx
+    import server.memory.app.pipeline as pipe
+    from server.memory.api.models_bulk import MemorySetFromMessagesInput
+
+    written: list[Any] = []
+
+    async def bulk(input: Any) -> Any:
+        written.extend(input.entries)
+        return SimpleNamespace(written=[], stage_ms={})
+
+    async def nothing(*a: Any, **k: Any) -> Any:
+        return 0
+
+    async def no_evidence(*a: Any, **k: Any) -> list[str]:
+        return []
+
+    async def cold(org: str, ns: str) -> dict[str, Any]:
+        return {}
+
+    async def no_conflict_policy(state: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(bulk_set, "handle_memory_bulk_set", bulk)
+    monkeypatch.setattr(pipe, "_newest_wins", no_conflict_policy)
+    monkeypatch.setattr(mx, "_write_source_evidence", no_evidence)
+    monkeypatch.setattr(mx, "_draft_session_summary", nothing)
+    monkeypatch.setattr(mx, "_link_written_memories_to_evidence", nothing)
+    monkeypatch.setattr(mx, "write_memory_chunks", nothing)
+    monkeypatch.setattr(mx, "_write_session_summary", nothing)
+    monkeypatch.setattr(ont, "load_namespace_ontology", cold)
+    provider.text = (
+        '{"facts": [{"key": "user_fixed_login", "value": "User fixed the login bug.",'
+        ' "source_message_indices": [0]}]}'
+    )
+
+    def request() -> MemorySetFromMessagesInput:
+        return MemorySetFromMessagesInput(
+            org="acme",
+            namespace="dev",
+            agent="a",
+            session_id="s",
+            messages=[
+                {
+                    "role": "user",
+                    "name": "Dana",
+                    "content": "I fixed the login bug; the crash was in src/auth/login.py.",
+                }
+            ],
+            pipeline_steps=[{"step_id": "loom.llm_extract"}, {"step_id": "loom.bulk_write"}],
+        )
+
+    _read_now({})
+    plain_out = await mx.handle_memory_set_from_messages(request())
+    [plain] = [e for e in written if e.memory_key.endswith("login")]
+    written.clear()
+    _read_now({("acme", ""): _POLICY})
+    ruled_out = await mx.handle_memory_set_from_messages(request())
+    [ruled] = [e for e in written if e.memory_key.endswith("login")]
+    assert plain_out.under_operator_policy is False
+    assert ruled_out.under_operator_policy is True
+    assert "speaker:dana" in plain.tags and "dana" in plain.entities
+    assert plain.files == ["src/auth/login.py"]
+    assert "speaker:dana" not in ruled.tags
+    assert "dana" not in ruled.entities
+    assert ruled.files == []

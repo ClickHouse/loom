@@ -66,7 +66,7 @@ async def effective(org: str, namespace: str) -> str:
 def forget() -> None:
     """Make the next extraction read the policies again, for a change just made
     here. The copy in hand keeps its age, so a failed read serves it as before."""
-    _policies.forget()
+    _policies.note_change()
 
 
 def _scope(
@@ -103,11 +103,10 @@ async def handle_extraction_policy_set(input: ExtractionPolicySetInput) -> Extra
     """Set the scope's policy, replacing the one it held; under it, an
     extraction can keep fewer facts, since the passes that add what the model
     left out do not run. Every process extracts under it within
-    `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`. While a policy is
-    in force, the passes that add rows the model left out (recovered
-    preferences, costs and ages, assistant-stated premises, a forget request's
-    correction in the user's words) do not run; `memory.set_from_messages`
-    answers `under_operator_policy: true`."""
+    `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`. The passes it turns off are
+    listed in the extraction guide (docs/features/memory/extraction.md, "The
+    trade-off"); `memory.set_from_messages` answers `under_operator_policy:
+    true` while one is in force."""
     org, namespace = _scope(input)
     policy = input.policy.strip()
     if not policy:

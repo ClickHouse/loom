@@ -128,8 +128,15 @@ async def _revise_window(
 ) -> tuple[sb.BriefSections, int, int, int, bool]:
     """One window through the model. Returns (merged sections, dropped,
     tokens_in, tokens_out, used_model). A failed or unparseable call falls
-    back to the deterministic builder for this window only."""
+    back to the deterministic builder for this window only, or, under an
+    operator's policy, keeps `prev`: the builder copies the raw events."""
     condensed, _stats = sb.condense_events(events, budget)
+
+    def fallback() -> sb.BriefSections:
+        if operator_policy:
+            return prev or sb.BriefSections()
+        return sb.merge_sections(prev, sb.deterministic_revision(events))
+
     try:
         result = await client.complete(
             system=with_policy(sb.SYSTEM_PROMPT, operator_policy),
@@ -140,17 +147,17 @@ async def _revise_window(
             response_format={"type": "json_object"},
         )
     except Exception as e:  # noqa: BLE001 — a brief without the model beats no brief
-        log.warning("session.brief_save: model call failed (%s); deterministic window", e)
-        return sb.merge_sections(prev, sb.deterministic_revision(events)), 0, 0, 0, False
+        log.warning("session.brief_save: model call failed (%s); window not revised", e)
+        return fallback(), 0, 0, 0, False
     try:
         parsed = sb.parse_revision(result.text)
     except Exception as e:  # noqa: BLE001 — a malformed reply degrades one window, never the save
-        log.warning("session.brief_save: model reply rejected (%s); deterministic window", e)
+        log.warning("session.brief_save: model reply rejected (%s); window not revised", e)
         parsed = None
     if parsed is None:
-        log.warning("session.brief_save: unparseable model output; deterministic window")
+        log.warning("session.brief_save: unparseable model output; window not revised")
         return (
-            sb.merge_sections(prev, sb.deterministic_revision(events)),
+            fallback(),
             0,
             int(result.tokens_in),
             int(result.tokens_out),
@@ -172,19 +179,20 @@ async def _revise_from_events(inp: Any, prev: sb.BriefSections | None) -> _Revis
         list(inp.events), budget * 3, max(1, int(settings.session_brief_max_windows))
     )
     use, client = _use_llm(inp)
-    policy = ""
-    if use:
-        # The brief is written from the session's own events, so the model is
-        # given the operator's extraction policy; one this process cannot read
-        # leaves the deterministic builder, which makes no model call.
-        from server.llm import customer
-        from server.memory.app import extraction_policy
+    # The brief is written from the session's own events, so the model is given
+    # the operator's extraction policy. Under one, or when it cannot be read, no
+    # window is built from the raw events without the model: the brief stays.
+    from server.llm import customer
+    from server.memory.app import extraction_policy
 
-        try:
-            policy = await extraction_policy.effective(inp.org, inp.namespace)
-        except customer.SwitchUnread as e:
-            log.warning("session.brief_save: %s; deterministic revision", e)
-            use = False
+    unchanged = _Revision(sections=prev or sb.BriefSections(), author="unchanged")
+    try:
+        policy = await extraction_policy.effective(inp.org, inp.namespace)
+    except customer.SwitchUnread as e:
+        log.warning("session.brief_save: %s; brief left as it was", e)
+        return unchanged
+    if not use and policy:
+        return unchanged
     if not use:
         cur = prev
         for w in windows:
@@ -219,7 +227,7 @@ async def _revise_from_events(inp: Any, prev: sb.BriefSections | None) -> _Revis
         any_model = any_model or used
     rev.sections = cur or sb.BriefSections()
     if not any_model:
-        rev.author = "deterministic"
+        rev.author = "unchanged" if policy else "deterministic"
     return rev
 
 
