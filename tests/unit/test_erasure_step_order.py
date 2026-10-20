@@ -184,8 +184,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("events.delete", ((D, "loom.events"),)),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
     ("consolidation_runs.delete", ((D, "loom.consolidation_runs"),)),
-    ("idempotency.delete", ((D, "loom.idempotency"),)),
-    ("embedding_cache.delete", ((L, "loom.embedding_cache"),)),
+    ("idempotency.delete", ((D, "loom.idempotency"), (L, "loom.embedding_cache"))),
 ]
 
 NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
@@ -265,8 +264,7 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ),
     ("consolidation_runs.delete", ((D, "loom.consolidation_runs"),)),
     ("projection_failures.delete", ((D, "loom.memory_projection_failures"),)),
-    ("idempotency.delete", ((D, "loom.idempotency"),)),
-    ("embedding_cache.delete", ((L, "loom.embedding_cache"),)),
+    ("idempotency.delete", ((D, "loom.idempotency"), (L, "loom.embedding_cache"))),
     ("code_index.purge", ()),
 ]
 
@@ -347,8 +345,7 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ),
     ("consolidation_runs.delete", ((D, "loom.consolidation_runs"),)),
     ("projection_failures.delete", ((D, "loom.memory_projection_failures"),)),
-    ("idempotency.delete", ((D, "loom.idempotency"),)),
-    ("embedding_cache.delete", ((L, "loom.embedding_cache"),)),
+    ("idempotency.delete", ((D, "loom.idempotency"), (L, "loom.embedding_cache"))),
     ("code_index.purge", ()),
 ]
 

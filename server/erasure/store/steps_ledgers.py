@@ -116,20 +116,22 @@ async def delete_idempotency_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
     """The org's cached replay bodies (loom.idempotency has no namespace
-    column, see its census row). A row with org '' leaves by the table's
-    24-hour TTL."""
+    column, see its census row) and its cached query vectors. A row with org ''
+    leaves by the table's TTL."""
     del namespace  # the rows carry no namespace; the scope is the org
-    return await delete_scoped("loom.idempotency", org=org, scope_where="1", params={}, ch=ch)
+    n = await delete_scoped("loom.idempotency", org=org, scope_where="1", params={}, ch=ch)
+    return n + await delete_embedding_cache_for_org(org, ch=ch)
 
 
 async def delete_idempotency_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
     """Every cached replay body in the user's org, not only the rows whose
     stamped subject is `user_id`: a replay a service account stored while
     acting for the user quotes the user's text under the account's subject,
-    and nothing on the row names the user. Fail closed; the cost is cache
-    misses."""
+    and nothing on the row names the user; and the org's cached query vectors,
+    which name no user either. Fail closed; the cost is cache misses."""
     del user_id  # no row column names the end user; the scope is the org
-    return await delete_scoped("loom.idempotency", org=org, scope_where="1", params={}, ch=ch)
+    n = await delete_scoped("loom.idempotency", org=org, scope_where="1", params={}, ch=ch)
+    return n + await delete_embedding_cache_for_org(org, ch=ch)
 
 
 # Telemetry that quotes the subject: the search trace keeps the query text and
@@ -316,17 +318,3 @@ async def delete_embedding_cache_for_org(org: str, *, ch: _CHClient | None = Non
     return await delete_scoped(
         "loom.embedding_cache", org=org, scope_where="1", params={}, ch=ch, lightweight=True
     )
-
-
-async def delete_embedding_cache_by_namespace(
-    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
-) -> int:
-    del namespace  # the rows carry no namespace; the scope is the org
-    return await delete_embedding_cache_for_org(org, ch=ch)
-
-
-async def delete_embedding_cache_by_user(
-    org: str, user_id: str, *, ch: _CHClient | None = None
-) -> int:
-    del user_id  # nothing on the row names the end user; the scope is the org
-    return await delete_embedding_cache_for_org(org, ch=ch)

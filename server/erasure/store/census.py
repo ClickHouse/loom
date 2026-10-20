@@ -266,19 +266,6 @@ _CENSUS: tuple[Substrate, ...] = (
         "idempotency.delete",
         ns_pred="1",
     ),
-    # Cached query vectors, keyed by sha1(org, model, normalised text) with the
-    # org in its own column and the text never stored. No namespace or user
-    # axis, so both scopes clear and count the org's rows, as for the search
-    # trace's query text (a cache: the cost is misses). Rows with org '' come
-    # from a build before the column and leave by the 30-day TTL.
-    Substrate(
-        "loom.embedding_cache",
-        "1",
-        "1",
-        "embedding_cache.delete",
-        "embedding_cache.delete",
-        ns_pred="1",
-    ),
     Substrate(
         "loom.code_search_trace",
         "1",
@@ -395,6 +382,10 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     # Who began each still-open run (KeeperMap: ids and user ids, no run text);
     # dropped beside the runs, not counted.
     "agent_runs.delete": ("loom.agent_run_claims",),
+    # The org's other cache: its cached query vectors (never their text), deleted
+    # org-wide beside the replay bodies at both scopes but not counted, since any
+    # search in the org refills them between the step and the census.
+    "idempotency.delete": ("loom.embedding_cache",),
 }
 
 # Every other `loom.*` table in schemas/schema.sql, with the reason it holds

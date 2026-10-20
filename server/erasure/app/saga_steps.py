@@ -131,7 +131,6 @@ _UNCOUNTED_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("consolidation_runs.delete", ledger_steps.delete_consolidation_runs_by_namespace),
     ("projection_failures.delete", ledger_steps.delete_projection_failures_by_namespace),
     ("idempotency.delete", ledger_steps.delete_idempotency_by_namespace),
-    ("embedding_cache.delete", ledger_steps.delete_embedding_cache_by_namespace),
     ("code_index.purge", _step_purge_code_index_by_ns),
 )
 _UNCOUNTED_STEPS_USER: tuple[UserStep, ...] = (
@@ -147,8 +146,6 @@ _UNCOUNTED_STEPS_USER: tuple[UserStep, ...] = (
     # while acting for the user carries the user's text under the account's
     # subject. A cache, so deleting more costs only misses.
     ("idempotency.delete", ledger_steps.delete_idempotency_by_user),
-    # The org's cached query vectors: no namespace or user axis, a cache.
-    ("embedding_cache.delete", ledger_steps.delete_embedding_cache_by_user),
 )
 
 # The loom-side steps of a user erasure over (org, user_id), in saga order.

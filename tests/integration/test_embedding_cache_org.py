@@ -58,9 +58,9 @@ async def _two_orgs(ch: Any) -> tuple[str, str, str]:
     await _embed(b, model, "the same query")
     for _ in range(50):  # async inserts land shortly after
         if len(await _rows(ch, model)) == 2:
-            break
+            return model, a, b
         await asyncio.sleep(0.1)
-    return model, a, b
+    pytest.fail(f"the two orgs' cache rows never landed in loom.embedding_cache (model {model})")
 
 
 async def test_an_orgs_cached_vector_lands_with_its_org(ch: Any) -> None:
@@ -76,10 +76,11 @@ async def test_an_orgs_cached_vector_lands_with_its_org(ch: Any) -> None:
 
 @pytest.mark.parametrize("scope", ["namespace", "user_id"])
 async def test_an_erasure_in_the_org_deletes_its_cached_vectors_only(ch: Any, scope: str) -> None:
+    # idempotency.delete, the step that clears the org's caches at both scopes
     model, a, b = await _two_orgs(ch)
     if scope == "namespace":
-        deleted = await steps_ledgers.delete_embedding_cache_by_namespace(a, ["ns"])
+        deleted = await steps_ledgers.delete_idempotency_by_namespace(a, ["ns"])
     else:
-        deleted = await steps_ledgers.delete_embedding_cache_by_user(a, "u1")
-    assert deleted == 1
+        deleted = await steps_ledgers.delete_idempotency_by_user(a, "u1")
+    assert deleted == 1  # the org's one cached vector; it had no replay body
     assert [r["org"] for r in await _rows(ch, model)] == [b]

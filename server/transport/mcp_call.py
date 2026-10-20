@@ -283,7 +283,10 @@ async def _call_tool(
             _ident["capture_level"] = "off"
         _otel_pre.set_loom_attributes(**_ident)
     except Exception:  # noqa: BLE001 — attribution must not break a tool call
-        pass
+        from server.observability import genai as _genai
+
+        # Not the previous batch entry's org: this entry's model calls name none and refuse.
+        _genai.set_identity(operation=op.name, capture_level="off")
 
     start = time.perf_counter()
     try:

@@ -127,8 +127,10 @@ flowchart TD
   counts that table.
 - **Org-wide caches.** `loom.idempotency` (replayed responses) and `loom.embedding_cache`
   (query vectors, never their text) carry the org but no namespace or end user, so an
-  erasure at either scope deletes all of the org's rows there and the census counts them
-  org-wide. The cost is cache misses.
+  erasure at either scope deletes all of the org's rows in both tables. The cost is cache
+  misses. The census counts `loom.idempotency` org-wide but not `loom.embedding_cache`,
+  which any search in the org refills; each replica's process cache of vectors expires
+  within `LOOM_EMBEDDING_CACHE_TTL_S`.
 
 ### The federated cascade
 

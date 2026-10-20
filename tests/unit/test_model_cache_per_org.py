@@ -258,6 +258,54 @@ def test_the_mcp_transport_scopes_the_cache_by_the_calls_org(ch: _CH, monkeypatc
     assert calls == ["acme", "beta"]
 
 
+def test_an_mcp_entry_whose_identity_fails_keys_no_cache_by_the_last_entrys_org(
+    ch: _CH, monkeypatch
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import server.transport.mcp as mcp
+    import server.transport.mcp_call as mcp_call
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "identity_provider", "single-user")
+    calls: list[str] = []
+    monkeypatch.setitem(
+        mcp_call.TOOLS_BY_NAME, "loom_memory_ask", _embedding_op("memory.ask", calls)
+    )
+    stamp = mcp_call._span_identity
+
+    def flaky(op: Any, input_obj: Any, *a: Any, **kw: Any) -> Any:
+        if input_obj.org == "beta":
+            raise RuntimeError("identity unavailable")
+        return stamp(op, input_obj, *a, **kw)
+
+    monkeypatch.setattr(mcp_call, "_span_identity", flaky)
+
+    async def defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
+        return {"org": "acme", "namespace": "ns", "agent": "a"}
+
+    monkeypatch.setattr(mcp_call, "_caller_defaults", defaults)
+    app = FastAPI()
+    mcp.attach(app)
+    batch = [
+        {
+            "jsonrpc": "2.0",
+            "id": i,
+            "method": "tools/call",
+            "params": {
+                "name": "loom_memory_ask",
+                "arguments": {"org": org, "namespace": "ns", "query": "the same question"},
+            },
+        }
+        for i, org in enumerate(("acme", "beta"), 1)
+    ]
+    TestClient(app).post("/mcp", json=batch)
+    # beta's call was made with no org (not acme's, the entry before it), so it
+    # neither hit acme's entry nor wrote one
+    assert calls == ["acme", ""]
+
+
 # ---- search's in-process LLM caches ------------------------------------------
 
 

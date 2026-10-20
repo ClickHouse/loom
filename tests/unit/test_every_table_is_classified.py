@@ -80,9 +80,9 @@ def test_the_review_moved_the_named_tables_into_the_census() -> None:
         assert t not in user, t  # no user axis on these
     # namespace_snapshots stays out: it holds counts and a namespace name, never the payload
     assert "loom.namespace_snapshots" in erasure_census.NO_MEMORY_CONTENT
-    # embedding_cache has no namespace or user axis: both scopes clear the org's rows
-    assert "loom.embedding_cache" in ns and "loom.embedding_cache" in user
-    assert "loom.embedding_cache" not in erasure_census.NO_MEMORY_CONTENT
+    # embedding_cache is deleted at both scopes but not counted: traffic refills it
+    assert "loom.embedding_cache" not in ns and "loom.embedding_cache" not in user
+    assert erasure_census.STEP_ONLY_TABLES["idempotency.delete"] == ("loom.embedding_cache",)
 
 
 def test_a_plain_mergetree_with_a_live_predicate_is_marked_final_false() -> None:

@@ -993,7 +993,8 @@ def main() -> int:
     ap.add_argument(
         "--embedding-model",
         default="text-embedding-3-large",
-        help="the shared embedding cache's model name (its key is sha1(model, text))",
+        help="the shared embedding cache's model name (its key is the server's "
+        "`_cache._key(model, text, org)`)",
     )
     args = ap.parse_args()
 
