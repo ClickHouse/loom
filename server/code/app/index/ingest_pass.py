@@ -156,6 +156,8 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
         try:
             with customer.for_org(cfg.org):
                 plan = await _run_repo(cfg, result, commit_budget)
+        except customer.HOLDS:
+            continue  # a held call is no failure: the repository waits, watermark unmoved
         except Exception as e:
             result.errors.append(f"{cfg.label}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: repo %s failed", cfg.label)
@@ -219,6 +221,8 @@ async def _run_leg(
         try:
             with customer.for_org(plan.cfg.org):
                 await run(plan, result, budget)
+        except customer.HOLDS:
+            pass  # a held call is no failure: the leg runs once the org is back
         except Exception as e:
             result.errors.append(f"{plan.cfg.label}: {leg}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: %s of %s failed", leg, plan.cfg.label)

@@ -272,6 +272,8 @@ async def label_sessions(ch: Any, llm: Any, cfg: DistillConfig, result: DistillR
                     system, user, max_tokens=160, response_format={"type": "json_object"}
                 )
             outcome, confidence, reason = parse_judgement(getattr(res, "text", "") or "")
+        except customer.HOLDS:
+            continue  # a held call is no failure: the session is judged once the org is back
         except Exception as e:  # noqa: BLE001 — one bad judgement never stops the pass
             result.failures.append(f"judge {r.get('session_id')}: {type(e).__name__}: {e}")
             continue
@@ -416,6 +418,8 @@ async def distil_contrasts(
             # both that org's.
             with customer.for_org(str(neg["org"])):
                 written = await _contrast_pair(ch, llm, cfg, neg, writer)
+        except customer.HOLDS:
+            continue  # a held call is no failure: the pair is distilled once the org is back
         except Exception as e:  # noqa: BLE001 — one bad pair never stops the pass
             result.failures.append(f"contrast {sid}: {type(e).__name__}: {e}")
             continue

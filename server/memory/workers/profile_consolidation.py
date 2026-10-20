@@ -120,6 +120,8 @@ async def run_pass(
             try:
                 if await _consolidate_identity(ch, row, cfg):
                     result.profiles_written += 1
+            except customer.HOLDS:
+                continue  # a held call is no failure: the identity is folded once the org is back
             except Exception as e:
                 result.errors += 1
                 log.exception("profile consolidation failed for %s", dict(row))

@@ -10,6 +10,7 @@ from typing import Any
 
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.llm import customer
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 
 
@@ -240,6 +241,15 @@ async def retry_projection_failure(
             projection=failure.projection,
             retried=True,
             resolved=True,
+        )
+    except customer.HOLDS:
+        # Held by the model-call switch: no attempt, no error; the row stays open.
+        return ProjectionFailureRetryResult(
+            failure_id=failure.failure_id,
+            projection=failure.projection,
+            retried=False,
+            resolved=False,
+            reason="model_calls_held",
         )
     except Exception as e:  # noqa: BLE001 — reported on the result; the row stays open
         return ProjectionFailureRetryResult(

@@ -97,6 +97,8 @@ async def _run(result: CodeSummaryResult) -> None:
                 await _summarize_repo(
                     cfg.org, cfg.namespace, result, cap=result.cards_written + share
                 )
+        except customer.HOLDS:
+            continue  # a held call is no failure: its cards wait until the org is back
         except Exception as e:  # one repository's failed read never skips the rest
             logger.exception("code_summary: %s/%s failed", cfg.org, cfg.namespace)
             result.errors.append(f"{cfg.namespace}: {type(e).__name__}: {e}")
@@ -225,6 +227,8 @@ async def _card_row(
     vec: list[float] = []
     try:
         vec = await embedder.embed(summary)
+    except customer.HOLDS:
+        pass  # a stub: the recovery worker embeds it once the org is back on
     except Exception as e:  # noqa: BLE001 — recovery worker fills stubs
         logger.warning("code_summary: embed failed for %s: %s", live.get("scope_path"), e)
     row = CodeRepo.tombstone_of("code_summaries", live)  # full mirror
@@ -318,7 +322,7 @@ async def _summarize_repo(
                 await repo.insert_rows("code_summaries", [row])
                 result.cards_written += 1
             except Exception as e:  # noqa: BLE001 — per-file, keep going
-                result.errors.append(f"{path}: {type(e).__name__}: {e}")
+                _note_file_error(result, path, e)
             finally:
                 emit_worker_cost_event_for(
                     org=org,
@@ -328,6 +332,13 @@ async def _summarize_repo(
                 )
 
     await _run_cards(candidates, _one, workers, lambda: result.cards_written >= cap)
+
+
+def _note_file_error(result: Any, path: str, e: Exception) -> None:
+    """One file's failure on the pass's errors; a call the model-call switch held
+    is none: the file is summarised once the org is back."""
+    if not isinstance(e, customer.HOLDS):
+        result.errors.append(f"{path}: {type(e).__name__}: {e}")
 
 
 async def _run_cards(

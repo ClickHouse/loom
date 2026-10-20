@@ -73,13 +73,11 @@ class SwitchUnread(BackendUnavailableError):
     for an org until it is read, and a job leaves its rows as they are."""
 
 
-# What require() refuses with: callers that fail open (a reranker, classify)
-# re-raise these, since neither is a provider fault to work around.
-REFUSALS: tuple[type[LoomServerError], ...] = (Unattributed, ModelCallsDisabled)
-
-# What a job leaves its rows as they are for, to try again later: a refusal, or
-# a switch it cannot read.
-HOLDS: tuple[type[LoomServerError], ...] = (*REFUSALS, SwitchUnread)
+# What require() holds a call with: a refusal, or a switch it cannot read. None
+# is a provider fault, so a fail-open caller (a reranker, classify) lets these
+# through, and a job leaves its rows as they are to try again later; a queued
+# extraction request naming no customer still fails, since it never clears.
+HOLDS: tuple[type[LoomServerError], ...] = (Unattributed, ModelCallsDisabled, SwitchUnread)
 
 
 # The orgs switched off, as this process last read them, when (monotonic; 0.0 =

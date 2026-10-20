@@ -140,6 +140,8 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
         for r in rows:
             try:
                 v = await rejudge(r, ch=ch)
+            except customer.HOLDS:
+                continue  # a held call is no failure: the mark is re-judged once the org is back
             except Exception as e:  # noqa: BLE001 — one row's failure never stops the pass
                 errors.append(f"{r.get('namespace')}/{r.get('memory_key')}: {e}")
                 continue

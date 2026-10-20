@@ -287,14 +287,15 @@ the shared HTTP client also carries non-model calls, which name no customer.
   `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`, past which every model call for an org is
   refused (`customer.SwitchUnread`). A job treats that as it treats a switch-off
   (`customer.HOLDS`): its rows stay as they are with no attempt spent, a rebuild step runs
-  again, and a fail-open reranker or classifier lets it through. Every job leaves a switched-off org out when it selects work (in the query, so its
-  rows neither spend attempts nor fill the batch ahead of other orgs); code ingest skips its
-  repositories, freezing its whole code index. A conflict mark older than the sweep's hour
-  when the org comes back is past the sweep, as a judge lost in an outage is: the write stands
-  as made. The check runs in `require()`, before provider-health recording, so a refusal is
-  never a provider failure. With no customer header a job's batch of several orgs is one call,
-  unless an org in it is switched off: `customer.by_org` then splits it by org, so the switch
-  refuses that org's call and the others go on.
+  again, and a fail-open reranker, classifier or judge lets it through. Every job leaves a
+  switched-off org out when it selects work (in the query, so its rows neither spend attempts
+  nor fill the batch ahead of other orgs); code ingest skips its repositories, freezing its
+  whole code index. A conflict mark older than the sweep's hour when the org comes back is past
+  the sweep, as a judge lost in an outage is: the write stands as made. The check runs in
+  `require()`, before provider-health recording, so a refusal is never a provider failure. With
+  no customer header a job's batch of several orgs is one call, unless an org in it is switched
+  off: `customer.by_org` then splits it by org, so the switch refuses that org's call and the
+  others go on.
 
 **Why headers, not a token per customer.** The gateway already knows Loom as one service
 (its token); a credential per org would mean thousands to issue, rotate and revoke for no

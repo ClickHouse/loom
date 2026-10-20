@@ -353,6 +353,10 @@ async def run_pass(
             try:
                 with customer.for_org(str(r["org"])):
                     entities = await _extract(value_str)
+            except customer.HOLDS:
+                # Switched off since the scan, or the switch unread: left for later, no sentinel.
+                result.skipped_switched_off += 1
+                continue
             except Exception as e:  # noqa: BLE001 — one row's failure must not stop the pass
                 result.failures.append(
                     f"{r['org']}/{r['namespace']}/{r['memory_key']}: {type(e).__name__}: {e}"

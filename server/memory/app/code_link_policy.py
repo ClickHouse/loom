@@ -10,6 +10,7 @@ from typing import Any
 from server.code.domain.anchor import Definition
 from server.code.domain.declaration import fingerprint_version
 from server.core.datetimes import naive_utc_now
+from server.llm import customer
 from server.memory.app import code_link_judge
 from server.memory.app import code_link_pass as link_pass
 from server.memory.app.code_link_reads import (
@@ -55,8 +56,6 @@ async def apply_policies(
     """Run the policy of each memory a change in `cns` left due and clear the marks it
     settled; what fails or is past the judgement budget stays due. An org whose model
     calls are switched off is left as it is: its links stay due, nothing written."""
-    from server.llm import customer
-
     if await customer.switched_off(org):
         return
     # a page a few times the budget: what is left over is read by the next pass
@@ -152,6 +151,9 @@ async def _revise(
             return _Revised()
         try:
             link = await _judge(claim, a, texts, head, budget)
+        except customer.HOLDS:
+            out.due.add(key)  # held, not failed: due with no backoff stamp
+            continue
         except Exception as e:  # noqa: BLE001 — a failed judgement leaves its link due
             result.errors.append(f"judge {org}/{row['mid']}: {e}")
             out.failed.add(key)

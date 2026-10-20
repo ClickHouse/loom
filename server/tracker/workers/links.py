@@ -141,6 +141,8 @@ async def _run(
         except TrackerUnavailable as e:
             result.errors.append(f"{ns}: tracker_unavailable: {e}")
             note_failure(e, f"tracker_links:{ns}")
+        except customer.HOLDS:
+            continue  # a held call is no failure: the namespace is scored once the org is back
         except Exception as e:
             result.errors.append(f"{ns}: {type(e).__name__}: {e}")
             note_failure(e, f"tracker_links:{ns}")

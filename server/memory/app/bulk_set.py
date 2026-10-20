@@ -17,6 +17,7 @@ from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
+from server.llm import customer
 from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
@@ -716,7 +717,8 @@ async def _bulk_conflict_verdicts(
     are indexes into memory_rows; values are ConflictResults. A bulk past the
     cap checks the first N and writes the rest unchecked (the caller counts
     them); a check that errors counts as clear — the write must not fail
-    because the check could not run."""
+    because the check could not run — except one the model-call switch holds
+    (`customer.HOLDS`), which the write answers as its own embeds would."""
     import asyncio
 
     from server.memory.app.conflicts import check_on_commit
@@ -752,6 +754,8 @@ async def _bulk_conflict_verdicts(
                     candidate_rows=candidate_rows,
                     resolved_threshold=resolved_threshold,
                 )
+            except customer.HOLDS:
+                raise  # held, as the batch's own embeds would be: the write answers it
             except Exception as e:  # noqa: BLE001 — the fact writes unchecked
                 log.warning("bulk_set: conflict check failed for %r: %s", entry.memory_key, e)
 

@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.code.app.reads import CodeIndexReads
+from server.llm import customer
 from server.settings import settings
 from server.tracker.api.models import TrackerDuplicateCheckInput
 from server.tracker.domain import dupcheck as dc
@@ -208,8 +209,9 @@ async def refit_namespace(
     progress: Any = None,
 ) -> RefitOutcome:
     """Refresh one namespace's fit when it is due: gold through the source,
-    every query replayed at its filing time, fit, store. Never raises — the
-    outcome says what happened; the pass counts them."""
+    every query replayed at its filing time, fit, store. Raises only a call the
+    model-call switch holds (`customer.HOLDS`) — otherwise the outcome says what
+    happened; the pass counts them."""
     from server.tracker.domain.errors import TrackerUnavailable
 
     if not enabled():
@@ -262,6 +264,8 @@ async def refit_namespace(
             "negatives_requested": n_neg,
         }
         return await _store(repo, org, ns, fit, write=write)
+    except customer.HOLDS:
+        raise  # a held call is no failed refit: the pass waits for the org
     except Exception as e:  # noqa: BLE001 — last week's fit keeps serving
         logger.warning("dupcheck_fit: refit failed for %s/%s: %s", org, ns, e)
         return RefitOutcome(ns, "failed", detail=f"{type(e).__name__}: {e}")

@@ -43,6 +43,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.llm import customer
+
 log = logging.getLogger(__name__)
 
 CONTRADICTION = "contradiction"
@@ -152,7 +154,8 @@ def build_user_prompt(new_value: str, peers: list[Any]) -> str:
 
 async def judge(llm: Any, new_value: str, peers: list[Any]) -> Judgement:
     """One call over the given peers (the caller caps them). Fails open:
-    `ran=False` and the cosine verdict `conflict` on any error."""
+    `ran=False` and the cosine verdict `conflict` on any error, except a call
+    the model-call switch holds (`customer.HOLDS`), which propagates."""
     if llm is None or not peers or not (new_value or "").strip():
         return Judgement()
     peer_ids = [str(getattr(p, "memory_id", "") or "") for p in peers]
@@ -167,6 +170,8 @@ async def judge(llm: Any, new_value: str, peers: list[Any]) -> Judgement:
                 response_format={"type": "json_object"},
             )
         labels = parse_labels(str(getattr(res, "text", "") or ""), peer_ids)
+    except customer.HOLDS:
+        raise  # held, not failed: no cosine verdict lands as if judged
     except Exception as e:  # noqa: BLE001 — a judge never blocks a write
         log.warning("conflict judge failed (open, cosine verdict kept): %s", e)
         return Judgement()

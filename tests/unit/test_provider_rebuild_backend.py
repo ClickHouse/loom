@@ -154,3 +154,21 @@ async def test_an_unread_switch_leaves_the_step_to_run_again_not_failed(setup):
     effects["verify_staged_cache"].side_effect = customer.SwitchUnread("stale")
     assert await runner.run_rebuild_step(current, backend) == current
     assert writes == []  # no checkpoint: the job stays where it was
+
+
+@pytest.mark.asyncio
+async def test_an_unread_switch_in_the_rebuild_phase_leaves_the_page_to_run_again(setup):
+    from server.llm import customer
+
+    backend, _, effects, _, writes, current = setup
+    for _ in range(10):  # queued → snapshot → the first rebuild page
+        if json.loads(current["progress"] or "{}").get("phase") == "rebuild":
+            break
+        current = await runner.run_rebuild_step(current, backend)
+    assert json.loads(current["progress"])["phase"] == "rebuild"
+    written = len(writes)
+    effects["rebuild_snapshot_page"].side_effect = customer.SwitchUnread("stale")
+    assert await runner.run_rebuild_step(current, backend) == current
+    assert len(writes) == written  # no checkpoint: the page runs again next tick
+    effects["rebuild_snapshot_page"].side_effect = None
+    assert (await runner.run_rebuild_step(current, backend))["state"] != "failed"

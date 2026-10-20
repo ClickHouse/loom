@@ -407,7 +407,7 @@ async def test_the_extraction_queue_leaves_a_switched_off_orgs_requests_pending(
         (customer.Unattributed, False),  # names no customer: it never will, so it fails
     ],
 )
-async def test_a_request_switched_off_after_its_claim_spends_no_attempt(
+async def test_a_claimed_request_the_switch_holds_waits_and_one_naming_no_customer_fails(
     monkeypatch: pytest.MonkeyPatch, error: type[Exception], waits: bool
 ) -> None:
     from server.memory.app import extraction_queue as q
