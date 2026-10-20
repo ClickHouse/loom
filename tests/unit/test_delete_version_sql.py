@@ -1043,12 +1043,12 @@ async def test_a_sweep_above_the_tombstone_answers_not_found_and_retires_nothing
 
 
 @pytest.mark.asyncio
-async def test_a_write_the_sweep_caught_stays_under_it_after_the_copy(
+async def test_a_write_the_sweep_caught_stays_under_it(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A sweep removes the key after delete_version's check; a write drawn before the sweep's
-    # tombstone (one the sweep caught) lands after the copy is written back above the
-    # tombstone. The sweep's own tombstone still sits above it, so neither fence lifts it.
+    # tombstone (one the sweep caught) lands after the delete's tombstone. The sweep's own
+    # tombstone still sits above it, so neither fence lifts it.
     from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 
     head = time.time_ns() - 10_000_000_000
@@ -1074,15 +1074,15 @@ async def test_a_write_the_sweep_caught_stays_under_it_after_the_copy(
         MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
     )
     assert out.found is False
-    # Above the sweep: delete_version's tombstone and the copy of the sweep's written above
-    # it, both delete_version's own, with no sweep marker.
+    # Above the sweep: delete_version's own tombstone, with no sweep marker. The sweep
+    # removed the row this delete checked, so that tombstone already carries it: no copy.
     above_sweep = await ch.query_all(
         "SELECT source_trace, expire_reason FROM loom.memory_versions "
         "WHERE tombstoned_at IS NOT NULL AND version > {v:UInt64} ORDER BY version",
         {"v": caught["version"] + 1},
     )
     expected = {"source_trace": f"memory.delete_version:{head}", "expire_reason": ""}
-    assert above_sweep == [expected, expected]
+    assert above_sweep == [expected]
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
     drawn = caught["version"]
     assert await lift_above_deletes("o", "n", [caught], [], ch=ch) == {}
@@ -1557,7 +1557,63 @@ async def test_a_set_under_a_late_tombstone_of_the_same_delete_is_written_back(
     )
     assert out.tombstoned is False and out.reason == "version_changed"
     got = await _read_back(ch)
+    tombstones = [int(c["tombstone"]) for c in await _recorded_checks(ch)]
+    assert got is not None and got.value == "Thursdays" and got.version > max(tombstones)
+
+
+@pytest.mark.asyncio
+async def test_a_plain_delete_above_a_late_tombstone_of_the_same_delete_is_copied(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The SDK retries the 503 of a timed-out tombstone insert. After the retry's version
+    # check the first tombstone commits, then a set and a plain memory.delete of it, all
+    # below the retry's tombstone. The plain delete removed the key (found=False), and its
+    # tombstone is copied on top, so a restore brings back the set's value.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore as restore_mod
+
+    head, commit_late = await _tombstone_held_back(ch, monkeypatch)
+    get_by_key = memory_repo.get_by_key
+    landed: list[bool] = []
+
+    async def check_then_land(identity: Any, key: str, **kw: Any) -> Any:
+        found = await get_by_key(identity, key, **kw)
+        if not landed:
+            landed.append(True)
+            await commit_late()
+            await set_commit._set_plain_insert(_in_flight_set(time.time_ns()), ch)
+            await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
+        return found
+
+    monkeypatch.setattr(memory_repo, "get_by_key", check_then_land)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is False and out.found is False
+    monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
+    monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
+    restored = await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
+    assert restored.restored is True
+    got = await _read_back(ch)
     assert got is not None and got.value == "Thursdays"
+
+
+@pytest.mark.asyncio
+async def test_a_check_whose_tombstone_is_missing_finishes_on_the_retrys(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The first tombstone insert failed for good; the retry deleted the key again. The first
+    # check, run later, stands on the retry's tombstone, the one that committed.
+    head, _commit_late = await _tombstone_held_back(ch, monkeypatch)
+    retry = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert retry.tombstoned is True
+    first = next(c for c in await _recorded_checks(ch) if c["done"] == 0)
+    check = {**_ID, "memory_key": _KEY, "checked": head, "tombstone": first["tombstone"]}
+    out = await hm.rerun_delete_check(check)
+    assert out is not None and out.tombstoned is True and out.version == retry.version
+    assert [c["done"] for c in await _recorded_checks(ch)] == [1, 1]
 
 
 @pytest.mark.asyncio

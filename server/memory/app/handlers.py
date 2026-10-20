@@ -737,12 +737,12 @@ async def finish_delete_check(
 
 async def rerun_delete_check(check: dict[str, Any]) -> MemoryDeleteVersionOutput | None:
     """Run an owed check (the caller holds the key lock) and answer as its delete would
-    have, or close it and answer None when the removed version was erased since. A
-    tombstone missing from the key's history (its insert failed) is written first when
-    nothing came after the removed version, at a new version so the namespace's watermark
-    moves; otherwise the check runs against the recorded one and answers how the key moved
-    on. An insert that timed out can still commit: it lands aimed at the same version and
-    counts as this same delete (`_key_moved_on`)."""
+    have, or close it and answer None when the removed version was erased since. When the
+    tombstone is missing from the key's history (its insert failed), the check runs against
+    another tombstone of this same delete (a retry's), or writes one when nothing came
+    after the removed version, at a new version so the namespace's watermark moves, or
+    otherwise answers how the key moved on. An insert that timed out can still commit: it
+    lands aimed at the same version and counts as this same delete (`_key_moved_on`)."""
     import server.memory.store as memory_repo
 
     checked, tombstone = int(check["checked"]), int(check["tombstone"])
@@ -759,13 +759,13 @@ async def rerun_delete_check(check: dict[str, Any]) -> MemoryDeleteVersionOutput
         await memory_repo.record_delete_check(check, done=True)
         return None
     if tombstone not in mine:
-        copies, others = await _after_checked(removed, checked=checked, tombstone=tombstone)
-        if not copies and not others:
-            # Nothing came after the removed version: the delete is still owed, at a version
-            # above any write a fence lifted over a late commit of the original.
-            from server.memory.app import write_fence
-
-            tombstone = max(next_version(), tombstone + write_fence.LIFT_BAND_NS + 1)
+        same_delete, others = await _after_checked(removed, checked=checked, tombstone=tombstone)
+        if same_delete:
+            tombstone = max(same_delete)  # a retry's, or a late one: the delete's that stands
+        elif not others:
+            # Nothing came after the removed version: the delete is still owed, above any
+            # write a fence lifted over a late commit of the original.
+            tombstone = _above_lift_band(tombstone)
             await _write_tombstone_row(
                 removed, version=tombstone, trace=delete_version_trace(checked)
             )
@@ -775,30 +775,34 @@ async def rerun_delete_check(check: dict[str, Any]) -> MemoryDeleteVersionOutput
 async def _key_moved_on(
     existing: Any, *, checked: int, tombstone: int
 ) -> MemoryDeleteVersionOutput | None:
-    """The answer when the key moved on after the version check (`checked`), from its
-    newest version other than this delete's own `tombstone`, read with sequential
-    consistency; None when it did not. A live row means `version_changed`, and a live row
-    below the tombstone (a plain write between the check and the tombstone) is written
-    again above it. Another delete's or a sweep's tombstone means that delete or sweep
-    removed the key, not this one (`found=False`); one below this tombstone is written again
-    above it, stamped as this delete's own, so the key's head is the row it removed. A
+    """The answer when the key moved on after the version check (`checked`), read with
+    sequential consistency; None when it did not. Every tombstone of this same delete (the
+    split `_after_checked` makes) is set aside, and the newest version left decides. A live
+    row means `version_changed`; another delete's or a sweep's tombstone means that delete
+    or sweep removed the key, not this one (`found=False`). Either one below this delete's
+    newest tombstone is written again above it, a tombstone stamped as this delete's own so
+    the key's head is the row it removed; a head that already carries that row is left. A
     write still in flight lifts itself when it lands (`write_fence.lift_after_insert`)."""
-    copies, others = await _after_checked(existing, checked=checked, tombstone=tombstone)
+    same_delete, others = await _after_checked(existing, checked=checked, tombstone=tombstone)
     if not others:
         return None
     row = await _version_row(existing, max(others))
     gone = row.tombstoned_at is not None  # another delete or a sweep removed it
-    top = max([tombstone, *copies])
-    if row.version < top and not (gone and copies):
-        # Written again above this delete's tombstones. A tombstone's copy is this delete's
-        # own, aimed at `checked`: a write after it lifts over it as over this tombstone (a
-        # sweep's marker stays on the sweep's tombstone, which keeps the writes it caught).
-        # One already copied is not copied twice.
+    top = max([tombstone, *same_delete])
+    if row.version < top and not (gone and await _head_carries(existing, top, row)):
+        # A sweep's marker stays on the sweep's tombstone, which keeps the writes it caught.
         trace = delete_version_trace(checked) if gone else None
         await _write_above(row, tombstone=top, source_trace=trace)
     if gone:
         return MemoryDeleteVersionOutput(tombstoned=False, found=False)
     return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
+
+
+async def _head_carries(existing: Any, top: int, row: Any) -> bool:
+    """Version `top` of the key, this delete's newest tombstone, already carries `row`'s
+    value: a copy of it this delete wrote back, so it is not copied twice."""
+    head = await _find_version_row(existing, top)
+    return head is not None and (head.memory_id, head.value) == (row.memory_id, row.value)
 
 
 async def _restore_newer_chunks(existing: Any, *, tombstone: int) -> None:
@@ -853,10 +857,10 @@ async def _served_chunks(existing: Any, *, tombstone: int) -> frozenset[tuple[in
     chunks stay retired); none otherwise."""
     from server.memory.app import set_chunks as _set_chunks
 
-    copies, others = await _after_checked(
+    same_delete, others = await _after_checked(
         existing, checked=int(existing.version), tombstone=tombstone
     )
-    if not others or max(copies, default=0) > max(others):
+    if not others or max(same_delete, default=0) > max(others):
         return frozenset()  # nothing after it, or this delete's own tombstone on top
     newer = await _version_row(existing, max(others))
     if newer.tombstoned_at is not None:
@@ -870,9 +874,9 @@ async def _after_checked(
     existing: Any, *, checked: int, tombstone: int
 ) -> tuple[list[int], list[int]]:
     """The key's committed versions above `checked` under the identity of `existing`, read
-    with sequential consistency, other than the delete's own `tombstone`: this delete's
-    other tombstones (aimed at `checked`: a late or retried insert of it, or a copy it
-    wrote back), and the rest."""
+    with sequential consistency, other than the delete's own `tombstone`: the other
+    tombstones of this same delete (aimed at `checked`: a late or retried insert of it, or
+    a copy it wrote back), and the rest."""
     import server.memory.store as memory_repo
 
     key = {
@@ -886,38 +890,52 @@ async def _after_checked(
     above = committed.get(
         (existing.agent, existing.user_id, existing.session_id, existing.memory_key), []
     )
-    copies = [v for v, deleted, target in above if v != tombstone and deleted and target == checked]
-    others = [v for v, _deleted, _target in above if v != tombstone and v not in copies]
-    return copies, others
+    same_delete: list[int] = []
+    others: list[int] = []
+    for v, deleted, target in above:
+        if v != tombstone:
+            (same_delete if deleted and target == checked else others).append(v)
+    return same_delete, others
 
 
-async def _version_row(existing: Any, version: int) -> Any:
-    """Version `version` of the key under the identity of `existing`, which a listing just
-    saw committed, read with sequential consistency."""
+async def _find_version_row(existing: Any, version: int) -> Any | None:
+    """Version `version` of the key under the identity of `existing`, read with sequential
+    consistency; None when it is not committed."""
     import server.memory.store as memory_repo
 
     ident = (existing.agent, existing.user_id, existing.session_id)
     rows = await memory_repo.fetch_version_rows(
         existing.org, existing.namespace, [(existing.memory_key, version)], sequential=True
     )
-    row = next((r for r in rows if (r.agent, r.user_id, r.session_id) == ident), None)
+    return next((r for r in rows if (r.agent, r.user_id, r.session_id) == ident), None)
+
+
+async def _version_row(existing: Any, version: int) -> Any:
+    """`_find_version_row` for a version a listing just saw committed."""
+    row = await _find_version_row(existing, version)
     if row is None:
         raise RuntimeError(f"version {version} of {existing.memory_key!r} was listed, not read")
     return row
 
 
-async def _write_above(row: Any, *, tombstone: int, source_trace: str | None = None) -> None:
-    """`row` written again above `tombstone`, `source_trace` replacing its own when given.
-    The version is drawn on this process's clock, but never within the band the write fence
-    lifts writes into over the same tombstone (`write_fence.LIFT_BAND_NS`), so it cannot tie
-    with one when another process's clock put the tombstone ahead of this one."""
-    import server.memory.store as memory_repo
+def _above_lift_band(tombstone: int) -> int:
+    """A version drawn on this process's clock, but above the band the write fence lifts
+    writes into over `tombstone` (`write_fence.LIFT_BAND_NS`), so it cannot tie with one
+    when another process's clock put the tombstone ahead of this one."""
     from server.memory.app import write_fence
+
+    return max(next_version(), tombstone + write_fence.LIFT_BAND_NS + 1)
+
+
+async def _write_above(row: Any, *, tombstone: int, source_trace: str | None = None) -> None:
+    """`row` written again above `tombstone` (`_above_lift_band`), `source_trace` replacing
+    its own when given."""
+    import server.memory.store as memory_repo
 
     changes = {} if source_trace is None else {"source_trace": source_trace}
     back = memory_repo.build_memory_version_row(
         row,
-        version=max(next_version(), tombstone + write_fence.LIFT_BAND_NS + 1),
+        version=_above_lift_band(tombstone),
         updated_at=memory_repo.written_now(),
         **changes,
     )
