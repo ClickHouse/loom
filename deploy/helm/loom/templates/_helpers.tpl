@@ -216,6 +216,13 @@ passes and runs an overdue worker instead of restarting its interval. */}}
   readOnly: true
 {{- end }}
 
+{{/* The settings file's `data`, for the release's ConfigMap and each hook Job's copy. */}}
+{{- define "loom.settingsFileData" -}}
+loom.yaml: |
+  # yaml-language-server: $schema=https://raw.githubusercontent.com/ClickHouse/loom/main/schemas/loom-settings.schema.json
+  {{- dict "version" 1 "settings" (.Values.settingsFile | default dict) | toYaml | nindent 2 }}
+{{- end }}
+
 {{/* A hash of the settings file, so a change to it rolls the pods. */}}
 {{- define "loom.settingsFileChecksum" -}}
 {{- .Values.settingsFile | toJson | sha256sum -}}

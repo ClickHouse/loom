@@ -6,6 +6,7 @@ ignored (N-1 and N share the file in a rollout)."""
 from __future__ import annotations
 
 import ast
+import difflib
 import json
 import os
 import re
@@ -274,6 +275,20 @@ def test_no_description_names_a_sibling_setting_by_its_suffix() -> None:
                         found.append(f"{st.target.id}: {word}")
     assert not found, f"spell the full setting name: {sorted(set(found))}"
     assert wire_hits == _WIRE_NAMES, f"no longer needed: {sorted(_WIRE_NAMES - wire_hits)}"
+
+
+def test_a_full_setting_name_in_a_description_is_spelled_right() -> None:
+    """A backticked name within a typo of a setting names nothing."""
+    fields = list(Settings.model_fields)
+    name = re.compile(r"`([a-z][a-z0-9]*(?:_[a-z0-9]+){2,})`")
+    typos = [
+        f"{field}: {word} -> {close[0]}"
+        for field, text in descriptions(Settings).items()
+        for word in name.findall(text)
+        if word not in Settings.model_fields
+        and (close := difflib.get_close_matches(word, fields, n=1, cutoff=0.9))
+    ]
+    assert not typos, typos
 
 
 def test_no_description_points_at_a_neighbouring_field() -> None:

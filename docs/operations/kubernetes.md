@@ -45,9 +45,11 @@ The first pod runs the migrations under the migrate lease and the others wait fo
 so the first install takes a few minutes. The startup probe allows 15 minutes
 (`probes.startup`), which also covers cloning the git mirrors.
 
-The embedding settings and the root secret go through `embedding.*` and `secrets.jwtSecret`,
-which the chart guards (below), or the `secrets.existingSecret` Secret, which it cannot
-check; it refuses them in `env`, `extraEnv`, `settingsFile` and `secrets.extra`, and an `envFrom` source must not carry them either. Every other
+The embedding settings go through `embedding.*`, and the root secret and its previous
+value through `secrets.jwtSecret` and `secrets.jwtSecretPrevious`; the chart guards these
+(below). The root secret can instead live in the `secrets.existingSecret` Secret, whose
+contents the chart cannot check. The chart refuses all of them in `env`, `extraEnv`,
+`settingsFile` and `secrets.extra`, and an `envFrom` source must not carry them either. Every other
 setting goes in `env` (plain values) or `secrets.extra` (keys), named as in
 the [configuration reference](../reference/configuration.md). `settingsFile` takes the same
 settings as the YAML settings file holds them, lowercase and typed:
@@ -59,11 +61,14 @@ settingsFile:
 ```
 
 The chart always renders the settings file (an empty `settings` map when `settingsFile`
-is empty), mounts it at `/app/config/loom.yaml` on every pod and rolls the pods when it
-changes; `env` wins over it. A pod of the previous ReplicaSet that starts during a
-rollout still finds the file. Every pod of a rollout reads the one file, and a pod of the
-previous build logs a setting it does not have and ignores it, so a new setting can go in
-the same upgrade. A live setting can also change without a rollout
+is empty), mounts it at `/app/config/loom.yaml` on every pod and on the publish, reseal
+and rollback-check Jobs (each from its own copy, rendered with the Job), and rolls the
+pods when it changes; `env` wins over it. A pod of the previous ReplicaSet that starts
+during a rollout still finds the file, and reads the new revision's copy: a pod of the
+previous build logs a setting it does not have and ignores it, so a new setting can go
+in the same upgrade, but it refuses to start on a value only the new build accepts (a
+new choice of an existing setting, a widened bound). Set such a value in the upgrade
+after the one that changes the image. A live setting can also change without a rollout
 ([runtime settings](./runtime-settings.md)). `values.yaml` documents the chart's own values.
 
 ### On a laptop

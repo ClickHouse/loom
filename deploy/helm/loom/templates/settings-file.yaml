@@ -12,6 +12,4 @@ metadata:
   labels:
     {{- include "loom.labels" . | nindent 4 }}
 data:
-  loom.yaml: |
-    # yaml-language-server: $schema=https://raw.githubusercontent.com/ClickHouse/loom/main/schemas/loom-settings.schema.json
-    {{- dict "version" 1 "settings" (.Values.settingsFile | default dict) | toYaml | nindent 4 }}
+  {{- include "loom.settingsFileData" . | nindent 2 }}
