@@ -214,7 +214,7 @@ def _observed(cache: Any, key: str) -> list[float]:
     return [o.value for o in metrics_gauges._cached_series(cache, key)(None)]
 
 
-def test_a_process_that_loses_the_lease_stops_exporting_its_census(
+def test_a_refresh_off_the_lease_clears_the_holders_reading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.workers import leader
@@ -223,10 +223,11 @@ def test_a_process_that_loses_the_lease_stops_exporting_its_census(
     cache = _census_cache(monkeypatch, lambda: reading)
     cache._refresh()
     assert _observed(cache, "agent_trust_used_ratio") == [0.9]
-    # The lease moves to another process, which takes the census from now on.
+    # The lease moves to another process while a refresh is on its way: its None
+    # answer clears the reading, which a later read on the lease must not serve.
     monkeypatch.setattr(leader, "_CURRENT", _lease(False))
     cache._refresh()
-    assert _observed(cache, "agent_trust_used_ratio") == []
+    assert cache._value is None
 
 
 def test_a_handoff_stops_the_old_holders_series_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
