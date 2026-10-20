@@ -119,14 +119,15 @@ async def handle_profile_set(input: ProfileSetInput) -> ProfileMutationOutput:
 
 
 async def write_folded_section(
-    *, org: str, namespace: str, user_id: str, label: str, value: str
+    *, org: str, namespace: str, user_id: str, label: str, value: str, memory_ids: list[str]
 ) -> None:
     """Write a consolidation fold's text as the user's `label` section.
 
     The section is user-scoped (user_id); agent='-' so profile.render's
     per-user fan-out picks it up for every client. The trace names the fold
     so provenance classes the row `derived`, not `asserted`: an LLM's summary
-    of a user's working style is an inference."""
+    of a user's working style is an inference. It also names the memories the
+    fold read, so `memory.redact` of one of them scrubs this version too."""
     await handle_profile_set(
         ProfileSetInput(
             org=org,
@@ -135,7 +136,7 @@ async def write_folded_section(
             user_id=user_id,
             label=label,
             value=value,
-            source_trace=f"profile.fold:{label}",
+            source_trace=f"profile.fold:{label}:" + ",".join(memory_ids),
         )
     )
 

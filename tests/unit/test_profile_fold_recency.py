@@ -36,21 +36,6 @@ def test_fold_prompt_carries_the_recency_and_forget_rules() -> None:
     assert "MOST RECENT" in pc._FOLD_SYSTEM and "forget" in pc._FOLD_SYSTEM
 
 
-def test_fold_reads_only_current_rows() -> None:
-    import inspect
-
-    from server.memory.store import profile_sources
-
-    assert "user_keys_only=True" in inspect.getsource(pc._consolidate_identity)
-    src = inspect.getsource(profile_sources.user_facts) + profile_sources.CURRENT_FACTS
-    assert "status NOT IN ('superseded', 'rejected', 'proposed', 'duplicate')" in src
-    assert "(valid_to IS NULL OR valid_to > now())" in src
-    assert "(expires_at IS NULL OR expires_at > now())" in src
-    assert "coalesce(valid_at, updated_at)" in src
-    # The user's own facts only, never a stored request to forget
-    assert "startsWith(memory_key, 'user_')" in src and "NOT has(tags, 'forget')" in src
-
-
 class _LocalCH:
     def __init__(self, *setup: str) -> None:
         self.setup = list(setup)
@@ -91,6 +76,50 @@ async def test_fold_leaves_out_a_duplicate_row() -> None:
         ch=ch,
     )
     assert [r["value"] for r in rows] == ["Uses uv."]
+
+
+def _fact(key: str, value: str, **cols: str) -> str:
+    """One preference of user u1; `cols` are extra columns as SQL literals."""
+    names = ", ".join(cols)
+    values = ", ".join(cols.values())
+    return (
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
+        f"memory_type, value, content_sha256, version, updated_at{', ' + names if cols else ''}) "
+        f"VALUES ('o', 'n', 'a', 'u1', '-', '{key}', 'preference', '{value}', '{'a' * 64}', 1, "
+        f"'2026-02-01 00:00:00'{', ' + values if cols else ''})"
+    )
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_fold_reads_only_current_rows_about_the_user(monkeypatch) -> None:
+    """The fold reads the user's own current facts, each dated by when it became
+    true, else when it last changed; nothing superseded, expired, past its
+    `valid_to`, about someone else, keyed off the user or asking to be forgotten."""
+    ch = _LocalCH(
+        ddl("memory"),
+        _fact("user_editor", "Uses vim.", valid_at="'2026-01-15 00:00:00'"),
+        _fact("user_shell", "Uses zsh."),
+        _fact("user_old", "Uses nano.", status="'superseded'"),
+        _fact("user_trial", "Tries emacs.", expires_at="'2020-01-01 00:00:00'"),
+        _fact("user_job", "Works at night.", valid_to="'2020-01-01 00:00:00'"),
+        _fact("user_gone", "Lives in Paris.", tags="['forget']"),
+        _fact("user_friend", "Likes tea.", tags="['about:other']"),
+        _fact("team_style", "Reviews on Fridays."),
+    )
+    read: list[dict[str, Any]] = []
+
+    def _render(rows: list[dict[str, Any]]) -> str:
+        read.extend(rows)
+        return ""  # nothing to fold: the worker stops before the model
+
+    monkeypatch.setattr(pc, "render_fold_input", _render)
+    row = {"org": "o", "namespace": "n", "user_id": "u1"}
+    assert await pc._consolidate_identity(ch, row, pc.ProfileConsolidationConfig()) is False
+    assert sorted((r["value"], r["since"]) for r in read) == [
+        ("Uses vim.", "2026-01-15 00:00:00"),
+        ("Uses zsh.", "2026-02-01 00:00:00"),
+    ]
 
 
 def test_fold_config_reads_the_model_setting() -> None:

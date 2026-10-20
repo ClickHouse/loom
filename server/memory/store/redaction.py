@@ -25,6 +25,11 @@ the text of a version, and what this module scrubs:
     value of the key (a superseded or deleted row, or one the worker has not
     relinked yet) may hold `suggestion`, a rewrite of that value's text; it is
     blanked. The links made from the live head's value keep theirs.
+  The user's profiles built from the memory: a profile worker writes what a
+    model made of the user's facts and names the facts it read in the row's
+    trace (`profile.fold:<label>:<memory ids>`). Every version whose trace
+    names the redacted memory is scrubbed the same way, head included, since a
+    trace names the memory and not its version (`profile_versions_built_from`).
 
 Out of scope, with the reason:
   `tags`, `files`: caller-supplied labels, not the value's text.
@@ -163,6 +168,32 @@ async def redact_row(
         )
 
 
+async def profile_versions_built_from(
+    org: str, namespace: str, user_id: str, memory_id: str, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The user's profile versions, not redacted yet, whose trace names `memory_id`
+    among the memories they were built from (`profile.fold:<label>:<id>,<id>,...`)."""
+    ch = ch or _default_client()
+    cols = "toString(memory_id) AS memory_id, version, agent, session_id, memory_key"
+    where = """org = {org:String} AND namespace = {ns:String} AND user_id = {u:String}
+        AND memory_type = 'profile' AND redacted_at IS NULL
+        AND startsWith(source_trace, 'profile.fold:')
+        AND has(splitByRegexp('[:,]', source_trace), toString({mid:UUID}))"""
+    rows: list[dict[str, Any]] = await ch.query_all(
+        f"""
+        SELECT memory_id, version, agent, session_id, memory_key
+        FROM (
+            SELECT {cols} FROM loom.memory_versions WHERE {where}
+            UNION ALL
+            SELECT {cols} FROM loom.memory WHERE {where}
+        )
+        LIMIT 1 BY memory_id, version
+        """,
+        params={"org": org, "ns": namespace, "u": user_id, "mid": memory_id},
+    )
+    return rows
+
+
 async def _live_texts(
     ch: _CHClient, org: str, ns: str, agent: str, user_id: str, session_id: str, key: str
 ) -> tuple[list[str], list[str]]:
@@ -252,6 +283,7 @@ __all__ = [
     "REDACTED_VALUE",
     "Scrub",
     "key_derivative_scrubs",
+    "profile_versions_built_from",
     "redact_row",
     "run_scrubs",
 ]

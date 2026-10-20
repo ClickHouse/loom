@@ -195,5 +195,6 @@ async def _consolidate_identity(
         user_id=row["user_id"],
         label=cfg.label,
         value=text,
+        memory_ids=[str(r["memory_id"]) for r in rows],
     )
     return True

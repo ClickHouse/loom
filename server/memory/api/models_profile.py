@@ -34,7 +34,7 @@ class ProfileSetInput(_Identity):
     char_limit: int = DEFAULT_CHAR_LIMIT
     # Where the section came from; a trace starting with `memory.delete_version:` is
     # refused (that op's tombstone marker). A worker that folds facts with an LLM
-    # writes "profile.fold:<label>" so provenance classes the row `derived`;
+    # writes "profile.fold:<label>:<memory ids>" so provenance classes the row `derived`;
     # a client writing a persona leaves it empty (`asserted`).
     source_trace: str = ""
     # Write only if the section's current content hash equals this (409 otherwise);

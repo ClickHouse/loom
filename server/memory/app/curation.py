@@ -55,6 +55,7 @@ from server.memory.api.models_temporal import (
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.domain.temporal_sql import status_predicate
+from server.memory.store.history import HistoryTarget
 from server.memory.store.rows import MemoryRow
 from server.observability import audit as _audit
 
@@ -623,6 +624,9 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         live_link_inputs=await _live_link_inputs(input.org, head),
     )
     await memory_repo.run_scrubs(scrubs, apply=True)
+    await _redact_profiles_built_from(
+        input.org, target, input.memory_id, when=now, reason_blob=f"{reason_blob}|{by_blob}"
+    )
     # A redacted value may already be quoted in a cached answer (7-day TTL) or a precedent
     # (30 days); both carry the keys of the window they rendered, so the text leaves with the
     # row it quoted. A failure here is reported, not swallowed: an ADMIN scrub that left the
@@ -635,6 +639,54 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         cache_rows_deleted=cache_rows,
         precedent_rows_deleted=precedent_rows,
     )
+
+
+async def _redact_profiles_built_from(
+    org: str, target: HistoryTarget, memory_id: str, *, when: datetime, reason_blob: str
+) -> None:
+    """Scrub every version of the user's profiles built from the redacted memory,
+    and each profile key's derived rows: a model wrote them from its text. The
+    worker rebuilds a scrubbed head from the user's current facts."""
+    import server.memory.store as memory_repo
+
+    versions = await memory_repo.profile_versions_built_from(
+        org, target.namespace, target.user_id, memory_id
+    )
+    scrubbed: dict[tuple[str, str, str], set[int]] = {}
+    for v in versions:
+        await memory_repo.redact_row(
+            org, v["memory_id"], int(v["version"]), when=when, reason_blob=reason_blob
+        )
+        key = (str(v["agent"]), str(v["session_id"]), str(v["memory_key"]))
+        scrubbed.setdefault(key, set()).add(int(v["version"]))
+    for (agent, session_id, memory_key), done in sorted(scrubbed.items()):
+        head = await memory_repo.get_by_key(
+            memory_repo.Identity(
+                org=org,
+                namespace=target.namespace,
+                agent=agent,
+                user_id=target.user_id,
+                session_id=session_id,
+            ),
+            memory_key,
+            fresh=True,
+            strong=True,
+            scope=WHOLE_NAMESPACE,
+        )
+        # A scrubbed head keeps no text, so none of the key's derived rows is live.
+        if head is not None and head.version in done:
+            head = None
+        scrubs = await memory_repo.key_derivative_scrubs(
+            org,
+            target.namespace,
+            agent,
+            target.user_id,
+            session_id,
+            memory_key,
+            head_live=head is not None,
+            live_link_inputs=await _live_link_inputs(org, head),
+        )
+        await memory_repo.run_scrubs(scrubs, apply=True)
 
 
 async def _live_link_inputs(org: str, head: MemoryRow | None) -> str:

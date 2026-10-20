@@ -449,7 +449,7 @@ Table-level retention and tiering are operator TTLs, off by default
 | Operation            | Reads                                           | Writes                                                                                                                                 |
 | -------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `memory.history`     | `memory_versions` for one key                   | Nothing.                                                                                                                               |
-| `memory.redact`      | `memory_versions`, by org-wide `memory_id`      | Scrubs one historical version in place. Refuses the live head (delete it first).                                                       |
+| `memory.redact`      | `memory_versions`, by org-wide `memory_id`      | Scrubs one historical version in place, and the profile versions built from it. Refuses the live head (delete it first).               |
 | `namespace.snapshot` | Live `memory` rows, type configs, curated rows  | A portable payload with `version`, `content_sha256` and the attestation columns, plus a `loom.namespace_snapshots` audit row.          |
 | `namespace.restore`  | A snapshot payload                              | Rows into a target namespace (created if missing; the caller becomes admin). Idempotent per `snapshot_id`. Never strips `verified_by`. |
 | `namespace.rollback` | `memory` heads and `memory_versions` at `as_of` | Each changed key's older version as a new head; keys absent at `as_of` tombstoned; embedding stubs for the worker. Dry run by default. |

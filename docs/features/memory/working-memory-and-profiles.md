@@ -90,7 +90,7 @@ Field lists: [operations reference](../../reference/operations.md#profile).
   `LOOM_PROFILE_CONSOLIDATION_ENABLED`) folds a user's preference and decision memories
   into a versioned section (label `consolidated_profile`) with a model call. Rows tagged
   with a protected attribute are left out. Its provenance is `derived`
-  (`source_trace` `profile.fold:<label>`).
+  (`source_trace` `profile.fold:<label>:<memory ids>`, the facts it read).
 
 ```python
 async with Agent(org="acme", namespace="support", agent="triage-bot") as bot:
@@ -212,9 +212,9 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   build also writes nothing when a fact it read is no longer current once the model has
   answered (erased or deleted while it ran). What is left is the short gap between that
   check and the write: a row written there while the erasure saga runs is a live row its
-  final census finds, and the saga fails closed on it.
-  `memory.redact` does not scrub earlier profile versions built from the redacted text;
-  see [security](../../architecture/security.md#sensitivity).
+  final census finds, and the saga fails closed on it. `memory.redact` of a source fact
+  scrubs every profile version whose trace names it
+  ([security](../../architecture/security.md#sensitivity)).
 - **Scope.** The read is always for one `user_id`. A token pinned to a user
   (`read_user_id`, an end user's token) reads only that user's profile, with or without
   `user_id` in the body; another user is 403. A token bounded to one session

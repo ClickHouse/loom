@@ -744,13 +744,14 @@ counting as `credential` for its default shape filter: a new version per row and
 unlabelled row that holds a credential is embedded like any other, so search serves it, and
 `memory.ask` and the conflict judge can send it to their models.
 
-A redaction (`memory.redact`) scrubs the version it names and that key's derived rows; it
-does not reach the profiles built from the text. The structured profile is rebuilt from
-the user's current facts on the next pass once a source changes, is deleted or is erased,
-but its earlier versions (`structured_profile`, and the free-text fold's
-`consolidated_profile`) keep what the model wrote from the redacted text until they are
-redacted too: `memory.history` on the profile key lists them, and `memory.redact` takes
-each one. A user's erasure removes every version.
+A redaction (`memory.redact`) scrubs the version it names, that key's derived rows, and
+every version of the user's profiles built from the memory: the structured profile and the
+free-text fold's `consolidated_profile` name the memories they read in their trace
+(`profile.fold:<label>:<memory ids>`), and each version whose trace names the redacted
+memory is scrubbed with its key's derived rows, the live one included. The trace names
+the memory and not its version, so a profile built from another version of it is scrubbed
+too. A scrubbed live profile reads as no profile until the worker rebuilds it from the
+user's current facts.
 
 ## Audit log
 

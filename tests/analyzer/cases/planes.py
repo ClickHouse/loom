@@ -626,6 +626,7 @@ async def _ledgers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await L.delete_procedure_runs_by_key(ORG, NS, "k1", ch=ch)
     await R.delete_llm_response_cache_by_key(ORG, "k1", ch=ch)
     await R.delete_ask_precedents_by_key(ORG, "k1", ch=ch)
+    await R.profile_versions_built_from(ORG, NS, "u1", _UUID, ch=ch)
 
 
 async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:

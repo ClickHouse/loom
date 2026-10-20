@@ -137,6 +137,7 @@ from server.memory.store.redaction import (
     delete_ask_precedents_by_key,
     delete_llm_response_cache_by_key,
     key_derivative_scrubs,
+    profile_versions_built_from,
     redact_row,
     run_scrubs,
 )
@@ -270,6 +271,7 @@ __all__ = [
     "record_delete_check",
     "record_usage_event",
     "key_derivative_scrubs",
+    "profile_versions_built_from",
     "redact_row",
     "run_scrubs",
     "reemit_embedding_rows_for_key",
