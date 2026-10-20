@@ -157,23 +157,27 @@ def test_an_orphaned_candidate_goes_when_pending_and_keeps_its_decision_when_dec
     assert sqls.index("INSERT INTO loom.learnings_queue") < sqls.index(decided[0])
 
 
-def _deleted(row: dict[str, Any], sql: str, params: dict[str, Any]) -> bool:
-    """Whether one recorded delete of loom.learnings_queue takes `row`: a pending
-    delete only `pending` rows, a decided one only rows holding the rule at a
-    version no newer than it read."""
+def _deleted(row: dict[str, Any], sql: str, params: dict[str, Any], supported: set[str]) -> bool:
+    """Whether one recorded delete of loom.learnings_queue takes `row`, given the
+    candidates with a supporter row when it runs: a pending delete only `pending`
+    rows of a candidate nobody supports, a decided one only rows holding the rule
+    at a version no newer than it read."""
     if row["candidate_id"] not in params["cids"]:
         return False
     if "status = 'pending'" in sql:
-        return row["status"] == "pending"
+        assert "candidate_id NOT IN (SELECT candidate_id FROM loom.learnings_supporters" in sql
+        return row["status"] == "pending" and row["candidate_id"] not in supported
     return bool(row["proposed_value"]) and row["version"] <= params["read_max"]
 
 
-def _survivors(rows: list[dict[str, Any]], ch: _LearningsCH) -> list[dict[str, Any]]:
+def _survivors(
+    rows: list[dict[str, Any]], ch: _LearningsCH, supported: set[str] = frozenset()
+) -> list[dict[str, Any]]:
     """`rows` and the step's inserts, after the deletes it sent."""
     left = [*rows, *ch.inserted]
     for sql, params in ch.commands:
         if "ALTER TABLE loom.learnings_queue" in sql:
-            left = [r for r in left if not _deleted(r, sql, params)]
+            left = [r for r in left if not _deleted(r, sql, params, set(supported))]
     return left
 
 
@@ -193,6 +197,19 @@ def test_a_review_between_the_read_and_the_delete_survives_and_the_reopened_step
     blank = {"candidate_id": "c", "status": "rejected", "proposed_value": "", "version": 10}
     assert reopened.inserted == [blank]
     assert _survivors([review], reopened) == [blank]
+
+
+def test_a_candidate_a_supporter_backed_after_the_read_survives_the_pending_delete() -> None:
+    """The step read a pending candidate with no supporter; a filing then wrote its
+    supporter row and its version-1 candidate row before the delete was submitted.
+    The delete re-checks for supporter rows, so the candidate stays."""
+    filed = {"candidate_id": "c", "status": "pending", "proposed_value": '"r"', "version": 1}
+    ch = _LearningsCH(["c"], [filed])
+    asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch))
+    # The filer's rows landed before the delete ran: the candidate is supported.
+    assert _survivors([filed, dict(filed)], ch, supported={"c"}) == [filed, filed]
+    # With nobody's support it goes.
+    assert _survivors([filed], ch) == []
 
 
 def test_a_review_landing_after_the_blank_write_survives_the_decided_delete() -> None:

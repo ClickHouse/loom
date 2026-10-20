@@ -256,8 +256,9 @@ class MemorySetFromMessagesOutput(BaseModel):
     # The user's facts read from the assistant's premises ("since you enjoy
     # X…"), added to the batch.
     premise_facts: int = 0
-    # Rules the assistant stated about itself routed to the learnings queue, each
-    # filing a candidate or supporting one; none is written as a memory.
+    # Rules the assistant stated about itself that wrote to the learnings queue: a
+    # new candidate or this session's support of one (a session restating a rule it
+    # already backs counts 0). None is written as a memory.
     learning_candidates: int = 0
     # Request fields the server did not apply: unknown keys, and `agent_learnings=true`
     # while the deployment setting memory_extract_agent_learnings is off.

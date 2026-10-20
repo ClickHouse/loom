@@ -101,8 +101,14 @@ UID = "user_id = {uid:String}"
 # A bot-rule candidate (`assistant_turn`) holds no user's words: each user's quotes
 # live on their own loom.learnings_supporters rows, deleted by `UID`. A candidate left
 # with no supporter still holding its rule text is the residue a user erasure leaves:
-# the step deletes it when pending and blanks its rule when decided.
+# the step deletes it when pending and blanks its rule when decided. It is counted
+# org-wide, not only for the erased user's candidates (their supporter rows are gone
+# by then): a census can count residue another erasure in the org left mid-step, so
+# this saga fails and its reopened step cleans it. That fails closed, never open.
+SUPPORTED_LEARNINGS = (
+    "(SELECT candidate_id FROM loom.learnings_supporters WHERE org = {org:String})"
+)
 ORPHAN_LEARNINGS = (
     "source_kind = 'assistant_turn' AND proposed_value != '' AND candidate_id NOT IN "
-    "(SELECT candidate_id FROM loom.learnings_supporters WHERE org = {org:String})"
+    + SUPPORTED_LEARNINGS
 )

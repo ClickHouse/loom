@@ -429,3 +429,48 @@ async def test_a_user_erasure_saga_runs_the_learnings_step_and_reopens_it_from_r
     assert "skipped" in by_step["memory.tombstone"].notes
     stray_rows = await _raw(ch, "loom.learnings_queue", org, "candidate_id = {cid:UUID}", cid=stray)
     assert stray_rows == []
+
+
+@pytest.mark.asyncio
+async def test_a_session_backing_the_rule_while_its_last_supporter_is_erased_keeps_it(
+    base_url: str, token: tuple[str, str], ch: Any
+) -> None:
+    """Two sessions interleaved on a real ClickHouse: alice's erasure reads her
+    candidate as unsupported, then bob's session files the same rule (supporter row,
+    then the version-1 candidate row) before the erasure's delete runs. The delete
+    re-checks for supporter rows, so the candidate stays, backed by bob."""
+    from server.erasure.store import census as erasure_census
+    from server.erasure.store import steps_ledgers
+
+    org, tok = token
+    ns = f"bot-{uuid.uuid4().hex[:8]}"
+    _converse(base_url, tok, org, ns, "alice", "s1")
+    (cand,) = _listed(base_url, tok, org, ns)
+
+    class _BobFilesMidStep:
+        """The real client, with bob's session filing just after the step reads the
+        unsupported candidates and before it deletes any."""
+
+        def __init__(self, inner: Any) -> None:
+            self.inner, self.fired = inner, False
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.inner, name)
+
+        async def query_all(self, sql: str, params: Any = None) -> Any:
+            rows = await self.inner.query_all(sql, params=params)
+            if "FROM loom.learnings_queue FINAL" in sql and not self.fired:
+                self.fired = True
+                assert [str(r["candidate_id"]) for r in rows] == [cand["candidate_id"]]
+                _converse(base_url, tok, org, ns, "bob", "s2")
+            return rows
+
+    proxy = _BobFilesMidStep(ch)
+    await steps_ledgers.delete_learnings_queue_by_user(org, "alice", ch=proxy)
+    assert proxy.fired
+
+    (kept,) = _listed(base_url, tok, org, ns)
+    assert kept["candidate_id"] == cand["candidate_id"] and kept["status"] == "pending"
+    assert kept["rationale"] == _rationale("bob")
+    after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
+    assert after["loom.learnings_supporters"] == 0 and after["loom.learnings_queue"] == 0

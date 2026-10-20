@@ -538,7 +538,6 @@ _PAIRS = [
 
 @pytest.mark.asyncio
 async def test_the_list_counts_a_rules_users_and_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
-
     from server.memory.api.models_learnings import LearningsListInput
     from server.memory.app import learnings as h
 

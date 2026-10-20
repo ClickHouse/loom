@@ -135,6 +135,12 @@ flowchart TD
   misses. The census counts `loom.idempotency` org-wide but not `loom.embedding_cache`,
   which any search in the org refills; each replica's process cache of vectors expires
   within `LOOM_EMBEDDING_CACHE_TTL_S`.
+- **Bot-rule learnings.** A user's words in the learnings queue live only on their rows
+  of `loom.learnings_supporters`, which a user erasure deletes. A rule candidate left
+  with no supporter is then deleted when pending, or keeps its decision with the rule
+  blanked ([extraction](./extraction.md#rules-the-assistant-states-about-itself)). The
+  census counts such unsupported candidates across the org, not only the erased user's,
+  so a saga can fail on one another erasure left mid-step; its reopened step cleans it.
 
 ### The federated cascade
 

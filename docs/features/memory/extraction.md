@@ -88,9 +88,11 @@ request's `(org, namespace, agent)`:
 - The candidate row holds the rule and no user's words. Each session that states it adds
   a row to `loom.learnings_supporters` with the end user, the session and that user's
   own quotes: the user turn before the rule (up to 200 characters) and the rule as said,
-  the span the extractor cited or the assistant turn (up to 400). A supporter never
-  rewrites the candidate's row, so a review is never undone by a late supporter. A
-  decided candidate takes no new supporters.
+  the span the extractor cited or the assistant turn (up to 400). The supporter row is
+  written first, then the candidate row again, at version 1, with every new supporter.
+  So an erasure that deletes a pending candidate mid-filing never leaves that supporter
+  without it. A review always writes a newer version, so the rewrite never undoes a
+  decision, and a decided candidate takes no new supporters.
 - `learnings.list` shows the earliest remaining supporter's quotes as the `rationale`.
   A user erasure deletes that user's supporter rows, so the next supporter's quotes
   show. A candidate left with none is deleted when pending; when decided, it keeps its
