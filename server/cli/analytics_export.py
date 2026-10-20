@@ -14,6 +14,10 @@ from server.core.datetimes import utc_now as _now
 # The first botocore whose put_object takes IfNoneMatch (the `aws` extra's floor).
 BOTOCORE_FLOOR = (1, 35, 2)
 
+# A refusal's exit code, argparse's for a bad flag too: the chart's
+# podFailurePolicy fails the Job on it instead of retrying.
+REFUSED = 2
+
 
 def _day(value: str) -> date:
     try:
@@ -68,7 +72,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
     day = args.day or today - timedelta(days=1)
     if refusal := _refusal(day, today):
         print(f"  ✗ {refusal}", file=sys.stderr)
-        return 2
+        return REFUSED
     name_key = name_hash_key(settings.analytics_export_name_key)
 
     def new_client() -> Any:

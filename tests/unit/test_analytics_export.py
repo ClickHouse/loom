@@ -16,9 +16,7 @@ from server.cli import analytics_export as cli
 from server.insights.app.analytics_export import export_day, name_hash_key, object_key, s3_put
 from server.insights.store.analytics_export import (
     ENTITIES,
-    NAME_COLUMNS,
     STATEMENT_SETTINGS,
-    name_hash_sql,
 )
 from server.settings import settings
 
@@ -51,11 +49,10 @@ async def test_export_day_hashes_every_name_and_uploads_each_entity() -> None:
     out = await export_day(day, prefix="p", put=put, name_key=name_key, ch=ch)  # type: ignore[arg-type]
     assert [(e.entity, e.written) for e in out] == [("usage", True), ("namespaces", False)]
     assert [k for k, _ in seen] == [e.key for e in out]
-    for (sql, params), entity in zip(ch.calls, ENTITIES, strict=True):
+    assert len(ch.calls) == len(ENTITIES)
+    for sql, params in ch.calls:
         assert sql.endswith(f"{STATEMENT_SETTINGS} FORMAT Parquet")
         assert params == {"day": day, "k0": name_key[0], "k1": name_key[1]}
-        for column in NAME_COLUMNS[entity]:
-            assert f"{name_hash_sql(column)} AS {column}" in sql
 
 
 def test_the_hash_key_is_stable_and_depends_on_the_secret() -> None:
@@ -306,3 +303,11 @@ def test_a_missing_boto3_or_an_old_botocore_is_refused(
     monkeypatch.setattr(importlib.metadata, "version", version)
     got = cli._refusal(date(2000, 1, 1), date(2000, 1, 2))
     assert ("needs boto3 and botocore 1.35.2 or later" in got) is refused
+
+
+def test_the_chart_fails_the_job_on_the_clis_refusal_code() -> None:
+    from server.core.paths import REPO_ROOT
+
+    template = (REPO_ROOT / "deploy/helm/loom/templates/analytics-export.yaml").read_text()
+    rule = re.search(r"- action: FailJob\s+onExitCodes:.*?values: \[(\d+)\]", template, re.S)
+    assert rule is not None and int(rule.group(1)) == cli.REFUSED

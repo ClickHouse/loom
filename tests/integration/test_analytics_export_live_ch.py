@@ -27,6 +27,7 @@ from server.insights.store.analytics_export import (
     NAME_COLUMNS,
     NAMESPACES_SQL,
     ROW_ORDER,
+    STATEMENT_SETTINGS,
     USAGE_SQL,
     _hashed,
     name_hash_sql,
@@ -292,22 +293,29 @@ async def test_the_columns_that_leave_loom_are_exactly_the_allowlist(
         assert [r["name"] for r in rows] == COLUMNS[entity]
 
 
+# Profile settings that change a statement's column types or join and alias
+# resolution, each tried on and off around the statement as shipped.
+PROFILE_SETTINGS = (
+    "join_use_nulls",
+    "prefer_column_name_to_alias",
+    "cast_keep_nullable",
+    "aggregate_functions_null_for_empty",
+)
+
+
 @pytest.mark.parametrize("entity", sorted(ENTITIES))
-async def test_shipped_hashes_are_plain_strings_under_any_profile(
-    ch: CHClient, entity: str
-) -> None:
-    # Not LowCardinality (its dictionary encoding is the release's choice) and
-    # not Nullable, whichever way the profile resolves joins, aliases and casts.
+async def test_the_file_schema_does_not_depend_on_the_profile(ch: CHClient, entity: str) -> None:
     params = {"day": DAY, "k0": KEY[0], "k1": KEY[1]}
-    for join_use_nulls, prefer_column, keep_nullable in itertools.product((0, 1), repeat=3):
-        rows = await ch.query_all(
-            f"DESCRIBE TABLE ({_hashed(entity)}) SETTINGS join_use_nulls = {join_use_nulls}, "
-            f"prefer_column_name_to_alias = {prefer_column}, "
-            f"cast_keep_nullable = {keep_nullable}",
-            params,
-        )
-        types = {r["name"]: r["type"] for r in rows}
-        assert all(types[c] == "String" for c in NAME_COLUMNS[entity]), types
+    shipped = f"{_hashed(entity)} {STATEMENT_SETTINGS}"
+    default = await ch.query_all(f"DESCRIBE TABLE ({shipped})", params)
+    types = {r["name"]: r["type"] for r in default}
+    # The hashes are plain strings: not LowCardinality (its dictionary encoding
+    # is the release's choice), not Nullable.
+    assert all(types[c] == "String" for c in NAME_COLUMNS[entity]), types
+    for values in itertools.product((0, 1), repeat=len(PROFILE_SETTINGS)):
+        profile = ", ".join(f"{s} = {v}" for s, v in zip(PROFILE_SETTINGS, values, strict=True))
+        rows = await ch.query_all(f"DESCRIBE TABLE ({shipped}) SETTINGS {profile}", params)
+        assert {r["name"]: r["type"] for r in rows} == types, profile
 
 
 async def test_namespaces_lists_registered_and_unregistered_with_live_counts(

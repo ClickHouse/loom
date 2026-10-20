@@ -96,21 +96,20 @@ ROW_ORDER = {"usage": USAGE_KEY, "namespaces": "org, namespace"}
 
 # Pinned whatever the server's profile says: the analyzer (from 26.9 the only
 # one; on 26.4-26.8 a profile can still turn it off, and FULL JOIN USING and
-# alias resolution differ without it), strings as Parquet STRING, not BINARY (a
-# warehouse joins the hashes as strings), and dates as DATE, not UInt16.
+# alias resolution differ without it), sums that are never Nullable, strings as
+# Parquet STRING, not BINARY (a warehouse joins the hashes as strings), and
+# dates as DATE, not UInt16.
 STATEMENT_SETTINGS = (
-    "SETTINGS enable_analyzer = 1, output_format_parquet_string_as_string = 1, "
-    "output_format_parquet_date_as_uint16 = 0"
+    "SETTINGS enable_analyzer = 1, aggregate_functions_null_for_empty = 0, "
+    "output_format_parquet_string_as_string = 1, output_format_parquet_date_as_uint16 = 0"
 )
 
 
 def name_hash_sql(expr: str) -> str:
     """The lowercase hex of `expr`'s SipHash-2-4-128 under the key {k0:UInt64},
     {k1:UInt64}: the reference variant, which any SipHash-128 library reproduces.
-    A plain String, so the file's dictionary pages are built from the hashes in
-    row order and never depend on how ClickHouse keeps a `LowCardinality` one.
-    `ifNull`: a FULL JOIN key is Nullable under `join_use_nulls`, and with
-    `cast_keep_nullable` the cast would keep it so; the keys are never NULL."""
+    A plain String; the `ifNull` keeps a FULL JOIN key from going Nullable under
+    `join_use_nulls` with `cast_keep_nullable` (the keys are never NULL)."""
     sip = f"sipHash128ReferenceKeyed(({{k0:UInt64}}, {{k1:UInt64}}), ifNull({expr}, ''))"
     return f"CAST(lower(hex({sip})) AS String)"
 

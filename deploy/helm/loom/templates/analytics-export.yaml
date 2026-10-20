@@ -62,8 +62,9 @@ spec:
             onPodConditions:
               - type: DisruptionTarget
                 status: "True"
-          # Exit 2 is a refusal (a day not ended, a missing or short key): a retry
-          # would refuse the same way.
+          # Exit 2 is a refusal (a day not ended, a missing or short key, a
+          # missing boto3 or an old botocore, a bad flag): a retry would refuse
+          # the same way.
           - action: FailJob
             onExitCodes:
               containerName: analytics-export
