@@ -46,7 +46,7 @@ async def test_a_read_slower_than_the_refresh_is_not_repeated_by_each_waiter(
 
 async def test_the_copy_is_aged_from_the_start_of_its_read(clock: ManualClock) -> None:
     """A read that takes 0.05 s leaves a copy already 0.05 s old: with a 0.04 s
-    bound it is not served."""
+    bound it is not served, with a 0.06 s bound it is."""
 
     async def slow() -> str:
         clock.advance(0.05)
@@ -54,6 +54,8 @@ async def test_the_copy_is_aged_from_the_start_of_its_read(clock: ManualClock) -
 
     copy = PolledCopy("t", slow, _LOG)
     assert await copy.get(refresh_s=10, max_stale_s=0.04) is None
+    assert copy._read_at == 1000.0
+    assert await copy.get(refresh_s=10, max_stale_s=0.06) == "new"
 
 
 async def test_a_change_made_here_is_waited_for_even_with_a_young_copy(
