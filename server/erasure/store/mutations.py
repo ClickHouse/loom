@@ -82,14 +82,15 @@ def saga_scope(erasure_id: str) -> Iterator[None]:
         _SAGA_ID.reset(token)
 
 
-def mutation_tag(table: str, mutation: str, where: str) -> str:
-    """Deterministic within a saga: (saga, table, statement) → one tag. Two
+def mutation_tag(table: str, mutation: str, where: str, part: str = "") -> str:
+    """Deterministic within a saga: (saga, table, statement, part) → one tag. Two
     statements on one table in one saga differ in `mutation`/`where`, so they
-    get different tags. Without a saga in context the tag is unique per call."""
+    get different tags; one statement run in batches names each batch with
+    `part`. Without a saga in context the tag is unique per call."""
     saga = _SAGA_ID.get()
     if not saga:
         return f"erasure:{uuid.uuid4().hex}"
-    digest = hashlib.sha1(f"{table}\n{mutation}\n{where}".encode()).hexdigest()[:12]
+    digest = hashlib.sha1(f"{table}\n{mutation}\n{where}\n{part}".encode()).hexdigest()[:12]
     return f"erasure:{saga}:{digest}"
 
 
@@ -156,13 +157,15 @@ async def run_mutation(
     params: dict[str, Any],
     ch: _CHClient | None = None,
     wait_s: float | None = None,
+    tag_part: str = "",
 ) -> MutationRow | None:
     """`ALTER TABLE {table} {mutation} WHERE {where}`, submitted asynchronously
     and awaited. Returns the final system.mutations row, or None when the
-    mutation was never observed (see the grace note above)."""
+    mutation was never observed (see the grace note above). `tag_part` tells
+    apart batches of one statement (`mutation_tag`)."""
     return await _submit_and_wait(
         table,
-        tag=mutation_tag(table, mutation, where),
+        tag=mutation_tag(table, mutation, where, tag_part),
         statement=f"""
         ALTER TABLE {table}
         {mutation}
@@ -339,6 +342,7 @@ async def count_then_mutate(
     set_now_param: str = "now",
     lightweight: bool = False,
     ch: _CHClient | None = None,
+    tag_part: str = "",
 ) -> int:
     """Generic erasure step: count, then ALTER UPDATE/DELETE.
 
@@ -382,7 +386,12 @@ async def count_then_mutate(
         await run_lightweight_delete(table, where=mutation_where, params=mutation_params, ch=ch)
     else:
         await run_mutation(
-            table, mutation=mutation, where=mutation_where, params=mutation_params, ch=ch
+            table,
+            mutation=mutation,
+            where=mutation_where,
+            params=mutation_params,
+            ch=ch,
+            tag_part=tag_part,
         )
     return n
 

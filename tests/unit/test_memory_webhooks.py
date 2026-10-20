@@ -590,14 +590,7 @@ class FakeStore:
                 a is None or a["status"] in ("pending", "leased")
             ):
                 self.attempts.append(
-                    worker._attempt_row(
-                        o["event_id"],
-                        status="dead",
-                        attempts=0,
-                        next_attempt_at=now,
-                        now=now,
-                        last_error=reason,
-                    )
+                    worker._attempt_row(o["event_id"], status="dead", attempts=0, last_error=reason)
                 )
 
     async def live_webhooks(self) -> list[dict[str, Any]]:
@@ -629,19 +622,34 @@ async def _public(host: str, **_: Any) -> tuple[str, str]:
     return "", PUBLIC
 
 
+# The worker's clock (`naive_utc_now`) in these tests: set by `_pass`, moved by a handler.
+CLOCK = ManualClock()
+
+
+def _at(when: datetime) -> float:
+    return when.replace(tzinfo=UTC).timestamp()
+
+
+def _clock_now() -> datetime:
+    return datetime.fromtimestamp(CLOCK(), UTC).replace(tzinfo=None)
+
+
 @pytest.fixture
 def fake(monkeypatch: pytest.MonkeyPatch) -> FakeStore:
     fs = FakeStore([_outbox_row(event_id="ev-1")], [_registration("wh1")])
     monkeypatch.setattr(worker, "store", fs)
     monkeypatch.setattr(worker, "_health", {})
     monkeypatch.setattr(signed, "vet_host", _public)
+    CLOCK.t = _at(NOW)
+    monkeypatch.setattr(worker, "naive_utc_now", _clock_now)
     return fs
 
 
 async def _pass(handler: Any, *, now: datetime = NOW, env: dict[str, str] | None = None) -> Any:
+    CLOCK.t = _at(now)
     async with httpx.MockTransport(handler) as transport:
         return await worker.deliver_once(
-            transport=transport, now=now, env={REF: SECRET} if env is None else env
+            transport=transport, env={REF: SECRET} if env is None else env
         )
 
 
@@ -875,6 +883,78 @@ async def test_the_erasure_step_reads_the_ids_once_then_deletes_events_and_attem
 
 
 @pytest.mark.asyncio
+async def test_a_backoff_is_measured_from_the_failure(fake: FakeStore) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        CLOCK.advance(7)  # the receiver takes 7 s to fail
+        return httpx.Response(500)
+
+    await _pass(handler)
+    out = fake.last()
+    assert out["recorded_at"] == NOW + timedelta(seconds=7)
+    assert out["next_attempt_at"] == NOW + timedelta(seconds=7 + 5)
+
+
+def _two_webhooks(fake: FakeStore, b_events: int = 1) -> None:
+    fake.hooks = [_registration("wh-a", namespace="a"), _registration("wh-b", namespace="b")]
+    fake.outbox = [_outbox_row(webhook_id="wh-a", namespace="a", event_id="a-1")] + [
+        _outbox_row(webhook_id="wh-b", namespace="b", event_id=f"b-{i}") for i in range(b_events)
+    ]
+    fake.history = {(KEY[0], ns, *KEY[2:]) for ns in ("a", "b")}
+
+
+@pytest.mark.asyncio
+async def test_a_check_that_fails_leaves_its_event_leased_and_the_pass_going(
+    fake: FakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _two_webhooks(fake)
+    real = fake.keys_with_history
+
+    async def flaky(keys: list[tuple[str, ...]]) -> set[tuple[str, ...]]:
+        if keys[0][1] == "a":
+            raise RuntimeError("ClickHouse is away")
+        return await real(keys)
+
+    monkeypatch.setattr(fake, "keys_with_history", flaky)
+    seen: list[str] = []
+    result = await _pass(lambda r: seen.append(r.headers["host"]) or httpx.Response(204))
+    assert seen == ["b.example"] and result.delivered == 1
+    assert fake.last("b-0")["status"] == "delivered"
+    assert fake.last("a-1")["status"] == "leased"
+
+
+@pytest.mark.asyncio
+async def test_an_error_in_one_webhooks_turn_stops_every_post_and_keeps_the_finished(
+    fake: FakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _two_webhooks(fake, b_events=3)
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["host"])
+        if request.headers["host"] == "a.example":
+            await asyncio.sleep(0.05)
+        elif len([h for h in seen if h == "b.example"]) > 1:
+            await asyncio.sleep(0.1)  # b's second POST is out when a's turn fails
+        return httpx.Response(204)
+
+    real = worker._note_post
+
+    def broken(webhook_id: str, ok: bool) -> None:
+        if webhook_id == "wh-a":
+            raise RuntimeError("a bug")
+        real(webhook_id, ok)
+
+    monkeypatch.setattr(worker, "_note_post", broken)
+    with pytest.raises(ExceptionGroup):
+        await _pass(handler)
+    sent = list(seen)
+    await asyncio.sleep(0.3)  # past b's second POST and long enough for a third
+    assert seen == sent  # nothing went out after the pass returned
+    assert fake.last("b-0")["status"] == "delivered"  # finished, so recorded
+    assert {fake.last(e)["status"] for e in ("a-1", "b-1", "b-2")} == {"leased"}
+
+
+@pytest.mark.asyncio
 async def test_a_pass_cut_at_its_budget_still_records_what_it_sent(
     fake: FakeStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -943,8 +1023,10 @@ async def test_the_erasure_step_takes_a_namespace_list_and_deletes_attempts_in_b
     ch.install(monkeypatch)
     mutations: list[tuple[str, str, Any]] = []
 
-    async def mutate(table: str, *, mutation: str, where: str, params: Any, **_: Any) -> None:
-        mutations.append((table, where, params.get("ids")))
+    async def mutate(
+        table: str, *, mutation: str, where: str, params: Any, tag_part: str = "", **_: Any
+    ) -> None:
+        mutations.append((table, tag_part, params.get("ids")))
 
     monkeypatch.setattr(steps_ledgers.erasure_mutations, "run_mutation", mutate)
     await steps_ledgers.delete_memory_webhook_outbox_by_namespace("acme", ["a", "b"], ch=ch)
@@ -956,7 +1038,7 @@ async def test_the_erasure_step_takes_a_namespace_list_and_deletes_attempts_in_b
         "loom.memory_webhook_attempts",
     ]
     assert [m[2] for m in mutations[1:]] == [["e0", "e1"], ["e2"]]
-    # Each batch's statement differs, so each gets its own mutation tag.
+    # Each batch names itself, so each gets its own mutation tag.
     assert mutations[1][1] != mutations[2][1]
 
 
@@ -968,7 +1050,7 @@ async def test_a_second_pass_overlapping_the_first_passes_over_its_leased_events
 
     async def handler(request: httpx.Request) -> httpx.Response:
         # The first pass is mid-POST: its lease is in, its outcome is not.
-        second.append(await worker.deliver_once(now=NOW, env={REF: SECRET}))
+        second.append(await worker.deliver_once(env={REF: SECRET}))
         return httpx.Response(204)
 
     first = await _pass(handler)

@@ -125,13 +125,11 @@ async def ops(control_plane_url: str, mint_test_token: Any) -> Any:
         yield Ops(client, token, ns)
 
 
-async def _deliver_until(
-    receiver: Receiver, ns: str, n: int, *, now: datetime | None = None
-) -> None:
+async def _deliver_until(receiver: Receiver, ns: str, n: int) -> None:
     """Run the worker's pass over the namespace until the receiver holds `n`
     requests (a row written a moment ago can take a moment to read back)."""
     for _ in range(40):
-        await webhook_deliver.deliver_once(now=now, env={REF: SECRET}, org=ORG, namespace=ns)
+        await webhook_deliver.deliver_once(env={REF: SECRET}, org=ORG, namespace=ns)
         if len(receiver.requests) >= n:
             return
         await asyncio.sleep(0.25)
@@ -191,7 +189,9 @@ async def test_set_and_delete_reach_the_receiver_signed_and_without_content(
         assert b"green tea" not in body and b"sugar" not in body
 
 
-async def test_a_500_is_retried_and_the_retry_is_delivered(ops: Ops, receiver: Receiver) -> None:
+async def test_a_500_is_retried_and_the_retry_is_delivered(
+    ops: Ops, receiver: Receiver, monkeypatch: pytest.MonkeyPatch
+) -> None:
     receiver.statuses = [500]
     await ops.register(receiver.url)
     await ops("memory.set", agent="assistant", memory_key="user/name", value="Sam")
@@ -199,9 +199,12 @@ async def test_a_500_is_retried_and_the_retry_is_delivered(ops: Ops, receiver: R
     pending = await ops("webhook.deliveries", status="pending")
     assert [(d["attempts"], d["last_status"]) for d in pending["deliveries"]] == [(1, 500)]
 
-    # The retry is due 5 s later; the pass is run as of then.
-    later = datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=6)
-    await _deliver_until(receiver, ops.ns, 2, now=later)
+    # The retry is due 5 s later: the worker's clock runs 6 s ahead.
+    ahead = timedelta(seconds=6)
+    monkeypatch.setattr(
+        webhook_deliver, "naive_utc_now", lambda: datetime.now(UTC).replace(tzinfo=None) + ahead
+    )
+    await _deliver_until(receiver, ops.ns, 2)
     for _ in range(20):
         done = await ops("webhook.deliveries", status="delivered")
         if done["deliveries"]:

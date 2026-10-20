@@ -462,8 +462,8 @@ _WORKERS: tuple[_Worker, ...] = (
         "server.memory.workers.webhook_deliver",
         "memory_webhook_deliver_enabled",
         "memory_webhook_deliver_interval_seconds",
-        # the pass sends for up to 100 s (40 POSTs, 4 at a time, 10 s each at most),
-        # past the default of four intervals
+        # the pass stops starting POSTs at 100 s (POST_BUDGET_SECONDS); 120 s leaves room
+        # for its reads and the final insert
         max_pass_seconds=120.0,
         idle_interval="memory_webhook_deliver_idle_interval_seconds",
     ),

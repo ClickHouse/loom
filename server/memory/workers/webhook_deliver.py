@@ -123,16 +123,18 @@ def _attempt_row(
     *,
     status: str,
     attempts: int,
-    next_attempt_at: datetime,
-    now: datetime,
+    next_attempt_at: datetime | None = None,
     last_status: int = 0,
     last_error: str = "",
 ) -> dict[str, Any]:
+    """An attempt row stamped now: when the event finished, not when the pass began.
+    `next_attempt_at` defaults to now (a settled event)."""
+    now = naive_utc_now()
     return {
         "event_id": event_id,
         "status": status,
         "attempts": attempts,
-        "next_attempt_at": next_attempt_at,
+        "next_attempt_at": next_attempt_at or now,
         "last_status": last_status,
         "last_error": last_error[:512],
         "recorded_at": now,
@@ -140,21 +142,22 @@ def _attempt_row(
     }
 
 
-def _outcome(row: Mapping[str, Any], delivery: signed.Delivery, *, now: datetime) -> dict[str, Any]:
-    """The attempt row after one POST."""
+def _outcome(row: Mapping[str, Any], delivery: signed.Delivery) -> dict[str, Any]:
+    """The attempt row after one POST; a retry is due a backoff after the failure."""
     attempts = int(row["attempts"]) + 1
+    next_at = None
     if delivery.ok:
-        status, next_at = "delivered", now
+        status = "delivered"
     elif attempts >= settings.memory_webhook_max_attempts:
-        status, next_at = "dead", now
+        status = "dead"
     else:
-        status, next_at = "pending", now + timedelta(seconds=backoff_seconds(attempts))
+        status = "pending"
+        next_at = naive_utc_now() + timedelta(seconds=backoff_seconds(attempts))
     return _attempt_row(
         str(row["event_id"]),
         status=status,
         attempts=attempts,
         next_attempt_at=next_at,
-        now=now,
         last_status=delivery.status,
         last_error=delivery.error,
     )
@@ -195,31 +198,98 @@ def _hook(row: Mapping[str, Any]) -> store.Hook:
     return (str(row["org"]), str(row["namespace"]), str(row["webhook_id"]))
 
 
-def _wait_row(
-    row: Mapping[str, Any], *, until: datetime, now: datetime, why: str
-) -> dict[str, Any]:
+def _wait_row(row: Mapping[str, Any], *, until: datetime, why: str) -> dict[str, Any]:
     """An event passed over, its attempts uncounted, until `until`."""
     return _attempt_row(
         str(row["event_id"]),
         status="pending",
         attempts=int(row["attempts"]),
         next_attempt_at=until,
-        now=now,
         last_error=why,
     )
+
+
+async def _check(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Why `row` is not sent (a cooldown, an erased key), or None to send it."""
+    until = _cooling_until(_hook(row)[2])
+    if until is not None:  # failed its last POSTs earlier in this pass
+        return _wait_row(row, until=until, why="the webhook is cooling down")
+    # memory.erased names no key; any other event names the memory it is about.
+    # Read right before the POST: only an erasure during the POST can let it out.
+    if row["memory_key"] and not await store.keys_with_history([_key(row)]):
+        return _attempt_row(
+            str(row["event_id"]),
+            status="dead",
+            attempts=int(row["attempts"]),
+            last_error="the memory was erased",
+        )
+    return None
+
+
+async def _send(
+    transport: httpx.AsyncBaseTransport | None,
+    due: list[dict[str, Any]],
+    urls: Mapping[store.Hook, str],
+    secrets: Mapping[store.Hook, bytes],
+) -> list[tuple[dict[str, Any], bool]]:
+    """POST the leased `due` events: CONCURRENCY at a time, one at a time per
+    webhook, within POST_BUDGET_SECONDS. Each (attempt row, whether it is a
+    POST's outcome) as it finished, so a pass cut at its budget or by an error
+    still records what it sent."""
+    slots = asyncio.Semaphore(CONCURRENCY)
+    finished: list[tuple[dict[str, Any], bool]] = []
+
+    async def one(row: Mapping[str, Any]) -> None:
+        """One event: checked once it holds a slot, then POSTed or passed over."""
+        hook = _hook(row)
+        async with slots:
+            try:
+                skipped = await _check(row)
+            except Exception as e:  # noqa: BLE001 — one event's check must not stop the pass
+                # It keeps its lease and goes again once the lease ends.
+                log.warning("memory_webhook_deliver: %s not checked: %s", row["event_id"], e)
+                return
+            if skipped is not None:
+                finished.append((skipped, False))
+                return
+            delivery = await _post(transport, row, urls[hook], secrets[hook])
+        _note_post(hook[2], delivery.ok)
+        finished.append((_outcome(row, delivery), True))
+
+    async def in_turn(rows: list[Mapping[str, Any]]) -> None:
+        """A webhook's events one after another: one POST in flight per webhook."""
+        for row in rows:
+            await one(row)
+
+    by_hook: dict[store.Hook, list[Mapping[str, Any]]] = {}
+    for row in due:
+        by_hook.setdefault(_hook(row), []).append(row)
+    try:
+        # A task group: an error in one webhook's turn cancels the others' before
+        # the pass returns, so no POST outlives the pass.
+        async with asyncio.timeout(POST_BUDGET_SECONDS), asyncio.TaskGroup() as group:
+            for rows in by_hook.values():
+                group.create_task(in_turn(rows))
+    except TimeoutError:
+        # The unfinished keep their lease and go again once it ends, under the same ids.
+        log.info("memory_webhook_deliver: %d of %d finished in the budget", len(finished), len(due))
+    finally:
+        # One insert per pass, whatever ended it: receivers drop a re-send of an id.
+        await store.insert_attempts([out for out, _posted in finished])
+    return finished
 
 
 async def deliver_once(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
-    now: datetime | None = None,
     env: Mapping[str, str] | None = None,
     org: str = "",
     namespace: str = "",
 ) -> DeliverResult:
     """One pass over the due events. `transport` replaces the network and
-    `org` / `namespace` narrow the pass (tests); `now` is naive UTC."""
-    now = now or naive_utc_now()
+    `org` / `namespace` narrow the pass (tests). Every time comes from
+    `naive_utc_now()`, read when it is needed."""
+    now = naive_utc_now()
     env = os.environ if env is None else env
     since = now - timedelta(days=store.KEEP_DAYS)
 
@@ -253,7 +323,7 @@ async def deliver_once(
     waiting = len(live) - len(sendable)
     if not due:
         return DeliverResult(waiting=waiting)
-    lease_end = now + timedelta(seconds=LEASE_SECONDS)
+    lease_end = naive_utc_now() + timedelta(seconds=LEASE_SECONDS)
     await store.insert_attempts(
         [
             _attempt_row(
@@ -261,63 +331,15 @@ async def deliver_once(
                 status="leased",
                 attempts=int(r["attempts"]),
                 next_attempt_at=lease_end,
-                now=now,
             )
             for r in due
         ]
     )
-    slots = asyncio.Semaphore(CONCURRENCY)
-    # (attempt row, whether a POST went out and failed), as each event finishes, so
-    # a pass cut at its budget still records what it sent.
-    finished: list[tuple[dict[str, Any], bool]] = []
-
-    async def one(row: Mapping[str, Any]) -> None:
-        """One event: checked once it holds a slot, then POSTed or passed over."""
-        hook = _hook(row)
-        async with slots:
-            until = _cooling_until(hook[2])
-            if until is not None:  # failed its last POSTs earlier in this pass
-                wait = _wait_row(row, until=until, now=now, why="the webhook is cooling down")
-                finished.append((wait, False))
-                return
-            # memory.erased names no key; any other event names the memory it is about.
-            # Read right before the POST: only an erasure during the POST can let it out.
-            if row["memory_key"] and not await store.keys_with_history([_key(row)]):
-                dead = _attempt_row(
-                    str(row["event_id"]),
-                    status="dead",
-                    attempts=int(row["attempts"]),
-                    next_attempt_at=now,
-                    now=now,
-                    last_error="the memory was erased",
-                )
-                finished.append((dead, False))
-                return
-            delivery = await _post(transport, row, urls[hook], usable[hook])
-        _note_post(hook[2], delivery.ok)
-        finished.append((_outcome(row, delivery, now=now), not delivery.ok))
-
-    async def in_turn(rows: list[Mapping[str, Any]]) -> None:
-        """A webhook's events one after another: one POST in flight per webhook."""
-        for row in rows:
-            await one(row)
-
-    by_hook: dict[store.Hook, list[Mapping[str, Any]]] = {}
-    for row in due:
-        by_hook.setdefault(_hook(row), []).append(row)
-    try:
-        async with asyncio.timeout(POST_BUDGET_SECONDS):
-            await asyncio.gather(*map(in_turn, by_hook.values()))
-    except TimeoutError:
-        # The unsent keep their lease and go again once it ends, under the same ids.
-        log.info("memory_webhook_deliver: %d of %d sent by the budget", len(finished), len(due))
-    # One insert per pass: the receivers drop a re-send of an id they have.
-    await store.insert_attempts([out for out, _failed in finished])
-    statuses = [str(out["status"]) for out, _failed in finished]
+    finished = await _send(transport, due, urls, usable)
     return DeliverResult(
-        delivered=statuses.count("delivered"),
-        failed=sum(failed for _out, failed in finished),
-        dead=statuses.count("dead"),
+        delivered=sum(out["status"] == "delivered" for out, _posted in finished),
+        failed=sum(posted and out["status"] == "pending" for out, posted in finished),
+        dead=sum(out["status"] == "dead" for out, _posted in finished),
         waiting=waiting,
     )
 
