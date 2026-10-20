@@ -148,12 +148,14 @@ async def _drop_links_of(
     input: Any, keep: Mapping[str, set[str]], versions: Mapping[str, int], *, ch: Any
 ) -> None:
     """`drop_undeclared_links` for the rows still 'high' (`keep`: memory_id -> the
-    entities whose edges it keeps)."""
+    entities whose edges it keeps). Only the links read here go: a link a write lands
+    after the read is that write's."""
     params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "ids": sorted(keep)}
     links = await query_all_sliced(
         ch,
         """
-        SELECT DISTINCT toString(memory_id) AS id, entity_a, entity_b
+        SELECT DISTINCT toString(memory_id) AS id, toString(content_sha256) AS sha,
+               entity_a, entity_b
         FROM loom.entity_edge_rows
         WHERE org = {org:String} AND namespace = {ns:String} AND memory_id IN {ids:Array(UUID)}
         SETTINGS select_sequential_consistency = 1
@@ -162,7 +164,7 @@ async def _drop_links_of(
         "ids",
     )
     drop = sorted(
-        (str(r["id"]), str(r["entity_a"]), str(r["entity_b"]))
+        (str(r["id"]), str(r["sha"]), str(r["entity_a"]), str(r["entity_b"]))
         for r in links
         if not {str(r["entity_a"]), str(r["entity_b"])} <= keep[str(r["id"])]
     )
@@ -174,18 +176,18 @@ async def _drop_links_of(
     }
     # Each edge ends when the first write that dropped it landed, a replay included.
     ends: dict[tuple[str, str], datetime] = {}
-    for memory_id, a, b in drop:
+    for memory_id, _, a, b in drop:
         at = version_time(versions[memory_id])
         ends[(a, b)] = min(ends.get((a, b), at), at)
-    # The edges end before their links go, the links of these rows holding none, so a
-    # failure between leaves the links for the replay to find the edges by.
+    # The edges end before their links go, the values read holding none, so a failure
+    # between leaves the links for the replay to find the edges by.
     await projections.end_edges(
         ch,
         org=input.org,
         namespace=input.namespace,
         ends=[(a, b, at) for (a, b), at in sorted(ends.items()) if (a, b) not in kept],
         open_only=True,
-        skip_rows=sorted(keep),
+        skip_versions=sorted({(memory_id, sha) for memory_id, sha, _, _ in drop}),
     )
     for part in param_slices(drop):
         await ch.execute(
@@ -193,12 +195,12 @@ async def _drop_links_of(
             DELETE FROM loom.entity_edge_rows
             WHERE org = {org:String} AND namespace = {ns:String}
               AND memory_id IN {ids:Array(UUID)}
-              AND (toString(memory_id), entity_a, entity_b)
-                  IN {links:Array(Tuple(String, String, String))}
+              AND (toString(memory_id), toString(content_sha256), entity_a, entity_b)
+                  IN {links:Array(Tuple(String, String, String, String))}
             """,
             params={
                 **params,
-                "ids": sorted({memory_id for memory_id, _, _ in part}),
+                "ids": sorted({memory_id for memory_id, _, _, _ in part}),
                 "links": part,
             },
         )

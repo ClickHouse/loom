@@ -1245,3 +1245,50 @@ async def test_a_bulk_made_high_with_a_huge_declared_entity_drops_and_ends_its_o
         params={"org": org},
     )
     assert {(r["entity_a"], r["entity_b"]) for r in linked} == {tuple(sorted((big, "bob lane")))}
+
+
+async def test_a_link_written_inside_a_drop_keeps_its_edge_and_survives(
+    ch, org, monkeypatch
+) -> None:
+    """A row made high; its drop reads its links, then a plain write of the row links a
+    pair the drop is ending, before the drop ends and deletes: only the links the drop
+    read go, so the later link stays and holds its pair's edge open."""
+    from server.core.hashing import sha256_value
+    from server.memory.app import edge_links, projections
+    from server.memory.app.projection_errors import ProjectionScope
+
+    value = "Alice Smith met Bob Lane and Carol King in Berlin"
+    await _high_set(org, "s1", "contact", value)
+
+    async def nothing(*a: Any, **kw: Any) -> None:
+        return None
+
+    with monkeypatch.context() as m:
+        m.setattr(edge_links, "drop_undeclared_links", nothing)  # the drop runs below
+        out = await _high_set(
+            org, "s1", "contact", value, sensitivity="high", entities=["Alice Smith", "Bob Lane"]
+        )
+    head = await ch.query_one(
+        "SELECT version FROM loom.memory FINAL WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    later = sha256_value("Alice Smith met Carol King")
+    real = projections.end_edges
+
+    async def a_later_link_first(*a: Any, **kw: Any) -> None:
+        monkeypatch.setattr(projections, "end_edges", real)
+        # The writer re-sets the row plain, naming Carol King: its own links land.
+        await _high_set(org, "s1", "contact", "Alice Smith met Carol King", sensitivity="low")
+        await real(*a, **kw)
+
+    monkeypatch.setattr(projections, "end_edges", a_later_link_first)
+    scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    await edge_links.drop_undeclared_links(scope, {str(out.memory_id): int(head["version"])}, ch=ch)
+    assert ("alice smith", "carol king") in await _open_edge_pairs(ch, org)
+    linked = await ch.query_all(
+        "SELECT entity_a, entity_b FROM loom.entity_edge_rows WHERE org = {org:String}"
+        " AND content_sha256 = {sha:String} SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "sha": later},
+    )
+    assert ("alice smith", "carol king") in {(r["entity_a"], r["entity_b"]) for r in linked}
