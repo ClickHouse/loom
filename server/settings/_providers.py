@@ -15,8 +15,11 @@ from server.settings._models import (
     ModelSettings,
 )
 
-# The providers' own APIs: a gateway's token never goes there (server/llm/gateway.py).
-PROVIDER_API_HOSTS = frozenset({"api.openai.com", "api.anthropic.com"})
+# The providers' own APIs: while the gateway is required, no model call goes
+# there (server/llm/gateway.py).
+PROVIDER_API_HOSTS = frozenset(
+    {"api.openai.com", "api.anthropic.com", "generativelanguage.googleapis.com"}
+)
 
 
 def is_provider_api(url: str) -> bool:
@@ -72,6 +75,11 @@ class ProviderSettings(ModelSettings):
     inference_token_audience: str = ""
     # The scope sent with that exchange; "" sends none.
     inference_token_scope: str = ""
+    # Every model call goes to a gateway: Loom refuses to load with an API root
+    # at a provider's own host (OpenAI, Anthropic, Gemini), and refuses any call
+    # sent there, so a provider key in hand never reaches the provider. On
+    # whenever inference_token_url is set.
+    inference_gateway_required: bool = False
     # Shared query-embedding cache in loom.embedding_cache behind the
     # per-process LRU, keyed (model, sha1 of normalised text). Only single-text
     # (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use
@@ -233,19 +241,35 @@ class ProviderSettings(ModelSettings):
             return {}
         return dict(json_map_items(raw, "rerank_endpoints_json"))
 
+    def gateway_required(self) -> bool:
+        """Whether model calls may go only to a gateway, never a provider's own API."""
+        return self.inference_gateway_required or bool(self.inference_token_url)
+
     @model_validator(mode="after")
     def _check_gateway_is_in_front(self) -> ProviderSettings:
-        """The gateway's token is for the gateway: any model a request or the
-        dashboard names may be either provider's, so both API roots must point
-        away from the providers' own hosts (the senders refuse them too)."""
-        if not self.inference_token_url:
+        """With the gateway required, every API root points away from the
+        providers' own hosts: any model a request or the dashboard names may be
+        either provider's (the senders refuse them too)."""
+        if not self.gateway_required():
             return self
+        why = (
+            "LOOM_INFERENCE_TOKEN_URL"
+            if self.inference_token_url
+            else "LOOM_INFERENCE_GATEWAY_REQUIRED"
+        )
         for name, url in (
             ("LOOM_OPENAI_BASE_URL", self.openai_base_url),
             ("LOOM_ANTHROPIC_BASE_URL", self.anthropic_base_url),
+            ("LOOM_EMBEDDING_BASE_URL", self.embedding_base_url),
         ):
             if is_provider_api(url):
-                raise ValueError(f"LOOM_INFERENCE_TOKEN_URL needs {name} at the gateway")
+                raise ValueError(f"{why} needs {name} at the gateway")
+        gemini = self.embedding_provider == "gemini" or (
+            not self.embedding_provider and self.embedding_model.startswith("gemini")
+        )
+        if gemini:
+            # The Gemini embedder calls Google's own API, never a gateway.
+            raise ValueError(f"{why} refuses the Gemini embedder: embed through the gateway")
         return self
 
     @model_validator(mode="after")

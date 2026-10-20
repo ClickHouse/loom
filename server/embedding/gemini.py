@@ -74,6 +74,9 @@ class GeminiEmbedder:
         }
 
     async def _post(self, url: str, payload: dict[str, object]) -> dict[str, Any]:
+        from server.llm import gateway
+
+        gateway.refuse_provider_api(url)
         resp = await _http_client().post(
             url, json=payload, headers={"x-goog-api-key": self._api_key}
         )

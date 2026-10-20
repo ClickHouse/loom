@@ -386,3 +386,112 @@ def test_the_documented_gateway_block_starts(
             monkeypatch.setenv(name, value.strip().strip('"'))
     monkeypatch.setenv("LOOM_INFERENCE_WORKLOAD_TOKEN_FILE", str(token))
     Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+_AT_GATEWAY = {
+    "LOOM_OPENAI_BASE_URL": "https://gateway.example/v1",
+    "LOOM_ANTHROPIC_BASE_URL": "https://gateway.example",
+}
+
+
+@pytest.fixture
+def required(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A static gateway key, with the gateway required."""
+    monkeypatch.setattr(settings, "inference_gateway_required", True)
+    monkeypatch.setattr(settings, "inference_token_url", "")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.openai.com/v1/chat/completions",
+        "https://api.anthropic.com",
+        "https://eu.api.openai.com/v1/embeddings",
+        "https://generativelanguage.googleapis.com/v1beta/models/m:embedContent",
+    ],
+)
+def test_with_the_gateway_required_a_key_never_goes_to_a_providers_own_api(
+    required: None, url: str
+) -> None:
+    with pytest.raises(gateway.GatewayUnavailable, match="not the gateway"):
+        asyncio.run(gateway.bearer("sk-gateway", url))
+
+
+def test_with_the_gateway_required_its_key_is_the_bearer_at_the_gateway(required: None) -> None:
+    assert asyncio.run(gateway.bearer("sk-gateway", _GW)) == "sk-gateway"
+
+
+def test_with_the_gateway_required_no_embedder_posts_to_a_provider(
+    required: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Neither calls bearer: each refuses the provider's host itself.
+    from server.embedding import compatible, gemini
+
+    recorder = _Recorder({})
+    monkeypatch.setattr(compatible, "get_client", lambda: recorder)
+    monkeypatch.setattr(gemini, "_http_client", lambda: recorder)
+    monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+    direct = compatible.CompatibleEmbedder(
+        model="text-embedding-3-small", dim=8, base_url="https://api.openai.com/v1", api_key="k"
+    )
+    with pytest.raises(gateway.GatewayUnavailable):
+        asyncio.run(direct._request(["text"]))
+    google = gemini.GeminiEmbedder(model="gemini-embedding-001", dim=8)
+    with pytest.raises(gateway.GatewayUnavailable):
+        asyncio.run(google._post(google._endpoint, google._content_request("text")))
+    assert recorder.calls == []
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ({}, "needs LOOM_OPENAI_BASE_URL at the gateway"),  # the defaults are the providers'
+        ({"LOOM_ANTHROPIC_BASE_URL": "https://api.anthropic.com"}, "LOOM_ANTHROPIC_BASE_URL"),
+        (
+            {
+                "LOOM_EMBEDDING_PROVIDER": "compatible",
+                "LOOM_EMBEDDING_BASE_URL": "https://api.openai.com/v1",
+            },
+            "LOOM_EMBEDDING_BASE_URL",
+        ),
+        ({"LOOM_EMBEDDING_MODEL": "gemini-embedding-001"}, "Gemini embedder"),
+    ],
+)
+def test_the_gateway_required_refuses_to_load_with_a_providers_address(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], message: str
+) -> None:
+    base = {"LOOM_INFERENCE_GATEWAY_REQUIRED": "true"} | (_AT_GATEWAY if env else {})
+    for name, value in {**base, **env}.items():
+        monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match=f"LOOM_INFERENCE_GATEWAY_REQUIRED.*{message}"):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_the_gateway_required_loads_with_every_root_at_the_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _AT_GATEWAY | {
+        "LOOM_INFERENCE_GATEWAY_REQUIRED": "true",
+        "LOOM_EMBEDDING_PROVIDER": "compatible",
+        "LOOM_EMBEDDING_BASE_URL": "https://gateway.example/v1",
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    loaded = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert loaded.gateway_required()
+
+
+def test_an_exchange_requires_the_gateway_and_refuses_the_gemini_embedder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = tmp_path / "token"
+    token.write_text("t")
+    env = _AT_GATEWAY | {
+        "LOOM_INFERENCE_TOKEN_URL": "https://gateway.example/oauth/token",
+        "LOOM_INFERENCE_WORKLOAD_TOKEN_FILE": str(token),
+        "LOOM_EMBEDDING_PROVIDER": "gemini",
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match="LOOM_INFERENCE_TOKEN_URL refuses the Gemini embedder"):
+        Settings(_env_file=None)  # type: ignore[call-arg]

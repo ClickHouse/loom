@@ -200,7 +200,15 @@ OPENAI_API_KEY=<the key the gateway issued for Loom>
 ```
 
 Off its default, the Anthropic key is also sent as `Authorization: Bearer`, the
-scheme gateways take. A gateway that accepts workload identity (RFC 8693 token
+scheme gateways take. With a gateway key, set `LOOM_INFERENCE_GATEWAY_REQUIRED=true`
+so a wrong root can never send prompts and the key straight to a provider:
+Loom then refuses to start while `LOOM_OPENAI_BASE_URL`, `LOOM_ANTHROPIC_BASE_URL`
+or `LOOM_EMBEDDING_BASE_URL` points at a provider's own API (OpenAI, Anthropic,
+Gemini), or the embedder is Gemini's, and refuses any model call sent there,
+whatever named it (a model named per request, a root changed in the dashboard).
+A token exchange turns this on by itself.
+
+A gateway that accepts workload identity (RFC 8693 token
 exchange) needs no key at all: Loom exchanges its workload's OIDC token there,
 renews the answer five minutes before it runs out (halfway, for one living
 under ten minutes), and sends it with every call. With no key to infer them

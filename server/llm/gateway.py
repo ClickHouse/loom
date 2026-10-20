@@ -10,7 +10,9 @@ service-account token on Kubernetes), or one Loom signs itself
 which `/v1/.well-known/jwks.json` publishes. Either way the gateway must trust
 the issuer. Loom's own verifier never accepts that audience, so the token opens
 nothing here. Unset, the provider's key is the bearer, as always;
-`LOOM_OPENAI_BASE_URL` / `LOOM_ANTHROPIC_BASE_URL` point either at a gateway.
+`LOOM_OPENAI_BASE_URL` / `LOOM_ANTHROPIC_BASE_URL` point either at a gateway,
+and `LOOM_INFERENCE_GATEWAY_REQUIRED` refuses every call to a provider's own
+API, as the exchange does.
 """
 
 from __future__ import annotations
@@ -57,16 +59,21 @@ def exchanging() -> bool:
     return bool(settings.inference_token_url)
 
 
-async def bearer(provider_key: str, url: str) -> str:
-    """What a model call to `url` presents: the gateway's token when Loom
-    exchanges an identity token there, else the provider key. A call any path (a model
-    named per request, the dashboard's check) sends to a provider's own API
-    gets no gateway token."""
-    if not exchanging():
-        return provider_key
-    if is_provider_api(url):
+def refuse_provider_api(url: str) -> None:
+    """Refuses a model call to a provider's own API while the gateway is
+    required: whatever path named it (a model named per request, the
+    dashboard's check), neither a gateway token nor a provider key goes there."""
+    if settings.gateway_required() and is_provider_api(url):
         host = urlsplit(url).hostname
         raise GatewayUnavailable(f"{host} is not the gateway: point its base URL at the gateway")
+
+
+async def bearer(provider_key: str, url: str) -> str:
+    """What a model call to `url` presents: the gateway's token when Loom
+    exchanges an identity token there, else the provider key."""
+    refuse_provider_api(url)
+    if not exchanging():
+        return provider_key
     now = time.time()
     if now < _renew_at and _token and now < _expires_at:  # a retry pause never outlasts it
         return _token

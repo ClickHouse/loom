@@ -64,7 +64,11 @@ lands: a retire since may be unseen. The public keys of RS256 keys are served at
 `GET /v1/.well-known/jwks.json`. With `LOOM_INFERENCE_TOKEN_AUDIENCE` the newest RS256 key
 also signs the identity token Loom exchanges at an inference gateway; that gateway trusts
 those keys, so Loom refuses the settings when the token's audience is `LOOM_JWT_AUDIENCE` or
-its issuer one Loom's verifier accepts, and a retire may not leave no RS256 key active. The `default` row holds `HMAC(root, label)`, written by
+its issuer one Loom's verifier accepts, and a retire may not leave no RS256 key active.
+While the gateway is required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or any token exchange),
+no model call reaches a provider's own API (`server/llm/gateway.py::refuse_provider_api`,
+called by every sender): the settings refuse an API root there or the Gemini embedder, and
+a call a request or the dashboard points there is refused before its key is sent. The `default` row holds `HMAC(root, label)`, written by
 the workers leader or a keyring command (never a replica's first boot, which would trust a
 mistyped secret); a process whose root does not match it reports
 `keyring_root_mismatch`, and the keyring commands and `loom mint-token` refuse there.
