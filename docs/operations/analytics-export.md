@@ -101,12 +101,13 @@ they belong to (`GetCallerIdentity`). Missing or expired credentials, or a role 
 be assumed, fail there, not after the read; a missing `s3:PutObject` grant, a wrong bucket
 or a bucket owner other than `--expected-bucket-owner` fails at the first upload. With
 `--role-arn` it assumes the role again before each upload and writes under its credentials.
-Pass `--region` (the bucket's) where the process has no AWS region: boto3 then falls back
-to the global STS and S3 endpoints.
-That fits a bucket in another account: the bucket's account grants `s3:PutObject` to a
-writer role, and the writer role trusts only the export's own identity. The export needs no
-read, list or delete permission on the bucket. `--expected-bucket-owner` makes S3 refuse
-the write when another account owns the bucket.
+Assuming a writer role fits a bucket in another account: the bucket's account grants
+`s3:PutObject` to the writer role, and the writer role trusts only the export's own
+identity. The export needs no read, list or delete permission on the bucket.
+`--expected-bucket-owner` makes S3 refuse the write when another account owns the bucket.
+
+Pass `--region` (the bucket's) where the process has no AWS region; on EKS the IRSA and Pod
+Identity webhooks set one.
 
 ## On Kubernetes
 
@@ -138,7 +139,8 @@ them.
 
 The chart creates a ServiceAccount `<fullname>-analytics-export` and a CronJob of the same
 name, where `<fullname>` is the chart's full name: `fullnameOverride` when set, else the
-release name when it contains `loom`, else `<release>-loom`, cut to its first 35 characters
+release name when it contains the chart name (`nameOverride`, else `loom`), else
+`<release>-<chart name>`, cut to its first 35 characters
 so the name stays within 52 (`kubectl get sa` shows it). The job runs at 00:30 UTC
 (`schedule`), one run at a time, with up to 3 retries and a three-hour deadline over all
 attempts; each statement may run 20 minutes, and the ClickHouse client may retry one, so a
