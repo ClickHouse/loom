@@ -950,3 +950,16 @@ async def test_a_value_less_close_reads_past_two_thousand_values_in_one_pass(
     )
     (out,) = await retry_failures([failure], ch=_ValuesCH())
     assert out.resolved and asked == shas
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"rows": {_ROW_ID: ["alice"]}}, {"versions": {}}, {"versions": {_ROW_ID: "1"}}],
+    ids=["rows-only", "no-versions", "a-version-not-a-number"],
+)
+async def test_a_drop_payload_without_its_versions_is_malformed(payload) -> None:
+    """A drop is dated by the owing write's version: a payload without one per row is
+    abandoned, not replayed."""
+    failure = dataclasses.replace(_graph_failure("entity_edges_drop_undeclared"), payload=payload)
+    (out,) = await retry_failures([failure], ch=_GraphCH())
+    assert out.abandoned and out.reason == "malformed_payload"

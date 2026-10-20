@@ -479,9 +479,7 @@ async def test_a_user_erasure_deletes_every_kind_of_projection_failure_of_that_u
         with monkeypatch.context() as m:
             m.setattr(edge_links, "drop_undeclared_links", boom)
             memory_id = str(uuid.uuid4())
-            await edge_links.drop_undeclared_edges(
-                scope, {memory_id: ["acme"]}, {memory_id: 1}, ch=ch, op="memory.set"
-            )
+            await edge_links.drop_undeclared_edges(scope, {memory_id: 1}, ch=ch, op="memory.set")
         for kind in (TRIPLES_REOPEN, TRIPLES_RECONCILE, EDGES_CLOSE, FOLLOW_ROWS):
             await record_input_projection_failure(
                 scope, projection=kind, error="x", payload={"closes": [["alice", "lives_in", "x"]]}

@@ -413,9 +413,7 @@ async def _revised_edges(
             user_id=str(existing.user_id),
         )
         memory_id = str(existing.memory_id)
-        await drop_undeclared_edges_beside(
-            scope, {memory_id: declared}, {memory_id: int(memory_row["version"])}, op=op
-        )
+        await drop_undeclared_edges_beside(scope, {memory_id: int(memory_row["version"])}, op=op)
 
 
 def _update_sensitivity(

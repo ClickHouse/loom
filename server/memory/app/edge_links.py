@@ -211,25 +211,23 @@ async def _drop_links_of(
         )
 
 
-def drop_payload(rows: Mapping[str, list[str]], versions: Mapping[str, int]) -> dict[str, Any]:
-    """An EDGES_DROP_UNDECLARED payload: the version of the write that owes the drop for
-    each row, which dates the edges' end. `rows` is what an N-1 replay reads; this build
-    reads the row's current entities."""
-    return {
-        "rows": {memory_id: list(declared) for memory_id, declared in rows.items()},
-        "versions": {memory_id: int(versions[memory_id]) for memory_id in rows},
-    }
+def drop_payload(versions: Mapping[str, int]) -> dict[str, Any]:
+    """An EDGES_DROP_UNDECLARED payload: for each row, the version of the write that owes
+    the drop, which dates the edges' end."""
+    return {"versions": {memory_id: int(version) for memory_id, version in versions.items()}}
 
 
 async def drop_undeclared_edges(
-    input: Any, rows: Mapping[str, list[str]], versions: Mapping[str, int], *, ch: Any, op: str
+    input: Any, versions: Mapping[str, int], *, ch: Any, op: str
 ) -> None:
     """`drop_undeclared_links`, fail-open: a failure is recorded for the projection repair
     (`EDGES_DROP_UNDECLARED`), which drops them again."""
     try:
         await drop_undeclared_links(input, versions, ch=ch)
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair drops them
-        log.warning("%s: undeclared edges of %d rows not dropped (recorded): %s", op, len(rows), e)
+        log.warning(
+            "%s: undeclared edges of %d rows not dropped (recorded): %s", op, len(versions), e
+        )
         await record_projection_failure(
             org=input.org,
             namespace=input.namespace,
@@ -237,28 +235,24 @@ async def drop_undeclared_edges(
             projection=EDGES_DROP_UNDECLARED,
             source_operation=op,
             error=e,
-            payload=drop_payload(rows, versions),
+            payload=drop_payload(versions),
             ch=ch,
             user_id=str(getattr(input, "user_id", "") or ""),
         )
 
 
-async def drop_undeclared_edges_beside(
-    input: Any, rows: Mapping[str, list[str]], versions: Mapping[str, int], *, op: str
-) -> None:
+async def drop_undeclared_edges_beside(input: Any, versions: Mapping[str, int], *, op: str) -> None:
     """`drop_undeclared_links` after the response, for the rows a write made 'high' or
-    whose declared entities it narrowed (`versions`: the version the write gave each;
-    `rows`, their declared entities, for the payload; callers pick them by
-    `owes_undeclared_drop`). Owed first, as a retirement is: one EDGES_DROP_UNDECLARED
-    intent for the whole write goes in before the drop is scheduled and is resolved in
-    the next batched mark once the drop lands, so a stop between them leaves it to the
-    repair. Scheduled after the write's own declared projection returned, so it runs
-    after its fence."""
+    whose declared entities it narrowed (`versions`: memory_id -> the version the write
+    gave it; callers pick them by `owes_undeclared_drop`). Owed first, as a retirement
+    is: one EDGES_DROP_UNDECLARED intent for the whole write goes in before the drop is
+    scheduled and is resolved in the next batched mark once the drop lands, so a stop
+    between them leaves it to the repair. Scheduled after the write's own declared
+    projection returned, so it runs after its fence."""
     from server.memory.app import after_write, intent_marks
 
-    if not rows:
+    if not versions:
         return
-    payload = drop_payload(rows, versions)
     try:
         intent = await record_projection_failure(
             org=input.org,
@@ -267,21 +261,23 @@ async def drop_undeclared_edges_beside(
             projection=EDGES_DROP_UNDECLARED,
             source_operation=op,
             error="rows made high: undeclared edges to drop",
-            payload=payload,
+            payload=drop_payload(versions),
             user_id=str(getattr(input, "user_id", "") or ""),
         )
     except Exception as e:  # noqa: BLE001 — the drop still runs; a failure is recorded then
-        log.warning("%s: drop intent not written for %d rows: %s", op, len(rows), e)
+        log.warning("%s: drop intent not written for %d rows: %s", op, len(versions), e)
         intent = ""
 
     async def drop() -> None:
         if not intent:
-            await drop_undeclared_edges(input, rows, versions, ch=get_client(), op=op)
+            await drop_undeclared_edges(input, versions, ch=get_client(), op=op)
             return
         try:
             await drop_undeclared_links(input, versions, ch=get_client())
         except Exception as e:  # noqa: BLE001 — the intent stays; the repair drops them
-            log.warning("%s: undeclared edges of %d rows not dropped (owed): %s", op, len(rows), e)
+            log.warning(
+                "%s: undeclared edges of %d rows not dropped (owed): %s", op, len(versions), e
+            )
             return
         intent_marks.resolve_soon(input.org, [intent])
 

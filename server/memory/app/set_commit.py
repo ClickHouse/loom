@@ -296,10 +296,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     if high and had_existing_row and owes_undeclared_drop(w.existing, declared or []):
         # Made high over a value it held: what its text gave the graph goes.
         await drop_undeclared_edges_beside(
-            input,
-            {memory_id: declared or []},
-            {memory_id: int(memory_row["version"])},
-            op="memory.set",
+            input, {memory_id: int(memory_row["version"])}, op="memory.set"
         )
     await project_stated_relations(
         memory_row,
