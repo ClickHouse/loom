@@ -45,14 +45,19 @@ class HttpCoverageSource:
     statement is a SELECT sent with `readonly=1`-compatible parameters only."""
 
     def __init__(
-        self, url: str, *, user: str, password: str, database: str, timeout_s: float
+        self,
+        url: str,
+        *,
+        user: str,
+        password: str,
+        database: str,
+        timeout_s: float,
+        connect_timeout_s: float,
     ) -> None:
         self._url = url.rstrip("/") + "/"
         self._auth = httpx.BasicAuth(user, password) if user else None
         self._database = database
-        self._timeout = httpx.Timeout(
-            timeout_s, connect=settings.code_coverage_source_connect_timeout_s
-        )
+        self._timeout = httpx.Timeout(timeout_s, connect=connect_timeout_s)
 
     async def rows(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         query: dict[str, str] = {"database": self._database, "default_format": "JSONEachRow"}
@@ -79,4 +84,5 @@ def source_from_settings() -> HttpCoverageSource | None:
         password=settings.code_coverage_source_password,
         database=settings.code_coverage_source_database,
         timeout_s=settings.code_coverage_source_timeout_s,
+        connect_timeout_s=settings.code_coverage_source_connect_timeout_s,
     )

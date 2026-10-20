@@ -325,12 +325,13 @@ async def test_a_tracker_source_connects_within_its_setting(
 def test_the_coverage_source_connects_within_its_setting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.clients.coverage_source import HttpCoverageSource
+    from server.clients.coverage_source import source_from_settings
 
+    monkeypatch.setattr(settings, "code_coverage_source_url", "https://coverage.example")
+    monkeypatch.setattr(settings, "code_coverage_source_timeout_s", 40.0)
     monkeypatch.setattr(settings, "code_coverage_source_connect_timeout_s", 1.25)
-    source = HttpCoverageSource(
-        "https://coverage.example", user="", password="", database="default", timeout_s=40.0
-    )
+    source = source_from_settings()
+    assert source is not None
     assert (source._timeout.read, source._timeout.connect) == (40.0, 1.25)
 
 
@@ -373,17 +374,17 @@ _NEVER_ZERO = [
 ]
 
 
+@pytest.mark.parametrize("name", _NEVER_ZERO)
+def test_a_cap_or_interval_of_zero_is_refused(name: str) -> None:
+    with pytest.raises(ValidationError):
+        coerce(Settings, name, 0)
+
+
 def test_the_replica_bound_retry_count_has_a_ceiling() -> None:
     """More reconnects would only multiply a real SQL bug's round-trips."""
     assert coerce(Settings, "ch_replica_bound_retries", 5) == 5
     with pytest.raises(ValidationError):
         coerce(Settings, "ch_replica_bound_retries", 6)
-
-
-@pytest.mark.parametrize("name", _NEVER_ZERO)
-def test_a_cap_or_interval_of_zero_is_refused(name: str) -> None:
-    with pytest.raises(ValidationError):
-        coerce(Settings, name, 0)
 
 
 def test_zero_retries_of_an_empty_block_read_still_means_none() -> None:
