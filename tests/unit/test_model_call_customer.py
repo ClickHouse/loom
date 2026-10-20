@@ -467,6 +467,7 @@ def test_a_chat_refusal_comes_before_the_gateway_and_provider_health(
 
 
 def test_a_cached_answer_does_not_hide_a_missed_path(metered) -> None:
+    from server.llm import cache as cache_mod
     from server.llm.cache import CachedLLMClient
 
     class _Hit:
@@ -485,6 +486,7 @@ def test_a_cached_answer_does_not_hide_a_missed_path(metered) -> None:
         asyncio.run(cached.complete("s", "u"))
     with customer.for_org("acme"):
         assert asyncio.run(cached.complete("s", "u")).text == "cached"
+    cache_mod.reset_stats()  # the hit counts in the process-wide stats other tests read
 
 
 def test_code_search_rerank_lets_a_refusal_through(metered, monkeypatch) -> None:
@@ -511,7 +513,9 @@ def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_heade
         return "https://classify.example", "t"
 
     async def types(org: str, ns: str) -> list[Any]:
-        return []
+        return [{"memory_type": "observation"}]
+
+    sent: list[dict[str, str]] = []
 
     class _Client:
         def __init__(self, **_: Any) -> None:
@@ -524,7 +528,9 @@ def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_heade
             return None
 
         async def post(self, url: str, **kw: Any) -> httpx.Response:
-            return httpx.Response(200, json={}, request=httpx.Request("POST", url))
+            sent.append(kw.get("headers") or {})
+            body = {"memory_type": "observation"}
+            return httpx.Response(200, json=body, request=httpx.Request("POST", url))
 
     monkeypatch.setattr(classify_mod, "get_namespace_classify_config", config)
     monkeypatch.setattr(namespace_types, "list_type_configs", types)
@@ -542,7 +548,8 @@ def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_heade
         asyncio.run(write._set_resolve_type(body))
     monkeypatch.setattr(settings, "inference_customer_header", "")
     resolved, _, _ = asyncio.run(write._set_resolve_type(body))
-    assert resolved.memory_type == "semantic"  # unset: classify runs and keeps the type
+    # Unset: the classifier is asked, with no customer header, and its type applies.
+    assert resolved.memory_type == "observation" and "X-Customer" not in sent[-1]
 
 
 def test_the_llm_reranker_lets_a_refusal_through_and_records_no_outage(
@@ -563,7 +570,7 @@ def test_the_llm_reranker_lets_a_refusal_through_and_records_no_outage(
     candidates = [rerank_mod.RerankCandidate("k", "ns", "v", "fact", 1.0)]
     with pytest.raises(customer.Unattributed):
         asyncio.run(rerank_mod._rerank_with_builtin_openai("builtin:openai", "q", candidates))
-    assert not provider_health._state.get("rerank:openai", {}).get("failing")
+    assert not provider_health.status()["providers"].get("rerank:openai", {}).get("failing")
 
 
 def test_settings_refuse_one_name_for_both_headers(monkeypatch) -> None:
