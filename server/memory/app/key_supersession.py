@@ -136,9 +136,11 @@ async def keys_held_elsewhere(
         "org": org,
         "ns": namespace,
         "keys": sorted({str(r.get("memory_key") or "") for r in memory_rows} - {""}),
-        "own_agent": str(writer.get("agent") or ""),
-        "own_user": str(writer.get("user_id") or "-"),
-        "own_session": str(writer.get("session_id") or "-"),
+        # The stored values as they are: a session sent empty is stored "", so a '-'
+        # fallback would count the writer's own row as another session's.
+        "own_agent": str(writer.get("agent", "")),
+        "own_user": str(writer.get("user_id", "-")),
+        "own_session": str(writer.get("session_id", "-")),
     }
     in_scope = scope_and(request_scope(), params)
     rows = await ch.query_all(

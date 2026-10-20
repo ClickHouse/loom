@@ -721,6 +721,29 @@ async def test_an_empty_user_is_the_anonymous_user_and_owes_no_other_session(
     assert {r["session_id"]: r["mark"] for r in rows} == {"s1": None, "s2": None}
 
 
+@pytest.mark.parametrize("session", ["", "-"])
+async def test_a_named_users_rewrite_in_its_own_session_is_owed_nothing(
+    ch, wired, monkeypatch, session
+) -> None:
+    """A named user rewriting a key in the one session it wrote it from (sent empty or
+    '-') holds the key nowhere else, so the rewrite owes no judgement."""
+    from server.memory.app import after_write
+
+    org, _ = wired
+    _policy(monkeypatch, "auto_reinforce")
+    await _set(org, session, "office", "office: Paris", user="u1")
+    await after_write.drain()
+    await _set(org, session, "office", "office: Rome", user="u1")
+    await after_write.drain()
+    rows = await ch.query_all(
+        "SELECT toUnixTimestamp(conflict_checked_at) AS mark"
+        " FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND memory_key = 'office'"
+        " AND tombstoned_at IS NULL SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert [r["mark"] for r in rows] == [None]
+
+
 async def test_a_point_write_of_a_key_another_session_holds_is_owed(ch, wired, monkeypatch) -> None:
     """memory.set and memory.update_by_id from s2 of a key s1 holds live are owed a
     judgement under auto_reinforce, though no peer sits near them."""
