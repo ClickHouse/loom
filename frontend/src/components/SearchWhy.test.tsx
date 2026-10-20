@@ -55,6 +55,13 @@ describe("SearchWhy", () => {
     expect(await axeViolations(container.ownerDocument.body)).toEqual([]);
   });
 
+  it("shows a reranker's move in places, not as a score", async () => {
+    render(<SearchWhy rank={1} hit={hit({ score_components: { rerank_from: 4, rerank_delta: 3, semantic: 0.25 } })} />);
+    const why = await open();
+    expect(why.textContent).toMatch(/reranked \+3(?!\.)/);
+    expect(why.textContent).not.toMatch(/rerank from/);
+  });
+
   it("marks a term that pushed the hit down", async () => {
     render(<SearchWhy rank={1} hit={hit({ score_components: { reinforcement: -0.2 } })} />);
     await open();

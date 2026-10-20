@@ -8,7 +8,7 @@ import { Documents } from "./Documents";
 const api = vi.hoisted(() => ({
   listKnowledge: vi.fn(),
   getKnowledge: vi.fn(),
-  fetchKnowledgeInlineUrl: vi.fn(),
+  fetchKnowledgePreview: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 const toastError = vi.hoisted(() => vi.fn());
@@ -39,7 +39,7 @@ describe("Library keeps the open document in its URL", () => {
   beforeEach(() => {
     api.listKnowledge.mockResolvedValue({ rows: ROWS, next_cursor: null });
     api.getKnowledge.mockResolvedValue({ found: true, content: "text", source_uri: "docs/handbook.md" });
-    api.fetchKnowledgeInlineUrl.mockResolvedValue(null);
+    api.fetchKnowledgePreview.mockResolvedValue(null);
     useStore.setState({
       identity: { org: "acme", namespace: "team", agent: "loom-ui" },
       view: "knowledge",
