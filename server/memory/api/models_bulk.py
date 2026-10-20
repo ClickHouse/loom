@@ -18,7 +18,7 @@ from server.operations.base import MCP_HIDDEN
 
 
 # The most entries one memory.bulk_set takes.
-MAX_BULK_ENTRIES = 1000
+MAX_BULK_ENTRIES = 1000  # not a setting: a wire bound the request schema and SDKs publish
 
 
 class _BulkSetEntry(BaseModel):

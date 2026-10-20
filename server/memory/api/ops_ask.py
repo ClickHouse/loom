@@ -12,9 +12,6 @@ memory_ask = Operation(
     output_model=MemoryAskOutput,
     handler=handle_memory_ask,
     idempotent=True,
-    # Retrieval (memory.search's own budget) plus at most one LLM synthesis
-    # call; a retrieval_only / abstained call pays no LLM latency.
-    budget_p99_ms=8000,
     required_role=Role.VIEWER,
     audit=False,
 )

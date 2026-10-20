@@ -49,7 +49,7 @@ _NO_ORG = ("", "-", "*")
 
 log = logging.getLogger(__name__)
 # A missed call path is logged once a minute per feature, not on every call.
-_LOG_EVERY_S = 60.0
+_LOG_EVERY_S = 60.0  # not a setting: how often a log line repeats, not what Loom does
 _logged_at: dict[str, float] = {}
 
 
@@ -84,7 +84,7 @@ async def _read() -> frozenset[str]:
     from server.core.ch import get_client, own_write_reads
 
     # Every org switched off, one row each: never cut short, which would fail open.
-    # Sequentially consistent: the read after `forget_switch` must see the change
+    # Sequentially consistent: the read after `note_switch_change` must see the change
     # just written, and every process's read the newest change on any replica.
     with own_write_reads():
         rows = await get_client().query_all(
@@ -238,6 +238,6 @@ async def switched_off_orgs() -> frozenset[str]:
     return off
 
 
-def forget_switch() -> None:
+def note_switch_change() -> None:
     """Make the next call read the switch again, for a change just made here."""
     _switch.note_change()

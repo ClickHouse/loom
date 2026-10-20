@@ -23,11 +23,9 @@ from server.code.app.index.ingest_parse import (
 from server.code.app.ttl_cache import TtlCache
 from server.code.domain.extract.treesitter import ParsedFile
 from server.code.store.index import CodeRepo
+from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.ingest")
-
-# How long a sibling-text answer (a manifest, a listing, a config, a barrel) is kept.
-_PACKAGE_JSON_TTL_S = 600.0
 
 _PY_LAYOUT_CACHE: dict[tuple[str, str], tuple[float, Any]] = {}
 
@@ -46,7 +44,7 @@ async def _py_layout(repo: CodeRepo, org: str, ns: str, present: set[str]) -> An
         return None
     hit = _PY_LAYOUT_CACHE.get((org, ns))
     now = time.monotonic()
-    if hit is not None and now - hit[0] < _PACKAGE_JSON_TTL_S:
+    if hit is not None and now - hit[0] < settings.code_ingest_sibling_text_ttl_s:
         return hit[1]
     manifests = sorted(
         (p for p in present if pl.is_manifest_path(p)), key=lambda p: (p.count("/"), p)
@@ -274,7 +272,7 @@ async def _resolve_go_imports(repo: CodeRepo, org: str, ns: str, pf: ParsedFile)
 
 
 _GO_LISTING_CACHE: TtlCache[tuple[str, str, str], list[str]] = TtlCache(
-    _PACKAGE_JSON_TTL_S, maxsize=50_000
+    lambda: settings.code_ingest_sibling_text_ttl_s, maxsize=50_000
 )
 
 
@@ -294,7 +292,7 @@ async def _go_package_listing(repo: CodeRepo, org: str, ns: str, pkg_dir: str) -
 
 
 _GO_MODULE_INDEX_CACHE: TtlCache[tuple[str, str], list[tuple[str, str]]] = TtlCache(
-    _PACKAGE_JSON_TTL_S
+    lambda: settings.code_ingest_sibling_text_ttl_s
 )
 
 
@@ -320,7 +318,7 @@ async def _go_module_index(repo: CodeRepo, org: str, ns: str) -> list[tuple[str,
 
 
 _PACKAGE_JSON_CACHE: TtlCache[tuple[str, str, str], str] = TtlCache(
-    _PACKAGE_JSON_TTL_S, maxsize=50_000
+    lambda: settings.code_ingest_sibling_text_ttl_s, maxsize=50_000
 )
 
 # The (git_dir, sha) a worker pass is ingesting at. Set, a sibling file's text (a
@@ -357,8 +355,12 @@ async def _live_text(repo: CodeRepo, org: str, ns: str, path: str) -> str:
     return await repo.live_text_for_path(org, ns, path)
 
 
-_TSCONFIG_CACHE: TtlCache[tuple[str, str, str], Any] = TtlCache(_PACKAGE_JSON_TTL_S, maxsize=50_000)
-_WORKSPACE_CACHE: TtlCache[tuple[str, str], dict[str, str]] = TtlCache(_PACKAGE_JSON_TTL_S)
+_TSCONFIG_CACHE: TtlCache[tuple[str, str, str], Any] = TtlCache(
+    lambda: settings.code_ingest_sibling_text_ttl_s, maxsize=50_000
+)
+_WORKSPACE_CACHE: TtlCache[tuple[str, str], dict[str, str]] = TtlCache(
+    lambda: settings.code_ingest_sibling_text_ttl_s
+)
 
 
 async def _workspace_registry(
@@ -599,7 +601,7 @@ async def _resolve_package_exports(
 
 
 _BARREL_CACHE: TtlCache[tuple[str, str, str], tuple[str, ...]] = TtlCache(
-    _PACKAGE_JSON_TTL_S, maxsize=50_000
+    lambda: settings.code_ingest_sibling_text_ttl_s, maxsize=50_000
 )
 
 

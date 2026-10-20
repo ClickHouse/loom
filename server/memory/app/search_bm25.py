@@ -6,11 +6,9 @@ from typing import Any
 
 from server.core import bm25
 from server.memory.domain.search_types import _CHClient
+from server.settings import settings
 
 _BM25_CORPUS_CACHE: dict[tuple[str, str], tuple[float, int, float]] = {}
-
-
-_BM25_CACHE_TTL_S = 300.0
 
 
 def _bm25_sigmoid_params(n_terms: int, max_score: float) -> tuple[float, float]:
@@ -219,7 +217,9 @@ async def _bm25_df_and_corpus(
 
     cache_key = (org, namespace)
     cached = _BM25_CORPUS_CACHE.get(cache_key)
-    use_cached_corpus = cached is not None and _time.time() - cached[0] < _BM25_CACHE_TTL_S
+    use_cached_corpus = (
+        cached is not None and _time.time() - cached[0] < settings.memory_bm25_cache_ttl_s
+    )
     df_params = {"org": org, "ns": namespace, "tokens": tokens}
     corpus_params = {"org": org, "ns": namespace}
 

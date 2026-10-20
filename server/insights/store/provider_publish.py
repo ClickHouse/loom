@@ -8,6 +8,7 @@ There is a temporary name gap, so every reader and writer must remain drained.
 
 from uuid import UUID
 
+from server.core.ch_names import SCHEMA, physical
 from server.core.repo_base import _CHClient, _default_client
 from server.insights.store.provider_staging import StagingNames, _identifier
 
@@ -37,7 +38,7 @@ async def publish_prepared_table(
     original_uuid: UUID,
     prepared_uuid: UUID,
     *,
-    database: str = "loom",
+    database: str = SCHEMA,
     ch: _CHClient | None = None,
 ) -> None:
     """Publish an already verified, live-schema candidate; retain its old table.
@@ -55,6 +56,7 @@ async def publish_prepared_table(
         or original_uuid == prepared_uuid
     ):
         raise ValueError("Invalid publication identities")
+    database = physical(database)
     db = _identifier(database)
     client = ch or _default_client()
     state = await _state(names, original_uuid, prepared_uuid, database, client)

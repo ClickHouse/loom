@@ -71,6 +71,7 @@ jobs:
         run: |
           python scripts/codegen/sdk_py_gen.py --check
           python scripts/codegen/sdk_py_client_gen.py --check
+          python scripts/codegen/sdk_py_admin_gen.py --check
       # The Codex plugin's hook scripts, library and skills are copies of the
       # Claude Code plugin's; a change to one must be synced. The check compares
       # bytes and the executable bit.
@@ -82,6 +83,7 @@ jobs:
       - name: docs reference and reach manifest are current
         run: |
           python scripts/codegen/settings_reference.py --check
+          python scripts/codegen/settings_schema.py --check
           python scripts/codegen/docs_reference.py --check
           python scripts/codegen/op_reach_census.py --check
       # The SDK ships py.typed: it is type-checked strictly
@@ -318,7 +320,7 @@ jobs:
           chart=deploy/helm/loom
           secret=$(openssl rand -hex 32)
           # Every optional object on, so each template renders at least once.
-          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set mustMatchChange.publish=ci)
+          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set mustMatchChange.publish=ci --set settingsFile.memory_ask_recency_weight=0.3)
           for overlay in values-eks.yaml values-kind.yaml; do
             args=(-f "$chart/$overlay" --set secrets.jwtSecret="$secret")
             helm lint --strict "$chart" "${args[@]}"

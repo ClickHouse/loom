@@ -65,8 +65,6 @@ async def _cause_stage(
     return top + pool[CAUSE_SCAN_TOP:]
 
 
-# The fix-blame stage's wall budget and blame fan-out
-FIX_BLAME_BUDGET_S = 8.0
 FIX_BLAME_CONCURRENCY = 4
 
 
@@ -353,7 +351,8 @@ async def _fix_blame_stage(
 
         with code_span("bisect.fix_blame", ranges=len(ranges)):
             per_range = await asyncio.wait_for(
-                asyncio.gather(*(one(r) for r in ranges)), timeout=_budget(FIX_BLAME_BUDGET_S)
+                asyncio.gather(*(one(r) for r in ranges)),
+                timeout=_budget(settings.code_bisect_fix_blame_budget_s),
             )
     except TimeoutError:
         summary["skipped"] = "deadline" if _expired("fix_blame") else "timeout"

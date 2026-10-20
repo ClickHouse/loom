@@ -43,6 +43,7 @@ if str(ROOT) not in sys.path:  # run as a file
     sys.path.insert(0, str(ROOT))
 
 from scripts.codegen.common import write_atomic  # noqa: E402
+from scripts.codegen.sdk_py_admin_gen import render_admin_routes_table  # noqa: E402
 
 COMMAND = "python scripts/codegen/docs_reference.py"
 REFERENCE = ROOT / "docs" / "reference"
@@ -403,11 +404,8 @@ def render_workers() -> str:
         if w.also_requires:
             enabled += f" + `LOOM_{w.also_requires.upper()}`"
         default = _setting_default(w.enabled) if w.enabled else ""
-        if w.interval_in_module:
-            cadence, cadence_default = f"`{w.module}.{w.interval}`", ""
-        else:
-            cadence = f"`LOOM_{w.interval.upper()}`"
-            cadence_default = _setting_default(w.interval)
+        cadence = f"`LOOM_{w.interval.upper()}`"
+        cadence_default = _setting_default(w.interval)
         out.append(
             f"| `{w.name}` | {_cell(_module_summary(w.module))} | {enabled} | "
             f"{default} | {cadence} | {cadence_default} |"
@@ -605,6 +603,7 @@ RENDERERS: dict[str, Callable[[], str]] = {
     "cli": render_cli,
     "errors": render_errors,
     "schema": render_schema,
+    "admin_routes": render_admin_routes_table,
 }
 
 

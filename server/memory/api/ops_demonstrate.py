@@ -13,7 +13,6 @@ memory_demonstrate = Operation(
     output_model=MemoryDemonstrateOutput,
     handler=handle_memory_demonstrate,
     idempotent=True,
-    budget_p99_ms=400,
     required_role=Role.VIEWER,
     audit=False,
 )

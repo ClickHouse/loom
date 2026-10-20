@@ -17,6 +17,7 @@ import pytest
 import server.code.app.backport as h
 import server.tracker.app.binding as binding
 from server.code.api.models_history import CodeBackportGapInput
+from server.settings import settings
 from server.tracker.domain import backport as bp
 from server.tracker.domain import patch_presence as pp
 from server.tracker.domain.errors import TrackerUnavailable
@@ -631,7 +632,7 @@ async def test_exact_deadline_and_error_are_symbol_only_never_a_verdict(wired, m
                 raise RuntimeError("boom")
             return await super().chunks_for_patch(org, ns, paths, symbols, needles, limit=limit)
 
-    monkeypatch.setattr(h, "_PATCH_WALL_MS", 50)
+    monkeypatch.setattr(settings, "code_backport_patch_budget_ms", 50)
     repo = _Broken(CHUNKS, slow="code-clickhouse-26-8")
     wired(_Source(sections=[DIFF_SRC]), repo)
     out = await h.handle_code_backport_gap(

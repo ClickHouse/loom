@@ -1077,7 +1077,7 @@ def test_an_end_user_issuer_names_its_orgs_and_its_keys(spec: dict[str, Any], sa
 
     from pydantic import ValidationError
 
-    from server.settings._auth import AuthSettings
+    from server.settings.catalog import AuthSettings
 
     with pytest.raises(ValidationError, match=said):
         AuthSettings(jwt_end_user_issuers_json=json.dumps(spec))
@@ -1088,7 +1088,7 @@ def test_an_end_user_issuer_is_never_a_trusted_one_and_signs_for_its_orgs_alone(
 
     from pydantic import ValidationError
 
-    from server.settings._auth import AuthSettings
+    from server.settings.catalog import AuthSettings
 
     with pytest.raises(ValidationError, match="both end-user and trusted issuers"):
         AuthSettings(
@@ -1357,7 +1357,7 @@ def test_one_key_is_never_both_an_end_user_and_a_federated_key() -> None:
 
     from pydantic import ValidationError
 
-    from server.settings._auth import AuthSettings
+    from server.settings.catalog import AuthSettings
 
     with pytest.raises(ValidationError, match="are federated keys"):
         AuthSettings(

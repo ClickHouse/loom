@@ -13,6 +13,7 @@ from server.embedding import get_embedder
 from server.memory.domain.extraction_policy import with_policy
 from server.memory.domain.sensitivity import value_reads_high
 from server.observability.genai import staged
+from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
 
@@ -28,8 +29,6 @@ _SESSION_SUMMARY_PROMPT_VERSION = "ss-3"
 # Bounds the digest call's input cost. ~3000 chars ≈ 750 tokens.
 _SESSION_SUMMARY_MAX_INPUT_CHARS = 3000
 
-# Output room for 1-3 dated sentences.
-_SESSION_SUMMARY_MAX_TOKENS = 160
 
 # How many fact values ride along as key_facts — a dedup signal for the
 # assembler (which facts a summary subsumes); never independently embedded.
@@ -150,7 +149,7 @@ async def _draft_session_summary(
     result = await llm.complete(
         with_policy(_SESSION_SUMMARY_SYSTEM, operator_policy),
         user_prompt,
-        max_tokens=_SESSION_SUMMARY_MAX_TOKENS,
+        max_tokens=llm_max_tokens("session_summary"),
     )
     summary_text = (result.text or "").strip()
     if not summary_text:

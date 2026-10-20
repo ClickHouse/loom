@@ -211,7 +211,7 @@ async def _lockfile_changed(checkout: Path, base: str, head: str) -> bool:
         stderr=asyncio.subprocess.DEVNULL,
         env=auth_env(),
     )
-    out, _err = await communicate_or_kill(proc, timeout_s=120.0)
+    out, _err = await communicate_or_kill(proc, timeout_s=settings.code_git_timeout_s)
     return bool(out.strip())
 
 

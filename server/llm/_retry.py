@@ -18,5 +18,9 @@ def is_provider_outage(exc: BaseException) -> bool:
 
 
 def retrying() -> AsyncRetrying:
-    """Four attempts, backoff capped at 20 s."""
-    return _retry.retrying(attempts=4, max_wait_s=20)
+    """`llm_retry_attempts` attempts, backoff capped at `llm_retry_max_wait_s`."""
+    from server.settings import settings
+
+    return _retry.retrying(
+        attempts=settings.llm_retry_attempts, max_wait_s=settings.llm_retry_max_wait_s
+    )

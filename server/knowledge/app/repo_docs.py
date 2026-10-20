@@ -26,10 +26,9 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeSearchOutput,
     _SearchHit,
 )
+from server.settings import settings
 
 log = logging.getLogger("loom.repo_docs")
-
-REPO_DOCS_TIMEOUT_S = 1.5
 
 
 def docs_namespace_of(org: str, code_namespace: str) -> str:
@@ -61,10 +60,12 @@ async def readable_docs_namespace(org: str, code_namespace: str) -> str:
 
 
 async def search_repo_docs(
-    org: str, code_namespace: str, query: str, top_k: int, *, timeout_s: float = REPO_DOCS_TIMEOUT_S
+    org: str, code_namespace: str, query: str, top_k: int, *, timeout_s: float | None = None
 ) -> tuple[str, list[_SearchHit]]:
     """(docs namespace, hits) for `query` over the repository's documents;
     ("", []) when there is nothing the caller may read, or on any failure."""
+    if timeout_s is None:
+        timeout_s = settings.knowledge_repo_docs_timeout_s
     ns = await readable_docs_namespace(org, code_namespace)
     if not ns or not query.strip():
         return "", []
@@ -141,7 +142,6 @@ class RepoDoc(TypedDict):
 
 DOCS_SECTION_MAX_TOKENS = 300
 DOCS_SECTION_MAX_DOCS = 12
-LIST_CACHE_TTL_S = 60.0
 _LIST_CACHE: dict[tuple[str, str, int], tuple[float, list[RepoDoc]]] = {}
 
 
@@ -150,11 +150,13 @@ async def list_repo_docs(
     code_namespace: str,
     *,
     limit: int = DOCS_SECTION_MAX_DOCS,
-    timeout_s: float = REPO_DOCS_TIMEOUT_S,
+    timeout_s: float | None = None,
 ) -> tuple[str, list[RepoDoc]]:
     """(docs namespace, [{source_uri, title, description}]) — the
     repository's live documents, newest first as `knowledge.list` orders
     them; ("", []) when there is nothing the caller may read, or on failure."""
+    if timeout_s is None:
+        timeout_s = settings.knowledge_repo_docs_timeout_s
     ns = await readable_docs_namespace(org, code_namespace)
     if not ns:
         return "", []
@@ -183,7 +185,10 @@ async def list_repo_docs(
     docs = [
         RepoDoc(source_uri=r.source_uri, title=r.title, description=r.description) for r in out.rows
     ]
-    _LIST_CACHE[(org, ns, limit)] = (time.monotonic() + LIST_CACHE_TTL_S, docs)
+    _LIST_CACHE[(org, ns, limit)] = (
+        time.monotonic() + settings.knowledge_repo_docs_list_ttl_s,
+        docs,
+    )
     return ns, list(docs)
 
 

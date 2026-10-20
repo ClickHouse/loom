@@ -12,7 +12,6 @@ context_pack = Operation(
     output_model=ContextPackOutput,
     handler=handle_context_pack,
     idempotent=True,
-    budget_p99_ms=600,
     required_role=Role.VIEWER,
     audit=False,
 )

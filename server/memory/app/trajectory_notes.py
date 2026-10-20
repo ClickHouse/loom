@@ -44,6 +44,7 @@ from server.memory.api.models_crud import MemoryDeleteInput, MemorySetInput
 from server.memory.domain.extraction_policy import with_policy
 from server.memory.domain.transcript_rows import EVENT_SOURCE_TRACE, EVENT_TAG, FROM_OBSERVATION_TAG
 from server.observability.genai import llm_stage
+from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
 
@@ -454,7 +455,11 @@ async def distill_events(
     for before, after in pairs:
         try:
             with llm_stage("observe_extract.event"):
-                out = await llm.complete(system, event_prompt(before, after), max_tokens=300)
+                out = await llm.complete(
+                    system,
+                    event_prompt(before, after),
+                    max_tokens=llm_max_tokens("observe_extract.event"),
+                )
             res.llm_calls += 1
             parsed = parse_event(str(getattr(out, "text", "") or ""))
             if parsed is None:
@@ -548,7 +553,11 @@ async def distill_notes(
     system = with_policy(_NOTES_SYSTEM, policy)
     try:
         with llm_stage("observe_extract.notes"):
-            out = await llm.complete(system, notes_prompt(observations), max_tokens=900)
+            out = await llm.complete(
+                system,
+                notes_prompt(observations),
+                max_tokens=llm_max_tokens("observe_extract.notes"),
+            )
         res.llm_calls += 1
         notes = parse_notes(str(getattr(out, "text", "") or ""))
     except customer.HOLDS:

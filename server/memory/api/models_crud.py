@@ -736,7 +736,7 @@ class MemoryListOutput(BaseModel):
 
 
 # The most keys one memory.keys answer carries.
-MEMORY_KEYS_MAX = 100_000
+MEMORY_KEYS_MAX = 100_000  # not a setting: a wire bound the request schema and SDKs publish
 
 
 class MemoryKeysInput(BaseModel):

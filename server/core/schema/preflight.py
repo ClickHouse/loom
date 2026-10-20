@@ -6,23 +6,25 @@ one line."""
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from server.core.ch_errors import error_code, error_line
+from server.core.ch_names import SCHEMA, TELEMETRY, NamedClient, quote, telemetry_database
+from server.core.ch_names import database as database_name
 from server.core.paths import MIGRATIONS_DIR
+from server.core.schema.migrate_lease import RUNNER_TABLES
 
 if TYPE_CHECKING:
     from clickhouse_connect.driver.client import Client
 
 
-DATABASE = "loom"
 # Telemetry Loom derives from its own tables (045_request_sli.sql). Only the
 # migrations write it: its refreshable view runs as the user that created it.
-TELEMETRY_DATABASE = "loom_telemetry"
 TELEMETRY_GRANTS = "CREATE DATABASE, CREATE TABLE, CREATE VIEW, INSERT, SELECT"
 # The oldest server that applies every migration: 26.3 still gates stem() and
 # 25.12 the text index. CI tests the latest release (dev/clickhouse_release.sh);
@@ -88,7 +90,15 @@ def replica_versions_sql() -> str:
     )
 
 
-_DATABASE_COUNT = f"SELECT count() FROM system.databases WHERE name = '{DATABASE}'"
+def _database_count(ch: Client) -> bool:
+    """Whether the schema's database exists (and this user can see it)."""
+    return bool(
+        ch.command(
+            "SELECT count() FROM system.databases WHERE name = {db:String}",
+            parameters={"db": database_name()},
+        )
+    )
+
 
 # UNKNOWN_USER, WRONG_PASSWORD, REQUIRED_PASSWORD, AUTHENTICATION_FAILED
 AUTH_FAILED = frozenset({192, 193, 194, 516})
@@ -173,12 +183,15 @@ def connect() -> Client:
     level = driver_log.level
     driver_log.setLevel(logging.CRITICAL)
     try:
-        return clickhouse_connect.get_client(
+        # Connected to no database, which may not exist yet; the ledger it reads is
+        # named `loom._migrations`, mapped by the wrapper.
+        driver = clickhouse_connect.get_client(
             **connection_kwargs(database=""),
-            connect_timeout=10,
-            send_receive_timeout=60,
+            connect_timeout=10,  # not a setting: the preflight's own probe, before any pool
+            send_receive_timeout=60,  # not a setting: the preflight's own probe, before any pool
             settings={"log_comment": "ch.preflight"},
         )
+        return cast("Client", NamedClient(driver))
     except Exception as e:  # noqa: BLE001 — every connect failure becomes one line
         if error_code(e) in AUTH_FAILED:
             raise PreflightError(
@@ -268,18 +281,21 @@ def _require(ch: Client, user: str, grants: str) -> None:
         raise _lacks(user, missing)
 
 
-def _missing(ch: Client, grants: str, database: str = DATABASE) -> str:
+def _missing(ch: Client, grants: str, database: str = "") -> str:
     """The ones of `grants` this user lacks on `database`.*, '' when it holds all."""
+    database = database or quote(database_name())
     if _granted(ch, grants, database):
         return ""
     return ", ".join(g for g in grants.split(", ") if not _granted(ch, g, database))
 
 
-def _granted(ch: Client, grants: str, database: str = DATABASE) -> bool:
+def _granted(ch: Client, grants: str, database: str = "") -> bool:
+    database = database or quote(database_name())
     return str(ch.command(f"CHECK GRANT {grants} ON {database}.*")) == "1"
 
 
-def _lacks(user: str, grants: str, database: str = DATABASE) -> PreflightError:
+def _lacks(user: str, grants: str, database: str = "") -> PreflightError:
+    database = database or quote(database_name())
     return PreflightError(
         f"{user!r} is missing {grants} on {database}.*: "
         f"an admin has to run GRANT CURRENT GRANTS ON {database}.* TO `{user}`",
@@ -287,9 +303,75 @@ def _lacks(user: str, grants: str, database: str = DATABASE) -> PreflightError:
     )
 
 
+# A name written before a dot, not itself the tail of a dotted name.
+_QUALIFIER = re.compile(r"(?<![\w.`])`?(\w[\w-]*)`?\.(?=[`\w*])")
+
+
+@functools.cache
+def _qualifiers() -> frozenset[str]:
+    """Every name the migrations write before a dot: databases, but also table names
+    and aliases (`memory.org`), which DDL read back from ClickHouse holds too."""
+    from server.core.schema.journal import sorted_migrations
+
+    names: set[str] = set()
+    for path in sorted_migrations(MIGRATIONS_DIR.glob("*.sql")):
+        names.update(m.lower() for m in _QUALIFIER.findall(path.read_text(encoding="utf-8")))
+    return frozenset(names - {SCHEMA, TELEMETRY})
+
+
+def _refuse_ambiguous_names() -> None:
+    """Refuse a database named like a table or an alias the schema writes before a
+    dot: `unqualify` could not tell `e.memory_key` from a database qualifier."""
+    for setting, name in (
+        ("LOOM_CH_DATABASE", database_name()),
+        ("LOOM_CH_TELEMETRY_DATABASE", telemetry_database()),
+    ):
+        if name.lower() in _qualifiers():
+            raise PreflightError(
+                f"{setting} is {name!r}, a name Loom's schema uses for a table or an "
+                "alias: choose another"
+            )
+
+
+def _refuse_moved_schema(ch: Client) -> None:
+    """Refuse to serve or migrate a LOOM_CH_DATABASE other than `loom` that holds no Loom
+    ledger while Loom's schema is in `loom`: the setting would start an empty schema
+    beside the deployment's data, or inside another application's database. An
+    operator who means a new schema there creates the database, empty, first."""
+    if database_name() == SCHEMA:
+        return
+    rows = ch.query(
+        "SELECT countIf(database = {schema:String} AND name = '_migrations') AS other, "
+        "countIf(database = {db:String} AND name NOT IN {own:Array(String)}) AS tables, "
+        "countIf(database = {db:String} AND name = '_migrations') AS ledger "
+        "FROM system.tables WHERE database IN ({schema:String}, {db:String})",
+        parameters={
+            "schema": SCHEMA,
+            "db": database_name(),
+            # The runner makes its own tables before the ledger: a first boot stopped
+            # between the two leaves a schema that is still Loom's.
+            "own": sorted(RUNNER_TABLES),
+        },
+    ).result_rows
+    other, tables, ledger = rows[0] if rows else (0, 0, 0)
+    if not other or ledger:
+        return
+    if not _database_count(ch):
+        where = "which does not exist"
+    elif tables:
+        where = f"which holds {tables} tables and no Loom ledger"
+    else:
+        return  # created empty for a new schema
+    raise PreflightError(
+        f"LOOM_CH_DATABASE is {database_name()!r}, {where}, and a Loom schema is in "
+        f"{SCHEMA!r}: set LOOM_CH_DATABASE={SCHEMA}, or create an empty "
+        f"{quote(database_name())} first to start a new schema there"
+    )
+
+
 def _cannot_create(user: str) -> PreflightError:
     return PreflightError(
-        f"{user!r} cannot see a database {DATABASE} and may not create it: "
+        f"{user!r} cannot see a database {quote(database_name())} and may not create it: "
         "an admin has to run Loom's setup SQL",
         needs_admin=True,
     )
@@ -312,7 +394,7 @@ def check(
     from server.settings import settings
 
     user = settings.ch_user
-    database = bool(ch.command(_DATABASE_COUNT))
+    database = _database_count(ch)
     migrates = migrates and need == "server"  # a replica or a read never migrates
     # Strict where migrations are about to run: a restart with nothing
     # pending, or one that does not migrate, relaxes what only they read.
@@ -323,24 +405,28 @@ def check(
         floor = ".".join(map(str, MIN_VERSION))
         raise PreflightError(f"ClickHouse {version} is older than {floor}: upgrade the server")
 
+    _refuse_ambiguous_names()
+    if need == "server":
+        _refuse_moved_schema(ch)
     if not database:
         if not migrates:
             raise PreflightError(
-                f"{user!r} cannot see a database {DATABASE} (missing, or no grant on it)",
+                f"{user!r} cannot see a database {quote(database_name())} "
+                "(missing, or no grant on it)",
                 needs_admin=True,
             )
         if create_database:
             try:
-                ch.command(f"CREATE DATABASE IF NOT EXISTS {DATABASE}")
+                ch.command(f"CREATE DATABASE IF NOT EXISTS {quote(database_name())}")
             except Exception as e:
                 if error_code(e) == ACCESS_DENIED:
                     raise _cannot_create(user) from None
                 # Another process or replica may have created it meanwhile
                 # (Cloud answers UNFINISHED, 341): only a still-missing one fails.
-                if not ch.command(_DATABASE_COUNT):
+                if not _database_count(ch):
                     raise
         # The doctor creates nothing; it only says whether boot could.
-        elif str(ch.command(f"CHECK GRANT CREATE DATABASE ON {DATABASE}.*")) != "1":
+        elif str(ch.command(f"CHECK GRANT CREATE DATABASE ON {quote(database_name())}.*")) != "1":
             raise _cannot_create(user)
 
     # Strict even with nothing pending: the running server uses them too.
@@ -348,7 +434,9 @@ def check(
     no_refresh = need == "server" and not _granted(ch, REFRESH_GRANT)
     # A migrating process checks every telemetry grant below.
     no_telemetry_read = (
-        need == "server" and not migrates and not _granted(ch, "SELECT", TELEMETRY_DATABASE)
+        need == "server"
+        and not migrates
+        and not _granted(ch, "SELECT", quote(telemetry_database()))
     )
 
     if migrates:
@@ -362,8 +450,8 @@ def check(
             if migrating:
                 raise error
             later.append(error)
-        if missing := _missing(ch, TELEMETRY_GRANTS, TELEMETRY_DATABASE):
-            error = _lacks(user, missing, TELEMETRY_DATABASE)
+        if missing := _missing(ch, TELEMETRY_GRANTS, quote(telemetry_database())):
+            error = _lacks(user, missing, quote(telemetry_database()))
             if migrating:
                 raise error
             later.append(error)
@@ -410,13 +498,13 @@ def warnings(server: Server) -> str:
         parts.append(f"may not read {tables}, so the telemetry from these tables stays empty")
     if server.no_refresh:
         parts.append(
-            f"may not {REFRESH_GRANT} on {DATABASE}.*, so purged code stays in the "
+            f"may not {REFRESH_GRANT} on {quote(database_name())}.*, so purged code stays in the "
             "refreshable views until their next scheduled refresh"
         )
     if server.no_telemetry_read:
         parts.append(
-            f"may not SELECT on {TELEMETRY_DATABASE}.*, so /v1/admin/schema.status reports the "
-            "SLI rollup missing, the view refresh gauges leave it out, and "
+            f"may not SELECT on {quote(telemetry_database())}.*, so /v1/admin/schema.status "
+            "reports the SLI rollup missing, the view refresh gauges leave it out, and "
             "loom.sli.rollup_lag_s and loom.sli.rollup_missed_rows are never reported"
         )
     # Each reason may end in its own SQL advice: " | " keeps them apart.

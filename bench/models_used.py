@@ -4,7 +4,7 @@ A benchmark number is only true with its instrument: the embedder, the
 extraction model, each memory.ask tier and every other per-job model the read
 and write paths call. This reads them the way the server does — the settings
 loaded from the env file it was started with, plus overrides in the process
-environment — and writes the `server/settings/_models.py` fields with their
+environment — and writes the `server/settings/catalog.py` model fields with their
 resolved values (an empty one reads "(off)" or "(llm_model: …)" by what the field
 means), so the record cannot
 drift from what ran.
@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 # Fields whose empty value turns the job off rather than handing it to llm_model
-# (see their comments in server/settings/_models.py).
+# (see their comments in server/settings/catalog.py).
 OFF_WHEN_EMPTY = frozenset(
     {
         "llm_fallback_model",
@@ -35,7 +35,7 @@ OFF_WHEN_EMPTY = frozenset(
 
 def snapshot() -> dict[str, str]:
     from server.settings import settings
-    from server.settings._models import ModelSettings
+    from server.settings.catalog import ModelSettings
 
     out: dict[str, str] = {
         "llm_provider": str(settings.llm_provider),

@@ -42,11 +42,30 @@ def test_a_rows_switches_are_boolean_settings(row: registry._Worker) -> None:
 
 @pytest.mark.parametrize("row", _ROWS, ids=[w.name for w in _ROWS])
 def test_a_rows_cadences_are_numeric_settings(row: registry._Worker) -> None:
-    names = [row.idle_interval, row.max_pass_setting]
-    if not row.interval_in_module:
-        names.append(row.interval)
+    names = [row.idle_interval, row.max_pass_setting, row.interval]
     for name in (n for n in names if n is not None):
         assert name in _FIELDS and _FIELDS[name].annotation in (int, float), name
+
+
+_CADENCE_SETTINGS = {
+    "usage_fold": "usage_fold_interval_seconds",
+    "keeper_sweep": "keeper_sweep_interval_seconds",
+    "conflict_sweep": "conflict_sweep_interval_seconds",
+    "oauth_signin_state_sweep": "oauth_signin_state_sweep_interval_seconds",
+    "mcp_session_run_sweep": "mcp_session_run_sweep_interval_seconds",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_CADENCE_SETTINGS))
+def test_a_workers_spec_takes_its_cadence_from_its_setting(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    (row,) = [w for w in _ROWS if w.name == name]
+    assert row.interval == _CADENCE_SETTINGS[name]
+    monkeypatch.setattr(settings, row.interval, 7)
+    assert registry._spec_for(row).interval_seconds == 7
 
 
 def test_only_the_always_on_worker_runs_with_every_switch_off() -> None:
@@ -92,6 +111,33 @@ def test_the_memory_expiry_sweep_row() -> None:
     assert row.enabled == "memory_expiry_sweep_enabled"
     assert row.interval == "memory_expiry_sweep_interval_seconds"
     assert importlib.util.find_spec(row.module) is not None
+
+
+_DEADLINE_SETTINGS = {
+    "memory_code_links": "memory_code_links_max_pass_seconds",
+    "observe_extract": "observe_extract_max_pass_seconds",
+    "tracker_embed": "tracker_embed_max_pass_seconds",
+    "tracker_links": "tracker_links_max_pass_seconds",
+    "tracker_test_daily": "tracker_test_daily_max_pass_seconds",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_DEADLINE_SETTINGS))
+def test_a_workers_spec_takes_its_pass_deadline_from_its_setting(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    (row,) = [w for w in _ROWS if w.name == name]
+    assert row.max_pass_setting == _DEADLINE_SETTINGS[name]
+    monkeypatch.setattr(settings, row.max_pass_setting, 42.0)
+    assert registry._spec_for(row).max_pass_seconds == 42.0
+
+
+def test_a_pass_deadline_is_a_setting_or_derived_in_its_worker() -> None:
+    """No row pins a number: a deadline is a setting, or a constant its worker derives."""
+    for row in _ROWS:
+        assert not hasattr(row, "max_pass_seconds"), row.name
 
 
 def test_the_delete_version_check_row() -> None:

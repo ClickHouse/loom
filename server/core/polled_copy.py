@@ -1,4 +1,4 @@
-"""One process's copy of a small table, read on a timer, for a fail-closed check.
+"""One process's copy of a small table for a fail-closed check, read when a call finds it due.
 
 The check is made on every call. The copy reads the whole table when a read is due:
 `refresh_s` after the last read ended, or at once after a change made in this process
@@ -62,12 +62,13 @@ class PolledCopy[T]:
         changes = self._changes
         try:
             value = await self._read()
-        except Exception as e:  # noqa: BLE001 — the last copy serves until it is too old
+        except Exception as e:  # noqa: BLE001 — a failed read must not fail the call; the copy's age decides what is served
             self._log.warning("%s: read failed (%s)", self._name, e)
         else:
             self._value = value
             self._read_at = started
-        # Reached by a failed read too, so waiters do not each read in turn.
+        # Reached by a failed read too, so waiters do not each read in turn; a cancelled
+        # read skips it, so the next call reads.
         self._changes_read = changes
         self._next_read = time.monotonic() + refresh_s
 

@@ -39,7 +39,7 @@ _HOME_INSIDE = "/tmp/home"
 # Output the parent holds: a `keep_stdout` job's stdout whole up to this (a big
 # repository's `ls-remote` of PR heads is ~6 MB), past it the job is killed; any other
 # stream keeps only its last _TAIL_BYTES. The child's rlimits do not bound the parent.
-_STDOUT_LIMIT = 64 * 1024 * 1024
+_STDOUT_LIMIT = 64 * 1024 * 1024  # not a setting: the parent's memory bound against a hostile job
 _TAIL_BYTES = 1024 * 1024
 _READ_CHUNK = 64 * 1024
 # How long a killed job's pipes may stay open. Outside the sandbox a process that
@@ -200,7 +200,10 @@ def _probe() -> bool:
         return False
     try:
         help_text = subprocess.run(
-            [bwrap, "--help"], capture_output=True, text=True, timeout=10
+            [bwrap, "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,  # not a setting: a local binary's help
         ).stdout
         _disable_userns = "--disable-userns" in help_text
         done = _probe_job()
@@ -231,7 +234,11 @@ def _probe_job() -> subprocess.CompletedProcess[bytes]:
         try:
             argv = _bwrap_argv(["true"], scratch=scratch, binds=[], fd=fd)
             return subprocess.run(
-                argv, pass_fds=(fd,), capture_output=True, timeout=10, env={"PATH": os.defpath}
+                argv,
+                pass_fds=(fd,),
+                capture_output=True,
+                timeout=10,  # not a setting: a probe that runs `true`
+                env={"PATH": os.defpath},
             )
         finally:
             os.close(fd)

@@ -36,7 +36,7 @@ async def test_a_read_slower_than_the_refresh_is_not_repeated_by_each_waiter(
         await asyncio.sleep(0)  # the other calls queue on the lock meanwhile
         raise ConnectionError("clickhouse away")
 
-    copy: PolledCopy[str] = PolledCopy("t", failing, _LOG)
+    copy = PolledCopy("t", failing, _LOG)
     copy._reset_for_tests("last", read_age_s=0.0, due_in_s=10)
     copy.note_change()  # what makes the read due
     got = await asyncio.gather(*(copy.get(refresh_s=0.01, max_stale_s=60) for _ in range(3)))
@@ -46,14 +46,16 @@ async def test_a_read_slower_than_the_refresh_is_not_repeated_by_each_waiter(
 
 async def test_the_copy_is_aged_from_the_start_of_its_read(clock: ManualClock) -> None:
     """A read that takes 0.05 s leaves a copy already 0.05 s old: with a 0.04 s
-    bound it is not served."""
+    bound it is not served, with a 0.06 s bound it is."""
 
     async def slow() -> str:
         clock.advance(0.05)
         return "new"
 
-    copy: PolledCopy[str] = PolledCopy("t", slow, _LOG)
+    copy = PolledCopy("t", slow, _LOG)
     assert await copy.get(refresh_s=10, max_stale_s=0.04) is None
+    assert copy._read_at == 1000.0
+    assert await copy.get(refresh_s=10, max_stale_s=0.06) == "new"
 
 
 async def test_a_change_made_here_is_waited_for_even_with_a_young_copy(
@@ -68,7 +70,7 @@ async def test_a_change_made_here_is_waited_for_even_with_a_young_copy(
         await release.wait()
         return "changed"
 
-    copy: PolledCopy[str] = PolledCopy("t", read, _LOG)
+    copy = PolledCopy("t", read, _LOG)
     copy._reset_for_tests("old", read_age_s=0.0, due_in_s=10)
     copy.note_change()
     first = asyncio.create_task(copy.get(refresh_s=10, max_stale_s=60))
@@ -86,16 +88,16 @@ async def test_a_failed_read_logs_on_the_callers_logger(caplog, clock: ManualClo
         raise ConnectionError("clickhouse away")
 
     owner = logging.getLogger("server.llm.customer")
-    copy: PolledCopy[str] = PolledCopy("model-call switch", failing, owner)
+    copy = PolledCopy("model-call switch", failing, owner)
     with caplog.at_level(logging.WARNING, logger="server.llm.customer"):
         assert await copy.get(refresh_s=10, max_stale_s=60) is None
     assert [r.name for r in caplog.records] == ["server.llm.customer"]
-    assert "model-call switch: read failed" in caplog.records[0].getMessage()
+    assert caplog.records[0].getMessage() == "model-call switch: read failed (clickhouse away)"
 
 
 async def test_a_cancelled_read_hands_over_to_the_first_queued_call(clock: ManualClock) -> None:
-    """The call that was reading goes away; the calls queued behind it do not
-    find a copy nobody read: the first one reads, the next is served it."""
+    """The call that was reading is cancelled; the first queued call reads, and
+    the next is served that read."""
     reading = asyncio.Event()
     reads = 0
 
@@ -107,7 +109,7 @@ async def test_a_cancelled_read_hands_over_to_the_first_queued_call(clock: Manua
             await asyncio.Event().wait()  # until cancelled
         return "fresh"
 
-    copy: PolledCopy[str] = PolledCopy("t", read, _LOG)
+    copy = PolledCopy("t", read, _LOG)
     first = asyncio.create_task(copy.get(refresh_s=10, max_stale_s=60))
     await reading.wait()
     queued = [asyncio.create_task(copy.get(refresh_s=10, max_stale_s=60)) for _ in range(2)]

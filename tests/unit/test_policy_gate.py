@@ -29,7 +29,6 @@ WRITE_OP = Operation(
     output_model=_In,
     handler=_noop,
     idempotent=False,
-    budget_p99_ms=100,
     required_role=Role.WRITER,
 )
 READ_OP = Operation(
@@ -38,7 +37,6 @@ READ_OP = Operation(
     output_model=_In,
     handler=_noop,
     idempotent=True,
-    budget_p99_ms=100,
     required_role=Role.VIEWER,
 )
 POLICY_OP = Operation(
@@ -47,7 +45,6 @@ POLICY_OP = Operation(
     output_model=_In,
     handler=_noop,
     idempotent=True,
-    budget_p99_ms=100,
     required_role=Role.ADMIN,
 )
 

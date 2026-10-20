@@ -79,13 +79,13 @@ The `Embedder` protocol is `model_name`, `dim`, `async embed(text)` and
 
 OpenAI and Gemini share `server/embedding/_provider.py`:
 
-| Concern      | Behaviour                                                                                                                                                                                           |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Retry        | Transport errors and 408, 409, 425, 429, 500, 502, 503, 504; three attempts, exponential backoff (0.5 s base, 10 s cap).                                                                            |
-| Input guard  | Inputs are token-counted first (8191 tokens for OpenAI, 2048 for Gemini); an oversize input raises instead of being truncated.                                                                      |
-| Output guard | An empty vector, a width mismatch or a non-finite value raises `MalformedEmbedding`.                                                                                                                |
-| Timeouts     | The shared HTTP client's 20 s (5 s connect). The query path uses `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` (2.5 s) per attempt and `LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES` (1), then 503 `EMBED_TIMEOUT`. |
-| Health       | Calls report to `/v1/health`. A cancellation is not a provider failure.                                                                                                                             |
+| Concern      | Behaviour                                                                                                                                                                                                                                                                   |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Retry        | Transport errors and 408, 409, 425, 429, 500, 502, 503, 504; `LOOM_EMBEDDING_RETRY_ATTEMPTS` (3) attempts, exponential backoff (0.5 s base, `LOOM_EMBEDDING_RETRY_MAX_WAIT_S` cap, 10 s).                                                                                   |
+| Input guard  | Inputs are token-counted first (8191 tokens for OpenAI, 2048 for Gemini); an oversize input raises instead of being truncated.                                                                                                                                              |
+| Output guard | An empty vector, a width mismatch or a non-finite value raises `MalformedEmbedding`.                                                                                                                                                                                        |
+| Timeouts     | The shared HTTP client's `LOOM_HTTP_CLIENT_TIMEOUT_S` (20 s; `LOOM_HTTP_CLIENT_CONNECT_TIMEOUT_S`, 5 s, to connect). The query path uses `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` (2.5 s) per attempt and `LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES` (1), then 503 `EMBED_TIMEOUT`. |
+| Health       | Calls report to `/v1/health`. A cancellation is not a provider failure.                                                                                                                                                                                                     |
 
 ### Changing the embedder
 
@@ -229,10 +229,11 @@ what it takes. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude mod
 ### Retries, timeouts, fallback
 
 - **Retry** (`server/llm/_retry.py`): transport errors and 429, 500, 502, 503, 504, 529;
-  four attempts, exponential backoff (0.5 s base, 20 s cap). The request timeout,
+  `LOOM_LLM_RETRY_ATTEMPTS` (4) attempts, exponential backoff (0.5 s base,
+  `LOOM_LLM_RETRY_MAX_WAIT_S` cap, 20 s). The request timeout,
   `LOOM_LLM_REQUEST_TIMEOUT_S`, is 300 s: it only catches a hung connection, so a slow
   model or a long output never hits it. Callers that need less wrap the call (HyDE on
-  `memory.search` waits 6 s).
+  `memory.search` waits `LOOM_MEMORY_SEARCH_HYDE_TIMEOUT_S`, 6 s).
 - **Fallback model.** `LOOM_LLM_FALLBACK_MODEL` wraps the client in `FallbackLLMClient`
   (`server/llm/fallback.py`). It hands the call to the second model on an outage
   (transport error, retryable status, timeout) or a rejected request (400, 413, 422);
@@ -291,11 +292,11 @@ the shared HTTP client also carries non-model calls, which name no customer.
   a kill switch, so nothing model-made reaches the org. The copy is read at most every
   `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted no longer than
   `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`, past which every model call for an org is
-  refused (`customer.SwitchUnread`). A call made while the copy is being read waits for that
-  read when the copy is too old or a change made in this process waits to be read; otherwise
-  it is served the copy in hand. A job treats that as it treats a switch-off
-  (`customer.HOLDS`): its rows stay as they are with no attempt spent, a rebuild step runs
-  again, and a fail-open reranker, classifier or judge lets it through. Every job leaves a
+  refused (`customer.SwitchUnread`). A job treats a SwitchUnread refusal as it treats a
+  switch-off (`customer.HOLDS`): its rows stay as they are with no attempt spent, a rebuild
+  step runs again, and a fail-open reranker, classifier or judge lets it through. A call made
+  during a read waits for it when the copy is too old or a change made in this process has
+  not been read yet; otherwise it is served the copy in hand. Every job leaves a
   switched-off org out when it selects work (in the query, so its rows neither spend attempts
   nor fill the batch ahead of other orgs); code ingest skips its repositories, freezing its
   whole code index. A conflict mark older than the sweep's hour when the org comes back is past
@@ -399,7 +400,7 @@ Prompts are Python constants, versioned with the code:
 | `memory.ask` synthesis                                                         | `server/memory/app/ask/prompts.py`                                                                      |
 | Worker prompts                                                                 | The worker modules (`code_summary`, `conversation_titler`, `profile_consolidation`, `entity_extractor`) |
 
-Which model runs each job is set in one place, `server/settings/_models.py`
+Which model runs each job is set in one place, the `Models` section of `server/settings/catalog.py`
 ([models per job](../operations/deployment.md#models-per-job)). Recalled memory
 inside a prompt is fenced as data ([security](security.md#prompt-safety)).
 

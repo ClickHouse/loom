@@ -1333,8 +1333,8 @@ _THREAD_TURNS = """(agent = {agent:String} OR msg_id IN (
 # Rows written by build N-1 and by earlier builds hold the first 240 characters of the
 # turn, and a re-embed keeps that excerpt. A row's excerpt is compared whole against a
 # peer's content cut at this length and at EMBEDDED_EXCERPT_CHARS. It is not
-# HIT_EXCERPT_CHARS, the cut a search hit shows.
-_SHORT_EXCERPT_CHARS = 240
+# conversation_search_excerpt_chars, the cut a search hit shows.
+_SHORT_EXCERPT_CHARS = 240  # not a setting: stored rows are matched at this length
 
 
 # Live copies of the thread's turns that search indexes (user and

@@ -1206,6 +1206,7 @@ def test_an_http_request_names_the_org_it_addresses(metered, monkeypatch) -> Non
     from pydantic import BaseModel
 
     from server.operations.base import Operation, Role
+    from server.settings.catalog import OP_BUDGETS_P99_MS
     from server.transport import http as http_mod
 
     class _In(BaseModel):
@@ -1224,9 +1225,9 @@ def test_an_http_request_names_the_org_it_addresses(metered, monkeypatch) -> Non
         output_model=_Out,
         handler=handler,
         idempotent=False,
-        budget_p99_ms=100,
         required_role=Role.VIEWER,
     )
+    monkeypatch.setitem(OP_BUDGETS_P99_MS, op.name, 100)
     monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)
     monkeypatch.setattr(
         type(http_mod.settings), "auth_actually_required", lambda self: False, raising=False

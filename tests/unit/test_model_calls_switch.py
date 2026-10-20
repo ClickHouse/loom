@@ -197,7 +197,7 @@ def test_switching_back_on_takes_effect_and_the_switch_is_read_at_most_every_int
     assert asyncio.run(customer.switched_off("beta")) is False
     assert switch.reads == 1  # one read serves the interval
     switch.off = set()
-    customer.forget_switch()  # a change written on this server
+    customer.note_switch_change()  # a change written on this server
     assert asyncio.run(customer.switched_off("acme")) is False and switch.reads == 2
     assert switch.sequential == [True, True]  # the read after a write sees it on any replica
 
@@ -290,7 +290,7 @@ def test_a_change_made_during_a_read_is_read_again(switch: _Switch, monkeypatch)
     async def write_meanwhile(sql: str, **kw: Any) -> list[dict[str, Any]]:
         rows = await plain(sql, **kw)
         switch.off = {"acme"}
-        customer.forget_switch()  # the write lands after this read took its rows
+        customer.note_switch_change()  # the write lands after this read took its rows
         return rows
 
     monkeypatch.setattr(switch, "query_all", write_meanwhile)
@@ -330,8 +330,8 @@ def test_an_org_admin_switches_its_org_and_reads_it_back(monkeypatch) -> None:
 
     monkeypatch.setattr(model_calls.repo, "insert_row", insert_row)
     monkeypatch.setattr(model_calls.repo, "get", get)
-    forgot: list[bool] = []
-    monkeypatch.setattr(customer, "forget_switch", lambda: forgot.append(True))
+    noted: list[bool] = []
+    monkeypatch.setattr(customer, "note_switch_change", lambda: noted.append(True))
     admin = AuthInfo(
         subject="ops@acme.com",
         org="acme",
@@ -345,7 +345,7 @@ def test_an_org_admin_switches_its_org_and_reads_it_back(monkeypatch) -> None:
         assert before.enabled is True and before.updated_at is None  # never set: on
         body = OrgSetModelCallsInput(org="acme", enabled=False, reason="AI off")
         out = asyncio.run(model_calls.handle_org_set_model_calls(body))
-        assert out.enabled is False and out.updated_by == "ops@acme.com" and forgot == [True]
+        assert out.enabled is False and out.updated_by == "ops@acme.com" and noted == [True]
         [row] = rows
         assert (row["org"], row["enabled"], row["reason"], row["updated_by"]) == (
             "acme",
@@ -612,13 +612,12 @@ def test_no_refusal_and_no_unreadable_switch_is_a_provider_failure(
 
 
 def test_a_failed_read_waits_its_turn_and_the_copy_serves_until_too_old(switch: _Switch) -> None:
-    switch.off = {"acme"}
-    assert asyncio.run(customer.switched_off("acme")) is True and switch.reads == 1
-    switch.down = True
+    # A copy with acme switched off, read just now and due again; the read fails.
     customer._switch._reset_for_tests(frozenset({"acme"}), read_age_s=0.0, due_in_s=0.0)
+    switch.down = True
     assert asyncio.run(customer.switched_off("acme")) is True  # the last copy serves
     assert asyncio.run(customer.switched_off("acme")) is True
-    assert switch.reads == 2  # the failed read is not tried again before its turn
+    assert switch.reads == 1  # the failed read is not tried again before its turn
 
 
 def test_the_refresh_must_be_shorter_than_the_stale_bound(monkeypatch) -> None:

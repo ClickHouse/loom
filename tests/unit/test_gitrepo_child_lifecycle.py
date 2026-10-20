@@ -54,3 +54,25 @@ def test_a_timed_out_read_kills_and_reaps_its_git(monkeypatch: pytest.MonkeyPatc
         asyncio.run(gitrepo.run("/tmp/none.git", "log", timeout_s=0.1))
     [proc] = started
     assert proc.returncode is not None
+
+
+def test_a_git_command_that_names_no_timeout_gets_the_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    started: list = []
+    _sleeping_git(monkeypatch, started)
+    monkeypatch.setattr(settings, "code_git_timeout_s", 0.1)
+    with pytest.raises(gitrepo.GitError, match="timed out after 0.1s"):
+        asyncio.run(gitrepo.run("/tmp/none.git", "log"))
+    seen: list[float] = []
+
+    async def _git(git_dir: str, *args: str, timeout_s: float | None = None, **kw) -> str:
+        seen.append(timeout_s)  # type: ignore[arg-type]
+        return ""
+
+    monkeypatch.setattr(gitrepo, "_git", _git)
+    monkeypatch.setattr(settings, "code_git_fetch_timeout_s", 42.0)
+    asyncio.run(gitrepo.fetch("/tmp/none.git", "https://example.invalid/r.git", "main"))
+    assert seen == [42.0]

@@ -124,7 +124,6 @@ def test_http_exception_row_names_status_and_code(monkeypatch: pytest.MonkeyPatc
         output_model=_Out,
         handler=_forbidden,
         idempotent=False,
-        budget_p99_ms=100,
         required_role=Role.VIEWER,
     )
     seen: list[dict[str, Any]] = []

@@ -151,7 +151,7 @@ async def _module_dirs(checkout: Path) -> list[str]:
         stderr=asyncio.subprocess.DEVNULL,
         env=auth_env(),
     )
-    out, _err = await communicate_or_kill(proc, timeout_s=120.0)
+    out, _err = await communicate_or_kill(proc, timeout_s=settings.code_git_timeout_s)
     return sorted({posixpath.dirname(p) for p in nul_fields(out.decode("utf-8", "replace"))})
 
 
@@ -175,7 +175,7 @@ async def _changed_paths(checkout: Path, base: str, head: str) -> list[str]:
         stderr=asyncio.subprocess.DEVNULL,
         env=auth_env(),
     )
-    out, _err = await communicate_or_kill(proc, timeout_s=300.0)
+    out, _err = await communicate_or_kill(proc, timeout_s=settings.code_git_fetch_timeout_s)
     if proc.returncode != 0:
         if not await _has_commit(checkout, base):
             raise BaseUnknown(f"base commit {base[:12]} not in {checkout}")
@@ -195,7 +195,7 @@ async def _has_commit(checkout: Path, sha: str) -> bool:
         stderr=asyncio.subprocess.DEVNULL,
         env=auth_env(),
     )
-    await communicate_or_kill(proc, timeout_s=60.0)
+    await communicate_or_kill(proc, timeout_s=settings.code_git_timeout_s)
     return proc.returncode == 0
 
 

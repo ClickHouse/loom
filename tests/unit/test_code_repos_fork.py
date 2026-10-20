@@ -18,6 +18,7 @@ from server.auth.jwt import AuthInfo
 from server.code.app import index_status
 from server.code.app import repos as repos_mod
 from server.operations.base import Role
+from server.settings import settings
 from tests.unit.code_fixtures import repo_config
 
 ORG = "clickhouse"
@@ -174,7 +175,7 @@ async def test_parent_wins_over_source(plane, github) -> None:
 async def test_non_fork_error_or_timeout_is_not_indexed(plane, github, monkeypatch, answer) -> None:
     answers, calls = github
     answers["someone/clickhouse"] = answer
-    monkeypatch.setattr(fu, "BUDGET_S", 0.05)
+    monkeypatch.setattr(settings, "code_fork_upstream_budget_s", 0.05)
     assert await _repos(repos=["someone/ClickHouse"]) == []
     assert await _repos(repos=["someone/ClickHouse"]) == []
     assert calls == ["someone/clickhouse"]  # the miss is cached too
