@@ -557,7 +557,7 @@ const NEVER_RAN_CODES: ReadonlySet<string> = new Set(["AUTH_UNAVAILABLE"]);
  * 5xx answers to a deployment's configuration, which no retry changes: the
  * operator's fix is named in the error (and in /v1/health).
  */
-const CONFIGURATION_CODES: ReadonlySet<string> = new Set(["CODED_WIDTH_MISMATCH"]);
+const CONFIGURATION_CODES: ReadonlySet<string> = new Set(["CODED_WIDTH_MISMATCH", "GATEWAY_REQUIRED"]);
 
 function neverRan(status: number, code: string): boolean {
   return status === 408 || NEVER_RAN_CODES.has(code);
