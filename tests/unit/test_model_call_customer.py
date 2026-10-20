@@ -471,12 +471,92 @@ def test_a_chat_refusal_comes_before_the_gateway_and_provider_health(
 
 
 def test_a_cached_answer_does_not_hide_a_missed_path(metered) -> None:
+    from server.llm import cache as cache_mod
     from server.llm.cache import CachedLLMClient
-    from server.llm.fake import FakeLLMClient
 
-    cached = CachedLLMClient(FakeLLMClient(), org="acme")
-    with pytest.raises(customer.Unattributed):
+    class _Hit:
+        async def query_one(self, sql: str, params: Any) -> Any:
+            return {"text": "cached", "tokens_in": 1, "tokens_out": 1}
+
+    class _Provider:
+        model = "m"
+        provider = "fake"
+
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            raise AssertionError("called the provider")
+
+    cached = CachedLLMClient(_Provider(), org="acme", ch=_Hit())
+    with pytest.raises(customer.Unattributed):  # before the hit, not only on a miss
         asyncio.run(cached.complete("s", "u"))
+    with customer.for_org("acme"):
+        assert asyncio.run(cached.complete("s", "u")).text == "cached"
+    cache_mod.reset_stats()  # the hit counts in the process-wide stats other tests read
+
+
+def test_code_search_rerank_lets_a_refusal_through(metered, monkeypatch) -> None:
+    from server.code.app.search import rerank as code_rerank
+    from server.memory.app import rerank as rerank_mod
+
+    async def refusing(**kw: Any) -> Any:
+        await customer.require()
+        raise AssertionError("not reached")
+
+    monkeypatch.setattr(rerank_mod, "rerank", refusing)
+    with pytest.raises(customer.Unattributed):  # not "fused order kept"
+        asyncio.run(code_rerank._rerank_units("ops", "q", []))
+
+
+def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_header(
+    metered, monkeypatch
+) -> None:
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import classify as classify_mod
+    from server.memory.app import namespace_types, write
+
+    async def config(org: str, ns: str) -> tuple[str, str]:
+        return "https://classify.example", "t"
+
+    async def types(org: str, ns: str) -> list[Any]:
+        return [{"memory_type": "observation"}]
+
+    sent: list[dict[str, str]] = []
+
+    class _Client:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_: Any) -> None:
+            return None
+
+        async def post(self, url: str, **kw: Any) -> httpx.Response:
+            sent.append(kw.get("headers") or {})
+            body = {"memory_type": "observation"}
+            return httpx.Response(200, json=body, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(classify_mod, "get_namespace_classify_config", config)
+    monkeypatch.setattr(namespace_types, "list_type_configs", types)
+    monkeypatch.setattr(classify_mod.httpx, "AsyncClient", _Client)
+    body = MemorySetInput(
+        org="acme",
+        namespace="ns",
+        agent="a",
+        memory_key="k",
+        value="v",
+        memory_type="semantic",
+        classify=True,
+    )
+    with pytest.raises(customer.Unattributed):  # a worker path that named no org
+        asyncio.run(write._set_resolve_type(body))
+    monkeypatch.setattr(settings, "inference_customer_header", "")
+    resolved, _, _ = asyncio.run(write._set_resolve_type(body))
+    # Unset: the classifier is asked once, with no metering header, and its type applies.
+    assert resolved.memory_type == "observation" and sent == [{}]
+    from server.observability import provider_health
+
+    provider_health.reset()  # classify recorded a success in the process-wide state
 
 
 def test_the_llm_reranker_lets_a_refusal_through_and_records_no_outage(
@@ -493,11 +573,11 @@ def test_the_llm_reranker_lets_a_refusal_through_and_records_no_outage(
             raise AssertionError("not reached")
 
     monkeypatch.setattr("server.llm.client.get_llm_client", lambda: _Metered())
-    provider_health._state.clear()
+    provider_health.reset()
     candidates = [rerank_mod.RerankCandidate("k", "ns", "v", "fact", 1.0)]
     with pytest.raises(customer.Unattributed):
         asyncio.run(rerank_mod._rerank_with_builtin_openai("builtin:openai", "q", candidates))
-    assert not provider_health._state.get("rerank:openai", {}).get("failing")
+    assert not provider_health.status()["providers"].get("rerank:openai", {}).get("failing")
 
 
 def test_settings_refuse_one_name_for_both_headers(monkeypatch) -> None:
@@ -506,4 +586,33 @@ def test_settings_refuse_one_name_for_both_headers(monkeypatch) -> None:
     monkeypatch.setenv("LOOM_INFERENCE_CUSTOMER_HEADER", "X-Meter")
     monkeypatch.setenv("LOOM_INFERENCE_FEATURE_HEADER", "x-meter")
     with pytest.raises(ValueError, match="must differ"):
+        Settings()
+
+
+def test_the_gateway_names_the_customer_and_feature_its_own_way(metered, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "inference_customer_format", "cloud:{org}")
+    monkeypatch.setattr(
+        settings, "inference_feature_map_json", '{"hyde": "search-expand", "*": "loom-other"}'
+    )
+    _request("acme")
+    with genai.llm_stage("hyde"):
+        assert _headers() == {"X-Customer": "cloud:acme", "X-Feature": "search-expand"}
+    assert _headers()["X-Feature"] == "loom-other"  # memory.search is not mapped
+
+
+@pytest.mark.parametrize(
+    "env, error",
+    [
+        ({"LOOM_INFERENCE_CUSTOMER_REQUIRED": "true"}, "needs LOOM_INFERENCE_CUSTOMER_HEADER"),
+        ({"LOOM_INFERENCE_CUSTOMER_FORMAT": "cloud"}, "must contain"),
+        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '["hyde"]'}, "must map"),
+        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": "{not json"}, ""),
+    ],
+)
+def test_settings_refuse_a_cell_that_could_not_name_its_customers(monkeypatch, env, error) -> None:
+    from server.settings import Settings
+
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    with pytest.raises(ValueError, match=error):
         Settings()
