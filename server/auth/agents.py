@@ -17,6 +17,7 @@ from typing import Any
 from server.auth import machines
 from server.auth.grant_claims import account_change
 from server.core.ch import get_client
+from server.observability import metrics
 
 # The agent's name as its claim must give it: it becomes part of a subject and
 # a namespace, so it is refused, never rewritten into another agent's name.
@@ -95,6 +96,7 @@ async def ensure_namespace(m: machines.Machine, agent: str) -> str:
             async with bot_change(m["name"]):
                 if await _made(org, m["name"]) >= m["max_agents"]:
                     # A broken or compromised issuer could name agents without end.
+                    metrics.record_agent_provisioned(org, m["name"], outcome="at_cap")
                     raise machines.Refused(
                         "invalid_grant", f"trust {m['name']} has made its agents"
                     )
@@ -111,6 +113,7 @@ async def ensure_namespace(m: machines.Machine, agent: str) -> str:
     if made:
         from server.observability import audit
 
+        metrics.record_agent_provisioned(org, m["name"], outcome="made")
         await audit.emit(
             "auth.agent_provisioned",
             org=org,

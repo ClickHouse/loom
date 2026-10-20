@@ -669,16 +669,59 @@ def _probe_storage() -> dict[str, list[tuple[float, dict[str, str]]]]:
     return series
 
 
+# How many agents each agent trust has made against its --max-agents, counted
+# as `server.auth.agents._made` counts them for the cap: every namespace in
+# the trust's org carrying its mark (`agents.tag`), released ones too. One
+# row per trust and per marked namespace, so the census is small.
+_AGENT_TRUSTS_SQL = """
+        SELECT t.org AS org, t.name AS trust, t.max_agents AS max_agents,
+               countIf(n.namespace != '') AS made
+        FROM (
+            SELECT org, name, max_agents, concat('machine:', name) AS mark
+            FROM loom.machine_identities FINAL
+            WHERE active = 1 AND agent_claim != ''
+        ) AS t
+        LEFT JOIN (
+            SELECT org, namespace, mark
+            FROM loom.namespaces FINAL
+            ARRAY JOIN tags AS mark
+            WHERE startsWith(mark, 'machine:')
+        ) AS n ON n.org = t.org AND n.mark = t.mark
+        GROUP BY t.org, t.name, t.max_agents
+"""
+
+
+def _agent_trust_series_from_rows(rows: list[Any]) -> dict[str, list[tuple[float, dict[str, str]]]]:
+    """Pure transform of `_AGENT_TRUSTS_SQL` rows: agents made, and the share
+    of --max-agents they use, per trust."""
+    out: dict[str, list[tuple[float, dict[str, str]]]] = {
+        "agent_trust_agents": [],
+        "agent_trust_used_ratio": [],
+    }
+    for org, trust, max_agents, made in rows:
+        attrs = {"loom.org": str(org), "loom.trust": str(trust)}
+        out["agent_trust_agents"].append((float(made), attrs))
+        out["agent_trust_used_ratio"].append((float(made) / max(int(max_agents), 1), attrs))
+    return out
+
+
+def _probe_agent_trusts() -> dict[str, list[tuple[float, dict[str, str]]]]:
+    """The agent trusts' headroom; cached five minutes."""
+    rows = _probe_client().query(_AGENT_TRUSTS_SQL).result_rows
+    return _agent_trust_series_from_rows(list(rows))
+
+
 def _state_gauge_probes() -> dict[str, Any]:
     """The probe callables `register_state_gauges` wires, named once."""
     # The fast probe (per-replica counters, 30 s) runs in
-    # every process; the four whole-table censuses run where the lease is.
+    # every process; the whole-table censuses run where the lease is.
     return {
         "ch_probe": _probe_state,
         "code_probe": _census_only(_probe_code_state),
         "retention_probe": _census_only(_probe_retention),
         "agent_labels_probe": _census_only(_probe_agent_labels),
         "storage_probe": _census_only(_probe_storage),
+        "agent_trusts_probe": _census_only(_probe_agent_trusts),
     }
 
 

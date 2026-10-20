@@ -170,6 +170,18 @@ retention census every `LOOM_OTEL_RETENTION_CENSUS_S` (3600 s), and code-plane c
 | `loom.extract.cost_per_row_usd` | histogram | USD per memory row written by one extraction                                                                                                                                                                                                                                                                                                                                                                    |
 | `loom.auth.refusals`            | counter   | requests refused for their bearer token (none, one that failed verification, or one that could not be checked yet; also a mint by a token ClickHouse says is revoked), by `reason` (`missing`, `malformed`, `expired`, `revoked`, `invalid`, `unavailable`) and `loom.transport` (`http`, `mcp`, or `scim` for a SCIM request whose provider token is missing, malformed or wrong); none reaches the SLI rollup |
 
+### Agent trusts
+
+A workload trust registered with `--agent-claim` makes a namespace for each agent on its
+first exchange, up to `--max-agents` ([bots and CI](../../operations/sso.md#bots-and-ci)).
+`loom.trust` is the trust's name, which only an operator registers.
+
+| Metric                              | Type    | Meaning                                                                                                                                                                  |
+| ----------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `loom.auth.agents_provisioned`      | counter | first exchanges of a trust's agents, by `loom.org`, `loom.trust` and `outcome`: `made` (its namespace was made) or `at_cap` (refused: the trust has made `--max-agents`) |
+| `loom.auth.trust_agents`            | gauge   | agents an active trust has made, released ones included, as the cap counts them; computed by the workers-lease holder every five minutes                                 |
+| `loom.auth.trust_agents_used_ratio` | gauge   | `loom.auth.trust_agents` over the trust's `--max-agents`; at 1 every new agent is refused                                                                                |
+
 ### Retrieval quality
 
 These catch a search that is fast and wrong, which HTTP metrics cannot see.
@@ -274,18 +286,21 @@ caller.
 
 ### Suggested alerts
 
-| Condition                                                                     | Why                                                                                                                                                  |
-| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom.search.top_similarity` mean below your baseline for 30 minutes          | retrieval quality dropped (embedder or index change)                                                                                                 |
-| `loom.embed.pending` above 100 for 15 minutes                                 | new memories are not becoming searchable                                                                                                             |
-| any `loom.integrity.*` above 0                                                | a data defect has happened                                                                                                                           |
-| `loom.worker.consecutive_failures` ≥ 3                                        | a worker is failing in a loop                                                                                                                        |
-| `loom.process.open_fds / loom.process.fd_limit` above 0.5                     | a descriptor leak                                                                                                                                    |
-| `loom.host.disk.free_bytes / loom.host.disk.total_bytes` below 0.10           | the data disk filling                                                                                                                                |
-| `loom.langfuse.breaker` = 2                                                   | traces to Langfuse are being dropped                                                                                                                 |
-| `loom.audit.checkpoint_lag_windows` rising for several hours                  | the audit sealer is stalled                                                                                                                          |
-| `loom.code.index_lag_commits` above the per-pass commit budget for 15 minutes | code ingest is falling behind                                                                                                                        |
-| `loom.code.tier_lag_seconds` above 1800 for 10 minutes                        | a compiler tier is stuck (the "code tier lag" alert in `deploy/dashboards/code_plane.json`; set the threshold above the slowest tier's normal cycle) |
+| Condition                                                                                                                | Why                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom.search.top_similarity` mean below your baseline for 30 minutes                                                     | retrieval quality dropped (embedder or index change)                                                                                                 |
+| `loom.embed.pending` above 100 for 15 minutes                                                                            | new memories are not becoming searchable                                                                                                             |
+| any `loom.integrity.*` above 0                                                                                           | a data defect has happened                                                                                                                           |
+| `loom.worker.consecutive_failures` ≥ 3                                                                                   | a worker is failing in a loop                                                                                                                        |
+| `loom.process.open_fds / loom.process.fd_limit` above 0.5                                                                | a descriptor leak                                                                                                                                    |
+| `loom.host.disk.free_bytes / loom.host.disk.total_bytes` below 0.10                                                      | the data disk filling                                                                                                                                |
+| `loom.langfuse.breaker` = 2                                                                                              | traces to Langfuse are being dropped                                                                                                                 |
+| `loom.audit.checkpoint_lag_windows` rising for several hours                                                             | the audit sealer is stalled                                                                                                                          |
+| `loom.code.index_lag_commits` above the per-pass commit budget for 15 minutes                                            | code ingest is falling behind                                                                                                                        |
+| `loom.code.tier_lag_seconds` above 1800 for 10 minutes                                                                   | a compiler tier is stuck (the "code tier lag" alert in `deploy/dashboards/code_plane.json`; set the threshold above the slowest tier's normal cycle) |
+| `loom.auth.agents_provisioned{outcome=made}` per trust above its control plane's normal rate (start at 50 in 10 minutes) | a trust is naming new agents faster than its fleet grows: a leaked issuer key or a runaway control plane                                             |
+| `loom.auth.trust_agents_used_ratio` above 0.8                                                                            | the trust nears `--max-agents`                                                                                                                       |
+| `loom.auth.agents_provisioned{outcome=at_cap}` above 0                                                                   | new agents of the trust are refused                                                                                                                  |
 
 With HyperDX, an empty result is read as 0, so a minimum-sample guard must return a value
 inside the healthy range rather than no rows.

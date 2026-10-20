@@ -129,6 +129,41 @@ def test_a_trust_makes_no_more_agents_than_its_limit(world) -> None:
         _ensure(trust, "a2")
 
 
+class _Counter:
+    def __init__(self) -> None:
+        self.ticks: list[dict[str, str]] = []
+
+    def add(self, n: int, attributes: dict[str, str]) -> None:
+        self.ticks.extend([attributes] * n)
+
+
+def test_each_new_agent_and_each_refusal_at_the_cap_is_counted(world, monkeypatch) -> None:
+    from server.observability import metrics
+
+    counter = _Counter()
+    monkeypatch.setattr(metrics, "_agents_provisioned", counter)
+    trust = {**_TRUST, "max_agents": 1}
+    _ensure(trust)
+    _ensure(trust)  # its own again: not a new agent
+    with pytest.raises(machines.Refused):
+        _ensure(trust, "a2")
+    assert counter.ticks == [
+        {"loom.org": "acme", "loom.trust": "fleet", "outcome": "made"},
+        {"loom.org": "acme", "loom.trust": "fleet", "outcome": "at_cap"},
+    ]
+
+
+def test_a_failing_counter_never_fails_the_exchange(world, monkeypatch) -> None:
+    from server.observability import metrics
+
+    class _Broken:
+        def add(self, *a: object, **k: object) -> None:
+            raise RuntimeError("exporter down")
+
+    monkeypatch.setattr(metrics, "_agents_provisioned", _Broken())
+    assert _ensure() == "fleet-a1"
+
+
 def test_a_first_exchange_cut_off_before_its_grant_is_finished_by_the_next(
     world, monkeypatch
 ) -> None:

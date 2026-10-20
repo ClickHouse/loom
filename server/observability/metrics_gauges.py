@@ -216,6 +216,28 @@ def _register_storage_gauges(meter: Any, probe: Callable[[], CodeSeries] | None)
         )
 
 
+def _register_agent_trust_gauges(meter: Any, probe: Callable[[], CodeSeries] | None) -> None:
+    """How far each agent trust is towards its --max-agents, per `loom.trust`
+    (operator-registered, so bounded). No probe, no gauges. Cached five minutes."""
+    if probe is None:
+        return
+    cache = _TTLCache(300.0, probe)
+    meter.create_observable_gauge(
+        name="loom.auth.trust_agents",
+        callbacks=[_cached_series(cache, "agent_trust_agents")],
+        description="Agents an active workload trust has made, released ones included, "
+        "as its --max-agents counts them, by loom.org and loom.trust",
+        unit="1",
+    )
+    meter.create_observable_gauge(
+        name="loom.auth.trust_agents_used_ratio",
+        callbacks=[_cached_series(cache, "agent_trust_used_ratio")],
+        description="loom.auth.trust_agents over the trust's --max-agents; at 1 every "
+        "new agent of the trust is refused",
+        unit="1",
+    )
+
+
 def _register_code_lag_gauges(meter: Any, series: Callable[[str], Callable[[Any], Any]]) -> None:
     """Per-tier lag, in commits and in seconds, from `code_probe`'s series."""
     meter.create_observable_gauge(
@@ -828,6 +850,7 @@ def register_state_gauges(
     retention_probe: Callable[[], CodeSeries] | None = None,
     agent_labels_probe: Callable[[], CodeSeries] | None = None,
     storage_probe: Callable[[], CodeSeries] | None = None,
+    agent_trusts_probe: Callable[[], CodeSeries] | None = None,
 ) -> None:
     """Register observable gauges for system state.
 
@@ -856,6 +879,7 @@ def register_state_gauges(
 
         _register_agent_labels_gauge(meter, agent_labels_probe)
         _register_storage_gauges(meter, storage_probe)
+        _register_agent_trust_gauges(meter, agent_trusts_probe)
         _register_code_lag_gauges(meter, _series)
         _register_backlog_gauges(meter, reading)
         _register_process_gauges(meter)

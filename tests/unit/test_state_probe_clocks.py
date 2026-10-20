@@ -191,5 +191,11 @@ def test_census_scope_process_keeps_every_process_reading(monkeypatch: pytest.Mo
 def test_state_gauge_probes_wrap_the_censuses_and_not_the_fast_probe() -> None:
     probes = otel_probes._state_gauge_probes()
     assert probes["ch_probe"] is otel_probes._probe_state  # per-replica counters: every process
-    for name in ("code_probe", "retention_probe", "agent_labels_probe", "storage_probe"):
+    for name in (
+        "code_probe",
+        "retention_probe",
+        "agent_labels_probe",
+        "storage_probe",
+        "agent_trusts_probe",
+    ):
         assert getattr(probes[name], "__wrapped__", None) is not None, name
