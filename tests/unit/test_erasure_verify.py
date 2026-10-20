@@ -263,3 +263,21 @@ def test_every_predicate_column_exists_on_its_table() -> None:
     assert "record_id" in columns("loom.memory_record_fields")
     assert "record_id" not in columns("loom.memory_record_conflicts")
     assert {"prior_record_id", "incoming_record_id"} <= columns("loom.memory_record_conflicts")
+
+
+@pytest.mark.parametrize("scope, value", [("namespace", "ns"), ("user_id", "alice")])
+def test_a_cached_query_vector_written_after_its_step_never_fails_the_census(
+    scope: str, value: str
+) -> None:
+    """Any search in the org refills loom.embedding_cache between
+    idempotency.delete and verify.residue; the census never counts it."""
+
+    class _Refilled(_StubCH):
+        async def query_one(self, sql, params=None):
+            self.query_one_calls.append((sql, params or {}))
+            return {"n": 1 if "loom.embedding_cache" in sql else 0}
+
+    ch = _Refilled([])
+    out = asyncio.run(erasure_census.residue_census("o", scope, value, ch=ch))
+    assert "loom.embedding_cache" not in out and sum(out.values()) == 0
+    assert not any("loom.embedding_cache" in sql for sql, _ in ch.query_one_calls)

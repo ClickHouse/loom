@@ -79,6 +79,15 @@ class PreconditionFailedError(LoomServerError):
         super().__init__(message, current_sha256=current_sha256)
 
 
+class ReadsLlmFreeError(LoomServerError):
+    """409 — `memory.ask` or `code.ask` asked for a model's answer while
+    `LOOM_READS_LLM_FREE` is on. Resending the same request never succeeds;
+    the retrieval-only flag the message names returns the recalled evidence."""
+
+    code = "READS_LLM_FREE"
+    status_code = 409
+
+
 class GrantWouldDowngradeError(LoomServerError):
     """409 — `grants.create` asked for a role below the subject's current
     active grant on that namespace. The grants table is a
@@ -134,6 +143,20 @@ class RateLimitedError(LoomServerError):
 
     def __init__(self, message: str = "", *, retry_after_s: int = 1) -> None:
         super().__init__(message, retry_after_s=retry_after_s)
+
+
+class GatewayRequiredError(LoomServerError):
+    """503 — a model call named a host LOOM_INFERENCE_GATEWAY_HOSTS does not
+    list while the gateway is required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or a
+    token exchange); the message names the host. Also every data-plane request
+    on a server whose saved model configuration the check refuses, until a
+    replacement is saved or the configuration is reset; that answer names no
+    host. A setting to fix, not an outage: never retried. A classifier or
+    reranker refused the same way fails open instead: the caller's type, or
+    the input order, stays."""
+
+    code = "GATEWAY_REQUIRED"
+    status_code = 503
 
 
 class BackendUnavailableError(LoomServerError):

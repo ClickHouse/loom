@@ -118,7 +118,7 @@ def test_default_off_for_production_on_for_the_bench_class(settings_override) ->
 
 
 async def test_a_re_ingest_of_the_same_bytes_is_served_from_the_cache(extractor) -> None:
-    from server.llm.cache import cache_key
+    from server.llm.cache import scoped_key
     from server.memory.app.extract import extract_from_messages
 
     first = await extract_from_messages(
@@ -128,7 +128,7 @@ async def test_a_re_ingest_of_the_same_bytes_is_served_from_the_cache(extractor)
     assert len(extractor.provider.calls) == 1
     system, user, max_tokens, fmt = extractor.provider.calls[0]
     assert fmt == {"type": "json_object"} and "observation_date: 2026-09-01" in user
-    assert first.prompt_key == cache_key(system, user, max_tokens, fmt), (
+    assert first.prompt_key == scoped_key(system, user, max_tokens, fmt, org="o"), (
         "the same key the ask's cache reads by"
     )
     assert (first.llm_cache_hits, first.llm_cache_misses) == (0, 1)

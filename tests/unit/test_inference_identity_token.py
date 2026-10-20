@@ -71,10 +71,11 @@ def signs(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Gateway]:
     monkeypatch.setattr(settings, "jwt_secret", "r" * 40)
     monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
     monkeypatch.setattr(settings, "inference_token_url", "https://gateway.example/oauth/token")
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
     monkeypatch.setattr(settings, "inference_workload_token_file", "")
     monkeypatch.setattr(settings, "inference_token_audience", _AUDIENCE)
     fake = _Gateway()
-    monkeypatch.setattr("server.clients._http.get_client", lambda: fake)
+    monkeypatch.setattr("server.clients._http.get_model_client", lambda: fake)
     keyring._reset_for_tests()
     gateway._reset_for_tests()
     yield fake
@@ -176,6 +177,7 @@ def test_the_exchange_takes_exactly_one_token_source(
     monkeypatch: pytest.MonkeyPatch, env: dict[str, str], message: str
 ) -> None:
     monkeypatch.setenv("LOOM_INFERENCE_TOKEN_URL", "https://gateway.example/oauth/token")
+    monkeypatch.setenv("LOOM_INFERENCE_GATEWAY_HOSTS", "gateway.example")
     monkeypatch.setenv("LOOM_OPENAI_BASE_URL", "https://gateway.example/v1")
     monkeypatch.setenv("LOOM_ANTHROPIC_BASE_URL", "https://gateway.example")
     for name, value in env.items():
@@ -186,6 +188,7 @@ def test_the_exchange_takes_exactly_one_token_source(
 
 _SIGNING_ENV = {
     "LOOM_INFERENCE_TOKEN_URL": "https://gateway.example/oauth/token",
+    "LOOM_INFERENCE_GATEWAY_HOSTS": "gateway.example",
     "LOOM_INFERENCE_TOKEN_AUDIENCE": _AUDIENCE,
     "LOOM_PUBLIC_BASE_URL": "https://loom.example",
     "LOOM_OPENAI_BASE_URL": "https://gateway.example/v1",

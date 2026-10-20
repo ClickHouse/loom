@@ -92,7 +92,7 @@ Bounded startup context pack for this session, once near the start of a substant
 | `token_budget` | `int` | `2000` | Size cap of the whole rendered pack in tokens (about 4 characters each); a longer pack is cut and `truncated` is set. |
 | `top_k` | `int` | `5` | How many hits each search-backed section asks for (procedures and the stack's knowledge layer cap it at 5). |
 | `read_scope` | `Literal['namespace', 'own_user', 'own_session']` | `'namespace'` | Same semantics as memory.search.read_scope; binds to this op's user_id / session_id. |
-| `mode` | `Literal['startup', 'task', 'debug', 'handoff']` | `'task'` | Section budgets and search recipe: `startup` (fast recall; with no query it serves pins and recent memories), `task` (balanced), `debug` (quality), `handoff`. |
+| `mode` | `Literal['startup', 'task', 'debug', 'handoff']` | `'task'` | Section budgets and search recipe, with no LLM call in any mode: `startup` (fast recall; with no query it serves pins and recent memories), `task` and `handoff` (balanced), `debug` (quality). |
 | `include_knowledge` | `bool` | `False` | Add a `knowledge` section of matching document chunks; needs a `query`. |
 | `include_conversations` | `bool` | `False` | Add a `conversations` section of matching past messages; needs a `query`. |
 | `include_runs` | `bool` | `False` | The runs manifest — one line per recent session of this identity (date, run status and goal, tool calls by kind with errors, files touched, digest), newest first, `runs_limit` rows. |

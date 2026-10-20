@@ -457,6 +457,13 @@ resumed saga re-runs the owning step of any table the last census found rows in.
 polled to completion. `tests/unit/test_every_table_is_classified.py` fails on a table in
 none of the three lists.
 
+An erasure in an org, at any scope, deletes the whole org's cached query vectors in
+`loom.embedding_cache`, not only the erased scope's: the rows carry the org but no
+namespace or user, and hold vectors, never text. It is a derived cache, so deleting more
+than the scope costs only cache misses. The table is step-only (`idempotency.delete`), not
+counted: any search in the org refills it before the census could run. Each replica's
+process tier expires within `LOOM_EMBEDDING_CACHE_TTL_S`.
+
 ## Audit rows
 
 Every write that creates or changes memory leaves one hash-only row in `loom.audit_log`

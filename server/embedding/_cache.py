@@ -1,8 +1,11 @@
 """In-process LRU cache for embedding results, with lazy TTL eviction.
 
-Keyed by (model, normalized_text) only — never identity — so shared corpus
-text is cached once across tenants. Process-local and single-event-loop;
-no locks (asyncio guarantees no mutation between awaits).
+Keyed by (org, model, normalized_text): one org never shares an entry, an
+in-flight call or a shared-tier row with another, since a fast answer would
+tell it that someone else embedded the same text. A call made outside a
+request (a worker, a CLI, the startup probe) has no org to scope by and skips
+the cache. Process-local and single-event-loop; no locks (asyncio guarantees
+no mutation between awaits).
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from collections.abc import Awaitable, Callable
 
 from server.core.background import TaskSet
 from server.embedding.normalize import normalize_whitespace, query_text
+from server.observability.genai import request_org
 from server.settings import settings
 
 # The key hashes the whitespace-normalised text, and the provider sees the
@@ -27,8 +31,9 @@ _normalize = normalize_whitespace
 _KEY_VERSION = b"ws1\0"
 
 
-def _key(model: str, text: str) -> str:
+def _key(model: str, text: str, org: str) -> str:
     h = hashlib.sha1()
+    h.update(b"org\0" + org.encode() + b"\0")
     h.update(model.encode())
     h.update(b"\0")
     h.update(_KEY_VERSION)
@@ -36,11 +41,12 @@ def _key(model: str, text: str) -> str:
     return h.hexdigest()
 
 
-def batch_key(model: str, text: str) -> str:
+def batch_key(model: str, text: str, org: str) -> str:
     """Process-cache key for a batch (`embed_many`) text: the raw text in its
     own key space, since the batch path embeds it unnormalised and must never
     serve, or be served by, a query's vector."""
-    return hashlib.sha1(b"raw\0" + model.encode() + b"\0" + text.encode()).hexdigest()
+    raw = b"raw\0" + org.encode() + b"\0" + model.encode() + b"\0" + text.encode()
+    return hashlib.sha1(raw).hexdigest()
 
 
 class _LRU:
@@ -96,7 +102,11 @@ async def cached_embed(
     served-from-cache embedding (no upstream tokens, no cost) from a billed one
     on its telemetry span.
     """
-    k = _key(model, text)
+    org = request_org()
+    if not org:
+        _last_tier.set("miss")
+        return await fetch(query_text(text)), False
+    k = _key(model, text, org)
     hit = _cache.get(k)
     if hit is not None:
         _last_tier.set("process")
@@ -113,14 +123,14 @@ async def cached_embed(
         try:
             vec = await asyncio.shield(pending)
         except _OwnerGone:
-            return await _embed_uncached(model, k, text, fetch, dim)
+            return await _embed_uncached(model, k, text, fetch, dim, org)
         _last_tier.set("inflight")
         return vec, True
     fut: asyncio.Future[list[float]] = loop.create_future()
     fut.add_done_callback(_consume_exception)
     _INFLIGHT[k] = fut
     try:
-        vec, was_hit = await _embed_uncached(model, k, text, fetch, dim)
+        vec, was_hit = await _embed_uncached(model, k, text, fetch, dim, org)
     except BaseException as e:
         fut.set_exception(e if isinstance(e, Exception) else _OwnerGone(repr(e)))
         raise
@@ -147,6 +157,7 @@ async def _embed_uncached(
     text: str,
     fetch: Callable[[str], Awaitable[list[float]]],
     dim: int,
+    org: str,
 ) -> tuple[list[float], bool]:
     shared = await _shared_get(model, k, text, dim)
     if shared is not None:
@@ -157,7 +168,7 @@ async def _embed_uncached(
     vec = await fetch(query_text(text))
     _cache.put(k, vec)
     _last_tier.set("miss")
-    _shared_put(model, k, text, vec)
+    _shared_put(model, k, text, vec, org)
     return vec, False
 
 
@@ -212,7 +223,7 @@ async def _shared_get(model: str, key: str, text: str, dim: int) -> list[float] 
     return [float(x) for x in row["embedding"]]
 
 
-def _shared_put(model: str, key: str, text: str, vec: list[float]) -> None:
+def _shared_put(model: str, key: str, text: str, vec: list[float], org: str) -> None:
     """Fire-and-forget insert of a provider result; never awaited by the read."""
     if not _shared_enabled(text) or not vec:
         return
@@ -225,6 +236,8 @@ def _shared_put(model: str, key: str, text: str, vec: list[float]) -> None:
     row = {
         "model": model,
         "key": key,
+        # The org the key hashes, so its rows can be deleted without their texts.
+        "org": org,
         "dim": len(vec),
         "embedding": [float(x) for x in vec],
         "created_at": naive_utc_now(),

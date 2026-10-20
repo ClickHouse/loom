@@ -137,7 +137,7 @@ describe("Transport", () => {
   });
 
   it("never retries a 5xx that names a configuration fault", async () => {
-    for (const code of ["CODED_WIDTH_MISMATCH"]) {
+    for (const code of ["CODED_WIDTH_MISMATCH", "GATEWAY_REQUIRED"]) {
       sleeps.length = 0;
       const { t, calls } = transport([
         { status: 503, body: { detail: { code, message: "fix the deployment" } } },

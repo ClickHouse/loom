@@ -5,6 +5,7 @@ every failure falls open to the provider, and the served tier is recorded."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -38,7 +39,7 @@ class _CH:
 
 
 @pytest.fixture
-def env(monkeypatch: pytest.MonkeyPatch) -> _CH:
+def env(monkeypatch: pytest.MonkeyPatch) -> Iterator[_CH]:
     import server.core.ch as ch_mod
     from server.settings import settings
 
@@ -47,7 +48,12 @@ def env(monkeypatch: pytest.MonkeyPatch) -> _CH:
     monkeypatch.setattr(settings, "embedding_cache_shared", True)
     monkeypatch.setattr(settings, "embedding_cache_shared_max_chars", 2000)
     ec._cache._store.clear()
-    return ch
+    # A request of one org: the cache is scoped by it.
+    from server.observability import genai
+
+    genai.set_identity(org="acme", namespace="ns", operation="memory.search")
+    yield ch
+    genai._identity.set(None)
 
 
 async def _settle() -> None:
@@ -66,7 +72,7 @@ async def test_process_miss_reads_the_shared_tier_and_fills_the_process_cache(en
         calls += 1
         return [9.0]
 
-    key = ec._key("m", "what did she say")
+    key = ec._key("m", "what did she say", "acme")
     env.rows[("m", key)] = [1.0, 2.0]
     vec, hit = await ec.cached_embed(
         "m", "what did  she say", fetch, dim=2
@@ -89,7 +95,7 @@ async def test_shared_miss_calls_the_provider_and_writes_the_row_without_text(en
     assert table == "loom.embedding_cache"
     row = rows[0]
     assert row["model"] == "m" and row["dim"] == 2 and row["embedding"] == [0.5, 0.25]
-    assert row["key"] == ec._key("m", "a brand new question")
+    assert row["key"] == ec._key("m", "a brand new question", "acme")
     assert "text" not in row and "query" not in row
     assert env.tags == [ec.PUT_QUERY_TAG]  # the detached put names itself in the query log
 
@@ -115,12 +121,12 @@ async def test_long_texts_and_the_switch_skip_the_shared_tier(env: _CH, monkeypa
     async def fetch(text: str) -> list[float]:
         return [1.0]
 
-    env.rows[("m", ec._key("m", "x" * 3000))] = [7.0]
+    env.rows[("m", ec._key("m", "x" * 3000, "acme"))] = [7.0]
     vec, hit = await ec.cached_embed("m", "x" * 3000, fetch, dim=1)
     assert vec == [1.0] and hit is False  # over the cap: never consulted
     ec._cache._store.clear()
     monkeypatch.setattr(settings, "embedding_cache_shared", False)
-    env.rows[("m", ec._key("m", "short"))] = [7.0]
+    env.rows[("m", ec._key("m", "short", "acme"))] = [7.0]
     vec, hit = await ec.cached_embed("m", "short", fetch, dim=1)
     assert vec == [1.0] and hit is False
     await _settle()
@@ -130,7 +136,7 @@ async def test_long_texts_and_the_switch_skip_the_shared_tier(env: _CH, monkeypa
 @pytest.mark.asyncio
 async def test_a_shared_row_of_another_width_is_a_miss(env: _CH) -> None:
     """Same model, new LOOM_EMBEDDING_DIM: the old width's row must not serve."""
-    key = ec._key("m", "q")
+    key = ec._key("m", "q", "acme")
     env.rows[("m", key)] = [1.0, 2.0, 3.0]
 
     async def fetch(text: str) -> list[float]:

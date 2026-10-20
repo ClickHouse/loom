@@ -54,6 +54,26 @@ async def _refuse_drifted(scope: Scope, receive: Receive, send: Send) -> None:
     await response(scope, receive, send)
 
 
+async def _refuse_refused_configuration(scope: Scope, receive: Receive, send: Send) -> None:
+    """Held for a configuration the gateway check refused: nothing is
+    rebuilding and only an operator ends it, so no Retry-After, and a code
+    the SDKs never retry. The reason is in /v1/health, for the operator."""
+    response = JSONResponse(
+        {
+            "detail": {
+                "code": "GATEWAY_REQUIRED",
+                "message": "This server refuses model work: the model configuration saved in "
+                "the dashboard sends model calls off the inference gateway "
+                "(/v1/health: model_configuration_refused). Save one at a host in "
+                "LOOM_INFERENCE_GATEWAY_HOSTS, or reset it to the environment's.",
+            }
+        },
+        status_code=503,
+        headers={"Cache-Control": "no-store"},
+    )
+    await response(scope, receive, send)
+
+
 class ModelMaintenanceMiddleware:
     def __init__(self, app: ASGIApp, gate: ModelWorkGate | None = None) -> None:
         self.app = app
@@ -77,6 +97,9 @@ class ModelMaintenanceMiddleware:
         except ModelChangeInProgress:
             if scope["type"] == "websocket":
                 await send({"type": "websocket.close", "code": 1013})
+                return
+            if self.gate.refusal:
+                await _refuse_refused_configuration(scope, receive, send)
                 return
             response = JSONResponse(
                 {

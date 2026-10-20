@@ -38,7 +38,7 @@ from server.memory.app.search.plan import (
     _resolve_rerank_endpoint,
     _size_candidate_pool,
 )
-from server.memory.app.search.query_plan import _is_fast_posture
+from server.memory.app.search.query_plan import _is_fast_posture, _is_llm_free
 from server.memory.app.search.ranking import (
     _apply_chronological_sort,
     _apply_global_fusion,
@@ -171,8 +171,8 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
         fresh_result.top_k_ceiling = _top_k_ceiling
         return fresh_result
 
-    # Fast posture disables every optional LLM stage (the iterative judge) for a vector-query
-    # latency floor.
+    # Fast posture skips set expansion (the fast budget also pins the 1x pool); the LLM
+    # gates read _is_llm_free.
     fast_posture = _is_fast_posture(input)
 
     embedder = get_embedder()
@@ -230,7 +230,6 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
             search_plan,
             endpoint,
             prompt_template,
-            external_rerank_enabled,
         ) = await _resolve_rerank_endpoint(input, search_plan, run, actual_work)
 
         search_plan, pool_top_k, retrieval_cost_estimate = _size_candidate_pool(
@@ -238,9 +237,8 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
             search_plan,
             run,
             query_shape,
-            parsed_intent is not None,
             sub_queries,
-            external_rerank_enabled,
+            endpoint,
             actual_work,
         )
 
@@ -250,7 +248,7 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
             input=input,
             search_budget=search_budget,
             embedder=embedder,
-            fast_posture=fast_posture,
+            llm_free=_is_llm_free(input),
             obs_date=obs_date,
             parsed_intent=parsed_intent,
             resolved_dates=resolved_dates,

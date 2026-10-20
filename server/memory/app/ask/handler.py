@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from server.core.llm_free import refuse_synthesis
 from server.core.naming import SENTINEL
 from server.memory.api.models_ask import MemoryAskInput, MemoryAskOutput
 from server.memory.api.models_common import run_next_hint
@@ -221,6 +222,8 @@ async def handle_memory_ask(input: MemoryAskInput) -> MemoryAskOutput:
     from server.memory.app.ask import ask
     from server.settings import settings
 
+    if input.allow_synthesis:
+        refuse_synthesis("memory.ask", "allow_synthesis=false")
     # A summary-shaped question over documents goes to the whole-document pass, not to
     # fifteen memories. Deterministic detector, then one knowledge.search to find which
     # documents; falls through when nothing concentrates or the flag is off.
