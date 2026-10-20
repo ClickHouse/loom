@@ -758,6 +758,7 @@ Source: `server/settings/_memory.py`
 | `LOOM_SENSITIVITY_SWEEP_INTERVAL_SECONDS` | `int` | `86400` | Seconds between sensitivity sweep passes. |
 | `LOOM_SENSITIVITY_SWEEP_WINDOW_DAYS` | `int` | `2` | Days back the sweep re-labels rows created in. |
 | `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` | `int` | `500` | Rows one sweep pass re-labels, and the page size it scans in (at least 1). |
+| `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` | `int` | `10` | Pages of `sensitivity_sweep_max_rows_per_pass` rows one sweep pass scans at most (at least 1); a row behind more waits for `loom sensitivity-sweep --apply`. |
 | `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` | Shapes the sweep applies (comma-separated: credential, email, phone, other). Every high row is `credential`; an IBAN-only row is `other`. `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`. |
 
 ### Code-linked memories

@@ -10436,7 +10436,7 @@
        "nargs": null,
        "type": "builtins:int",
        "required": false,
-       "help": "Candidate rows read per run (default 20000)",
+       "help": "Rows labelled per run, and the page size the scan reads in (default 20000)",
        "metavar": null
       },
       {

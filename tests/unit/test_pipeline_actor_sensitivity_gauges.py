@@ -313,7 +313,7 @@ def _spin_rows_then_a_pin(spins: int) -> list[tuple[str, str, Any, int]]:
     rows: list[tuple[str, str, Any, int]] = [
         (_uuid(i), f"spin_{i}", {"spin": "4471"}, 600 - i) for i in range(spins)
     ]
-    rows.append((_uuid(99), "door", "badge PIN is 4471", 60))
+    rows.append((_uuid(99), "vault_door", "badge PIN is 4471", 60))  # sorts after spin_*
     return rows
 
 
@@ -343,7 +343,7 @@ async def test_a_pass_pages_past_selected_rows_it_leaves_unlabelled(monkeypatch)
     monkeypatch.setattr(settings, "sensitivity_sweep_max_rows_per_pass", 2)
     monkeypatch.setattr(settings, "sensitivity_sweep_shapes", "credential, email")
     out = await w.run_pass(ch=ch)  # type: ignore[arg-type]
-    assert [c.memory_key for c in applied] == ["door"] and applied[0].level == "high"
+    assert [c.memory_key for c in applied] == ["vault_door"] and applied[0].level == "high"
     assert out["scanned"] == 6 and not out["truncated"]
 
 
@@ -394,11 +394,22 @@ async def test_the_worker_sweeps_the_trailing_window_only(monkeypatch) -> None:
     monkeypatch.setattr(sweep, "apply", _apply)
     monkeypatch.setattr(settings, "sensitivity_sweep_window_days", 2)
     monkeypatch.setattr(settings, "sensitivity_sweep_max_rows_per_pass", 500)
+    monkeypatch.setattr(settings, "sensitivity_sweep_pages_per_pass", 3)
     monkeypatch.setattr(settings, "sensitivity_sweep_shapes", "credential, email")
     out = await w.run_pass(ch=_CH())  # type: ignore[arg-type]
-    assert seen["since_days"] == 2 and seen["limit"] == 500 and seen["pages"] == 10
+    assert seen["since_days"] == 2 and seen["limit"] == 500 and seen["pages"] == 3
     assert seen["only_shapes"] == ["credential", "email"]  # the phone shape is the operator's
     assert out["scanned"] == 3 and out["relabelled"] == 0
+
+
+@pytest.mark.parametrize("field", ["sensitivity_sweep_max_rows_per_pass", "sensitivity_sweep_pages_per_pass"])
+def test_a_sweep_pass_bound_below_one_is_refused(field: str) -> None:
+    from pydantic import ValidationError
+
+    from server.settings._memory import MemorySettings
+
+    with pytest.raises(ValidationError):
+        MemorySettings(**{field: 0})
 
 
 def test_the_worker_is_registered_and_described() -> None:

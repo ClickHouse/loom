@@ -814,11 +814,12 @@ filter: a new version per row and, for `high`, tombstoned embedding rows and ent
 An IBAN-only row is shape `other`, which `loom sensitivity-sweep --apply` labels. Until the
 sweep labels it, an unlabelled row that holds a credential is embedded like any other, so
 search serves it, and `memory.ask` and the conflict judge can send it to their models. A
-pass reads its window oldest first, in pages of `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS`
-rows, until that many candidates are found or ten pages are read: a selected row the
-detector leaves unlabelled, or one outside the shape filter, is selected again on every
-pass, and paging past it keeps a run of them from hiding a later row that is high. A row
-behind more than ten pages of such rows waits for the operator's
+pass reads its window in the table's sort key order, in pages of
+`LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` rows, until that many candidates are found or
+`LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` (10) pages are read: a selected row the detector
+leaves unlabelled, or one outside the shape filter, is selected again on every pass, and
+paging past it keeps a run of them from hiding a later row that is high. A row behind more
+than that many pages of such rows waits for the operator's
 `loom sensitivity-sweep --apply`, which pages through its whole scope until `--limit`
 candidates are found. The sweep reads unlabelled rows only: a row already labelled
 `medium` that also holds a `high` shape stays `medium` until it is set again with

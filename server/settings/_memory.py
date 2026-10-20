@@ -328,6 +328,9 @@ class MemorySettings(BaseModel):
     sensitivity_sweep_window_days: int = 2
     # Rows one sweep pass re-labels, and the page size it scans in (at least 1).
     sensitivity_sweep_max_rows_per_pass: int = Field(default=500, ge=1)
+    # Pages of `sensitivity_sweep_max_rows_per_pass` rows one sweep pass scans at most
+    # (at least 1); a row behind more waits for `loom sensitivity-sweep --apply`.
+    sensitivity_sweep_pages_per_pass: int = Field(default=10, ge=1)
     # Shapes the sweep applies (comma-separated: credential, email, phone,
     # other). Every high row is `credential`; an IBAN-only row is `other`.
     # `phone` (a ten-digit run) mostly matches ids, and a `medium` label

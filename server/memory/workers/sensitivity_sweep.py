@@ -23,10 +23,6 @@ from server.workers.status import log_pass_errors, record_pass
 
 log = logging.getLogger(__name__)
 
-# Pages of `sensitivity_sweep_max_rows_per_pass` rows one pass reads at most, so selected
-# rows the detector leaves unlabelled cannot hide later ones for long.
-_PAGES_PER_PASS = 10
-
 
 async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
     from server.core.repo_base import _default_client
@@ -41,7 +37,7 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
         report = await sweep.scan(
             since_days=window,
             limit=limit,
-            pages=_PAGES_PER_PASS,
+            pages=int(settings.sensitivity_sweep_pages_per_pass),
             only_shapes=shapes or None,
             ch=ch,
         )

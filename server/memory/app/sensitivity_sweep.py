@@ -157,6 +157,21 @@ def _shapes(text: str, level: str) -> tuple[str, ...]:
     return tuple(shapes) or ("other",)
 
 
+# loom.memory's sort key: a scan pages on it so each page starts where the last one ended.
+_SORT_KEY = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
+
+
+def _after_cursor() -> str:
+    """Rows after `{after_<column>}` in sort key order. Spelled out as `a > x OR (a = x AND
+    ...)`: the primary index prunes on that form, and not on a tuple comparison."""
+    cond = ""
+    for col in reversed(_SORT_KEY):
+        cond = f"{col} > {{after_{col}:String}}" + (
+            f" OR ({col} = {{after_{col}:String}} AND ({cond}))" if cond else ""
+        )
+    return cond
+
+
 def scan_sql(
     *, org: str | None, namespace: str | None, since_days: int | None, after: bool = False
 ) -> str:
@@ -168,10 +183,7 @@ def scan_sql(
     if since_days:
         scope += " AND created_at > now() - INTERVAL {days:UInt32} DAY"
     if after:  # the next page, after the last row of the one before
-        scope += (
-            " AND (created_at, memory_key, memory_id)"
-            " > ({after_at:DateTime}, {after_key:String}, {after_id:UUID})"
-        )
+        scope += f" AND ({_after_cursor()})"
     return f"""
         SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, created_at,
                if(length(toString(value_json)) > 2, toString(value_json), value) AS value
@@ -180,8 +192,9 @@ def scan_sql(
           AND (expires_at IS NULL OR expires_at > now())
           AND match(value, {{shape:String}})
           {scope}
-        ORDER BY created_at, memory_key, memory_id
+        ORDER BY {', '.join(_SORT_KEY)}
         LIMIT {{lim:UInt32}}
+        SETTINGS max_threads = 1  -- one stream in key order stops at the LIMIT; more read ahead
     """
 
 
@@ -201,13 +214,12 @@ async def scan(
     `other`) — the phone shape is a ten-digit run and the noisiest, so an
     operator can apply the others first.
 
-    Reads pages of `limit` rows, oldest first, until `limit` candidates are found, the rows
-    run out or `pages` pages are read (`None`: no page cap). A selected row the detector
+    Reads pages of `limit` rows in the table's sort key order until `limit` candidates are
+    found, the rows run out or `pages` pages are read (`None`: no page cap). A selected row the detector
     leaves unlabelled, or one outside `only_shapes`, stays unlabelled and is selected again
     on the next run; reading past it keeps a run of them from hiding a later row that is
     high."""
     ch = ch or _default_client()
-    limit = int(limit)
     params: dict[str, Any] = {"shape": COARSE_SHAPE_RE, "lim": limit}
     if org:
         params["org"] = org
@@ -219,15 +231,11 @@ async def scan(
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
     last: dict[str, Any] | None = None
     read = 0
-    while pages is None or read < max(1, pages):
+    while pages is None or read < pages:
         read += 1
         page_params = dict(params)
         if last is not None:
-            page_params |= {
-                "after_at": last["created_at"],
-                "after_key": last["memory_key"],
-                "after_id": last["memory_id"],
-            }
+            page_params |= {f"after_{col}": last[col] for col in _SORT_KEY}
         sql = scan_sql(org=org, namespace=namespace, since_days=since_days, after=last is not None)
         rows = await ch.query_all(sql, params=page_params)
         report.scanned += len(rows)

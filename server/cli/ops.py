@@ -309,7 +309,10 @@ def _add_sensitivity_sweep_parser(sub: Any) -> None:
         "--since-days", type=int, default=0, help="Only rows created in the last N days (0 = all)"
     )
     p_ssw.add_argument(
-        "--limit", type=int, default=20000, help="Candidate rows read per run (default 20000)"
+        "--limit",
+        type=int,
+        default=20000,
+        help="Rows labelled per run, and the page size the scan reads in (default 20000)",
     )
     p_ssw.add_argument("--show", type=int, default=20, help="Namespaces to print")
     p_ssw.add_argument(
