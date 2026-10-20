@@ -16,6 +16,7 @@ import logging
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.memory.app import blacklist_guard
 from server.memory.app.pipeline_state import WorkflowState
 from server.memory.domain import assistant_rules
 from server.memory.domain.extracted_facts import judged_confidence
@@ -67,6 +68,9 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     # every user of the bot.
     if not key or not value or not agent or reads_high(value):
         return False
+    # Refuse (blacklist), as memory.bulk_set does for every other extracted fact.
+    if await _blacklisted(state, key, value):
+        return False
     cid = assistant_rules.candidate_id(state.org, state.namespace, agent, key, value)
     row = await learnings_repo.find_candidate(state.org, state.namespace, cid)
     if row is not None and row["status"] != "pending":
@@ -76,6 +80,12 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     )
     if new_supporter:
         asked, said = assistant_rules.quotes(fact, state.messages)
+        # A quote that matches a blacklist pattern is left blank, as one that reads
+        # as a credential is.
+        if asked and await _blacklisted(state, key, asked):
+            asked = ""
+        if said and await _blacklisted(state, key, said):
+            said = ""
         await learnings_repo.insert_supporter(
             {
                 "org": state.org,
@@ -122,3 +132,20 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
             }
         )
     return wrote
+
+
+async def _blacklisted(state: WorkflowState, key: str, text: str) -> bool:
+    """Whether `text` matches a blacklist pattern for the request's org and
+    namespace. A match counts its pattern's hit and is logged, as memory.bulk_set
+    counts the entries it drops."""
+    hit = await blacklist_guard.find_match(org=state.org, namespace=state.namespace, value=text)
+    if hit is None:
+        return False
+    await blacklist_guard.note_hit(hit.pattern_id)
+    log.warning(
+        "learnings queue dropped blacklisted text key=%r pattern=%s scope=%s",
+        key,
+        hit.pattern_id,
+        hit.scope,
+    )
+    return True

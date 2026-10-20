@@ -450,8 +450,9 @@ async def _do_promote_to_knowledge(
     title = candidate_row.get("memory_key", "") or "promoted-learning"
     source_kind = candidate_row.get("source_kind", "") or "memory_supporters"
     tags = ["promoted-from-learning", f"source-kind:{source_kind}"]
-    # A bot's rule names its agent, as the document's author and as a tag a bot
-    # filters its own rules by (knowledge.search(tags=["agent:<id>"])).
+    # A bot's rule names its agent in a tag a bot filters its own rules by
+    # (knowledge.search(tags=["agent:<id>"])). The document's author is the
+    # reviewer's identity, stamped from the review's token.
     agent = (
         str(candidate_row.get("agent") or "") if source_kind == assistant_rules.SOURCE_KIND else ""
     )
@@ -469,7 +470,6 @@ async def _do_promote_to_knowledge(
             source_uri=source_uri,
             title=title,
             tags=tags,
-            agent=agent,
             metadata={
                 "promoted_from_candidate_id": str(candidate_row["candidate_id"]),
                 "rationale": rationale,

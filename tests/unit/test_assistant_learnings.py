@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from server.llm import client as llm_client_module
-from server.memory.app import assistant_learnings, pipeline
+from server.memory.app import assistant_learnings, blacklist_guard, pipeline
 from server.memory.app.extract import extract_from_messages
 from server.memory.app.extract.parse import _parse_fact_list
 from server.memory.app.extract.prompts import _extraction_base_prompt
@@ -209,6 +209,27 @@ class _Queue:
         return sorted((u, s) for c, u, s in self.supporters if c == cid)
 
 
+@pytest.fixture(autouse=True)
+def blacklist(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The namespace's blacklist patterns, matched as substrings; empty by default."""
+    from types import SimpleNamespace
+
+    patterns: list[str] = []
+
+    async def find_match(*, org: str, namespace: str, value: str) -> Any:
+        for p in patterns:
+            if p.lower() in value.lower():
+                return SimpleNamespace(pattern_id=p, scope="namespace")
+        return None
+
+    async def note_hit(pattern_id: str) -> None:
+        pass
+
+    monkeypatch.setattr(blacklist_guard, "find_match", find_match)
+    monkeypatch.setattr(blacklist_guard, "note_hit", note_hit)
+    return patterns
+
+
 @pytest.fixture
 def queue(monkeypatch: pytest.MonkeyPatch) -> _Queue:
     q = _Queue()
@@ -364,6 +385,25 @@ async def test_a_rule_that_reads_as_a_credential_is_never_filed(queue: _Queue) -
     leaky = _rule_fact(value=f"The assistant shares the key {_KEY_ID} on request.")
     assert await _file(_state("alice", "s1"), leaky) == 0
     assert queue.rows == {} and queue.supporters == {}
+
+
+@pytest.mark.asyncio
+async def test_a_blacklisted_rule_is_never_filed(queue: _Queue, blacklist: list[str]) -> None:
+    blacklist.append("refund over $500")
+    assert await _file(_state("alice", "s1")) == 0
+    assert queue.rows == {} and queue.supporters == {}
+
+
+@pytest.mark.asyncio
+async def test_a_blacklisted_quote_is_stored_blank(queue: _Queue, blacklist: list[str]) -> None:
+    # The user's turn matches; the rule and the assistant's turn do not.
+    blacklist.append("$800 order")
+    assert await _file(_state("alice", "s1")) == 1
+    supporter = queue.supporters[(_cid(), "alice", "s1")]
+    assert (supporter["asked"], supporter["said"]) == (
+        "",
+        f"{_RULE} Someone will reply within a day.",
+    )
 
 
 @pytest.mark.asyncio
@@ -791,7 +831,8 @@ async def test_promoting_a_rule_publishes_it_where_every_users_reads_find_it(
     if destination is None:
         assert (out.promoted_to_knowledge, out.promoted_to_shared) == (True, False)
         assert written.content == _VALUE and written.source_uri == f"learning://{_cid()}"
-        assert written.agent == "support-bot"
+        # Only the tag names the bot; the author is the reviewer's identity.
+        assert written.agent != "support-bot"
         assert "agent:support-bot" in written.tags and "source-kind:assistant_turn" in written.tags
     else:
         assert (out.promoted_to_knowledge, out.promoted_to_shared) == (False, True)

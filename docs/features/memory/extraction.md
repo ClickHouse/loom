@@ -88,7 +88,9 @@ request's `(org, namespace, agent)`:
 - The candidate row holds the rule and no user's words. Each session that states it adds
   a row to `loom.learnings_supporters` with the end user, the session and that user's
   own quotes: the user turn before the rule (up to 200 characters) and the rule as said,
-  the span the extractor cited or the assistant turn (up to 400). The supporter row is
+  the span the extractor cited or the assistant turn (up to 400). A rule that matches a
+  blacklist pattern, or reads as a credential, is never filed, and a quote that does is
+  stored blank. The supporter row is
   written first, then the candidate row again, at version 1, with every new supporter.
   So an erasure that deletes a pending candidate mid-filing never leaves that supporter
   without it. A review always writes a newer version, so the rewrite never undoes a
@@ -99,7 +101,8 @@ request's `(org, namespace, agent)`:
   decision with the rule blanked.
 - Support never promotes a candidate. An admin's `learnings.review` does. By default
   the rule is published to the namespace's knowledge (`learning://<candidate_id>`,
-  tagged `agent:<agent>`), which every user's reads serve: `context.pack` with
+  tagged `agent:<agent>`; the tag names the bot, and the document's author is the
+  reviewer), which every user's reads serve: `context.pack` with
   `include_knowledge`, `knowledge.search` and `loom_search`, a user bounded to their own
   rows included. Knowledge is not filtered by agent; a bot reads only its own rules
   with `knowledge.search(tags=["agent:<agent>"])`. `destination="memory"` writes the
