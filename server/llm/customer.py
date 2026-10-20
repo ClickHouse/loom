@@ -75,8 +75,7 @@ def current() -> str:
     the row it last worked on, which the next row's call must not inherit."""
     org = _org.get()
     if org in _NO_ORG:
-        op = genai.current_operation()
-        org = genai.current_org() if op and not op.startswith("worker.") else ""
+        org = genai.request_org()
     return "" if org in _NO_ORG else org
 
 

@@ -209,13 +209,6 @@ def current_operation() -> str:
     return str((ident or {}).get("operation") or "")
 
 
-def current_org() -> str:
-    """The org the transport (or a worker) stamped on this context; "" when
-    none was."""
-    ident = _identity.get()
-    return str((ident or {}).get("org") or "")
-
-
 def request_org() -> str:
     """The org of the request this context serves, as the transport recorded
     it once the token was verified; "" outside a request. A worker's identity
