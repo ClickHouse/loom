@@ -50,6 +50,41 @@ def _emptied(schema: SourceSchema, columns: list[str]) -> str:
     )
 
 
+# Snapshot rows a page of the emptied-text read returns.
+_EMPTIED_PAGE = 1000
+
+
+async def _plain_emptied(
+    names: StagingNames,
+    schema: SourceSchema,
+    columns: list[str],
+    passage_text: str,
+    client: _CHClient,
+) -> int:
+    """How many of the rows the rebuild left empty hold text that does not read as a
+    credential. Only those rows' text is read: a semi-join on the target's empty ordinals,
+    paged by ordinal, so neither table is joined whole."""
+    active = " AND isNull(s.tombstoned_at)" if "tombstoned_at" in schema.columns else ""
+    emptied = " OR ".join(
+        f"(s.{_ORDINAL} IN (SELECT {_ORDINAL} FROM loom.{names.target} FINAL"
+        f" WHERE empty({_identifier(c)})) AND arrayExists(x -> x != 0, s.{_identifier(c)}))"
+        for c in columns
+    )
+    plain, after = 0, -1
+    while True:
+        page = await client.query_all(
+            f"SELECT s.{_ORDINAL} AS ordinal, s.{_identifier(passage_text)} AS text"
+            f" FROM loom.{names.snapshot} AS s"
+            f" WHERE s.{_ORDINAL} > {{after:Int64}} AND ({emptied}){active}"
+            f" ORDER BY s.{_ORDINAL} LIMIT {{page:UInt32}}",
+            {"after": after, "page": _EMPTIED_PAGE},
+        )
+        plain += sum(1 for r in page if not reads_high(str(r["text"])))
+        if len(page) < _EMPTIED_PAGE:
+            return plain
+        after = int(page[-1]["ordinal"])
+
+
 async def verify_reembedded_target(
     names: StagingNames,
     schema: SourceSchema,
@@ -129,13 +164,7 @@ async def verify_reembedded_target(
     ):
         raise ValueError("Cannot establish rebuild verification result")
     if result["emptied"] and passage_text:
-        # Few rows: only those the rebuild left empty. Their text is read whole and checked
-        # here, as the write path checks it.
-        texts = await client.query_all(
-            f"SELECT s.{_identifier(passage_text)} AS text FROM {joined} "
-            f"WHERE {emptied} SETTINGS join_use_nulls = 0"
-        )
-        result["emptied"] = sum(1 for r in texts if not reads_high(str(r["text"])))
+        result["emptied"] = await _plain_emptied(names, schema, vectors, passage_text, client)
     if result["source_rows"] != result["target_rows"] or any(result[name] for name in fields[2:]):
         raise ValueError("Staged rebuild failed verification")
     await verify_live_key_uniqueness(names, schema, client)

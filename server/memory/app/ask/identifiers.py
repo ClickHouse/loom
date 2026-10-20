@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from server.memory.api.models_search import _MemorySearchHit
@@ -15,7 +16,7 @@ from server.memory.app.ask.question_shapes import (
     is_mention_time_question,
 )
 from server.memory.app.ask.result import _is_chunk_hit
-from server.memory.app.credential_passages import HELD_MARGIN, without_credentials
+from server.memory.domain.sensitivity import HELD_MARGIN, without_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +78,12 @@ _INJECT_WORD_ORDINAL_RE = re.compile(
 )
 
 
-async def _plain_chunks(find: Any, *, limit: int, **kwargs: Any) -> list[dict[str, Any]]:
+async def _plain_chunks(
+    find: Callable[..., Awaitable[list[dict[str, Any]]]], *, limit: int, **kwargs: Any
+) -> list[dict[str, Any]]:
     """`find` (a chunk lookup), without the chunks whose text reads as a credential. A chunk
     written as one has no vector and the lookup's `embedding_dim > 0` filter leaves it out;
     this holds back one an earlier build embedded."""
-    if limit <= 0:
-        return []
     rows = await find(limit=limit + HELD_MARGIN, **kwargs)
     return without_credentials(rows, lambda r: str(r.get("content_excerpt") or ""), limit)
 

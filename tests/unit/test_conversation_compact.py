@@ -762,7 +762,7 @@ def test_a_summary_that_reads_as_a_credential_compacts_nothing(monkeypatch) -> N
             )
         )
     )
-    assert (out.compacted, out.reason) == (False, "summary-reads-high")
+    assert (out.compacted, out.reason) == (False, "summary-reads-as-credential")
     assert fake.inserted == [] and fake.embedded == [] and fake.executed == []
 
 
@@ -813,3 +813,81 @@ def test_a_credential_turn_is_left_out_of_the_window_and_stays_live(monkeypatch)
         params["ids"] for sql, params in fake.executed if "ALTER TABLE loom.conversations\n" in sql
     ]
     assert tombstoned == [["m0", "m2", "m3", "m4"]]
+
+
+def test_compact_never_summarizes_or_tombstones_a_saved_turn(monkeypatch) -> None:
+    """A message the user saved for search keeps its row: compaction folds the
+    turns around it and leaves it verbatim."""
+    import server.core.ch
+    import server.llm.client
+
+    rows = [
+        {
+            "msg_id": f"m{i}",
+            "role": "user" if i % 2 == 0 else "assistant",
+            "content": f"turn {i}",
+            "ts": T0 + timedelta(seconds=i),
+            "metadata": "{}",
+            "user_id": "alice",
+            "run_id": "-",
+            "is_saved": i == 1,
+        }
+        for i in range(8)
+    ]
+    fake = _FakeCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _FakeLLM())
+
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=2, min_to_compact=2
+            )
+        )
+    )
+    assert out.compacted is True
+    assert out.messages_summarized == 5
+    [summary] = fake.inserted
+    import json
+
+    assert "m1" not in json.loads(summary["metadata"])["compacted_from"]
+
+
+def test_a_saved_and_a_credential_turn_both_stay_live(monkeypatch) -> None:
+    """Both filters hold together: the saved turn and the credential turn are left out of
+    the window, never sent to the summarizer and never tombstoned."""
+    import server.core.ch
+    import server.llm.client
+
+    key = "sk-" + "proj-" + "Ab3" * 12
+    rows = [
+        {
+            "msg_id": f"m{i}",
+            "role": "user",
+            "content": f"my key is {key}" if i == 2 else f"turn {i}",
+            "ts": T0 + timedelta(seconds=i),
+            "metadata": "{}",
+            "user_id": "alice",
+            "run_id": "-",
+            "is_saved": i == 1,
+        }
+        for i in range(7)
+    ]
+    fake = _FakeCH(rows)
+    llm = _FakeLLM()
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
+
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=2
+            )
+        )
+    )
+    assert out.compacted is True and out.messages_summarized == 4
+    assert all(key not in prompt and "turn 1" not in prompt for prompt in llm.prompts)
+    tombstoned = [
+        params["ids"] for sql, params in fake.executed if "ALTER TABLE loom.conversations\n" in sql
+    ]
+    assert tombstoned == [["m0", "m3", "m4", "m5"]]

@@ -692,7 +692,7 @@ row keeps the turn out of vector search. `conversation.save_message` answers
 `reason: "reads_as_credential"` for such a turn, so the saved search never holds it.
 `conversation.compact` leaves such a turn out of its window: it stays live and is never
 sent to the summarizer. A summary that reads as a credential anyway is refused
-(`reason: "summary-reads-high"`) and tombstones nothing, as when the summary cannot be
+(`reason: "summary-reads-as-credential"`) and tombstones nothing, as when the summary cannot be
 embedded. A provider rebuild stages a chunk, digest or
 turn embedding that reads as a credential without a vector, and its verification reads
 the text of every row left empty and accepts those that read as a credential.
@@ -706,10 +706,14 @@ their text too:
 - Left out: `memory.search`'s `chunk` and `summary` hits (and so what `memory.ask` hands
   its model and the context pack built from search), the chunks `memory.ask` injects for an
   identifier or a session date, the neighbours `memory.get` stitches around a `chunk:`
-  key, and `conversation.search`'s hits (the vector ranking, checked on the text the vector
-  was built from, and the substring fallback the search takes when the embedder is down).
+  key, `conversation.search`'s hits (the vector ranking, checked on the text the vector
+  was built from, and the substring fallback the search takes when the embedder is down),
+  and `conversation.search_saved_messages`'s hits (its vector leg and its BM25 keyword leg
+  over the whole text).
   Each read asks for a few spare rows, so a held-back passage does not leave it short.
-- Listed without the text: `conversation.threads` shows an empty `last_content_excerpt`
+- Listed without the text: `conversation.list_saved_messages` shows an empty
+  `content_excerpt` for a saved message that reads as a credential (one an earlier build
+  saved), and `conversation.threads` shows an empty `last_content_excerpt`
   for a thread whose last turn reads as a credential (the whole turn is checked, not the
   excerpt), and an empty `title` for a title that reads as one. The conversation titler
   never sends a turn that reads as a credential to its model and never stores a title that

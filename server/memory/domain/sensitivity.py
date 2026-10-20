@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable
-from typing import Any, Final
+from collections.abc import Callable, Iterable
+from typing import Any, Final, NamedTuple
 
 HIGH: Final = "high"
 MEDIUM: Final = "medium"
@@ -234,6 +234,38 @@ def reads_high(text: str) -> bool:
         return True
     unescaped = _JSON_ESCAPE.sub(lambda m: _JSON_ESCAPES.get(m.group(1), m.group(1)), text)
     return unescaped != text and _holds_credential(unescaped)
+
+
+# Spare rows a read asks for, so a passage it holds back for reading as a credential does
+# not leave the page short.
+HELD_MARGIN = 2
+
+
+class Embedded(NamedTuple):
+    """One raw passage's vector, [] when it has none; `held` when it reads as a credential
+    and so is stored with no vector."""
+
+    vector: list[float]
+    held: bool
+
+    @property
+    def written(self) -> bool:
+        """Stored: with its vector, or held without one. A failed embed is not."""
+        return self.held or bool(self.vector)
+
+
+def without_credentials[T](
+    items: Iterable[T], text: Callable[[T], str], limit: int | None = None
+) -> list[T]:
+    """`items`, in order, whose text does not read as a credential, the first `limit` of
+    them. The text is checked only as far as `limit` reaches."""
+    kept: list[T] = []
+    for item in items:
+        if limit is not None and len(kept) >= limit:
+            break
+        if not reads_high(text(item)):
+            kept.append(item)
+    return kept
 
 
 def resolve_sensitivity(requested: str | None, text: str) -> str:

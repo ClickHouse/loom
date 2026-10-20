@@ -10,13 +10,13 @@ from typing import Any
 
 import pytest
 
-from server.memory.app.credential_passages import HELD_MARGIN as _HELD_MARGIN
 from server.memory.app.retrieval import SearchHit, fetch_session_summaries
 from server.memory.app.retrieval.summaries import (
     _SESSION_SUMMARY_OVERFETCH,
     _SESSION_SUMMARY_TOP_N,
     dedup_summary_rows,
 )
+from server.memory.domain.sensitivity import HELD_MARGIN as _HELD_MARGIN
 
 
 class StubCH:
@@ -38,7 +38,7 @@ async def test_returns_summary_source_hits_with_label() -> None:
         returns=[
             {
                 "session_id": "sess-1",
-                "content_excerpt": "On 2024-03-11 the user moved to Berlin.",
+                "summary_text": "On 2024-03-11 the user moved to Berlin.",
                 "distance": 0.18,
                 "valid_at_iso": "2024-03-11 00:00:00",
             }
@@ -69,7 +69,7 @@ async def test_label_sentinel_reads_undated() -> None:
         returns=[
             {
                 "session_id": "s2",
-                "content_excerpt": "digest",
+                "summary_text": "digest",
                 "distance": 0.5,
                 "valid_at_iso": "1970-01-01 00:00:00",
             }
@@ -170,9 +170,9 @@ def test_dedup_keeps_the_closest_row_per_session_in_served_order() -> None:
 async def test_hits_are_deduped_per_session_and_capped_at_n() -> None:
     ch = StubCH(
         returns=[
-            {"session_id": "a", "distance": 0.1, "content_excerpt": "x", "valid_at_iso": ""},
-            {"session_id": "a", "distance": 0.2, "content_excerpt": "y", "valid_at_iso": ""},
-            {"session_id": "b", "distance": 0.3, "content_excerpt": "z", "valid_at_iso": ""},
+            {"session_id": "a", "distance": 0.1, "summary_text": "x", "valid_at_iso": ""},
+            {"session_id": "a", "distance": 0.2, "summary_text": "y", "valid_at_iso": ""},
+            {"session_id": "b", "distance": 0.3, "summary_text": "z", "valid_at_iso": ""},
         ]
     )
     hits = await fetch_session_summaries(

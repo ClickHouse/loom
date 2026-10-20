@@ -66,7 +66,7 @@ async def test_embed_plain_makes_no_call_when_every_text_reads_as_a_credential(
 
 
 def test_without_credentials_keeps_order_and_fills_the_limit() -> None:
-    from server.memory.app.credential_passages import without_credentials
+    from server.memory.domain.sensitivity import without_credentials
 
     items = [f"key {_AWS_KEY_ID}", "one", f"key {_OPENAI_KEY}", "two", "three"]
     assert without_credentials(items, str) == ["one", "two", "three"]
@@ -238,15 +238,13 @@ async def test_the_summary_leg_serves_no_digest_that_reads_as_a_credential() -> 
         async def query_all(self, *_: Any, **__: Any) -> list[dict[str, Any]]:
             return [
                 {
-                    # The key straddles the served excerpt's cut: the whole text is checked.
+                    # The key straddles the served excerpt's 1200-character cut.
                     "session_id": "s1",
-                    "content_excerpt": "x" * 1195 + " AKIA",
                     "summary_text": "x" * 1195 + f" {_AWS_KEY_ID}.",
                     "distance": 0.1,
                 },
                 {
                     "session_id": "s2",
-                    "content_excerpt": _PLAIN,
                     "summary_text": _PLAIN,
                     "distance": 0.2,
                 },
@@ -267,7 +265,7 @@ async def test_the_summary_leg_serves_no_digest_that_reads_as_a_credential() -> 
 @pytest.mark.asyncio
 async def test_the_ask_chunk_lookups_serve_no_chunk_that_reads_as_a_credential() -> None:
     from server.memory.app.ask.identifiers import _plain_chunks
-    from server.memory.app.credential_passages import HELD_MARGIN as _HELD_MARGIN
+    from server.memory.domain.sensitivity import HELD_MARGIN as _HELD_MARGIN
 
     asked: list[int] = []
 
@@ -282,7 +280,6 @@ async def test_the_ask_chunk_lookups_serve_no_chunk_that_reads_as_a_credential()
     rows = await _plain_chunks(find, limit=2, org="o")
     assert [r["memory_key"] for r in rows] == ["chunk:s:1", "chunk:s:2"]
     assert asked == [2 + _HELD_MARGIN]
-    assert await _plain_chunks(find, limit=0) == [] and asked == [2 + _HELD_MARGIN]
 
 
 @pytest.mark.asyncio

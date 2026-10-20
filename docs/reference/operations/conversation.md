@@ -58,7 +58,7 @@ Summarize old turns into one embedded system turn and tombstone the originals.
 | `summary_msg_id` | `str` | Id of the synthetic `system` summary message; empty when not compacted. |
 | `tokens_in` | `int` | Prompt tokens the summarizer LLM call used; 0 when no call was made. |
 | `tokens_out` | `int` | Completion tokens of the summary; 0 when no call was made. |
-| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, embed-failed (retry once the embedder answers), or summary-reads-high (the summary holds a credential, so it would have no vector). |
+| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, embed-failed (retry once the embedder answers), or summary-reads-as-credential (the summary holds a credential, so it would have no vector). |
 
 ## `conversation.create`
 
@@ -156,6 +156,28 @@ Enumerate stored conversation threads for an agent / namespace.
 | `rows` | `list[_ConversationEntry]` | The page of messages in chronological order. |
 | `next_cursor` | `str \| None` | Pass as `cursor` for the next page; None when this is the last page. |
 
+## `conversation.list_saved_messages`
+
+Page through the messages a user saved, newest first, with no query: the first view of a "Saved" panel before anything is typed.
+
+`POST /v1/conversation.list_saved_messages` · MCP `loom_conversation_list_saved_messages` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | required | Only this user's saved messages are listed. |
+| `conversation_id` | `str \| None` | `None` | Optional: only the messages saved from one conversation. |
+| `limit` | `int` | `50` | At most this many messages per page (1-200). |
+| `cursor` | `str \| None` | `None` | Opaque; pass the previous page's `next_cursor`. |
+| `fields` | `list[str] \| None` | `None` | The output fields the caller reads (a whitelist resolved against the row model; an unknown name is a 422); unset, every field. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `rows` | `list[_SavedMessageHit]` | The page, most recently saved first. |
+| `next_cursor` | `str \| None` | Pass as `cursor` for the next page; None when this is the last page. |
+
 ## `conversation.save_message`
 
 Save one chat message a user picked for search, whether or not the namespace records transcripts.
@@ -180,6 +202,25 @@ Save one chat message a user picked for search, whether or not the namespace rec
 | `indexed` | `bool` | True when the turn is saved and has a vector the saved search ranks: a new write, a re-save (finishing what an interrupted save left behind), and a transcript turn that is now flagged saved. |
 | `reason` | `Literal['', 'duplicate', 'owner_mismatch', 'deleted', 'unsupported_role', 'embed_failed', 'reads_as_credential']` | "duplicate": already saved, nothing changed. "owner_mismatch": the stored turn belongs to another user. "deleted": the stored turn was tombstoned. "unsupported_role": the stored turn is a system or tool turn, which is not embedded.… |
 | `ts` | `datetime` | The stored turn's timestamp; the time of the refusal when one is refused. |
+
+## `conversation.saved_status`
+
+Which of a conversation's messages a user has saved, in one call: a chat client draws every message's saved state when it opens the conversation.
+
+`POST /v1/conversation.saved_status` · MCP `loom_conversation_saved_status` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | required | The end user the row belongs to; `'-'` for none. |
+| `conversation_id` | `str` | required | The conversation the messages belong to; message ids are unique within it. |
+| `message_ids` | `list[str]` | required | The messages to check (1-500). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `saved` | `list[str]` | The subset of `message_ids` this user has saved, in the order asked. |
 
 ## `conversation.search`
 
@@ -207,7 +248,7 @@ Rank conversation messages by embedding similarity to `query`.
 
 ## `conversation.search_saved_messages`
 
-Semantic search over only the messages one user saved with conversation.save_message, not the whole transcript.
+Hybrid search over only the messages one user saved with conversation.save_message, not the whole transcript.
 
 `POST /v1/conversation.search_saved_messages` · MCP `loom_conversation_search_saved_messages` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -221,6 +262,8 @@ Semantic search over only the messages one user saved with conversation.save_mes
 | `conversation_id` | `str \| None` | `None` |  |
 | `role` | `Literal['user', 'assistant'] \| None` | `None` |  |
 | `top_k` | `int` | `20` |  |
+| `search_mode` | `Literal['hybrid', 'semantic', 'lexical']` | `'hybrid'` | hybrid: the vector leg and a BM25 leg over each message's whole text, fused by reciprocal rank; semantic: vector only; lexical: BM25 only. |
+| `lexical_weight` | `float` | `1.0` | Weight of the BM25 leg in the fusion (hybrid mode); 1.0 = equal weight. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -262,6 +305,29 @@ Recent conversation threads of a namespace, newest first.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `threads` | `list[ConversationThreadSummary]` | Threads, most recently active first, each with its count and last message excerpt. |
+
+## `conversation.unsave_message`
+
+Withdraw one message from a user's saved-message search.
+
+`POST /v1/conversation.unsave_message` · MCP `loom_conversation_unsave_message` · role `writer` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `conversation_id` | `str` | required | LibreChat's conversation id, as given to conversation.save_message. |
+| `message_id` | `str` | required | LibreChat's message id, as given to conversation.save_message. |
+| `user_id` | `str` | required | Only this user's saved row is withdrawn. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `conversation_id` | `str` |  |
+| `message_id` | `str` |  |
+| `found` | `bool` | False when no saved row of this user exists: never saved, already withdrawn, or saved by another user (which is not confirmed). |
+| `removed` | `bool` | True when the turn itself was removed: the namespace does not record transcripts, so the row existed only because of the save. |
+| `ts` | `datetime` |  |
 
 ## `conversation.update`
 

@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.knowledge.store import conversations as conversation_repo
 
 
@@ -28,13 +29,17 @@ class StubCH:
 @pytest.mark.asyncio
 async def test_substring_search_spans_every_agent_on_a_wildcard() -> None:
     ch = StubCH()
-    await conversation_repo.search_substring("o", ["ns"], "bot", "deploy", ch=ch)
+    await conversation_repo.search_substring(
+        "o", ["ns"], "bot", "deploy", scope=WHOLE_NAMESPACE, ch=ch
+    )
     sql, params = ch.calls[-1]
     assert "agent = {agent:String}" in sql
     assert params["agent"] == "bot"
 
     for star in ("*", "-"):
-        await conversation_repo.search_substring("o", ["ns"], star, "deploy", ch=ch)
+        await conversation_repo.search_substring(
+            "o", ["ns"], star, "deploy", scope=WHOLE_NAMESPACE, ch=ch
+        )
         sql, params = ch.calls[-1]
         assert "agent = {agent:String}" not in sql
         assert "agent" not in params
@@ -182,13 +187,17 @@ async def test_a_substring_search_across_agents_collapses_before_its_limit() -> 
     # Collapsing after the limit would fill the page with copies and return fewer turns
     # than match; the turn key is the full text, as the thread read's.
     ch = StubCH()
-    await conversation_repo.search_substring("o", ["ns"], "*", "deploy", limit=5, ch=ch)
+    await conversation_repo.search_substring(
+        "o", ["ns"], "*", "deploy", limit=5, scope=WHOLE_NAMESPACE, ch=ch
+    )
     sql, _ = ch.calls[-1]
     assert sql.index("LIMIT 1 BY namespace, thread_id, msg_id, cityHash64(content)") < sql.index(
         "LIMIT {limit:UInt32}"
     )
 
-    await conversation_repo.search_substring("o", ["ns"], "bot", "deploy", limit=5, ch=ch)
+    await conversation_repo.search_substring(
+        "o", ["ns"], "bot", "deploy", limit=5, scope=WHOLE_NAMESPACE, ch=ch
+    )
     sql, _ = ch.calls[-1]
     assert "LIMIT 1 BY" not in sql
 
@@ -198,7 +207,9 @@ async def test_a_substring_hit_names_a_shared_turns_first_copy() -> None:
     # The thread read keeps a turn's earliest copy; a hit opens that turn, so it names the
     # same copy: the collapse runs oldest first, the page newest first.
     ch = StubCH()
-    await conversation_repo.search_substring("o", ["ns"], "*", "deploy", limit=5, ch=ch)
+    await conversation_repo.search_substring(
+        "o", ["ns"], "*", "deploy", limit=5, scope=WHOLE_NAMESPACE, ch=ch
+    )
     sql, _ = ch.calls[-1]
     inner, _, outer = sql.partition("LIMIT 1 BY")
     assert "ORDER BY ts ASC" in inner
@@ -213,7 +224,9 @@ async def test_a_shared_turns_first_copy_is_the_same_row_on_every_read() -> None
     await conversation_repo.list_thread("o", "ns", None, "t-1", ch=ch)
     inner = ch.calls[-1][0].partition("LIMIT 1 BY")[0]
     assert "ORDER BY ts ASC, msg_id ASC, cityHash64(content) ASC, agent ASC" in inner
-    await conversation_repo.search_substring("o", ["ns"], "*", "deploy", limit=5, ch=ch)
+    await conversation_repo.search_substring(
+        "o", ["ns"], "*", "deploy", limit=5, scope=WHOLE_NAMESPACE, ch=ch
+    )
     inner = ch.calls[-1][0].partition("LIMIT 1 BY")[0]
     assert "ORDER BY ts ASC, agent ASC" in inner
 

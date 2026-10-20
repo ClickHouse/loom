@@ -71,7 +71,27 @@ async def test_an_emptied_passage_that_reads_as_a_credential_verifies(verificati
     )
     assert count == 3
     sql = client.query_all.await_args.args[0]
-    assert "s.`content` AS text" in sql and "empty(t.`embedding`)" in sql
+    # Only the emptied rows' text is read: a semi-join, no join of the two tables.
+    assert "s.`content` AS text" in sql and "WHERE empty(`embedding`)" in sql
+    assert "JOIN" not in sql
+
+
+@pytest.mark.asyncio
+async def test_the_emptied_text_is_read_a_page_at_a_time(verification, monkeypatch):
+    from server.insights.store import provider_verify
+
+    monkeypatch.setattr(provider_verify, "_EMPTIED_PAGE", 2)
+    args, client, result = verification
+    result["emptied"] = 3
+    client.query_all.side_effect = [
+        [{"ordinal": 4, "text": f"key {_KEY}"}, {"ordinal": 9, "text": f"key {_KEY}"}],
+        [{"ordinal": 12, "text": f"key {_KEY}"}],
+    ]
+    count = await verify_reembedded_target(
+        *args, model="target", dimensions=3, passage_text="content", ch=client
+    )
+    assert count == 3
+    assert [c.args[1]["after"] for c in client.query_all.await_args_list] == [-1, 9]
 
 
 @pytest.mark.asyncio

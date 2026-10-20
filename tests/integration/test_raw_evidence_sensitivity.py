@@ -23,8 +23,8 @@ from tests.integration._resources import unique_org
 ORG = unique_org("raw-evidence")
 _NONCE = os.urandom(3).hex()
 # One namespace per test, so one test's identical passage never ranks in another's search.
-NS_CHUNKS, NS_LEGACY, NS_DIGEST, NS_TURNS = (
-    f"raw-{name}-{_NONCE}" for name in ("chunks", "legacy", "digest", "turns")
+NS_CHUNKS, NS_LEGACY, NS_DIGEST, NS_TURNS, NS_SAVED = (
+    f"raw-{name}-{_NONCE}" for name in ("chunks", "legacy", "digest", "turns", "saved")
 )
 
 # Credential shapes `reads_high` matches, with nonce bodies. Never real secrets.
@@ -52,7 +52,7 @@ def token() -> str:
     return mint_token(
         subject="raw-evidence",
         org=ORG,
-        namespaces=[NS_CHUNKS, NS_LEGACY, NS_DIGEST, NS_TURNS],
+        namespaces=[NS_CHUNKS, NS_LEGACY, NS_DIGEST, NS_TURNS, NS_SAVED],
         roles=["admin", "writer"],  # admin: conversation.set_logging
         ttl_seconds=600,
     )
@@ -275,3 +275,84 @@ def test_a_conversation_turn_holding_a_credential_is_never_a_search_hit(
     r = _post(control_plane_url, token, NS_TURNS, "conversation.list", {"thread_id": thread})
     assert r.status_code == 200, r.text
     assert any(_API_KEY in row["content"] for row in r.json()["rows"])
+
+
+def _insert_turns(ch_client, ns: str, thread: str, turns: list[tuple[str, str, bool]]) -> None:
+    """Transcript rows as an earlier build wrote them, all at one `ts`."""
+    from datetime import UTC, datetime
+
+    ts = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    for msg_id, content, saved in turns:
+        ch_client.command(
+            "INSERT INTO loom.conversations (org, namespace, agent, thread_id, msg_id, role, "
+            "content, user_id, is_saved, ts) VALUES ({o:String}, {n:String}, 'a', {t:String}, "
+            "{m:String}, 'user', {c:String}, 'u-1', {saved:Bool}, {ts:DateTime64(3)})",
+            parameters={
+                "o": ORG,
+                "n": ns,
+                "t": thread,
+                "m": msg_id,
+                "c": content,
+                "saved": saved,
+                "ts": ts,
+            },
+        )
+
+
+def test_a_saved_turn_an_earlier_build_kept_is_never_a_keyword_hit_or_listed(
+    control_plane_url: str, ch_client, token: str
+) -> None:
+    """A credential turn saved before the save refused one: the keyword leg never returns
+    it, and the saved list shows it without its text."""
+    thread = f"t-{uuid.uuid4().hex[:8]}"
+    _insert_turns(
+        ch_client,
+        NS_SAVED,
+        thread,
+        [
+            ("m-key", f"the access key id is {_AWS_KEY_ID}", True),
+            ("m-plain", "deploy plan notes", True),
+        ],
+    )
+    body = {"user_id": "u-1", "query": _AWS_KEY_ID, "search_mode": "lexical", "top_k": 5}
+    r = _post(control_plane_url, token, NS_SAVED, "conversation.search_saved_messages", body)
+    assert r.status_code == 200, r.text
+    assert _AWS_KEY_ID not in r.text and r.json()["hits"] == []
+    r = _post(
+        control_plane_url,
+        token,
+        NS_SAVED,
+        "conversation.search_saved_messages",
+        {**body, "query": "access key deploy", "search_mode": "hybrid"},
+    )
+    assert r.status_code == 200 and _AWS_KEY_ID not in r.text, r.text
+    r = _post(
+        control_plane_url, token, NS_SAVED, "conversation.list_saved_messages", {"user_id": "u-1"}
+    )
+    assert r.status_code == 200, r.text
+    listed = {row["message_id"]: row["content_excerpt"] for row in r.json()["rows"]}
+    assert listed["m-key"] == "" and listed["m-plain"] == "deploy plan notes"
+
+
+def test_the_thread_list_names_one_last_turn_on_a_ts_tie(
+    control_plane_url: str, ch_client, token: str
+) -> None:
+    """Two last turns at one `ts`: the listing's role and excerpt come from the same one
+    (`msg_id` breaks the tie), and that one is checked whole."""
+    thread = f"t-{uuid.uuid4().hex[:8]}"
+    _insert_turns(
+        ch_client,
+        NS_SAVED,
+        thread,
+        [("m-a", "a plain last turn", False), ("m-b", f"key {_API_KEY}", False)],
+    )
+    r = _post(
+        control_plane_url,
+        token,
+        NS_SAVED,
+        "conversation.threads",
+        {"window_days": 30, "agent": "*", "limit": 50},
+    )
+    assert r.status_code == 200, r.text
+    [row] = [t for t in r.json()["threads"] if t["thread_id"] == thread]
+    assert row["last_content_excerpt"] == "" and _API_KEY not in r.text

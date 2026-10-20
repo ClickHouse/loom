@@ -27,8 +27,7 @@ before ClickHouse applies it; watch `system.mutations`.
   credential to the embedder: the row stays on the old model, which search does not read,
   until `--delete-old` removes it. A memory row's vector follows its sensitivity label.
   `--in-database` cannot check the text and re-embeds such a turn too; search still holds
-  it back
-  ([sensitivity](../architecture/security.md#sensitivity)).
+  it back ([sensitivity](../architecture/security.md#sensitivity)).
 - **A model of another width.** On ClickHouse 26.8 or later a fresh install codes its
   vector columns (`Quantized`), and a coded column takes vectors of the width it was
   created with only. Change to a model of another width (a multiple of 8) in Settings → Models & keys, which

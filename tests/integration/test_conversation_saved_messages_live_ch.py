@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -78,7 +78,11 @@ def _transcript_turn(namespace: str) -> Any:
     )
 
 
-async def _saved_hits(namespace: str, user_id: str = "u-1") -> list[Any]:
+async def _saved_hits(
+    namespace: str,
+    user_id: str = "u-1",
+    search_mode: Literal["hybrid", "semantic", "lexical"] = "hybrid",
+) -> list[Any]:
     from server.knowledge.api.models_conversations import ConversationSearchSavedMessagesInput
     from server.knowledge.app.conversations import handle_conversation_search_saved_messages
 
@@ -89,6 +93,7 @@ async def _saved_hits(namespace: str, user_id: str = "u-1") -> list[Any]:
             agent="itest-client",
             user_id=user_id,
             query=_CONTENT,
+            search_mode=search_mode,
         )
     )
     return out.hits
@@ -124,7 +129,9 @@ async def test_retry_repairs_a_save_interrupted_after_its_first_mutation(
     monkeypatch.setattr(conversation_repo, "mark_message_saved", fail_on_embeddings)
     with pytest.raises(RuntimeError):
         await handle_conversation_save_message(_save(namespace))
-    assert await _saved_hits(namespace) == []
+    # The message row is flagged, its embedding row is not: the vector leg
+    # misses it until the retry repairs the embedding row.
+    assert await _saved_hits(namespace, search_mode="semantic") == []
 
     monkeypatch.setattr(conversation_repo, "mark_message_saved", real_mark)
     out = await handle_conversation_save_message(_save(namespace))
@@ -284,7 +291,14 @@ async def test_a_save_during_an_embedder_outage_is_embedded_by_the_retry(
         m.setattr(get_embedder(), "embed", down)
         out = await handle_conversation_save_message(_save(namespace))
     assert (out.indexed, out.reason) == (False, "embed_failed")
-    assert await _saved_hits(namespace) == []
+    # The BM25 leg reads the saved text, so the turn is found before it has a vector.
+    assert [h.message_id for h in await _saved_hits(namespace)] == ["m-1"]
+    dims = await ch.query_all(
+        "SELECT embedding_dim FROM loom.conversation_embeddings FINAL "
+        "WHERE org = 'itest-org' AND namespace = {ns:String} AND msg_id = 'm-1'",
+        params={"ns": namespace},
+    )
+    assert [r["embedding_dim"] for r in dims] == [0]
 
     again = await handle_conversation_save_message(_save(namespace))
     assert (again.indexed, again.reason) == (True, "")

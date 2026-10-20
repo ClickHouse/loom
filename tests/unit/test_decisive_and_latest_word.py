@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from server.memory.app.ask import identifiers, question_shapes
-from server.memory.app.credential_passages import HELD_MARGIN as _HELD_MARGIN
+from server.memory.domain.sensitivity import HELD_MARGIN as _HELD_MARGIN
 
 
 def test_question_shapes() -> None:

@@ -23,7 +23,7 @@ from collections.abc import Callable
 from typing import Any
 
 from server.llm import customer
-from server.memory.app.credential_passages import without_credentials
+from server.memory.domain.sensitivity import without_credentials
 
 # (text-source column, vector column) per table, plus an optional secondary
 # (key text -> key vector, key dim) embedding.
@@ -284,7 +284,7 @@ async def reembed_table(
     keys = _KEYS[table]
     order = ", ".join(keys)
     after = list(start_after) if start_after else None
-    written = 0
+    written = held = 0
     while True:
         page_where, page_params = where_clause, dict(params)
         if after is not None:
@@ -306,8 +306,7 @@ async def reembed_table(
             # on the old model, which search does not read, until --delete-old removes it. A
             # memory row's vector follows its own sensitivity label instead.
             page = without_credentials(page, lambda r: str(r.get(cfg["text"]) or ""))
-        if len(page) < len(rows):
-            log(f"  {table}: {len(rows) - len(page)} rows whose text reads as a credential kept")
+        held += len(rows) - len(page)
         left = await _rewrite_page(ch, embedder, table, page, key_only)
         written += len(page) - sum(left.values())
         if left:
@@ -321,6 +320,8 @@ async def reembed_table(
         log(f"  {table}: {written}/{total}  resume: {encode_resume(table, after)}")
         if len(rows) < batch:
             break
+    if held:
+        log(f"  {table}: {held} rows whose text reads as a credential kept on the old model")
     return written
 
 

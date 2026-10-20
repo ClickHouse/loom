@@ -9,9 +9,9 @@ import logging
 from typing import Any
 
 from server.core.vectors.search_settings import vector_search_settings
-from server.memory.app.credential_passages import HELD_MARGIN, without_credentials
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_types import SearchHit
+from server.memory.domain.sensitivity import HELD_MARGIN, without_credentials
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -19,6 +19,8 @@ log = logging.getLogger("server.memory.app.retrieval")
 # Top-N session summaries by cosine. Module constant, not a wire knob — the
 # assembler re-balances planes via RRF so a larger N never floods the block.
 _SESSION_SUMMARY_TOP_N = 5
+# Characters of a digest a hit shows; the whole text is read, so it can be checked first.
+_SUMMARY_EXCERPT_CHARS = 1200
 
 # Under agent='*' the digest leg fetches this many times its N and dedups per
 # session in Python: a session can carry one row per agent,
@@ -159,7 +161,6 @@ async def fetch_session_summaries(
     where_sql = " AND ".join(where)
     sql = f"""
         SELECT session_id,
-               substringUTF8(summary_text, 1, 1200) AS content_excerpt,
                summary_text,
                cosineDistance(summary_embedding, {{q:Array(Float32)}}) AS distance,
                -- NB: alias must NOT be `valid_at` — under the analyzer a
@@ -212,7 +213,7 @@ async def fetch_session_summaries(
             SearchHit(
                 memory_key=f"summary:{session_id}",
                 memory_type="semantic",
-                content_excerpt=str(r.get("content_excerpt") or ""),
+                content_excerpt=str(r.get("summary_text") or "")[:_SUMMARY_EXCERPT_CHARS],
                 distance=distance,
                 rank_score=sim,
                 temporal_anchor="",

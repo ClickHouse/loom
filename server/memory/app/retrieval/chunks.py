@@ -10,11 +10,11 @@ import re
 from typing import Any
 
 from server.core.vectors.search_settings import vector_search_settings
-from server.memory.app.credential_passages import without_credentials
 from server.memory.app.retrieval.retry import _call_retrying_empty_block
 from server.memory.domain.passage_trim import trim_chunk_excerpt
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_types import SearchHit, SearchQuery, _CHClient, hit_sort_key
+from server.memory.domain.sensitivity import without_credentials
 
 log = logging.getLogger("server.memory.app.retrieval")
 
