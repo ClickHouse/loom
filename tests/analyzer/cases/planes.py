@@ -536,7 +536,7 @@ def _logged_turn_rows(embedded: bool):
                     "unsaved": 1,
                 }
             ],
-            "countIf(embedding_model": [
+            "countIf(live AND embedding_model": [
                 {"current": 1 if embedded else 0, "unsaved": 1 if embedded else 0, "foreign": 0}
             ],
         }

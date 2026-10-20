@@ -308,6 +308,8 @@ class StoredEmbedding(BaseModel):
     unsaved: int
     # Rows another user owns, which a save for `user_id` must not take over.
     foreign: int
+    # Include retired versions: a repair must replace them even on a slower clock.
+    version_ts: datetime | None = None
 
 
 async def embedding_state(
@@ -326,13 +328,14 @@ async def embedding_state(
     ch = ch or _default_client()
     row = await ch.query_one(
         """
-        SELECT countIf(embedding_model = {model:String} AND embedding_dim > 0) AS current,
-               countIf(NOT is_saved OR user_id != {uid:String}) AS unsaved,
-               countIf(user_id NOT IN ('-', '', {uid:String})) AS foreign
+        WITH agent = {agent:String} AND tombstoned_at IS NULL AS live
+        SELECT countIf(live AND embedding_model = {model:String} AND embedding_dim > 0) AS current,
+               countIf(live AND (NOT is_saved OR user_id != {uid:String})) AS unsaved,
+               countIf(live AND user_id NOT IN ('-', '', {uid:String})) AS foreign,
+               maxOrNullIf(ts, embedding_model = {model:String}) AS version_ts
         FROM loom.conversation_embeddings FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
-          AND agent = {agent:String} AND thread_id = {tid:String}
-          AND msg_id = {mid:String} AND tombstoned_at IS NULL
+          AND thread_id = {tid:String} AND msg_id = {mid:String}
         """,
         params={
             "org": org,
@@ -347,7 +350,10 @@ async def embedding_state(
     if not row:
         return StoredEmbedding(current=0, unsaved=0, foreign=0)
     return StoredEmbedding(
-        current=int(row["current"]), unsaved=int(row["unsaved"]), foreign=int(row["foreign"])
+        current=int(row["current"]),
+        unsaved=int(row["unsaved"]),
+        foreign=int(row["foreign"]),
+        version_ts=row.get("version_ts"),
     )
 
 
@@ -449,9 +455,9 @@ async def unsave_message(
     ch: _CHClient | None = None,
 ) -> None:
     """Withdraw `user_id`'s saved rows of a turn in `table` (one of
-    SAVED_MESSAGE_TABLES): clear the flag, or remove the saved rows when recording
-    is off. Only rows saved by that user change. A synchronous mutation, so the
-    next saved-message search no longer returns the turn."""
+    SAVED_MESSAGE_TABLES): clear the flag, or remove an unrecorded transcript
+    and retire its vector. Only rows saved by that user change. The synchronous
+    mutation makes the next saved-message search omit the turn."""
     if table not in SAVED_MESSAGE_TABLES:
         raise ValueError(f"not a saved-message table: {table}")
     ch = ch or _default_client()
@@ -468,12 +474,14 @@ async def unsave_message(
             preserve_saved=False,
             ch=ch,
         )
+    deleting = remove and table == "loom.conversations"
+    tombstone = ", tombstoned_at = {when:DateTime}" if removing_embedding else ""
     statement = (
         f"DELETE FROM {table}"
-        if remove
-        else f"ALTER TABLE {table} UPDATE is_saved = false, saved_at = NULL"
+        if deleting
+        else f"ALTER TABLE {table} UPDATE is_saved = false, saved_at = NULL{tombstone}"
     )
-    sync = "lightweight_deletes_sync" if remove else "mutations_sync"
+    sync = "lightweight_deletes_sync" if deleting else "mutations_sync"
     live = "" if removing_embedding else "AND tombstoned_at IS NULL"
     await ch.execute(
         f"""

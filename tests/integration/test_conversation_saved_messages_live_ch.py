@@ -101,7 +101,7 @@ async def _saved_hits(
 
 async def _rows(ch: Any, table: str, namespace: str) -> list[dict[str, Any]]:
     return await ch.query_all(
-        f"SELECT run_id, user_id, is_saved FROM {table} "
+        f"SELECT run_id, user_id, is_saved, tombstoned_at FROM {table} "
         "WHERE org = 'itest-org' AND namespace = {ns:String} AND msg_id = 'm-1'",
         params={"ns": namespace},
     )
@@ -482,11 +482,13 @@ def _unsave_request(namespace: str) -> Any:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("recording", [False, True])
+@pytest.mark.parametrize("future_version", [False, True])
 async def test_unsave_can_be_saved_again(
     ch: Any,
     namespace: str,
     monkeypatch: pytest.MonkeyPatch,
     recording: bool,
+    future_version: bool,
 ) -> None:
     from server.knowledge.app import conversations
     from server.knowledge.store import conversations as repo
@@ -497,12 +499,23 @@ async def test_unsave_can_be_saved_again(
     monkeypatch.setattr(repo, "namespace_logging_enabled", logging_enabled)
     request = _save(namespace)
     assert (await conversations.handle_conversation_save_message(request)).indexed
+    if future_version:
+        # Another replica can have a clock ahead of the replica handling resave.
+        await ch.execute(
+            "INSERT INTO loom.conversation_embeddings "
+            "SELECT * REPLACE (ts + INTERVAL 1 DAY AS ts) FROM "
+            "(SELECT * FROM loom.conversation_embeddings FINAL "
+            "WHERE org = 'itest-org' AND namespace = {ns:String})",
+            params={"ns": namespace},
+        )
     assert (
         await conversations.handle_conversation_unsave_message(_unsave_request(namespace))
     ).found
     assert await _saved_hits(namespace) == []
     assert (await conversations.handle_conversation_save_message(request)).indexed
-    assert [hit.message_id for hit in await _saved_hits(namespace)] == [request.message_id]
+    for mode in ("lexical", "semantic"):
+        hits = await _saved_hits(namespace, search_mode=mode)
+        assert [hit.message_id for hit in hits] == [request.message_id]
 
 
 @pytest.mark.asyncio
@@ -541,7 +554,10 @@ async def test_unsave_retry_finishes_both_tables(
         rows = await _rows(ch, table, namespace)
         assert all(not row["is_saved"] for row in rows)
         if not recording:
-            assert rows == []
+            if table == "loom.conversations":
+                assert rows == []
+            else:
+                assert all(row["tombstoned_at"] is not None for row in rows)
 
 
 @pytest.mark.asyncio

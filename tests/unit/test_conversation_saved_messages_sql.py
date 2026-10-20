@@ -1,4 +1,4 @@
-"""Saved-message lexical ranking against the production ClickHouse statement."""
+"""Saved-message ranking and retirement against production ClickHouse statements."""
 
 from __future__ import annotations
 
@@ -83,3 +83,69 @@ async def test_long_saved_messages_and_many_query_terms_fit_the_statement_memory
     assert len(rows) == 1
     assert rows[0]["score"] > 0
     assert rows[0]["content"].endswith("needle")
+
+
+class _MutationClient:
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+        self.params: dict[str, Any] = {}
+
+    async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
+        self.statements.append(sql)
+        self.params.update(params or {})
+
+    async def query_all(self, *_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+
+@pytest.mark.parametrize("resave", [False, True])
+async def test_unsave_does_not_reveal_an_older_embedding_version(resave: bool) -> None:
+    from datetime import UTC, datetime
+
+    from server.knowledge.store.conversations import unsave_message
+
+    ch = _MutationClient()
+    await unsave_message(
+        "loom.conversation_embeddings",
+        "o",
+        "n",
+        "b",
+        "c",
+        "m",
+        user_id="user-b",
+        remove=True,
+        when=datetime(2025, 1, 1, 0, 1, tzinfo=UTC),
+        ch=ch,
+    )
+    columns = "org,namespace,agent,thread_id,msg_id,role,content_excerpt,embedding_model,embedding_dim,embedding,user_id,is_saved,ts"
+
+    def version(agent: str, saved: bool, second: int) -> str:
+        return (
+            f"INSERT INTO loom.conversation_embeddings ({columns}) SELECT "
+            f"'o','n','{agent}','c','m','assistant','shared','model',3072,"
+            f"arrayResize([toFloat32(1)],3072),'user-{agent}',{str(saved).lower()},"
+            f"toDateTime64('2025-01-01 00:00:0{second}',3,'UTC')"
+        )
+
+    setup = [
+        "SET enable_quantized_codec=1",
+        ddl("conversations"),
+        ddl("conversation_embeddings"),
+        "ALTER TABLE loom.conversation_embeddings MODIFY SETTING "
+        "max_bytes_to_merge_at_max_space_in_pool=1, max_bytes_to_merge_at_min_space_in_pool=1",
+        "INSERT INTO loom.conversations "
+        "(org,namespace,agent,thread_id,msg_id,role,content,user_id,is_saved) "
+        "VALUES ('o','n','b','c','m','assistant','shared','user-b',true)",
+        version("a", False, 1),
+        version("b", True, 2),
+        *ch.statements,
+    ]
+    if resave:
+        setup.append(version("b", True, 3))
+    rows = run(
+        setup,
+        "SELECT agent, user_id, is_saved FROM loom.conversation_embeddings FINAL "
+        "WHERE tombstoned_at IS NULL",
+        ch.params,
+    )
+    assert rows == ([{"agent": "b", "user_id": "user-b", "is_saved": True}] if resave else [])

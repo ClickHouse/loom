@@ -408,7 +408,7 @@ async def _save_message(input: ConversationSaveMessageInput) -> ConversationSave
                 run_id=stored.run_id,
                 is_saved=True,
                 saved_at=stored.saved_at,
-                ts=stored.ts,
+                ts=max(stored.ts, emb.version_ts or stored.ts),
             ),
             embedded,
         )
