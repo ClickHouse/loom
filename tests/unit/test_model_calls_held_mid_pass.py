@@ -117,10 +117,60 @@ def test_code_summaries_record_no_error_for_a_held_repository_or_file(monkeypatc
     result = w.CodeSummaryResult()
     asyncio.run(w._run(result))
     assert result.errors == []
-    w._note_file_error(result, "a.py", error)
-    assert result.errors == []  # a file whose call was held waits too
-    w._note_file_error(result, "a.py", RuntimeError("boom"))
-    assert result.errors == ["a.py: RuntimeError: boom"]
+
+
+@held
+@pytest.mark.parametrize("concurrency", [1, 3])
+def test_a_summary_pass_held_at_one_file_leaves_the_rest_of_the_repository(
+    monkeypatch, error, concurrency
+) -> None:
+    from server.code.workers import summary as w
+    from server.settings import settings
+
+    read: list[str] = []
+    paths = [f"f{i}.py" for i in range(20)]
+
+    class _Repo:
+        async def live_file_hashes(self, org: str, ns: str) -> dict[str, str]:
+            return {p: "h" for p in paths}
+
+        async def live_summary_rows(self, *a: Any, **k: Any) -> list[dict[str, Any]]:
+            return []
+
+        async def live_chunks_for_path(self, org: str, ns: str, path: str, model: str) -> list:
+            read.append(path)
+            return [{"start_line": 1, "scope": "f", "content": "def f(): pass"}]
+
+        async def insert_rows(self, table: str, rows: list[Any]) -> None:
+            raise AssertionError("no card is written for a held org")
+
+    async def nothing(*a: Any, **k: Any) -> Any:
+        return None
+
+    async def in_order(repo: Any, org: str, ns: str, *a: Any) -> list[str]:
+        return list(paths)
+
+    async def under_cap(org: str, ns: str) -> bool:
+        return False
+
+    monkeypatch.setattr("server.code.store.index.CodeRepo", _Repo)
+    monkeypatch.setattr("server.observability.budget.namespace_over_cap", under_cap)
+    monkeypatch.setattr(
+        "server.embedding.embedder.get_embedder", lambda: SimpleNamespace(model_name="m")
+    )
+    monkeypatch.setattr(  # the real summarise call: the model client refuses
+        "server.llm.client.get_llm_client_for_model",
+        lambda model=None: SimpleNamespace(complete=_raise(error), model="llm"),
+    )
+    monkeypatch.setattr("server.workers.cost_event.emit_worker_cost_event_for", lambda **k: None)
+    monkeypatch.setattr(w, "_dedupe_models", nothing)
+    monkeypatch.setattr(w, "_candidate_order", in_order)
+    monkeypatch.setattr(settings, "code_summary_concurrency", concurrency)
+    result = w.CodeSummaryResult()
+    with pytest.raises(type(error)):  # `_run` skips the repository on it
+        asyncio.run(w._summarize_repo("acme", "code-a", result, cap=100))
+    assert result.errors == [] and result.cards_written == 0
+    assert len(read) <= 2 * concurrency  # not every remaining file of the repository
 
 
 @held
@@ -172,25 +222,6 @@ def test_tracker_links_record_no_error_for_a_held_namespace(monkeypatch, error) 
     result = w.TrackerLinksResult()
     asyncio.run(w._run(result, repo=object(), source_factory=lambda org, ns: object()))
     assert result.errors == [] and result.namespaces == 0
-
-
-@held
-def test_a_held_dupcheck_refit_is_no_failed_refit(monkeypatch, error) -> None:
-    from server.tracker.app import dupcheck_fit as fit
-
-    async def none(*a: Any, **k: Any) -> Any:
-        return None
-
-    async def gold(*a: Any, **k: Any) -> list[dict[str, Any]]:
-        return [{"number": n, "label": 1} for n in range(fit.MIN_POSITIVES)]
-
-    monkeypatch.setattr(fit, "enabled", lambda: True)
-    monkeypatch.setattr(fit, "stored_fit", none)
-    monkeypatch.setattr(fit, "gather_gold", gold)
-    monkeypatch.setattr(fit, "replay_query", _raise(error))  # the replay embeds the query
-    monkeypatch.setattr(fit, "PACE_S", 0)
-    with pytest.raises(type(error)):  # not a `failed` outcome: the links pass skips the org
-        asyncio.run(fit.refit_namespace(object(), object(), "acme", "t-a", force=True))
 
 
 @held
@@ -265,17 +296,77 @@ def test_the_conflict_judge_lets_a_held_call_through(error) -> None:
 
 
 @held
-def test_the_conflict_sweep_records_no_error_for_a_held_mark(monkeypatch, error) -> None:
+def test_the_conflict_sweep_leaves_a_mark_whose_judge_is_held_unstamped(monkeypatch, error) -> None:
+    """The real re-judge and settle: the deferred judge's model call is refused, so
+    the verdict is `held`, nothing is stamped and the mark waits for the org."""
+    import server.memory.store as memory_repo
+    from server.memory.app import conflict_deferred as cd
+    from server.memory.app import conflicts as cf
+    from server.memory.domain.conflicts import ConflictPeer, PendingJudge
     from server.memory.store import conflict_marks
     from server.memory.workers import conflict_sweep as w
+    from server.settings import settings
+
+    mark = {
+        "org": "acme",
+        "namespace": "n",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "memory_key": "k",
+        "memory_type": "semantic",
+        "version": 2,
+        "created_at": datetime.now(UTC),
+        "content_sha256": "sha",
+        "embedding": [0.1, 0.2],
+    }
+    mem = SimpleNamespace(
+        status="active",
+        content_sha256="sha",
+        memory_type="semantic",
+        memory_id="m1",
+        run_id="-",
+        valid_at=None,
+    )
+    peer = ConflictPeer(
+        memory_id="p1",
+        memory_key="k2",
+        similarity=0.9,
+        pinned=False,
+        canonical="",
+        value="the old value",
+    )
+    stamped: list[Any] = []
 
     async def marks(**k: Any) -> list[dict[str, Any]]:
-        return [{"org": "acme", "namespace": "n", "memory_key": "k"}]
+        return [dict(mark)]
 
+    async def rows(keys: Any, **k: Any) -> dict[Any, Any]:
+        return {keys[0]: mem}
+
+    async def pending(**k: Any) -> Any:  # the candidate search; the judge is deferred
+        pj = PendingJudge("acme", "n", "the new value", [peer], [peer], "conflict", None, "-", "")
+        return SimpleNamespace(verdict=cd.PENDING, pending_judge=pj)
+
+    async def stamp(*a: Any, **k: Any) -> None:
+        stamped.append(a)
+
+    customer._reset_for_tests()
+    monkeypatch.setattr(settings, "memory_conflict_judge", True)
     monkeypatch.setattr(conflict_marks, "stale_pending_marks", marks)
-    monkeypatch.setattr(w, "rejudge", _raise(error))
+    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", rows)
+    monkeypatch.setattr(memory_repo, "stored_value_text", lambda m: "the new value")
+    monkeypatch.setattr(cf, "check_on_commit", pending)
+    monkeypatch.setattr(
+        "server.llm.client.get_llm_client", lambda: SimpleNamespace(complete=_raise(error))
+    )
+    monkeypatch.setattr(settings, "memory_ask_synth_model_cheap", "")
+    monkeypatch.setattr(cd, "stamp_checked", stamp)
+    monkeypatch.setattr(cd, "emit_settle_row", lambda *a, **k: None)
+    monkeypatch.setattr("server.memory.app.drops.record_drop", lambda *a, **k: None)
     outcome = asyncio.run(w.run_pass(ch=object()))
-    assert outcome["errors"] == 0 and outcome["verdicts"] == {}
+    assert outcome["verdicts"] == {cd.HELD: 1} and outcome["errors"] == 0
+    assert stamped == []
 
 
 @held
@@ -381,10 +472,45 @@ def test_a_held_projection_retry_is_no_error_and_leaves_the_row_open(monkeypatch
         error_type="RuntimeError",
         error_message="boom",
     )
-    monkeypatch.setattr(pf, "_retry_memory_chunks", _raise(error))
-    out = asyncio.run(pf.retry_projection_failure(failure, ch=object()))
+    turns = [
+        {"role": "user", "content": "We moved the staging cluster to us-east-2.", "user_id": "u"}
+    ]
+
+    class _Refusing:
+        model_name, dim = "m", 2
+        per_chunk = 0
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            raise error
+
+        async def embed(self, text: str) -> list[float]:
+            self.per_chunk += 1
+            raise error
+
+    ch = _CH(turns)
+    resolved: list[Any] = []
+
+    async def resolve(**k: Any) -> None:
+        resolved.append(k)
+
+    refusing = _Refusing()
+    monkeypatch.setattr("server.embedding.get_embedder", lambda: refusing)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(pf, "mark_projection_failures_resolved", resolve)
+    # The real retry and chunk write: only the embedder refuses.
+    out = asyncio.run(pf.retry_projection_failure(failure, ch=ch))
     assert not out.retried and not out.resolved and not out.error
     assert out.reason == "model_calls_held"
+    assert resolved == [] and ch.inserted == []  # the row stays open, no chunk written
+    assert refusing.per_chunk == 0  # a held batch is not retried chunk by chunk
+
+    class _BatchDown(_Refusing):  # the batch fails on its own; each chunk is then held
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("provider down")
+
+    monkeypatch.setattr("server.embedding.get_embedder", lambda: _BatchDown())
+    out = asyncio.run(pf.retry_projection_failure(failure, ch=ch))
+    assert out.reason == "model_calls_held" and resolved == []
 
 
 @held
@@ -401,3 +527,180 @@ def test_a_bulk_write_answers_a_held_conflict_check(monkeypatch, error) -> None:
                 put, [{}], [(entry, "v", None, None, None)], [(0, None, None, None)], [[0.1]]
             )
         )
+
+
+@held
+def test_the_duplicate_checks_judge_and_rerank_let_a_held_call_through(error) -> None:
+    from server.tracker.app import dup_judge, dup_rerank
+
+    llm = SimpleNamespace(complete=_raise(error))
+    cands = [{"number": 7, "title": "t", "body": "b"}]
+    with pytest.raises(type(error)):  # the request answers it, not "the fit's verdict stands"
+        asyncio.run(dup_judge.judge(llm, "title", "body", cands))
+    with pytest.raises(type(error)):  # not "the answer stands" without the rerank
+        asyncio.run(dup_rerank.rerank(llm, "title", "body", cands, body_chars=200))
+
+
+@held
+def test_bisect_fusion_lets_a_held_embed_and_rerank_through(monkeypatch, error) -> None:
+    from server.code.app import bisect_fusion as bf
+    from server.tracker.domain import bisect as bi
+
+    class _Refusing:
+        async def embed(self, text: str) -> list[float]:
+            raise error
+
+    class _Window:
+        async def window_prs(self, *a: Any, **k: Any) -> list[dict[str, Any]]:
+            return [{"pr_number": 1}]
+
+    monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: _Refusing())
+    with pytest.raises(type(error)):  # not "window_unavailable" with no vector leg
+        asyncio.run(
+            bf._read_window(
+                _Window(), "acme", "t-a", versions=[], bounds=(None, None), text="crash"
+            )
+        )
+    with pytest.raises(type(error)):  # nor the weak path's wider window: `([], {})`
+        asyncio.run(
+            bf.wide_extras(
+                _Window(),
+                "acme",
+                "t-a",
+                good="",
+                bad="",
+                master=False,
+                versions=[],
+                report_at=datetime(2026, 9, 1),
+                in_window=set(),
+                text="crash",
+                paths=[],
+            )
+        )
+    monkeypatch.setattr(
+        "server.llm.client.get_llm_client_for_model",
+        lambda model: SimpleNamespace(complete=_raise(error)),
+    )
+    pool = [bi.Candidate(pr_number=1, title="t", author="a", merged_at="", minor_version="")]
+    with pytest.raises(type(error)):  # not "failed" with the fused order kept
+        asyncio.run(bf.rerank_stage(pool, text="crash", force=True))
+
+
+@held
+def test_code_ingest_lets_a_held_embed_or_description_through(error) -> None:
+    from server.code.app.index import describe, ingest, round_models
+
+    class _Refusing:
+        calls = 0
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            self.calls += 1
+            raise error
+
+    refusing = _Refusing()
+    with pytest.raises(type(error)):  # not a stub with a recorded failure
+        asyncio.run(ingest._embed_texts(["def f(): pass"], refusing))
+    assert refusing.calls == 1  # a held batch is not retried text by text
+
+    class _Short:  # the batch answers short: the per-text fallback is held
+        calls = 0
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            self.calls += 1
+            if self.calls == 1:
+                return []
+            raise error
+
+    with pytest.raises(type(error)):
+        asyncio.run(ingest._embed_texts(["def f(): pass"], _Short()))
+    chunk = SimpleNamespace(scope="f", kind="function", content="def f(): pass", path="a.py")
+    llm = SimpleNamespace(complete=_raise(error))
+    with pytest.raises(type(error)):  # not an empty description
+        asyncio.run(describe._describe_chunk.__wrapped__(llm, chunk))
+    with pytest.raises(type(error)):  # nor a prefetch miss the file then repeats
+        asyncio.run(round_models._bounded(2, [_raise(error)()]))
+
+
+@held
+def test_a_bootstrap_slice_held_at_a_file_leaves_its_cursor(monkeypatch, error) -> None:
+    from server.code.app.index import bootstrap as bs
+    from server.settings import settings
+
+    class _Repo:
+        state: dict[str, str] = {}
+
+        async def get_state(self, org: str, ns: str, key: str) -> str:
+            return ""
+
+        async def set_state(self, org: str, ns: str, key: str, value: str, **k: Any) -> None:
+            self.state[key] = value
+
+    async def tree(*a: Any, **k: Any) -> list[str]:
+        return ["a.py", "b.py"]
+
+    async def show(*a: Any, **k: Any) -> bytes:
+        return b"def f(): pass\n"
+
+    async def no_denylist(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.code.app.index.gitrepo.ls_tree", tree)
+    monkeypatch.setattr("server.code.app.index.gitrepo.show_file", show)
+    monkeypatch.setattr("server.code.app.index.denylist.load_denylist", no_denylist)
+    monkeypatch.setattr("server.code.app.index.ingest_headers.headers_first", lambda p: p)
+    monkeypatch.setattr("server.code.app.index.ingest.ingest_file", _raise(error))
+    monkeypatch.setattr(
+        "server.embedding.embedder.get_embedder", lambda: SimpleNamespace(model_name="m")
+    )
+    monkeypatch.setattr(bs, "bootstrap_embedder", lambda: object())
+    monkeypatch.setattr(settings, "code_ingest_round_files", 0)
+    bs.reset_embed_breaker()
+    cfg = SimpleNamespace(org="acme", namespace="code-a", git_dir="/g", path_prefixes=[], label="r")
+    repo = _Repo()
+    with pytest.raises(type(error)):  # the leg's held clause skips the repository
+        asyncio.run(bs.index_slice(cfg, repo, "sha"))
+    assert bs.CURSOR_KEY not in repo.state  # the slice starts over once the org is back
+    assert not bs.embed_breaker_open()  # a held call is no provider outage
+
+
+@held
+def test_the_reconcile_and_rechunk_heals_let_a_held_call_through(monkeypatch, error) -> None:
+    """Both heal through ingest, which embeds; a held call ends the repository's
+    turn rather than land on the pass's errors as a failed reconcile."""
+    from server.code.app.index import ingest_pass as ip
+    from server.code.app.index import reconcile
+    from server.settings import settings
+
+    class _Repo:
+        async def all_state(self, org: str, ns: str) -> dict[str, Any]:
+            return {}
+
+        async def live_file_hashes(self, org: str, ns: str) -> dict[str, str]:
+            return {"a.py": "h"}
+
+    async def stale(*a: Any, **k: Any) -> Any:
+        return SimpleNamespace(stale=["a.py"], stale_count=1)
+
+    async def scope(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(settings, "code_reconcile_enabled", True)
+    monkeypatch.setattr(settings, "code_ingest_dependents_enabled", False)
+    monkeypatch.setattr(settings, "code_extractor_rechunk_enabled", True)
+    monkeypatch.setattr(reconcile, "find_stale_paths", stale)
+    monkeypatch.setattr(reconcile, "heal", _raise(error))  # heal re-ingests: the embed is held
+    monkeypatch.setattr(ip, "_scope_of", scope)
+    monkeypatch.setattr(
+        "server.embedding.embedder.get_embedder", lambda: SimpleNamespace(model_name="m")
+    )
+    cfg = SimpleNamespace(org="acme", namespace="code-a", git_dir="/g", label="r")
+    result = ip.CodeIngestResult()
+    with pytest.raises(type(error)):
+        asyncio.run(ip._maybe_reconcile(_Repo(), cfg, "sha", result))
+    monkeypatch.setattr(ip, "_stage_plan", lambda *a: ("heal", frozenset({"chunk"}), {}))
+    monkeypatch.setattr(ip, "_heal_languages", lambda *a: set())
+    monkeypatch.setattr(ip, "_scope_paths", lambda paths, langs: list(paths))
+    monkeypatch.setattr(ip, "_rechunk_batch", _raise(error))
+    with pytest.raises(type(error)):
+        asyncio.run(ip._maybe_rechunk(_Repo(), cfg, "sha", result))
+    assert result.errors == []

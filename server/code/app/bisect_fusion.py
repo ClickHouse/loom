@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from server.core.background import create_deferred_task
+from server.llm import customer
 from server.settings import settings
 from server.tracker.domain import bisect as bi
 from server.tracker.domain import bisect_fusion as fu
@@ -30,6 +31,8 @@ async def _embed(text: str) -> list[float]:
 
     try:
         return list(await get_embedder().embed(text[:4000]))
+    except customer.HOLDS:
+        raise  # the org's model calls are held: the request answers that
     except Exception as e:  # noqa: BLE001 — no vector leg, the others still rank
         logger.info("bisect fusion: embed failed: %s", e)
         return []
@@ -102,6 +105,8 @@ async def _read_window(
             source.window_prs(org, tracker_ns, versions, before=wall, after=floor),
             _embed(text) if text.strip() else asyncio.sleep(0, result=[]),
         )
+    except customer.HOLDS:
+        raise
     except Exception as e:  # noqa: BLE001 — the scan's candidates stand
         logger.info("bisect fusion: window read failed: %s", e)
         return {}, [], "window_unavailable"
@@ -302,6 +307,8 @@ async def rerank_stage(
         )
         body = result.text[result.text.find("{") : result.text.rfind("}") + 1]
         ranking = [x for x in json.loads(body).get("ranking", []) if isinstance(x, dict)]
+    except customer.HOLDS:
+        raise
     except Exception as e:  # noqa: BLE001 — the fused order stands
         logger.info("bisect rerank failed: %s", e)
         trigger = "weak" if weak else "asked"
@@ -364,6 +371,8 @@ async def wide_extras(
             source.window_prs(org, tracker_ns, wide, before=report_at, after=floor),
             _embed(text) if text.strip() else asyncio.sleep(0, result=[]),
         )
+    except customer.HOLDS:
+        raise
     except Exception as e:  # noqa: BLE001 — the first window stands
         logger.info("bisect wide window read failed: %s", e)
         return [], {}

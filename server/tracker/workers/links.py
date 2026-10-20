@@ -162,7 +162,8 @@ async def refit_dupcheck(
     """The weekly refit of tracker.duplicate_check's logistic fit
     for this namespace — due when the stored fit is `tracker_dupcheck_refit_interval_s`
     old; the pass counts fits, the rows fitted, the in-sample AUC and the
-    namespaces skipped (fresh, restricted, no gold, off). Never raises."""
+    namespaces skipped (fresh, restricted, no gold, off). Raises only a call the
+    model-call switch holds (`customer.HOLDS`), on which the pass skips the namespace."""
     from server.tracker.app import dupcheck_fit as df
 
     if not hasattr(src, "duplicate_gold"):

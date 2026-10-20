@@ -275,8 +275,11 @@ curl -s -X POST "$LOOM_BASE_URL/v1/org.set_model_calls" -H "Authorization: Beare
 - While off, no chat, embedding, rerank or classify request is sent for the
   org, and no cached vector or answer is served to it either: the switch is a
   kill switch. A request that needs one is refused (403 `MODEL_CALLS_DISABLED`):
-  `memory.set` of a memory that is embedded on write and `memory.search` among
-  them. A read by key (`memory.get`) and a delete make no model call and answer.
+  `memory.set` of a memory that is embedded on write, or in a namespace with a
+  classify endpoint, `memory.search`, and `tracker.similar`,
+  `tracker.duplicate_check` and `code.bisect_candidates` when they embed, judge
+  or rerank, among them. A read by key (`memory.get`) and a delete make no
+  model call and answer.
   The local embedder runs in-process and sends nothing, but it is switched off
   too. A call that names the org is checked even when Loom makes it for itself;
   only its own calls that name no org (the startup check, calibration) go on.

@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 from server.core.errors import ValidationError
+from server.llm import customer
 from server.settings import settings
 from server.tracker.api.models import (
     TrackerSimilarInput,
@@ -283,6 +284,8 @@ async def _similar_legs(
             )
         except TrackerUnavailable:
             raise
+        except customer.HOLDS:
+            raise  # the org's model calls are held: the request answers that, not an outage
         except Exception as e:
             # The leg's own store or embedder failed: the leg is unavailable and the
             # answer degraded (guarded() records it), never a 500 that also leaves the
@@ -292,27 +295,46 @@ async def _similar_legs(
     timings: dict[str, int] = {}
     if meta is not None:
         meta["timings_ms"] = timings
-
-    async def guarded(name: str, coro: Any) -> tuple[str, list[dict[str, Any]]]:
-        t0 = time.monotonic()
-        try:
-            return name, await coro
-        except TrackerUnavailable as e:
-            common._unavailable(f"tracker.similar/{name}", input.namespace, e)
-            status[name] = "tracker_unavailable"
-            if errors is not None:
-                errors[name] = e
-            return name, []
-        finally:
-            timings[name] = int((time.monotonic() - t0) * 1000)
-
+    marks = (input.namespace, status, errors, timings)
+    # Every leg runs to its end; then a held model call (`customer.HOLDS`) is the
+    # request's answer, rather than a degraded one without the vector leg.
     results = await asyncio.gather(
-        guarded("lexical", lexical()),
-        guarded("frames", frames()),
-        guarded("mentions", mentions()),
-        guarded("vector", vector()),
+        _guarded("lexical", lexical(), *marks),
+        _guarded("frames", frames(), *marks),
+        _guarded("mentions", mentions(), *marks),
+        _guarded("vector", vector(), *marks),
+        return_exceptions=True,
     )
-    return {name: rows for name, rows in results if rows}
+    legs: dict[str, list[dict[str, Any]]] = {}
+    for res in results:
+        if isinstance(res, BaseException):
+            raise res
+        if res[1]:
+            legs[res[0]] = res[1]
+    return legs
+
+
+async def _guarded(
+    name: str,
+    coro: Any,
+    ns: str,
+    status: dict[str, str],
+    errors: dict[str, BaseException] | None,
+    timings: dict[str, int],
+) -> tuple[str, list[dict[str, Any]]]:
+    """One leg's rows; an unavailable leg is named in `status` (and `errors`) and
+    answers none, so its siblings still serve."""
+    t0 = time.monotonic()
+    try:
+        return name, await coro
+    except TrackerUnavailable as e:
+        common._unavailable(f"tracker.similar/{name}", ns, e)
+        status[name] = "tracker_unavailable"
+        if errors is not None:
+            errors[name] = e
+        return name, []
+    finally:
+        timings[name] = int((time.monotonic() - t0) * 1000)
 
 
 async def _similar_frames_leg(

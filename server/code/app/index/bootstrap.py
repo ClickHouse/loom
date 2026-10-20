@@ -35,6 +35,7 @@ from server.code.app.index.mirror_locks import (
     partial_mirror,
     partial_temp_dir,
 )
+from server.llm import customer
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.bootstrap")
@@ -482,6 +483,8 @@ async def index_slice(
                 counters["files"] += 1
                 counters["embedded"] += int(getattr(stats, "embedded", 0) or 0)
                 counters["embed_stubs"] += int(getattr(stats, "embed_stubs", 0) or 0)
+            except customer.HOLDS:
+                raise  # the org's model calls are held: the repository waits
             except Exception as e:  # noqa: BLE001 — per-file, keep going
                 counters["errors"] += 1
                 logger.warning("bootstrap: %s %s: %s", cfg.label, path, e)

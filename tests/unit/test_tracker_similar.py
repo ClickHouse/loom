@@ -825,3 +825,46 @@ def test_query_tokens_drop_line_references() -> None:
         "mergetreedata",
         "lazy",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held", ["switched_off", "unread"])
+async def test_a_held_vector_leg_answers_the_refusal_not_a_degraded_answer(
+    monkeypatch, held
+) -> None:
+    from server.llm import customer
+
+    error = (
+        customer.ModelCallsDisabled("model calls are switched off for org 'clickhouse'")
+        if held == "switched_off"
+        else customer.SwitchUnread("the model-call switch could not be read")
+    )
+    s = _Src(item=_item())
+    monkeypatch.setattr(tsrc, "tracker_source", lambda org, ns: s)
+
+    class _Repo:
+        async def stored_vector(self, org, ns, kind, number):
+            return None  # the query text is embedded
+
+        async def namespace_stats(self, org, ns):
+            return {"live": 10, "dead": 0, "last_updated": None, "dims": []}
+
+    class _Refusing:
+        model_name, dim = "fake-ngram-8", 8
+
+        async def embed(self, text):
+            raise error
+
+    class _NoCursor:
+        async def get(self, org, ns, kind):
+            return None
+
+    monkeypatch.setattr(tsim, "_embed_repo", lambda: _Repo())
+    monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: _Refusing())
+    monkeypatch.setattr(
+        "server.tracker.app.embed_index.cursor_state", lambda code_repo=None: _NoCursor()
+    )
+    with pytest.raises(type(error)):  # 403 / 503, as memory.search answers
+        await tsim.handle_tracker_similar(
+            TrackerSimilarInput(org=ORG, namespace=NS, issue_number=117352, legs=["vector"])
+        )

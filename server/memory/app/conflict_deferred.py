@@ -235,8 +235,10 @@ async def settle(
     (`version`) `conflict_checked_at`; returns the settled verdict (`error` when the
     settle itself failed — the row stays as inserted, its mark left for the
     conflict sweep; `moved` when a newer write took the key while the judge ran,
-    which lands nothing). Never raises. Writes one `memory_drops` row and one
-    ledger row (`memory.set.settle`, the write's `request_id`)."""
+    which lands nothing; `held` when the model-call switch held the judge's call,
+    which stamps nothing, so the sweep judges it once the org is back). Never
+    raises. Writes one `memory_drops` row and one ledger row
+    (`memory.set.settle`, the write's `request_id`)."""
     from server.memory.app import conflicts as cf
     from server.memory.app.drops import record_drop
     from server.observability import cost_accumulator

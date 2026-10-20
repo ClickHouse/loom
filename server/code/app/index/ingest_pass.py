@@ -634,6 +634,8 @@ async def _maybe_reconcile(
                 found.truncated,
                 healed.files if healed else 0,
             )
+    except customer.HOLDS:
+        raise  # the reconcile re-ingests through the embedder: the repository waits
     except Exception as e:
         result.errors.append(f"reconcile: {type(e).__name__}: {e}")
         logger.exception("code_ingest: reconcile failed for %s", cfg.label)
@@ -944,6 +946,8 @@ async def _maybe_rechunk(
                 len(paths),
                 identical,
             )
+    except customer.HOLDS:
+        raise  # the re-chunk embeds: the repository waits
     except Exception as e:
         result.errors.append(f"rechunk: {type(e).__name__}: {e}")
         logger.exception("code_ingest: extractor re-chunk failed for %s", cfg.label)

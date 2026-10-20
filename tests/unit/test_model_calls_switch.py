@@ -994,3 +994,26 @@ def test_a_rebuild_stages_a_switched_off_orgs_rows_without_a_vector(monkeypatch)
     assert waiting == [0]  # the rebuild goes on: acme's row waits for its vector
     assert (out[0]["embedding"], out[0]["embedding_dim"]) == ([], 0)
     assert (out[1]["embedding"], out[1]["embedding_dim"]) == ([0.5, 0.5], 2)
+
+
+def test_the_dupcheck_refit_command_sends_nothing_for_a_switched_off_org(monkeypatch) -> None:
+    import argparse
+
+    from server.cli import tracker as cli
+    from server.tracker.app import dupcheck_fit as df
+
+    sent: list[str] = []
+
+    async def refit(src: Any, repo: Any, org: str, ns: str, **k: Any) -> Any:
+        await customer.require()  # what the replay's vector embed checks first
+        sent.append(org)
+
+    monkeypatch.setattr(cli, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr("server.tracker.app.source.tracker_source", lambda org, ns: object())
+    monkeypatch.setattr(df, "state_repo", lambda: object())
+    monkeypatch.setattr(df, "refit_namespace", refit)
+    _off("acme")
+    args = argparse.Namespace(org="acme", namespace="t-a", dry_run=False, negatives=None, out=None)
+    with pytest.raises(customer.ModelCallsDisabled):
+        cli._cmd_tracker_dupcheck_fit(args)
+    assert sent == []

@@ -312,17 +312,12 @@ async def _summarize_repo(
             started = time.monotonic()
             cost_accumulator.begin_op()
             try:
-                excerpts = await _file_excerpts(repo, org, ns, path, embedder.model_name)
-                if not excerpts:
-                    return
-                summary = await _summarize(llm, path, excerpts)
-                row = await _card_row(
-                    embedder, live, summary, getattr(llm, "model", ""), content_hash
-                )
-                await repo.insert_rows("code_summaries", [row])
-                result.cards_written += 1
+                if await _write_card(repo, llm, embedder, live, (org, ns, path), content_hash):
+                    result.cards_written += 1
+            except customer.HOLDS:
+                raise  # the org's calls are held: the pass leaves the rest of this repository
             except Exception as e:  # noqa: BLE001 — per-file, keep going
-                _note_file_error(result, path, e)
+                result.errors.append(f"{path}: {type(e).__name__}: {e}")
             finally:
                 emit_worker_cost_event_for(
                     org=org,
@@ -334,11 +329,18 @@ async def _summarize_repo(
     await _run_cards(candidates, _one, workers, lambda: result.cards_written >= cap)
 
 
-def _note_file_error(result: Any, path: str, e: Exception) -> None:
-    """One file's failure on the pass's errors; a call the model-call switch held
-    is none: the file is summarised once the org is back."""
-    if not isinstance(e, customer.HOLDS):
-        result.errors.append(f"{path}: {type(e).__name__}: {e}")
+async def _write_card(
+    repo: Any, llm: Any, embedder: Any, live: dict[str, Any], at: tuple[str, str, str], hash_: str
+) -> bool:
+    """One file's card, summarised, embedded and written; False with no excerpts."""
+    org, ns, path = at
+    excerpts = await _file_excerpts(repo, org, ns, path, embedder.model_name)
+    if not excerpts:
+        return False
+    summary = await _summarize(llm, path, excerpts)
+    row = await _card_row(embedder, live, summary, getattr(llm, "model", ""), hash_)
+    await repo.insert_rows("code_summaries", [row])
+    return True
 
 
 async def _run_cards(
@@ -348,7 +350,8 @@ async def _run_cards(
     at_cap: Any,
 ) -> None:
     """Consume the candidate list in order until `at_cap()`: sequentially
-    for one worker, else as a bounded fan-out with `workers` files in flight."""
+    for one worker, else as a bounded fan-out with `workers` files in flight.
+    A file that raises (a held model call) ends the list, its peers cancelled."""
     if workers == 1:
         for path in candidates:
             if at_cap():
@@ -364,6 +367,8 @@ async def _run_cards(
             if len(pending) >= workers * 2:
                 done_set, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 pending = [t for t in pending if t not in done_set]
+                for task in done_set:
+                    task.result()  # re-raises what the file raised
         if pending:
             await asyncio.gather(*pending)
     finally:

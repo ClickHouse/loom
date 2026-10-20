@@ -22,6 +22,7 @@ import asyncio
 import logging
 from typing import Any
 
+from server.llm import customer
 from server.observability.genai import staged
 
 logger = logging.getLogger("loom.code_index.round_models")
@@ -41,6 +42,8 @@ async def _bounded(limit: int, coros: list[Any]) -> list[Any]:
         async with gate:
             try:
                 return await c
+            except customer.HOLDS:
+                raise  # the org's model calls are held: the repository waits
             except Exception as exc:  # noqa: BLE001 — a miss, the file calls itself
                 logger.debug("round models: call skipped (%s)", exc)
                 return None
