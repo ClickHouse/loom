@@ -1,13 +1,12 @@
 """Pluggable per-namespace reranker.
 
 When a namespace sets `rerank_endpoint` (or a request sets `rerank`),
-`memory.search` POSTs its candidate pool to the endpoint of that NAME and
-orders results by the response. Rows an exact identifier match pins keep their
-place and are not sent; with fewer than two rows left, no call is made. Names map
-to URLs only in the operator's LOOM_RERANK_ENDPOINTS_JSON; a caller never
-supplies the URL, and a value that
-is not a configured name (a URL included) reranks nothing. Loom owns the data
-plane, not the model.
+`memory.search` POSTs its candidate pool to the endpoint of that NAME and orders
+results by the response. Rows an exact identifier match pins keep their place
+and are not sent; with fewer than two rows left, no call is made. Names map to
+URLs only in the operator's LOOM_RERANK_ENDPOINTS_JSON; a caller never supplies
+the URL, and a value that is not a configured name (a URL included) reranks
+nothing. Loom owns the data plane, not the model.
 
 Built-in rerankers (no separate service to run): `builtin:openai` (or
 `builtin:openai:gpt-4o-mini`) routes through Loom's LLM client;
