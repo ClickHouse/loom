@@ -94,6 +94,9 @@ async def test_a_reranker_that_keeps_the_input_order_changes_no_score(
         ("user_name", 0.40),
         ("user_editor", 0.37),
     ]
+    # No pre-rerank score when nothing moved, and a trail of zero moves.
+    assert all("rank_score_pre_rerank" not in h.score_components for h in ctx.all_hits)
+    assert all(h.score_components["rerank_delta"] == 0.0 for h in ctx.all_hits)
 
 
 @pytest.mark.asyncio
