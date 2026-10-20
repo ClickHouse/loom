@@ -419,6 +419,7 @@ def test_a_protected_attribute_after_a_newline_is_tagged(monkeypatch: pytest.Mon
         "PIN code 0042",
         "CVV 123",
         "the cvc was 987",
+        "PIN number 123456",
         "my PIN is 4471 of course",
         "passcode = 908712",
         "Security code: 55512",
@@ -435,6 +436,7 @@ def test_payment_and_identity_numbers_are_high(text: str) -> None:
         "pay to DE89370400440532013000 by Friday",
         "ES91 2100 0418 4502 0005 1332 EUR",
         "ref XY12 GB82 WEST 1234 5698 7654 32",
+        "ref XY12 LC55 HEMM 0001 0001 0012 0012 0002 3015",  # a 32-character IBAN
         # two phone numbers side by side are not read as one card number
         "phones: 415-555-0123 415-555-0199",
         # a phone number keeps its own tier: 13 digits after `+`, Luhn-valid or not
@@ -470,6 +472,8 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
         "wire it to pin #115",
         "ship to MG Road, Bengaluru, PIN code 560001",  # a postal code
         "PIN code: 560001",
+        "Bengaluru, Karnataka, PIN: 560001",
+        "PIN is 560001",
         "passcode 100 of the batch",
         "the spinner took 1500 ms",
         "a pin is 2 mm wide",
@@ -550,6 +554,29 @@ def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
     assert not re.search(COARSE_SHAPE_RE, "pin numpy to 1.26 in the lockfile")
     assert not re.search(COARSE_SHAPE_RE, "the passcode screen and the CVV field")
     assert not re.search(COARSE_SHAPE_RE, "verify SHA256SUMS before the upload")
+    assert not re.search(COARSE_SHAPE_RE, "pin the base image before the 2025 release")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"note": "door codes\nPIN: 4471"},
+        {"note": "PIN:\n4471"},
+        {"note": "PIN\nis 4471"},
+        {"note": "bank:\nMT84 MALT 0110 0001 2345 MTLC AST0 01S"},
+    ],
+)
+def test_the_sweeps_coarse_filter_reads_stored_json_text(value: object) -> None:
+    # `match()` runs on the stored column, where an object value's line break is the two
+    # characters `\n`; the detector reads the decoded text.
+    import re
+
+    from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE
+    from server.memory.domain.sensitivity import detector_text
+
+    stored = json.dumps(value)
+    assert detect_sensitivity(detector_text(stored)) in ("high", "medium")
+    assert re.search(COARSE_SHAPE_RE, stored)
 
 
 def test_a_question_for_a_bank_account_is_contact_intent() -> None:
@@ -557,4 +584,6 @@ def test_a_question_for_a_bank_account_is_contact_intent() -> None:
 
     assert contact_intent("which IBAN does my salary go to?")
     assert contact_intent("what is the bank account for rent")
+    assert contact_intent("list my IBANs")
+    assert contact_intent("account numbers for payroll")
     assert not contact_intent("what did we decide about the deploy schedule")

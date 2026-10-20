@@ -89,23 +89,25 @@ _CARD_NETWORKS: tuple[tuple[tuple[str, ...], tuple[int, ...]], ...] = (
 # A US Social Security number written ddd-dd-dddd, without the never-issued ranges:
 # area 000, 666 or 9xx, group 00, serial 0000.
 _SSN = re.compile(r"(?<![\d-])(?!000|666|9)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d-])", re.ASCII)
-# A PIN, passcode, CVV/CVC or security code stated with its 3-8 digit value. Every label
-# takes the value after `is`, `was`, `:` or `=` ("PIN is 4471", "cvv: 123"). All but a
-# bare `pin`, which is also a verb and a connector pin ("pin 115", "pin #115"), take it
-# directly too ("CVV 123"), unless an `of` follows ("passcode 100 of the batch" names a
-# position). A `PIN code` takes 3-5 digits only: a 6-digit PIN code is an Indian postal
-# code. Each whitespace run has its own anchor, so a long run of spaces is read once.
+# A PIN, passcode, CVV/CVC or security code stated with its value. Every label takes the
+# value after `is`, `was`, `:` or `=` ("PIN is 4471", "cvv: 123"). All but a bare `pin`,
+# which is also a verb and a connector pin ("pin 115", "pin #115"), take it directly too
+# ("CVV 123"), unless an `of` follows ("passcode 100 of the batch" names a position).
+# `pin number`, `passcode`, `cvv`, `cvc` and `security code` take 3-8 digits; `pin` and
+# `pin code` take 3-5, since "PIN: 560001" and "PIN code 560001" are Indian postal codes.
+# Each whitespace run has its own anchor, so a long run of spaces is read once.
 _PIN_VALUE_AFTER = r"(?:\s+(?:is|was)(?:\s*[:=])?|\s*[:=])\s*"
+_LONG_PIN_LABEL = r"(?:pin number|passcode|cvv2?|cvc2?|security code)"
 _STATED_PIN = re.compile(
-    r"(?i)\b(?:pin(?: number)?|passcode|cvv2?|cvc2?|security code)"
-    rf"{_PIN_VALUE_AFTER}\d{{3,8}}(?!\d)"
-    r"|\b(?:pin number|passcode|cvv2?|cvc2?|security code)\s+\d{3,8}(?!\d)(?!\s+of\b)"
-    rf"|\bpin code(?:{_PIN_VALUE_AFTER}|\s+)\d{{3,5}}(?!\d)",
+    rf"(?i)\b{_LONG_PIN_LABEL}{_PIN_VALUE_AFTER}\d{{3,8}}(?!\d)"
+    rf"|\b{_LONG_PIN_LABEL}\s+\d{{3,8}}(?!\d)(?!\s+of\b)"
+    rf"|\bpin(?:{_PIN_VALUE_AFTER}| code(?:{_PIN_VALUE_AFTER}|\s+))\d{{3,5}}(?!\d)",
     re.ASCII,
 )
 # An IBAN: country code, two check digits, then the BBAN in groups of four (spaced or
-# not) with a short last group; 15-34 characters once the spaces are gone.
-_IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?\b", re.ASCII)
+# not) with a short last group; 15-34 characters once the spaces are gone. One group more
+# than the longest IBAN needs leaves room for an IBAN-shaped token before it.
+_IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,8}(?: ?[A-Z0-9]{1,3})?\b", re.ASCII)
 
 
 def _luhn_ok(digits: str) -> bool:
@@ -157,8 +159,8 @@ def _is_iban(candidate: str) -> bool:
 
 def _has_iban(text: str) -> bool:
     """An IBAN in `text`. A spaced match can take in an uppercase word before or after it
-    ("XY12 GB82 ...", "... 1332 EUR"), so each run of its groups is checked (at most nine
-    groups, so at most 45 runs)."""
+    ("XY12 GB82 ...", "... 1332 EUR"), so each run of its groups is checked (at most ten
+    groups, so at most 55 runs)."""
     for m in _IBAN.finditer(text):
         groups = m.group().split(" ")
         for start in range(len(groups)):
@@ -166,13 +168,6 @@ def _has_iban(text: str) -> bool:
                 if _is_iban("".join(groups[start:end])):
                     return True
     return False
-
-
-def _has_high_number(text: str) -> bool:
-    """A card number, an SSN or a stated PIN in `text`."""
-    if _SSN.search(text) is not None or _STATED_PIN.search(text) is not None:
-        return True
-    return _has_card(text)
 
 
 # --- Protected-attribute classes --------------------------------------------
@@ -284,7 +279,7 @@ def detect_sensitivity(text: str) -> str:
     contact details or an IBAN, '' otherwise. Order matters — a line with both is 'high'."""
     if not text:
         return ""
-    if any(pat.search(text) for pat in _HIGH_PATTERNS) or _has_high_number(text):
+    if any(pat.search(text) for pat in (*_HIGH_PATTERNS, _SSN, _STATED_PIN)) or _has_card(text):
         return HIGH
     if any(pat.search(text) for pat in _MEDIUM_PATTERNS) or _has_iban(text):
         return MEDIUM
@@ -388,7 +383,7 @@ _CONTACT_INTENT = re.compile(
     r"how (?:do|can) i (?:reach|contact|get)|"
     r"who (?:do|should) i (?:call|email|contact)|"
     # an IBAN is labelled medium too: a question for the account is asking for it
-    r"iban|bank account|account number)\b",
+    r"ibans?|bank accounts?|account numbers?)\b",
     re.IGNORECASE,
 )
 

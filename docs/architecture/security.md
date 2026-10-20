@@ -641,11 +641,13 @@ The `high` shapes:
   16-19) and passes the Luhn check, so a 15-digit IMEI is not a card.
 - Social Security number: `ddd-dd-dddd` outside the never-issued ranges (area 000, 666,
   9xx; group 00; serial 0000).
-- Stated PIN: a PIN, passcode, CVV/CVC or security code followed by its 3-8 digit value
-  after `is`, `was`, `:` or `=` (`PIN is 4471`, `cvv: 123`). Every label but a bare `pin`,
-  which is also a verb and a connector pin (`pin 115`, `pin #115`), also takes the value
-  directly (`CVV 123`), unless `of` follows it (`passcode 100 of the batch`). A `PIN code`
-  takes 3-5 digits only, since a 6-digit PIN code is an Indian postal code.
+- Stated PIN: a PIN, passcode, CVV/CVC or security code followed by its value after `is`,
+  `was`, `:` or `=` (`PIN is 4471`, `cvv: 123`). Every label but a bare `pin`, which is
+  also a verb and a connector pin (`pin 115`, `pin #115`), also takes the value directly
+  (`CVV 123`), unless `of` follows it (`passcode 100 of the batch`). `PIN number`,
+  passcode, CVV/CVC and security code take 3-8 digits; `PIN` and `PIN code` take 3-5, since
+  `PIN: 560001` and `PIN code 560001` are Indian postal codes, so a 6-digit PIN counts
+  when stated as a `PIN number`.
 
 An IBAN counts when it passes the ISO 13616 mod-97 check, and a question naming an IBAN,
 a bank account or an account number counts as contact intent, so ranking does not demote
