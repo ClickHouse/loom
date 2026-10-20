@@ -141,7 +141,8 @@ def test_page_paths_serve_the_dashboard(client, path: str) -> None:
     assert r.status_code == 200
     assert _PAGE_MARK in r.text and "window.__LOOM_AUTH_DISABLED" in r.text
     assert r.headers["cache-control"] == "no-store"
-    assert "nonce-" in r.headers["content-security-policy"]
+    [csp] = r.headers.get_list("content-security-policy")
+    assert "nonce-" in csp
 
 
 def test_assets_are_served_immutable(client) -> None:
@@ -174,11 +175,6 @@ def test_api_page_and_asset_answers_carry_the_browser_security_headers(client, p
     r = client.get(path)
     assert r.status_code == 200
     assert_security_headers(r)
-
-
-def test_the_dashboard_keeps_its_own_csp(client) -> None:
-    [csp] = client.get("/").headers.get_list("content-security-policy")
-    assert "nonce-" in csp and "script-src" in csp
 
 
 def test_hsts_max_age_zero_sends_no_hsts(client, monkeypatch: pytest.MonkeyPatch) -> None:

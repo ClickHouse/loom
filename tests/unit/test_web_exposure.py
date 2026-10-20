@@ -78,19 +78,6 @@ def test_cors_star_is_refused() -> None:
     ]
 
 
-# Auth off, so the gate checks the preflight's Origin too.
-@pytest.mark.usefixtures("auth_off")
-def test_a_cors_preflight_carries_the_security_headers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "cors_origins", "https://app.example")
-    r = _gated_client("http://localhost").options(
-        "/v1/memory.list",
-        headers={"origin": "https://app.example", "access-control-request-method": "POST"},
-    )
-    assert r.status_code == 200
-    assert r.headers["access-control-allow-origin"] == "https://app.example"
-    assert_security_headers(r)
-
-
 # ---- Host allowlist while auth is off ----
 
 
@@ -299,6 +286,19 @@ def test_a_refusal_while_draining_closes_the_connection(monkeypatch: pytest.Monk
     r = _post(**{"content-type": "text/plain", "origin": "https://evil.example"})
     assert r.status_code == 403
     assert r.headers["connection"] == "close"
+
+
+# Auth off, so the gate checks the preflight's Origin too.
+@pytest.mark.usefixtures("auth_off")
+def test_a_cors_preflight_carries_the_security_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "cors_origins", "https://app.example")
+    r = _gated_client("http://localhost").options(
+        "/v1/memory.list",
+        headers={"origin": "https://app.example", "access-control-request-method": "POST"},
+    )
+    assert r.status_code == 200
+    assert r.headers["access-control-allow-origin"] == "https://app.example"
+    assert_security_headers(r)
 
 
 def test_a_body_limit_refusal_carries_the_security_headers() -> None:
