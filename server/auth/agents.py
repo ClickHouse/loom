@@ -56,8 +56,8 @@ def home_of(subject_: str) -> str:
 
 async def granted(org: str, subject_: str) -> dict[str, str]:
     """The active namespaces of `org` where `subject_` holds a live grant, with
-    the role it counts as in a token: writer at most, so an agent never
-    re-shares a namespace it was only lent."""
+    the role it counts as in a token: writer at most, so an agent cannot pass
+    on admin over a namespace it was lent."""
     from server.core.grant_cache import grant_map
 
     ranks = (await grant_map(org, subject_)).ranks
@@ -67,7 +67,7 @@ async def granted(org: str, subject_: str) -> dict[str, str]:
 
 def lent(roles: dict[str, str], held: dict[str, str]) -> list[str]:
     """The namespaces of `held` beyond `roles` (the agent's own and its
-    trust's), by name: those a token names, up to MAX_LENT."""
+    trust's), by name; the caller caps them at MAX_LENT."""
     return [ns for ns in held if ns not in roles]
 
 

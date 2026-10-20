@@ -279,3 +279,58 @@ def test_an_unshare_rechecks_the_row_under_the_grants_claim(monkeypatch) -> None
     with pytest.raises(PreconditionFailedError):
         asyncio.run(grants_app.revoke_grant(body, check))
     assert written == []
+
+
+def test_a_share_rechecks_the_row_under_the_grants_claim(monkeypatch) -> None:
+    # The row read under the claim is an admin's: the share writes nothing.
+    from server.auth import aliases
+    from server.identity.api.models_grants import GrantsCreateInput
+    from server.identity.app import grants as grants_app
+
+    written: list[Any] = []
+
+    async def find_active_grant(org: str, namespace: str, subject: str, **kw: Any) -> GrantState:
+        return _row("alice@acme.com")
+
+    async def canonical(org: str, subject: str) -> str:
+        return subject
+
+    async def no_ceiling(*a: Any) -> None:
+        return None
+
+    class _Claim:
+        async def __aenter__(self) -> None:
+            return None
+
+        async def __aexit__(self, *a: Any) -> None:
+            return None
+
+    async def insert_row(row: Any, **kw: Any) -> None:
+        written.append(row)
+
+    monkeypatch.setattr(grants_app.grants_repo, "find_active_grant", find_active_grant)
+    monkeypatch.setattr(grants_app.grants_repo, "insert_row", insert_row)
+    monkeypatch.setattr(grants_app, "grant_change", lambda *a: _Claim())
+    monkeypatch.setattr(grants_app, "_enforce_code_ceiling", no_ceiling)
+    monkeypatch.setattr(aliases, "canonical_subject", canonical)
+    check = agent_shares._made_by("sa:fleet:a", "sa:fleet:b", "fleet-a")
+    body = GrantsCreateInput(org="acme", namespace="fleet-a", subject="sa:fleet:b", role="viewer")
+    with pytest.raises(PreconditionFailedError):
+        asyncio.run(grants_app.create_grant(body, check))
+    assert written == []
+
+
+def test_a_share_that_would_lower_a_grant_says_how_an_agent_lowers_it(monkeypatch, world) -> None:
+    from server.core.errors import GrantWouldDowngradeError
+
+    async def lowering(input: Any, may_replace: Any) -> Any:
+        raise GrantWouldDowngradeError("", current_role="writer", requested_role=input.role)
+
+    monkeypatch.setattr(agent_shares, "create_grant", lowering)
+    _as("sa:fleet:a")
+    try:
+        with pytest.raises(GrantWouldDowngradeError, match="grants.unshare_agent") as e:
+            _share()
+        assert e.value.extra == {"current_role": "writer", "requested_role": "viewer"}
+    finally:
+        set_current_auth(None)

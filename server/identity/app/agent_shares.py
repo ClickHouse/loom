@@ -17,7 +17,12 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from server.auth import agents, machines
-from server.core.errors import AuthInsufficientError, PreconditionFailedError, ValidationError
+from server.core.errors import (
+    AuthInsufficientError,
+    GrantWouldDowngradeError,
+    PreconditionFailedError,
+    ValidationError,
+)
 from server.identity.api.models_grants import (
     GrantsCreateInput,
     GrantsRevokeInput,
@@ -30,15 +35,18 @@ from server.identity.app.grants import create_grant, revoke_grant
 from server.identity.domain.grants import GrantState
 
 
-def _parties(org: str, namespace: str, agent: str) -> tuple[str, str]:
-    """(the caller's subject, the subject of `agent` in its trust); refused
-    unless the caller is an agent acting on its own namespace."""
+def _parties(org: str, namespace: str, agent: str) -> tuple[str, str, str]:
+    """(the caller's trust, the caller's subject, the subject of `agent` in
+    that trust); refused unless the caller is an agent acting on its own
+    namespace."""
     from server.auth.context import current_auth
 
     auth = current_auth()
     found = agents.parse(auth.subject) if auth is not None else None
     if auth is None or found is None or auth.org != org:
-        raise AuthInsufficientError("only an agent shares its namespace, with grants.share_agent")
+        raise AuthInsufficientError(
+            "only the agent whose namespace it is shares it or takes it back"
+        )
     trust, me = found
     own = agents.namespace(trust, me)
     if namespace != own:
@@ -47,7 +55,7 @@ def _parties(org: str, namespace: str, agent: str) -> tuple[str, str]:
         raise ValidationError("agent: lower-case letters, digits and '-', at most 63")
     if agent == me:
         raise ValidationError("an agent already owns its namespace")
-    return auth.subject, agents.subject(trust, agent)
+    return trust, auth.subject, agents.subject(trust, agent)
 
 
 def _made_by(me: str, subject: str, namespace: str) -> Callable[[GrantState], None]:
@@ -68,14 +76,13 @@ async def handle_grants_share_agent(input: GrantsShareAgentInput) -> GrantsShare
     """Let another agent of the caller's trust read, or write, the caller's own namespace."""
     from server.auth.authz import may_be_restricted
 
-    me, subject = _parties(input.org, input.namespace, input.agent)
+    trust, me, subject = _parties(input.org, input.namespace, input.agent)
     if await may_be_restricted(input.org, input.namespace):
         # A restricted read needs a grant its admin gave, never a writer's.
         raise AuthInsufficientError(
             f"{input.namespace} is restricted: only its admin grants it, with grants.create"
         )
     # Counted as the grantee's token counts them (`agents.with_grants`).
-    trust, _ = agents.parse(me) or ("", "")
     m = await machines.get(trust)
     roles = {agents.home_of(subject): "writer", **dict(m["ns_roles"] if m else [])}
     extra = agents.lent(roles, await agents.granted(input.org, subject))
@@ -84,14 +91,23 @@ async def handle_grants_share_agent(input: GrantsShareAgentInput) -> GrantsShare
             f"agent {input.agent} holds {agents.MAX_LENT} namespaces already; "
             "a namespace must be taken back first"
         )
-    # Never lowering (409 GRANT_WOULD_DOWNGRADE) and never over someone else's
-    # grant: an agent lowers its own share by taking it back first.
-    out = await create_grant(
-        GrantsCreateInput(
-            org=input.org, namespace=input.namespace, subject=subject, role=input.role
-        ),
-        _made_by(me, subject, input.namespace),
-    )
+    # Never lowering and never over someone else's grant: an agent lowers its
+    # own share by taking it back first.
+    try:
+        out = await create_grant(
+            GrantsCreateInput(
+                org=input.org, namespace=input.namespace, subject=subject, role=input.role
+            ),
+            _made_by(me, subject, input.namespace),
+        )
+    except GrantWouldDowngradeError as e:
+        current = str(e.extra.get("current_role", ""))
+        raise GrantWouldDowngradeError(
+            f"{subject} is {current} on {input.namespace}; a {input.role} share would lower "
+            "it: take it back with grants.unshare_agent, then share again",
+            current_role=current,
+            requested_role=input.role,
+        ) from None
     return GrantsShareAgentOutput(
         namespace=input.namespace, subject=subject, role=input.role, granted_at=out.granted_at
     )
@@ -99,7 +115,7 @@ async def handle_grants_share_agent(input: GrantsShareAgentInput) -> GrantsShare
 
 async def handle_grants_unshare_agent(input: GrantsUnshareAgentInput) -> GrantsUnshareAgentOutput:
     """Take back what the caller lent another agent of its trust."""
-    me, subject = _parties(input.org, input.namespace, input.agent)
+    _, me, subject = _parties(input.org, input.namespace, input.agent)
     out = await revoke_grant(
         GrantsRevokeInput(org=input.org, namespace=input.namespace, subject=subject),
         _made_by(me, subject, input.namespace),
