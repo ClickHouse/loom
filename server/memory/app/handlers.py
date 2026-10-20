@@ -778,16 +778,17 @@ async def _key_moved_on(
     """The answer when the key moved on after the version check (`checked`), read with
     sequential consistency; None when it did not. Every tombstone of this same delete (the
     split `_after_checked` makes) is set aside, and the newest version left decides. A live
-    row means `version_changed`; another delete's or a sweep's tombstone means that delete
-    or sweep removed the key, not this one (`found=False`). Either one below this delete's
-    newest tombstone is written again above it, a tombstone stamped as this delete's own so
-    the key's head is the row it removed; a head that already carries that row is left. A
-    write still in flight lifts itself when it lands (`write_fence.lift_after_insert`)."""
+    row means `version_changed`; another remover's tombstone (a delete, a sweep, a dedup or
+    a conflict resolution) means it removed the key, not this one (`found=False`). Either
+    one below this delete's newest tombstone is written again above it, a tombstone stamped
+    as this delete's own so the key's head is the row it removed; a head that already
+    carries that row is left. A write still in flight lifts itself when it lands
+    (`write_fence.lift_after_insert`)."""
     same_delete, others = await _after_checked(existing, checked=checked, tombstone=tombstone)
     if not others:
         return None
     row = await _version_row(existing, max(others))
-    gone = row.tombstoned_at is not None  # another delete or a sweep removed it
+    gone = row.tombstoned_at is not None  # another remover took the key
     top = max([tombstone, *same_delete])
     if row.version < top and not (gone and await _head_carries(existing, top, row)):
         # A sweep's marker stays on the sweep's tombstone, which keeps the writes it caught.
@@ -806,7 +807,7 @@ _NOT_CARRIED = frozenset({"version", "updated_at", "tombstoned_at", "source_trac
 async def _head_carries(existing: Any, top: int, row: Any) -> bool:
     """Version `top` of the key, this delete's newest tombstone, already carries every
     column of `row` a copy would: a copy this delete wrote back, or its own tombstone of
-    the row another delete or a sweep removed. Then it is not copied again. What the
+    the row another remover took. Then it is not copied again. What the
     removing write stamped is not the row's: the `tombstoned` status of a by-id tombstone
     (a sweep, dedup, conflict resolution) and a sweep's marker over the row's own reason."""
     import server.memory.store as memory_repo
