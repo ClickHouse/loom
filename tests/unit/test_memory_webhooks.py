@@ -17,6 +17,7 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -175,7 +176,10 @@ async def test_the_registry_copy_is_read_again_and_kept_when_a_read_fails(
     monkeypatch.setattr(app, "_hooks", {})
     monkeypatch.setattr(app, "_loaded", False)
     monkeypatch.setattr(app, "_next_read", 0.0)
+    monkeypatch.setattr(settings, "memory_webhook_refresh_seconds", 30.0)
     assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
+    # The next read is due an interval after this one landed.
+    assert 25 < app._next_read - time.monotonic() <= 30
     # Within the interval the copy serves without a read.
     assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
     assert len(reads) == 1
