@@ -183,6 +183,31 @@ def test_cli_issued_before_rejects_a_bad_instant(
     assert fake_ch.connected == 0
 
 
+@pytest.mark.parametrize("subject", ["user:u-1", "Group:finance", "everyone"])
+def test_cli_refuses_a_bare_principal_that_no_token_carries(
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str], subject: str
+) -> None:
+    """No token's sub is a bare principal: an end user is revoked under its org,
+    so a bare one would cut off no one while saying it had."""
+    rc = cli.main(["revoke-token", "--subject", subject])
+    assert rc == 2 and "<org>/user:<id>" in capsys.readouterr().err
+    assert fake_ch.inserts == []
+
+
+def test_cli_revokes_an_end_user_in_their_org(
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc = cli.main(
+        ["revoke-token", "--subject", "acme/user:u-1", "--issued-before", "2026-09-17T16:30:00Z"]
+    )
+    assert rc == 0
+    (row,) = fake_ch.inserts[0][1]
+    assert row["jti"] == "acme/user:u-1"
+    out = capsys.readouterr().out
+    assert "that org's end user; a token minted after that stays valid" in out
+    assert "every org" not in out
+
+
 def test_cli_subject_with_cutoff_writes_it_and_says_the_re_mint_survives(
     fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str]
 ) -> None:

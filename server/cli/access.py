@@ -349,6 +349,7 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     import getpass
 
     from server.auth import revocation
+    from server.core.principals import is_reserved_subject
     from server.observability import audit
     from server.settings import settings
 
@@ -363,6 +364,13 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         return 2
     if issued_before is not None and not args.subject:
         print("  ✗ --issued-before narrows a --subject revocation; pass --subject", file=sys.stderr)
+        return 2
+    if args.subject and is_reserved_subject(args.subject):
+        # No token's sub is a bare principal: such a row would cut off no one.
+        print(
+            "  ✗ no token's sub is a bare principal; revoke an end user as <org>/user:<id>",
+            file=sys.stderr,
+        )
         return 2
     if args.scim and (issued_before is None or expires_at is not None):
         print(
@@ -414,13 +422,15 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         else:
             what = "narrowed SCIM's revocation of" if args.scim else "revoked"
             print(f"{what} {kind} {token_id!r}", end="")
+            end_user = "/user:" in token_id
+            where = "that org's end user" if end_user else "in every org"
             if kind == "subject" and issued_before is not None:
                 print(
                     f" for tokens issued before {issued_before.isoformat()}Z "
-                    "(in every org; a token minted after that stays valid)",
+                    f"({where}; a token minted after that stays valid)",
                     end="",
                 )
-            elif kind == "subject" and "/user:" in token_id:
+            elif kind == "subject" and end_user:
                 print(" (that org's end user: every token its issuer signs for them)", end="")
             elif kind == "subject":
                 print(" (every token whose sub is this principal, in every org)", end="")
@@ -481,7 +491,8 @@ def _add_revoke_token_parser(sub: Any) -> None:
         default=None,
         help="The `sub` claim: retires EVERY token minted for this principal, in "
         "every org (verification checks sub against the revoked set); narrow it "
-        "with --issued-before.",
+        "with --issued-before. An end user is <org>/user:<id>: their tokens in that "
+        "org alone.",
     )
     which.add_argument("--list", action="store_true", help="Print the unexpired revocations.")
     p_revoke.add_argument(

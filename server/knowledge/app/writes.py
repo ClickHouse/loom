@@ -251,9 +251,10 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         if superseded_count > 0
         else None
     )
+    uploader = author["user_id"]  # the writer's, even when the document keeps its author
     author = _author_for(prior, input.content, author, _fresh_sha(input))
     blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
-        input, _original_of(prior, author), uploader=_authorship(input)["user_id"]
+        input, _original_of(prior, author), uploader=uploader
     )
 
     from server.knowledge.store import documents as documents_repo
@@ -349,9 +350,10 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
         input.source_uri,
         include_superseded=True,
     )
+    uploader = author["user_id"]  # the writer's, even when the document keeps its author
     author = _author_for(prior, input.content, author, _fresh_sha(input))
     blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
-        input, _original_of(prior, author), uploader=_authorship(input)["user_id"]
+        input, _original_of(prior, author), uploader=uploader
     )
 
     # The builder sets every loom.documents column, content_sha256 included
