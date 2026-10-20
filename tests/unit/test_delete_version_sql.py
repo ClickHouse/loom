@@ -1672,6 +1672,49 @@ async def test_a_503_writes_its_audit_row_and_the_worker_none(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("refusal", ["a locked row", "an unread head"])
+async def test_a_refusal_or_another_503_writes_no_deferred_audit_row(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, refusal: str
+) -> None:
+    # Only a delete that may still finish writes the deferred row: a 423 on a locked row,
+    # or a 503 before anything is recorded (the head unread), writes none.
+    from fastapi import HTTPException
+
+    from server.core.errors import BackendUnavailableError
+    from server.observability import audit
+
+    emitted: list[str] = []
+
+    async def record(event_type: str, **_kw: Any) -> str:
+        emitted.append(event_type)
+        return ""
+
+    monkeypatch.setattr(audit, "emit", record)
+    head = time.time_ns() - 10_000_000_000
+    row = _row("Tuesdays", head)
+    if refusal == "a locked row":
+        row = {**row, "lock_mode": "read_only", "lock_reason": "frozen"}
+        await ch.insert("loom.memory", [row])
+        with pytest.raises(HTTPException) as refused:
+            await hm.handle_memory_delete_version(
+                MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+            )
+        assert refused.value.status_code == 423
+    else:
+        await ch.insert("loom.memory", [row])
+
+        async def unread(*_a: Any, **_k: Any) -> Any:
+            raise BackendUnavailableError("ClickHouse is unreachable")
+
+        monkeypatch.setattr(memory_repo, "get_by_key", unread)
+        with pytest.raises(BackendUnavailableError):
+            await hm.handle_memory_delete_version(
+                MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+            )
+    assert emitted == []
+
+
+@pytest.mark.asyncio
 async def test_a_check_whose_tombstone_is_missing_leaves_a_later_set_alone(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:

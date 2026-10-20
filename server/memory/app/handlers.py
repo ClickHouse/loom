@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
@@ -55,6 +55,9 @@ from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
 from server.observability import degradations
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.memory.store.rows import Identity
 
 log = logging.getLogger(__name__)
 
@@ -649,7 +652,7 @@ async def handle_memory_delete_version(
 
 
 async def _delete_version_locked(
-    input: MemoryDeleteVersionInput, identity: Any
+    input: MemoryDeleteVersionInput, identity: Identity
 ) -> MemoryDeleteVersionOutput:
     """`handle_memory_delete_version` under the key lock."""
     import server.memory.store as memory_repo
@@ -703,7 +706,7 @@ async def _delete_version_locked(
             existing, version=version, trace=delete_version_trace(input.version)
         )
         return await finish_delete_check(existing, check)
-    except Exception as e:  # a retry or the worker runs the recorded check
+    except Exception as e:  # a retry finishes it, or the worker once the check is recorded
         raise _check_deferred(e) from e
 
 
@@ -729,17 +732,17 @@ async def _audit_deferred(input: MemoryDeleteVersionInput) -> None:
 
 
 class _DeleteDeferred(BackendUnavailableError):
-    """The 503 of a delete that did not finish; its recorded check stays owed."""
+    """The 503 of a delete that did not finish (`_check_deferred`)."""
 
 
 def _check_deferred(e: Exception) -> _DeleteDeferred:
-    """The 503 of a delete that did not finish (its tombstone or the check after it
-    failed); the recorded check stays owed."""
+    """The 503 of a delete that did not finish: its check record, its tombstone, the check
+    after it, or a retry's run of an owed check failed. A recorded check stays owed."""
     degradations.note("memory.delete_version", "check_deferred", e)
     log.warning("memory.delete_version: the delete did not finish: %s", e)
     return _DeleteDeferred(
-        "the delete did not finish; its check is recorded, and a retry or the background "
-        "worker finishes it"
+        "the delete did not finish; a retry finishes it, or the background worker once its "
+        "check is recorded"
     )
 
 
