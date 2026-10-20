@@ -420,3 +420,24 @@ async def test_a_pin_stays_above_a_digest_after_a_rerank(monkeypatch: pytest.Mon
     keys = [h.memory_key for h in block]
     assert keys[0] == "finding_pr116016"
     assert keys.index("other") < keys.index("fact") < keys.index("chunk")
+
+
+@pytest.mark.asyncio
+async def test_a_single_unpinned_row_makes_no_reranker_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Behind an identifier pin one row is left: the reranker could not reorder it, so it is
+    not called and nothing is stamped."""
+    called: list[int] = []
+
+    async def _count(*, candidates: list[Any], **_k: Any) -> list[Any]:
+        called.append(len(candidates))
+        return candidates
+
+    pinned, other = _hit("finding_pr116016", 0.9), _hit("other", 0.5)
+    pinned.score_components["identifier_match"] = 1.0
+    ctx = _ctx([pinned, other])
+    monkeypatch.setattr("server.memory.app.rerank.rerank", _count)
+    await ranking._run_external_rerank(ctx)
+    assert called == [] and "external_rerank_used" not in ctx.actual_work
+    assert not any(k.startswith("rerank_") for h in (pinned, other) for k in h.score_components)

@@ -167,6 +167,8 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
     # orders the rows in the others.
     slots = [i for i, h in enumerate(before) if not h.score_components.get("identifier_match")]
     rest = [before[i] for i in slots]
+    if len(rest) < 2:
+        return  # nothing the reranker could reorder: no model call
     ctx.actual_work["external_rerank_used"] = True
     candidates = [
         RerankCandidate(
