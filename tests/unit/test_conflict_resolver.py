@@ -902,7 +902,10 @@ async def test_a_row_or_peer_labelled_high_before_the_prompt_is_never_sent(row_e
 async def test_a_cancellation_while_acting_lets_the_act_and_its_audit_finish(
     row_env: NS, monkeypatch
 ) -> None:
+    acting = asyncio.Event()
+
     async def slow_retire(org: str, namespace: str, row: Any, peer: Any) -> Any:
+        acting.set()
         await asyncio.sleep(0.05)
         row_env.acted.append((cr.RETIRE, row.memory_id, peer.memory_id))
         return resolver.Retired("f1", [], "a")
@@ -911,7 +914,7 @@ async def test_a_cancellation_while_acting_lets_the_act_and_its_audit_finish(
     task = asyncio.ensure_future(
         resolver.resolve_row(_q(), policy="newest_wins", counts=resolver.Counts())
     )
-    await asyncio.sleep(0.01)
+    await acting.wait()  # cancelled while it acts, however slow the judge before it
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
