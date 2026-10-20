@@ -272,7 +272,7 @@
         "ch_timeout_read_s": {
           "default": 30.0,
           "type": "number",
-          "description": "Per-class statement deadline, seconds, applied as `max_execution_time` and as a client-side bound that frees the pool slot. 0 = no bound for that class."
+          "description": "Deadline, seconds, for read statements, applied as `max_execution_time` and as a client-side bound that frees the pool slot. 0 = no bound for reads."
         },
         "ch_timeout_write_s": {
           "default": 60.0,
@@ -565,7 +565,7 @@
         "code_closure_repair_max_sites": {
           "default": 2000,
           "type": "integer",
-          "description": "Unresolved call sites read per commit for those names."
+          "description": "Unresolved call sites closure repair reads per commit for the names it binds."
         },
         "code_compact_after_bulk_rows": {
           "default": 10000,
@@ -638,7 +638,7 @@
           "default": 300.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "The control is one read per namespace, not one per claim. The brief builder makes a claim per touched function, and each would re-run the same `arrayJoin` grep over the tests tree (176 MB a statement on the ClickHouse namespace). Its answer — is the tests corpus measurable from here — holds for a namespace across a brief, so it is kept per (org, namespace) for this long, in this process only."
+          "description": "Seconds the coverage control's answer is kept per (org, namespace). The control is one read per namespace, not one per claim. The brief builder makes a claim per touched function, and each would re-run the same `arrayJoin` grep over the tests tree (176 MB a statement on the ClickHouse namespace). Its answer — is the tests corpus measurable from here — holds for a namespace across a brief, so it is kept, in this process only."
         },
         "code_coverage_import_enabled": {
           "default": false,
@@ -977,7 +977,7 @@
         "code_ingest_dependents_pending_max": {
           "default": 5000,
           "type": "integer",
-          "description": "Size cap of that overflow queue; paths past it are dropped and counted."
+          "description": "Size cap of the dependents re-extraction overflow queue; paths past it are dropped and counted."
         },
         "code_ingest_enabled": {
           "default": false,
@@ -1076,7 +1076,7 @@
         "code_ingest_walk_budget_share": {
           "default": 0.3,
           "type": "number",
-          "description": "Share of that budget the commit phase leaves to the walk (reconcile heal, extractor re-chunk). 0 = commits may take it all."
+          "description": "Share of the ingest pass budget (`code_ingest_pass_budget_fraction` of the deadline) the commit phase leaves to the walk (reconcile heal, extractor re-chunk). 0 = commits may take it all."
         },
         "code_intel_enabled": {
           "default": true,
@@ -1660,7 +1660,7 @@
         "code_search_hyde_cap": {
           "default": 1.0,
           "type": "number",
-          "description": "The list's cap × the two-leg top (the history rule)."
+          "description": "Cap on the hypothetical-answer (HyDE) leg's candidate list, as a multiple of the two-leg top (the history rule)."
         },
         "code_search_hyde_kinds": {
           "default": "responsibility",
@@ -1670,7 +1670,7 @@
         "code_search_hyde_max_tokens": {
           "default": 220,
           "type": "integer",
-          "description": "The passage's length budget."
+          "description": "Tokens the hypothetical-answer (HyDE) passage may run to."
         },
         "code_search_hyde_model": {
           "default": "",
@@ -1740,7 +1740,7 @@
         "code_search_pr_leg_max_files": {
           "default": 10,
           "type": "integer",
-          "description": "Files that may vote per query."
+          "description": "Files of those PRs that may vote per query in code.search's PR leg."
         },
         "code_search_pr_leg_min_prs": {
           "default": 500,
@@ -1755,7 +1755,7 @@
         "code_search_pr_leg_pool": {
           "default": 30,
           "type": "integer",
-          "description": "PRs read per query, files that may vote, chunk units per voted file."
+          "description": "PRs code.search's PR leg reads per query."
         },
         "code_search_pr_leg_units_per_file": {
           "default": 2,
@@ -1903,12 +1903,12 @@
         "code_summary_churn_exclude": {
           "default": "",
           "type": "string",
-          "description": "CSV of path prefixes the churn order never proposes, at any depth."
+          "description": "CSV of path prefixes the summary cards' churn order never proposes, at any depth (vendored trees)."
         },
         "code_summary_churn_prefixes": {
           "default": "",
           "type": "string",
-          "description": "CSV path prefixes the churn order may propose (empty = any) and CSV prefixes it never proposes, at any depth (vendored trees)."
+          "description": "CSV path prefixes the summary cards' churn order may propose; empty = any."
         },
         "code_summary_concurrency": {
           "default": 1,
@@ -2056,7 +2056,7 @@
         "document_blob_gc_interval_seconds": {
           "default": 3600,
           "type": "integer",
-          "description": "Seconds between sweeps."
+          "description": "Seconds between document-original GC sweeps."
         },
         "document_blob_min_age_seconds": {
           "default": 3600,
@@ -2218,7 +2218,7 @@
         "entity_extract_full_scan_seconds": {
           "default": 1800,
           "type": "integer",
-          "description": "Each pass scans only memories of the last recent_seconds; the full candidate scan (without the value column) runs once per full_scan_seconds. full_scan_seconds 0 = full scan every pass."
+          "description": "Seconds between entity extraction's full candidate scans (without the value column); other passes scan only `entity_extract_recent_seconds`. 0 = full scan every pass."
         },
         "entity_extract_idle_interval_seconds": {
           "default": 300,
@@ -2258,7 +2258,7 @@
         "erasure_reclaim_min_dead_bytes": {
           "default": 1073741824,
           "type": "integer",
-          "description": "...and those rows hold at least this many bytes (default 1 GiB)."
+          "description": "Least bytes the deleted rows must hold before the erasure reclaim compacts a table (default 1 GiB)."
         },
         "erasure_reclaim_min_dead_fraction": {
           "default": 0.3,
@@ -2389,7 +2389,7 @@
         "inference_token_scope": {
           "default": "",
           "type": "string",
-          "description": "The scope sent with that exchange; \"\" sends none."
+          "description": "The scope sent with the inference gateway token exchange; \"\" sends none."
         },
         "inference_token_url": {
           "default": "",
@@ -2757,7 +2757,7 @@
         "memory_ask_bridge_completion_top_hits": {
           "default": 12,
           "type": "integer",
-          "description": "Bridge completion: the other attributes of the entities the top hits name (key-prefix siblings) join the pool, so a question that names an entity by one attribute can answer with another. The top hits it reads, the rows it adds, the rows per prefix."
+          "description": "Bridge completion: the other attributes of the entities the top hits name (key-prefix siblings) join the pool, so a question that names an entity by one attribute can answer with another. This is how many top hits it reads the entities of."
         },
         "memory_ask_bridge_row_hops": {
           "default": 2,
@@ -2859,7 +2859,7 @@
           "default": 2500,
           "minimum": 1,
           "type": "integer",
-          "description": "Source text per opened memory and in total, so a window-linked memory cannot expand into its whole conversation."
+          "description": "Source-text characters deep evidence may open per memory, so a window-linked memory cannot expand into its whole conversation."
         },
         "memory_ask_deep_evidence_max_memories": {
           "default": 5,
@@ -2899,7 +2899,7 @@
         "memory_ask_entity_follow_max": {
           "default": 3,
           "type": "integer",
-          "description": "A chain question (\"the citizenship of the CEO of X\") follows the first hop's answer entity into one more retrieval per bridge entity: at most this many entities, this many rows each."
+          "description": "A chain question (\"the citizenship of the CEO of X\") follows the first hop's answer entity into one more retrieval per bridge entity; this is the most entities it follows."
         },
         "memory_ask_entity_follow_top_k": {
           "default": 6,
@@ -3067,7 +3067,7 @@
           "default": 1500,
           "minimum": 100,
           "type": "integer",
-          "description": "Characters of one turn in that block; longer ones are cut and marked."
+          "description": "Characters of one turn in memory.ask's recent-turns block; longer ones are cut and marked."
         },
         "memory_ask_relevance_gate_min_keep": {
           "default": 3,
@@ -3420,7 +3420,7 @@
         "memory_extract_existing_short_limit": {
           "default": 8,
           "type": "integer",
-          "description": "Existing memories (fact rows only) an extraction in that short tier sees for update detection (sized on an extraction eval); 0 lets it see the caller's full limit. A longer transcript sees none: shown the namespace's facts, the extractor links later details to them instead of writing them."
+          "description": "Existing memories (fact rows only) an extraction in the compact-prompt tier (`memory_extract_compact_prompt_max_chars`) sees for update detection (sized on an extraction eval); 0 lets it see the caller's full limit. A longer transcript sees none: shown the namespace's facts, the extractor links later details to them instead of writing them."
         },
         "memory_extract_observation_date_default": {
           "default": "request_time",
@@ -3440,7 +3440,7 @@
           "default": 16,
           "minimum": 1,
           "type": "integer",
-          "description": "Most size segment windows per session; past it the last window takes the remainder (windows grow past `_turns` turns first)."
+          "description": "Most size segment windows per session; past it the last window takes the remainder (windows grow past `memory_extract_size_segment_turns` turns first)."
         },
         "memory_extract_size_segment_messages": {
           "default": 60,
@@ -3456,14 +3456,14 @@
         "memory_extract_value_updates": {
           "default": false,
           "type": "boolean",
-          "description": "Value-update supersession on the extraction write path (memory.app.value_updates): a fresh memory restating an existing one with a different value token marks the older one superseded. Costs one ANN lookup per written row; a per-request `detect_updates` overrides it. `_min_cosine` is the neighbour floor, set below the conflict threshold."
+          "description": "Value-update supersession on the extraction write path (memory.app.value_updates): a fresh memory restating an existing one with a different value token marks the older one superseded. Costs one ANN lookup per written row; a per-request `detect_updates` overrides it."
         },
         "memory_extract_value_updates_min_cosine": {
           "default": 0.75,
           "exclusiveMinimum": 0.0,
           "maximum": 1.0,
           "type": "number",
-          "description": "Least cosine similarity a neighbour needs to be checked as the older value of a fresh memory."
+          "description": "Least cosine similarity a neighbour needs to be checked as the older value of a fresh memory; set below the conflict threshold."
         },
         "memory_extract_verify_models": {
           "default": "claude-opus-5-5",
@@ -3597,7 +3597,7 @@
           "default": 0.2,
           "minimum": 0,
           "type": "number",
-          "description": "Seconds before the first such retry; each later one waits one more step of it."
+          "description": "Seconds before the first retry of an empty retrieval block (`memory_retrieval_empty_block_retries`); each later one waits one more step of it."
         },
         "memory_rrf_code_shape_hi": {
           "default": 0.3,
@@ -3612,7 +3612,7 @@
         "memory_rrf_lexical_weight_floor": {
           "default": 0.1,
           "type": "number",
-          "description": "Never fully zero the lexical leg."
+          "description": "Least weight the RRF adaptive lexical weight gives the lexical leg on a code-shaped query, so it is never fully zeroed."
         },
         "memory_run_complete_expire_days": {
           "default": 7,
@@ -3662,7 +3662,7 @@
             "parent"
           ],
           "type": "string",
-          "description": "Digest-anchored expansion: a session digest in the pool's top-m summaries adds that session's top-k facts as candidates (+300 ms ask p50); MemorySearchInput.digest_descent overrides. chunk_date_source: \"session\" dates a chunk by its conversation's digest, \"parent\" by the session's first fact anchor."
+          "description": "How memory.search dates a chunk: \"session\" by its conversation's digest, \"parent\" by the session's first fact anchor."
         },
         "memory_search_chunk_min_share": {
           "default": 0.0,
@@ -3703,7 +3703,7 @@
           "default": 3,
           "minimum": 1,
           "type": "integer",
-          "description": "Top session digests in the pool that digest descent expands."
+          "description": "Top session digests in the pool that digest descent expands: a digest among them adds its session's top facts as candidates (+300 ms ask p50); MemorySearchInput.digest_descent overrides."
         },
         "memory_search_embed_bound_retries": {
           "default": 1,
@@ -3728,7 +3728,7 @@
         "memory_search_entity_summaries_top_n": {
           "default": 5,
           "type": "integer",
-          "description": "Pre-built entity summaries fetched per namespace on that leg."
+          "description": "Pre-built entity summaries memory.search's entity-summary leg fetches per namespace."
         },
         "memory_search_excerpt_bodies_k": {
           "default": 15,
@@ -3764,12 +3764,12 @@
         "memory_search_fallback_max_llm_calls": {
           "default": 2,
           "type": "integer",
-          "description": "Finer caps inside a round: LLM calls and vector queries a fallback may spend before it is denied."
+          "description": "LLM calls one fallback round may spend before further ones are denied."
         },
         "memory_search_fallback_max_rounds": {
           "default": 1,
           "type": "integer",
-          "description": "Bounds on the recursive fallback cascade (iterative-judge retry), shared through one SearchBudget: recursive rounds and wall-clock ms; whichever trips first stops further fallbacks. The first-pass retrieve always runs."
+          "description": "Recursive rounds the fallback cascade (iterative-judge retry) may run; it stops at this or `memory_search_fallback_max_wall_ms`, whichever trips first. The first-pass retrieve always runs."
         },
         "memory_search_fallback_max_vector_queries": {
           "default": 12,
@@ -3810,7 +3810,7 @@
             "both"
           ],
           "type": "string",
-          "description": "graph_seed: query | recent | both — under recent/both the entities of the identity's newest memories (recent_memories, at most recent_max) join the graph seeds. diversify: \"none\" | \"session\" — under \"session\" at most diversify_session_cap hits per source session (0 = max(2, top_k // 3)); per-request `diversify` overrides."
+          "description": "What seeds memory.search's graph leg: \"query\", \"recent\" or \"both\". Under recent or both, the entities of the identity's newest memories (`memory_search_graph_seed_recent_memories`) join the query's seeds."
         },
         "memory_search_graph_seed_recent_max": {
           "default": 8,
@@ -4519,7 +4519,7 @@
         "profile_consolidation_model": {
           "default": "",
           "type": "string",
-          "description": "The profile fold."
+          "description": "Model of the profile fold, which consolidates an identity's memories into its profile; \"\" = `llm_model`."
         },
         "projection_repair_enabled": {
           "default": true,
@@ -4663,7 +4663,7 @@
         "retention_audit_log_days": {
           "default": 0,
           "type": "integer",
-          "description": "Opt-in retention/tiering, applied as idempotent ALTER TABLE MODIFY TTL by server/storage/retention_overrides.py: - retention_*_days: delete rows older than N days. 0 = keep forever. - tiering_*_warm_days: move rows older than W days to tiering_warm_volume_name. 0 = no tiering. With both set, W must be < N or the move is a no-op (logged WARN)."
+          "description": "Days `loom.audit_log` rows are kept; 0 = forever."
         },
         "retention_chunks_days": {
           "default": 0,
@@ -4942,7 +4942,7 @@
         "tracker_circuit_failure_threshold": {
           "default": 3,
           "type": "integer",
-          "description": "Breaker per credential: consecutive failures that open it, and how long it stays open before one probe read."
+          "description": "Consecutive failures of a tracker source's credential that open its breaker."
         },
         "tracker_code_namespace_bindings_json": {
           "default": "",
@@ -4985,7 +4985,7 @@
         "tracker_dupcheck_fit_negatives": {
           "default": 400,
           "type": "integer",
-          "description": "the negatives sampled per fit"
+          "description": "Non-duplicate pairs sampled (by hash) per duplicate-check calibration fit."
         },
         "tracker_dupcheck_fit_ttl_s": {
           "default": 300.0,
@@ -5069,17 +5069,17 @@
         "tracker_dupcheck_refit_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "The fit (coefficients, curve, holdout) is JSON in loom.code_index_state under the tracker namespace, refitted by the tracker_links pass once older than the refit interval by replaying every gold query at its filing time; `fit_negatives` non-duplicates are sampled by hash per fit. Off = the stored fit keeps serving; with none stored the op answers `uncalibrated`."
+          "description": "The fit (coefficients, curve, holdout) is JSON in loom.code_index_state under the tracker namespace, refitted by the tracker_links pass once older than `tracker_dupcheck_refit_interval_s` by replaying every gold query at its filing time. Off = the stored fit keeps serving; with none stored the op answers `uncalibrated`."
         },
         "tracker_dupcheck_refit_interval_s": {
           "default": 604800.0,
           "type": "number",
-          "description": "7 days"
+          "description": "Seconds after which the tracker_links pass refits the duplicate-check calibration (7 days)."
         },
         "tracker_dupcheck_related_threshold": {
           "default": 0.05,
           "type": "number",
-          "description": "the lower band's floor"
+          "description": "Calibrated confidence from which tracker.duplicate_check answers `related` (below `tracker_dupcheck_duplicate_threshold`)."
         },
         "tracker_dupcheck_rerank_body_chars": {
           "default": 200,
@@ -5089,7 +5089,7 @@
         "tracker_dupcheck_rerank_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "The rerank stage. One model call reads the draft against a pool of each leg's own head (`_rerank_per_leg` rows a leg) plus the issues the tracker graph links to the leading candidates; its same/related picks lead `nearest`, the verdict stays the fit's. Fails open."
+          "description": "The rerank stage. One model call reads the draft against a pool of each leg's own head (`tracker_dupcheck_rerank_per_leg` rows a leg) plus the issues the tracker graph links to the leading candidates; its same/related picks lead `nearest`, the verdict stays the fit's. Fails open."
         },
         "tracker_dupcheck_rerank_model": {
           "default": "gpt-6-luna",
@@ -5197,7 +5197,7 @@
         "tracker_links_min_score": {
           "default": 1.0,
           "type": "number",
-          "description": "A consumer (code.backport_gap's issue path, the bisect's fix candidate) takes the top candidate as the fix only above `min_score` AND when a closing keyword names the issue. tracker.links serves every row with its score."
+          "description": "A consumer (code.backport_gap's issue path, the bisect's fix candidate) takes the top candidate as the fix only above this score AND when a closing keyword names the issue. tracker.links serves every row with its score."
         },
         "tracker_links_per_issue": {
           "default": 20,
@@ -5273,7 +5273,7 @@
         "tracker_self_service_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "Self-service tracker sources: any signed-in org member registers one (`tracker.source.add`); credential and schema are checked before any write. Off = only the operator's map serves; loom.qa_sources rows are ignored. `_max_sources` caps the registrations."
+          "description": "Self-service tracker sources: any signed-in org member registers one (`tracker.source.add`); credential and schema are checked before any write. Off = only the operator's map serves; loom.qa_sources rows are ignored."
         },
         "tracker_self_service_max_sources": {
           "default": 10,
@@ -5361,7 +5361,7 @@
         "tracker_test_daily_max_days_per_pass": {
           "default": 6,
           "type": "integer",
-          "description": "Days rolled per pass and the pause between remote statements: the shared `play` user is metered at 100 statements of one shape per hour, and the op's live reads share that quota."
+          "description": "Days one test-daily pass rolls up: the shared `play` user is metered at 100 statements of one shape per hour, and the op's live reads share that quota."
         },
         "tracker_test_daily_max_pass_seconds": {
           "default": 900.0,
@@ -5408,7 +5408,7 @@
         "tracker_test_signal_min_runs": {
           "default": 5,
           "type": "integer",
-          "description": "Verdict thresholds: `min_runs` below which nothing is said; `flip_rate` (status changes between consecutive runs of one PR/check sequence) that reads as flaky; a storm hour holds ≥ K other failing tests across ≥ `cofail_prs` PRs, K = max(`cofail_k`, `cofail_multiple` × the window's median failing tests per hour); `cofail_share` of the test's failing hours must be storm hours for `infra_candidate`; a test failing on ≥ `cofail_prs` PRs in one hour is a shared cause by itself."
+          "description": "Runs of a test the history must hold before the test signal gives a verdict."
         },
         "tracker_test_signal_smell_chunks": {
           "default": 6,
@@ -5418,7 +5418,7 @@
         "tracker_test_signal_window_days": {
           "default": 30,
           "type": "integer",
-          "description": "Window of the history read, days; churn window of the ledger leg, days."
+          "description": "Window of the test-signal history read, days."
         },
         "traffic_class_registry_ttl_seconds": {
           "default": 300,

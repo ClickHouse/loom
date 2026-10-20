@@ -85,22 +85,27 @@ def _section(cls: ast.ClassDef, lines: list[str]) -> list[str]:
         if isinstance(s, ast.AnnAssign)
         and isinstance(s.target, ast.Name)
         and s.target.id in Settings.model_fields
-        and not is_secret_field(s.target.id)
     ]
-    if not fields:
+    if all(is_secret_field(s.target.id) for s in fields):  # type: ignore[union-attr]
         return []
     title = (ast.get_docstring(cls) or cls.name).split("\n\n")[0].replace("\n", " ")
     out = ["", f"  # ===== {title.rstrip('.')} ====="]
-    current = None
+    # A secret is left out but can open a heading: the heading prints above the first
+    # field of its group that is shown.
+    opened: tuple[str, str] | None = None
+    shown = None
     for stmt in fields:
         field = stmt.target.id  # type: ignore[union-attr]
         heading, text = comment_block(lines, stmt.lineno)
-        if heading and heading != current:
-            current = heading
-            out += ["", f"  # --- {heading} ---"]
-            note = heading_note(lines, stmt.lineno)
-            if note:
-                out += _comment(note, "  ")
+        if heading:
+            opened = (heading, heading_note(lines, stmt.lineno))
+        if is_secret_field(field):
+            continue
+        if opened and opened != shown:
+            shown = opened
+            out += ["", f"  # --- {opened[0]} ---"]
+            if opened[1]:
+                out += _comment(opened[1], "  ")
         tail = trailing(lines[(stmt.end_lineno or stmt.lineno) - 1])
         about = " ".join(t for t in (text, tail) if t)
         mode = "live" if is_live(Settings.model_fields[field]) else "restart"

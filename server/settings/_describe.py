@@ -36,8 +36,9 @@ def comment_block(lines: list[str], lineno: int) -> tuple[str | None, str]:
 
 
 def heading_note(lines: list[str], lineno: int) -> str:
-    """The note of the heading directly above the field at `lineno` (its comment block
-    included): the comment block above that heading. '' when the field opens no group."""
+    """The note of the heading that opens the field at `lineno` (the heading sits above
+    the field's own comment): the comment block directly above that heading; '' when the
+    field opens no group."""
     i = lineno - 2
     while i >= 0 and lines[i].strip().startswith("#"):
         if HEADING.match(lines[i].strip()):

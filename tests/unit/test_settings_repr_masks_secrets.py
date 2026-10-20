@@ -58,7 +58,7 @@ def test_a_load_error_names_the_field_never_the_environment(bad: dict[str, objec
     assert "input_value" not in text
 
 
-# Names with a secret's word in them that hold no secret: TTLs and the token-exchange
+# Names with a secret's word in them that hold no secret: TTLs, the token-exchange
 # endpoint's parameters.
 _NOT_SECRETS = {
     "password_link_ttl_seconds",
@@ -74,11 +74,11 @@ _NOT_SECRETS = {
 def test_every_field_named_for_a_secret_is_a_secret() -> None:
     """A secret the classifier misses is printed by settings.list and accepted from the
     settings file; a new field with one of these words in its name must be one or be
-    listed above. A `_tokens` or `_token_budget` field counts tokens."""
+    listed above. `_tokens` and `_token_budget` count tokens and name no secret."""
     named = {
         n
         for n in Settings.model_fields
-        if re.search(r"secret|password|token", n)
-        and not re.search(r"_tokens(?:_|$)|_token_budget", n)
+        if re.search(r"secret|password|api_key|(?:^|_)key(?:_(?:file|previous|path))?$", n)
+        or re.search(r"token(?!s(?:_|$)|_budget)", n)
     }
     assert {n for n in named if not is_secret_field(n)} == _NOT_SECRETS

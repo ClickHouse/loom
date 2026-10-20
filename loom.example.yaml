@@ -78,8 +78,8 @@ settings:
   # the backstop). [restart]
   # ch_read_your_writes_window_s: 20.0
 
-  # Per-class statement deadline, seconds, applied as `max_execution_time` and as a
-  # client-side bound that frees the pool slot. 0 = no bound for that class. [restart]
+  # Deadline, seconds, for read statements, applied as `max_execution_time` and as a
+  # client-side bound that frees the pool slot. 0 = no bound for reads. [restart]
   # ch_timeout_read_s: 30.0
 
   # Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. [restart]
@@ -222,7 +222,8 @@ settings:
   # the first. Fails open. "" turns it off. [restart]
   # memory_extract_verify_models: "claude-opus-5-5"
 
-  # The profile fold. [restart]
+  # Model of the profile fold, which consolidates an identity's memories into its
+  # profile; "" = `llm_model`. [restart]
   # profile_consolidation_model: ""
 
   # Reflection distillation: the outcome labeller and the contrast writer. [restart]
@@ -325,7 +326,7 @@ settings:
   # jwt_audience. [restart]
   # inference_token_audience: ""
 
-  # The scope sent with that exchange; "" sends none. [restart]
+  # The scope sent with the inference gateway token exchange; "" sends none. [restart]
   # inference_token_scope: ""
 
   # Seconds one token exchange with the inference gateway may take. [restart]
@@ -701,6 +702,8 @@ settings:
   # many `src/<dir>` directories (rule wide_callers_untested). [restart]
   # code_conventions_wide_caller_dirs: 5
 
+  # --- multi-repo and self-service ---
+
   # Repositories added from the Repositories page (loom.code_repos) merge with the
   # configured entries (`code_repos_json` and the scalar entry); the environment wins on
   # a namespace collision. Off = the operator's JSON is the only source. [restart]
@@ -896,6 +899,10 @@ settings:
   # `ambiguous` + candidates instead of walking them all. [restart]
   # code_callers_max_distinct_seeds: 5
 
+  # The floor below which a declined site code.callers / code.callees return is counted,
+  # not returned; a request may pass `candidate_min_confidence`. [restart]
+  # code_callers_candidate_min_confidence: 0.2
+
   # --- ingest pass budget ---
 
   # Commits past the watermark one pass reads; later ones wait for the next pass.
@@ -923,8 +930,9 @@ settings:
   # in-flight round, saves cursors and returns `partial: true`. [restart]
   # code_ingest_pass_budget_fraction: 0.75
 
-  # Share of that budget the commit phase leaves to the walk (reconcile heal, extractor
-  # re-chunk). 0 = commits may take it all. [restart]
+  # Share of the ingest pass budget (`code_ingest_pass_budget_fraction` of the deadline)
+  # the commit phase leaves to the walk (reconcile heal, extractor re-chunk). 0 =
+  # commits may take it all. [restart]
   # code_ingest_walk_budget_share: 0.3
 
   # Files per round in the walk, the bootstrap slice and a commit's file list; a round
@@ -937,6 +945,17 @@ settings:
   # ClickHouse round trips, not on its capacity, so lanes add throughput. 1 = one commit
   # at a time across all entries. [restart]
   # code_ingest_lanes: 1
+
+  # --- vector table compaction ---
+
+  # A bulk `loom code` pass that wrote at least this many chunk rows ends by compacting
+  # the prefix/twin vector tables past code_compact_min_ratio. 0 = off; loom.code_chunks
+  # is compacted only by the CLI. [restart]
+  # code_compact_after_bulk_rows: 10000
+
+  # Copies per key (active rows / distinct keys) at which a code vector table is
+  # OPTIMIZE ... FINAL'd. [restart]
+  # code_compact_min_ratio: 1.5
 
   # --- compiler-tier indexes (SCIP) ---
 
@@ -1293,7 +1312,8 @@ settings:
   # so more is not faster. [restart]
   # code_ingest_dependents_concurrency: 4
 
-  # Size cap of that overflow queue; paths past it are dropped and counted. [restart]
+  # Size cap of the dependents re-extraction overflow queue; paths past it are dropped
+  # and counted. [restart]
   # code_ingest_dependents_pending_max: 5000
 
   # Closure repair: a bare function name the commit added with exactly ONE live
@@ -1305,7 +1325,8 @@ settings:
   # [restart]
   # code_closure_repair_max_names: 500
 
-  # Unresolved call sites read per commit for those names. [restart]
+  # Unresolved call sites closure repair reads per commit for the names it binds.
+  # [restart]
   # code_closure_repair_max_sites: 2000
 
   # --- graph and symbol statistics ---
@@ -1324,15 +1345,6 @@ settings:
   # schedule rounds; past it the pass succeeds with `unit_risk_partial: true` and the
   # next resumes. Must stay under `code_graph_stats_max_pass_seconds`. [restart]
   # code_graph_stats_unit_risk_budget_s: 2400
-
-  # Cap of code.search's fan-in rank prior: score *= 1 + cap * log1p(fan_in) / log1p(max
-  # fan_in in the pool); skipped under test intent and on noise paths; inert without the
-  # stats. 0 = off. [restart]
-  # code_fan_in_prior_cap: 0.25
-
-  # The floor below which a declined site code.callers / code.callees return is counted,
-  # not returned; a request may pass `candidate_min_confidence`. [restart]
-  # code_callers_candidate_min_confidence: 0.2
 
   # Fan-in at or above which the `uses` block says `skipped: hub` instead of listing
   # sites. 0 = never. [restart]
@@ -1358,11 +1370,11 @@ settings:
   # counts. [restart]
   # code_summary_churn_days: 365
 
-  # CSV path prefixes the churn order may propose (empty = any) and CSV prefixes it
-  # never proposes, at any depth (vendored trees). [restart]
+  # CSV path prefixes the summary cards' churn order may propose; empty = any. [restart]
   # code_summary_churn_prefixes: ""
 
-  # CSV of path prefixes the churn order never proposes, at any depth. [restart]
+  # CSV of path prefixes the summary cards' churn order never proposes, at any depth
+  # (vendored trees). [restart]
   # code_summary_churn_exclude: ""
 
   # CSV of summary models whose cards are rewritten when code_summary_model differs,
@@ -1486,15 +1498,6 @@ settings:
   # scan. Empty = off. [restart]
   # code_search_vector_model_default: ""
 
-  # A bulk `loom code` pass that wrote at least this many chunk rows ends by compacting
-  # the prefix/twin vector tables past code_compact_min_ratio. 0 = off; loom.code_chunks
-  # is compacted only by the CLI. [restart]
-  # code_compact_after_bulk_rows: 10000
-
-  # Copies per key (active rows / distinct keys) at which a code vector table is
-  # OPTIMIZE ... FINAL'd. [restart]
-  # code_compact_min_ratio: 1.5
-
   # Per-result risk annotations (churn/amp/tested) and one-hop callee context on
   # code.search results; reserves part of the token budget. Kill switch. [restart]
   # code_risk_annotations: true
@@ -1591,6 +1594,11 @@ settings:
   # [restart]
   # code_search_prose_penalty: 0.25
 
+  # Cap of code.search's fan-in rank prior: score *= 1 + cap * log1p(fan_in) / log1p(max
+  # fan_in in the pool); skipped under test intent and on noise paths; inert without the
+  # stats. 0 = off. [restart]
+  # code_fan_in_prior_cap: 0.25
+
   # The question kinds the catalogue penalty applies to. [restart]
   # code_search_catalogue_kinds: "responsibility"
 
@@ -1620,10 +1628,11 @@ settings:
   # The question kinds the hypothetical answer votes on. [restart]
   # code_search_hyde_kinds: "responsibility"
 
-  # The list's cap × the two-leg top (the history rule). [restart]
+  # Cap on the hypothetical-answer (HyDE) leg's candidate list, as a multiple of the
+  # two-leg top (the history rule). [restart]
   # code_search_hyde_cap: 1.0
 
-  # The passage's length budget. [restart]
+  # Tokens the hypothetical-answer (HyDE) passage may run to. [restart]
   # code_search_hyde_max_tokens: 220
 
   # Default code.search request budget (ms) when the request sets no `deadline_ms`; what
@@ -1655,10 +1664,10 @@ settings:
   # a third RRF list. "off" | "issue" (issue-shaped queries) | "always". [restart]
   # code_search_pr_leg: "issue"
 
-  # PRs read per query, files that may vote, chunk units per voted file. [restart]
+  # PRs code.search's PR leg reads per query. [restart]
   # code_search_pr_leg_pool: 30
 
-  # Files that may vote per query. [restart]
+  # Files of those PRs that may vote per query in code.search's PR leg. [restart]
   # code_search_pr_leg_max_files: 10
 
   # Chunk units a voted file contributes. [restart]
@@ -1875,11 +1884,12 @@ settings:
   # Most git subprocesses code.verify_citations may start per request. [live]
   # code_citations_git_call_cap: 20
 
-  # The control is one read per namespace, not one per claim. The brief builder makes a
-  # claim per touched function, and each would re-run the same `arrayJoin` grep over the
-  # tests tree (176 MB a statement on the ClickHouse namespace). Its answer — is the
-  # tests corpus measurable from here — holds for a namespace across a brief, so it is
-  # kept per (org, namespace) for this long, in this process only. [live]
+  # Seconds the coverage control's answer is kept per (org, namespace). The control is
+  # one read per namespace, not one per claim. The brief builder makes a claim per
+  # touched function, and each would re-run the same `arrayJoin` grep over the tests
+  # tree (176 MB a statement on the ClickHouse namespace). Its answer — is the tests
+  # corpus measurable from here — holds for a namespace across a brief, so it is kept,
+  # in this process only. [live]
   # code_coverage_control_ttl_s: 300.0
 
   # Seconds a repository job's egress tunnel may move no byte before it is closed.
@@ -1956,7 +1966,8 @@ settings:
   # A table is reclaimed once this share of its rows on disk are purged rows. [restart]
   # erasure_reclaim_min_dead_fraction: 0.3
 
-  # ...and those rows hold at least this many bytes (default 1 GiB). [restart]
+  # Least bytes the deleted rows must hold before the erasure reclaim compacts a table
+  # (default 1 GiB). [restart]
   # erasure_reclaim_min_dead_bytes: 1073741824
 
   # Seconds one erasure step waits for its mutation (submitted with mutations_sync=0,
@@ -1984,12 +1995,11 @@ settings:
   # Value-update supersession on the extraction write path (memory.app.value_updates): a
   # fresh memory restating an existing one with a different value token marks the older
   # one superseded. Costs one ANN lookup per written row; a per-request `detect_updates`
-  # overrides it. `_min_cosine` is the neighbour floor, set below the conflict
-  # threshold. [live]
+  # overrides it. [live]
   # memory_extract_value_updates: false
 
   # Least cosine similarity a neighbour needs to be checked as the older value of a
-  # fresh memory. [live]
+  # fresh memory; set below the conflict threshold. [live]
   # memory_extract_value_updates_min_cosine: 0.75
 
   # The observation date a write is anchored to when the caller sends none.
@@ -2009,20 +2019,12 @@ settings:
   # [live]
   # memory_extract_compact_prompt_max_chars: 1200
 
-  # Existing memories (fact rows only) an extraction in that short tier sees for update
-  # detection (sized on an extraction eval); 0 lets it see the caller's full limit. A
-  # longer transcript sees none: shown the namespace's facts, the extractor links later
-  # details to them instead of writing them. [live]
+  # Existing memories (fact rows only) an extraction in the compact-prompt tier
+  # (`memory_extract_compact_prompt_max_chars`) sees for update detection (sized on an
+  # extraction eval); 0 lets it see the caller's full limit. A longer transcript sees
+  # none: shown the namespace's facts, the extractor links later details to them instead
+  # of writing them. [live]
   # memory_extract_existing_short_limit: 8
-
-  # A session's procedure and hint (observe notes) are mined only once the session holds
-  # this many non-trivial observations. 0 = any. [live]
-  # observe_extract_notes_min_observations: 15
-
-  # A coding capture keeps the coverage sweep's density / uncovered auto-gates only with
-  # at least this many user turns (on short sessions the sweep's output is mostly junk).
-  # 0 = always keep. An explicit namespace / per-call switch wins either way. [live]
-  # memory_extract_coding_sweep_min_user_turns: 4
 
   # Seconds one durability-check call (`memory_extract_verify_models`) may take; a
   # timeout keeps every fact. [live]
@@ -2061,6 +2063,11 @@ settings:
   # items, one concurrent call each (more recall for more tokens). 0 = one call. [live]
   # memory_extract_coverage_sweep_batch_items: 0
 
+  # A coding capture keeps the coverage sweep's density / uncovered auto-gates only with
+  # at least this many user turns (on short sessions the sweep's output is mostly junk).
+  # 0 = always keep. An explicit namespace / per-call switch wins either way. [live]
+  # memory_extract_coding_sweep_min_user_turns: 4
+
   # --- size segments ---
 
   # Size segments: a session longer than this many messages is extracted in fixed
@@ -2073,7 +2080,7 @@ settings:
   # memory_extract_size_segment_turns: 20
 
   # Most size segment windows per session; past it the last window takes the remainder
-  # (windows grow past `_turns` turns first). [live]
+  # (windows grow past `memory_extract_size_segment_turns` turns first). [live]
   # memory_extract_size_segment_max: 16
 
   # The same windows past this many characters of message content, whatever the message
@@ -2093,6 +2100,10 @@ settings:
   # Observations a session needs before the buffer threshold can fire (at least 1); a
   # per-namespace value wins. [live]
   # observe_extract_buffer_min_observations: 8
+
+  # A session's procedure and hint (observe notes) are mined only once the session holds
+  # this many non-trivial observations. 0 = any. [live]
+  # observe_extract_notes_min_observations: 15
 
   # Deferred-extraction worker for the observe plane: distills READY rows
   # (observe.record/crystallize) into durable memories through the
@@ -2522,9 +2533,9 @@ settings:
   # Sleep after a pass that found no unentitied row. [restart]
   # entity_extract_idle_interval_seconds: 300
 
-  # Each pass scans only memories of the last recent_seconds; the full candidate scan
-  # (without the value column) runs once per full_scan_seconds. full_scan_seconds 0 =
-  # full scan every pass. [restart]
+  # Seconds between entity extraction's full candidate scans (without the value column);
+  # other passes scan only `entity_extract_recent_seconds`. 0 = full scan every pass.
+  # [restart]
   # entity_extract_full_scan_seconds: 1800
 
   # Window, seconds, of recent memories each pass scans for untagged rows. [restart]
@@ -2813,7 +2824,8 @@ settings:
   # on a part still being written) before the search fails. [restart]
   # memory_retrieval_empty_block_retries: 3
 
-  # Seconds before the first such retry; each later one waits one more step of it.
+  # Seconds before the first retry of an empty retrieval block
+  # (`memory_retrieval_empty_block_retries`); each later one waits one more step of it.
   # [restart]
   # memory_retrieval_empty_block_retry_sleep_s: 0.2
 
@@ -2891,8 +2903,8 @@ settings:
   # At most this many memories are opened per ask. [live]
   # memory_ask_deep_evidence_max_memories: 5
 
-  # Source text per opened memory and in total, so a window-linked memory cannot expand
-  # into its whole conversation. [live]
+  # Source-text characters deep evidence may open per memory, so a window-linked memory
+  # cannot expand into its whole conversation. [live]
   # memory_ask_deep_evidence_max_chars_per_memory: 2500
 
   # Total source-text characters deep evidence may open across all memories of one ask.
@@ -2963,8 +2975,8 @@ settings:
 
   # Bridge completion: the other attributes of the entities the top hits name
   # (key-prefix siblings) join the pool, so a question that names an entity by one
-  # attribute can answer with another. The top hits it reads, the rows it adds, the rows
-  # per prefix. [live]
+  # attribute can answer with another. This is how many top hits it reads the entities
+  # of. [live]
   # memory_ask_bridge_completion_top_hits: 12
 
   # Most rows bridge completion adds to the pool. [live]
@@ -3104,8 +3116,8 @@ settings:
   # memory_ask_set_full_scan_chunk_share: 0.15
 
   # A chain question ("the citizenship of the CEO of X") follows the first hop's answer
-  # entity into one more retrieval per bridge entity: at most this many entities, this
-  # many rows each. [live]
+  # entity into one more retrieval per bridge entity; this is the most entities it
+  # follows. [live]
   # memory_ask_entity_follow_max: 3
 
   # Rows retrieved for each followed bridge entity. [live]
@@ -3176,7 +3188,8 @@ settings:
   # Conversation turns the recent-turns block carries at most, newest last. [live]
   # memory_ask_recent_max_turns: 40
 
-  # Characters of one turn in that block; longer ones are cut and marked. [live]
+  # Characters of one turn in memory.ask's recent-turns block; longer ones are cut and
+  # marked. [live]
   # memory_ask_recent_turn_max_chars: 1500
 
   # Characters of the whole recent-turns block; the oldest turns go first. [live]
@@ -3224,17 +3237,16 @@ settings:
   # [restart]
   # memory_search_query_rewrite_threshold: 0.38
 
-  # Bounds on the recursive fallback cascade (iterative-judge retry), shared through one
-  # SearchBudget: recursive rounds and wall-clock ms; whichever trips first stops
-  # further fallbacks. The first-pass retrieve always runs. [live]
+  # Recursive rounds the fallback cascade (iterative-judge retry) may run; it stops at
+  # this or `memory_search_fallback_max_wall_ms`, whichever trips first. The first-pass
+  # retrieve always runs. [live]
   # memory_search_fallback_max_rounds: 1
 
   # Wall-clock ms the fallback cascade may spend across all rounds before it stops.
   # [live]
   # memory_search_fallback_max_wall_ms: 4000
 
-  # Finer caps inside a round: LLM calls and vector queries a fallback may spend before
-  # it is denied. [live]
+  # LLM calls one fallback round may spend before further ones are denied. [live]
   # memory_search_fallback_max_llm_calls: 2
 
   # Vector queries one fallback round may issue before further ones are denied. [live]
@@ -3409,24 +3421,21 @@ settings:
   # / temporal_diff shapes. [live]
   # memory_search_per_key_cap: 3
 
-  # Digest-anchored expansion: a session digest in the pool's top-m summaries adds that
-  # session's top-k facts as candidates (+300 ms ask p50);
-  # MemorySearchInput.digest_descent overrides. chunk_date_source: "session" dates a
-  # chunk by its conversation's digest, "parent" by the session's first fact anchor.
-  # [live]
+  # How memory.search dates a chunk: "session" by its conversation's digest, "parent" by
+  # the session's first fact anchor. [live]
   # memory_search_chunk_date_source: "session"
 
-  # Top session digests in the pool that digest descent expands. [live]
+  # Top session digests in the pool that digest descent expands: a digest among them
+  # adds its session's top facts as candidates (+300 ms ask p50);
+  # MemorySearchInput.digest_descent overrides. [live]
   # memory_search_digest_descent_top_m: 3
 
   # Facts digest descent adds as candidates from each expanded session. [live]
   # memory_search_digest_descent_k: 5
 
-  # graph_seed: query | recent | both — under recent/both the entities of the identity's
-  # newest memories (recent_memories, at most recent_max) join the graph seeds.
-  # diversify: "none" | "session" — under "session" at most diversify_session_cap hits
-  # per source session (0 = max(2, top_k // 3)); per-request `diversify` overrides.
-  # [live]
+  # What seeds memory.search's graph leg: "query", "recent" or "both". Under recent or
+  # both, the entities of the identity's newest memories
+  # (`memory_search_graph_seed_recent_memories`) join the query's seeds. [live]
   # memory_search_graph_seed: "query"
 
   # Newest memories of the identity whose entities seed the graph under recent/both.
@@ -3465,7 +3474,8 @@ settings:
   # value is untouched; takes effect on (re-)ingest. [live]
   # memory_embed_answer_topic: true
 
-  # Pre-built entity summaries fetched per namespace on that leg. [live]
+  # Pre-built entity summaries memory.search's entity-summary leg fetches per namespace.
+  # [live]
   # memory_search_entity_summaries_top_n: 5
 
   # Per-token top_k ceiling by the token's role on the namespace: viewer and writer each
@@ -3484,7 +3494,8 @@ settings:
   # Shape at/above which w_lex == floor (code). [live]
   # memory_rrf_code_shape_hi: 0.3
 
-  # Never fully zero the lexical leg. [live]
+  # Least weight the RRF adaptive lexical weight gives the lexical leg on a code-shaped
+  # query, so it is never fully zeroed. [live]
   # memory_rrf_lexical_weight_floor: 0.1
 
   # Smallest window share verbatim chunks keep when the pool has them. 0.0 = off. [live]
@@ -3965,7 +3976,7 @@ settings:
   # namespace's retention_days) aged out, so the bytes leave with their rows. [restart]
   # document_blob_gc_enabled: true
 
-  # Seconds between sweeps. [restart]
+  # Seconds between document-original GC sweeps. [restart]
   # document_blob_gc_interval_seconds: 3600
 
   # Seconds an original must have gone unwritten before the sweep may remove it. A write
@@ -3975,12 +3986,13 @@ settings:
   # document_blob_min_age_seconds: 3600
 
   # --- retention and tiering ---
+  # Opt-in retention and tiering, applied as idempotent ALTER TABLE MODIFY TTL by
+  # server/storage/retention_overrides.py: a retention_*_days setting deletes a table's
+  # rows older than N days, a tiering_*_warm_days setting moves them to
+  # tiering_warm_volume_name after W days. With both set, W must be < N or the move is a
+  # no-op (logged WARN).
 
-  # Opt-in retention/tiering, applied as idempotent ALTER TABLE MODIFY TTL by
-  # server/storage/retention_overrides.py: - retention_*_days: delete rows older than N
-  # days. 0 = keep forever. - tiering_*_warm_days: move rows older than W days to
-  # tiering_warm_volume_name. 0 = no tiering. With both set, W must be < N or the move
-  # is a no-op (logged WARN). [restart]
+  # Days `loom.audit_log` rows are kept; 0 = forever. [restart]
   # retention_audit_log_days: 0
 
   # Days `loom.agent_events` rows are kept; 0 = forever. [restart]
@@ -4119,8 +4131,8 @@ settings:
   # escalations / incidents by term), ms; above the 300 ms interactive budget. [restart]
   # tracker_live_text_budget_ms: 900
 
-  # Breaker per credential: consecutive failures that open it, and how long it stays
-  # open before one probe read. [restart]
+  # Consecutive failures of a tracker source's credential that open its breaker.
+  # [restart]
   # tracker_circuit_failure_threshold: 3
 
   # Seconds an open breaker stays open before one probe read (at least 1 s). [restart]
@@ -4166,8 +4178,7 @@ settings:
 
   # Self-service tracker sources: any signed-in org member registers one
   # (`tracker.source.add`); credential and schema are checked before any write. Off =
-  # only the operator's map serves; loom.qa_sources rows are ignored. `_max_sources`
-  # caps the registrations. [restart]
+  # only the operator's map serves; loom.qa_sources rows are ignored. [restart]
   # tracker_self_service_enabled: true
 
   # At most this many self-service sources an org may register; a further
@@ -4280,7 +4291,7 @@ settings:
   # tracker_links_weight_mention: 1.5
 
   # A consumer (code.backport_gap's issue path, the bisect's fix candidate) takes the
-  # top candidate as the fix only above `min_score` AND when a closing keyword names the
+  # top candidate as the fix only above this score AND when a closing keyword names the
   # issue. tracker.links serves every row with its score. [restart]
   # tracker_links_min_score: 1.0
 
@@ -4293,7 +4304,8 @@ settings:
   # on 99% of negatives at 0.25. [restart]
   # tracker_dupcheck_duplicate_threshold: 0.25
 
-  # the lower band's floor [restart]
+  # Calibrated confidence from which tracker.duplicate_check answers `related` (below
+  # `tracker_dupcheck_duplicate_threshold`). [restart]
   # tracker_dupcheck_related_threshold: 0.05
 
   # The fix-in-flight leg reads PRs from the last this many days. [restart]
@@ -4329,16 +4341,17 @@ settings:
   # tracker_dupcheck_duplicate_threshold_max: 0.5
 
   # The fit (coefficients, curve, holdout) is JSON in loom.code_index_state under the
-  # tracker namespace, refitted by the tracker_links pass once older than the refit
-  # interval by replaying every gold query at its filing time; `fit_negatives`
-  # non-duplicates are sampled by hash per fit. Off = the stored fit keeps serving; with
-  # none stored the op answers `uncalibrated`. [restart]
+  # tracker namespace, refitted by the tracker_links pass once older than
+  # `tracker_dupcheck_refit_interval_s` by replaying every gold query at its filing
+  # time. Off = the stored fit keeps serving; with none stored the op answers
+  # `uncalibrated`. [restart]
   # tracker_dupcheck_refit_enabled: true
 
-  # 7 days [restart]
+  # Seconds after which the tracker_links pass refits the duplicate-check calibration (7
+  # days). [restart]
   # tracker_dupcheck_refit_interval_s: 604800.0
 
-  # the negatives sampled per fit [restart]
+  # Non-duplicate pairs sampled (by hash) per duplicate-check calibration fit. [restart]
   # tracker_dupcheck_fit_negatives: 400
 
   # The judge stage. On a `related` answer one model call reads the draft against the
@@ -4355,9 +4368,9 @@ settings:
   # tracker_dupcheck_judge_body_chars: 1500
 
   # The rerank stage. One model call reads the draft against a pool of each leg's own
-  # head (`_rerank_per_leg` rows a leg) plus the issues the tracker graph links to the
-  # leading candidates; its same/related picks lead `nearest`, the verdict stays the
-  # fit's. Fails open. [restart]
+  # head (`tracker_dupcheck_rerank_per_leg` rows a leg) plus the issues the tracker
+  # graph links to the leading candidates; its same/related picks lead `nearest`, the
+  # verdict stays the fit's. Fails open. [restart]
   # tracker_dupcheck_rerank_enabled: true
 
   # Rows each leg contributes to the rerank pool; also deepens the rows kept per leg
@@ -4420,19 +4433,14 @@ settings:
   # key, far past the 300 ms interactive budget. [restart]
   # tracker_live_checks_budget_ms: 8000
 
-  # Window of the history read, days; churn window of the ledger leg, days. [restart]
+  # Window of the test-signal history read, days. [restart]
   # tracker_test_signal_window_days: 30
 
   # Churn window of the ledger leg, days (at least 1). [restart]
   # tracker_test_signal_churn_days: 54
 
-  # Verdict thresholds: `min_runs` below which nothing is said; `flip_rate` (status
-  # changes between consecutive runs of one PR/check sequence) that reads as flaky; a
-  # storm hour holds ≥ K other failing tests across ≥ `cofail_prs` PRs, K =
-  # max(`cofail_k`, `cofail_multiple` × the window's median failing tests per hour);
-  # `cofail_share` of the test's failing hours must be storm hours for
-  # `infra_candidate`; a test failing on ≥ `cofail_prs` PRs in one hour is a shared
-  # cause by itself. [restart]
+  # Runs of a test the history must hold before the test signal gives a verdict.
+  # [restart]
   # tracker_test_signal_min_runs: 5
 
   # Status-change rate between consecutive runs of one PR/check sequence at or above
@@ -4473,9 +4481,9 @@ settings:
   # How far back a cold worker rolls, in days (the op's largest window is 90). [restart]
   # tracker_test_daily_backfill_days: 30
 
-  # Days rolled per pass and the pause between remote statements: the shared `play` user
-  # is metered at 100 statements of one shape per hour, and the op's live reads share
-  # that quota. [restart]
+  # Days one test-daily pass rolls up: the shared `play` user is metered at 100
+  # statements of one shape per hour, and the op's live reads share that quota.
+  # [restart]
   # tracker_test_daily_max_days_per_pass: 6
 
   # Seconds paused between remote statements of a pass; 0 = no pause. [restart]

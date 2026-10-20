@@ -33,7 +33,9 @@ HEADER = f"""# Configuration reference
 Every setting is declared in one file, `server/settings/catalog.py`, and is an
 environment variable `LOOM_<FIELD>` read at startup into
 `server.settings.settings`. Set them in `.env` or the container environment;
-`.env.example` lists the common ones. `LOOM_ENV_FILE` names a different dotenv file,
+`.env.example` lists the common ones. A secret's default shows as *(unset)* or
+*(set)*, never its value: set a secret in the environment, `.env` or a secrets manager,
+never in the settings file. `LOOM_ENV_FILE` names a different dotenv file,
 and empty reads none.
 
 The same settings, named in lowercase, can go in a YAML settings file, read when

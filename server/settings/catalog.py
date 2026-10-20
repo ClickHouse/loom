@@ -372,9 +372,8 @@ class ClickHouseSettings(BaseModel):
     # reads with select_sequential_consistency from the start. 0 = off (the
     # empty-pool retry remains the backstop).
     ch_read_your_writes_window_s: float = 20.0
-    # Per-class statement deadline, seconds, applied as `max_execution_time`
-    # and as a client-side bound that frees the pool slot. 0 = no bound for
-    # that class.
+    # Deadline, seconds, for read statements, applied as `max_execution_time` and as a
+    # client-side bound that frees the pool slot. 0 = no bound for reads.
     ch_timeout_read_s: float = 30.0
     # Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound.
     ch_timeout_write_s: float = 60.0
@@ -697,6 +696,9 @@ class CodeSettings(BaseModel):
     # code.callers/callees: a bare name with more distinct definitions than
     # this returns `ambiguous` + candidates instead of walking them all.
     code_callers_max_distinct_seeds: int = 5
+    # The floor below which a declined site code.callers / code.callees return
+    # is counted, not returned; a request may pass `candidate_min_confidence`.
+    code_callers_candidate_min_confidence: float = 0.2
     # --- ingest pass budget ---
     # Commits past the watermark one pass reads; later ones wait for the next pass.
     code_ingest_max_commits_per_pass: int = 20
@@ -716,7 +718,8 @@ class CodeSettings(BaseModel):
     # Fraction of the deadline after which the pass stops STARTING units,
     # finishes the in-flight round, saves cursors and returns `partial: true`.
     code_ingest_pass_budget_fraction: float = 0.75
-    # Share of that budget the commit phase leaves to the walk (reconcile heal,
+    # Share of the ingest pass budget (`code_ingest_pass_budget_fraction` of the
+    # deadline) the commit phase leaves to the walk (reconcile heal,
     # extractor re-chunk). 0 = commits may take it all.
     code_ingest_walk_budget_share: float = 0.3
     # Files per round in the walk, the bootstrap slice and a commit's file
@@ -728,6 +731,14 @@ class CodeSettings(BaseModel):
     # contract); a lane waits on ClickHouse round trips, not on its capacity,
     # so lanes add throughput. 1 = one commit at a time across all entries.
     code_ingest_lanes: int = Field(default=1, ge=1, le=8)
+    # --- vector table compaction ---
+    # A bulk `loom code` pass that wrote at least this many chunk rows ends by
+    # compacting the prefix/twin vector tables past code_compact_min_ratio.
+    # 0 = off; loom.code_chunks is compacted only by the CLI.
+    code_compact_after_bulk_rows: int = 10_000
+    # Copies per key (active rows / distinct keys) at which a code vector table
+    # is OPTIMIZE ... FINAL'd.
+    code_compact_min_ratio: float = Field(default=1.5, gt=0.0)
     # --- compiler-tier indexes (SCIP) ---
     # SCIP delta apply (compiler-grade tier uploaded via code.scip_ingest).
     code_scip_apply_enabled: bool = False
@@ -979,7 +990,8 @@ class CodeSettings(BaseModel):
     # Dependents re-extracted at once; the batch is bound by ClickHouse read
     # throughput, so more is not faster.
     code_ingest_dependents_concurrency: int = Field(default=4, ge=1, le=64)
-    # Size cap of that overflow queue; paths past it are dropped and counted.
+    # Size cap of the dependents re-extraction overflow queue; paths past it are dropped
+    # and counted.
     code_ingest_dependents_pending_max: int = 5000
     # Closure repair: a bare function name the commit added with exactly ONE
     # live definition repo-wide binds its `unresolved` sites at 0.6 without
@@ -987,7 +999,7 @@ class CodeSettings(BaseModel):
     code_closure_repair_enabled: bool = True
     # Added and removed names per commit closure repair considers; the rest are skipped.
     code_closure_repair_max_names: int = 500
-    # Unresolved call sites read per commit for those names.
+    # Unresolved call sites closure repair reads per commit for the names it binds.
     code_closure_repair_max_sites: int = 2000
     # --- graph and symbol statistics ------------------------------------------
     # Weekly graph statistics: PageRank, degrees, test_map rebuild.
@@ -1001,14 +1013,6 @@ class CodeSettings(BaseModel):
     # leg may schedule rounds; past it the pass succeeds with `unit_risk_partial: true` and the
     # next resumes. Must stay under `code_graph_stats_max_pass_seconds`.
     code_graph_stats_unit_risk_budget_s: int = 2400
-    # Cap of code.search's fan-in rank prior:
-    # score *= 1 + cap * log1p(fan_in) / log1p(max fan_in in the pool);
-    # skipped under test intent and on noise paths; inert without the stats.
-    # 0 = off.
-    code_fan_in_prior_cap: float = 0.25
-    # The floor below which a declined site code.callers / code.callees return
-    # is counted, not returned; a request may pass `candidate_min_confidence`.
-    code_callers_candidate_min_confidence: float = 0.2
     # Fan-in at or above which the `uses` block says `skipped: hub` instead of
     # listing sites. 0 = never.
     code_symbol_uses_hub_fan_in: int = 200
@@ -1026,10 +1030,10 @@ class CodeSettings(BaseModel):
     # these days (source tree), then by include-graph rank. Days of merged PRs
     # the churn order counts.
     code_summary_churn_days: int = 365
-    # CSV path prefixes the churn order may propose (empty = any) and CSV
-    # prefixes it never proposes, at any depth (vendored trees).
+    # CSV path prefixes the summary cards' churn order may propose; empty = any.
     code_summary_churn_prefixes: str = ""
-    # CSV of path prefixes the churn order never proposes, at any depth.
+    # CSV of path prefixes the summary cards' churn order never proposes, at any depth
+    # (vendored trees).
     code_summary_churn_exclude: str = ""
     # CSV of summary models whose cards are rewritten when code_summary_model
     # differs, even for an unchanged file. Empty = an unchanged file keeps its
@@ -1127,13 +1131,6 @@ class CodeSettings(BaseModel):
     # served vectors. Needs code_search_vector_shortlist > 0; an empty
     # shortlist falls back to the full scan. Empty = off.
     code_search_vector_model_default: str = ""
-    # A bulk `loom code` pass that wrote at least this many chunk rows ends by
-    # compacting the prefix/twin vector tables past code_compact_min_ratio.
-    # 0 = off; loom.code_chunks is compacted only by the CLI.
-    code_compact_after_bulk_rows: int = 10_000
-    # Copies per key (active rows / distinct keys) at which a code vector table
-    # is OPTIMIZE ... FINAL'd.
-    code_compact_min_ratio: float = Field(default=1.5, gt=0.0)
     # Per-result risk annotations (churn/amp/tested) and one-hop callee
     # context on code.search results; reserves part of the token budget.
     # Kill switch.
@@ -1207,6 +1204,11 @@ class CodeSettings(BaseModel):
     # unless the query asks for documentation or the search is constrained to paths;
     # 1.0 = off.
     code_search_prose_penalty: float = 0.25
+    # Cap of code.search's fan-in rank prior:
+    # score *= 1 + cap * log1p(fan_in) / log1p(max fan_in in the pool);
+    # skipped under test intent and on noise paths; inert without the stats.
+    # 0 = off.
+    code_fan_in_prior_cap: float = 0.25
     # The question kinds the catalogue penalty applies to.
     code_search_catalogue_kinds: str = "responsibility"
     # Lexical list's RRF weight for a responsibility question (vector = 1.0).
@@ -1229,9 +1231,10 @@ class CodeSettings(BaseModel):
     code_search_low_risk_from: float = 0.55
     # The question kinds the hypothetical answer votes on.
     code_search_hyde_kinds: str = "responsibility"
-    # The list's cap × the two-leg top (the history rule).
+    # Cap on the hypothetical-answer (HyDE) leg's candidate list, as a multiple of the
+    # two-leg top (the history rule).
     code_search_hyde_cap: float = 1.0
-    # The passage's length budget.
+    # Tokens the hypothetical-answer (HyDE) passage may run to.
     code_search_hyde_max_tokens: int = 220
     # Default code.search request budget (ms) when the request sets no
     # `deadline_ms`; what it cuts (late legs, rerank) makes the answer
@@ -1256,9 +1259,9 @@ class CodeSettings(BaseModel):
     # touched, as a third RRF list. "off" | "issue" (issue-shaped queries) |
     # "always".
     code_search_pr_leg: Literal["off", "issue", "always"] = "issue"
-    # PRs read per query, files that may vote, chunk units per voted file.
+    # PRs code.search's PR leg reads per query.
     code_search_pr_leg_pool: int = 30
-    # Files that may vote per query.
+    # Files of those PRs that may vote per query in code.search's PR leg.
     code_search_pr_leg_max_files: int = 10
     # Chunk units a voted file contributes.
     code_search_pr_leg_units_per_file: int = 2
@@ -1421,11 +1424,12 @@ class CodeSettings(BaseModel):
     code_bootstrap_mirror_retry_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # Most git subprocesses code.verify_citations may start per request.
     code_citations_git_call_cap: Annotated[int, LIVE] = Field(default=20, ge=1)
-    # The control is one read per namespace, not one per claim. The brief builder makes a
+    # Seconds the coverage control's answer is kept per (org, namespace). The control is
+    # one read per namespace, not one per claim. The brief builder makes a
     # claim per touched function, and each would re-run the same `arrayJoin` grep over the
     # tests tree (176 MB a statement on the ClickHouse namespace). Its answer — is the
     # tests corpus measurable from here — holds for a namespace across a brief, so it is
-    # kept per (org, namespace) for this long, in this process only.
+    # kept, in this process only.
     code_coverage_control_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
     # Seconds a repository job's egress tunnel may move no byte before it is closed.
     code_egress_idle_timeout_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
@@ -1495,7 +1499,8 @@ class ErasureSettings(BaseModel):
     erasure_reclaim_interval_seconds: int = 3600
     # A table is reclaimed once this share of its rows on disk are purged rows.
     erasure_reclaim_min_dead_fraction: float = 0.3
-    # ...and those rows hold at least this many bytes (default 1 GiB).
+    # Least bytes the deleted rows must hold before the erasure reclaim compacts a
+    # table (default 1 GiB).
     erasure_reclaim_min_dead_bytes: int = 1073741824
     # Seconds one erasure step waits for its mutation (submitted with
     # mutations_sync=0, polled in system.mutations); past it the saga fails
@@ -1524,10 +1529,10 @@ class ExtractionSettings(BaseModel):
     # Value-update supersession on the extraction write path (memory.app.value_updates):
     # a fresh memory restating an existing one with a different value token marks the
     # older one superseded. Costs one ANN lookup per written row; a per-request
-    # `detect_updates` overrides it. `_min_cosine` is the neighbour floor, set below the
-    # conflict threshold.
+    # `detect_updates` overrides it.
     memory_extract_value_updates: Annotated[bool, LIVE] = False
-    # Least cosine similarity a neighbour needs to be checked as the older value of a fresh memory.
+    # Least cosine similarity a neighbour needs to be checked as the older value of a
+    # fresh memory; set below the conflict threshold.
     memory_extract_value_updates_min_cosine: Annotated[float, LIVE] = Field(
         default=0.75, gt=0.0, le=1.0
     )
@@ -1549,19 +1554,12 @@ class ExtractionSettings(BaseModel):
     # statement can match, no structured-answer block); longer ones keep the full
     # prompt. 0 turns it off.
     memory_extract_compact_prompt_max_chars: Annotated[int, LIVE] = 1200
-    # Existing memories (fact rows only) an extraction in that short tier sees for
+    # Existing memories (fact rows only) an extraction in the compact-prompt tier
+    # (`memory_extract_compact_prompt_max_chars`) sees for
     # update detection (sized on an extraction eval); 0 lets it see the caller's full
     # limit. A longer transcript sees none: shown the namespace's facts, the extractor
     # links later details to them instead of writing them.
     memory_extract_existing_short_limit: Annotated[int, LIVE] = 8
-    # A session's procedure and hint (observe notes) are mined
-    # only once the session holds this many non-trivial observations. 0 = any.
-    observe_extract_notes_min_observations: Annotated[int, LIVE] = 15
-    # A coding capture keeps the coverage sweep's density / uncovered
-    # auto-gates only with at least this many user turns (on short sessions the
-    # sweep's output is mostly junk). 0 = always keep. An explicit namespace /
-    # per-call switch wins either way.
-    memory_extract_coding_sweep_min_user_turns: Annotated[int, LIVE] = 4
     # Seconds one durability-check call (`memory_extract_verify_models`) may take; a
     # timeout keeps every fact.
     memory_extract_verify_timeout_s: Annotated[float, LIVE] = 45.0
@@ -1592,6 +1590,11 @@ class ExtractionSettings(BaseModel):
     # The coverage sweep reads its listed turns and sentences in groups of this
     # many items, one concurrent call each (more recall for more tokens). 0 = one call.
     memory_extract_coverage_sweep_batch_items: Annotated[int, LIVE] = 0
+    # A coding capture keeps the coverage sweep's density / uncovered
+    # auto-gates only with at least this many user turns (on short sessions the
+    # sweep's output is mostly junk). 0 = always keep. An explicit namespace /
+    # per-call switch wins either way.
+    memory_extract_coding_sweep_min_user_turns: Annotated[int, LIVE] = 4
 
     # --- size segments ---
     # Size segments: a session longer than this many messages is extracted in fixed
@@ -1601,7 +1604,7 @@ class ExtractionSettings(BaseModel):
     # Turns per size segment window (a window never splits a turn).
     memory_extract_size_segment_turns: Annotated[int, LIVE] = Field(default=20, ge=1)
     # Most size segment windows per session; past it the last window takes the remainder
-    # (windows grow past `_turns` turns first).
+    # (windows grow past `memory_extract_size_segment_turns` turns first).
     memory_extract_size_segment_max: Annotated[int, LIVE] = Field(default=16, ge=1)
     # The same windows past this many characters of message content,
     # whatever the message count; a window closes early once its turns carry this much
@@ -1617,6 +1620,9 @@ class ExtractionSettings(BaseModel):
     # Observations a session needs before the buffer threshold can fire (at least 1);
     # a per-namespace value wins.
     observe_extract_buffer_min_observations: Annotated[int, LIVE] = Field(default=8, ge=1)
+    # A session's procedure and hint (observe notes) are mined
+    # only once the session holds this many non-trivial observations. 0 = any.
+    observe_extract_notes_min_observations: Annotated[int, LIVE] = 15
     # Deferred-extraction worker for the observe plane: distills READY rows
     # (observe.record/crystallize) into durable memories through the
     # memory.set_from_messages pipeline. Off by default (makes LLM calls).
@@ -1996,9 +2002,8 @@ class MemorySettings(BaseModel):
     entity_extract_interval_seconds: int = 60
     # Sleep after a pass that found no unentitied row.
     entity_extract_idle_interval_seconds: int = 300
-    # Each pass scans only memories of the last recent_seconds; the full
-    # candidate scan (without the value column) runs once per
-    # full_scan_seconds. full_scan_seconds 0 = full scan every pass.
+    # Seconds between entity extraction's full candidate scans (without the value column);
+    # other passes scan only `entity_extract_recent_seconds`. 0 = full scan every pass.
     entity_extract_full_scan_seconds: int = 1800
     # Window, seconds, of recent memories each pass scans for untagged rows.
     entity_extract_recent_seconds: int = 7200
@@ -2224,7 +2229,8 @@ class MemorySettings(BaseModel):
     # Retries of a vector read that ClickHouse answers with an empty-block error (code
     # 10 on a part still being written) before the search fails.
     memory_retrieval_empty_block_retries: int = Field(default=3, ge=0)
-    # Seconds before the first such retry; each later one waits one more step of it.
+    # Seconds before the first retry of an empty retrieval block
+    # (`memory_retrieval_empty_block_retries`); each later one waits one more step of it.
     memory_retrieval_empty_block_retry_sleep_s: float = Field(default=0.2, ge=0)
     # Most exposure rows one usage-fold pass reads to credit acted-on memories; the
     # watermark holds until a pass drains below it.
@@ -2290,7 +2296,7 @@ class MemoryAskSettings(BaseModel):
     memory_ask_deep_evidence_select: Annotated[Literal["llm", "top"], CaseFolded, LIVE] = "llm"
     # At most this many memories are opened per ask.
     memory_ask_deep_evidence_max_memories: Annotated[int, LIVE] = Field(default=5, ge=1)
-    # Source text per opened memory and in total, so a window-linked
+    # Source-text characters deep evidence may open per memory, so a window-linked
     # memory cannot expand into its whole conversation.
     memory_ask_deep_evidence_max_chars_per_memory: Annotated[int, LIVE] = Field(default=2500, ge=1)
     # Total source-text characters deep evidence may open across all memories of one ask.
@@ -2348,7 +2354,7 @@ class MemoryAskSettings(BaseModel):
     memory_ask_facet_completion_max: Annotated[int, LIVE] = 60
     # Bridge completion: the other attributes of the entities the top hits name (key-prefix
     # siblings) join the pool, so a question that names an entity by one attribute can
-    # answer with another. The top hits it reads, the rows it adds, the rows per prefix.
+    # answer with another. This is how many top hits it reads the entities of.
     memory_ask_bridge_completion_top_hits: Annotated[int, LIVE] = 12
     # Most rows bridge completion adds to the pool.
     memory_ask_bridge_completion_max: Annotated[int, LIVE] = 48
@@ -2466,8 +2472,7 @@ class MemoryAskSettings(BaseModel):
     # rows. 0 = uncapped.
     memory_ask_set_full_scan_chunk_share: Annotated[float, LIVE] = 0.15
     # A chain question ("the citizenship of the CEO of X") follows the first hop's answer
-    # entity into one more retrieval per bridge entity: at most this many entities, this many
-    # rows each.
+    # entity into one more retrieval per bridge entity; this is the most entities it follows.
     memory_ask_entity_follow_max: Annotated[int, LIVE] = 3
     # Rows retrieved for each followed bridge entity.
     memory_ask_entity_follow_top_k: Annotated[int, LIVE] = 6
@@ -2522,7 +2527,8 @@ class MemoryAskSettings(BaseModel):
     memory_ask_knowledge_block_max_chars: Annotated[int, LIVE] = Field(default=6000, ge=100)
     # Conversation turns the recent-turns block carries at most, newest last.
     memory_ask_recent_max_turns: Annotated[int, LIVE] = Field(default=40, ge=1)
-    # Characters of one turn in that block; longer ones are cut and marked.
+    # Characters of one turn in memory.ask's recent-turns block; longer ones are cut and
+    # marked.
     memory_ask_recent_turn_max_chars: Annotated[int, LIVE] = Field(default=1500, ge=100)
     # Characters of the whole recent-turns block; the oldest turns go first.
     memory_ask_recent_block_max_chars: Annotated[int, LIVE] = Field(default=12000, ge=100)
@@ -2571,15 +2577,13 @@ class MemorySearchSettings(BaseModel):
     # text-embedding-3-small.
     memory_search_query_rewrite_threshold: float = 0.38
 
-    # Bounds on the recursive fallback cascade (iterative-judge retry),
-    # shared through one SearchBudget: recursive rounds and wall-clock ms;
-    # whichever trips first stops further fallbacks. The first-pass retrieve
-    # always runs.
+    # Recursive rounds the fallback cascade (iterative-judge retry) may run; it stops at
+    # this or `memory_search_fallback_max_wall_ms`, whichever trips first. The first-pass
+    # retrieve always runs.
     memory_search_fallback_max_rounds: Annotated[int, LIVE] = 1
     # Wall-clock ms the fallback cascade may spend across all rounds before it stops.
     memory_search_fallback_max_wall_ms: Annotated[int, LIVE] = 4000
-    # Finer caps inside a round: LLM calls and vector queries a fallback may
-    # spend before it is denied.
+    # LLM calls one fallback round may spend before further ones are denied.
     memory_search_fallback_max_llm_calls: Annotated[int, LIVE] = 2
     # Vector queries one fallback round may issue before further ones are denied.
     memory_search_fallback_max_vector_queries: Annotated[int, LIVE] = 12
@@ -2737,21 +2741,18 @@ class MemorySearchSettings(BaseModel):
     # by one key re-extracted per session (38 of 60 questions on one eval).
     # Skipped for aggregational / temporal_diff shapes.
     memory_search_per_key_cap: Annotated[int, LIVE] = 3
-    # Digest-anchored expansion: a session digest in the pool's top-m
-    # summaries adds that session's top-k facts as candidates (+300 ms ask
-    # p50); MemorySearchInput.digest_descent overrides. chunk_date_source:
-    # "session" dates a chunk by its conversation's digest, "parent" by the
-    # session's first fact anchor.
+    # How memory.search dates a chunk: "session" by its conversation's digest, "parent" by
+    # the session's first fact anchor.
     memory_search_chunk_date_source: Annotated[Literal["session", "parent"], LIVE] = "session"
-    # Top session digests in the pool that digest descent expands.
+    # Top session digests in the pool that digest descent expands: a digest among them
+    # adds its session's top facts as candidates (+300 ms ask p50);
+    # MemorySearchInput.digest_descent overrides.
     memory_search_digest_descent_top_m: Annotated[int, LIVE] = Field(default=3, ge=1)
     # Facts digest descent adds as candidates from each expanded session.
     memory_search_digest_descent_k: Annotated[int, LIVE] = Field(default=5, ge=1)
-    # graph_seed: query | recent | both — under recent/both the entities of
-    # the identity's newest memories (recent_memories, at most recent_max)
-    # join the graph seeds. diversify: "none" | "session" — under "session" at
-    # most diversify_session_cap hits per source session (0 = max(2,
-    # top_k // 3)); per-request `diversify` overrides.
+    # What seeds memory.search's graph leg: "query", "recent" or "both". Under recent or
+    # both, the entities of the identity's newest memories
+    # (`memory_search_graph_seed_recent_memories`) join the query's seeds.
     memory_search_graph_seed: Annotated[Literal["query", "recent", "both"], LIVE] = "query"
     # Newest memories of the identity whose entities seed the graph under recent/both.
     memory_search_graph_seed_recent_memories: Annotated[int, LIVE] = Field(default=5, ge=1)
@@ -2781,7 +2782,7 @@ class MemorySearchSettings(BaseModel):
     # assistant-direct-answer facts, so a topic-only follow-up matches them.
     # The stored value is untouched; takes effect on (re-)ingest.
     memory_embed_answer_topic: Annotated[bool, LIVE] = True
-    # Pre-built entity summaries fetched per namespace on that leg.
+    # Pre-built entity summaries memory.search's entity-summary leg fetches per namespace.
     memory_search_entity_summaries_top_n: Annotated[int, LIVE] = 5
 
     # Per-token top_k ceiling by the token's role on the namespace: viewer and
@@ -2799,7 +2800,8 @@ class MemorySearchSettings(BaseModel):
     memory_rrf_code_shape_lo: Annotated[float, LIVE] = 0.20
     # Shape at/above which w_lex == floor (code).
     memory_rrf_code_shape_hi: Annotated[float, LIVE] = 0.30
-    # Never fully zero the lexical leg.
+    # Least weight the RRF adaptive lexical weight gives the lexical leg on a code-shaped
+    # query, so it is never fully zeroed.
     memory_rrf_lexical_weight_floor: Annotated[float, LIVE] = 0.1
 
     # Smallest window share verbatim chunks keep when the pool has them.
@@ -2885,7 +2887,8 @@ class ModelSettings(BaseModel):
     # paraphrases and replaced states. A fact is dropped only when every model says
     # drop; folds come from the first. Fails open. "" turns it off.
     memory_extract_verify_models: str = "claude-opus-5-5"
-    # The profile fold.
+    # Model of the profile fold, which consolidates an identity's memories into its
+    # profile; "" = `llm_model`.
     profile_consolidation_model: str = ""
     # Reflection distillation: the outcome labeller and the contrast writer.
     reflection_distill_model: str = ""
@@ -3073,7 +3076,7 @@ class ObservabilitySettings(BaseModel):
     # OTLP/HTTP collector base URL (`/v1/traces` and `/v1/metrics` are appended); set with
     # `otel_exporter` = "", it selects the otlp exporter.
     otel_exporter_otlp_endpoint: str = ""
-    # Comma-separated K=V headers sent to that endpoint, e.g.
+    # Comma-separated K=V headers sent to `otel_exporter_otlp_endpoint`, e.g.
     # `Authorization=Bearer <token>`.
     otel_exporter_otlp_headers: str = ""
     # The OTel resource `service.name` stamped on every span, log and metric.
@@ -3226,7 +3229,7 @@ class ProviderSettings(ModelSettings):
     # With inference_token_url and no workload token: the audience of the identity token Loom
     # signs (issuer <https public_base_url>/v1, newest RS256 key); never jwt_audience.
     inference_token_audience: str = ""
-    # The scope sent with that exchange; "" sends none.
+    # The scope sent with the inference gateway token exchange; "" sends none.
     inference_token_scope: str = ""
     # Seconds one token exchange with the inference gateway may take.
     inference_token_exchange_timeout_s: float = Field(default=10.0, gt=0)
@@ -3630,7 +3633,7 @@ class StorageSettings(BaseModel):
     # (retention_documents_days, a namespace's retention_days) aged out, so the
     # bytes leave with their rows.
     document_blob_gc_enabled: bool = True
-    # Seconds between sweeps.
+    # Seconds between document-original GC sweeps.
     document_blob_gc_interval_seconds: int = 3600
     # Seconds an original must have gone unwritten before the sweep may remove
     # it. A write stores its original before the document row that names it, so
@@ -3638,13 +3641,13 @@ class StorageSettings(BaseModel):
     # it and deletes every original of its scope.
     document_blob_min_age_seconds: int = 3600
 
+    # Opt-in retention and tiering, applied as idempotent ALTER TABLE MODIFY TTL by
+    # server/storage/retention_overrides.py: a retention_*_days setting deletes a table's
+    # rows older than N days, a tiering_*_warm_days setting moves them to
+    # tiering_warm_volume_name after W days. With both set, W must be < N or the move is a
+    # no-op (logged WARN).
     # ---- retention and tiering ----
-    # Opt-in retention/tiering, applied as idempotent ALTER TABLE MODIFY TTL by
-    # server/storage/retention_overrides.py:
-    #   - retention_*_days: delete rows older than N days. 0 = keep forever.
-    #   - tiering_*_warm_days: move rows older than W days to
-    #     tiering_warm_volume_name. 0 = no tiering.
-    # With both set, W must be < N or the move is a no-op (logged WARN).
+    # Days `loom.audit_log` rows are kept; 0 = forever.
     retention_audit_log_days: int = 0
     # Days `loom.agent_events` rows are kept; 0 = forever.
     retention_agent_events_days: int = 0
@@ -3762,8 +3765,7 @@ class TrackerSettings(BaseModel):
     # path, area escalations / incidents by term), ms; above the 300 ms interactive
     # budget.
     tracker_live_text_budget_ms: int = 900
-    # Breaker per credential: consecutive failures that open it, and how long
-    # it stays open before one probe read.
+    # Consecutive failures of a tracker source's credential that open its breaker.
     tracker_circuit_failure_threshold: int = 3
     # Seconds an open breaker stays open before one probe read (at least 1 s).
     tracker_circuit_cooldown_s: float = Field(default=120.0, ge=1.0)
@@ -3802,7 +3804,7 @@ class TrackerSettings(BaseModel):
     # Self-service tracker sources: any signed-in org member registers
     # one (`tracker.source.add`); credential and schema are checked before any write.
     # Off = only the operator's map serves; loom.qa_sources rows are
-    # ignored. `_max_sources` caps the registrations.
+    # ignored.
     tracker_self_service_enabled: bool = True
     # At most this many self-service sources an org may register; a further
     # `tracker.source.add` is refused.
@@ -3887,7 +3889,7 @@ class TrackerSettings(BaseModel):
     # The stack-frames-in-diff features ride the row unscored.
     tracker_links_weight_mention: float = 1.5
     # A consumer (code.backport_gap's issue path, the bisect's fix candidate) takes the
-    # top candidate as the fix only above `min_score` AND when a closing keyword names
+    # top candidate as the fix only above this score AND when a closing keyword names
     # the issue. tracker.links serves every row with its score.
     tracker_links_min_score: float = 1.0
     # --- tracker.duplicate_check -------------------------------------------------
@@ -3897,7 +3899,8 @@ class TrackerSettings(BaseModel):
     # duplicate pairs, so they survive a refit; the scale is compressed. Measured `none`
     # on 99% of negatives at 0.25.
     tracker_dupcheck_duplicate_threshold: float = 0.25
-    # the lower band's floor
+    # Calibrated confidence from which tracker.duplicate_check answers `related`
+    # (below `tracker_dupcheck_duplicate_threshold`).
     tracker_dupcheck_related_threshold: float = 0.05
     # The fix-in-flight leg reads PRs from the last this many days.
     tracker_dupcheck_fix_path_days: int = 365
@@ -3924,14 +3927,15 @@ class TrackerSettings(BaseModel):
     # Upper bound of the fitted duplicate threshold.
     tracker_dupcheck_duplicate_threshold_max: float = 0.5
     # The fit (coefficients, curve, holdout) is JSON in loom.code_index_state under the
-    # tracker namespace, refitted by the tracker_links pass once older than the refit
-    # interval by replaying every gold query at its filing time; `fit_negatives`
-    # non-duplicates are sampled by hash per fit. Off = the stored fit keeps serving;
+    # tracker namespace, refitted by the tracker_links pass once older than
+    # `tracker_dupcheck_refit_interval_s` by replaying every gold query at its filing
+    # time. Off = the stored fit keeps serving;
     # with none stored the op answers `uncalibrated`.
     tracker_dupcheck_refit_enabled: bool = True
-    # 7 days
+    # Seconds after which the tracker_links pass refits the duplicate-check calibration
+    # (7 days).
     tracker_dupcheck_refit_interval_s: float = 604800.0
-    # the negatives sampled per fit
+    # Non-duplicate pairs sampled (by hash) per duplicate-check calibration fit.
     tracker_dupcheck_fit_negatives: int = 400
     # The judge stage. On a `related` answer one model call reads
     # the draft against the top `judge_top_k` issue candidates' title + body head
@@ -3944,7 +3948,7 @@ class TrackerSettings(BaseModel):
     # Body characters per candidate the judge reads.
     tracker_dupcheck_judge_body_chars: int = 1500
     # The rerank stage. One model call reads the draft against a pool of
-    # each leg's own head (`_rerank_per_leg` rows a leg) plus the issues the tracker
+    # each leg's own head (`tracker_dupcheck_rerank_per_leg` rows a leg) plus the issues the tracker
     # graph links to the leading candidates; its same/related picks lead `nearest`, the
     # verdict stays the fit's. Fails open.
     tracker_dupcheck_rerank_enabled: bool = True
@@ -3993,17 +3997,11 @@ class TrackerSettings(BaseModel):
     # Budget of the per-test history read, ms: play scans the whole window by its time
     # key, far past the 300 ms interactive budget.
     tracker_live_checks_budget_ms: int = 8000
-    # Window of the history read, days; churn window of the ledger leg, days.
+    # Window of the test-signal history read, days.
     tracker_test_signal_window_days: int = 30
     # Churn window of the ledger leg, days (at least 1).
     tracker_test_signal_churn_days: int = Field(default=54, ge=1)
-    # Verdict thresholds: `min_runs` below which nothing is said;
-    # `flip_rate` (status changes between consecutive runs of one PR/check sequence)
-    # that reads as flaky; a storm hour holds ≥ K other failing tests across
-    # ≥ `cofail_prs` PRs, K = max(`cofail_k`, `cofail_multiple` × the window's median
-    # failing tests per hour); `cofail_share` of the test's failing hours must be storm
-    # hours for `infra_candidate`; a test failing on ≥ `cofail_prs` PRs in one hour is
-    # a shared cause by itself.
+    # Runs of a test the history must hold before the test signal gives a verdict.
     tracker_test_signal_min_runs: int = 5
     # Status-change rate between consecutive runs of one PR/check sequence at
     # or above which a test reads as flaky.
@@ -4032,9 +4030,8 @@ class TrackerSettings(BaseModel):
     tracker_test_daily_max_pass_seconds: float = Field(default=900.0, gt=0)
     # How far back a cold worker rolls, in days (the op's largest window is 90).
     tracker_test_daily_backfill_days: int = 30
-    # Days rolled per pass and the pause between remote statements: the shared
-    # `play` user is metered at 100 statements of one shape per hour, and the
-    # op's live reads share that quota.
+    # Days one test-daily pass rolls up: the shared `play` user is metered at 100
+    # statements of one shape per hour, and the op's live reads share that quota.
     tracker_test_daily_max_days_per_pass: int = 6
     # Seconds paused between remote statements of a pass; 0 = no pause.
     tracker_test_daily_pace_s: float = 5.0

@@ -185,7 +185,11 @@ def test_every_setting_says_what_it_does() -> None:
 def test_no_description_points_at_a_neighbouring_field() -> None:
     """settings.list and the schema show one field at a time, so "the bound above" names
     nothing there: a description names the other setting instead."""
-    pointing = re.compile(r"\b(?:above|below)(?=\s*(?:[).,;:]|$))")
+    pointing = re.compile(
+        r"\b(?:above|below)(?=\s*(?:[).,;:]|$))"
+        r"|\b(?:the|that|those|every)\s+[\w-]+(?:\s+[\w-]+)?\s+(?:above|below)\b(?!\s+(?:which|it|this))"
+        r"|\b(?:that|those)\s+(?:exchange|budget|block|leg|queue|endpoint)\b"
+    )
     found = [n for n, text in descriptions(Settings).items() if pointing.search(text)]
     assert not found, f"name the setting meant instead of above/below: {found}"
 
