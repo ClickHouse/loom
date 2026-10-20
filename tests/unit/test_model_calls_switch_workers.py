@@ -384,8 +384,7 @@ def _stale() -> None:
     customer._switch._reset_for_tests(
         frozenset(),
         read_age_s=settings.model_calls_policy_max_stale_seconds + 1,
-        due=False,
-        refresh_s=settings.model_calls_policy_refresh_seconds,
+        due_in_s=settings.model_calls_policy_refresh_seconds,
     )
 
 
