@@ -25,6 +25,7 @@ from pathlib import Path
 
 import httpx
 
+from server.clients._http import refuse_provider_api
 from server.core.errors import LoomServerError
 from server.settings import settings
 
@@ -62,8 +63,6 @@ async def bearer(provider_key: str, url: str) -> str:
     exchanges an identity token there, else the provider key. A provider's own
     API is refused here, before a token is fetched for it, and on every hop by
     the shared client (`server.clients._http._on_request`)."""
-    from server.clients._http import refuse_provider_api
-
     refuse_provider_api(url)
     if not exchanging():
         return provider_key

@@ -23,6 +23,7 @@ PROVIDER_API_HOSTS = frozenset(
         "api.anthropic.com",
         "generativelanguage.googleapis.com",
         "api.cohere.com",
+        "api.cohere.ai",
     }
 )
 

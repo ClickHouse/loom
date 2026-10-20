@@ -88,15 +88,16 @@ SDK has no class for raises the class its HTTP status maps to (a 409
 | `SCHEMA_PENDING`       | 503    | After the migration it names has run. No `Retry-After`: the wait is an operator action, not a timer.                                                                                                                                                                                                                            |
 | `OVERRIDE_NOT_SHARED`  | 503    | After the runtime directory is fixed (permissions, space, or none private enough to use); the next update tries it again, and the server log says what failed. No `Retry-After`: nothing changed.                                                                                                                               |
 | `CODED_WIDTH_MISMATCH` | 503    | After the embedder and the vector tables agree on a width; `/v1/health` (`coded_width_mismatch`) names the fix. A `memory.set`, `bulk_set`, `update` or `knowledge.*` write left nothing behind.                                                                                                                                |
+| `GATEWAY_REQUIRED`     | 503    | After a setting moves the call to the inference gateway: a model call named a provider's own API while `LOOM_INFERENCE_GATEWAY_REQUIRED` (or a token exchange) is on. The error names the host.                                                                                                                                 |
 | `EMBED_TIMEOUT`        | 503    | The SDKs retry it for idempotent ops (`memory.search` is one: three attempts by default). A raw HTTP or MCP caller retries once, straight away: the search wrote nothing. If it repeats, the embedding provider is down; back off rather than retry in a loop.                                                                  |
 | `BACKEND_TIMEOUT`      | 504    | Only an idempotent op, and preferably a narrower request. The statement exceeded its class deadline and the server does not retry it.                                                                                                                                                                                           |
 | `INTERNAL_ERROR`       | 500    | An idempotent op, once. Report the `request_id` if it repeats.                                                                                                                                                                                                                                                                  |
 | 4xx other than 429     | 4xx    | No. The same request gets the same answer; fix the request, the token or the data first.                                                                                                                                                                                                                                        |
 
-`SCHEMA_PENDING`, `OVERRIDE_NOT_SHARED` and `CODED_WIDTH_MISMATCH` are 503s because
-the server cannot serve the request in its current state, not because the request is
-wrong; they send no `Retry-After` since only an operator's fix ends them, and the SDKs
-never retry the last two.
+`SCHEMA_PENDING`, `OVERRIDE_NOT_SHARED`, `CODED_WIDTH_MISMATCH` and `GATEWAY_REQUIRED`
+are 503s because the server cannot serve the request in its current state, not because
+the request is wrong; they send no `Retry-After` since only an operator's fix ends them,
+and the SDKs never retry the last three.
 
 The SDKs' default policy: three attempts with exponential backoff; 408 and 5xx
 retried for ops the registry marks idempotent (any other op only on a 408 or a

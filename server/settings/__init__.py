@@ -79,6 +79,20 @@ class Settings(
         return f"{self.public_base_url.strip().rstrip('/')}/v1"
 
     @model_validator(mode="after")
+    def _check_code_rerank_behind_the_gateway(self) -> Settings:
+        """`builtin:cohere` calls Cohere's own API, and the code reranker fails
+        open: while the gateway is required, the default may not name it."""
+        rerank = self.code_search_rerank_default.strip()
+        if self.gateway_required() and (
+            rerank == "builtin:cohere" or rerank.startswith("builtin:cohere:")
+        ):
+            raise ValueError(
+                "LOOM_INFERENCE_GATEWAY_REQUIRED (or a token exchange) refuses "
+                "LOOM_CODE_SEARCH_RERANK_DEFAULT=builtin:cohere: rerank through the gateway"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _check_inference_identity(self) -> Settings:
         """Signing its own identity tokens, Loom needs an https public address
         for their issuer (the gateway fetches the keys there, and a key swapped

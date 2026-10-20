@@ -64,16 +64,19 @@ lands: a retire since may be unseen. The public keys of RS256 keys are served at
 `GET /v1/.well-known/jwks.json`. With `LOOM_INFERENCE_TOKEN_AUDIENCE` the newest RS256 key
 also signs the identity token Loom exchanges at an inference gateway; that gateway trusts
 those keys, so Loom refuses the settings when the token's audience is `LOOM_JWT_AUDIENCE` or
-its issuer one Loom's verifier accepts, and a retire may not leave no RS256 key active.
-While the gateway is required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or any token exchange),
-no model call reaches a provider's own API (`server/clients/_http.py::refuse_provider_api`):
-the settings refuse an API root or a rerank endpoint there and the Gemini embedder; the
-shared provider client's request hook (`_on_request`) refuses every hop, redirects included;
-the rerank and classify senders, on their own clients, check each URL; and `builtin:cohere`
-is refused by name. A refusal (`GATEWAY_REQUIRED`) is a setting to fix, never retried. The `default` row holds `HMAC(root, label)`, written by
+its issuer one Loom's verifier accepts, and a retire may not leave no RS256 key active. The `default` row holds `HMAC(root, label)`, written by
 the workers leader or a keyring command (never a replica's first boot, which would trust a
 mistyped secret); a process whose root does not match it reports
 `keyring_root_mismatch`, and the keyring commands and `loom mint-token` refuse there.
+
+**Model calls behind the gateway.** While the gateway is required
+(`LOOM_INFERENCE_GATEWAY_REQUIRED`, or any token exchange), no model call reaches a
+provider's own API (`server/clients/_http.py::refuse_provider_api`). The settings refuse
+an API root or a rerank endpoint there, the Gemini embedder and a `builtin:cohere`
+code-search default; the shared provider client's request hook (`_on_request`) refuses
+every hop, redirects included; the rerank and classify senders, on their own clients,
+check each URL; and `builtin:cohere` is refused by name. A refusal (`GATEWAY_REQUIRED`)
+is a setting to fix, and neither SDK retries it.
 
 **Rotation.** `loom signing-key rotate [--algorithm HS256|RS256] [--activate-in 300]`
 writes a key whose `activate_at` lies `--activate-in` seconds ahead on the ClickHouse

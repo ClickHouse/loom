@@ -411,6 +411,7 @@ def required(monkeypatch: pytest.MonkeyPatch) -> None:
         "https://eu.api.openai.com/v1/embeddings",
         "https://generativelanguage.googleapis.com/v1beta/models/m:embedContent",
         "https://api.cohere.com/v2/rerank",
+        "https://api.cohere.ai/v1/rerank",  # Cohere's older host
     ],
 )
 def test_with_the_gateway_required_a_key_never_goes_to_a_providers_own_api(
@@ -533,6 +534,22 @@ def test_no_rerank_or_classify_endpoint_reaches_a_provider(
         )
     )
     assert label == "" and posted == []
+
+
+@pytest.mark.parametrize("rerank", ["builtin:cohere", "builtin:cohere:rerank-english-v3.0"])
+def test_the_gateway_required_refuses_cohere_as_the_code_search_rerank_default(
+    monkeypatch: pytest.MonkeyPatch, rerank: str
+) -> None:
+    env = _AT_GATEWAY | {
+        "LOOM_INFERENCE_GATEWAY_REQUIRED": "true",
+        "LOOM_CODE_SEARCH_RERANK_DEFAULT": rerank,
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match="LOOM_CODE_SEARCH_RERANK_DEFAULT"):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+    monkeypatch.setenv("LOOM_CODE_SEARCH_RERANK_DEFAULT", "builtin:openai")
+    assert Settings(_env_file=None).code_search_rerank_default == "builtin:openai"  # type: ignore[call-arg]
 
 
 def test_with_the_gateway_required_builtin_cohere_is_refused_by_name(required: None) -> None:
