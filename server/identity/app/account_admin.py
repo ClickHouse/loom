@@ -12,7 +12,7 @@ from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from typing import Any
 
-from server.auth import aliases, machines, revocation, sso_links
+from server.auth import agents, aliases, machines, revocation, sso_links
 from server.auth.grant_claims import account_change, bot_change, trusts_change
 from server.core.naming import SSO_NAMESPACE_PREFIX
 from server.observability import audit
@@ -395,6 +395,16 @@ def bot_from(
         raise ValueError("an agent claim needs a workload trust and no key: a key is one bot")
     if agent_claim and f"{name}-".startswith(SSO_NAMESPACE_PREFIX):
         raise ValueError(f"name: its agents' namespaces would take SSO's {SSO_NAMESPACE_PREFIX}")
+    if agent_claim:
+        # Every agent's token names these and its own namespace (an agent name
+        # is at most 63 characters): they must fit before anything is lent.
+        used = agents.names_bytes([*ns_roles, f"{name}-" + "x" * 63])
+        if used > agents.TOKEN_NAMESPACE_BYTES:
+            raise ValueError(
+                f"namespace roles: {used} bytes of an agent's token with a 63-character "
+                f"agent's own namespace, over {agents.TOKEN_NAMESPACE_BYTES}; share fewer "
+                "namespaces, or shorter ones"
+            )
     return {
         "name": name,
         "org": org,
