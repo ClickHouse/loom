@@ -163,7 +163,9 @@ is `pending` while the row's embedding carries the pending mark.
 - The embedding is written with `conflict_checked_at` at the pending mark
   (`store.conflict_marks`) and the settle stamps it, so every replica reads the same
   state. A judge lost to a crash leaves the mark, and the leader's conflict sweep
-  (`workers.conflict_sweep`) re-judges the row.
+  (`workers.conflict_sweep`) re-judges the row. A judge whose model call the org's
+  model-call switch holds settles as `held`: nothing is stamped, and the sweep
+  re-judges the row once the org is back on.
 
 ## `memory.bulk_set` and `memory.set_from_messages`
 

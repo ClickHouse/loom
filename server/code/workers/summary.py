@@ -90,11 +90,15 @@ async def _run(result: CodeSummaryResult) -> None:
         if left <= 0:
             break
         share = max(1, -(-left // (len(repos) - i)))
+        if await customer.switched_off(cfg.org):
+            continue  # its cards wait until the org is switched back on
         try:
             with customer.for_org(cfg.org):
                 await _summarize_repo(
                     cfg.org, cfg.namespace, result, cap=result.cards_written + share
                 )
+        except customer.HOLDS:
+            continue  # a held call is no failure: its cards wait until the org is back
         except Exception as e:  # one repository's failed read never skips the rest
             logger.exception("code_summary: %s/%s failed", cfg.org, cfg.namespace)
             result.errors.append(f"{cfg.namespace}: {type(e).__name__}: {e}")
@@ -223,6 +227,8 @@ async def _card_row(
     vec: list[float] = []
     try:
         vec = await embedder.embed(summary)
+    except customer.HOLDS:
+        pass  # a stub: the recovery worker embeds it once the org is back on
     except Exception as e:  # noqa: BLE001 — recovery worker fills stubs
         logger.warning("code_summary: embed failed for %s: %s", live.get("scope_path"), e)
     row = CodeRepo.tombstone_of("code_summaries", live)  # full mirror
@@ -306,15 +312,12 @@ async def _summarize_repo(
             started = time.monotonic()
             cost_accumulator.begin_op()
             try:
-                excerpts = await _file_excerpts(repo, org, ns, path, embedder.model_name)
-                if not excerpts:
-                    return
-                summary = await _summarize(llm, path, excerpts)
-                row = await _card_row(
-                    embedder, live, summary, getattr(llm, "model", ""), content_hash
-                )
-                await repo.insert_rows("code_summaries", [row])
-                result.cards_written += 1
+                if await _write_card(
+                    repo, llm, embedder, live, org=org, ns=ns, path=path, content_hash=content_hash
+                ):
+                    result.cards_written += 1
+            except customer.HOLDS:
+                raise  # the org's calls are held: the pass leaves the rest of this repository
             except Exception as e:  # noqa: BLE001 — per-file, keep going
                 result.errors.append(f"{path}: {type(e).__name__}: {e}")
             finally:
@@ -328,6 +331,27 @@ async def _summarize_repo(
     await _run_cards(candidates, _one, workers, lambda: result.cards_written >= cap)
 
 
+async def _write_card(
+    repo: Any,
+    llm: Any,
+    embedder: Any,
+    live: dict[str, Any],
+    *,
+    org: str,
+    ns: str,
+    path: str,
+    content_hash: str,
+) -> bool:
+    """One file's card, summarised, embedded and written; False with no excerpts."""
+    excerpts = await _file_excerpts(repo, org, ns, path, embedder.model_name)
+    if not excerpts:
+        return False
+    summary = await _summarize(llm, path, excerpts)
+    row = await _card_row(embedder, live, summary, getattr(llm, "model", ""), content_hash)
+    await repo.insert_rows("code_summaries", [row])
+    return True
+
+
 async def _run_cards(
     candidates: list[str],
     one: Any,
@@ -335,7 +359,8 @@ async def _run_cards(
     at_cap: Any,
 ) -> None:
     """Consume the candidate list in order until `at_cap()`: sequentially
-    for one worker, else as a bounded fan-out with `workers` files in flight."""
+    for one worker, else as a bounded fan-out with `workers` files in flight.
+    A file that raises (a held model call) ends the list, its peers cancelled."""
     if workers == 1:
         for path in candidates:
             if at_cap():
@@ -351,14 +376,18 @@ async def _run_cards(
             if len(pending) >= workers * 2:
                 done_set, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 pending = [t for t in pending if t not in done_set]
+                # Every finished file's error is read, the first re-raised.
+                errors = [t.exception() for t in done_set if not t.cancelled()]
+                if first := next((e for e in errors if e is not None), None):
+                    raise first
         if pending:
             await asyncio.gather(*pending)
     finally:
-        # `asyncio.wait` does not cancel its tasks when the pass is cancelled
-        # (deadline, shutdown): without this they keep calling the model and
-        # writing cards after the pass, and the next pass starts the same files.
+        # `asyncio.wait` leaves its tasks running on a cancel or a raise:
+        # cancel and await them so none outlives the pass.
         for task in pending:
             task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 async def _file_excerpts(repo: Any, org: str, ns: str, path: str, model: str) -> str:

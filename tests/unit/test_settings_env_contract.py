@@ -35,6 +35,9 @@ _FIELDS = Settings.model_fields
 # own tests (test_identity_mode, test_llm_provider_inference,
 # test_default_namespace*).
 _CROSS_CHECKED = {
+    # Checked against each other (test_model_calls_switch.py).
+    "model_calls_policy_refresh_seconds",
+    "model_calls_policy_max_stale_seconds",
     "default_namespace",
     "jwt_public_keys_json",
     # Read with the issuer and the federated keys (test_sharing.py).

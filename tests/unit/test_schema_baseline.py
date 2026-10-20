@@ -106,8 +106,9 @@ def test_the_journal_files() -> None:
         "045_request_sli.sql",
         "054_embedding_cache_org.sql",
         "055_delete_version_checks.sql",
-        "056_acl_versions.sql",
-        "057_collections_and_groups.sql",
+        "056_org_model_calls.sql",
+        "057_acl_versions.sql",
+        "058_collections_and_groups.sql",
     ]
 
 

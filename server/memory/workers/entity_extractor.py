@@ -83,6 +83,8 @@ class EntityExtractorResult:
     healed_divergent: int = 0  # mirror rows re-emitted with memory's entities
     # Rows dropped because the namespace was over its 24h LLM cost cap.
     skipped_over_budget: int = 0
+    # Rows of an org whose model calls are switched off, left for later.
+    skipped_switched_off: int = 0
     # LLM replies that were not a parseable JSON array. The row is left
     # untouched for the next pass (see _PARSE_FAIL_MAX) — NOT written as
     # `_none_`, which would look like "genuinely no entities" forever.
@@ -253,17 +255,21 @@ async def _next_candidates(cfg: EntityExtractorConfig) -> list[dict[str, Any]]:
     import server.memory.store as memory_repo
 
     full_every, recent, full_keys = _scan_settings()
+    # An org whose model calls are switched off keeps its rows for later.
+    off = await customer.switched_off_orgs()
     if full_every <= 0 or recent <= 0:
         return await memory_repo.find_unentitied_memories(
             batch_size=cfg.batch_size,
             org_filter=cfg.org_filter,
             namespace_filter=cfg.namespace_filter,
+            exclude_orgs=off,
         )
     rows = await memory_repo.find_unentitied_memories(
         batch_size=cfg.batch_size,
         org_filter=cfg.org_filter,
         namespace_filter=cfg.namespace_filter,
         since_seconds=recent,
+        exclude_orgs=off,
     )
     if len(rows) >= cfg.batch_size:
         return rows
@@ -275,6 +281,7 @@ async def _next_candidates(cfg: EntityExtractorConfig) -> list[dict[str, Any]]:
                 org_filter=cfg.org_filter,
                 namespace_filter=cfg.namespace_filter,
                 per_namespace=_backlog_per_namespace(),
+                exclude_orgs=off,
             )
             _backlog_keys.clear()
             _backlog_keys.extend(interleave_by_namespace(scanned))
@@ -337,11 +344,19 @@ async def run_pass(
             if over_cap.get((r["org"], r["namespace"]), False):
                 result.skipped_over_budget += 1
                 continue
+            if await customer.switched_off(str(r["org"])):
+                # A backlog key queued before the switch: left for later, no sentinel.
+                result.skipped_switched_off += 1
+                continue
             row_started = time.monotonic()
             cost_accumulator.begin_op()
             try:
                 with customer.for_org(str(r["org"])):
                     entities = await _extract(value_str)
+            except customer.HOLDS:
+                # Switched off since the scan, or the switch unread: left for later, no sentinel.
+                result.skipped_switched_off += 1
+                continue
             except Exception as e:  # noqa: BLE001 — one row's failure must not stop the pass
                 result.failures.append(
                     f"{r['org']}/{r['namespace']}/{r['memory_key']}: {type(e).__name__}: {e}"

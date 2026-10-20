@@ -35,7 +35,7 @@ async def test_checkpoint_follows_successful_staged_write(plan):
     assert (result.cursor, result.rows_written, result.done) == (5, 1, True)
     read.assert_awaited_once_with(args[0], args[1], args[2], after=4, limit=64, ch=None)
     embed.assert_awaited_once_with(
-        "memory_embeddings", read.return_value, args[5], source_texts=None
+        "memory_embeddings", read.return_value, args[5], source_texts=None, waiting=[]
     )
     write.assert_awaited_once_with(*args[:5], embed.return_value, after=4, ch=None)
 
@@ -116,7 +116,11 @@ async def test_tracker_page_hydrates_before_embedding(plan, monkeypatch):
         read.return_value, body_chars=page.settings.tracker_embed_body_chars
     )
     embed.assert_awaited_once_with(
-        "qa_item_embeddings", read.return_value, args[5], source_texts={0: "Title\nBody"}
+        "qa_item_embeddings",
+        read.return_value,
+        args[5],
+        source_texts={0: "Title\nBody"},
+        waiting=[],
     )
 
 

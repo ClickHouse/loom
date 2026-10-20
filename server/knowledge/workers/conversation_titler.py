@@ -152,6 +152,7 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
             window_hours=int(cfg.window_hours),
             min_turns=int(cfg.min_turns),
             limit=int(max(1, cfg.max_threads_per_pass) * 5),
+            exclude_orgs=await customer.switched_off_orgs(),  # theirs wait, taking no slot
         )
         candidates = cast(list[TitleCandidate], rows)
         stored = await conversation_repo.thread_rows(
@@ -174,6 +175,8 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
                     continue
                 if await _make_title(row, cfg, llm, existing):
                     result.titled += 1
+            except customer.HOLDS:
+                continue  # a held call is no failure: the thread is titled once the org is back
             except Exception as e:
                 result.errors += 1
                 log.exception("conversation titling failed for %s", dict(row))

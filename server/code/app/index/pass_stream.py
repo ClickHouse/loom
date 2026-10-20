@@ -160,6 +160,9 @@ class CommitStream:
                     on_round=_saved,
                     **self._ctx,
                 )
+        except customer.HOLDS:
+            self.index = len(self.commits)  # held, no failure: the watermark stays
+            return False
         except Exception as e:
             self.result.errors.append(f"{sha[:12]}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: commit %s failed", sha[:12])

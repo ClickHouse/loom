@@ -28,50 +28,54 @@ def metered(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     genai._identity.set(None)  # the tests stamp identities a later test must not inherit
 
 
+def _headers() -> dict[str, str]:
+    return customer.headers(asyncio.run(customer.require()))
+
+
 def _request(org: str, op: str = "memory.search") -> None:
     genai.set_identity(org=org, namespace="ns", operation=op)
 
 
 def test_without_a_customer_header_nothing_is_sent_or_refused() -> None:
     genai._identity.set(None)
-    assert customer.headers() == {}
+    assert _headers() == {}
 
 
 def test_a_request_names_the_org_of_its_verified_identity(metered) -> None:
     _request("acme")
-    assert customer.headers() == {"X-Customer": "acme", "X-Feature": "memory.search"}
+    assert _headers() == {"X-Customer": "acme", "X-Feature": "memory.search"}
     with genai.llm_stage("hyde"):
-        assert customer.headers()["X-Feature"] == "hyde"
+        assert _headers()["X-Feature"] == "hyde"
 
 
 @pytest.mark.parametrize("org", ["", "-", "*"])
 def test_a_call_naming_no_org_is_refused(metered, org: str) -> None:
     _request(org)
     with pytest.raises(customer.Unattributed):
-        customer.headers()
+        _headers()
 
 
 def test_a_worker_names_its_rows_org_and_never_inherits_its_identity(metered) -> None:
     # A pass stamps the org of the row it last worked on; the next call is not that org's.
     genai.set_worker_identity("embedding", org="acme")
     with pytest.raises(customer.Unattributed):
-        customer.headers()
+        _headers()
     with customer.for_org("beta"):
-        assert customer.headers() == {"X-Customer": "beta", "X-Feature": "worker.embedding"}
+        assert _headers() == {"X-Customer": "beta", "X-Feature": "worker.embedding"}
     with pytest.raises(customer.Unattributed):
-        customer.headers()
+        _headers()
 
 
 def test_the_deployments_own_calls_name_the_system_customer(metered) -> None:
     with customer.system():
-        assert customer.headers()["X-Customer"] == "loom"
+        assert _headers()["X-Customer"] == "loom"
     with customer.system(), customer.for_org("acme"):
-        assert customer.headers()["X-Customer"] == "acme"  # an org's data is its own
+        assert _headers()["X-Customer"] == "acme"  # an org's data is its own
 
 
 def test_an_org_that_needs_it_is_quoted_for_the_header(metered) -> None:
     with customer.for_org("org one/ü"):
-        assert customer.headers()["X-Customer"] == "org%20one%2F%C3%BC"
+        assert _headers()["X-Customer"] == "org%20one%2F%C3%BC"
 
 
 class _Recorder:
@@ -119,14 +123,14 @@ def test_chat_and_embedding_requests_carry_the_customer(metered, monkeypatch) ->
     vectors = _Recorder({"data": [{"embedding": [0.0] * 8}], "usage": {"total_tokens": 1}})
     monkeypatch.setattr(embed_mod, "_http_client", lambda: vectors)
     embedder = embed_mod.OpenAIEmbedder(model="text-embedding-3-small", dim=8, api_key="k")
-    asyncio.run(embedder._post(embedder._payload("text")))
+    asyncio.run(embedder._embed_one_raw("text"))
     sent.append(vectors.calls[0]["headers"])
 
     gemini = _Recorder({"embedding": {"values": [0.0] * 8}})
     monkeypatch.setattr(gemini_mod, "_http_client", lambda: gemini)
     asyncio.run(
-        gemini_mod.GeminiEmbedder(model="gemini-embedding-001", dim=8, api_key="k")._post(
-            "https://gemini.example/embed", {}
+        gemini_mod.GeminiEmbedder(model="gemini-embedding-001", dim=8, api_key="k")._embed_one_raw(
+            "text"
         )
     )
     sent.append(gemini.calls[0]["headers"])
@@ -302,10 +306,10 @@ def test_a_refusal_is_logged_once_a_minute_by_its_code(metered, monkeypatch, cap
     monkeypatch.setattr(customer.time, "monotonic", lambda: clock[0])
     for _ in range(3):
         with pytest.raises(customer.Unattributed):
-            customer.require()
+            asyncio.run(customer.require())
     clock[0] += 61
     with pytest.raises(customer.Unattributed):
-        customer.require()
+        asyncio.run(customer.require())
     logged = [r for r in caplog.records if "MODEL_CALL_UNATTRIBUTED" in r.getMessage()]
     assert len(logged) == 2
 
@@ -527,17 +531,45 @@ def test_a_cached_answer_does_not_hide_a_missed_path(metered) -> None:
     cache_mod.reset_stats()  # the hit counts in the process-wide stats other tests read
 
 
-def test_code_search_rerank_lets_a_refusal_through(metered, monkeypatch) -> None:
+@pytest.mark.parametrize("held", ["unattributed", "stale"])
+def test_code_search_rerank_lets_a_refusal_through(metered, monkeypatch, held: str) -> None:
     from server.code.app.search import rerank as code_rerank
     from server.memory.app import rerank as rerank_mod
 
     async def refusing(**kw: Any) -> Any:
-        customer.require()
+        if held == "stale":
+            raise customer.SwitchUnread("stale")
+        await customer.require()
         raise AssertionError("not reached")
 
+    error = customer.SwitchUnread if held == "stale" else customer.Unattributed
     monkeypatch.setattr(rerank_mod, "rerank", refusing)
-    with pytest.raises(customer.Unattributed):  # not "fused order kept"
+    with pytest.raises(error):  # not "fused order kept"
         asyncio.run(code_rerank._rerank_units("ops", "q", []))
+
+
+def test_inline_classify_lets_an_unread_switch_through(metered, monkeypatch) -> None:
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import classify as classify_mod
+    from server.memory.app import namespace_types, write
+
+    async def config(org: str, ns: str) -> tuple[str, str]:
+        return "https://classify.example", "t"
+
+    async def types(org: str, ns: str) -> list[Any]:
+        return [{"memory_type": "observation"}]
+
+    async def stale(**_: Any) -> str:
+        raise customer.SwitchUnread("stale")
+
+    monkeypatch.setattr(classify_mod, "get_namespace_classify_config", config)
+    monkeypatch.setattr(namespace_types, "list_type_configs", types)
+    monkeypatch.setattr(classify_mod, "classify", stale)
+    body = MemorySetInput(
+        org="acme", namespace="ns", agent="a", memory_key="k", value="v", classify=True
+    )
+    with customer.for_org("acme"), pytest.raises(customer.SwitchUnread):  # not the caller's type
+        asyncio.run(write._set_resolve_type(body))
 
 
 def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_header(
@@ -593,8 +625,9 @@ def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_heade
     provider_health.reset()  # classify recorded a success in the process-wide state
 
 
+@pytest.mark.parametrize("held", ["unattributed", "stale"])
 def test_the_llm_reranker_lets_a_refusal_through_and_records_no_outage(
-    metered, monkeypatch
+    metered, monkeypatch, held: str
 ) -> None:
     from server.memory.app import rerank as rerank_mod
     from server.observability import provider_health
@@ -603,13 +636,16 @@ def test_the_llm_reranker_lets_a_refusal_through_and_records_no_outage(
         """A real-looking client: the reranker skips the fake one."""
 
         async def complete(self, *a: Any, **k: Any) -> Any:
-            customer.require()
+            if held == "stale":
+                raise customer.SwitchUnread("stale")
+            await customer.require()
             raise AssertionError("not reached")
 
+    error = customer.SwitchUnread if held == "stale" else customer.Unattributed
     monkeypatch.setattr("server.llm.client.get_llm_client", lambda: _Metered())
     provider_health.reset()
     candidates = [rerank_mod.RerankCandidate("k", "ns", "v", "fact", 1.0)]
-    with pytest.raises(customer.Unattributed):
+    with pytest.raises(error):
         asyncio.run(rerank_mod._rerank_with_builtin_openai("builtin:openai", "q", candidates))
     assert not provider_health.status()["providers"].get("rerank:openai", {}).get("failing")
 
@@ -630,8 +666,8 @@ def test_the_gateway_names_the_customer_and_feature_its_own_way(metered, monkeyp
     )
     _request("acme")
     with genai.llm_stage("hyde"):
-        assert customer.headers() == {"X-Customer": "cloud:acme", "X-Feature": "search-expand"}
-    assert customer.headers()["X-Feature"] == "loom-other"  # memory.search is not mapped
+        assert _headers() == {"X-Customer": "cloud:acme", "X-Feature": "search-expand"}
+    assert _headers()["X-Feature"] == "loom-other"  # memory.search is not mapped
 
 
 @pytest.mark.parametrize(
@@ -660,11 +696,11 @@ def test_the_system_customer_is_named_as_configured_not_formatted(metered, monke
     monkeypatch.setattr(settings, "inference_customer_format", "cloud:{org}")
     monkeypatch.setattr(settings, "inference_system_customer", "loom-deployment")
     with customer.system():
-        assert customer.headers()["X-Customer"] == "loom-deployment"
+        assert _headers()["X-Customer"] == "loom-deployment"
     with customer.system(), customer.for_org("acme"):
-        assert customer.headers()["X-Customer"] == "cloud:acme"
+        assert _headers()["X-Customer"] == "cloud:acme"
     with customer.system(), customer.for_org("loom-deployment"):  # an org named like it
-        assert customer.headers()["X-Customer"] == "cloud:loom-deployment"
+        assert _headers()["X-Customer"] == "cloud:loom-deployment"
 
 
 def test_a_required_cell_without_its_header_refuses_rather_than_sends(monkeypatch) -> None:
@@ -672,7 +708,7 @@ def test_a_required_cell_without_its_header_refuses_rather_than_sends(monkeypatc
     monkeypatch.setattr(settings, "inference_customer_header", "")
     monkeypatch.setattr(settings, "inference_customer_required", True)
     with customer.for_org("acme"), pytest.raises(customer.Unattributed, match="REQUIRED"):
-        customer.headers()
+        asyncio.run(customer.require())
 
 
 @pytest.mark.parametrize(
@@ -700,7 +736,7 @@ def test_names_one_agrees_with_require(metered, monkeypatch, header, required, s
         elif scope == "system":
             stack.enter_context(customer.system())
         try:
-            customer.require()
+            asyncio.run(customer.require())
             accepted = True
         except customer.Unattributed:
             accepted = False
@@ -728,7 +764,7 @@ class _MeteredLLM:
         self.text = text
 
     async def complete(self, *a: Any, **k: Any) -> Any:
-        customer.require()
+        await customer.require()
         return type("Out", (), {"text": self.text, "tokens_in": 1, "tokens_out": 1})()
 
 
@@ -1141,7 +1177,7 @@ def test_the_retrieval_judge_names_the_judged_org(metered, monkeypatch, caplog) 
 
     class _Client:
         async def complete(self, *a: Any, **k: Any) -> Any:
-            seen.append(customer.headers())
+            seen.append(customer.headers(await customer.require()))
             return type("Out", (), {"text": "{}"})()
 
     monkeypatch.setattr(retrieval_judge.settings, "retrieval_judge_model", "")
@@ -1180,7 +1216,7 @@ def test_an_http_request_names_the_org_it_addresses(metered, monkeypatch) -> Non
         sent: dict[str, str] = {}
 
     async def handler(_: _In) -> _Out:
-        return _Out(sent=customer.headers())
+        return _Out(sent=customer.headers(await customer.require()))
 
     op = Operation(
         name="probe.customer",

@@ -117,10 +117,16 @@ def _seconds(dt: datetime) -> datetime:
 
 
 async def stale_pending_marks(
-    *, grace_s: int, lookback_s: int, limit: int, ch: _CHClient | None = None
+    *,
+    grace_s: int,
+    lookback_s: int,
+    limit: int,
+    exclude_orgs: frozenset[str] = frozenset(),
+    ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Live, active, embedded rows whose mark is older than `grace_s` (their judge
-    was lost) and younger than `lookback_s`, oldest first, one per identity key."""
+    was lost) and younger than `lookback_s`, oldest first, one per identity key;
+    none of `exclude_orgs` (orgs whose model calls are switched off)."""
     ch = ch or _default_client()
     return await ch.query_all(
         f"""
@@ -134,11 +140,17 @@ async def stale_pending_marks(
           AND scope = 'private'
           AND status = 'active'
           AND embedding_dim > 0
+          AND NOT has({{off:Array(String)}}, org)
         ORDER BY created_at ASC
         LIMIT 1 BY org, namespace, agent, user_id, session_id, memory_key
         LIMIT {{lim:UInt32}}
         """,
-        {"lookback": int(lookback_s), "grace": int(grace_s), "lim": int(limit)},
+        {
+            "lookback": int(lookback_s),
+            "grace": int(grace_s),
+            "lim": int(limit),
+            "off": sorted(exclude_orgs),
+        },
     )
 
 

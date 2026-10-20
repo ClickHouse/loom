@@ -51,6 +51,7 @@ from server.code.domain.extract.lang_reference import (
 from server.code.domain.extract.lang_sql_model import SQL_LANG
 from server.code.domain.extract.treesitter import ParsedFile, lang_for_path
 from server.code.store.index import CodeRepo, build_row
+from server.llm import customer
 
 logger = logging.getLogger("loom.code_index.ingest")
 
@@ -76,6 +77,8 @@ async def _embed_texts(texts: list[str], embedder: Any) -> EmbedResult:
                         len(got),
                         len(batch),
                     )
+            except customer.HOLDS:
+                raise  # the org's model calls are held: the repository waits
             except Exception as e:  # noqa: BLE001 — provider errors degrade to stubs
                 logger.warning("code ingest: embed_many failed (%s), per-text fallback", e)
         if vecs is not None:
@@ -87,6 +90,8 @@ async def _embed_texts(texts: list[str], embedder: Any) -> EmbedResult:
         for i, text in enumerate(batch):
             try:
                 result.vectors[start + i] = await embed_shrinking(embedder, text)
+            except customer.HOLDS:
+                raise
             except Exception as e:  # noqa: BLE001 — a failed chunk becomes a stub, not a failed ingest
                 result.failures[start + i] = str(e)[:300]
     return result

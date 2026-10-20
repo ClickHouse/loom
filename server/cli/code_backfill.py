@@ -14,6 +14,8 @@ from typing import Any
 
 from server.cli.code_maintenance import _compact_after_bulk
 from server.cli.code_run import _identity, _note, _repo_cfg
+from server.core.background import gather_or_cancel
+from server.llm import customer
 
 log = logging.getLogger("loom.cli.code")
 
@@ -88,6 +90,7 @@ async def _backfill(args: argparse.Namespace) -> int:
         print(f"twin label: rows written under embedding_model={model_name!r}")
     denylist = await load_denylist(cfg, head, gitrepo.show_file)
     cursor_key = f"backfill_cursor:index{suffix}"
+    mode = "repair" if paths_file else "twin" if suffix else "backfill"
     done_upto = "" if paths_file else await repo.get_state(org, ns, cursor_key)
     start_idx = int(done_upto) if done_upto.isdigit() else 0
     started = time.monotonic()
@@ -117,6 +120,8 @@ async def _backfill(args: argparse.Namespace) -> int:
                     callers_namespace=str(getattr(args, "callers_from", "") or ""),
                     parsed=reads.parsed.get(path),
                 )
+            except customer.HOLDS:
+                raise  # the org's model calls are held: the run stops, its cursor kept
             except Exception as e:  # noqa: BLE001 — per-file, keep going
                 counters["errors"] += 1
                 print(f"  ! {path}: {type(e).__name__}: {e}", file=sys.stderr)
@@ -134,15 +139,14 @@ async def _backfill(args: argparse.Namespace) -> int:
     batch = 200
     for b_start in range(start_idx, len(paths), batch):
         chunk_paths = paths[b_start : b_start + batch]
-        await _backfill_batch_rounds(
-            repo,
-            org,
-            ns,
-            chunk_paths,
-            source=_source,
-            one=_one,
-            denylist=denylist,
+        held = await _held_batch(
+            repo, org, ns, chunk_paths, source=_source, one=_one, denylist=denylist
         )
+        if held:
+            print(f"backfill stopped at {b_start}/{len(paths)}: {held}", file=sys.stderr)
+            # The batches written before the hold are compacted and recorded.
+            await _close_index(counters, org, ns, model_name, started, head, mode)
+            return 1
         if not paths_file:
             await repo.set_state(org, ns, cursor_key, str(b_start + len(chunk_paths)))
         rate = counters["files"] / max(time.monotonic() - started, 1e-9)
@@ -177,20 +181,7 @@ async def _backfill(args: argparse.Namespace) -> int:
     if getattr(args, "dialect_folder_pass", False):
         folder = await _dialect_folder_pass(repo, org, ns, head)
         counters["dialect_inherited"] = folder["inherited"]
-    await _compact_after_bulk(counters["chunks"] + counters.get("moved", 0), model_name)
-    await _record_manual_pass(
-        "code_ingest",
-        org,
-        ns,
-        started=started,
-        done=counters["files"],
-        rows_written=counters["chunks"] + counters["symbols"] + counters["edges"],
-        errors=counters["errors"],
-        counters=counters,
-        phase="index",
-        head=head[:12],
-        mode="repair" if paths_file else "twin" if suffix else "backfill",
-    )
+    await _close_index(counters, org, ns, model_name, started, head, mode)
     if paths_file:
         # a targeted repair proves nothing about the rest of the tree: the
         # per-merge watermark must keep walking every commit it has not seen
@@ -382,6 +373,47 @@ async def _dialect_folder_pass(repo: Any, org: str, ns: str, head: str) -> dict[
     return {"undecided": len(undecided), "inherited": len(assigned)}
 
 
+async def _close_index(
+    counters: dict[str, int],
+    org: str,
+    ns: str,
+    model_name: str,
+    started: float,
+    head: str,
+    mode: str,
+) -> None:
+    """The index phase's end: compact what it wrote and record its pass."""
+    await _compact_after_bulk(counters["chunks"] + counters.get("moved", 0), model_name)
+    await _record_manual_pass(
+        "code_ingest",
+        org,
+        ns,
+        started=started,
+        done=counters["files"],
+        rows_written=counters["chunks"] + counters["symbols"] + counters["edges"],
+        errors=counters["errors"],
+        counters=counters,
+        phase="index",
+        head=head[:12],
+        mode=mode,
+    )
+
+
+async def _held_batch(
+    repo: Any, org: str, ns: str, batch_paths: list[str], *, source: Any, one: Any, denylist: Any
+) -> str:
+    """One cursor batch as the org's model calls, so its switch applies to them;
+    "" once written, else why the switch held it (the cursor stays)."""
+    try:
+        with customer.for_org(org):
+            await _backfill_batch_rounds(
+                repo, org, ns, batch_paths, source=source, one=one, denylist=denylist
+            )
+    except customer.HOLDS as e:
+        return str(e)
+    return ""
+
+
 async def _backfill_batch_rounds(
     repo: Any,
     org: str,
@@ -410,7 +442,7 @@ async def _backfill_batch_rounds(
         async with RoundReads(repo, org, ns) as reads:
             if size > 0:
                 await reads.prefetch(sources, denylist)
-            await asyncio.gather(*(one(reads, p, sources[p]) for p in rnd if p in sources))
+            await gather_or_cancel(*(one(reads, p, sources[p]) for p in rnd if p in sources))
 
 
 async def _backfill_head(git_dir: str, cfg: Any, args: argparse.Namespace) -> str:
@@ -496,6 +528,23 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
     total = 0
     started = time.monotonic()
     result = CodeEmbedRecoveryResult()
+
+    async def _finish(code: int) -> int:
+        _note(phase="embed", embedded=total, failed=result.failed, poisoned=result.poisoned)
+        await _compact_after_bulk(total, embedder.model_name)
+        await _record_manual_pass(
+            "code_embed_recovery",
+            org,
+            ns,
+            started=started,
+            done=total,
+            rows_written=total,
+            errors=result.failed,
+            counters={"embedded": total, "failed": result.failed, "poisoned": result.poisoned},
+            phase="embed",
+        )
+        return code
+
     while True:
         # --include-poisoned: rows that exhausted their attempts get one more
         # pass (inputs are bounded now).
@@ -520,34 +569,12 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
         )
         total += n
         print(f"  embedded {total} (+{n}); failed={result.failed} poisoned={result.poisoned}")
+        if result.switched_off:
+            # Its rows stay as they are, so the next page would be the same one.
+            print(f"  {org}'s model calls are switched off — stopping", file=sys.stderr)
+            return await _finish(1)
         if n == 0 and result.failed:
             print("  stalling on failures — stopping; re-run to retry", file=sys.stderr)
-            _note(phase="embed", embedded=total, failed=result.failed, poisoned=result.poisoned)
-            await _compact_after_bulk(total, embedder.model_name)
-            await _record_manual_pass(
-                "code_embed_recovery",
-                org,
-                ns,
-                started=started,
-                done=total,
-                rows_written=total,
-                errors=result.failed,
-                counters={"embedded": total, "failed": result.failed, "poisoned": result.poisoned},
-                phase="embed",
-            )
-            return 1
+            return await _finish(1)
     print(f"embed phase complete: {total} chunks embedded")
-    await _compact_after_bulk(total, embedder.model_name)
-    _note(phase="embed", embedded=total, failed=result.failed, poisoned=result.poisoned)
-    await _record_manual_pass(
-        "code_embed_recovery",
-        org,
-        ns,
-        started=started,
-        done=total,
-        rows_written=total,
-        errors=result.failed,
-        counters={"embedded": total, "failed": result.failed, "poisoned": result.poisoned},
-        phase="embed",
-    )
-    return 0
+    return await _finish(0)

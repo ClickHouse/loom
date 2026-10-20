@@ -133,6 +133,13 @@ async def test_a_lost_checkpoint_repeats_the_same_idempotent_page(backend):
 
 
 @pytest.mark.asyncio
+async def test_rows_staged_without_a_vector_are_counted_in_the_progress(backend):
+    backend.rebuild.return_value = runner.BatchCheckpoint(30, 10, False, rows_waiting=4)
+    updated = await runner.run_rebuild_step(row("rebuild", cursor=20, rows_waiting=1), backend)
+    assert json.loads(updated["progress"])["rows_waiting"] == 5
+
+
+@pytest.mark.asyncio
 async def test_activation_write_failure_cannot_overwrite_a_possible_commit(backend):
     runner.write_configuration.side_effect = RuntimeError("response lost")
     with pytest.raises(RuntimeError):

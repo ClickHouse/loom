@@ -1409,6 +1409,27 @@ def test_positive_control_tenant_a_reads_its_canaries_in_the_task_and_agent_plan
         assert r.status_code == 200 and seed.leaked(r.text), f"{op}: {r.status_code} {r.text[:300]}"
 
 
+def test_an_org_admin_neither_reads_nor_sets_another_orgs_model_calls(
+    control_plane_url, mint_test_token
+) -> None:
+    """Org B's admin is refused org A's switch both ways, and A's switch is as
+    A's admin left it."""
+    org_a, org_b = unique_org("ai-a"), unique_org("ai-b")
+    admin_a = mint_test_token(org=org_a, namespaces=["*"], roles=["org_admin"], subject="ann")
+    admin_b = mint_test_token(org=org_b, namespaces=["*"], roles=["org_admin"], subject="ben")
+    off = {"org": org_a, "enabled": False, "reason": "AI off"}
+    r = _post(control_plane_url, admin_a, "org.set_model_calls", off)
+    assert r.status_code == 200 and r.json()["enabled"] is False, r.text[:300]
+    r = _post(control_plane_url, admin_b, "org.model_calls", {"org": org_a})
+    assert r.status_code == 403 and "AI off" not in r.text, r.text[:300]
+    r = _post(control_plane_url, admin_b, "org.set_model_calls", {"org": org_a, "enabled": True})
+    assert r.status_code == 403, r.text[:300]
+    r = _post(control_plane_url, admin_a, "org.model_calls", {"org": org_a})
+    assert r.status_code == 200, r.text[:300]
+    read = r.json()
+    assert (read["enabled"], read["reason"], read["updated_by"]) == (False, "AI off", "ann")
+
+
 # ── knowledge sharing (docs/architecture/sharing.md) ─────────────────────────
 #
 # A service's end users, signed in with end-user tokens, own collections: a parent shared with a group and one

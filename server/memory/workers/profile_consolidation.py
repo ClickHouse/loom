@@ -92,6 +92,8 @@ async def run_pass(
               AND m.tombstoned_at IS NULL
               AND m.user_id != '-'
               AND m.memory_type IN {types:Array(String)}
+              -- an org whose model calls are switched off waits, and takes no slot
+              AND NOT has({off:Array(String)}, m.org)
               AND (m.org, m.namespace, m.user_id) NOT IN (
                   SELECT org, namespace, user_id
                   FROM loom.memory FINAL
@@ -110,6 +112,7 @@ async def run_pass(
                 "types": ["preference", "decision"],
                 "label": cfg.label,
                 "cool": int(max(0, cfg.cooldown_seconds)),
+                "off": sorted(await customer.switched_off_orgs()),
             },
         )
         result.identities_scanned = len(identities)
@@ -117,6 +120,8 @@ async def run_pass(
             try:
                 if await _consolidate_identity(ch, row, cfg):
                     result.profiles_written += 1
+            except customer.HOLDS:
+                continue  # a held call is no failure: the identity is folded once the org is back
             except Exception as e:
                 result.errors += 1
                 log.exception("profile consolidation failed for %s", dict(row))
