@@ -109,6 +109,7 @@ def test_the_journal_files() -> None:
         "056_org_model_calls.sql",
         "057_acl_versions.sql",
         "058_collections_and_groups.sql",
+        "059_conversation_saved_messages.sql",
     ]
 
 

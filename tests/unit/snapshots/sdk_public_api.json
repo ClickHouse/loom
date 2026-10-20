@@ -584,7 +584,15 @@
               "body",
               "options"
             ],
+            "save_message": [
+              "body",
+              "options"
+            ],
             "search": [
+              "body",
+              "options"
+            ],
+            "search_saved_messages": [
               "body",
               "options"
             ],
