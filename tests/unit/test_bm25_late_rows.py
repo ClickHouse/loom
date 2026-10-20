@@ -65,15 +65,20 @@ async def test_late_rows_are_folded_with_both_views_statements_and_errors_are_lo
 
 @pytest.mark.asyncio
 async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeypatch) -> None:
-    """Each embedding write whose version predates its insert hands its rows over."""
+    """Each embedding write whose version predates its insert hands its rows over; a
+    request does it after its response, so a slow statement does not hold the write."""
+    import asyncio
+
     import server.memory.store as memory_repo
-    from server.memory.app import bulk_set
+    from server.memory.app import after_write, bulk_set
     from server.memory.app.bulk_rows import _BulkWriteState
     from server.memory.workers import embedding
 
     handed: list[list[dict[str, Any]]] = []
+    release = asyncio.Event()
 
     async def _index(rows: Any, **_k: Any) -> int:
+        await release.wait()  # inserts are slow
         handed.append(list(rows))
         return 0
 
@@ -87,7 +92,10 @@ async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeyp
     state = _BulkWriteState()
     state.memory_rows.append({**_row(), "memory_type": "semantic", "sensitivity": "", "version": 1})
     state.embedding_rows.append(_row(version=1))
-    await bulk_set._bulk_insert(object(), state)
+    await asyncio.wait_for(bulk_set._bulk_insert(object(), state), timeout=5)
+    assert handed == []  # the write returned with the statements still running
+    release.set()
+    await after_write.drain()
     assert handed and handed[0][0]["memory_key"] == "k"
 
     # The worker: a filled stub is handed over after its replacement row is in (the
@@ -132,6 +140,20 @@ async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeyp
     monkeypatch.setattr(embedding, "get_embedder", lambda: _Embedder())
     await embedding.run_pass(embedding.EmbeddingWorkerConfig(org_filter="o", namespace_filter="n"))
     assert order[:2] == ["insert", "index"], order
+
+
+@pytest.mark.asyncio
+async def test_a_write_with_no_late_row_schedules_nothing(monkeypatch) -> None:
+    """The common write lands inside the lag: no task, no statement."""
+    import server.memory.store as memory_repo
+    from server.memory.app import after_write
+
+    async def _index(*_a: Any, **_k: Any) -> int:
+        raise AssertionError("no late row to index")
+
+    monkeypatch.setattr(memory_repo, "index_late_rows", _index)
+    assert after_write.index_late_rows([_row(version=10**30)], ch=object()) is None
+    assert after_write.index_late_rows([], ch=object()) is None
 
 
 @pytest.mark.asyncio

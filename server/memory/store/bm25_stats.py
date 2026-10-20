@@ -6,13 +6,16 @@ rows by version, each pass taking `version > watermark AND version <= now - 10 s
 carries its memory row's version, drawn when the write began, so a write that
 inserts more than the lag after drawing it (a long embed, a slow judge) can land
 under a watermark that already moved past it, and no pass would count it. Such a
-write indexes its own rows here with the views' expressions. Both tables take a
-repeat: doc stats collapse per row (ReplacingMergeTree on the row key) and a
-term's document frequency is a uniqExact over row identities.
+write indexes its own rows here with the views' expressions; a request does it after
+its response (`server.memory.app.after_write.index_late_rows`), since a write is late
+exactly when inserts are slow. Both tables take a repeat: doc stats collapse per row
+(ReplacingMergeTree on the row key) and a term's document frequency is a uniqExact
+over row identities.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -89,8 +92,11 @@ async def index_late_rows(rows: list[dict[str, Any]], *, ch: _CHClient | None = 
     )
     ch = ch or _default_client()
     try:
-        await ch.execute(_DOC_STATS, params={"keys": keys})
-        await ch.execute(_TERM_FREQ, params={"keys": keys})
+        # Independent statements: one round trip when inserts are slow, not two.
+        await asyncio.gather(
+            ch.execute(_DOC_STATS, params={"keys": keys}),
+            ch.execute(_TERM_FREQ, params={"keys": keys}),
+        )
     except Exception as e:  # noqa: BLE001 — the write landed; BM25 weights catch up on a rebuild
         _log.warning("bm25 stats: late rows not indexed for %d keys: %s", len(keys), e)
         return 0
