@@ -394,6 +394,7 @@ async def test_an_identifier_match_keeps_the_head(monkeypatch: pytest.MonkeyPatc
         "b",
         "a",
     ]
+    assert pinned.rank_score == pytest.approx(0.9)  # the pin keeps its own score
 
 
 @pytest.mark.asyncio

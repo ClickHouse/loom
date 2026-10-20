@@ -223,10 +223,11 @@ as attributes. Over HTTP it is `POST /v1/memory.search`; from a terminal,
 
 `memory.search_trace` takes the same fields as `memory.search` and returns, per hit, the
 cosine `distance` and `similarity`, `entity_boost`, `rank_score` and `rank`. It scores the
-vector leg alone: no fusion, assembly or reranker. Use it when a hit you expected ranks
-below one you did not. `explain=true` on a normal search returns a lighter
-`score_components` map, which after a reranker carries each row's move (`rerank_from`,
-`rerank_pos`, `rerank_delta`) and its own fused score (`rank_score_pre_rerank`).
+vector leg alone: no fusion, assembly or reranker, so use it to inspect what the vector
+leg found. When a hit you expected ranks below one you did not, run the search with
+`explain=true`: its `score_components` carry the ranking signals and, after a reranker,
+each row's move (`rerank_from`, `rerank_pos`, `rerank_delta`) and its own fused score
+(`rank_score_pre_rerank`).
 
 With `LOOM_SEARCH_TRACE_LOG_ENABLED=true`, every search appends a row to
 `loom.search_trace_log` (keys and scores returned, abstain, risk, latency, run id,

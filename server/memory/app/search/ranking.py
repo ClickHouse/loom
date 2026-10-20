@@ -200,6 +200,8 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
         return
     # The block sorts by rank_score: the pool's own scores, handed out in this order, keep
     # it, and every later stage (digest band, lift bound, retry merge) sees the same values.
+    # `before` is sorted best-first (fusion and the mention boost sort), so a kept slot,
+    # a pin's, keeps its own score.
     handed = sorted((o.rank_score for o in ordered), reverse=True)
     for h, score in zip(ordered, handed, strict=True):
         h.score_components[RANK_SCORE_PRE_RERANK] = h.rank_score

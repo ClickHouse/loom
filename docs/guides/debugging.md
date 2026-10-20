@@ -75,15 +75,23 @@ OTLP endpoint. With Langfuse configured they also go to
 **Why did this rank here?** `memory.search` with `explain=true` attaches `score_components`
 to each served hit: the ranking signals and, after a reranker, its move (`rerank_from`,
 `rerank_pos`, `rerank_delta`) and own fused score (`rank_score_pre_rerank`).
-`memory.search_trace` takes the arguments of `memory.search` and scores the vector leg alone
-(no fusion, assembly or reranker), returning, per hit, `similarity`, `distance`, `entity_boost`, `rank_score`, `rank` and
-`source`:
 
 ```python
-trace = await agent.call("memory.search_trace", {"query": "refund window", "explain": True})
-for h in trace["results"]:
-    print(h["rank"], h["memory_key"], h["similarity"], h["entity_boost"], h["rank_score"])
+out = await agent.call("memory.search", {"query": "refund window", "explain": True})
+for h in out["results"]:
+    c = h["score_components"]
+    print(
+        h["memory_key"],
+        h["similarity"],
+        h["rank_score"],
+        c.get("rerank_from"),
+        c.get("rank_score_pre_rerank"),
+    )
 ```
+
+`memory.search_trace` takes the arguments of `memory.search` and scores the vector leg
+alone (no fusion, assembly or reranker), returning, per hit, `similarity`, `distance`,
+`entity_boost`, `rank_score`, `rank` and `source`.
 
 **Why did it abstain?** Read the `memory.search` answer itself:
 
