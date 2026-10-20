@@ -38,9 +38,10 @@ const MIN_ABS = 0.005;
 export function whyTerms(components: Record<string, unknown> | null | undefined): WhyTerm[] {
   if (!components || typeof components !== "object") return [];
   const out: WhyTerm[] = [];
+  let moved: WhyTerm | null = null;
   for (const [name, raw] of Object.entries(components)) {
     if (name === "rerank_delta" && typeof raw === "number" && raw !== 0) {
-      out.push({ label: "reranked", value: raw, places: true });
+      moved = { label: "reranked", value: raw, places: true };
       continue;
     }
     if (SKIP.has(name) || name.startsWith("rerank_")) continue;
@@ -49,7 +50,8 @@ export function whyTerms(components: Record<string, unknown> | null | undefined)
     out.push({ label: LABELS[name] ?? name.replace(/_/g, " "), value: raw });
   }
   out.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
-  return out;
+  // A reranker's move counts places, not score: it leads, as in the MCP why note.
+  return moved ? [moved, ...out] : out;
 }
 
 /** A term as shown: a score lift as `+0.12`, a reranker's move in places as `+3`. */

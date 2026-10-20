@@ -34,6 +34,9 @@ describe("signed / whyTerms", () => {
       { label: "semantic", value: 0.25 },
     ]);
     expect(terms.map(termText)).toEqual(["+3", "+0.25"]);
+    // The move leads even when a score term is larger than it.
+    const big = whyTerms({ rerank_delta: 1, rank_score_before_defer: 1.2 });
+    expect(big.map((t) => t.label)).toEqual(["reranked", "rank score before defer"]);
   });
 
   it("shows an unknown component under its own spelling rather than hiding it", () => {
