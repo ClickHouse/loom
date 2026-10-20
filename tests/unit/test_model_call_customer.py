@@ -774,6 +774,13 @@ def test_code_embed_recovery_embeds_each_group_for_its_org(metered, caplog) -> N
     from server.code.workers import embed_recovery
     from server.embedding.fake import FakeNGramEmbedder
 
+    seen: list[str] = []
+
+    class _Embedder(FakeNGramEmbedder):
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            seen.append(customer.current())
+            return await super().embed_many(texts)
+
     class _Repo:
         rows: list[Any] = []
 
@@ -793,13 +800,13 @@ def test_code_embed_recovery_embeds_each_group_for_its_org(metered, caplog) -> N
             _Repo(),
             "code_chunks",
             rows,
-            FakeNGramEmbedder(dim=8),
+            _Embedder(dim=8),
             text_of=lambda r: r["text"],
             max_attempts=5,
             result=result,
         )
     )
-    assert embedded == 2
+    assert embedded == 2 and seen == ["acme", "beta"]
     _no_refusal_logged(caplog)
 
 
