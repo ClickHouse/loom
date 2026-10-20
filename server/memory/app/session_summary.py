@@ -134,7 +134,7 @@ async def _draft_session_summary(
     msgs: list[dict[str, str]],
     observation_date: str | None,
     *,
-    operator_policy: str = "",
+    operator_policy: str,
 ) -> SessionSummaryDraft | None:
     """One LLM call + one embedding: everything about the digest that does not
     need the extraction result. None when the model returns nothing or the

@@ -9,6 +9,7 @@ policy adds, and where, is pinned in tests/unit/test_extraction_policy.py."""
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Any
 
@@ -36,10 +37,11 @@ def _fresh() -> str:
     return f"xpol-{uuid.uuid4().hex[:8]}"
 
 
-def _key(base: str, token: str, org: str, ns: str, instructions: str = "") -> str:
-    """The extraction prompt's key for one fixed request. Only the extraction
-    step runs: nothing is fetched or written, so every call renders over the
-    same (empty) existing memories and categories."""
+def _key(base: str, token: str, org: str, ns: str, instructions: str = "") -> tuple[str, bool]:
+    """The extraction prompt's key for one fixed request, and whether the
+    response says it ran under an operator's policy. Only the extraction step
+    runs: nothing is fetched or written, so every call renders over the same
+    (empty) existing memories and categories."""
     out = _post(
         base,
         token,
@@ -55,7 +57,7 @@ def _key(base: str, token: str, org: str, ns: str, instructions: str = "") -> st
         },
     )
     [k] = out["extract_prompt_keys"]
-    return str(k)
+    return str(k), bool(out["under_operator_policy"])
 
 
 def test_each_policy_renders_its_own_prompt_and_a_clear_restores_the_first(
@@ -65,7 +67,7 @@ def test_each_policy_renders_its_own_prompt_and_a_clear_restores_the_first(
     admin = mint_test_token(org=org, namespaces=["*"], roles=["org_admin"], subject="ops")
     writer = mint_test_token(org=org, namespaces=["*"], roles=["writer"], subject="app")
 
-    def key(ns: str, instructions: str = "") -> str:
+    def key(ns: str, instructions: str = "") -> tuple[str, bool]:
         return _key(control_plane_url, writer, org, ns, instructions)
 
     def set_policy(policy: str, ns: str = "") -> dict[str, Any]:
@@ -77,14 +79,19 @@ def test_each_policy_renders_its_own_prompt_and_a_clear_restores_the_first(
         return _post(control_plane_url, admin, "extraction_policy.clear", body)
 
     bare = key(chat)
+    assert bare[1] is False
     assert key(other) == bare, "the same request renders the same prompt in any namespace"
 
     got = set_policy(_POLICY)
     assert (got["namespace"], got["policy"], got["effective"]) == ("", _POLICY, _POLICY)
-    org_only = policy_change_adopted(lambda: key(chat), lambda k: k != bare)
+    policy_change_adopted(time.monotonic())
+    org_only = key(chat)
+    assert org_only[0] != bare[0]
+    assert org_only[1] is True
     assert key(other) == org_only
 
     set_policy("Never store home addresses.", chat)
+    changed = time.monotonic()
     read = _post(
         control_plane_url,
         admin,
@@ -94,7 +101,9 @@ def test_each_policy_renders_its_own_prompt_and_a_clear_restores_the_first(
     assert read["policy"] == "Never store home addresses."
     assert read["effective"] == f"{_POLICY}\n\nNever store home addresses."
     assert read["updated_by"] and read["updated_at"]
-    both = policy_change_adopted(lambda: key(chat), lambda k: k not in (bare, org_only))
+    policy_change_adopted(changed)
+    both = key(chat)
+    assert both not in (bare, org_only)
     assert key(other) == org_only, "a namespace's policy stays in that namespace"
 
     # The request's instructions add to the prompt; they never take the policy out.
@@ -103,9 +112,11 @@ def test_each_policy_renders_its_own_prompt_and_a_clear_restores_the_first(
 
     cleared = clear(chat)
     assert (cleared["policy"], cleared["effective"]) == ("", _POLICY), "the org's stays"
-    policy_change_adopted(lambda: key(chat), lambda k: k == org_only)
+    policy_change_adopted(time.monotonic())
+    assert key(chat) == org_only
     clear()
-    policy_change_adopted(lambda: key(chat), lambda k: k == bare)
+    policy_change_adopted(time.monotonic())
+    assert key(chat) == bare
     read = _post(control_plane_url, admin, "extraction_policy.get", {"org": org, "scope": "org"})
     assert (read["policy"], read["effective"], read["updated_at"]) == ("", "", None)
 
@@ -122,9 +133,8 @@ def test_another_orgs_policy_never_reaches_this_org(
     other_admin = mint_test_token(org=theirs, namespaces=["*"], roles=["org_admin"])
     body = {"org": theirs, "scope": "org", "policy": _POLICY}
     _post(control_plane_url, other_admin, "extraction_policy.set", body)
-    policy_change_adopted(
-        lambda: _key(control_plane_url, their_writer, theirs, ns), lambda k: k != their_before
-    )
+    policy_change_adopted(time.monotonic())
+    assert _key(control_plane_url, their_writer, theirs, ns) != their_before
     assert _key(control_plane_url, writer, mine, ns) == before
     admin = mint_test_token(org=mine, namespaces=["*"], roles=["org_admin"])
     read = _post(

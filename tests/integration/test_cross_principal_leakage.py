@@ -1544,6 +1544,8 @@ def test_an_end_users_at_me_extraction_runs_under_the_policy_of_the_collection_i
     """`namespace: "@me"` resolves to the end user's personal collection before
     the handler reads the policy, so a policy set for that collection's name
     applies to the user's `@me` extractions, and its clear stops applying."""
+    import time
+
     from server.core.principals import personal_name
     from tests import end_user_issuer
     from tests.integration._eventually import policy_change_adopted
@@ -1571,10 +1573,12 @@ def test_an_end_users_at_me_extraction_runs_under_the_policy_of_the_collection_i
     body = {**target, "policy": "Never store home addresses."}
     r = _post(control_plane_url, admin, "extraction_policy.set", body)
     assert r.status_code == 200, r.text[:300]
-    policy_change_adopted(key, lambda k: k != bare)
+    policy_change_adopted(time.monotonic())
+    assert key() != bare
     r = _post(control_plane_url, admin, "extraction_policy.clear", target)
     assert r.status_code == 200, r.text[:300]
-    policy_change_adopted(key, lambda k: k == bare)
+    policy_change_adopted(time.monotonic())
+    assert key() == bare
 
 
 # ── knowledge sharing (docs/architecture/sharing.md) ─────────────────────────

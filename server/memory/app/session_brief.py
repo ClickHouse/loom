@@ -124,7 +124,7 @@ async def _revise_window(
     total: int,
     budget: int,
     context_line: str,
-    operator_policy: str = "",
+    operator_policy: str,
 ) -> tuple[sb.BriefSections, int, int, int, bool]:
     """One window through the model. Returns (merged sections, dropped,
     tokens_in, tokens_out, used_model). A failed or unparseable call falls
@@ -172,6 +172,19 @@ async def _revise_from_events(inp: Any, prev: sb.BriefSections | None) -> _Revis
         list(inp.events), budget * 3, max(1, int(settings.session_brief_max_windows))
     )
     use, client = _use_llm(inp)
+    policy = ""
+    if use:
+        # The brief is written from the session's own events, so the model is
+        # given the operator's extraction policy; one this process cannot read
+        # leaves the deterministic builder, which makes no model call.
+        from server.llm import customer
+        from server.memory.app import extraction_policy
+
+        try:
+            policy = await extraction_policy.effective(inp.org, inp.namespace)
+        except customer.SwitchUnread as e:
+            log.warning("session.brief_save: %s; deterministic revision", e)
+            use = False
     if not use:
         cur = prev
         for w in windows:
@@ -189,11 +202,6 @@ async def _revise_from_events(inp: Any, prev: sb.BriefSections | None) -> _Revis
     cur = prev
     any_model = False
     ctx = _context_line(inp)
-    # The brief is written from the session's own events: the model is given the
-    # operator's extraction policy, and an unreadable one refuses the save.
-    from server.memory.app import extraction_policy
-
-    policy = await extraction_policy.effective(inp.org, inp.namespace)
     for i, w in enumerate(windows, 1):
         cur, dropped, t_in, t_out, used = await _revise_window(
             client,

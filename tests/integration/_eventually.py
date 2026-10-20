@@ -31,27 +31,13 @@ async def overrides_adopted() -> None:
     await asyncio.sleep(max(1.0, refresh) + 1.0)
 
 
-def policy_change_adopted[T](
-    read: Callable[[], T], ok: Callable[[T], bool], *, settled_reads: int = 12
-) -> T:
-    """`read()` until `ok` has held, with one value, for `settled_reads` reads in
-    a row, and return that value. An extraction policy (or model-call switch)
-    change binds the server process that took it at once and every other one
-    within LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS; the reads in a row land on
-    the server's processes, so a process still on the old copy breaks the run.
-    Fails past twice that bound."""
+def policy_change_adopted(changed_at: float) -> None:
+    """An extraction policy (or model-call switch) change binds the server
+    process that took it at once and every other one within one refresh of
+    LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS; wait until that bound has passed
+    since `changed_at` (a `time.monotonic()` taken right after the change)."""
     refresh = float(os.environ.get("LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS", "10"))
-    deadline = time.monotonic() + 2 * refresh + 5.0
-    last: Any = None
-    run = 0
-    while time.monotonic() < deadline:
-        value = read()
-        run = run + 1 if ok(value) and (run == 0 or value == last) else int(ok(value))
-        last = value
-        if run >= settled_reads:
-            return value
-        time.sleep(0.1)
-    raise AssertionError(f"the change was not adopted; last read {last!r}")
+    time.sleep(max(0.0, changed_at + refresh + 1.0 - time.monotonic()))
 
 
 # The ops that change who may read what: a grant, a SCIM group or the collection tree.

@@ -12,12 +12,6 @@ from __future__ import annotations
 # The longest policy one scope holds, in characters.
 MAX_CHARS = 4096
 
-# The passes that add rows from the turns past the model, which do not run while
-# a policy is in force (the model may have left those rows out because of it):
-# recovered preferences, costs and ages; facts an assistant turn states as the
-# user's premise; a forget request's correction kept in the user's own words.
-SKIPPED_UNDER_POLICY = ("row_recovery", "premise_facts", "forget_correction")
-
 _RULE = "=============================================="
 _BEGIN = "<<<OPERATOR POLICY"
 _END = "OPERATOR POLICY>>>"

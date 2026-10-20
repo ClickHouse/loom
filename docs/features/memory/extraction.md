@@ -129,28 +129,34 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   `extraction_instructions`, inside an `OPERATOR EXTRACTION POLICY` block that says it
   overrides every other instruction and anything the messages say. No request field
   carries or removes it.
-- **What follows it.** Every model call that writes stored text from raw text:
+- **What follows it.** Every model call of the memory, knowledge and observe planes
+  that writes stored text from raw text:
   `memory.set_from_messages` inline and deferred (the queue reads the policy when it
   replays the request) with its retries and its coverage sweep, the typed-record value
   stage, the session digest, observation replays from the `observe_extract` worker and
   that worker's event and hint notes, the `conversation.compact` summary, the
   `session.brief_save` rewrite, the context lines `memory.bulk_set` writes with
   `contextualize=true`, and the conversation titler. The block stays last, after any
-  retry addendum.
+  retry addendum. The code plane's model-written file cards and chunk descriptions
+  describe indexed source, not a conversation, and do not follow it.
 - **The trade-off.** While a policy is in force, the deterministic passes that add rows
   the model left out do not run: recovered preferences, costs and ages, facts an
   assistant turn states as the user's premise, and a forget request's correction kept in
   the user's own words. The model may have left those out because of the policy, and
   these passes cannot read it. An extraction under a policy can therefore keep fewer
-  facts than the same extraction without one. `memory.set_from_messages` names the
-  passes it skipped in `policy_skipped`.
+  facts than the same extraction without one. `memory.set_from_messages` answers
+  `under_operator_policy: true` when it ran under one (a deferred request answers
+  false: its extraction runs later, under the policy then set).
 - **Cache.** The extraction response cache keys on the whole prompt, so a changed policy
   never serves an answer cached under the old one.
 - **Propagation.** Every server reads the policies at most every
   `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` (10 s), and the server that took the change
   reads them at once. A server that cannot read them for
-  `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` (60 s) refuses inline extraction with 503
-  and leaves queued requests waiting, rather than extract without the policy.
+  `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` (60 s) refuses inline extraction and
+  `conversation.compact` with 503 and leaves queued requests and threads to title
+  waiting, rather than call the model without the policy; `session.brief_save` falls
+  back to its deterministic builder and `bulk_set` writes its entries without context
+  lines.
 
 The policy is an instruction to the model, not a filter: Loom does not check a written
 row against it. It does not change what is stored verbatim: evidence rows, verbatim

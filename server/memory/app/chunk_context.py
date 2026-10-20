@@ -74,7 +74,7 @@ async def contextualize_chunks(
     concurrency: int = 8,
     max_context_chars: int = 400,
     max_tokens: int = 160,
-    operator_policy: str = "",
+    operator_policy: str,
 ) -> list[str]:
     """One context per chunk, in order; "" where the model failed (fail-open:
     that chunk is embedded as it is). One `llm_stage` for the whole batch. The

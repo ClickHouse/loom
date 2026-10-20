@@ -1264,6 +1264,8 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
 
     from server.knowledge.store import conversations as conversation_repo
     from server.llm.client import get_llm_client
+    from server.memory.app import extraction_policy
+    from server.memory.domain.extraction_policy import with_policy
 
     rows = await conversation_repo.live_messages(
         input.org, input.namespace, input.agent, input.thread_id
@@ -1319,20 +1321,15 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     candidate_ids = {str(r["msg_id"]) for r in candidates}
 
     llm = get_llm_client()
-    system_prompt = (
+    # The summary replaces the turns it covers in search, so it follows the
+    # operator's extraction policy as extraction does.
+    system_prompt = with_policy(
         "You are a conversation-history summarizer. Produce a tight "
         "third-person summary of the conversation below, preserving: "
         "named entities, decisions made, open questions, and any "
         "promises or commitments. Drop pleasantries and filler. "
-        "Target 200-400 words. No markdown headers. No bullet lists."
-    )
-    # The summary replaces the turns it covers in search, so it follows the
-    # operator's extraction policy as extraction does.
-    from server.memory.app import extraction_policy
-    from server.memory.domain.extraction_policy import with_policy
-
-    system_prompt = with_policy(
-        system_prompt, await extraction_policy.effective(input.org, input.namespace)
+        "Target 200-400 words. No markdown headers. No bullet lists.",
+        await extraction_policy.effective(input.org, input.namespace),
     )
     result = await llm.complete(
         system=system_prompt,

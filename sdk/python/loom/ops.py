@@ -13393,7 +13393,7 @@ class MemorySetFromMessagesOutput(TypedDict, total=False):
     deferred_by: NotRequired[str]
     stage_ms: NotRequired[dict[str, float]]
     observation_date_source: NotRequired[str]
-    policy_skipped: NotRequired[list[str]]
+    under_operator_policy: NotRequired[bool]
     extract_prompt_keys: NotRequired[list[str]]
     llm_cache_hits: NotRequired[int]
     llm_cache_misses: NotRequired[int]

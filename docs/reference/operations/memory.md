@@ -2052,7 +2052,7 @@ Run LLM extraction on `messages` and write the extracted facts.
 | `deferred_by` | `str` | "" (inline) \| "flag" (the caller passed defer=true) \| "allowlist" (the deployment's extraction_defer_agents chose for the caller) |
 | `stage_ms` | `dict[str, float]` | Wall time per stage of the ingest: handler stages (evidence_write, pipeline, projections, ontology, total), pipeline steps (`step.<id>`) and bulk-write phases (`bulk.<phase>`). |
 | `observation_date_source` | `str` | Where the observation date the facts were anchored to came from: "caller" \| "request_time" \| "" (none — undated rows). |
-| `policy_skipped` | `list[str]` | The passes that add rows the model left out which did not run because an operator's extraction policy is in force; [] when none is. |
+| `under_operator_policy` | `bool` | True when the extraction ran under an operator's extraction policy, so the deterministic passes that add rows the model left out did not run; false on a deferred request, whose extraction runs later under the policy then set. |
 | `extract_prompt_keys` | `list[str]` | The sha256 keys of the rendered extractor prompts (one per segment; the exact-prompt cache's own key, no text) and the cache's hit / miss counts over this extraction's calls (0 / 0 = cache off). |
 | `llm_cache_hits` | `int` | Extraction calls answered from the exact-prompt response cache. |
 | `llm_cache_misses` | `int` | Extraction calls the cache could not answer. |

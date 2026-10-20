@@ -15,10 +15,9 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import UTC, datetime
-from typing import Any
 
 from server.auth.sharing import PERSONAL_ALIAS
+from server.core.datetimes import naive_utc_now
 from server.core.errors import ValidationError
 from server.core.polled_copy import PolledCopy
 from server.identity.app.org_admin import caller, one_org
@@ -45,7 +44,7 @@ async def _read() -> dict[tuple[str, str], str]:
 
 # Every live policy by (org, namespace), namespace "" for the org's own.
 _policies: PolledCopy[dict[tuple[str, str], str]] = PolledCopy(
-    "extraction policy", {}, _read, logging.getLogger(__name__)
+    "extraction policy", _read, logging.getLogger(__name__)
 )
 
 
@@ -74,12 +73,18 @@ def forget() -> None:
 def _reset_for_tests(
     policies: dict[tuple[str, str], str] | None = None, *, read: bool = True
 ) -> None:
+    """The policies as just read, or never read when not `read`."""
     _policies._reset_for_tests(
-        dict(policies or {}), read=read, refresh_s=settings.model_calls_policy_refresh_seconds
+        dict(policies or {}) if read else None,
+        read_age_s=0.0 if read else None,
+        due=not read,
+        refresh_s=settings.model_calls_policy_refresh_seconds,
     )
 
 
-def _scope(input: Any) -> tuple[str, str]:
+def _scope(
+    input: ExtractionPolicySetInput | ExtractionPolicyGetInput | ExtractionPolicyClearInput,
+) -> tuple[str, str]:
     """(org, namespace) of the row the request names; namespace "" for the org's."""
     one_org(input.org)
     if input.scope == "org":
@@ -98,7 +103,7 @@ async def _write(org: str, namespace: str, policy: str) -> None:
             "namespace": namespace,
             "policy": policy,
             "updated_by": caller()[0],
-            "updated_at": datetime.now(UTC).replace(tzinfo=None),
+            "updated_at": naive_utc_now(),
             "deleted": int(not policy),
             "version": time.time_ns(),
         }
@@ -112,7 +117,7 @@ async def handle_extraction_policy_set(input: ExtractionPolicySetInput) -> Extra
     in force, the passes that add rows the model left out (recovered
     preferences, costs and ages, assistant-stated premises, a forget request's
     correction in the user's words) do not run; `memory.set_from_messages`
-    names them in `policy_skipped`."""
+    answers `under_operator_policy: true`."""
     org, namespace = _scope(input)
     policy = input.policy.strip()
     if not policy:

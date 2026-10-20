@@ -234,7 +234,7 @@ async def _complete_and_parse(
     max_tokens: int,
     json_format: dict[str, str],
     parse: Any,
-    operator_policy: str = "",
+    operator_policy: str,
 ) -> tuple[Any, list[ExtractedFact], str]:
     """The extraction call and its parse, with one retry on an unparseable
     answer: a larger budget when it reads as truncated (salvaging complete
@@ -568,7 +568,7 @@ async def extract_from_messages(
         facts, _cs_result, coverage_swept = await _coverage_sweep(
             messages,
             facts,
-            system_prompt=base_prompt,
+            base_prompt=base_prompt,
             operator_policy=operator_policy,
             observation_date=observation_date,
             last_messages=last_messages,

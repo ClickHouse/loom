@@ -444,7 +444,7 @@ async def distill_events(
     total = len(ordered)
     sid = str(session.get("session_id") or "")
     prev_key = ""
-    if pairs and only_after is not None and pairs[0][0].memory_key not in only_after:
+    if only_after is not None and pairs[0][0].memory_key not in only_after:
         # The first transition of this pass follows an observation an earlier
         # pass distilled; chain onto that pass's last event.
         prev_key = event_memory_key(sid, pairs[0][0].memory_key)

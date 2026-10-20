@@ -629,7 +629,8 @@ rows live in `loom.extraction_policies`; every server keeps a copy, read at most
 extraction answers 503 and queued requests wait.
 
 The handler reads the policy for the request's `(org, namespace)` itself; no request
-field carries it. Each model call that writes stored text from raw text (fact
+field carries it. Each model call of the memory, knowledge and observe planes that
+writes stored text from raw text (fact
 extraction with its retries and coverage sweep, the typed-record value stage, the
 session digest, observation distillation, conversation summaries and titles, session
 briefs and `bulk_set` context lines) ends its system prompt with it, after the

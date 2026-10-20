@@ -4,7 +4,6 @@ call them, and every extraction path that ends its prompt with it."""
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 import pytest
@@ -390,14 +389,12 @@ async def test_a_copy_too_old_to_trust_refuses_the_extraction(table) -> None:
     table.rows = [{"org": "acme", "namespace": "", "policy": "org rule"}]
     assert await extraction_policy.effective("acme", "n") == "org rule"
     table.down = True
-    extraction_policy._policies._read_at = (
-        time.monotonic() - settings.model_calls_policy_refresh_seconds - 1
-    )
-    extraction_policy._policies._next_read = 0.0
+    rules = {("acme", ""): "org rule"}
+    refresh = settings.model_calls_policy_refresh_seconds
+    extraction_policy._policies._reset_for_tests(rules, read_age_s=refresh + 1, due=True)
     assert await extraction_policy.effective("acme", "n") == "org rule", "still young enough"
-    extraction_policy._policies._read_at = (
-        time.monotonic() - settings.model_calls_policy_max_stale_seconds - 1
-    )
+    stale = settings.model_calls_policy_max_stale_seconds + 1
+    extraction_policy._policies._reset_for_tests(rules, read_age_s=stale, due=True)
     with pytest.raises(BackendUnavailableError):
         await extraction_policy.effective("acme", "n")
 
@@ -628,9 +625,9 @@ async def test_set_from_messages_runs_under_the_stored_policy_whatever_it_asks(
     effective = f"{_POLICY}\n\nNo addresses."
     assert seen["state_policy"] == effective
     assert seen["draft_policy"] == effective
-    assert out.policy_skipped == ["row_recovery", "premise_facts", "forget_correction"]
+    assert out.under_operator_policy is True
     extraction_policy._reset_for_tests({})
-    assert (await mx.handle_memory_set_from_messages(_request())).policy_skipped == []
+    assert (await mx.handle_memory_set_from_messages(_request())).under_operator_policy is False
     from server.memory.api.models_bulk import MemorySetFromMessagesInput
 
     assert "operator_policy" not in MemorySetFromMessagesInput.model_fields, "not a wire field"
@@ -715,11 +712,12 @@ async def test_bulk_set_contextualize_writes_each_context_under_the_policy() -> 
     assert all(s.endswith(policy_block(_POLICY)) for s in llm.systems)
 
 
-async def test_the_bulk_set_handler_hands_contextualize_the_stored_policy(monkeypatch) -> None:
+async def test_the_bulk_set_handler_hands_contextualize_the_stored_policy(
+    monkeypatch, settings_override
+) -> None:
     from types import SimpleNamespace
 
     from server.memory.app import bulk_rows, chunk_context
-    from server.settings import settings
 
     seen: dict[str, Any] = {}
 
@@ -733,7 +731,7 @@ async def test_the_bulk_set_handler_hands_contextualize_the_stored_policy(monkey
 
     monkeypatch.setattr(chunk_context, "contextualize_chunks", contextualize)
     monkeypatch.setattr("server.llm.client.get_llm_client", lambda: _System())
-    monkeypatch.setattr(settings, "memory_bulk_contextualize_allowed", True, raising=False)
+    settings_override(memory_bulk_contextualize_allowed=True)
     extraction_policy._reset_for_tests({("acme", "docs"): _POLICY})
     request = SimpleNamespace(contextualize=True, org="acme", namespace="docs")
     await bulk_rows._bulk_contextualize(request, [(0, "text", "text", "k")], _Clock())  # type: ignore[arg-type]
@@ -779,3 +777,145 @@ async def test_the_conversation_titler_titles_under_the_policy(monkeypatch) -> N
     row = {"org": "acme", "namespace": "chat", "thread_id": "t", "agent": "a", "n": 4}
     assert await titler._make_title(row, None, llm) is True  # type: ignore[arg-type]
     assert llm.systems == [with_policy(titler._TITLE_SYSTEM, _POLICY)]
+
+
+# ----------------------------------------------------------------- a policy this process cannot read
+
+
+@pytest.fixture
+def unreadable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This process never read the policies, and every read fails."""
+
+    async def down(**_: Any) -> list[dict[str, Any]]:
+        raise ConnectionError("clickhouse away")
+
+    monkeypatch.setattr(extraction_policy.repo, "live_rows", down)
+    extraction_policy._reset_for_tests(read=False)
+
+
+async def test_unreadable_bulk_set_contextualize_makes_no_call_and_keeps_the_rows(
+    unreadable, monkeypatch, settings_override
+) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.app import bulk_rows
+
+    llm = _System("a context line")
+    monkeypatch.setattr("server.llm.client.get_llm_client", lambda: llm)
+    settings_override(memory_bulk_contextualize_allowed=True)
+
+    class _Clock:
+        def mark(self, name: str) -> None:
+            pass
+
+    pending = [(0, "text", "text", "k")]
+    request = SimpleNamespace(contextualize=True, org="acme", namespace="docs")
+    assert await bulk_rows._bulk_contextualize(request, pending, _Clock()) == pending  # type: ignore[arg-type]
+    assert llm.systems == []
+
+
+async def test_unreadable_conversation_compact_is_refused(unreadable, monkeypatch) -> None:
+    from datetime import datetime, timedelta
+
+    import server.core.ch
+    import server.llm.client
+    from server.knowledge.api.models_conversations import ConversationCompactInput
+    from server.knowledge.app import conversations
+    from server.llm import customer
+    from tests.unit.test_conversation_compact import _FakeCH
+
+    t0 = datetime(2026, 9, 1, 12, 0, 0)
+    rows = [
+        {
+            "msg_id": f"m{i}",
+            "role": "user",
+            "content": f"turn {i}",
+            "ts": t0 + timedelta(seconds=i),
+            "metadata": "{}",
+            "user_id": "alice",
+            "run_id": "-",
+        }
+        for i in range(6)
+    ]
+    fake = _FakeCH(rows)
+    llm = _System("a summary")
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
+    with pytest.raises(customer.SwitchUnread):  # a 503: retry once the policy is read
+        await conversations.handle_conversation_compact(
+            ConversationCompactInput(
+                org="acme",
+                namespace="chat",
+                agent="a",
+                thread_id="t",
+                keep_recent=2,
+                min_to_compact=2,
+            )
+        )
+    assert llm.systems == []
+    assert fake.inserted == []
+
+
+async def test_unreadable_session_brief_falls_back_to_the_deterministic_builder(
+    unreadable, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.app import session_brief
+    from server.memory.domain.session_brief import BriefEvent
+
+    llm = _System("{}")
+    monkeypatch.setattr(session_brief, "_use_llm", lambda inp: (True, llm))
+    inp = SimpleNamespace(
+        org="acme",
+        namespace="dev",
+        events=[BriefEvent(kind="user", text="Fix the login bug.")],
+        project="",
+        branch="",
+        head_sha="",
+        use_llm=True,
+    )
+    rev = await session_brief._revise_from_events(inp, None)
+    assert rev.author == "deterministic"
+    assert llm.systems == []
+
+
+async def test_unreadable_titler_holds_the_thread_and_titles_it_once_read(
+    unreadable, monkeypatch
+) -> None:
+    from server.knowledge.workers import conversation_titler as titler
+    from server.llm import customer
+
+    row = {"org": "acme", "namespace": "chat", "thread_id": "t", "agent": "a", "n": 4}
+    inserted: list[dict[str, Any]] = []
+
+    async def candidates(**kw: Any) -> list[dict[str, Any]]:
+        return [row]
+
+    async def thread_rows(keys: Any) -> dict[Any, Any]:
+        return {}
+
+    async def opening_turns(org: str, namespace: str, thread_id: str) -> list[dict[str, Any]]:
+        return [{"role": "user", "content": "Fix the login bug."}]
+
+    async def insert_thread(new_row: dict[str, Any]) -> None:
+        inserted.append(new_row)
+
+    async def none_off() -> frozenset[str]:
+        return frozenset()
+
+    llm = _System("Login bug")
+    llm.model = "real-model"
+    monkeypatch.setattr("server.llm.client.get_llm_client", lambda: llm)
+    monkeypatch.setattr(titler.conversation_repo, "titler_candidates", candidates)
+    monkeypatch.setattr(titler.conversation_repo, "thread_rows", thread_rows)
+    monkeypatch.setattr(titler.conversation_repo, "opening_turns", opening_turns)
+    monkeypatch.setattr(titler.conversation_repo, "insert_thread", insert_thread)
+    monkeypatch.setattr(titler, "emit_worker_cost_event_for", lambda **kw: None)
+    monkeypatch.setattr(customer, "switched_off_orgs", none_off)
+    held = await titler.run_pass()
+    assert (held.titled, held.errors, inserted, llm.systems) == (0, 0, [], [])
+    extraction_policy._reset_for_tests({})  # read at last: no policy set
+    later = await titler.run_pass()
+    assert (later.titled, later.errors) == (1, 0)
+    assert [r["title"] for r in inserted] == ["Login bug"]

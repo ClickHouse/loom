@@ -59,7 +59,8 @@ async def test_the_coverage_sweep_lets_a_held_call_through(error: Exception) -> 
         await _coverage_sweep(
             MSGS,
             FIRST,
-            system_prompt="SYS",
+            base_prompt="SYS",
+            operator_policy="",
             observation_date="2023-07-03",
             last_messages=None,
             max_tokens=512,
