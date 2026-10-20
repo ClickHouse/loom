@@ -2,11 +2,10 @@
 
 A point write's own rows (`loom.memory` + `loom.memory_embeddings`) are the
 read-your-write contract and stay awaited. What the write *projects* — the
-entity graph rows of `memory.set` — is fail-open, repaired by the
-entity_extractor worker when it is lost, and read by nothing on the write's
-own path. Awaiting it put a canonical-map read, a canonical insert and two
-edge inserts on every response: 0.2 s on a quiet minute, 5–6 s (up to 15 s
-end to end) when the service's inserts are slow.
+entity graph rows of `memory.set`, the BM25 statistics of a late row — is
+fail-open, repaired by a worker or a reindex when it is lost, and read by
+nothing on the write's own path, so it runs after the response: each is a few
+more inserts, seconds of them when the service's inserts are slow.
 
 `schedule` runs such a coroutine as a task of the request (it keeps the
 request's context, so its statements carry the request's `log_comment`); the
@@ -58,6 +57,19 @@ def schedule(
     return task
 
 
+def index_late_rows(rows: list[dict[str, Any]], *, ch: Any) -> asyncio.Task[Any] | None:
+    """Fold a write's late embedding rows into the BM25 statistics after the response
+    (`server/memory/store/bm25_stats.py`). A row is late when its write was slow (a long
+    embed or judge, slow inserts), so the write does not also wait on these inserts; a
+    miss only skews BM25 weights. No task for a write with no late row."""
+    import server.memory.store as memory_repo
+
+    late = memory_repo.late_rows(rows)
+    if not late:
+        return None
+    return schedule(memory_repo.index_late_rows(late, ch=ch), name="loom-bm25-late-rows")
+
+
 def _forget_scope(task: asyncio.Task[Any]) -> None:
     _SCOPES.pop(task, None)
 
@@ -99,4 +111,4 @@ async def settle(org: str, namespace: str, *, timeout_s: float) -> int:
     return len(live)
 
 
-__all__ = ["drain", "pending", "schedule", "settle"]
+__all__ = ["drain", "index_late_rows", "pending", "schedule", "settle"]
