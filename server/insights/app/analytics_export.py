@@ -21,10 +21,8 @@ from server.insights.store.analytics_export import ENTITIES, parquet
 # put(key, body) -> True once written, False when the key already exists.
 Put = Callable[[str, bytes], bool]
 
-# Each statement reads a month partition of the ledger or every live memory
-# row: far past the request read deadline on a large deployment, and inside
-# the CronJob's three-hour deadline for four attempts. The client must be built inside the
-# `statement_timeout` scope for its driver read timeout to cover it.
+# A month partition of the ledger or every live memory row: far past the read
+# deadline. Build the client inside the `statement_timeout` scope it sets.
 STATEMENT_TIMEOUT_S = 1200
 
 # A shorter key can be searched offline from one known name and its hash.
@@ -54,12 +52,12 @@ def name_hash_key(secret: str) -> tuple[int, int]:
 
 
 async def export_day(
-    day: date, *, prefix: str, put: Put, key: tuple[int, int], ch: CHClient
+    day: date, *, prefix: str, put: Put, name_key: tuple[int, int], ch: CHClient
 ) -> list[Exported]:
-    """Read and upload each entity of `day` in turn, names hashed under `key`."""
+    """Read and upload each entity of `day` in turn, names hashed under `name_key`."""
     out: list[Exported] = []
     for entity in ENTITIES:
-        body = await parquet(entity, day, key=key, ch=ch)
+        body = await parquet(entity, day, name_key=name_key, ch=ch)
         path = object_key(prefix, entity, day)
         out.append(Exported(entity, path, len(body), put(path, body)))
     return out

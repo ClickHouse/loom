@@ -48,7 +48,6 @@ FROM loom.agent_events
 WHERE ts >= toDateTime64({day:Date}, 3, 'UTC')
   AND ts < toDateTime64({day:Date} + 1, 3, 'UTC')
 GROUP BY org, namespace, agent, operation, kind, transport, traffic_class
-ORDER BY org, namespace, agent, operation, kind, transport, traffic_class
 """
 
 # One row per (org, namespace) that is registered or holds a live memory row:
@@ -77,13 +76,20 @@ FULL OUTER JOIN (SELECT org, namespace, count() AS live_memories,
                  WHERE tombstoned_at IS NULL
                  GROUP BY org, namespace) AS m
   USING (org, namespace)
-ORDER BY org, namespace
 """
 
 ENTITIES = {"usage": USAGE_SQL, "namespaces": NAMESPACES_SQL}
 
 # The columns of each entity that hold a name, and leave hashed.
 NAME_COLUMNS = {"usage": ("org", "namespace", "agent"), "namespaces": ("org", "namespace")}
+
+# Each file's row order. The statements above carry none: rows sorted by the
+# stored names would line up with a sorted list of candidate names, and give
+# the names back without the key. The file is sorted by the hashes instead.
+ROW_ORDER = {
+    "usage": "org, namespace, agent, operation, kind, transport, traffic_class",
+    "namespaces": "org, namespace",
+}
 
 
 def name_hash_sql(expr: str) -> str:
@@ -93,12 +99,13 @@ def name_hash_sql(expr: str) -> str:
 
 
 def _hashed(entity: str) -> str:
-    """`entity`'s statement with each name column replaced by its hash."""
+    """`entity`'s statement with each name column replaced by its hash, sorted
+    by the hashes (`ORDER BY` reads the `REPLACE` aliases, not the names)."""
     replace = ", ".join(f"{name_hash_sql(c)} AS {c}" for c in NAME_COLUMNS[entity])
-    return f"SELECT * REPLACE ({replace}) FROM ({ENTITIES[entity]})"
+    return f"SELECT * REPLACE ({replace}) FROM ({ENTITIES[entity]}) ORDER BY {ROW_ORDER[entity]}"
 
 
-async def parquet(entity: str, day: date, *, key: tuple[int, int], ch: CHClient) -> bytes:
-    """`entity`'s rows for UTC day `day`, as one Parquet file, names hashed under `key`."""
-    params = {"day": day, "k0": key[0], "k1": key[1]}
+async def parquet(entity: str, day: date, *, name_key: tuple[int, int], ch: CHClient) -> bytes:
+    """`entity`'s rows for UTC day `day`, as one Parquet file, names hashed under `name_key`."""
+    params = {"day": day, "k0": name_key[0], "k1": name_key[1]}
     return await ch.raw_bytes(f"{_hashed(entity)} FORMAT Parquet", params)

@@ -114,8 +114,8 @@ spec:
                 - name: LOOM_ANALYTICS_EXPORT_NAME_KEY
                   valueFrom:
                     secretKeyRef:
-                      name: {{ .nameKeySecret.name }}
-                      key: {{ .nameKeySecret.key }}
+                      name: {{ .nameKeySecret.name | quote }}
+                      key: {{ .nameKeySecret.key | quote }}
                 {{- with $.Values.extraEnv }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}

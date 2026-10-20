@@ -14,7 +14,7 @@ from botocore.stub import Stubber
 
 from server.cli import analytics_export as cli
 from server.insights.app.analytics_export import export_day, name_hash_key, object_key, s3_put
-from server.insights.store.analytics_export import ENTITIES, NAME_COLUMNS, _hashed
+from server.insights.store.analytics_export import ENTITIES, NAME_COLUMNS, ROW_ORDER, _hashed
 from server.settings import settings
 
 
@@ -42,15 +42,22 @@ async def test_export_day_hashes_every_name_and_uploads_each_entity() -> None:
         seen.append((key, body))
         return key.startswith("p/usage")
 
-    day, key = date(2026, 10, 9), name_hash_key("secret")
-    out = await export_day(day, prefix="p", put=put, key=key, ch=ch)  # type: ignore[arg-type]
+    day, name_key = date(2026, 10, 9), name_hash_key("secret")
+    out = await export_day(day, prefix="p", put=put, name_key=name_key, ch=ch)  # type: ignore[arg-type]
     assert [(e.entity, e.written) for e in out] == [("usage", True), ("namespaces", False)]
     assert [k for k, _ in seen] == [e.key for e in out]
     for (sql, params), entity in zip(ch.calls, ENTITIES, strict=True):
         assert sql == f"{_hashed(entity)} FORMAT Parquet"
-        assert params == {"day": day, "k0": key[0], "k1": key[1]}
+        assert params == {"day": day, "k0": name_key[0], "k1": name_key[1]}
         for column in NAME_COLUMNS[entity]:
             assert f"{{k1:UInt64}}), {column}))) AS {column}" in sql
+
+
+@pytest.mark.parametrize("entity", sorted(ENTITIES))
+def test_only_the_hashed_statement_orders_rows(entity: str) -> None:
+    # Rows sorted by the stored names would give the names back without the key.
+    assert "ORDER BY" not in ENTITIES[entity]
+    assert _hashed(entity).endswith(f") ORDER BY {ROW_ORDER[entity]}")
 
 
 def test_the_hash_key_is_stable_and_depends_on_the_secret() -> None:

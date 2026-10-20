@@ -5399,7 +5399,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "The bucket's AWS region (default: from AWS_REGION)",
+       "help": "The bucket's AWS region (default: AWS_DEFAULT_REGION or the AWS config file)",
        "metavar": null
       },
       {

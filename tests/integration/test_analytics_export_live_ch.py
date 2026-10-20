@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import uuid
 from collections.abc import AsyncIterator
 from datetime import date, datetime
 from decimal import Decimal
@@ -21,6 +22,7 @@ from server.insights.app.analytics_export import name_hash_key
 from server.insights.store.analytics_export import (
     ENTITIES,
     NAMESPACES_SQL,
+    ROW_ORDER,
     USAGE_SQL,
     _hashed,
     name_hash_sql,
@@ -60,6 +62,23 @@ async def ch() -> AsyncIterator[CHClient]:
         yield client
     finally:
         await client.disconnect()
+
+
+async def _file_rows(ch: CHClient, entity: str) -> list[dict[str, Any]]:
+    """The rows of the Parquet file the export ships for `entity`, in file
+    order, decoded by ClickHouse: what the warehouse loads, not raw bytes."""
+    body = await parquet(entity, DAY, name_key=KEY, ch=ch)
+    table = f"default.it_analytics_{uuid.uuid4().hex}"
+    params = {"day": DAY, "k0": KEY[0], "k1": KEY[1]}
+    await ch.execute(
+        f"CREATE TABLE {table} ENGINE = Memory AS SELECT * FROM ({_hashed(entity)}) LIMIT 0",
+        params,
+    )
+    try:
+        await ch.client.raw_insert(table, insert_block=body, fmt="Parquet")
+        return await ch.query_all(f"SELECT * FROM {table} SETTINGS max_threads = 1")
+    finally:
+        await ch.execute(f"DROP TABLE {table}")
 
 
 def _event(org: str, ts: str, **kw: Any) -> dict[str, Any]:
@@ -120,8 +139,8 @@ async def test_usage_sums_one_utc_day_per_operation(ch: CHClient) -> None:
     assert (s["namespace"], s["agent"], s["transport"], s["day"]) == ("ns", "a", "http", DAY)
     assert s["kind"] == "request"
     assert by_op["memory.get"]["ops"] == 1
-    body = await parquet("usage", DAY, key=KEY, ch=ch)
-    assert b"alice@example.com" not in body
+    shipped = {r["operation"] for r in await _file_rows(ch, "usage")}
+    assert "me" in shipped and not [op for op in shipped if op.startswith("me.")]
 
 
 async def test_hashed_names_are_the_keyed_hash_of_the_stored_names(ch: CHClient) -> None:
@@ -137,8 +156,38 @@ async def test_hashed_names_are_the_keyed_hash_of_the_stored_names(ch: CHClient)
         f"SELECT * FROM ({_hashed('usage')}) WHERE org = {{h:String}}", {**params, "h": want["h"]}
     )
     assert [(r["namespace"], r["agent"], r["ops"]) for r in rows] == [(want["ns"], want["a"], 1)]
-    body = await parquet("usage", DAY, key=KEY, ch=ch)
-    assert org.encode() not in body
+    shipped = {r["org"] for r in await _file_rows(ch, "usage")}
+    assert want["h"] in shipped and org not in shipped
+
+
+@pytest.mark.parametrize("entity", sorted(ENTITIES))
+async def test_the_file_is_in_hash_order_never_name_order(ch: CHClient, entity: str) -> None:
+    org = unique_org("analytics")
+    # Two names whose hash order is the reverse of their own: a file sorted by
+    # the names puts their rows out of hash order.
+    hashed = await ch.query_all(
+        f"SELECT n, {name_hash_sql('n')} AS h FROM (SELECT concat('n', toString(number)) AS n "
+        "FROM numbers(50))",
+        {"k0": KEY[0], "k1": KEY[1]},
+    )
+    first = min(hashed, key=lambda r: r["n"])
+    second = next(r for r in sorted(hashed, key=lambda r: r["n"]) if r["h"] < first["h"])
+    names = [first["n"], second["n"]]
+    await ch.insert(
+        "loom.agent_events", [_event(org, "2026-01-02 07:00:00", namespace=n) for n in names]
+    )
+    await ch.insert(
+        "loom.namespaces",
+        [
+            {"org": org, "namespace": n, "owner_email": "x@example.com", "kind": "memory"}
+            for n in names
+        ],
+    )
+    order = [
+        tuple(str(r[c]) for c in ROW_ORDER[entity].split(", "))
+        for r in await _file_rows(ch, entity)
+    ]
+    assert order == sorted(order)
 
 
 _M = (1 << 64) - 1
@@ -192,6 +241,17 @@ def test_the_reference_implementation_matches_the_published_vectors() -> None:
     assert _siphash_2_4_128(key, bytes(range(15))).hex() == "5493e99933b0a8117e08ec0f97cfc3d9"
 
 
+async def test_the_operator_guides_key_words_are_the_exports(ch: CHClient) -> None:
+    # The SQL in docs/operations/analytics-export.md that a warehouse runs.
+    secret = "s" * 32
+    row = await ch.query_one(
+        "WITH SHA256({secret:String}) AS d SELECT reinterpretAsUInt64(substring(d, 1, 8)) AS k0, "
+        "reinterpretAsUInt64(substring(d, 9, 8)) AS k1",
+        {"secret": secret},
+    )
+    assert (row["k0"], row["k1"]) == name_hash_key(secret)
+
+
 @pytest.mark.parametrize("name", ["", "ns", "agent-alice-laptop", "x" * 8, "tenant-" * 9])
 async def test_a_hashed_name_is_reference_siphash_under_the_documented_key(
     ch: CHClient, name: str
@@ -221,20 +281,34 @@ async def test_namespaces_lists_registered_and_unregistered_with_live_counts(
     ch: CHClient,
 ) -> None:
     org = unique_org("analytics")
+    old, new = datetime(2026, 1, 1), datetime(2026, 1, 2)
+    reg = {"org": org, "owner_email": "x@example.com"}
     await ch.insert(
         "loom.namespaces",
         [
-            {"org": org, "namespace": "kb", "owner_email": "x@example.com", "kind": "knowledge"},
-            {"org": org, "namespace": "mem", "owner_email": "x@example.com", "kind": "memory"},
+            # Two registry versions: the newer one (by updated_at) is the one exported.
+            {**reg, "namespace": "kb", "kind": "memory", "updated_at": old},
+            {**reg, "namespace": "kb", "kind": "knowledge", "updated_at": new},
+            {**reg, "namespace": "mem", "kind": "memory", "updated_at": new},
         ],
     )
     base = {"agent": "a", "user_id": "-", "session_id": "-", "memory_type": "fact", "version": 1}
+    live = {**base, "tombstoned_at": None}
     await ch.insert(
         "loom.memory",
         [
-            {**base, "org": org, "namespace": "mem", "memory_key": "k1", "value": "v"},
-            {**base, "org": org, "namespace": "mem", "memory_key": "k2", "value": "v"},
-            {**base, "org": org, "namespace": "loose", "memory_key": "k1", "value": "v"},
+            {**live, "org": org, "namespace": "mem", "memory_key": "k1", "value": "v"},
+            {**live, "org": org, "namespace": "mem", "memory_key": "k2", "value": "v"},
+            # A deleted memory is not live.
+            {
+                **base,
+                "tombstoned_at": new,
+                "org": org,
+                "namespace": "mem",
+                "memory_key": "k3",
+                "value": "v",
+            },
+            {**live, "org": org, "namespace": "loose", "memory_key": "k1", "value": "v"},
         ],
     )
     for join_use_nulls in (0, 1):
@@ -262,5 +336,5 @@ def _assert_namespaces(got: dict[str, dict[str, Any]]) -> None:
 
 @pytest.mark.parametrize("entity", sorted(ENTITIES))
 async def test_each_entity_is_a_parquet_file(ch: CHClient, entity: str) -> None:
-    body = await parquet(entity, DAY, key=KEY, ch=ch)
+    body = await parquet(entity, DAY, name_key=KEY, ch=ch)
     assert body[:4] == b"PAR1" and body[-4:] == b"PAR1"

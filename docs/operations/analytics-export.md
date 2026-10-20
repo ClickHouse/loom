@@ -10,7 +10,7 @@ loom export-analytics --bucket analytics-landing --prefix loom \
   --expected-bucket-owner 123456789012
 ```
 
-It needs `LOOM_ANALYTICS_EXPORT_NAME_KEY`, the key names are hashed under (see
+It needs `LOOM_ANALYTICS_EXPORT_NAME_KEY`, the secret that names are hashed under (see
 [names](#names)).
 
 `--day YYYY-MM-DD` exports another day; the default is yesterday (UTC). A day that has not
@@ -33,12 +33,12 @@ repeated run can be retried as it is. To export a day again, delete its objects 
 
 `kind` in `usage` is `request` for a request and `worker` for a worker pass. Every
 `/v1/me/*` route is one `operation`, `me`: the ledger names those rows after the request
-path, which can carry any string a caller sent. `users` and
-`sessions` are distinct counts within the row that leave out the `-` of a call that named
-none; a sum over rows counts a user once per row. The
-`namespaces` file is the state at `snapshot_at`, whatever `--day` says: a backfill of an
-old day gets that day's usage and today's namespaces. An unregistered namespace has
-`registered = false` and NULL registry columns.
+path, which can carry any string a caller sent. `users` and `sessions` are distinct counts
+within the row that leave out the `-` of a call that named none; a sum over rows counts a
+user once per row. The `namespaces` file is the state at `snapshot_at`, whatever `--day`
+says: a backfill of an old day gets that day's usage and today's namespaces. An
+unregistered namespace has `registered = false` and NULL registry columns. Rows are sorted
+by the hashed names, never by the names themselves.
 
 ## What never leaves Loom
 
@@ -59,9 +59,17 @@ the lowercase hex of the reference SipHash-2-4-128 of the name under a secret ke
 - The key is a random string of 32 or more characters in `LOOM_ANALYTICS_EXPORT_NAME_KEY`;
   the export refuses to run with a shorter or empty one.
 - The 16-byte SipHash key is the first 16 bytes of SHA-256 of that string (UTF-8). The hash
-  is ClickHouse's `sipHash128ReferenceKeyed`, which any SipHash-2-4-128 library reproduces,
-  so a system that holds the key hashes its own ids to join on them (in ClickHouse,
-  `lower(hex(sipHash128ReferenceKeyed((k0, k1), tenant_id)))`).
+  is ClickHouse's `sipHash128ReferenceKeyed`, which any SipHash-2-4-128 library reproduces
+  from those 16 bytes, so a system that holds the key hashes its own ids to join on them.
+  ClickHouse takes the key as two words, each 8-byte half read little-endian:
+
+  ```sql
+  WITH SHA256('<the key>') AS d
+  SELECT lower(hex(sipHash128ReferenceKeyed(
+      (reinterpretAsUInt64(substring(d, 1, 8)), reinterpretAsUInt64(substring(d, 9, 8))),
+      tenant_id)))
+  ```
+
 - A hash is a pseudonym, not an anonymous value: whoever holds the key can recompute it
   from a name they know. Erasing a namespace in Loom does not remove its rows already in
   the bucket.
@@ -73,9 +81,9 @@ the lowercase hex of the reference SipHash-2-4-128 of the name under a secret ke
 ## Credentials
 
 The command uses the default AWS credentials of its process. With `--role-arn` it assumes
-that role with them before each upload and writes under the role's credentials, which fits a bucket in
-another account: the bucket's account grants `s3:PutObject` to a writer role, and the
-writer role trusts only the export's own identity. The export needs no read, list or
+that role with them before each upload and writes under the role's credentials, which fits
+a bucket in another account: the bucket's account grants `s3:PutObject` to a writer role,
+and the writer role trusts only the export's own identity. The export needs no read, list or
 delete permission on the bucket. `--expected-bucket-owner` makes S3 refuse the write when
 another account owns the bucket.
 
@@ -110,10 +118,10 @@ shows it). The job runs at 00:30 UTC (`schedule`), one run at a time, with up to
 and a three-hour deadline over all attempts; each statement may run 20 minutes. A refusal
 (exit 2) fails the Job at once instead of retrying. The web and workers pods keep their own
 ServiceAccount, so the role that may assume the writer role is bound to the export's pod
-only. With IRSA, that
-role's trust names `system:serviceaccount:<namespace>:<fullname>-analytics-export`, and its
-only permission is `sts:AssumeRole` on `roleArn`. With EKS Pod Identity, bind the role to
-the ServiceAccount and leave `annotations` empty.
+only. With IRSA, that role's trust names
+`system:serviceaccount:<namespace>:<fullname>-analytics-export`, and its only permission is
+`sts:AssumeRole` on `roleArn`. With EKS Pod Identity, bind the role to the ServiceAccount
+and leave `annotations` empty.
 
 The job reads ClickHouse with the release's Secret, settings, `extraEnv` and
 `extraVolumes`, as the web pods do, and writes nothing to it. A failed run shows as a

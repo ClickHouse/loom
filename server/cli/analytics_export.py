@@ -53,7 +53,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
     if refusal := _refusal(args, today):
         print(f"  ✗ {refusal}", file=sys.stderr)
         return 2
-    key = name_hash_key(settings.analytics_export_name_key)
+    name_key = name_hash_key(settings.analytics_export_name_key)
     put = s3_put(
         lambda: s3_client(role_arn=args.role_arn, region=args.region),
         args.bucket,
@@ -68,7 +68,9 @@ def _cmd_export(args: argparse.Namespace) -> int:
             ch = get_client()
             await ch.connect()
             try:
-                return await export_day(args.day, prefix=args.prefix, put=put, key=key, ch=ch)
+                return await export_day(
+                    args.day, prefix=args.prefix, put=put, name_key=name_key, ch=ch
+                )
             finally:
                 await ch.disconnect()
 
@@ -99,7 +101,9 @@ def register_analytics_export_cli(sub: Any) -> None:
         help="An IAM role to assume with the default credentials before each upload",
     )
     p.add_argument(
-        "--region", default="", help="The bucket's AWS region (default: from AWS_REGION)"
+        "--region",
+        default="",
+        help="The bucket's AWS region (default: AWS_DEFAULT_REGION or the AWS config file)",
     )
     p.add_argument(
         "--expected-bucket-owner",
