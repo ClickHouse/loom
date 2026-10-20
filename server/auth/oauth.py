@@ -1501,6 +1501,7 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
     return {**issued, "issued_token_type": "urn:ietf:params:oauth:token-type:access_token"}
 
 
+# Seconds both exchange limits count over (LOOM_WORKLOAD_EXCHANGES_PER_*).
 _EXCHANGE_WINDOW_S = 600
 
 
@@ -1535,7 +1536,7 @@ async def _admit_exchange(trust: str, workload: str) -> None:
     raise OAuthError(
         "temporarily_unavailable",
         429,
-        description="too many token exchanges for this trust; retry later",
+        description="too many token exchanges for this trust or workload; retry later",
         headers={"Retry-After": "60"},
     )
 
