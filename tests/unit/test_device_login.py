@@ -7,6 +7,7 @@ import asyncio
 import re
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -18,6 +19,7 @@ from fastapi.testclient import TestClient
 from server.auth import device, jit, login, oauth, oidc, revocation, scim, sso_links
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password
+from server.identity.app import password_link
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
 pytestmark = pytest.mark.usefixtures("auth_attempts")
@@ -1727,3 +1729,99 @@ def test_logging_out_an_ended_session_revokes_the_idp_s_current_token(
         c.post("/oauth/revoke", data={"token": old, "client_id": device.DEVICE_CLIENT_ID})
     c.post("/oauth/revoke", data={"token": new, "client_id": device.DEVICE_CLIENT_ID})
     assert "idp-r1+" in revoked
+
+
+# What a browser sends when the user submits a form on this server's own page.
+_FORM_SUBMIT = {
+    "origin": "http://testserver",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "document",
+}
+
+
+def _sign_in_routes_behind_the_gate(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """The sign-in routes behind the cross-site gate, with auth on."""
+    from server.main import attach_web_gate
+
+    monkeypatch.setattr(oauth.settings, "auth_required", True)
+    monkeypatch.setattr(oauth.settings, "identity_provider", "gateway")
+    monkeypatch.setattr(oauth.settings, "public_base_url", "")
+    monkeypatch.setattr(oauth.settings, "cors_origins", "")
+    app = oauth_app()
+    attach_web_gate(app)
+    return TestClient(app)
+
+
+def _authorize_params(c: TestClient) -> dict[str, str]:
+    reg = c.post("/oauth/register", json={"redirect_uris": ["http://127.0.0.1:9/cb"]}).json()
+    return {
+        "client_id": reg["client_id"],
+        "redirect_uri": "http://127.0.0.1:9/cb",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "code_challenge_method": "S256",
+    }
+
+
+# Each opens one server-rendered page that holds a sign-in form.
+def _device_code_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    return c.get("/oauth/device", params={"user_code": _start(c)["user_code"]})
+
+
+def _device_approval_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    return _sign_in(c, _start(c)["user_code"])
+
+
+def _connect_sign_in_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    return c.get("/oauth/authorize", params=_authorize_params(c))
+
+
+def _connect_approval_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    request.getfixturevalue("sso")
+    r = c.get("/oauth/authorize", params=_authorize_params(c), follow_redirects=False)
+    state = r.headers["location"].split("state=")[1]
+    return c.get("/oauth/callback", params={"code": "idp-code", "state": state})
+
+
+def _account_link_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    request.getfixturevalue("bobs_password_account")
+    return _sso_round_trip(c, _start(c)["user_code"])
+
+
+def _set_password_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    async def held(code: str) -> dict[str, Any]:
+        return {"kind": "set_password"}
+
+    request.getfixturevalue("monkeypatch").setattr(password_link, "_held", held)
+    return c.get("/oauth/set-password", params={"code": "c"})
+
+
+@pytest.mark.parametrize(
+    ("open_page", "action"),
+    [
+        (_device_code_page, "/oauth/device"),
+        (_device_approval_page, "/oauth/device/approve"),
+        (_connect_sign_in_page, "/oauth/authorize"),
+        (_connect_approval_page, "/oauth/authorize/approve"),
+        (_account_link_page, "/oauth/link"),
+        (_set_password_page, "/oauth/set-password"),
+    ],
+)
+def test_a_sign_in_form_posts_with_its_pages_own_origin(
+    monkeypatch,
+    request,
+    open_page: Callable[[TestClient, pytest.FixtureRequest], httpx.Response],
+    action: str,
+) -> None:
+    # A browser serializes a POST's Origin as `null` when the page's policy is no-referrer,
+    # and the gate refuses that; under same-origin it sends the server's own.
+    c = _sign_in_routes_behind_the_gate(monkeypatch)
+    r = open_page(c, request)
+    assert r.status_code == 200, r.text
+    assert f'<form method="post" action="{action}">' in r.text
+    assert r.headers["referrer-policy"] == "same-origin"
+    own = c.post(action, data={}, headers=_FORM_SUBMIT)
+    assert own.status_code == 400, own.text  # the route itself answers: no fields
+    refused = c.post(action, data={}, headers={**_FORM_SUBMIT, "origin": "null"})
+    assert refused.status_code == 403
+    assert refused.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
