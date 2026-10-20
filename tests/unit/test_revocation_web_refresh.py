@@ -86,7 +86,7 @@ async def test_token_state_loads_each_at_boot_and_runs_each_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server import boot
-    from server.auth import keyring
+    from server.auth import end_user_keys, keyring
     from server.core import grant_cache
 
     loaded: list[tuple[str, str]] = []
@@ -106,6 +106,10 @@ async def test_token_state_loads_each_at_boot_and_runs_each_loop(
         keyring, "start_refresh_loop", lambda: asyncio.create_task(_forever(), name="k")
     )
     monkeypatch.setattr(grant_cache, "poll", lambda: _load("grants"))
+    monkeypatch.setattr(end_user_keys, "refresh", lambda: _load("end-user keys"))
+    monkeypatch.setattr(
+        end_user_keys, "start_refresh_loop", lambda: asyncio.create_task(_forever(), name="e")
+    )
     periods: list[float] = []
 
     def _poll_loop(period: float) -> asyncio.Task[None]:
@@ -120,9 +124,10 @@ async def test_token_state_loads_each_at_boot_and_runs_each_loop(
         ("revocation", "revocation.refresh"),
         ("keyring", "auth.keyring_refresh"),
         ("grants", "grant_cache.poll"),
+        ("end-user keys", ""),
     ]
     assert current_query_tag() == ""
-    assert [t.get_name() for t in loops] == ["r", "k", "g"]
+    assert [t.get_name() for t in loops] == ["r", "k", "e", "g"]
     assert periods == [0.5]
     for t in loops:
         t.cancel()

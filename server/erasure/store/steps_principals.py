@@ -134,8 +134,9 @@ async def forget_collection_owner_by_user(
 
 async def delete_grant_rows_of_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
     """Every row naming the user (`user:<user_id>`) as a grant's subject, once
-    those grants are revoked: a revoked row caps an older token's claim, and no
-    token names an end user, so it holds nothing but the user's id."""
+    those grants are revoked: a revoked row caps an older token's namespace
+    claim, and no end-user token carries one, so it holds nothing but the
+    user's id."""
     from server.erasure.store.mutations import count_then_mutate
 
     where = "org = {org:String} AND subject = {p:String}"
@@ -146,6 +147,5 @@ async def delete_grant_rows_of_user(org: str, user_id: str, *, ch: _CHClient | N
         mutation_where=where,
         params={"org": org, "p": "user:" + user_id},
         final=False,
-        lightweight=True,
         ch=ch,
     )

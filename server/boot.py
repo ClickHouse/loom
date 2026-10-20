@@ -490,9 +490,9 @@ async def calibrate_similarity_gates() -> None:
 
 async def start_token_state() -> list[asyncio.Task[None]]:
     """Every process that verifies tokens loads the revocation snapshot, the
-    signing keyring and the grant watermark at boot and re-reads them on their
-    cadence."""
-    from server.auth import keyring, revocation
+    signing keyring, the end-user issuers' JWKS and the grant watermark at boot
+    and re-reads them on their cadence."""
+    from server.auth import end_user_keys, keyring, revocation
     from server.core import grant_cache
     from server.core.ch import query_tag
 
@@ -502,9 +502,11 @@ async def start_token_state() -> list[asyncio.Task[None]]:
         await keyring.refresh()
     with query_tag("grant_cache.poll"):
         await grant_cache.poll()
+    await end_user_keys.refresh()
     return [
         revocation.start_refresh_loop(settings.jwt_revocation_cache_ttl_seconds),
         keyring.start_refresh_loop(),
+        end_user_keys.start_refresh_loop(),
         grant_cache.start_poll_loop(settings.acl_watermark_poll_seconds),
     ]
 

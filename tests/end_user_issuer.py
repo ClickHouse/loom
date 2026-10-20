@@ -19,6 +19,9 @@ from pathlib import Path
 
 ISSUER = "test-end-user-issuer"
 KID = "test-end-user-1"
+# The orgs its tokens may name: the unit tests' and the integration suite's
+# (`unique_org`: it-<label>-<hex>).
+ORGS = ("acme", "globex", "it-*")
 _KEY_ENV = "LOOM_TEST_END_USER_KEY"
 
 
@@ -41,9 +44,10 @@ def new_key() -> tuple[str, str]:
     return private, public
 
 
-def issuers_setting(public_pem: str) -> str:
-    """The `LOOM_JWT_END_USER_ISSUERS_JSON` value that trusts `public_pem`."""
-    return json.dumps({ISSUER: {KID: public_pem}})
+def issuers_setting(public_pem: str, **spec: object) -> str:
+    """The `LOOM_JWT_END_USER_ISSUERS_JSON` value that trusts `public_pem` for
+    `ORGS` (or what `spec` says instead)."""
+    return json.dumps({ISSUER: {"orgs": list(ORGS), "keys": {KID: public_pem}, **spec}})
 
 
 def configured() -> bool:

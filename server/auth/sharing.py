@@ -18,6 +18,7 @@ own grants: unlike an ordinary namespace, never through an inheriting creator.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -211,8 +212,8 @@ async def roles(auth: AuthInfo, org: str, namespaces: list[str]) -> dict[str, Ro
     if not shared:
         return out
     collections = await tree(org)
-    maps = [await grant_cache.grant_map(org, p) for p in await principals(auth, org)]
-    creator = [await grant_cache.grant_map(org, auth.creator)] if auth.creator else []
+    maps = await _grant_maps(org, await principals(auth, org))
+    creator = await _grant_maps(org, [auth.creator]) if auth.creator else []
     for ns in shared:
         if ns not in collections.parent:
             out[ns] = None  # a `col-` name not in the tree admits only a platform admin
@@ -220,6 +221,12 @@ async def roles(auth: AuthInfo, org: str, namespaces: list[str]) -> dict[str, Ro
         lineage = collections.lineage(ns)
         out[ns] = _capped(auth, org, ns, _best(maps, lineage), _best(creator, lineage))
     return out
+
+
+async def _grant_maps(org: str, subjects: list[str]) -> list[grant_cache.GrantMap]:
+    """Each subject's grant map, read side by side: a user in many groups pays
+    one round trip after a grant change, not one per group."""
+    return list(await asyncio.gather(*(grant_cache.grant_map(org, s) for s in subjects)))
 
 
 async def readable(auth: AuthInfo | None, org: str) -> list[str]:
@@ -238,8 +245,7 @@ async def readable(auth: AuthInfo | None, org: str) -> list[str]:
         if auth.has_role(Role.PLATFORM_ADMIN):
             return sorted(found | set(collections.parent))
         granted: set[str] = set()
-        for principal in await principals(auth, org):
-            grants = await grant_cache.grant_map(org, principal)
+        for grants in await _grant_maps(org, await principals(auth, org)):
             granted.update(
                 ns for ns, rank in grants.ranks.items() if rank and ns in collections.parent
             )

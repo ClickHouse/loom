@@ -293,8 +293,9 @@ def test_a_users_erasure_leaves_no_trace_and_keeps_others_documents(
         assert r.status_code == 200, r.text
         return {(row["namespace"], row["source_uri"]) for row in r.json()["knowledge"]["rows"]}
 
-    # The org admin may erase bob's rows in collections it cannot read, not read them.
-    assert _exported(admin) == set()
+    # The org admin may erase bob's rows in collections it cannot read, not read
+    # them; bob's own personal collection is his to have exported.
+    assert {u for _, u in _exported(admin)} == {"chat/c1/m1"}
     everything = _exported(root)
     assert (col, bobs) in everything and {u for _, u in everything} == {bobs, "chat/c1/m1"}
     r = httpx.post(

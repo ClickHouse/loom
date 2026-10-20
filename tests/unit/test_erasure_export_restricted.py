@@ -149,3 +149,28 @@ async def test_the_export_audits_each_high_row_it_serves(exports, monkeypatch) -
     )
     assert [r["memory_key"] for r in out.memory.rows] == ["plain", "vault"]
     assert audited == [(STD, ["vault"])]
+
+
+@pytest.mark.asyncio
+async def test_a_user_export_carries_their_personal_collection_and_no_other_unread_one(
+    exports, monkeypatch
+) -> None:
+    from server.core.principals import personal_name
+
+    mine, theirs = personal_name(ORG, "user:u1"), personal_name(ORG, "user:u2")
+
+    async def _mem(org, scope_type, scope_value, *, include_tombstoned, limit):
+        rows = [{"namespace": ns, "value": ns} for ns in (STD, mine, theirs, "col-hr")]
+        return rows, len(rows), False
+
+    async def _readable(auth, org):
+        return []
+
+    monkeypatch.setattr(h, "_export_memory", _mem)
+    monkeypatch.setattr(h.sharing, "readable", _readable)
+    set_current_auth(_admin("*", role=Role.ORG_ADMIN))
+    out = await h.handle_erasure_export(
+        ErasureExportInput(org=ORG, scope_type="user_id", scope_value="u1", requester="ops@x")
+    )
+    assert [r["namespace"] for r in out.memory.rows] == [STD, mine]
+    assert out.counts["memory"] == 2

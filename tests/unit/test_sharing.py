@@ -563,7 +563,6 @@ def test_a_collection_delete_cut_short_is_closed_by_its_retry(
     after a failed retire finds the row inactive and still closes the tree."""
     from contextlib import asynccontextmanager
 
-    from server.identity.api.models import NamespaceDeleteInput
     from server.identity.app import collections, namespace
 
     directory = {"org": ORG, "namespace": "col-hr", "kind": "collection", "active": True}
@@ -594,11 +593,10 @@ def test_a_collection_delete_cut_short_is_closed_by_its_retry(
     monkeypatch.setattr(namespace.namespaces_repo, "fetch_row", _row)
     monkeypatch.setattr(namespace.grant_cache, "changed", _changed)
     monkeypatch.setattr(collections, "retire", _retire)
-    delete = NamespaceDeleteInput(org=ORG, namespace="col-hr")
     with pytest.raises(RuntimeError):
-        asyncio.run(namespace.handle_namespace_delete(delete))
+        asyncio.run(namespace.delete_namespace(ORG, "col-hr"))
     assert directory["active"] is False and retired == ["failed"], "the tree still stands"
-    asyncio.run(namespace.handle_namespace_delete(delete))
+    asyncio.run(namespace.delete_namespace(ORG, "col-hr"))
     assert retired == ["failed", "col-hr"], "the retry closes it"
 
 
@@ -892,6 +890,7 @@ def test_a_collection_whose_create_stopped_short_is_still_deleted(
     its grants, so a delete retires it."""
     from contextlib import asynccontextmanager
 
+    from server.core.errors import ValidationError
     from server.identity.api.models import NamespaceDeleteInput
     from server.identity.app import collections, namespace
 
@@ -912,10 +911,13 @@ def test_a_collection_whose_create_stopped_short_is_still_deleted(
     monkeypatch.setattr(namespace, "get_client", lambda: object())
     monkeypatch.setattr(namespace.namespaces_repo, "fetch_row", _no_row)
     monkeypatch.setattr(collections, "retire", _retire)
-    out = asyncio.run(
-        namespace.handle_namespace_delete(NamespaceDeleteInput(org=ORG, namespace="col-hr"))
-    )
+    out = asyncio.run(namespace.delete_namespace(ORG, "col-hr"))
     assert out.deleted is True and retired == ["col-hr"]
+    # Only `collection.delete`, which purges what it holds first, deletes one.
+    with pytest.raises(ValidationError, match="collection.delete"):
+        asyncio.run(
+            namespace.handle_namespace_delete(NamespaceDeleteInput(org=ORG, namespace="col-hr"))
+        )
 
 
 def test_an_end_users_original_never_passes_to_another_writer_of_new_text() -> None:
@@ -994,19 +996,229 @@ def test_a_search_naming_its_namespaces_reads_those_alone_and_each_must_be_reada
         context.set_current_auth(None)
 
 
-def test_an_end_user_issuer_stands_apart_from_loom_and_the_federated_keys() -> None:
+@pytest.mark.parametrize(
+    ("spec", "said"),
+    [
+        ({"loom": {"orgs": ["acme"], "keys": {"k": "pem"}}}, "Loom's own"),
+        ({"chat": {"orgs": ["*"], "keys": {"k": "pem"}}}, "not every org"),
+        ({"chat": {"orgs": [], "keys": {"k": "pem"}}}, "lists the orgs"),
+        ({"chat": {"orgs": ["acme"]}}, "jwks_url` or `keys"),
+        ({"chat": {"orgs": ["acme"], "jwks_url": "http://keys"}}, "is https"),
+        ({"chat": {"orgs": ["acme"], "keys": {"k": "pem"}, "roles": ["admin"]}}, "unknown fields"),
+        (
+            {
+                "chat": {"orgs": ["acme"], "keys": {"k": "pem"}},
+                "mail": {"orgs": ["ac*"], "keys": {"m": "pem"}},
+            },
+            "both sign for",
+        ),
+    ],
+)
+def test_an_end_user_issuer_names_its_orgs_and_its_keys(spec: dict[str, Any], said: str) -> None:
     import json
 
     from pydantic import ValidationError
 
     from server.settings._auth import AuthSettings
 
-    with pytest.raises(ValidationError, match="Loom's own"):
-        AuthSettings(jwt_end_user_issuers_json=json.dumps({"loom": {"k": _PUBLIC}}))
+    with pytest.raises(ValidationError, match=said):
+        AuthSettings(jwt_end_user_issuers_json=json.dumps(spec))
+
+
+def test_an_end_user_key_is_never_a_federated_one_and_signs_for_its_orgs_alone() -> None:
+    import json
+
+    from pydantic import ValidationError
+
+    from server.settings._auth import AuthSettings
+
     with pytest.raises(ValidationError, match="both end-user and federated"):
         AuthSettings(
-            jwt_end_user_issuers_json=json.dumps({"chat": {"k": _PUBLIC}}),
+            jwt_end_user_issuers_json=json.dumps(
+                {"chat": {"orgs": ["acme"], "keys": {"k": _PUBLIC}}}
+            ),
             jwt_public_keys_json=json.dumps({"k": _PUBLIC}),
         )
-    keys = AuthSettings(jwt_end_user_issuers_json=end_user_issuer.issuers_setting(_PUBLIC))
-    assert keys.end_user_keys() == {end_user_issuer.KID: (end_user_issuer.ISSUER, _PUBLIC)}
+    issuers = AuthSettings(
+        jwt_end_user_issuers_json=end_user_issuer.issuers_setting(_PUBLIC)
+    ).end_user_issuers()
+    spec = issuers[end_user_issuer.ISSUER]
+    assert spec.keys == {end_user_issuer.KID: _PUBLIC}
+    assert spec.signs_for("acme") and spec.signs_for("it-share-1a2b")
+    assert not spec.signs_for("initech") and not spec.signs_for("itx")
+
+
+def test_an_end_user_token_of_an_org_its_issuer_does_not_sign_for_is_refused() -> None:
+    with pytest.raises(TokenError, match="does not sign for"):
+        verify_token(_token(org="initech"))
+
+
+def test_an_end_user_token_carries_a_jti() -> None:
+    import time
+
+    import jwt as pyjwt
+
+    from server.settings import settings
+
+    now = int(time.time())
+    claims = {"iss": end_user_issuer.ISSUER, "aud": settings.jwt_audience, "sub": "user:u-1"}
+    claims.update({"org": ORG, "iat": now, "exp": now + 60})
+    token = pyjwt.encode(claims, _PRIVATE, algorithm="RS256", headers={"kid": end_user_issuer.KID})
+    with pytest.raises(TokenError, match="jti"):
+        verify_token(token)
+
+
+def test_an_end_user_issuer_s_keys_come_from_its_jwks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Until the first fetch of its JWKS lands, its tokens are answered retry
+    (503); a fetched key verifies them."""
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+    from server.auth import end_user_keys
+    from server.auth.jwt import AuthUnavailable
+    from server.settings import settings
+
+    monkeypatch.setattr(
+        settings,
+        "jwt_end_user_issuers_json",
+        end_user_issuer.issuers_setting(_PUBLIC, keys={}, jwks_url="https://chat.example/jwks"),
+    )
+    end_user_keys.clear()
+    try:
+        with pytest.raises(AuthUnavailable):
+            verify_token(_token())
+        end_user_keys._keys[end_user_issuer.ISSUER] = {
+            end_user_issuer.KID: load_pem_public_key(_PUBLIC.encode())
+        }
+        assert verify_token(_token()).subject == "user:u-1"
+    finally:
+        end_user_keys.clear()
+
+
+def test_an_end_user_issuer_s_jwks_is_fetched_and_a_failed_fetch_keeps_the_last_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import base64
+
+    import httpx
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+    from server.auth import end_user_keys
+    from server.settings import settings
+
+    numbers = load_pem_public_key(_PUBLIC.encode()).public_numbers()  # type: ignore[union-attr]
+
+    def b64(n: int) -> str:
+        return (
+            base64.urlsafe_b64encode(n.to_bytes((n.bit_length() + 7) // 8, "big"))
+            .rstrip(b"=")
+            .decode()
+        )
+
+    jwk = {
+        "kty": "RSA",
+        "kid": end_user_issuer.KID,
+        "use": "sig",
+        "n": b64(numbers.n),
+        "e": b64(numbers.e),
+    }
+    answers = [httpx.Response(200, json={"keys": [jwk]}), httpx.Response(500)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://chat.example/jwks"
+        return answers.pop(0)
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw)
+    )
+    monkeypatch.setattr(
+        settings,
+        "jwt_end_user_issuers_json",
+        end_user_issuer.issuers_setting(_PUBLIC, keys={}, jwks_url="https://chat.example/jwks"),
+    )
+    end_user_keys.clear()
+    try:
+        asyncio.run(end_user_keys.refresh())
+        assert end_user_keys.key(end_user_issuer.ISSUER, end_user_issuer.KID) is not None
+        asyncio.run(end_user_keys.refresh())
+        assert end_user_keys.key(end_user_issuer.ISSUER, end_user_issuer.KID) is not None
+        assert verify_token(_token()).subject == "user:u-1"
+    finally:
+        end_user_keys.clear()
+
+
+@pytest.mark.parametrize(
+    ("end_user", "asked", "read"),
+    [(True, None, "this"), (True, "all_mine", "all_mine"), (False, None, "all_mine")],
+)
+def test_an_end_user_s_search_reads_its_namespace_unless_it_asks_for_more(
+    monkeypatch: pytest.MonkeyPatch, end_user: bool, asked: str | None, read: str
+) -> None:
+    from server.auth import context
+    from server.knowledge.api.models_knowledge import KnowledgeSearchInput
+    from server.knowledge.app import knowledge_search
+
+    scopes: list[str] = []
+
+    class _Read(Exception):
+        pass
+
+    async def _namespaces(org: str, namespace: str, scope: str, **_k: Any) -> Any:
+        scopes.append(scope)
+        raise _Read
+
+    class _Embedder:
+        model_name = "fake"
+
+        async def embed(self, text: str) -> list[float]:
+            return [0.0]
+
+    monkeypatch.setattr(knowledge_search, "namespaces_to_search", _namespaces)
+    monkeypatch.setattr(knowledge_search, "get_embedder", _Embedder)
+    scope = {} if asked is None else {"namespace_scope": asked}
+    query = KnowledgeSearchInput(org=ORG, namespace="col-team", query="q", **scope)
+    member = AuthInfo(
+        subject="bob@acme.io",
+        org=ORG,
+        namespaces=("col-team",),
+        roles=(Role.VIEWER,),
+        is_service_account=False,
+    )
+    context.set_current_auth(_user("alice") if end_user else member)
+    try:
+        with pytest.raises(_Read):
+            asyncio.run(knowledge_search.handle_knowledge_search(query))
+    finally:
+        context.set_current_auth(None)
+    assert scopes == [read]
+
+
+def test_an_end_user_issuer_s_jwks_is_refetched_every_refresh_period(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import end_user_keys
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "jwt_end_user_jwks_refresh_seconds", 42.0)
+    slept: list[float] = []
+
+    class _Done(Exception):
+        pass
+
+    async def _sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    async def _refresh() -> None:
+        if len(slept) == 2:
+            raise _Done
+
+    monkeypatch.setattr(end_user_keys.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(end_user_keys, "refresh", _refresh)
+
+    async def _run() -> None:
+        with pytest.raises(_Done):
+            await end_user_keys.start_refresh_loop()
+
+    asyncio.run(_run())
+    assert slept == [42.0, 42.0]

@@ -592,18 +592,26 @@ async def handle_namespace_delete(
 
     Idempotent: deleting an already-inactive namespace returns
     `deleted=False`. Deleting a namespace that was never registered
-    is a no-op (returns deleted=False).
+    is a no-op (returns deleted=False). A collection is refused: it goes with
+    what it holds, through `collection.delete`.
     """
-    from server.auth.sharing import is_personal
+    from server.auth.sharing import is_collection, is_personal
 
     if is_personal(input.namespace):
         # It goes with its user's erasure, which also takes the user's id off its row.
         raise ValidationError("a personal collection goes only with its user's erasure")
+    if is_collection(input.namespace):
+        raise ValidationError("a collection is deleted with collection.delete, with what it holds")
+    return await delete_namespace(input.org, input.namespace)
+
+
+async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
+    """`namespace.delete`'s write, and `collection.delete`'s once its purge ran."""
     ch = get_client()
     # SELECT * so the soft-delete row mirrors EVERY column forward; a
     # partial RMT insert would reset omitted columns to schema defaults.
-    async with account_change(input.org, input.namespace):  # as register holds it
-        existing = await namespaces_repo.fetch_row(input.org, input.namespace, ch=ch)
+    async with account_change(org, namespace):  # as register holds it
+        existing = await namespaces_repo.fetch_row(org, namespace, ch=ch)
         now = naive_utc_now_seconds()
         if existing is None:
             # A collection whose create stopped before its directory row still
@@ -611,8 +619,8 @@ async def handle_namespace_delete(
             from server.auth.sharing import is_collection
             from server.identity.app.collections import retire
 
-            closed = is_collection(input.namespace) and await retire(input.org, input.namespace)
-            return NamespaceDeleteOutput(deleted=closed, namespace=input.namespace, updated_at=now)
+            closed = is_collection(namespace) and await retire(org, namespace)
+            return NamespaceDeleteOutput(deleted=closed, namespace=namespace, updated_at=now)
         active = bool(existing.get("active", False))
         if active:
             row = dict(existing)
@@ -625,14 +633,14 @@ async def handle_namespace_delete(
             # and closes the collection then. Retiring twice changes nothing.
             from server.identity.app.collections import retire
 
-            await retire(input.org, input.namespace)
+            await retire(org, namespace)
         if not active:
-            return NamespaceDeleteOutput(deleted=False, namespace=input.namespace, updated_at=now)
+            return NamespaceDeleteOutput(deleted=False, namespace=namespace, updated_at=now)
     # The claim cap reads which accounts tie a person's spellings from this table.
-    await grant_cache.changed(input.org)
+    await grant_cache.changed(org)
     return NamespaceDeleteOutput(
         deleted=True,
-        namespace=input.namespace,
+        namespace=namespace,
         updated_at=now,
     )
 

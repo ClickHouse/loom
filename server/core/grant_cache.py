@@ -37,7 +37,7 @@ from typing import Any
 from server.core import readiness
 from server.core.errors import BackendUnavailableError
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
-from server.core.principals import ONE_SPELLING
+from server.core.principals import EVERYONE, ONE_SPELLING
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -355,7 +355,7 @@ async def _read(org: str, subject: str) -> GrantMap:
     namespaces' ranks, and every spelling read, for `invalidate`."""
     from server.core.ch import get_client, own_write_reads
 
-    human = bool(subject) and subject != "*" and not subject.startswith(ONE_SPELLING)
+    human = subject not in ("", "*", EVERYONE) and not subject.startswith(ONE_SPELLING)
     with own_write_reads():
         row = await get_client().query_one(
             """

@@ -19,7 +19,7 @@ import jwt
 
 from server.auth.authz import Role, grant_role
 from server.core.principals import is_reserved_subject
-from server.settings import settings
+from server.settings import EndUserIssuer, settings
 
 
 class TokenError(Exception):
@@ -352,9 +352,9 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     if secret is None:
         from server.auth import keyring
 
-        end_user_key = _end_user_key(token)
-        if end_user_key is not None:
-            return _verify_end_user(token, *end_user_key)
+        end_user = _end_user_key(token)
+        if end_user is not None:
+            return _verify_end_user(token, *end_user)
         if not keyring.loaded():
             raise KeyringUnavailable("the signing keyring is not loaded yet; retry shortly")
         if keyring.stale():
@@ -442,17 +442,35 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     )
 
 
-def _end_user_key(token: str) -> tuple[str, str] | None:
-    """(issuer, public PEM) when `token` is signed with an end-user issuer's key
-    (by its header's `kid`), else None."""
-    keys = settings.end_user_keys()
-    if not keys:
+class EndUserKeysUnavailable(AuthUnavailable):
+    """An end-user issuer's JWKS has not been fetched in this process yet."""
+
+
+def _end_user_key(token: str) -> tuple[str, EndUserIssuer, Any] | None:
+    """(issuer, its spec, public key) when `token` names an end-user issuer
+    (its `iss`, checked against the signature after), else None. The key is the
+    issuer's own of the token's `kid`: from its `keys`, or its last fetched JWKS."""
+    from server.auth import end_user_keys
+
+    issuers = settings.end_user_issuers()
+    if not issuers:
         return None
     try:
+        iss = jwt.decode(token, options={"verify_signature": False}).get("iss")
         kid = jwt.get_unverified_header(token).get("kid")
     except jwt.PyJWTError as e:
-        raise TokenError(f"invalid token header: {e}") from e
-    return keys.get(kid) if isinstance(kid, str) else None
+        raise TokenError(f"invalid token: {e}") from e
+    spec = issuers.get(iss) if isinstance(iss, str) else None
+    if spec is None or not isinstance(iss, str):
+        return None
+    found = spec.keys.get(kid) if isinstance(kid, str) else None
+    if found is None and isinstance(kid, str):
+        found = end_user_keys.key(iss, kid)
+    if found is None:
+        if spec.jwks_url and not end_user_keys.loaded(iss):
+            raise EndUserKeysUnavailable(f"the keys of {iss!r} are not fetched yet; retry shortly")
+        raise TokenError(f"token kid {kid!r} is not a key of {iss!r}")
+    return iss, spec, found
 
 
 # Claims an end-user token may not carry: its identity is the user, nothing more.
@@ -469,7 +487,7 @@ _NOT_FOR_END_USERS = (
 )
 
 
-def _verify_end_user(token: str, issuer: str, public_pem: str) -> AuthInfo:
+def _verify_end_user(token: str, issuer: str, spec: EndUserIssuer, public_key: Any) -> AuthInfo:
     """A short-lived token an end-user issuer signed for one of its users: one
     org, `sub: user:<id>`, and the agent the request runs inside when there is
     one (`agent: agent:<id>`, signed, since an agent's grants widen the
@@ -479,7 +497,7 @@ def _verify_end_user(token: str, issuer: str, public_pem: str) -> AuthInfo:
     from server.core.principals import AGENT, USER, principal_id
 
     try:
-        decoded = _decode(token, [public_pem], "RS256")
+        decoded = _decode(token, [public_key], "RS256")
     except jwt.ExpiredSignatureError as e:
         raise TokenError(f"token expired: {e}", reason="expired") from e
     except jwt.PyJWTError as e:
@@ -494,6 +512,10 @@ def _verify_end_user(token: str, issuer: str, public_pem: str) -> AuthInfo:
         raise TokenError("an end-user token names one user: sub user:<id>")
     if not isinstance(org, str) or org in ("", "*"):
         raise TokenError("an end-user token names one org")
+    if not spec.signs_for(org):
+        raise TokenError(f"{issuer!r} does not sign for the org {org!r}")
+    if not isinstance(decoded.get("jti"), str) or not decoded["jti"]:
+        raise TokenError("an end-user token carries a jti, so one token can be revoked")
     if not isinstance(agent, str) or (agent and not principal_id(agent, AGENT)):
         raise TokenError("an end-user token's agent is agent:<id>")
     if not isinstance(exp, int | float) or isinstance(exp, bool) or not isinstance(iat, int):
@@ -525,7 +547,7 @@ def _verify_end_user(token: str, issuer: str, public_pem: str) -> AuthInfo:
     )
 
 
-def _decode(token: str, keys: list[str], algorithm: str) -> dict[str, Any]:
+def _decode(token: str, keys: list[Any], algorithm: str) -> dict[str, Any]:
     """The claims under the first of `keys` the signature matches. `issuer=` is
     checked by the caller (PyJWT takes one string, not a set); `exp` is not
     required (indefinite tokens) but enforced when present."""

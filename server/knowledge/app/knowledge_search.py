@@ -36,7 +36,14 @@ PRIVATE_HIT_THRESHOLD = 0.30
 
 
 async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearchOutput:
+    from server.auth.context import current_auth
+    from server.auth.gateway import is_end_user
     from server.observability.otel import traced
+
+    if is_end_user(current_auth()) and "namespace_scope" not in input.model_fields_set:
+        # An end user's search reads what it names (`namespaces`), not every
+        # collection the user reaches: another agent's files stay out of it.
+        input = input.model_copy(update={"namespace_scope": "this"})
 
     embedder = get_embedder()
     with traced("embed.compute.query", model=embedder.model_name):

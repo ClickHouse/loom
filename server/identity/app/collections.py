@@ -14,7 +14,7 @@ from server.core.datetimes import naive_utc_now_seconds
 from server.core.errors import AuthInsufficientError, PreconditionFailedError, ValidationError
 from server.core.naming import validate_namespace_name
 from server.core.principals import PERSONAL_PREFIX
-from server.identity.api.models import NamespaceDeleteInput, NamespaceRegisterInput
+from server.identity.api.models import NamespaceRegisterInput
 from server.identity.api.models_collections import (
     CollectionCreateInput,
     CollectionCreateOutput,
@@ -27,7 +27,7 @@ from server.identity.api.models_collections import (
     _CollectionEntry,
 )
 from server.identity.app.namespace import (
-    handle_namespace_delete,
+    delete_namespace,
     insert_admin_grant,
     registry_row,
     resolve_subject,
@@ -195,9 +195,7 @@ async def handle_collection_delete(input: CollectionDeleteInput) -> CollectionDe
     erasure = await erase_namespace(
         input.org, input.namespace, requester=resolve_subject() or "collection.delete"
     )
-    out = await handle_namespace_delete(
-        NamespaceDeleteInput(org=input.org, namespace=input.namespace)
-    )
+    out = await delete_namespace(input.org, input.namespace)
     return CollectionDeleteOutput(
         namespace=input.namespace,
         deleted=out.deleted,

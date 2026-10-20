@@ -17,6 +17,7 @@ from server.auth import authz, sharing
 from server.auth import context as auth_context
 from server.auth.jwt import AuthInfo
 from server.core.errors import AuthInsufficientError
+from server.core.principals import personal_name
 from server.erasure.api.erasure import (
     ErasureExportInput,
     ErasureExportOutput,
@@ -202,6 +203,9 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
                 )
             if not auth.has_role(Role.PLATFORM_ADMIN):
                 readable_collections = set(await sharing.readable(auth, input.org))
+                if input.scope_type == "user_id":
+                    # The subject's own collection is theirs to have exported.
+                    readable_collections.add(personal_name(input.org, "user:" + input.scope_value))
 
     def _shown(namespace: str) -> bool:
         if namespace in hidden:

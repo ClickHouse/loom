@@ -169,7 +169,6 @@ async def delete_last_seen_by_user(
         mutation_where=where,
         params={"org": org, "p": "user:" + user_id},
         final=False,
-        lightweight=True,
         ch=ch,
     )
 

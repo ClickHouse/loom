@@ -150,7 +150,7 @@ class KnowledgeSearchInput(BaseModel):
     top_k: int = Field(default=5, ge=1, le=100)
     # "this" → input.namespace only; "all_mine" → also the caller's own
     # namespaces, up to `knowledge_search_max_namespaces`. Ignored when
-    # `namespaces` names the set.
+    # `namespaces` names the set; unset for an end-user token means "this".
     namespace_scope: Literal["this", "all_mine"] = "all_mine"
     # Search `namespace` and exactly these (an agent's collection, `@me`)
     # instead of a fan-out; each must be one the caller may read, else the call

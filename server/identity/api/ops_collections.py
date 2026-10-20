@@ -74,7 +74,8 @@ collection_delete = Operation(
     output_model=CollectionDeleteOutput,
     handler=handle_collection_delete,
     idempotent=True,
-    budget_p99_ms=80,
+    # It runs the purging erasure inline, as `erasure.request` does.
+    budget_p99_ms=2000,
     required_role=Role.ADMIN,
     audit=True,
 )

@@ -2731,7 +2731,7 @@ def test_a_method_not_served_names_the_ones_that_are(client: TestClient) -> None
 
 def test_unknown_paths_and_methods_answer_scim_errors(client: TestClient) -> None:
     for method, path, status in [
-        ("POST", "/Groups", 403),  # groups are pushed with an org's gateway token
+        ("POST", "/Groups", 403),  # groups are pushed with an org admin's token
         ("GET", "/Schemas", 404),
         ("POST", "/Users/x", 405),
         ("DELETE", "/Users", 405),

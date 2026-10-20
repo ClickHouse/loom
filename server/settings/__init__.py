@@ -15,7 +15,7 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from server.core.env_file import env_file_path
-from server.settings._auth import AuthSettings
+from server.settings._auth import AuthSettings, EndUserIssuer
 from server.settings._clickhouse import ClickHouseSettings
 from server.settings._code import CodeSettings
 from server.settings._context import ContextSettings
@@ -134,4 +134,4 @@ def log_unknown_env_keys() -> None:
         )
 
 
-__all__ = ["DEV_JWT_SECRET", "Settings", "log_unknown_env_keys", "settings"]
+__all__ = ["DEV_JWT_SECRET", "EndUserIssuer", "Settings", "log_unknown_env_keys", "settings"]

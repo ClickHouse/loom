@@ -22,9 +22,10 @@ flowchart LR
   `loom.collections` naming its parent. `collection.create` makes one (the creator holds
   `admin`), `collection.move` puts it under another collection or detaches it,
   `collection.list` lists the ones the caller can read, and `collection.delete` takes one
-  out of the directory and the tree (its children become top-level). A deleted
-  collection's name is never used again, and its documents stay until an org admin's
-  erasure of the namespace removes them: no grant reaches it any more. A document lives in
+  out of the directory and the tree (its children become top-level) once a purging
+  erasure of it has taken what it holds off disk (`namespace.delete` refuses a
+  collection). A deleted collection's name is never used again, and no grant reaches it
+  any more. A document lives in
   one collection and follows its grants from the moment it is written.
 - **Only grants open a collection**, and only one in the tree: a `col-` name that was
   deleted, or never created, admits no one but a platform admin. A collection is known by
@@ -54,24 +55,33 @@ flowchart LR
 
 A service in front of Loom (a chat app) signs a short-lived token for each request it
 makes for one of its users, with a key registered for it as an end-user issuer
-(`LOOM_JWT_END_USER_ISSUERS_JSON`: issuer → kid → RS256 public key). The token names the
-user (`sub: user:<id>`), one org, and, when the request runs inside one of its agents,
-that agent (`agent: agent:<id>`). `server.auth.jwt` verifies it into the request's
+(`LOOM_JWT_END_USER_ISSUERS_JSON`: issuer → the orgs it may sign for, and its RS256 keys,
+fetched from its `jwks_url` or listed by kid). The token names the user
+(`sub: user:<id>`), one of those orgs, its own id (`jti`), and, when the request runs
+inside one of its agents, that agent (`agent: agent:<id>`). `server.auth.jwt` verifies it into the request's
 identity: subject `user:<id>`, the `viewer` role of an org member with no claim, and
 reads pinned to that user's rows (`read_scope = own_user`). There is no long-lived
 secret per customer, and no header can name a different user.
 
-| An end-user token may name                   | It may not                                                    |
-| -------------------------------------------- | ------------------------------------------------------------- |
-| one user id and one agent id, of its own org | name another org, or none                                     |
-|                                              | carry namespaces, roles or a read scope                       |
-|                                              | live longer than `LOOM_JWT_END_USER_MAX_TTL_SECONDS` (15 min) |
-|                                              | be signed by a key of another issuer                          |
+| An end-user token may name                         | It may not                                                   |
+| -------------------------------------------------- | ------------------------------------------------------------ |
+| one user id and one agent id, of an org its issuer | name an org its issuer does not list, or none                |
+| lists                                              | carry namespaces, roles or a read scope                      |
+|                                                    | lack a `jti`                                                 |
+|                                                    | live longer than `LOOM_JWT_END_USER_MAX_TTL_SECONDS` (5 min) |
+|                                                    | be signed by a key of another issuer                         |
 
 An end-user key verifies only its own issuer's tokens, and only as an end user: it can
 never sign a Loom-shaped token (another `sub`, roles, Loom's own issuer). The agent is a
 signed claim because an agent's grants widen what the request reaches; the service
 decides who may use which agent before it signs one in, so Loom keeps no copy of that.
+
+An issuer's `orgs` are exact names or `prefix*` patterns, never `*`: one issuer serves the
+orgs of its own deployment, and a stolen key reaches no other. A `jwks_url` is fetched by
+every process at boot and every `LOOM_JWT_END_USER_JWKS_REFRESH_SECONDS` (5 min); a
+failed fetch keeps the last keys, and until the first fetch lands the issuer's tokens are
+answered 503, never admitted. An issuer rotates by publishing the new key one refresh
+before it signs with it.
 
 Ids are lowercase (`server/core/principals.py`), so two spellings never name one user; a
 SCIM member is the service's own lowercase user id, not an identity provider's. Of the

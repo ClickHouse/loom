@@ -9103,7 +9103,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "code.verify", group: "code", method: "verify", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "code.verify_citations", group: "code", method: "verifyCitations", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "collection.create", group: "collection", method: "create", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
-  { name: "collection.delete", group: "collection", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
+  { name: "collection.delete", group: "collection", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 2000, audit: true, readOnly: false },
   { name: "collection.list", group: "collection", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "collection.move", group: "collection", method: "move", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "conflicts.allowlist_list", group: "conflicts", method: "allowlistList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },

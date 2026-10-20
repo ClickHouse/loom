@@ -472,17 +472,21 @@ the real caller in `impersonated_by`. Empty disables the header.
 ## Act for a service's end users
 
 A service in front of Loom, whose users have no Loom account, signs a short-lived RS256
-token per request for the user it serves. Register its public key, under its issuer and
-the key's `kid`, in `LOOM_JWT_END_USER_ISSUERS_JSON`:
+token per request for the user it serves. Register it in
+`LOOM_JWT_END_USER_ISSUERS_JSON`, under its issuer: the orgs it may sign for (exact names
+or `prefix*`, never `*`) and where its keys come from, a `jwks_url` (https, fetched at
+boot and every `LOOM_JWT_END_USER_JWKS_REFRESH_SECONDS`) or `keys` by `kid`:
 
 ```bash
-LOOM_JWT_END_USER_ISSUERS_JSON='{"chat-app": {"chat-1": "-----BEGIN PUBLIC KEY-----\n…"}}'
+LOOM_JWT_END_USER_ISSUERS_JSON='{"chat-app": {"orgs": ["acme", "team-*"], "jwks_url": "https://chat.example.com/.well-known/jwks.json"}}'
+# or, with the public keys inline:
+LOOM_JWT_END_USER_ISSUERS_JSON='{"chat-app": {"orgs": ["acme"], "keys": {"chat-1": "-----BEGIN PUBLIC KEY-----\n…"}}}'
 ```
 
-The service then signs, for each call, a token with `iss` its issuer, `aud` Loom's
-audience (`LOOM_JWT_AUDIENCE`), `sub: user:<id>`, `org`, `iat` and an `exp` at most
-`LOOM_JWT_END_USER_MAX_TTL_SECONDS` (15 min) later, and `agent: agent:<id>` when the call
-runs inside one of its agents:
+The service then signs, for each call, a token with `kid` in its header, `iss` its
+issuer, `aud` Loom's audience (`LOOM_JWT_AUDIENCE`), `sub: user:<id>`, `org`, a fresh
+`jti`, `iat` and an `exp` at most `LOOM_JWT_END_USER_MAX_TTL_SECONDS` (5 min) later, and
+`agent: agent:<id>` when the call runs inside one of its agents:
 
 ```bash
 curl -s "$LOOM_BASE_URL/v1/knowledge.search" -H "Authorization: Bearer $END_USER_TOKEN" \
@@ -493,8 +497,9 @@ curl -s "$LOOM_BASE_URL/v1/knowledge.search" -H "Authorization: Bearer $END_USER
 - The request runs as `user:u-42` alone, in the token's org: an org member with no claim,
   reads pinned to that user's rows, reaching what grants give `user:u-42`, the groups that
   list it, the agent the token names, and `everyone`. A token with any other claim
-  (namespaces, roles, a read scope) or a longer life is refused, and the key verifies its
-  own issuer's end-user tokens and nothing else. MCP, `/v1/me/*` and the admin routes
+  (namespaces, roles, a read scope), an org its issuer does not list, no `jti` or a longer
+  life is refused, and the key verifies its own issuer's end-user tokens and nothing else.
+  Until an issuer's JWKS is first fetched, its tokens are answered 503 (retry). MCP, `/v1/me/*` and the admin routes
   refuse an end-user token.
 - Grants name these principals as subjects: `grants.create` with `subject: "user:u-42"`,
   `"group:finance"`, `"agent:helper"` or `"everyone"`. Groups, agents and `everyone` hold
@@ -509,7 +514,9 @@ curl -s "$LOOM_BASE_URL/v1/knowledge.search" -H "Authorization: Bearer $END_USER
   self-service (`namespace.register`, `namespace.join`, `namespace.browse`).
 - An agent's files: a collection granted to `agent:<id>`, searched with
   `knowledge.search` and `namespaces: ["<that collection>", "@me"]`, so the search reads
-  those alone. A document's `agent`, `session_id` and `source_class` come back on each hit.
+  those alone. A search that names neither `namespaces` nor `namespace_scope` reads its
+  `namespace` alone (`this`) for an end user; `namespace_scope: "all_mine"` widens it to
+  every collection the user reaches. A document's `agent`, `session_id` and `source_class` come back on each hit.
 - To cut off one user, revoke their tokens (`loom revoke-token --subject user:<id>`) and
   grants and take them out of their groups, or erase them (`erasure.request` with
   `scope_type: user_id`, and `purge: true` to take the rows off disk). Collections, their
