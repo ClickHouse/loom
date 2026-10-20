@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from server.llm import customer
 from server.settings import settings
 from server.workers.status import record_pass
 
@@ -49,8 +50,6 @@ async def run_pass(
         )
         result.scanned = len(failures)
         for failure in failures:
-            from server.llm import customer
-
             with customer.for_org(str(failure.org)):
                 retry = await retry_projection_failure(failure)
             if retry.retried:

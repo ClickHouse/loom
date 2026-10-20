@@ -214,11 +214,12 @@ async def _consolidate_identity(
 
     from server.memory.app.profile import write_folded_section
 
-    await write_folded_section(
-        org=row["org"],
-        namespace=row["namespace"],
-        user_id=row["user_id"],
-        label=cfg.label,
-        value=text,
-    )
+    with customer.for_org(str(row["org"])):  # a write that embeds is the org's call too
+        await write_folded_section(
+            org=row["org"],
+            namespace=row["namespace"],
+            user_id=row["user_id"],
+            label=cfg.label,
+            value=text,
+        )
     return True

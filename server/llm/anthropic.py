@@ -156,6 +156,9 @@ class AnthropicLLMClient:
         response_format: dict[str, str] | None = None,
         temperature: float | None = 0.0,
     ) -> LLMResult:
+        # Before the gateway token and outside `recording`: a call naming no
+        # customer is the caller's to fix, not a provider failure.
+        customer.require()
         client = _http_client()
         data: dict[str, Any] = {}
         json_mode = (response_format or {}).get("type") == "json_object"

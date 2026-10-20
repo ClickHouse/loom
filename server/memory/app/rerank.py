@@ -47,6 +47,7 @@ from typing import Any
 
 import httpx
 
+from server.llm import customer
 from server.llm.json_text import strip_code_fence
 from server.memory.domain.rerank_names import (
     BUILTIN_COHERE,
@@ -173,7 +174,6 @@ async def rerank(
     # The operator endpoint is a plain HTTP hop with no LLM client behind it,
     # so nothing else would put it in the waterfall; without this span a slow
     # reranker read as slow retrieval.
-    from server.llm import customer
     from server.observability.otel import traced
 
     headers = customer.headers()  # outside the fail-open: a call naming no customer is a bug
@@ -246,7 +246,6 @@ async def _rerank_with_builtin_cohere(
         "top_n": len(candidates),
         "return_documents": False,
     }
-    from server.llm import customer
     from server.observability.otel import traced
 
     headers = {

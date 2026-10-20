@@ -35,6 +35,7 @@ import logging
 import time
 from typing import Any
 
+from server.llm import customer
 from server.observability.worker_queue import LoopBoundQueue
 from server.settings import settings
 
@@ -359,8 +360,6 @@ async def _judge_one(item: dict[str, Any]) -> None:
     started = time.monotonic()
     cost_accumulator.begin_op()
     try:
-        from server.llm import customer
-
         with llm_stage("classify"), customer.for_org(str(item["org"])):
             out = await client.complete(
                 _JUDGE_SYSTEM, user, max_tokens=120, response_format={"type": "json_object"}

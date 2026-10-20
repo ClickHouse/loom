@@ -101,8 +101,9 @@ class OpenAIEmbedder:
         return data
 
     async def _embed_one_raw(self, text: str) -> list[float]:
-        # Outside `recording`: an oversized text is the caller's to fix, not a
-        # provider failure for /v1/health to report.
+        # Outside `recording`: an oversized text, or a call naming no customer,
+        # is the caller's to fix, not a provider failure for /v1/health to report.
+        customer.require()
         check_size(text, _MAX_INPUT_TOKENS, "OpenAI text-embedding-3")
         with recording(_HEALTH):
             return await self._embed_one_raw_inner(text)
@@ -150,6 +151,7 @@ class OpenAIEmbedder:
     async def _embed_many_raw(self, texts: list[str]) -> tuple[list[list[float]], int, list[str]]:
         """`(vectors in input order, billed_tokens, cache_hit_texts)`; misses go
         to the API `_OPENAI_BATCH_LIMIT` at a time."""
+        customer.require()  # before the cache: a hit must not hide a missed path
         results, misses, hits = split_cached(self.model_name, texts)
         billed = 0
         for start in range(0, len(misses), _OPENAI_BATCH_LIMIT):

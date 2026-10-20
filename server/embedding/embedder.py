@@ -11,7 +11,7 @@ from typing import Protocol
 from server.core.embedding_space import inferred_provider
 from server.core.provider_keys import provider_key
 from server.embedding.alias import PREFIX as ALIAS_PREFIX
-from server.llm import gateway
+from server.llm import customer, gateway
 from server.settings import settings
 
 
@@ -227,8 +227,6 @@ async def probe_embedding_dim() -> int | None:
     `settings.embedding_dim`).
     """
     global _probed_dim
-    from server.llm import customer
-
     try:
         embedder = get_embedder()
         with customer.system():  # the deployment's own check, no org's data

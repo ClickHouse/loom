@@ -5,6 +5,7 @@ one, and a job working on several orgs' rows makes one call per org."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -16,11 +17,13 @@ from server.settings import settings
 
 
 @pytest.fixture
-def metered(monkeypatch: pytest.MonkeyPatch) -> None:
+def metered(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(settings, "inference_customer_header", "X-Customer")
     monkeypatch.setattr(settings, "inference_feature_header", "X-Feature")
     monkeypatch.setattr(settings, "inference_system_customer", "loom")
     genai._identity.set(None)
+    yield
+    genai._identity.set(None)  # the tests stamp identities a later test must not inherit
 
 
 def _request(org: str, op: str = "memory.search") -> None:
@@ -209,7 +212,7 @@ def test_the_embedding_worker_makes_one_call_per_org(metered) -> None:
     assert [v[0] for v, _ in out] == [1.0, 2.0, 3.0]  # in the rows' order
 
 
-def test_a_reembed_page_spanning_two_orgs_makes_one_call_per_org(metered) -> None:
+def test_a_reembed_page_spanning_two_orgs_makes_one_call_per_org(metered, monkeypatch) -> None:
     from server.memory.app import reembed
 
     table = next(t for t, cfg in reembed._TABLES.items() if not cfg.get("key_text"))
@@ -224,12 +227,10 @@ def test_a_reembed_page_spanning_two_orgs_makes_one_call_per_org(metered) -> Non
 
     emb = _ByOrg()
     ch = _CH()
-    original = reembed.rewrite_row
-    try:
-        reembed.rewrite_row = lambda r, cfg, model, dim, vec, kvec: {**r, "vec": vec}
-        asyncio.run(reembed._rewrite_page(ch, emb, table, chunk, key_only=False))
-    finally:
-        reembed.rewrite_row = original
+    monkeypatch.setattr(
+        reembed, "rewrite_row", lambda r, cfg, model, dim, vec, kvec: {**r, "vec": vec}
+    )
+    asyncio.run(reembed._rewrite_page(ch, emb, table, chunk, key_only=False))
     assert emb.calls == [("acme", 1), ("beta", 1)]
     assert [r["vec"][0] for r in ch.rows] == [1.0, 2.0]
 
@@ -275,3 +276,166 @@ def test_a_cli_command_for_one_org_bills_it(metered, monkeypatch) -> None:
         argparse.Namespace(cmd="reembed", func=command)
     )  # every org: each row names its own
     assert seen == ["acme", "code-org", ""]
+
+
+def test_a_refusal_is_logged_once_a_minute_by_its_code(metered, monkeypatch, caplog) -> None:
+    # A fail-open caller may swallow the error: the log still names the missed path.
+    monkeypatch.setattr(customer, "_logged_at", {})
+    clock = [1000.0]
+    monkeypatch.setattr(customer.time, "monotonic", lambda: clock[0])
+    for _ in range(3):
+        with pytest.raises(customer.Unattributed):
+            customer.require()
+    clock[0] += 61
+    with pytest.raises(customer.Unattributed):
+        customer.require()
+    logged = [r for r in caplog.records if "MODEL_CALL_UNATTRIBUTED" in r.getMessage()]
+    assert len(logged) == 2
+
+
+def test_a_refusal_comes_before_the_gateway_the_cache_and_provider_health(
+    metered, monkeypatch
+) -> None:
+    from server.embedding import _cache
+    from server.embedding import openai as embed_mod
+    from server.llm import gateway
+
+    async def no_token(*a: Any) -> str:
+        raise AssertionError("asked the gateway for a token")
+
+    monkeypatch.setattr(gateway, "bearer", no_token)
+    monkeypatch.setattr(embed_mod, "recording", lambda name: pytest.fail("recorded as an outage"))
+    embedder = embed_mod.OpenAIEmbedder(model="text-embedding-3-small", dim=8, api_key="k")
+    with pytest.raises(customer.Unattributed):
+        asyncio.run(embedder._embed_one_raw("text"))
+    # A cached vector does not hide the missed path either.
+    _cache._cache.put(_cache._key(embedder.model_name, "cached"), [1.0] * 8)
+    with pytest.raises(customer.Unattributed):
+        asyncio.run(embedder.embed("cached"))
+
+
+def test_the_fakes_check_the_customer_as_a_metered_provider_would(metered) -> None:
+    from server.embedding.fake import FakeNGramEmbedder
+    from server.llm.fake import FakeLLMClient
+
+    with pytest.raises(customer.Unattributed):
+        asyncio.run(FakeNGramEmbedder(dim=8).embed("text"))
+    with pytest.raises(customer.Unattributed):
+        asyncio.run(FakeLLMClient().complete("s", "u"))
+    with customer.for_org("acme"):
+        asyncio.run(FakeNGramEmbedder(dim=8).embed_many(["text"]))
+
+
+def test_a_reflection_is_written_for_the_org_of_its_pair(metered) -> None:
+    # The contrast call and the reflection's write (which embeds) are both that org's.
+    from server.memory.app import session_outcomes as so
+
+    seen: list[tuple[str, str]] = []
+    neg = {"org": "acme", "namespace": "ns", "session_id": "s1", "summary_embedding": [0.1]}
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any) -> list[Any]:
+            return [neg]
+
+        async def query_one(self, sql: str, params: Any) -> Any:
+            return {"session_id": "s2", "similarity": 0.99, "summary_text": "ok"}
+
+    class _LLM:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            seen.append(("llm", customer.current()))
+            return type("R", (), {"text": '{"lessons": ["check the input"], "what_failed": "x"}'})()
+
+    async def writer(**kw: Any) -> None:
+        seen.append(("write", customer.current()))
+
+    cfg = so.DistillConfig()
+    result = so.DistillResult()
+    asyncio.run(so.distil_contrasts(_CH(), _LLM(), cfg, result, writer=writer))
+    assert seen == [("llm", "acme"), ("write", "acme")] and result.reflections_written == 1
+
+
+def test_the_tracker_refit_embeds_for_the_namespaces_org(metered, monkeypatch) -> None:
+    from server.tracker.domain import namespaces
+    from server.tracker.domain.namespaces import TrackerNamespace
+    from server.tracker.workers import links
+
+    seen: list[str] = []
+
+    async def score(*a: Any, **k: Any) -> None:
+        seen.append(customer.current())
+
+    monkeypatch.setattr(
+        namespaces,
+        "configured_namespaces",
+        lambda: {"t": TrackerNamespace(org="acme", namespace="t")},
+    )
+    monkeypatch.setattr(links, "score_namespace", score)
+    monkeypatch.setattr(links, "refit_dupcheck", score)
+    asyncio.run(links._run(links.TrackerLinksResult(), source_factory=lambda org, ns: None))
+    assert seen == ["acme", "acme"]
+
+
+def test_an_operator_reranker_carries_the_customer_and_refuses_outside_its_fail_open(
+    metered, monkeypatch
+) -> None:
+    from server.memory.app import rerank as rerank_mod
+
+    sent: list[dict[str, str]] = []
+
+    class _Client:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_: Any) -> None:
+            return None
+
+        async def post(self, url: str, **kw: Any) -> httpx.Response:
+            sent.append(kw.get("headers") or {})
+            return httpx.Response(200, json={"ranked": []}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(rerank_mod.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(
+        type(settings), "rerank_endpoint_map", lambda self: {"ops": "https://rerank.example"}
+    )
+    candidates = [rerank_mod.RerankCandidate("k", "ns", "v", "fact", 1.0)]
+
+    def call() -> Any:
+        return asyncio.run(
+            rerank_mod.rerank(
+                endpoint="ops",
+                prompt_template="",
+                query="q",
+                candidates=candidates,
+            )
+        )
+
+    with customer.for_org("acme"):
+        call()
+    assert sent[0]["X-Customer"] == "acme"
+    with pytest.raises(customer.Unattributed):  # a missed path is an error, not "kept the order"
+        call()
+    monkeypatch.setattr(settings, "inference_customer_header", "")
+    assert call() == candidates  # unset: nothing to name, and nothing refused
+
+
+@pytest.mark.parametrize(
+    "env, error",
+    [
+        ({"LOOM_INFERENCE_CUSTOMER_HEADER": "X Customer"}, "HTTP header name"),
+        ({"LOOM_INFERENCE_FEATURE_HEADER": "X-Feature:"}, "HTTP header name"),
+        (
+            {"LOOM_INFERENCE_CUSTOMER_HEADER": "X-Customer", "LOOM_INFERENCE_SYSTEM_CUSTOMER": " "},
+            "LOOM_INFERENCE_SYSTEM_CUSTOMER",
+        ),
+    ],
+)
+def test_settings_refuse_headers_a_call_could_not_send(monkeypatch, env, error) -> None:
+    from server.settings import Settings
+
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    with pytest.raises(ValueError, match=error):
+        Settings()

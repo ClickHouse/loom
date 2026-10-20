@@ -22,6 +22,7 @@ from typing import Any
 
 import server.memory.store as memory_repo
 from server.embedding import get_embedder
+from server.llm import customer
 from server.workers import pass_context
 from server.workers.status import record_pass
 
@@ -177,13 +178,8 @@ async def _embed_rows(
 ) -> list[tuple[list[float] | None, str]]:
     """`_embed_batch` per org, in the rows' order: a pass picks stubs of every
     org, and one model call names a single customer."""
-    from server.llm import customer
-
-    by_org: dict[str, list[int]] = {}
-    for i, r in enumerate(rows):
-        by_org.setdefault(str(r.get("org") or ""), []).append(i)
     out: list[tuple[list[float] | None, str]] = [(None, "")] * len(rows)
-    for org, positions in by_org.items():
+    for org, positions in customer.by_org(str(r.get("org") or "") for r in rows).items():
         with customer.for_org(org):
             embedded = await _embed_batch(embedder, [rows[i]["content_excerpt"] for i in positions])
         for i, one in zip(positions, embedded, strict=True):
