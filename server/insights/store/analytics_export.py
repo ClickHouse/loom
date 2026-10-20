@@ -25,10 +25,11 @@ from server.core.ch import CHClient
 # whatever `prefer_column_name_to_alias` says. The `ts` bounds prune to the
 # day's monthly partition, which a daily batch reads once (the ledger is a plain
 # MergeTree: no FINAL).
-USAGE_SQL = """
+USAGE_KEY = "org, namespace, agent, operation, kind, transport, traffic_class"
+USAGE_SQL = f"""
 SELECT
-    org, namespace, agent, operation, kind, transport, traffic_class,
-    {day:Date} AS day,
+    {USAGE_KEY},
+    {{day:Date}} AS day,
     count() AS ops,
     countIf(NOT success) AS errors,
     countIf(status_class = 'server') AS server_errors,
@@ -47,9 +48,9 @@ SELECT
     now64(3, 'UTC') AS snapshot_at
 FROM (SELECT * REPLACE (if(startsWith(operation, 'me.'), 'me', operation) AS operation)
       FROM loom.agent_events
-      WHERE ts >= toDateTime64({day:Date}, 3, 'UTC')
-        AND ts < toDateTime64({day:Date} + 1, 3, 'UTC'))
-GROUP BY org, namespace, agent, operation, kind, transport, traffic_class
+      WHERE ts >= toDateTime64({{day:Date}}, 3, 'UTC')
+        AND ts < toDateTime64({{day:Date}} + 1, 3, 'UTC'))
+GROUP BY {USAGE_KEY}
 """
 
 # One row per (org, namespace) that is registered or holds a live memory row:
@@ -90,23 +91,25 @@ NAME_COLUMNS = {"usage": ("org", "namespace", "agent"), "namespaces": ("org", "n
 # Each file's row order. The statements above carry none: rows sorted by the
 # stored names would line up with a sorted list of candidate names, and give
 # the names back without the key. The file is sorted by the hashes instead.
-ROW_ORDER = {
-    "usage": "org, namespace, agent, operation, kind, transport, traffic_class",
-    "namespaces": "org, namespace",
-}
+ROW_ORDER = {"usage": USAGE_KEY, "namespaces": "org, namespace"}
 
 
-# Strings as Parquet STRING, not BINARY, whatever the server's profile says: a
-# warehouse joins the hashes as strings.
-PARQUET_SETTINGS = "SETTINGS output_format_parquet_string_as_string = 1"
+# The file's encodings, whatever the server's profile says: strings as Parquet
+# STRING, not BINARY (a warehouse joins the hashes as strings), and dates as
+# DATE, not UInt16.
+PARQUET_SETTINGS = (
+    "SETTINGS output_format_parquet_string_as_string = 1, output_format_parquet_date_as_uint16 = 0"
+)
 
 
 def name_hash_sql(expr: str) -> str:
     """The lowercase hex of `expr`'s SipHash-2-4-128 under the key {k0:UInt64},
     {k1:UInt64}: the reference variant, which any SipHash-128 library reproduces.
     A plain String, so the file's dictionary pages are built from the hashes in
-    row order and never depend on how ClickHouse keeps a `LowCardinality` one."""
-    sip = f"sipHash128ReferenceKeyed(({{k0:UInt64}}, {{k1:UInt64}}), {expr})"
+    row order and never depend on how ClickHouse keeps a `LowCardinality` one.
+    `ifNull`: a FULL JOIN key is Nullable under `join_use_nulls`, and with
+    `cast_keep_nullable` the cast would keep it so; the keys are never NULL."""
+    sip = f"sipHash128ReferenceKeyed(({{k0:UInt64}}, {{k1:UInt64}}), ifNull({expr}, ''))"
     return f"CAST(lower(hex({sip})) AS String)"
 
 

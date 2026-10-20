@@ -297,12 +297,13 @@ async def test_shipped_hashes_are_plain_strings_under_any_profile(
     ch: CHClient, entity: str
 ) -> None:
     # Not LowCardinality (its dictionary encoding is the release's choice) and
-    # not Nullable, whichever way the profile resolves joins and aliases.
+    # not Nullable, whichever way the profile resolves joins, aliases and casts.
     params = {"day": DAY, "k0": KEY[0], "k1": KEY[1]}
-    for join_use_nulls, prefer_column in itertools.product((0, 1), (0, 1)):
+    for join_use_nulls, prefer_column, keep_nullable in itertools.product((0, 1), repeat=3):
         rows = await ch.query_all(
             f"DESCRIBE TABLE ({_hashed(entity)}) SETTINGS join_use_nulls = {join_use_nulls}, "
-            f"prefer_column_name_to_alias = {prefer_column}",
+            f"prefer_column_name_to_alias = {prefer_column}, "
+            f"cast_keep_nullable = {keep_nullable}",
             params,
         )
         types = {r["name"]: r["type"] for r in rows}

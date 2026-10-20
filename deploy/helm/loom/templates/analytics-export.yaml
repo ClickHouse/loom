@@ -63,16 +63,12 @@ spec:
               values: [2]
       template:
         metadata:
+          # Not the web pods' podLabels / podAnnotations, as the hook Jobs: a
+          # mesh sidecar injected through them outlives the export and the Job
+          # never completes.
           labels:
             {{- include "loom.labels" $ | nindent 12 }}
             app.kubernetes.io/component: analytics-export
-            {{- with $.Values.podLabels }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
-          {{- with $.Values.podAnnotations }}
-          annotations:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
         spec:
           restartPolicy: Never
           {{- include "loom.podCommon" (dict "root" $ "leads" false "serviceAccount" $name) | nindent 10 }}

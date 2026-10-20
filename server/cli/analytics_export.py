@@ -36,16 +36,17 @@ def _refusal(day: date, today: date) -> str:
             f"export-analytics needs LOOM_ANALYTICS_EXPORT_NAME_KEY: a random string of at "
             f"least {MIN_NAME_KEY_CHARS} characters"
         )
-    # put_object's IfNoneMatch: an older botocore fails at the first upload,
-    # after the month's read.
+    # A missing boto3, or a botocore without put_object's IfNoneMatch, fails at
+    # the first upload, after the month's read: refuse before it instead.
     try:
+        version("boto3")
         found = tuple(int(part) for part in version("botocore").split(".")[:3])
     except PackageNotFoundError:
         found = ()
     if found < BOTOCORE_FLOOR:
         floor = ".".join(map(str, BOTOCORE_FLOOR))
         return (
-            f"export-analytics needs botocore {floor} or later: "
+            f"export-analytics needs boto3 and botocore {floor} or later: "
             "pip install 'clickhouse-loom-server[aws]'"
         )
     return ""

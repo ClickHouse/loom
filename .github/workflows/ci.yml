@@ -322,21 +322,30 @@ jobs:
           for overlay in values-eks.yaml values-kind.yaml; do
             args=(-f "$chart/$overlay" --set secrets.jwtSecret="$secret")
             helm lint --strict "$chart" "${args[@]}"
+            helm lint --strict "$chart" "${args[@]}" "${all[@]}"
             helm template loom "$chart" "${args[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
             helm template loom "$chart" "${args[@]}" "${all[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
           done
           kubeconform -strict -summary -kubernetes-version 1.30.0 deploy/okf-sync/cronjob.yaml
-          # The analytics name key reaches the export pod only: the chart refuses it
-          # anywhere the web pods would read it.
-          # A refused render exits non-zero, so the output is taken first and read after.
-          for v in env.LOOM_ANALYTICS_EXPORT_NAME_KEY=x secrets.extra.LOOM_ANALYTICS_EXPORT_NAME_KEY=x "extraEnv[0].name=LOOM_ANALYTICS_EXPORT_NAME_KEY"; do
-            if out=$(helm template loom "$chart" -f "$chart/values-kind.yaml" --set secrets.jwtSecret="$secret" --set "$v" 2>&1); then
-              echo "the chart accepted $v"; exit 1
+          # Values the chart must refuse, each with its own message. A refused render
+          # exits non-zero, so the output is taken first and read after.
+          refused() {
+            local want=$1; shift
+            if out=$(helm template loom "$chart" -f "$chart/values-kind.yaml" --set secrets.jwtSecret="$secret" "$@" 2>&1); then
+              echo "the chart accepted $*"; exit 1
             fi
-            grep -q "set LOOM_ANALYTICS_EXPORT_NAME_KEY through analyticsExport.nameKeySecret" <<<"$out" \
-              || { echo "unexpected refusal for $v: $out"; exit 1; }
-            echo "refused as expected: $v"
-          done
+            grep -qF "$want" <<<"$out" || { echo "unexpected refusal for $*: $out"; exit 1; }
+            echo "refused as expected: $*"
+          }
+          # The analytics name key reaches the export pod only, never the web pods.
+          key="set LOOM_ANALYTICS_EXPORT_NAME_KEY through analyticsExport.nameKeySecret"
+          refused "$key" --set env.LOOM_ANALYTICS_EXPORT_NAME_KEY=x
+          refused "$key" --set secrets.extra.LOOM_ANALYTICS_EXPORT_NAME_KEY=x
+          refused "$key" --set "extraEnv[0].name=LOOM_ANALYTICS_EXPORT_NAME_KEY"
+          on=(--set analyticsExport.enabled=true --set analyticsExport.bucket=ci --set analyticsExport.nameKeySecret.name=ci)
+          refused "needs analyticsExport.bucket" "${on[@]}" --set analyticsExport.bucket=
+          refused "needs analyticsExport.nameKeySecret.name" "${on[@]}" --set analyticsExport.nameKeySecret.name=
+          refused "expectedBucketOwner must be a quoted string" "${on[@]}" --set analyticsExport.expectedBucketOwner=123456789012
 
   agent-plugins:
     name: coding-agent plugins (node --test)

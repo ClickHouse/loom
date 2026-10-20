@@ -281,21 +281,28 @@ def test_a_role_that_cannot_be_assumed_fails_before_any_read(
 
 
 @pytest.mark.parametrize(
-    ("installed", "refused"),
-    [("1.35.1", True), ("1.35.2", False), ("1.43.102", False), (None, True)],
+    ("boto3", "botocore", "refused"),
+    [
+        ("1.35.1", "1.35.1", True),
+        ("1.35.2", "1.35.2", False),
+        ("1.43.102", "1.43.102", False),
+        (None, "1.43.102", True),  # botocore alone, e.g. from the AWS CLI v1
+        ("1.43.102", None, True),
+    ],
 )
-def test_a_botocore_without_if_none_match_is_refused(
-    monkeypatch: pytest.MonkeyPatch, installed: str | None, refused: bool
+def test_a_missing_boto3_or_an_old_botocore_is_refused(
+    monkeypatch: pytest.MonkeyPatch, boto3: str | None, botocore: str | None, refused: bool
 ) -> None:
     import importlib.metadata
 
+    installed = {"boto3": boto3, "botocore": botocore}
+
     def version(name: str) -> str:
-        assert name == "botocore"
-        if installed is None:
+        if installed[name] is None:
             raise importlib.metadata.PackageNotFoundError(name)
-        return installed
+        return str(installed[name])
 
     monkeypatch.setattr(settings, "analytics_export_name_key", "k" * 32)
     monkeypatch.setattr(importlib.metadata, "version", version)
     got = cli._refusal(date(2000, 1, 1), date(2000, 1, 2))
-    assert ("needs botocore 1.35.2 or later" in got) is refused
+    assert ("needs boto3 and botocore 1.35.2 or later" in got) is refused
