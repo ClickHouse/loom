@@ -389,8 +389,9 @@ initContainers:
 Kubernetes API (retireLostPods). */}}
 {{- define "loom.podCommon" -}}
 {{- $leads := .leads -}}
+{{- $sa := .serviceAccount -}}
 {{- with .root -}}
-serviceAccountName: {{ include "loom.serviceAccountName" . }}
+serviceAccountName: {{ default (include "loom.serviceAccountName" .) $sa }}
 automountServiceAccountToken: {{ or .Values.serviceAccount.automountToken (and .Values.retireLostPods $leads) }}
 # Service links would inject LOOM_SERVICE_HOST and the like into Loom's env namespace.
 enableServiceLinks: false

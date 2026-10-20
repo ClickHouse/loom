@@ -265,6 +265,28 @@ workers:
   # build tree) per compiler tier, the Go module cache.
   cache: {}
 
+# A daily CronJob that runs `loom export-analytics`: the previous UTC day's
+# usage and a namespace snapshot as Parquet in an S3 bucket, for a data
+# warehouse to load (docs/operations/analytics-export.md). It runs under its own
+# service account, so the bucket's write access is never on the web pods.
+analyticsExport:
+  enabled: false
+  # After midnight UTC, so the day it exports has ended.
+  schedule: "30 0 * * *"
+  bucket: ""
+  prefix: ""
+  # A writer role to assume (in the bucket's account) with the pod's credentials.
+  roleArn: ""
+  region: ""
+  # The account id that must own the bucket; a write to any other is refused.
+  expectedBucketOwner: ""
+  serviceAccount:
+    # IRSA (eks.amazonaws.com/role-arn): a role that may only assume roleArn.
+    annotations: {}
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { cpu: "1", memory: 2Gi }
+
 # Ingress to the Loom port from `ingressFrom` only. Egress to DNS, the
 # release's web pods, and TCP 443 and the ClickHouse port anywhere except
 # `egressExcept` (providers, the IdP and git remotes have no fixed range).

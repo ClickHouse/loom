@@ -738,6 +738,14 @@ in scope fails the saga. The saga, the census registry and the rule for new tabl
 [retention and erasure](../features/memory/retention-and-erasure.md). Erasure and audit
 hashing are engineering primitives, not a compliance guarantee.
 
+The [analytics export](../operations/analytics-export.md) is the one path that copies rows
+to a store erasure does not reach (an S3 bucket a warehouse loads). It is therefore an
+allowlist of aggregate and registry columns with no memory content and no person: users
+and sessions leave as distinct counts only, and `tests/unit/test_analytics_export.py`
+fails when a statement names a content or identity column. The bucket's write role is
+bound to the export's own Kubernetes ServiceAccount, not to the web pods, and the upload
+never replaces an object.
+
 ## Secrets
 
 - **Dev signing secret.** A deployment (`LOOM_DEPLOYMENT=1`) that requires auth refuses

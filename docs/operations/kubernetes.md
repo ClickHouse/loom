@@ -337,6 +337,12 @@ more memory than a web pod, or to scale them apart from it. With `replicaCount: 
 the second pod is a standby with warm mirrors, and a PodDisruptionBudget keeps one of
 the two through a drain.
 
+## Analytics export
+
+`analyticsExport.enabled: true` adds a daily CronJob that writes the previous UTC day's
+usage and a namespace snapshot to an S3 bucket as Parquet, under a ServiceAccount of its
+own ([exporting usage to a data warehouse](./analytics-export.md)).
+
 ## Checks
 
 ```bash

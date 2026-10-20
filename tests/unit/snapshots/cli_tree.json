@@ -5278,6 +5278,147 @@
       }
      ]
     },
+    "export-analytics": {
+     "prog": "loom export-analytics",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {
+      "func": "server.cli.analytics_export:_cmd_export"
+     },
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help",
+        "bucket",
+        "prefix",
+        "day",
+        "role_arn",
+        "region",
+        "expected_bucket_owner"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--bucket"
+       ],
+       "dest": "bucket",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": true,
+       "help": "The S3 bucket to write to",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--prefix"
+       ],
+       "dest": "prefix",
+       "action": "_StoreAction",
+       "default": "",
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "A key prefix inside the bucket",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--day"
+       ],
+       "dest": "day",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": "server.cli.analytics_export:_day",
+       "required": false,
+       "help": "The UTC day to export, YYYY-MM-DD (default: yesterday)",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--role-arn"
+       ],
+       "dest": "role_arn",
+       "action": "_StoreAction",
+       "default": "",
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "An IAM role to assume with the default credentials before writing",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--region"
+       ],
+       "dest": "region",
+       "action": "_StoreAction",
+       "default": "",
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "The bucket's AWS region (default: from AWS_REGION)",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--expected-bucket-owner"
+       ],
+       "dest": "expected_bucket_owner",
+       "action": "_StoreAction",
+       "default": "",
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "The AWS account id that must own the bucket; a write to any other is refused",
+       "metavar": null
+      }
+     ]
+    },
     "reembed": {
      "prog": "loom reembed",
      "usage": null,
@@ -12191,6 +12332,7 @@
     "secrets": "loom secrets",
     "signing-key": "loom signing-key",
     "provider-lock": "loom provider-lock",
+    "export-analytics": "loom export-analytics",
     "reembed": "loom reembed",
     "reextract": "loom reextract",
     "deploy-delta": "loom deploy-delta",
@@ -12299,6 +12441,11 @@
      "dest": "provider-lock",
      "help": "The provider configuration lock.",
      "metavar": "provider-lock"
+    },
+    {
+     "dest": "export-analytics",
+     "help": "Write one UTC day of usage and a namespace snapshot to S3 as Parquet. Never replaces an object, so a repeated run is safe.",
+     "metavar": "export-analytics"
     },
     {
      "dest": "reembed",

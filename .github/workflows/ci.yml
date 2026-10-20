@@ -318,7 +318,7 @@ jobs:
           chart=deploy/helm/loom
           secret=$(openssl rand -hex 32)
           # Every optional object on, so each template renders at least once.
-          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set mustMatchChange.publish=ci)
+          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set mustMatchChange.publish=ci --set analyticsExport.enabled=true --set analyticsExport.bucket=ci)
           for overlay in values-eks.yaml values-kind.yaml; do
             args=(-f "$chart/$overlay" --set secrets.jwtSecret="$secret")
             helm lint --strict "$chart" "${args[@]}"

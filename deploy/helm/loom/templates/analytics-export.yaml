@@ -1,0 +1,105 @@
+{{- /* `loom export-analytics` once a day, under a service account of its own:
+the bucket's write role is bound to it alone, never to the web pods'. A second
+run of a day keeps the first run's files, so a retry is safe. */}}
+{{- with .Values.analyticsExport }}
+{{- if .enabled }}
+{{- if not .bucket }}
+{{- fail "analyticsExport.enabled needs analyticsExport.bucket" }}
+{{- end }}
+{{- $name := include "loom.suffixed" (dict "root" $ "suffix" "analytics-export") }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+  {{- with .serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: analytics-export
+spec:
+  schedule: {{ .schedule | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "loom.labels" $ | nindent 12 }}
+            app.kubernetes.io/component: analytics-export
+        spec:
+          restartPolicy: Never
+          {{- include "loom.podCommon" (dict "root" $ "leads" false "serviceAccount" $name) | nindent 10 }}
+          containers:
+            - name: analytics-export
+              image: {{ include "loom.image" $ }}
+              imagePullPolicy: {{ $.Values.image.pullPolicy }}
+              command:
+                - loom
+                - export-analytics
+                - --bucket={{ .bucket }}
+                {{- with .prefix }}
+                - --prefix={{ . }}
+                {{- end }}
+                {{- with .roleArn }}
+                - --role-arn={{ . }}
+                {{- end }}
+                {{- with .region }}
+                - --region={{ . }}
+                {{- end }}
+                {{- with .expectedBucketOwner }}
+                - --expected-bucket-owner={{ . }}
+                {{- end }}
+              envFrom:
+                - secretRef:
+                    name: {{ include "loom.secretName" $ }}
+                {{- with $.Values.envFrom }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              env:
+                {{- range $k, $v := fromYaml (include "loom.config" $) }}
+                - name: {{ $k }}
+                  value: {{ $v | toString | quote }}
+                {{- end }}
+                - name: POD_NAME
+                  valueFrom: { fieldRef: { fieldPath: metadata.name } }
+                - name: POD_NAMESPACE
+                  valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+                - name: LOOM_INSTANCE_LABEL
+                  value: k8s:analytics-export
+                {{- with $.Values.extraEnv }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              resources:
+                {{- toYaml .resources | nindent 16 }}
+              securityContext:
+                {{- toYaml $.Values.securityContext | nindent 16 }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                - name: cache
+                  mountPath: /app/var
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 1Gi
+            - name: cache
+              emptyDir:
+                sizeLimit: 1Gi
+{{- end }}
+{{- end }}
