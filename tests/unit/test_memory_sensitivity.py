@@ -413,6 +413,8 @@ def test_a_protected_attribute_after_a_newline_is_tagged(monkeypatch: pytest.Mon
         "4111 1111 1111 1111 12/29",
         "4111 1111 1111 1111 123",
         "x2 4111 1111 1111 1111",
+        "4111 1111 1111 1111 0429 123",  # card, MMYY, CVV
+        "2024-01-15 4111 1111 1111 1111",
         "SSN 123-45-6789 on the form",
         "My employee badge PIN is 4471",
         "pin: 4471",
@@ -470,6 +472,7 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
         "pin 128 rows before the import",
         "GPIO pin 115",
         "wire it to pin #115",
+        "ports 3000 5432 6379 9200 4000 4001 4002 4003 4004",  # nine groups: a table
         "ship to MG Road, Bengaluru, PIN code 560001",  # a postal code
         "PIN code: 560001",
         "Bengaluru, Karnataka, PIN: 560001",
@@ -484,6 +487,11 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
 )
 def test_lookalike_numbers_stay_unset(text: str) -> None:
     assert detect_sensitivity(text) == ""
+
+
+def test_a_connector_pin_written_as_an_assignment_reads_as_a_pin() -> None:
+    # The price of reading "PIN: 4471" as a PIN; documented in docs/architecture/security.md.
+    assert detect_sensitivity("GPIO pin: 115") == "high"
 
 
 @pytest.mark.parametrize(
@@ -564,6 +572,7 @@ def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
         {"note": "PIN:\n4471"},
         {"note": "PIN\nis 4471"},
         {"note": "bank:\nMT84 MALT 0110 0001 2345 MTLC AST0 01S"},
+        {"note": "\u201cPIN is 4471\u201d"},  # stored as `\u201cPIN`
     ],
 )
 def test_the_sweeps_coarse_filter_reads_stored_json_text(value: object) -> None:
@@ -585,5 +594,7 @@ def test_a_question_for_a_bank_account_is_contact_intent() -> None:
     assert contact_intent("which IBAN does my salary go to?")
     assert contact_intent("what is the bank account for rent")
     assert contact_intent("list my IBANs")
-    assert contact_intent("account numbers for payroll")
+    assert contact_intent("bank account numbers for payroll")
+    assert contact_intent("which bank account numbers do we pay into")
     assert not contact_intent("what did we decide about the deploy schedule")
+    assert not contact_intent("what is the AWS account number for staging")

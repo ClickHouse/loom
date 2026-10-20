@@ -54,12 +54,13 @@ COARSE_SHAPE_RE = (
     r"|[0-9](?:[ -]?[0-9]){12}"  # card number
     r"|[0-9]{3}-[0-9]{2}-[0-9]{4}"  # SSN
     # A PIN label and its value, in the detector's grammar. The column holds JSON text for
-    # an object value, where a line break is the two characters `\n`, so an escape counts
-    # as a word boundary and as whitespace; `\v` is listed beside `\s` because the
-    # detector's `\s` has it and RE2's does not.
-    r"|(?i:(?:\b|\\[nrt])(?:pin|passcode|cv[vc]2?|security code)(?: number| code)?"
+    # an object value, where a line break is the two characters `\n` and a non-ASCII
+    # character is `\uXXXX`, so an escape counts as a word boundary (and `\n`, `\r`, `\t`
+    # as whitespace); `\v` is listed beside `\s` because the detector's `\s` has it and
+    # RE2's does not.
+    r"|(?i:(?:\b|\\[nrt]|\\u[0-9a-f]{4})(?:pin|passcode|cv[vc]2?|security code)(?: number| code)?"
     r"(?:(?:[\s\v]|\\[nrt])+(?:is|was))?(?:[\s\v]|\\[nrt])*[:=]?(?:[\s\v]|\\[nrt])*[0-9]{3})"
-    r"|(?:\b|\\[nrt])[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]{4}){2}"  # IBAN
+    r"|(?:\b|\\[nrt]|\\u[0-9a-fA-F]{4})[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]{4}){2}"  # IBAN
 )
 
 # A probe shape reported beside the detector's levels, so a dry run says how many

@@ -21,9 +21,9 @@ The key and token patterns are the same family `scripts/gates/check_no_secrets.p
 uses to keep credentials out of the repo; the card, SSN and PIN patterns are not
 repo secrets and live here only. A memory row holding a live key or a card number
 must never be pulled into a prompt by similarity, which is what embedding it would
-do. Every pattern is a linear regex pass, and the Luhn and mod-97 checks run on a
-bounded number of windows per group of what a pattern matched, so the work stays linear
-in the text.
+do. Every pattern is a linear regex pass; the Luhn check runs on each digit group and on
+at most twelve grouped windows per run, and the mod-97 check on at most 55 runs per match,
+so the work stays linear in the text.
 """
 
 from __future__ import annotations
@@ -68,9 +68,10 @@ _MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (
 #
 # A run of digit groups joined by single spaces or dashes, not after `+` (an international
 # phone number). A card number is one group of such a run, or consecutive groups in a
-# card's own grouping with at most one other group on each side, so a card pasted with
-# its expiry or CVV ("4111 1111 1111 1111 12/29") or after another number is still found,
-# and two phone numbers side by side (3-3-4 groups) or a long table of numbers are not.
+# card's own grouping with at most three short groups (1-4 digits) around it, at most two
+# of them after it. So a card pasted with its expiry and CVV ("4111 1111 1111 1111 0429
+# 123") or after a date ("2024-01-15 4111 ...") is still found, and two phone numbers side
+# by side (3-3-4 groups) or a table of eight or more numbers are not.
 _DIGIT_GROUPS = re.compile(r"(?<![\d+])\d+(?:[ -]\d+)*", re.ASCII)
 # Group lengths of a printed card: 16 and 19 digits in fours, and Amex and Diners 4-6-5
 # and 4-6-4.
@@ -95,6 +96,8 @@ _SSN = re.compile(r"(?<![\d-])(?!000|666|9)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d
 # ("CVV 123"), unless an `of` follows ("passcode 100 of the batch" names a position).
 # `pin number`, `passcode`, `cvv`, `cvc` and `security code` take 3-8 digits; `pin` and
 # `pin code` take 3-5, since "PIN: 560001" and "PIN code 560001" are Indian postal codes.
+# A connector pin written as an assignment ("GPIO pin: 115") reads as a PIN: the price of
+# reading "PIN: 4471" as one.
 # Each whitespace run has its own anchor, so a long run of spaces is read once.
 _PIN_VALUE_AFTER = r"(?:\s+(?:is|was)(?:\s*[:=])?|\s*[:=])\s*"
 _LONG_PIN_LABEL = r"(?:pin number|passcode|cvv2?|cvc2?|security code)"
@@ -129,18 +132,20 @@ def _is_card(digits: str) -> bool:
 
 def _has_card(text: str) -> bool:
     """Whether a digit run holds a card number: one group, or consecutive groups in a
-    card's grouping with at most one other group on each side, that has a card network's
-    leading digits and length and passes the Luhn check."""
+    card's grouping with at most three short groups around it (at most two after), that
+    has a card network's leading digits and length and passes the Luhn check."""
     for m in _DIGIT_GROUPS.finditer(text):
         groups = re.split(r"[ -]", m.group())
-        for i, group in enumerate(groups):
-            if _is_card(group):
-                return True
+        if any(_is_card(group) for group in groups):
+            return True
+        for i in range(min(len(groups), 4)):  # a grouped card starts within four groups
             for n in (3, 4, 5):
                 window = groups[i : i + n]
+                around = groups[:i] + groups[i + n :]
                 if (
-                    i <= 1
-                    and len(groups) - (i + n) <= 1
+                    len(groups) - (i + n) <= 2
+                    and len(around) <= 3
+                    and all(len(g) <= 4 for g in around)
                     and tuple(map(len, window)) in _CARD_GROUPINGS
                     and _is_card("".join(window))
                 ):
@@ -383,7 +388,7 @@ _CONTACT_INTENT = re.compile(
     r"how (?:do|can) i (?:reach|contact|get)|"
     r"who (?:do|should) i (?:call|email|contact)|"
     # an IBAN is labelled medium too: a question for the account is asking for it
-    r"ibans?|bank accounts?|account numbers?)\b",
+    r"ibans?|bank account(?: number)?s?)\b",
     re.IGNORECASE,
 )
 

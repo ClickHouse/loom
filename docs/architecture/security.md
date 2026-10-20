@@ -634,11 +634,12 @@ The `high` shapes:
   `password=` / `api_key:` assignment of an 8+ character token.
 - Card number: in a run of digit groups joined by single spaces or dashes, one group, or
   consecutive groups in a card's grouping (4-4-4-4, 4-4-4-4-3, 4-6-5, 4-6-4) with at most
-  one other group on each side, so a card pasted with its expiry or CVV still counts and
-  two phone numbers side by side or a table of numbers do not. It has a card network's
-  leading digits and length (Visa 4 at 13, 16 or 19 digits; Mastercard 51-55 and 22-27 at
-  16; Amex 34 and 37 at 15; Diners 30, 36 and 38 at 14; JCB 35 and Discover/UnionPay 6 at
-  16-19) and passes the Luhn check, so a 15-digit IMEI is not a card.
+  three short groups around it, at most two of them after it. A card pasted with its
+  expiry and CVV or after a date still counts; two phone numbers side by side or a table
+  of eight or more numbers do not. It has a card network's leading digits and length
+  (Visa 4 at 13, 16 or 19 digits; Mastercard 51-55 and 22-27 at 16; Amex 34 and 37 at 15;
+  Diners 30, 36 and 38 at 14; JCB 35 and Discover/UnionPay 6 at 16-19) and passes the
+  Luhn check, so a 15-digit IMEI is not a card.
 - Social Security number: `ddd-dd-dddd` outside the never-issued ranges (area 000, 666,
   9xx; group 00; serial 0000).
 - Stated PIN: a PIN, passcode, CVV/CVC or security code followed by its value after `is`,
@@ -647,14 +648,16 @@ The `high` shapes:
   (`CVV 123`), unless `of` follows it (`passcode 100 of the batch`). `PIN number`,
   passcode, CVV/CVC and security code take 3-8 digits; `PIN` and `PIN code` take 3-5, since
   `PIN: 560001` and `PIN code 560001` are Indian postal codes, so a 6-digit PIN counts
-  when stated as a `PIN number`.
+  when stated as a `PIN number`. A connector pin written as an assignment
+  (`GPIO pin: 115`) reads as a PIN.
 
-An IBAN counts when it passes the ISO 13616 mod-97 check, and a question naming an IBAN,
-a bank account or an account number counts as contact intent, so ranking does not demote
-the row that answers it. A JSON value is read scalar by
-scalar (`detector_text`): a key is not a label for the scalar after it, so
-`{"pin": "4471"}` stays unlabelled where `{"note": "PIN is 4471"}` is `high`, as
-`{"password": ...}` does for credentials.
+An IBAN counts when it passes the ISO 13616 mod-97 check, and a question naming an IBAN
+or a bank account (number) counts as contact intent, so ranking does not demote the row
+that answers it.
+
+A JSON value is read scalar by scalar (`detector_text`): a key is not a label for the
+scalar after it, so `{"pin": "4471"}` stays unlabelled where `{"note": "PIN is 4471"}` is
+`high`, just as a `{"password": ...}` key does not label its value.
 
 A caller-supplied level wins. Detection is `LOOM_MEMORY_SENSITIVITY_AUTODETECT`. A `high`
 row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so no search
