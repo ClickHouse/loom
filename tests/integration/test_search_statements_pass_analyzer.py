@@ -619,7 +619,7 @@ async def test_sensitivity_sweep_and_integrity_statements_pass_the_analyzer(ch_c
     await sw.scan(org="o", namespace="n", since_days=2, limit=10, pages=1, ch=ch)  # type: ignore[arg-type]
     await sw.scan(pages=1, ch=ch)  # type: ignore[arg-type]
     # The stub returns no keys, so the page's FINAL read is added by hand: a later page's.
-    page = {f"after_{col}": "x" for col in sweep_sql.SORT_KEY}
+    page = {f"{edge}_{col}": "x" for edge in ("after", "upto") for col in sweep_sql.SORT_KEY}
     scan = sweep_sql.scan_sql(org="o", namespace="n", since_days=2, after=True)
     params = {"shape": sw.COARSE_SHAPE_RE, "lim": 10, "org": "o", "ns": "n", "days": 2}
     ch.calls.append((scan, params | page))

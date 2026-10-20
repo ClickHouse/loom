@@ -186,14 +186,16 @@ async def test_scan_labels_exactly_as_the_write_path_would() -> None:
 @pytest.mark.asyncio
 async def test_a_pages_current_versions_are_read_by_key_subquery_not_by_key_list() -> None:
     # A page of 20,000 keys bound as one array parameter outgrows the request URL; the
-    # FINAL read takes the page's keys as a subquery, the same parameters for any page size.
+    # FINAL read takes the page's key range as a subquery, the same parameters for any page
+    # size.
     ch = _CH([_mem(str(i), "secret") for i in range(2000)])
     await sweep.scan(limit=2000, pages=2, ch=ch)
     finals = [(sql, params) for sql, params in ch.calls if "FINAL" in sql]
     assert len(finals) == 2
     for sql, params in finals:
-        assert "IN (" in sql and "SELECT DISTINCT" in sql
+        assert "IN (" in sql and "LIMIT" not in sql
         assert not any(isinstance(v, list | tuple) for v in params.values())
+        assert params["upto_memory_key"] == "k1999"
     assert "after_memory_key" not in finals[0][1]
     assert finals[1][1]["after_memory_key"] == "k1999"
 
@@ -437,6 +439,42 @@ async def test_pages_cross_namespace_and_user_boundaries_without_a_gap() -> None
     assert returned == sorted(row.memory_id for row in rows)
     assert [c.memory_key for c in report.candidates] == ["vault_door"]
     assert report.scanned == 8
+
+
+class _WriteBetweenReads:
+    """Answers the first query from `before` and every later one from `after`: a row
+    written between a page's key read and its FINAL read."""
+
+    def __init__(self, before: _LocalCH, after: _LocalCH) -> None:
+        self.before = before
+        self.after = after
+        self.calls = 0
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+        self.calls += 1
+        return await (self.before if self.calls == 1 else self.after).query_all(sql, params)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_key_written_inside_a_page_between_its_reads_is_read_once_and_none_skipped() -> (
+    None
+):
+    # The first page's keys are k1 and k3. A row k2, which sorts between them, is written
+    # before the page's FINAL read: that read returns k1, k2 and k3, and the next page
+    # starts after k3, so every row is read exactly once.
+    spin = {"spin": "4471"}
+    rows = [
+        _Row("o", "n", "-", _uuid(1), "k1", spin, 60),
+        _Row("o", "n", "-", _uuid(3), "k3", spin, 60),
+        _Row("o", "n", "-", _uuid(5), "k5", spin, 60),
+    ]
+    written = _Row("o", "n", "-", _uuid(2), "k2", "badge PIN is 4471", 60)
+    ch = _WriteBetweenReads(_local_memory(rows), _local_memory([*rows, written]))
+    report = await sweep.scan(since_days=2, limit=2, pages=None, ch=ch)  # type: ignore[arg-type]
+    returned = [r["memory_id"] for r in ch.after.returned if "memory_id" in r]  # FINAL reads
+    assert sorted(returned) == [_uuid(i) for i in (1, 2, 3, 5)]
+    assert [c.memory_key for c in report.candidates] == ["k2"]
 
 
 @pytest.mark.asyncio

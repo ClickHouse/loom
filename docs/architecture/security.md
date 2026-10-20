@@ -694,7 +694,8 @@ The `high` shapes:
   must end at its number: a version, a date or a run-on word (`pin is 2024.1`,
   `pin is 2024/01/15`, `pin is 1234abc`) is not a PIN.
 
-An IBAN counts when it passes the ISO 13616 mod-97 check, and a question naming an IBAN
+An IBAN counts when its country code is in the ISO 13616 registry, its length is that
+country's and it passes the mod-97 check, and a question naming an IBAN
 or a bank account (number) counts as contact intent, so ranking does not demote the row
 that answers it.
 
@@ -715,9 +716,9 @@ JSON text, such as a chunk of an object value, when the value is digits and dash
 sweep's prefilter is a superset of this key rule, not a copy: it selects a key that ends in
 a label, so it may select a few non-secret rows (`spin`, `unpin`, `ATMPIN`), which the
 detector, comparing whole key words, leaves unlabelled; each costs a re-check on the sweep's
-passes within its window. The sweep reads an object value as ClickHouse stores it, where a
-dotted key is nested: a `{"security.code": "5512"}` row is read as `{"security": {"code":
-"5512"}}`, so the sweep does not label it.
+passes within its window. The sweep reads the bytes its writer stored in `value`, where a
+dotted key such as `{"security.code": "5512"}` keeps its words, and also the object in
+`value_json`, which an import may fill with more than `value` holds.
 
 A caller-supplied level wins for the stored label. Detection is
 `LOOM_MEMORY_SENSITIVITY_AUTODETECT`.
@@ -817,8 +818,10 @@ search serves it, and `memory.ask` and the conflict judge can send it to their m
 pass reads its window in the table's sort key order, in pages of
 `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` keys taken from any row version that matches
 (without `FINAL`, so the window prunes partitions), then reads the current version of each
-of the page's keys, taking the page's key read as a subquery so only those keys' granules
-are read, and keeps it only if it still matches. It goes on until that many candidates are
+of the keys from just after the page before's last key up to this page's last key, as a
+subquery so only those keys' granules are read, and keeps it only if it still matches. A
+key written into that range between the two reads is read too, and no key is read on two
+pages. It goes on until that many candidates are
 found or `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` pages are read. The ClickHouse filter
 selects only the shapes in the shape filter, so a ten-digit run (an epoch timestamp, a run
 id) the default filter leaves alone is never selected. Its card alternative selects only

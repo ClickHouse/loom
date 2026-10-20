@@ -11,7 +11,12 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE, _shapes, coarse_shape_re
+from server.memory.app.sensitivity_sweep import (
+    COARSE_SHAPE_RE,
+    _shapes,
+    coarse_shape_re,
+    scan_text,
+)
 from server.memory.app.set_chunks import human_text
 from server.memory.domain.memory_types import is_embedded, is_searchable_type
 from server.memory.domain.sensitivity import (
@@ -546,6 +551,8 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
         "the spinner took 1500 ms",
         "a pin is 2 mm wide",
         "iban GB82 WEST 1234 5698 7654 33",  # fails mod-97
+        "iban XY54 WEST 1234 5698 7654 32",  # passes mod-97; XY is no registered country
+        "iban DE86 3704 0044 0532 0130",  # passes mod-97; 20 characters, a German IBAN is 22
         "ticket AB12 CDEF GHIJ KLMN",
         "fullwidth ＰＩＮ is ４４７１",  # ASCII only, as the sweep's RE2 filter is
     ],
@@ -786,7 +793,8 @@ _PREFILTER_OBJECTS = [
     {"note": "PIN for the front door is 4471"},
     {"address": {"pincode": "560001"}},
     {"door": {"security-code": "5512"}},
-    {"badge.pin": "4471"},  # ClickHouse nests it: `{"badge":{"pin":...}}`
+    {"badge.pin": "4471"},  # nested in value_json: `{"badge":{"pin":...}}`
+    {"security.code": "5512"},
     {"ssn": 123456789},
     {"note": "PIN is\v4471"},  # written `\u000B`
     {"note": "“PIN is 4471”"},  # kept raw
@@ -825,31 +833,35 @@ _PREFILTER_TEXTS = [
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-def test_a_dotted_security_code_key_is_not_selected_by_the_sweep() -> None:
-    # ClickHouse stores `security.code` nested, as `code` under `security`: the sweep does not
-    # label such a row (documented in docs/architecture/security.md); the write path does.
+def test_a_dotted_security_code_key_is_selected_and_labelled_by_the_sweep() -> None:
+    # ClickHouse nests `security.code` in value_json, as `code` under `security`; the
+    # writer's bytes in `value` keep the key whole, so the sweep labels the row as the
+    # write path does.
     rows = run(
         [],
-        "SELECT toString(CAST(j AS JSON)) AS t, match(t, {r:String}) AS hit"
-        " FROM (SELECT {j:String} AS j)",
-        {"r": COARSE_SHAPE_RE, "j": json.dumps({"security.code": "5512"})},
+        "SELECT v AS value, toString(CAST(v AS JSON)) AS object_text, match(v, {r:String}) AS hit"
+        " FROM (SELECT {v:String} AS v)",
+        {"r": COARSE_SHAPE_RE, "v": json.dumps({"security.code": "5512"})},
     )
-    assert rows == [{"t": '{"security":{"code":"5512"}}', "hit": 0}]
+    assert rows[0]["object_text"] == '{"security":{"code":"5512"}}' and rows[0]["hit"] == 1
+    assert detect_sensitivity(scan_text(rows[0])) == "high"
     assert value_reads_high({"security.code": "5512"})
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -> None:
-    # RE2 `match()` on the text the scan reads: `toString(value_json)` for an object value,
-    # the `json.dumps` text in `value` for any other. The prefilter is a superset: every case
+    # RE2 `match()` on the texts the scan reads: the `json.dumps` text in `value`, and
+    # `toString(value_json)` for an object value. The prefilter is a superset: every case
     # the detector labels is selected (a high one by the scheduled pass's filter too), and
     # the only unlabelled cases it selects are keys whose last word ends in a label
     # (documented in docs/architecture/security.md).
     sql = (
-        "SELECT toString(CAST(j AS JSON)) AS t, match(t, {r:String}) AS hit,"
-        " match(t, {h:String}) AS high_hit"
+        "SELECT j AS value, toString(CAST(j AS JSON)) AS object_text,"
+        " match(value, {r:String}) OR match(object_text, {r:String}) AS hit,"
+        " match(value, {h:String}) OR match(object_text, {h:String}) AS high_hit"
         " FROM (SELECT arrayJoin({js:Array(String)}) AS j)"
-        " UNION ALL SELECT j AS t, match(j, {r:String}) AS hit, match(j, {h:String}) AS high_hit"
+        " UNION ALL SELECT j AS value, '{}' AS object_text, match(j, {r:String}) AS hit,"
+        " match(j, {h:String}) AS high_hit"
         " FROM (SELECT arrayJoin({ts:Array(String)}) AS j)"
     )
     params = {
@@ -862,16 +874,16 @@ def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -
     assert len(rows) == len(_PREFILTER_OBJECTS) + len(_PREFILTER_TEXTS)
     over_selected = set()
     for row in rows:
-        level = detect_sensitivity(detector_text(row["t"]))
+        level = detect_sensitivity(scan_text(row))
         if level == "high":
             assert int(row["high_hit"]), row
         if level:
             assert int(row["hit"]), row
         elif int(row["hit"]):
-            over_selected.add(row["t"])
+            over_selected.add(row["value"])
     assert over_selected == {
-        '{"spin":"4471"}',
-        '{"unpin":"1234"}',
-        '{"Spin":1200}',
-        '{"ATMPIN":"4471"}',
+        '{"spin": "4471"}',
+        '{"unpin": "1234"}',
+        '{"Spin": 1200}',
+        '{"ATMPIN": "4471"}',
     }

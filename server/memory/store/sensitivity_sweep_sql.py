@@ -7,19 +7,22 @@ from __future__ import annotations
 # loom.memory's sort key: a scan pages on it so each page starts where the last one ended.
 SORT_KEY = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
 
-# The text the coarse filter matches: an object value's JSON, any other value's text.
-_SCAN_TEXT = "if(length(toString(value_json)) > 2, toString(value_json), value)"
+# The texts the coarse filter matches: the bytes the writer stored in `value`, where a
+# dotted key keeps its words (`{"security.code": ...}`), and an object value as ClickHouse
+# stores it, which an import may fill with more than `value` holds.
+_VALUE_JSON = "toString(value_json)"
 
 
-def _after_last_key() -> str:
-    """The sort key past `{after_<column>}`, as `a > x OR (a = x AND (...))`."""
+def _key_bound(prefix: str, op: str, last_op: str) -> str:
+    """The sort key against `{<prefix>_<column>}`, as `a op x OR (a = x AND (...))`, with
+    `last_op` on the last column."""
     cond = ""
     for col in reversed(SORT_KEY):
-        param = f"{{after_{col}:String}}"
+        param = f"{{{prefix}_{col}:String}}"
         if cond:
-            cond = f"{col} > {param} OR ({col} = {param} AND ({cond}))"
+            cond = f"{col} {op} {param} OR ({col} = {param} AND ({cond}))"
         else:
-            cond = f"{col} > {param}"
+            cond = f"{col} {last_op} {param}"
     return cond
 
 
@@ -27,7 +30,7 @@ def _where(*, org: str | None, namespace: str | None, since_days: int | None) ->
     """The conditions a scanned row meets, each on one row version."""
     where = f"""tombstoned_at IS NULL AND sensitivity = ''
           AND (expires_at IS NULL OR expires_at > now())
-          AND match({_SCAN_TEXT}, {{shape:String}})"""
+          AND (match(value, {{shape:String}}) OR match({_VALUE_JSON}, {{shape:String}}))"""
     if org:
         where += " AND org = {org:String}"
     if namespace:
@@ -46,7 +49,7 @@ def keys_sql(
     reads, and a read in key order stops at the LIMIT."""
     where = _where(org=org, namespace=namespace, since_days=since_days)
     if after:  # the next page, after the last key of the one before
-        where += f" AND ({_after_last_key()})"
+        where += f" AND ({_key_bound('after', '>', '>')})"
     return f"""
         SELECT DISTINCT {", ".join(SORT_KEY)}
         FROM loom.memory
@@ -59,17 +62,24 @@ def keys_sql(
 def scan_sql(
     *, org: str | None, namespace: str | None, since_days: int | None, after: bool = False
 ) -> str:
-    """The current version of each of the page's keys that still meets the conditions. The
-    keys come from `keys_sql` as a subquery, so the statement binds no key list and the
-    FINAL read touches only the granules of the page's keys."""
+    """The current version of each key from just after `{after_<column>}` up to the page's
+    last key `{upto_<column>}` that still meets the conditions. The keys are a subquery, so
+    the statement binds no key list and the FINAL read touches only the granules of the
+    page's keys. The subquery takes the range, not `keys_sql` again: a key written into the
+    range between the two reads is read too, and a LIMIT cannot push the page's last key
+    out or pull the next page's first key in."""
     where = _where(org=org, namespace=namespace, since_days=since_days)
-    keys = keys_sql(org=org, namespace=namespace, since_days=since_days, after=after)
+    in_range = f"{where} AND ({_key_bound('upto', '<', '<=')})"
+    if after:
+        in_range += f" AND ({_key_bound('after', '>', '>')})"
     return f"""
         SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key,
-               {_SCAN_TEXT} AS value
+               value, {_VALUE_JSON} AS object_text
         FROM loom.memory FINAL
         WHERE {where}
-          AND ({", ".join(SORT_KEY)}) IN ({keys})
+          AND ({", ".join(SORT_KEY)}) IN (
+            SELECT {", ".join(SORT_KEY)} FROM loom.memory WHERE {in_range}
+          )
         ORDER BY {", ".join(SORT_KEY)}
     """
 

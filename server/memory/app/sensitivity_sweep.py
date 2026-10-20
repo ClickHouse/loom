@@ -26,6 +26,7 @@ Read-only by construction until `apply`; `scan` is what `--dry-run` prints.
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -50,8 +51,8 @@ from server.memory.domain.sensitivity import (
 )
 from server.memory.store.sensitivity_sweep_sql import SORT_KEY, keys_sql, scan_sql
 
-# The scan matches JSON text: `toString(value_json)` for an object value, the `json.dumps`
-# text in `value` for any other. So an escape (`\n`, `\u000B`, `\/`) or `_` may start a PIN
+# The scan matches JSON text: the `json.dumps` text in `value`, and `toString(value_json)`
+# for an object value. So an escape (`\n`, `\u000B`, `\/`) or `_` may start a PIN
 # or IBAN label, and a control escape counts as whitespace, as the detector reads it
 # decoded; `\v` is listed because RE2's `\s` lacks it.
 _JSON_BOUNDARY = r"(?:\b|_|\\[bfnrt]|\\u[0-9a-fA-F]{4})"
@@ -232,8 +233,9 @@ async def scan(
         keys = await ch.query_all(sql, params=page_params)
         rows: list[dict[str, Any]] = []
         if keys:
-            # The FINAL read takes the page's keys as a subquery, not as a list: a list of
-            # thousands of keys is a parameter too long for the request URL.
+            # The FINAL read takes the page's key range as a subquery, not its keys as a list:
+            # a list of thousands of keys is a parameter too long for the request URL.
+            page_params |= {f"upto_{col}": keys[-1][col] for col in SORT_KEY}
             sql = scan_sql(org=org, namespace=namespace, since_days=since_days, after=after)
             rows = await ch.query_all(sql, params=page_params)
         report.scanned += len(rows)
@@ -248,11 +250,27 @@ async def scan(
     return report
 
 
+def scan_text(row: dict[str, Any]) -> str:
+    """The text the detector reads for a scanned row: `value`, and `object_text` (value_json)
+    when it holds an object, each decoded as the write path reads it (in the stored JSON a
+    token after a newline follows `\\n`, and the detector's word boundary never matches
+    there)."""
+    texts = [row.get("value") or ""]
+    if (row.get("object_text") or "{}") != "{}":
+        texts.append(row["object_text"])
+    return detector_text([_decoded(t) for t in texts])
+
+
+def _decoded(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except (ValueError, RecursionError):  # raw text, or nested too deep to parse
+        return text
+
+
 def _add_candidates(report: SweepReport, rows: list[dict[str, Any]], keep: set[str]) -> None:
     for r in rows:
-        # Decoded, as the write path reads it: in the stored JSON a token after a newline
-        # follows `\\n`, and the detector's word boundary never matches there.
-        text = detector_text(r.get("value") or "")
+        text = scan_text(r)
         level = detect_sensitivity(text)
         if level not in (HIGH, MEDIUM):
             continue
