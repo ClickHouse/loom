@@ -847,8 +847,8 @@ def test_a_release_that_fails_leaves_the_exchange_charged(auth_attempts, monkeyp
 
     monkeypatch.setattr(oauth.settings, "workload_exchanges_per_agent", 1)
     count, insert = auth_attempts.query_all, auth_attempts.insert
-    # Another replica's renewal of a1, recorded between this one's two counts,
-    # nearly out of the window.
+    # Another renewal of a1 that this one's first count missed (racing),
+    # stamped near the window's start so it ages out first.
     other = {
         "kind": "oauth.exchange.agent",
         "key_sha256": attempts._digest("fleet:a1"),
