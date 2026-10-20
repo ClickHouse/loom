@@ -171,7 +171,9 @@ _PAGE_HEADERS = {
         "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
     ),
     "X-Frame-Options": "DENY",
-    "Referrer-Policy": "no-referrer",
+    # Not no-referrer: under it the form POST carries `Origin: null`, which the
+    # cross-site gate refuses. same-origin still sends this URL to no other site.
+    "Referrer-Policy": "same-origin",
     "Cache-Control": "no-store",
 }
 

@@ -1727,3 +1727,74 @@ def test_logging_out_an_ended_session_revokes_the_idp_s_current_token(
         c.post("/oauth/revoke", data={"token": old, "client_id": device.DEVICE_CLIENT_ID})
     c.post("/oauth/revoke", data={"token": new, "client_id": device.DEVICE_CLIENT_ID})
     assert "idp-r1+" in revoked
+
+
+# What a browser sends when the user submits a form on this server's own page.
+_FORM_SUBMIT = {
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "document",
+}
+
+
+def _gated_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """The sign-in routes behind the cross-site gate, with auth on."""
+    from server.main import attach_web_gate
+
+    monkeypatch.setattr(oauth.settings, "auth_required", True)
+    monkeypatch.setattr(oauth.settings, "identity_provider", "gateway")
+    monkeypatch.setattr(oauth.settings, "public_base_url", "")
+    monkeypatch.setattr(oauth.settings, "cors_origins", "")
+    app = oauth_app()
+    attach_web_gate(app)
+    return TestClient(app)
+
+
+def test_the_sign_in_forms_submit_with_their_own_origin(monkeypatch) -> None:
+    # Under no-referrer a browser sends `Origin: null` on these POSTs, which the gate refuses.
+    c = _gated_client(monkeypatch)
+    grant = _start(c)
+    page = c.get("/oauth/device", params={"user_code": grant["user_code"]})
+    assert page.headers["referrer-policy"] == "same-origin"
+    submit = {**_FORM_SUBMIT, "origin": "http://testserver"}
+    signed_in = c.post(
+        "/oauth/device",
+        data={"user_code": grant["user_code"], "identifier": "alice@example.com", "password": "pw"},
+        headers=submit,
+    )
+    assert signed_in.status_code == 200, signed_in.text
+    assert signed_in.headers["referrer-policy"] == "same-origin"
+    approved = c.post(
+        "/oauth/device/approve",
+        data={
+            "user_code": grant["user_code"],
+            "ticket": _ticket(signed_in.text),
+            "decision": "approve",
+        },
+        headers=submit,
+    )
+    assert approved.status_code == 200, approved.text
+    assert _poll(c, grant["device_code"]).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        "/oauth/authorize",
+        "/oauth/authorize/approve",
+        "/oauth/link",
+        "/oauth/device",
+        "/oauth/device/approve",
+        "/oauth/set-password",
+    ],
+)
+def test_a_sign_in_form_posted_with_origin_null_is_refused(monkeypatch, action: str) -> None:
+    c = _gated_client(monkeypatch)
+    own = c.post(action, data={}, headers={**_FORM_SUBMIT, "origin": "http://testserver"})
+    assert own.status_code == 400, own.text  # the route itself answers: no fields
+    # A page on another site can still send `Origin: null` (sandboxed frame, no-referrer).
+    for site in ("same-origin", "cross-site"):
+        headers = {**_FORM_SUBMIT, "origin": "null", "sec-fetch-site": site}
+        r = c.post(action, data={}, headers=headers)
+        assert r.status_code == 403
+        assert r.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
