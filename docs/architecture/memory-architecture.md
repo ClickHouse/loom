@@ -497,10 +497,12 @@ receiver has not taken in 2.75 days ("not delivered in time"), then reads
 the due events of the webhooks it can send to (registered, a usable secret, not cooling
 down) through the outbox's sort key (`org, namespace, webhook_id, occurred_at`): the
 events whose newest row in `loom.memory_webhook_attempts` is not settled or waiting, in
-turns (each webhook's oldest first, `row_number()` per webhook), at most 10 per webhook
-and 40 in all. It appends a lease (an attempt row whose `next_attempt_at` is the lease's
-end), then POSTs the signed bodies (`server/core/webhooks.py`, one 10 s deadline per
-POST) 4 at a time and one at a time per webhook, checking before each POST the webhook's
+turns (each webhook's oldest first, `row_number()` per webhook), at most
+`memory_webhook_posts_per_webhook` per webhook and `memory_webhook_max_posts_per_pass` in
+all. It appends a lease (an attempt row whose `next_attempt_at` is the lease's end), then
+POSTs the signed bodies (`server/core/webhooks.py`, one
+`memory_webhook_ack_timeout_seconds` deadline per POST)
+`memory_webhook_deliver_concurrency` at a time and one at a time per webhook, checking before each POST the webhook's
 cooldown and the key's history in `loom.memory_versions` (an erased key's event is marked
 dead), and appends every outcome in one insert: `delivered`, `pending` with its next
 attempt, or `dead`. Attempt rows hold

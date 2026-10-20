@@ -361,13 +361,13 @@ sweep, the `delete_version` check).
   POST; a 2xx ends it. The cooldown is kept per server process, so a restart or a new
   worker leader starts it afresh. Every
   webhook with work therefore gets its first POST of a pass before any webhook gets a
-  second, while fewer than 40 webhooks have work. A pass stops starting POSTs once every
+  second, while fewer than `LOOM_MEMORY_WEBHOOK_MAX_POSTS_PER_PASS` webhooks have work. A pass stops starting POSTs once every
   POST could have waited its whole ack deadline (40 / 4 × 10 s = 100 s), and at the latest
   `LOOM_MEMORY_WEBHOOK_DELIVER_RESERVE_SECONDS` (20 s) before its deadline
   (`LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS`, 120 s); what it
-  did not send goes next pass. One webhook gets at most 10 POSTs per
-  pass, one after another, so a receiver that answers in 1 s takes about 10 events per
-  pass. With fast receivers the ceiling is about 40 events per pass, a pass every 5 s
+  did not send goes next pass. One webhook gets at most
+  `LOOM_MEMORY_WEBHOOK_POSTS_PER_WEBHOOK` POSTs per pass, one after another, so a receiver
+  that answers in 1 s takes about 10 events per pass with the defaults. With fast receivers the ceiling is about 40 events per pass, a pass every 5 s
   while there is work: some 8 events a second per deployment with the defaults. A
   deployment that needs more raises the per-pass and concurrency settings, and the pass
   deadline with them.
