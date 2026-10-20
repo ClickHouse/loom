@@ -5,16 +5,17 @@ Deployment of web pods over one ClickHouse service, each pod a full replica. It 
 any conformant cluster; `values-eks.yaml` sets it up on EKS and `values-kind.yaml` runs
 it on a laptop.
 
-| Object                       | What it does                                                                                                         |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Deployment `<release>`       | The web pods. Rolls one pod at a time and takes none down before its replacement is ready.                           |
-| Service, optional Ingress    | Routes to ready pods only. The readiness probe is `/v1/health/ready`.                                                |
-| Secret                       | The keys every pod shares. Bring your own with `secrets.existingSecret`. The rest of the env is in the pod template. |
-| PodDisruptionBudget          | One pod at a time on node drains and upgrades.                                                                       |
-| Optional HPA                 | CPU-based. Rate-limit shares resize as pods come and go.                                                             |
-| Optional `<release>-workers` | Background workers in their own pods (`workers.enabled`). Off by default: one web pod holds the lease and runs them. |
-| Optional `<release>-publish` | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                               |
-| Optional dev ClickHouse      | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                            |
+| Object                         | What it does                                                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| Deployment `<release>`         | The web pods. Rolls one pod at a time and takes none down before its replacement is ready.                               |
+| Service, optional Ingress      | Routes to ready pods only. The readiness probe is `/v1/health/ready`.                                                    |
+| Secret                         | The keys every pod shares. Bring your own with `secrets.existingSecret`. The rest of the env is in the pod template.     |
+| ConfigMap `<release>-settings` | The settings file (`settingsFile`), mounted at `/app/config/loom.yaml` on every pod; each hook Job carries its own copy. |
+| PodDisruptionBudget            | One pod at a time on node drains and upgrades.                                                                           |
+| Optional HPA                   | CPU-based. Rate-limit shares resize as pods come and go.                                                                 |
+| Optional `<release>-workers`   | Background workers in their own pods (`workers.enabled`). Off by default: one web pod holds the lease and runs them.     |
+| Optional `<release>-publish`   | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                                   |
+| Optional dev ClickHouse        | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                |
 
 ## Before you install
 

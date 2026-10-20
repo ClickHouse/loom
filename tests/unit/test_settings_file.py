@@ -278,16 +278,29 @@ def test_no_description_names_a_sibling_setting_by_its_suffix() -> None:
 
 
 def test_a_full_setting_name_in_a_description_is_spelled_right() -> None:
-    """A backticked name within a typo of a setting names nothing."""
-    fields = list(Settings.model_fields)
-    name = re.compile(r"`([a-z][a-z0-9]*(?:_[a-z0-9]+){2,})`")
-    typos = [
-        f"{field}: {word} -> {close[0]}"
-        for field, text in descriptions(Settings).items()
-        for word in name.findall(text)
-        if word not in Settings.model_fields
-        and (close := difflib.get_close_matches(word, fields, n=1, cutoff=0.9))
+    """A backticked name one typo away from a setting's name names nothing: checked in
+    every description and every heading's note."""
+    source = settings_example.CATALOG.read_text(encoding="utf-8")
+    lines = source.splitlines()
+    texts = list(descriptions(Settings).values()) + [
+        heading_note(lines, st.lineno)
+        for cls in ast.parse(source).body
+        if isinstance(cls, ast.ClassDef)
+        for st in cls.body
+        if isinstance(st, ast.AnnAssign)
     ]
+    fields = list(Settings.model_fields)
+    name = re.compile(r"`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`")
+    checked, typos = 0, []
+    for text in texts:
+        for word in name.findall(text):
+            checked += 1
+            if word in Settings.model_fields:
+                continue
+            close = difflib.get_close_matches(word, fields, n=1, cutoff=0.9)
+            if close:
+                typos.append(f"{word} -> {close[0]}")
+    assert checked > 100  # the pattern still finds the backticked names
     assert not typos, typos
 
 
