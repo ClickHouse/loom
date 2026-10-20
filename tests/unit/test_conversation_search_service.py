@@ -263,6 +263,7 @@ async def test_the_thread_list_shows_no_text_of_a_last_turn_that_reads_as_a_cred
             "first_seen": at,
             "last_seen": at,
             "last_role": "user",
+            "last_content_excerpt": excerpt[:240],
             "last_content": excerpt,
         }
 

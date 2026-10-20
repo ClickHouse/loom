@@ -15,7 +15,7 @@ from server.memory.app.ask.question_shapes import (
     is_mention_time_question,
 )
 from server.memory.app.ask.result import _is_chunk_hit
-from server.memory.app.credential_passages import without_credentials
+from server.memory.app.credential_passages import HELD_MARGIN, without_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -77,18 +77,13 @@ _INJECT_WORD_ORDINAL_RE = re.compile(
 )
 
 
-# Spare rows a chunk lookup is asked for, so a chunk held back for reading as a credential
-# does not leave the injection short.
-_HELD_MARGIN = 2
-
-
 async def _plain_chunks(find: Any, *, limit: int, **kwargs: Any) -> list[dict[str, Any]]:
     """`find` (a chunk lookup), without the chunks whose text reads as a credential. A chunk
     written as one has no vector and the lookup's `embedding_dim > 0` filter leaves it out;
     this holds back one an earlier build embedded."""
     if limit <= 0:
         return []
-    rows = await find(limit=limit + _HELD_MARGIN, **kwargs)
+    rows = await find(limit=limit + HELD_MARGIN, **kwargs)
     return without_credentials(rows, lambda r: str(r.get("content_excerpt") or ""), limit)
 
 
@@ -453,20 +448,18 @@ async def _read_decisive_chunks(
     if n <= 0 or not is_decisive_question(q):
         return []
     try:
-        return list(
-            await _plain_chunks(
-                memory_repo.find_chunks_by_identifier,
-                org=getattr(search_input, "org", ""),
-                namespace=getattr(search_input, "namespace", ""),
-                identifiers=idents,
-                limit=n,
-                query_embedding=qvec or None,
-                case_insensitive=case_insensitive,
-                scope=getattr(search_input, "scope", "private"),
-                agent=getattr(search_input, "agent", "*"),
-                user_id=getattr(search_input, "user_id", None),
-                markers=list(_DECISIVE_MARKERS),
-            )
+        return await _plain_chunks(
+            memory_repo.find_chunks_by_identifier,
+            org=getattr(search_input, "org", ""),
+            namespace=getattr(search_input, "namespace", ""),
+            identifiers=idents,
+            limit=n,
+            query_embedding=qvec or None,
+            case_insensitive=case_insensitive,
+            scope=getattr(search_input, "scope", "private"),
+            agent=getattr(search_input, "agent", "*"),
+            user_id=getattr(search_input, "user_id", None),
+            markers=list(_DECISIVE_MARKERS),
         )
     except Exception as e:  # noqa: BLE001 — additive
         logger.debug("decisive chunk injection failed: %s", e)
@@ -502,20 +495,18 @@ async def _read_latest_word(
                     order="recency",
                 )
             )
-        rows += list(
-            await _plain_chunks(
-                memory_repo.find_chunks_by_identifier,
-                org=getattr(search_input, "org", ""),
-                namespace=getattr(search_input, "namespace", ""),
-                identifiers=idents,
-                limit=n,
-                query_embedding=None,
-                case_insensitive=case_insensitive,
-                scope=getattr(search_input, "scope", "private"),
-                agent=getattr(search_input, "agent", "*"),
-                user_id=getattr(search_input, "user_id", None),
-                order="recency",
-            )
+        rows += await _plain_chunks(
+            memory_repo.find_chunks_by_identifier,
+            org=getattr(search_input, "org", ""),
+            namespace=getattr(search_input, "namespace", ""),
+            identifiers=idents,
+            limit=n,
+            query_embedding=None,
+            case_insensitive=case_insensitive,
+            scope=getattr(search_input, "scope", "private"),
+            agent=getattr(search_input, "agent", "*"),
+            user_id=getattr(search_input, "user_id", None),
+            order="recency",
         )
     except Exception as e:  # noqa: BLE001 — additive
         logger.debug("recent identifier injection failed: %s", e)
@@ -601,19 +592,17 @@ async def _inject_identifier_memories(
             _n_chunks = _chunk_limit
             if _n_chunks > 0:
                 try:
-                    rows = list(rows) + list(
-                        await _plain_chunks(
-                            memory_repo.find_chunks_by_identifier,
-                            org=getattr(search_input, "org", ""),
-                            namespace=getattr(search_input, "namespace", ""),
-                            identifiers=idents,
-                            limit=_n_chunks,
-                            query_embedding=qvec or None,
-                            case_insensitive=case_insensitive,
-                            scope=getattr(search_input, "scope", "private"),
-                            agent=getattr(search_input, "agent", "*"),
-                            user_id=getattr(search_input, "user_id", None),
-                        )
+                    rows = list(rows) + await _plain_chunks(
+                        memory_repo.find_chunks_by_identifier,
+                        org=getattr(search_input, "org", ""),
+                        namespace=getattr(search_input, "namespace", ""),
+                        identifiers=idents,
+                        limit=_n_chunks,
+                        query_embedding=qvec or None,
+                        case_insensitive=case_insensitive,
+                        scope=getattr(search_input, "scope", "private"),
+                        agent=getattr(search_input, "agent", "*"),
+                        user_id=getattr(search_input, "user_id", None),
                     )
                 except Exception as e:  # noqa: BLE001 — chunks are additive too
                     logger.debug("identifier chunk injection failed: %s", e)

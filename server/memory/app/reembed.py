@@ -300,11 +300,12 @@ async def reembed_table(
         )
         if not rows:
             break
-        # A row whose text reads as a credential is never sent to the embedder: it stays on
-        # the old model, which search does not read, until --delete-old removes it.
-        page = without_credentials(
-            [_without_key(r) for r in rows], lambda r: str(r.get(cfg["text"]) or "")
-        )
+        page = [_without_key(r) for r in rows]
+        if table == "conversation_embeddings":
+            # A turn whose text reads as a credential is never sent to the embedder: it stays
+            # on the old model, which search does not read, until --delete-old removes it. A
+            # memory row's vector follows its own sensitivity label instead.
+            page = without_credentials(page, lambda r: str(r.get(cfg["text"]) or ""))
         if len(page) < len(rows):
             log(f"  {table}: {len(rows) - len(page)} rows whose text reads as a credential kept")
         left = await _rewrite_page(ch, embedder, table, page, key_only)

@@ -15,6 +15,7 @@ from typing import Any, Protocol
 from server.core.repo_base import _default_client
 from server.core.vectors.search_settings import vector_search_settings
 from server.knowledge.domain.conversations import ConversationRole
+from server.memory.app.credential_passages import HELD_MARGIN
 from server.memory.domain.sensitivity import reads_high
 
 # Characters of a turn a hit shows (the embedding row keeps the whole embedded text).
@@ -76,7 +77,8 @@ async def vector_search(
         "ns": q.namespace,
         "model": q.embedding_model,
         "q": q.query_vec,
-        "lim": int(q.top_k),
+        # Spare rows, so a turn held back below does not leave the page short.
+        "lim": int(q.top_k) + HELD_MARGIN,
         "maxd": float(q.max_distance),
     }
     # Relevance gate: drop rows beyond max_distance so a short query doesn't
@@ -130,7 +132,7 @@ async def vector_search(
     ]
     # Recency breaks exact distance ties (newest first).
     hits.sort(key=lambda h: (h.distance, _ts_desc_key(h.ts)))
-    return hits
+    return hits[: int(q.top_k)]
 
 
 def _ts_desc_key(ts: Any) -> float:

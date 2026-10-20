@@ -40,7 +40,7 @@ def backend(monkeypatch):
     backend.drain.return_value = True
     backend.rebuild.return_value = runner.BatchCheckpoint(0, 0, True)
     backend.snapshot.side_effect = lambda config_id: manifest(config_id)
-    backend.verify.side_effect = lambda config_id, prior, held: replace(
+    backend.verify.side_effect = lambda config_id, prior: replace(
         prior,
         tables=tuple(
             replace(table, prepared_uuid=uuid4(), verified_rows=0) for table in prior.tables
@@ -140,27 +140,6 @@ async def test_rows_staged_without_a_vector_are_counted_in_the_progress(backend)
 
 
 @pytest.mark.asyncio
-async def test_held_rows_are_carried_per_table_to_verification(backend):
-    table = runner.REBUILD_TABLES[0]
-    backend.rebuild.return_value = runner.BatchCheckpoint(30, 10, False, held=(25, 21))
-    updated = await runner.run_rebuild_step(
-        row("rebuild", cursor=20, held={table: [3, 21]}), backend
-    )
-    held = json.loads(updated["progress"])["held"]
-    assert held == {table: [3, 21, 25]}
-    original = row("verify", held=held)
-    await runner.run_rebuild_step(original, backend)
-    assert backend.verify.await_args.args[2] == held
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("held", [[1], {"memory_chunks": [-1]}, {"memory_chunks": ["1"]}])
-async def test_malformed_held_rows_fail_the_checkpoint(backend, held):
-    with pytest.raises(ValueError, match="held"):
-        runner._progress(row("rebuild", held=held))
-
-
-@pytest.mark.asyncio
 async def test_activation_write_failure_cannot_overwrite_a_possible_commit(backend):
     runner.write_configuration.side_effect = RuntimeError("response lost")
     with pytest.raises(RuntimeError):
@@ -236,7 +215,7 @@ async def test_prepared_manifest_checkpoint_failure_never_publishes(backend):
 @pytest.mark.asyncio
 async def test_verification_cannot_replace_source_identities(backend):
     original = row("verify")
-    backend.verify.side_effect = lambda config_id, prior, held: manifest(config_id, prepared=True)
+    backend.verify.side_effect = lambda config_id, prior: manifest(config_id, prepared=True)
     failed = await runner.run_rebuild_step(original, backend)
     assert failed["state"] == "failed"
     assert (

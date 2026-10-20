@@ -578,14 +578,15 @@ async def test_a_credential_passage_is_staged_empty_and_verifies(table):
             names, schema, identity, target_uuid, "a" * 64, embedder, after=0, ch=client
         )
         assert checkpoint.done and checkpoint.rows_written == 2
-        assert len(checkpoint.held) == 1
         args = (names, schema, identity, target_uuid, "a" * 64)
+        # Read as a table that holds no passages, the empty row is an error.
         with pytest.raises(ValueError, match="failed verification"):
             await verify_reembedded_target(
                 *args, model=embedder.model_name, dimensions=8, ch=client
             )
+        text = "content" if table == "memory_chunks" else "content_excerpt"
         rows = await verify_reembedded_target(
-            *args, model=embedder.model_name, dimensions=8, held=list(checkpoint.held), ch=client
+            *args, model=embedder.model_name, dimensions=8, passage_text=text, ch=client
         )
         assert rows == 2
     finally:

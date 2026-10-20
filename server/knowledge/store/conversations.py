@@ -600,9 +600,11 @@ async def recent_threads(
 ) -> list[dict[str, Any]]:
     """The namespace's threads with a live message in the window. Most recent first, ties
     by thread_id; `offset` skips that many. Each carries its message count, first/last seen
-    and the latest message's agent (`last_agent`), role and content (`last_content`).
-    `count_turns`: the message count is the thread's distinct turns, as an opened thread
-    shows; off, the window's raw row count (for a caller that does not read the count)."""
+    and the latest message's agent (`last_agent`), role, 240-character excerpt and whole
+    content (`last_content`, read for the page's threads only, so a credential that crosses
+    the excerpt's cut can be checked). `count_turns`: the message count is the thread's
+    distinct turns, as an opened thread shows; off, the window's raw row count (for a
+    caller that does not read the count)."""
     ch = ch or _default_client()
     params: dict[str, Any] = {
         "org": org,
@@ -626,7 +628,7 @@ async def recent_threads(
             min(ts)                                          AS first_seen,
             max(ts)                                          AS last_seen,
             argMax(toString(role), ts)                       AS last_role,
-            argMax(content, ts)                              AS last_content
+            argMax(substring(content, 1, 240), ts)           AS last_content_excerpt
         FROM loom.conversations
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -639,15 +641,16 @@ async def recent_threads(
         """,
         params=params,
     )
-    if not rows or not count_turns:
+    if not rows:
         return rows
     # The count an opened thread shows (each thread whole, one per turn however many agents
-    # logged it), for the page's threads only: an exact distinct count over the whole
-    # window would hold every turn's key in memory to rank threads it then drops.
-    per_thread = "count()" if agent else f"uniqExact({TURN})"
+    # logged it) and the whole last turn, for the page's threads only: an exact distinct
+    # count, or every thread's last turn, over the whole window would hold every turn's key
+    # or text in memory to rank threads it then drops.
+    per_thread = "count()" if agent or not count_turns else f"uniqExact({TURN})"
     counted = await ch.query_all(
         f"""
-        SELECT thread_id, {per_thread} AS n
+        SELECT thread_id, {per_thread} AS n, argMax(content, ts) AS last_content
         FROM loom.conversations
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -658,8 +661,18 @@ async def recent_threads(
         """,
         params={**params, "tids": [r["thread_id"] for r in rows]},
     )
-    turns = {r["thread_id"]: r["n"] for r in counted}
-    return [{**r, "msg_count": turns.get(r["thread_id"], r["msg_count"])} for r in rows]
+    by_thread = {r["thread_id"]: r for r in counted}
+    out = []
+    for r in rows:
+        page = by_thread.get(r["thread_id"], {})
+        out.append(
+            {
+                **r,
+                "msg_count": page.get("n", r["msg_count"]) if count_turns else r["msg_count"],
+                "last_content": page.get("last_content", r.get("last_content_excerpt", "")),
+            }
+        )
+    return out
 
 
 async def thread_titles(

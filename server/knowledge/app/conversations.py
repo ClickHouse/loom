@@ -665,8 +665,8 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
         input.org, input.namespace, [str(r["thread_id"]) for r in rows]
     )
     # Listed across the namespace: a last turn or a title that reads as a credential is
-    # listed without its text, as memory.list lists a 'high' row. The whole turn is read,
-    # so a key that crosses the excerpt's cut is caught too.
+    # listed without its text, as memory.list lists a 'high' row. The whole last turn is
+    # checked, so a key that crosses the excerpt's cut is caught too.
     threads = [
         ConversationThreadSummary(
             thread_id=str(r["thread_id"]),
@@ -675,7 +675,9 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
             first_seen=r["first_seen"],
             last_seen=r["last_seen"],
             last_role=str(r["last_role"]),
-            last_content_excerpt=_listed(str(r["last_content"]))[:HIT_EXCERPT_CHARS],
+            last_content_excerpt=""
+            if reads_high(str(r["last_content"]))
+            else str(r["last_content_excerpt"]),
             title=_listed(titles.get(str(r["thread_id"]), "")),
         )
         for r in rows
@@ -772,7 +774,9 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     The summary row's metadata.compacted_from = [msg_ids] marks it as a summary: a
     later run folds it into its window, and a window of nothing but summaries is
     already compacted. A summary that cannot be embedded compacts nothing
-    (`reason="embed-failed"`).
+    (`reason="embed-failed"`). A turn that reads as a credential is left out of the
+    window and stays live; a summary that reads as one anyway compacts nothing
+    (`reason="summary-reads-high"`).
     """
     import uuid as _uuid
 
@@ -806,7 +810,15 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             reason="nothing-to-compact",
         )
 
-    candidates = rows[: -input.keep_recent]
+    # A turn that reads as a credential is never sent to the summarizer: it stays live, out
+    # of the window, and out of search (it has no embedding row).
+    candidates = [r for r in rows[: -input.keep_recent] if not reads_high(str(r["content"]))]
+    if not candidates:
+        return ConversationCompactOutput(
+            compacted=False,
+            messages_summarized=0,
+            reason="nothing-to-compact",
+        )
     # An earlier summary in the window is not a new turn: it counts toward neither
     # min_to_compact nor messages_summarized.
     is_summary = [bool(_compacted_from(r)) for r in candidates]

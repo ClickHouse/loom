@@ -9,7 +9,7 @@ import logging
 from typing import Any
 
 from server.core.vectors.search_settings import vector_search_settings
-from server.memory.app.credential_passages import without_credentials
+from server.memory.app.credential_passages import HELD_MARGIN, without_credentials
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_types import SearchHit
 
@@ -50,11 +50,6 @@ def dedup_summary_rows(rows: list[dict[str, Any]], *, n: int) -> list[dict[str, 
         if len(out) >= n:
             break
     return out
-
-
-# Spare shortlist rows, so a digest held back for reading as a credential does not leave
-# the leg short.
-_HELD_MARGIN = 2
 
 
 # Pre-built per-entity summaries, top-N by cosine. Module-constant fallback;
@@ -164,7 +159,8 @@ async def fetch_session_summaries(
     where_sql = " AND ".join(where)
     sql = f"""
         SELECT session_id,
-               substring(summary_text, 1, 1200) AS content_excerpt,
+               substringUTF8(summary_text, 1, 1200) AS content_excerpt,
+               summary_text,
                cosineDistance(summary_embedding, {{q:Array(Float32)}}) AS distance,
                -- NB: alias must NOT be `valid_at` — under the analyzer a
                -- SELECT alias shadows the base column, so the as_of WHERE clause
@@ -197,15 +193,15 @@ async def fetch_session_summaries(
     # costs whole granules of vectors: measured 7.2 MiB at 5 rows, 13.3 MiB at
     # 20 on a 1,564-row namespace.
     wildcard = not agent or agent in ("*", "-")
-    params["lim"] = int(n) * (_SESSION_SUMMARY_OVERFETCH if wildcard else 1) + _HELD_MARGIN
+    params["lim"] = int(n) * (_SESSION_SUMMARY_OVERFETCH if wildcard else 1) + HELD_MARGIN
     try:
         rows = await ch.query_all(sql, params=params)
     except Exception as e:  # noqa: BLE001 — the session-summary leg is additive; fail open
         log.warning("fetch_session_summaries failed (fail-open): %s", e)
         return []
     # A digest that reads as a credential is written without a vector; this holds back
-    # one an earlier build embedded (the shortlist carries `_HELD_MARGIN` spare rows).
-    rows = without_credentials(rows, lambda r: str(r.get("content_excerpt") or ""))
+    # one an earlier build embedded (the shortlist carries `HELD_MARGIN` spare rows).
+    rows = without_credentials(rows, lambda r: str(r.get("summary_text") or ""))
     rows = dedup_summary_rows(rows, n=int(n))
     out: list[SearchHit] = []
     for r in rows:

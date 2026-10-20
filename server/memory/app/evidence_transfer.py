@@ -307,22 +307,21 @@ async def handle_memory_import_evidence(
     out.skipped += len(input.chunks) - len(chunks)
     importer_user = _importer_user(input)
     if chunks:
-        # A chunk or digest that reads as a credential is written without a vector (None).
-        vectors = await embed_plain(
+        # A chunk or digest that reads as a credential is written without a vector.
+        embedded = await embed_plain(
             [c.content for c in chunks], lambda texts: _embed_all(embedder, texts)
         )
         rows: list[dict[str, Any]] = []
         link_specs: list[tuple[str, int, str, int, int, list[str]]] = []
-        for c, vec in zip(chunks, vectors, strict=True):
-            if vec is not None and not vec:
+        for c, e in zip(chunks, embedded, strict=True):
+            if not e.written:
                 out.skipped += 1
                 continue
-            vec = vec or []
             sha = hashlib.sha256(c.content.encode("utf-8")).hexdigest()
             if c.content_sha256 and c.content_sha256 != sha:
                 out.edited.append(f"{c.session_id}:{c.chunk_index}")
-            if vec:
-                out.embedding_dim = len(vec)
+            if e.vector:
+                out.embedding_dim = len(e.vector)
             rows.append(
                 {
                     "org": input.org,
@@ -333,9 +332,9 @@ async def handle_memory_import_evidence(
                     "chunk_index": int(c.chunk_index),
                     "content_sha256": sha,
                     "content": c.content,
-                    "embedding": vec,
+                    "embedding": e.vector,
                     "embedding_model": embedder.model_name,
-                    "embedding_dim": len(vec),
+                    "embedding_dim": len(e.vector),
                     "parent_memory_key": c.parent_memory_key
                     or (c.memory_keys[0] if c.memory_keys else ""),
                     "line_start": int(c.line_start or 0),
@@ -382,17 +381,16 @@ async def handle_memory_import_evidence(
     ]
     out.skipped += len(input.digests) - len(digests)
     if digests:
-        dvectors = await embed_plain(
+        embedded = await embed_plain(
             [d.summary_text for d in digests], lambda texts: _embed_all(embedder, texts)
         )
         drows: list[dict[str, Any]] = []
-        for d, dvec in zip(digests, dvectors, strict=True):
-            if dvec is not None and not dvec:
+        for d, e in zip(digests, embedded, strict=True):
+            if not e.written:
                 out.skipped += 1
                 continue
-            vec = dvec or []
-            if vec:
-                out.embedding_dim = len(vec)
+            if e.vector:
+                out.embedding_dim = len(e.vector)
             drows.append(
                 build_session_summary_row(
                     org=input.org,
@@ -402,9 +400,9 @@ async def handle_memory_import_evidence(
                     session_id=d.session_id,
                     run_id=str(getattr(input, "run_id", "") or "-"),
                     summary_text=d.summary_text,
-                    summary_embedding=vec,
+                    summary_embedding=e.vector,
                     embedding_model=embedder.model_name,
-                    embedding_dim=len(vec),
+                    embedding_dim=len(e.vector),
                     key_facts=list(d.key_facts or []),
                     derived_from=list(d.derived_from or []),
                     valid_at=parse_iso_dt(d.valid_at) if d.valid_at else None,

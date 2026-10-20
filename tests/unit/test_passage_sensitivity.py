@@ -36,10 +36,16 @@ async def test_embed_plain_never_sends_a_credential_to_the_embedder(secret: str)
         sent.append(list(texts))
         return [[float(i + 1)] for i in range(len(texts))] if texts[0] != "fails" else [[]]
 
-    assert await embed_plain(["plain one", secret, "plain two"], embed) == [[1.0], None, [2.0]]
+    out = await embed_plain(["plain one", secret, "plain two"], embed)
+    assert [(e.vector, e.held, e.written) for e in out] == [
+        ([1.0], False, True),
+        ([], True, True),
+        ([2.0], False, True),
+    ]
     assert sent == [["plain one", "plain two"]]
-    # A failed embed is [], not None: the caller drops it rather than storing it unembedded.
-    assert await embed_plain(["fails"], embed) == [[]]
+    # A failed embed is not held: the caller drops it rather than storing it unembedded.
+    [failed] = await embed_plain(["fails"], embed)
+    assert (failed.vector, failed.held, failed.written) == ([], False, False)
 
 
 @pytest.mark.asyncio
@@ -55,7 +61,8 @@ async def test_embed_plain_makes_no_call_when_every_text_reads_as_a_credential(
     async def embed(texts: list[str]) -> list[list[float]]:
         raise AssertionError("no text may reach the embedder")
 
-    assert await embed_plain([f"key {_OPENAI_KEY}"], embed) == [None]
+    [e] = await embed_plain([f"key {_OPENAI_KEY}"], embed)
+    assert (e.vector, e.held) == ([], True)
 
 
 def test_without_credentials_keeps_order_and_fills_the_limit() -> None:
@@ -120,7 +127,6 @@ async def test_a_conversation_chunk_holding_a_key_is_stored_without_a_vector(
     assert held and plain
     assert all((r["embedding"], r["embedding_dim"]) == ([], 0) for r in held)
     assert all(r["embedding_dim"] == 2 for r in plain)
-    assert "sensitivity" not in rows[0]
     assert not any(_OPENAI_KEY in t for t in emb.seen)
 
 
@@ -232,11 +238,18 @@ async def test_the_summary_leg_serves_no_digest_that_reads_as_a_credential() -> 
         async def query_all(self, *_: Any, **__: Any) -> list[dict[str, Any]]:
             return [
                 {
+                    # The key straddles the served excerpt's cut: the whole text is checked.
                     "session_id": "s1",
-                    "content_excerpt": f"The user shared {_AWS_KEY_ID}.",
+                    "content_excerpt": "x" * 1195 + " AKIA",
+                    "summary_text": "x" * 1195 + f" {_AWS_KEY_ID}.",
                     "distance": 0.1,
                 },
-                {"session_id": "s2", "content_excerpt": _PLAIN, "distance": 0.2},
+                {
+                    "session_id": "s2",
+                    "content_excerpt": _PLAIN,
+                    "summary_text": _PLAIN,
+                    "distance": 0.2,
+                },
             ]
 
     hits = await fetch_session_summaries(
@@ -253,7 +266,8 @@ async def test_the_summary_leg_serves_no_digest_that_reads_as_a_credential() -> 
 
 @pytest.mark.asyncio
 async def test_the_ask_chunk_lookups_serve_no_chunk_that_reads_as_a_credential() -> None:
-    from server.memory.app.ask.identifiers import _HELD_MARGIN, _plain_chunks
+    from server.memory.app.ask.identifiers import _plain_chunks
+    from server.memory.app.credential_passages import HELD_MARGIN as _HELD_MARGIN
 
     asked: list[int] = []
 

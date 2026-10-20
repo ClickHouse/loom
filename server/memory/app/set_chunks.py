@@ -416,18 +416,17 @@ async def write_set_chunks(
 
         embedder = get_embedder()
 
-    # A chunk that reads as a credential is written without a vector (None).
-    vectors = await embed_plain(
+    # A chunk that reads as a credential is written without a vector.
+    embedded = await embed_plain(
         [c for c, _, _ in chunks], lambda texts: _embed_chunks(embedder, texts)
     )
     session_id = set_chunk_session_id(input.memory_key)
     run_id = str(getattr(input, "run_id", "") or "-")
     now = naive_utc_now()
     rows: list[dict[str, Any]] = []
-    for i, ((chunk, line_start, line_end), vec) in enumerate(zip(chunks, vectors, strict=True)):
-        if vec is not None and not vec:
+    for i, ((chunk, line_start, line_end), e) in enumerate(zip(chunks, embedded, strict=True)):
+        if not e.written:
             continue
-        vector = vec or []
         rows.append(
             {
                 "org": input.org,
@@ -439,9 +438,9 @@ async def write_set_chunks(
                 "chunk_index": i,
                 "content_sha256": _chunk_sha(chunk),
                 "content": chunk,
-                "embedding": vector,
+                "embedding": e.vector,
                 "embedding_model": embedder.model_name,
-                "embedding_dim": len(vector),
+                "embedding_dim": len(e.vector),
                 "parent_memory_key": input.memory_key,
                 "line_start": int(line_start),
                 "line_end": int(line_end),

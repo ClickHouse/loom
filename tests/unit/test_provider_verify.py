@@ -29,6 +29,7 @@ def verification():
         "missing": 0,
         "metadata_errors": 0,
         "vector_errors": 0,
+        "emptied": 0,
     }
     client = AsyncMock()
     client.query_one.side_effect = [
@@ -54,20 +55,47 @@ async def test_complete_verified_target_returns_logical_count(verification):
     assert "isNotDistinctFrom(s.`verified`, t.`verified`)" in sql
     assert "isNotDistinctFrom(s.`tombstoned_at`, t.`tombstoned_at`)" in sql
     assert "memory_key_embedding" in sql and "isFinite" in sql
-    assert params == {"model": "target", "dim": 3, "held": []}
+    assert params == {"model": "target", "dim": 3}
+
+
+_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
 
 
 @pytest.mark.asyncio
-async def test_held_ordinals_reach_the_empty_vector_check(verification):
-    args, client, _ = verification
-    await verify_reembedded_target(*args, model="target", dimensions=3, held=[4, 9], ch=client)
-    sql, params = client.query_one.await_args_list[2].args
-    assert params["held"] == [4, 9]
-    assert "NOT has({held:Array(UInt64)}, s._loom_rebuild_ordinal)" in sql
+async def test_an_emptied_passage_that_reads_as_a_credential_verifies(verification):
+    args, client, result = verification
+    result["emptied"] = 2
+    client.query_all.return_value = [{"text": f"key {_KEY}"}, {"text": f"also {_KEY}"}]
+    count = await verify_reembedded_target(
+        *args, model="target", dimensions=3, passage_text="content", ch=client
+    )
+    assert count == 3
+    sql = client.query_all.await_args.args[0]
+    assert "s.`content` AS text" in sql and "empty(t.`embedding`)" in sql
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["missing", "metadata_errors", "vector_errors"])
+async def test_an_emptied_plain_passage_fails_verification(verification):
+    args, client, result = verification
+    result["emptied"] = 2
+    client.query_all.return_value = [{"text": f"key {_KEY}"}, {"text": "a plain turn"}]
+    with pytest.raises(ValueError, match="failed verification"):
+        await verify_reembedded_target(
+            *args, model="target", dimensions=3, passage_text="content", ch=client
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_emptied_row_fails_a_table_that_holds_no_passages(verification):
+    args, client, result = verification
+    result["emptied"] = 1
+    with pytest.raises(ValueError, match="failed verification"):
+        await verify_reembedded_target(*args, model="target", dimensions=3, ch=client)
+    client.query_all.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["missing", "metadata_errors", "vector_errors", "emptied"])
 async def test_any_error_blocks_publication(verification, field):
     args, client, result = verification
     result[field] = 1

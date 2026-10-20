@@ -6,6 +6,7 @@ from uuid import UUID
 
 from server.core.repo_base import _CHClient
 from server.embedding.embedder import Embedder
+from server.insights.app.provider_rebuild_batch import PASSAGE_TABLES, TEXT_COLUMNS
 from server.insights.app.provider_rebuild_page import rebuild_snapshot_page
 from server.insights.app.provider_rebuild_runner import BatchCheckpoint
 from server.insights.app.provider_rebuild_snapshot import snapshot_rebuild_manifest
@@ -95,9 +96,7 @@ class ClickHouseRebuildBackend:
             ch=self.ch,
         )
 
-    async def _verify_table(
-        self, manifest: RebuildManifest, table: RebuildTablePlan, held: list[int]
-    ) -> int:
+    async def _verify_table(self, manifest: RebuildManifest, table: RebuildTablePlan) -> int:
         names = StagingNames(manifest.job_id, table.table)
         args = (names, _schema(table), table.snapshot_uuid, table.target_uuid, self.fingerprint)
         if table.table == "embedding_cache":
@@ -114,17 +113,15 @@ class ClickHouseRebuildBackend:
             *args,
             model=self.target.model_name,
             dimensions=self.target.dim,
-            held=held,
+            passage_text=TEXT_COLUMNS[table.table] if table.table in PASSAGE_TABLES else None,
             ch=self.ch,
         )
 
-    async def verify(
-        self, config_id: UUID, manifest: RebuildManifest, held: dict[str, list[int]]
-    ) -> RebuildManifest:
+    async def verify(self, config_id: UUID, manifest: RebuildManifest) -> RebuildManifest:
         self._require_job(config_id, manifest)
         prepared = []
         for table in manifest.tables:
-            count = await self._verify_table(manifest, table, held.get(table.table, []))
+            count = await self._verify_table(manifest, table)
             identity = await prepare_live_table(
                 StagingNames(config_id, table.table),
                 _schema(table),

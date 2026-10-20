@@ -326,18 +326,17 @@ async def write_memory_chunks(
     chunk_payloads = [
         (i, chunk, line_start, line_end) for i, (chunk, line_start, line_end) in enumerate(chunks)
     ]
-    # A chunk that reads as a credential is written without a vector (None): no search
-    # leg reads a chunk without one.
-    vectors = await embed_plain(
+    # A chunk that reads as a credential is written without a vector: no search leg
+    # reads a chunk without one.
+    embedded = await embed_plain(
         [chunk for _, chunk, _, _ in chunk_payloads], lambda texts: _embed_chunks(embedder, texts)
     )
 
     rows: list[dict[str, Any]] = []
     spans: list[tuple[int, str, int, int]] = []
-    for (i, chunk, line_start, line_end), vec in zip(chunk_payloads, vectors, strict=True):
-        if vec is not None and not vec:
+    for (i, chunk, line_start, line_end), e in zip(chunk_payloads, embedded, strict=True):
+        if not e.written:
             continue  # unembeddable: a plain chunk is written only with its vector
-        vector = vec or []
         content_sha256 = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
         rows.append(
             {
@@ -350,9 +349,9 @@ async def write_memory_chunks(
                 "chunk_index": i,
                 "content_sha256": content_sha256,
                 "content": chunk,
-                "embedding": vector,
+                "embedding": e.vector,
                 "embedding_model": embedder.model_name,
-                "embedding_dim": len(vector),
+                "embedding_dim": len(e.vector),
                 "parent_memory_key": parent_memory_key,
                 "line_start": int(line_start),
                 "line_end": int(line_end),

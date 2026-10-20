@@ -103,3 +103,48 @@ async def test_a_row_whose_text_reads_as_a_credential_is_never_re_embedded() -> 
     assert n == 2 and ch.inserted == ["000", "002"]
     assert sent == ["c0", "c2"]
     assert any("reads as a credential" in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_a_memory_row_is_re_embedded_whatever_its_text() -> None:
+    """A memory row's vector follows its sensitivity label: a caller's `low` label on a
+    value shaped like a credential wins, and its row has a vector to rebuild."""
+    excerpt = "the test fixture key is " + "sk-" + "proj-" + "Ab3" * 12
+    row = {
+        "org": "o",
+        "namespace": "ns",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "scope": "private",
+        "embedding_model": "m1",
+        "memory_key": "fixture_key",
+        "content_excerpt": excerpt,
+        "tags": ["sensitivity:low"],
+        "embedding": [0.0],
+        "embedding_dim": 1,
+        "version": 1,
+    }
+    inserted: list[dict[str, Any]] = []
+    sent: list[str] = []
+
+    class _MemCH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict]:
+            if "system.columns" in sql:
+                return [{"name": c} for c in row]
+            return [] if "k0" in (params or {}) else [{**row, "_k": tuple(row.values())[:8]}]
+
+        async def query_one(self, sql: str, params: Any = None) -> dict:
+            return {"n": 1}
+
+        async def insert(self, table: str, rows: list[dict], settings: Any = None) -> None:
+            inserted.extend(rows)
+
+    class _Recording(_Emb):
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            sent.extend(texts)
+            return await super().embed_many(texts)
+
+    n = await rb.reembed_table(_MemCH(), _Recording(), "memory_embeddings", log=lambda *_: None)
+    assert n == 1 and sent[0] == excerpt
+    assert inserted[0]["embedding_model"] == "m2"

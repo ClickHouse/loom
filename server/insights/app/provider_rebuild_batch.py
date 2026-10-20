@@ -60,10 +60,7 @@ def _source_text(
 
 
 def _inputs(
-    table: str,
-    rows: Sequence[Mapping[str, Any]],
-    source_texts: Mapping[int, str],
-    held: list[int],
+    table: str, rows: Sequence[Mapping[str, Any]], source_texts: Mapping[int, str]
 ) -> tuple[list[str], list[tuple[int, str]]]:
     columns = [s.column for s in EMBEDDING_SURFACES if s.table == table and s.action == "reembed"]
     if not columns:
@@ -77,7 +74,6 @@ def _inputs(
             continue
         text = _source_text(table, row, index, source_texts)
         if table in PASSAGE_TABLES and reads_high(text):
-            held.append(index)
             continue
         for column in columns:
             value = text
@@ -149,7 +145,6 @@ async def rebuild_batch(
     *,
     source_texts: Mapping[int, str] | None = None,
     waiting: list[int] | None = None,
-    held: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Return full staged rows; never publish partial or malformed embeddings.
 
@@ -161,7 +156,7 @@ async def rebuild_batch(
     vector until a write replaces it or a later rebuild covers it.
 
     A raw passage whose text reads as a credential is staged without a vector, as its
-    write path leaves it, and its index added to `held`, so verification accepts it.
+    write path leaves it; verification reads the text and accepts it.
 
     The caller must hydrate tracker text from its source and supply every stored
     column. Tombstones remain tombstones and are never sent to the provider.
@@ -170,10 +165,7 @@ async def rebuild_batch(
     """
     if not target.model_name or type(target.dim) is not int or not 1 <= target.dim <= 65535:
         raise RebuildBatchError("embedding_target_invalid")
-    left_out: list[int] = []
-    texts, slots = _inputs(table, rows, source_texts or {}, left_out)
-    if held is not None:
-        held.extend(left_out)
+    texts, slots = _inputs(table, rows, source_texts or {})
     # One call carries one org's texts: a model call names a single customer.
     by_org = await customer.by_org(str(rows[index].get("org", "")) for index, _ in slots)
     vectors: list[list[float]] = [[] for _ in texts]

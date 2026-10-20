@@ -10,9 +10,9 @@ from typing import Any
 
 import pytest
 
+from server.memory.app.credential_passages import HELD_MARGIN as _HELD_MARGIN
 from server.memory.app.retrieval import SearchHit, fetch_session_summaries
 from server.memory.app.retrieval.summaries import (
-    _HELD_MARGIN,
     _SESSION_SUMMARY_OVERFETCH,
     _SESSION_SUMMARY_TOP_N,
     dedup_summary_rows,
