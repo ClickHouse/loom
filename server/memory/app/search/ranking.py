@@ -184,17 +184,15 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
     # by identity: extraction writes a key once per session, so a key names several hits.
     hit_of = {id(c): h for c, h in zip(candidates, ctx.all_hits, strict=True)}
     before = list(ctx.all_hits)
-    ordered: list[_MemorySearchHit] = []
-    for c in reranked:
-        h = hit_of.pop(id(c), None)
-        if h is not None:
-            ordered.append(h)
+    # Every reranker returns a permutation of its candidates.
+    ordered = [hit_of[id(c)] for c in reranked]
     # The block sorts by rank_score: the pool's own scores, handed out in the reranker's
     # order, make that sort keep it without changing the scores' spread.
     for h, score in zip(
         ordered, sorted((o.rank_score for o in ordered), reverse=True), strict=True
     ):
         h.score_components["rank_score_pre_rerank"] = h.rank_score
+        h.score_components["rank_score"] = score
         h.rank_score = score
     ctx.all_hits = ordered
     ctx.actual_work.update(_record_rerank_trail(before, ctx.all_hits, "external"))

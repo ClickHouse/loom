@@ -10,6 +10,7 @@ import asyncio
 import logging
 
 from server.memory.app.search.context import SearchContext
+from server.memory.app.search.verdict import gate_order
 from server.memory.domain.search_types import hit_sort_key
 
 log = logging.getLogger(__package__)
@@ -23,7 +24,7 @@ async def _maybe_iterative_retry(ctx: SearchContext) -> None:
     retrievals skip."""
     input = ctx.input
     final_hits = ctx.final_hits
-    _iter_top_sim = (1.0 - final_hits[0].distance) if final_hits else 0.0
+    _iter_top_sim = (1.0 - gate_order(final_hits)[0].distance) if final_hits else 0.0
     if not (
         getattr(input, "recipe", "") == "quality"
         and 0.35 <= _iter_top_sim <= 0.65

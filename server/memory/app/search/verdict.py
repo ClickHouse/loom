@@ -13,6 +13,27 @@ if TYPE_CHECKING:
     from server.memory.domain.retrieval_calibration import RetrievalCalibration
 
 
+_PRE_RERANK = "rank_score_pre_rerank"
+
+
+def gate_order(hits: list[Any]) -> list[Any]:
+    """The served rows in the order the confidence gates read them: as served, except that
+    the rows a reranker ordered go back to their fused order (`ranking._run_external_rerank`
+    keeps it in `rank_score_pre_rerank`). The gates measure how well the first stage
+    matched, and a reranker's pick may answer in vocabulary the query does not share: read
+    as rank 1, its cosine would abstain on the answer it serves."""
+    slots = [
+        i for i, h in enumerate(hits) if _PRE_RERANK in (getattr(h, "score_components", None) or {})
+    ]
+    if not slots:
+        return hits
+    fused = sorted((hits[i] for i in slots), key=lambda h: -float(h.score_components[_PRE_RERANK]))
+    out = list(hits)
+    for i, h in zip(slots, fused, strict=True):
+        out[i] = h
+    return out
+
+
 def _gate_top_sim(hits: list[Any]) -> float | None:
     """The cosine the below-threshold gate reads: the fused rank-1 row's by default, or the
     best cosine among the returned rows when memory_search_abstain_top_sim_scope == "window" —
@@ -21,6 +42,8 @@ def _gate_top_sim(hits: list[Any]) -> float | None:
     if not hits:
         return None
     from server.settings import settings as _s_gate
+
+    hits = gate_order(hits)
 
     if str(_s_gate.memory_search_abstain_top_sim_scope) == "window":
         return max(1.0 - float(h.distance) for h in hits)
@@ -165,7 +188,8 @@ def _calibrate_final_hits(
     # 0.327/"abstain"); (c) the iterative judge reads rank 0 too, and would disagree with the
     # verdict about what the top hit is.
     # A real fix needs the hit model to distinguish cosine from synthesized distances.
-    second_similarity = 1.0 - final_hits[1].distance if len(final_hits) > 1 else 0.0
+    gated = gate_order(final_hits)
+    second_similarity = 1.0 - gated[1].distance if len(gated) > 1 else 0.0
     calibration = calibrate_retrieval(
         top_similarity=_gate_top_sim(final_hits) or 0.0,
         second_similarity=second_similarity,

@@ -74,3 +74,44 @@ async def test_rows_of_one_key_from_two_sessions_both_survive(
     monkeypatch.setattr("server.memory.app.rerank.rerank", _reranker(order))
     await ranking._run_external_rerank(ctx)
     assert _block(ctx) == order
+
+
+@pytest.mark.asyncio
+async def test_a_reranker_that_keeps_the_input_order_changes_no_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timeout or an unreadable reply keeps the input order: the scores stay as fused."""
+    ctx = _ctx([_hit("user_name", 0.40), _hit("user_editor", 0.37)])
+
+    async def _kept(*, candidates: list[Any], **_k: Any) -> list[Any]:
+        return candidates
+
+    monkeypatch.setattr("server.memory.app.rerank.rerank", _kept)
+    await ranking._run_external_rerank(ctx)
+    assert [(h.memory_key, h.rank_score) for h in ctx.all_hits] == [
+        ("user_name", 0.40),
+        ("user_editor", 0.37),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_confidence_gates_read_the_fused_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reranker's pick can answer in words the query does not share: its low cosine at
+    rank 1 must not make the response abstain on the answer it serves."""
+    from server.memory.app.search.verdict import _gate_top_sim, gate_order
+
+    ctx = _ctx([_hit("user_name", 0.40), _hit("user_location", 0.25)])
+    order = ["user_location in s1", "user_name in s1"]
+    monkeypatch.setattr("server.memory.app.rerank.rerank", _reranker(order))
+    await ranking._run_external_rerank(ctx)
+    block = assemble_context_block(ctx.all_hits, top_k=10)
+    assert [h.memory_key for h in block] == ["user_location", "user_name"]
+    assert [h.memory_key for h in gate_order(block)] == ["user_name", "user_location"]
+    assert _gate_top_sim(block) == pytest.approx(0.40)
+
+
+def test_an_unreranked_block_is_gated_as_served() -> None:
+    from server.memory.app.search.verdict import gate_order
+
+    block = [_hit("b", 0.30), _hit("a", 0.50)]
+    assert gate_order(block) is block

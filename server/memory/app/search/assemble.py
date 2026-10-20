@@ -191,11 +191,7 @@ async def _assemble_final_hits(
         per_speaker_quota=per_speaker_quota,
         per_session_cap=per_session_cap,
         summary_cap=summary_cap,
-        # Bounded lifts; not under rrf, and not over a reranker's order, which is the
-        # relevance authority.
-        bound_component_lifts=(
-            ctx.input.search_mode != "rrf" and not ctx.actual_work.get("external_rerank_used")
-        ),
+        bound_component_lifts=ctx.input.search_mode != "rrf",  # bounded lifts; not under rrf
     )
     # Fact rows first: verbatim chunks hold at most the request's share of the block; surplus
     # chunks give their slots to the best stored fact rows the window did not reach. 0 = off.
