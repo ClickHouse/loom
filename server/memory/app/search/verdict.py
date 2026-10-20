@@ -53,8 +53,9 @@ _TIER_COMPONENTS: tuple[str, ...] = ("anchor_first", "recent_first")
 
 def _flag_below_threshold(hits: list[Any], abstain_threshold: float) -> int:
     """Mark every served row whose un-boosted similarity is below the abstain threshold the
-    response's gate used. The gate reads the rank-1 row; a k=30 window carries a tail the gate
-    never looked at, and a caller who wants "abstain means abstain" per row reads this flag.
+    response's gate used. The gate reads the first row of `gate_order`; a k=30 window carries
+    a tail the gate never looked at, and a caller who wants "abstain means abstain" per row
+    reads this flag.
     Rows without a cosine (tier rows, derived / computed evidence, record-plane lexical rows)
     are left unset. Returns how many rows were flagged."""
     if abstain_threshold <= 0.0 or not hits:

@@ -418,6 +418,8 @@ def test_why_note_names_the_terms_by_magnitude_and_skips_the_base() -> None:
             "date_proximity_boost": 0.12,
         },
     }
+    assert mcp_tools.why_note(reranked) == "reranked+3, date+0.12"
+    reranked["score_components"]["rerank_delta"] = 0.0  # a kept order moved nothing
     assert mcp_tools.why_note(reranked) == "date+0.12"
 
 

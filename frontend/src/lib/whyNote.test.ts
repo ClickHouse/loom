@@ -19,7 +19,7 @@ describe("signed / whyTerms", () => {
     expect(terms[1].value).toBe(-0.3);
   });
 
-  it("skips a reranked row's own fused score and the rerank trail", () => {
+  it("names the reranker's move and skips the rest of its trail", () => {
     const terms = whyTerms({
       rank_score: 0.6,
       rank_score_pre_rerank: 0.37,
@@ -29,7 +29,10 @@ describe("signed / whyTerms", () => {
       rerank_external: 1,
       semantic: 0.25,
     });
-    expect(terms).toEqual([{ label: "semantic", value: 0.25 }]);
+    expect(terms).toEqual([
+      { label: "reranked", value: 3 },
+      { label: "semantic", value: 0.25 },
+    ]);
   });
 
   it("shows an unknown component under its own spelling rather than hiding it", () => {

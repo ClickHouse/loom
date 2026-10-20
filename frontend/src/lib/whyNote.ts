@@ -1,7 +1,8 @@
 // The Memories list says why each search hit ranked where it did: every non-zero score
 // component by magnitude, signed, in plain words. The base scores (`rank_score`,
 // `rank_score_raw`, a reranked row's `rank_score_pre_rerank`) and a rerank's trail of
-// positions (`rerank_*`) are not reasons, so they are skipped.
+// positions (`rerank_*`) are not reasons, so they are skipped; the places a reranker moved
+// the row (`rerank_delta`) are, and show as `reranked`.
 
 export interface WhyTerm {
   /** Plain-language label for the ranking term. */
@@ -36,6 +37,10 @@ export function whyTerms(components: Record<string, unknown> | null | undefined)
   if (!components || typeof components !== "object") return [];
   const out: WhyTerm[] = [];
   for (const [name, raw] of Object.entries(components)) {
+    if (name === "rerank_delta" && typeof raw === "number" && raw !== 0) {
+      out.push({ label: "reranked", value: raw }); // places the reranker moved the row
+      continue;
+    }
     if (SKIP.has(name) || name.startsWith("rerank_")) continue;
     if (typeof raw !== "number" || !Number.isFinite(raw)) continue;
     if (Math.abs(raw) < MIN_ABS) continue;

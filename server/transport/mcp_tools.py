@@ -473,6 +473,11 @@ def why_note(hit: dict[str, Any]) -> str:
         parts.append(expl[:80])
     comps = hit.get("score_components") or {}
     if isinstance(comps, dict):
+        # A rerank's trail is positions, not lifts; the places it moved the row are the
+        # reason the row holds its rank.
+        moved = comps.get("rerank_delta")
+        if isinstance(moved, int | float) and moved:
+            parts.append(f"reranked{int(moved):+d}")
         ranked = sorted(
             ((str(k), float(v)) for k, v in comps.items() if isinstance(v, int | float)),
             key=lambda kv: -abs(kv[1]),
