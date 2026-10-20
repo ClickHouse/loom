@@ -243,7 +243,6 @@ def submit(
     Synchronous and non-blocking: the caller is inside a request.
     """
     global _dropped
-
     if not enabled() or not trace_id or not query or reads_llm_free():
         return False
     if not _sampled(trace_id):

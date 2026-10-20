@@ -1,6 +1,6 @@
 """LOOM_READS_LLM_FREE: every read op (`Operation.read_only`) runs with no LLM
-call (no `builtin:openai` rerank) and one query embedding; an ask whose answer a
-model writes answers 409 naming the setting."""
+call (no `builtin:openai` rerank); an ask whose answer a model writes answers 409
+naming the setting."""
 
 from __future__ import annotations
 
@@ -274,11 +274,35 @@ async def test_a_read_runs_only_the_reranker_its_request_names(
         await _run(search_env, rerank="builtin:cohere")
         assert reranked == ["builtin:cohere"]  # named by the request: runs
         await _run(search_env, rerank="builtin:openai")
-    assert "builtin:cohere" in reranked and llm_attempts == []  # builtin:openai: never
+    assert reranked == ["builtin:cohere"] and llm_attempts == []  # builtin:openai: never
     await _run(search_env)  # off the setting, the namespace's reranker runs
-    assert looked_up == ["ns"]
+    assert looked_up == ["ns"] and reranked == ["builtin:cohere", "builtin:cohere"]
     await _run(search_env, rerank="builtin:openai")
     assert llm_attempts  # and builtin:openai reaches the model
+
+
+async def test_a_code_search_named_llm_reranker_keeps_the_fused_order(
+    llm_attempts, monkeypatch
+) -> None:
+    # Memory search drops builtin:openai before reranking; code search reaches rerank()
+    # with a request-named one, so the gate there is what keeps it from the model.
+    from server.memory.app.rerank import RerankCandidate, rerank
+
+    candidates = [
+        RerankCandidate(
+            memory_key=f"u{i}",
+            namespace="",
+            content_excerpt=f"def f{i}(): ...",
+            memory_type="function",
+            similarity=0.5,
+        )
+        for i in range(2)
+    ]
+    with _serving(_op("code.search"), monkeypatch):
+        out = await rerank(
+            endpoint="builtin:openai", prompt_template="", query="q", candidates=candidates
+        )
+    assert out is candidates and llm_attempts == []
 
 
 def test_a_code_search_runs_no_default_reranker(monkeypatch) -> None:
@@ -351,14 +375,29 @@ async def test_the_tracker_and_bisect_model_steps_keep_their_deterministic_answe
     from types import SimpleNamespace
 
     from server.code.app import bisect_fusion
-    from server.tracker.app import dupcheck, dupcheck_answer
+    from server.tracker.app import dup_judge, dupcheck, dupcheck_answer
+    from server.tracker.domain.bisect import Candidate
 
-    out = SimpleNamespace(items=[1], verdict="related")
-    pool = [SimpleNamespace(pr_number=1)]
+    judged: list[str] = []
+
+    async def judge(*a: Any, **k: Any) -> Any:
+        judged.append("judge")
+        raise AssertionError("an LLM call")
+
+    async def no_text(*a: Any, **k: Any) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(dup_judge, "judge", judge)
     monkeypatch.setattr(dupcheck_answer.settings, "tracker_dupcheck_judge_enabled", True)
+    pool = [Candidate(pr_number=1, title="t", author="a", merged_at="", minor_version="")]
+    related = SimpleNamespace(items=[{"number": 1, "kind": "issue"}], verdict="related")
+    draft = SimpleNamespace(org="o", namespace="ns", title="t", body="b", top_k=5)
+    run = {"q": SimpleNamespace(text="t"), "unserved": []}
+    src = SimpleNamespace(embed_items_by_number=no_text)
     with _serving(_op("tracker.duplicate_check"), monkeypatch):
         assert await dupcheck._rerank_call(SimpleNamespace(title="t", body="b"), [{"k": 1}]) is None
-        assert await dupcheck_answer.judge_uncertain(None, None, {}, out, object()) is out
+        out = await dupcheck_answer.judge_uncertain(src, draft, run, related, object())
+        assert out is related and judged == []
         ranked, info = await bisect_fusion.rerank_stage(pool, text="crash", force=True)
         assert ranked is pool and info == {}
 
@@ -482,3 +521,87 @@ async def test_off_the_setting_the_model_steps_that_need_results_reach_the_model
             SimpleNamespace(embed_items_by_number=no_text), draft, run, related, object()
         )
     assert judged == ["judge"]
+
+
+@pytest.mark.parametrize("on", [True, False])
+async def test_a_code_search_expands_no_query(every_module_faked, monkeypatch, on: bool) -> None:
+    # Query expansion asks a model for identifiers before the search; off the setting it
+    # does, under it the search runs on the question alone.
+    from server.code.api.models_search import CodeSearchInput
+
+    async def under_cap(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr("server.observability.budget.namespace_over_cap", under_cap)
+    op = _op("code.search")
+    with _serving(op, monkeypatch, on=on):
+        try:
+            await op.handler(
+                CodeSearchInput(org="o", namespace="code-x", query=_QUESTION, expand=True)
+            )
+        except Exception:  # noqa: BLE001 — the empty fake data fails the search after it
+            pass
+    assert bool(every_module_faked) is not on
+
+
+def _marking(op: Any, seen: list[bool]) -> Any:
+    """`op` with a handler that records whether it ran under the reads mark."""
+    import dataclasses
+
+    async def handler(inp: Any) -> Any:
+        seen.append(llm_free.reads_llm_free())
+        return op.output_model.model_construct()
+
+    return dataclasses.replace(op, handler=handler)
+
+
+@pytest.mark.parametrize("on", [True, False])
+def test_both_transports_run_a_read_handler_under_the_mark(monkeypatch, on: bool) -> None:
+    import asyncio
+
+    from server.settings import settings
+    from server.transport import http, mcp_call, mcp_outcome
+
+    monkeypatch.setattr(settings, "reads_llm_free", on)
+    monkeypatch.setattr(settings, "code_org", "acme")
+    monkeypatch.setattr(settings, "code_namespace", "code-acme")
+    seen: list[bool] = []
+    op = _marking(_op("code.repos"), seen)
+    assert op.read_only
+
+    async def _none(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, op.mcp_tool_name, op)
+    monkeypatch.setattr(mcp_call, "_caller_defaults", _none)
+    monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
+    monkeypatch.setattr(mcp_outcome, "_emit_mcp_event", lambda *a, **k: None)
+    out = asyncio.run(mcp_call._call_tool(1, {"name": op.mcp_tool_name, "arguments": {}}))
+    assert out["result"]["isError"] is False, out
+    asyncio.run(http._run_handler(op, op.input_model(), http._HttpCall(request_id="r")))
+    assert seen == [on, on]
+
+
+def test_the_judge_queues_nothing_under_the_mark(monkeypatch) -> None:
+    from server.observability import retrieval_judge
+
+    sampled: list[str] = []
+
+    def sample(trace_id: str) -> bool:
+        sampled.append(trace_id)
+        return False  # queues nothing either way
+
+    monkeypatch.setattr(retrieval_judge, "enabled", lambda: True)
+    monkeypatch.setattr(retrieval_judge, "_sampled", sample)
+    args: dict[str, Any] = {
+        "trace_id": "t",
+        "query": "q",
+        "hits": [],
+        "org": "o",
+        "namespace": "ns",
+    }
+    with _serving(_op("memory.search"), monkeypatch):
+        assert retrieval_judge.submit(**args) is False
+    assert sampled == []  # refused before sampling
+    retrieval_judge.submit(**args)
+    assert sampled == ["t"]  # off the mark it samples
