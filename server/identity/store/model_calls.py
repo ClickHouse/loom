@@ -25,7 +25,8 @@ async def get(org: str, *, ch: _CHClient | None = None) -> dict[str, Any] | None
     """The org's current setting; None when it was never set."""
     ch = ch or _default_client()
     row: dict[str, Any] | None = await ch.query_one(
-        "SELECT enabled, reason, updated_by, updated_at FROM loom.org_model_calls FINAL "
+        "SELECT enabled, reason, updated_by, updated_at, locked, locked_by "
+        "FROM loom.org_model_calls FINAL "
         "WHERE org = {org:String} LIMIT 1",
         params={"org": org},
     )

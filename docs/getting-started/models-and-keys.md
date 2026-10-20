@@ -283,7 +283,7 @@ curl -s -X POST "$LOOM_BASE_URL/v1/org.set_model_calls" -H "Authorization: Beare
 - Switch an org off only once every replica runs a build that knows the
   switch: an older one keeps calling models for the org.
 - A server that cannot read the switch for longer than
-  `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` makes no model call for any org
+  `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` makes no model call for any org
   until it can.
 - [`org.model_calls`](../reference/operations/org.md#orgmodel_calls) reads the
   current setting. The deployment's own calls (its startup check, calibration)

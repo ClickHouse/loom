@@ -54,6 +54,8 @@ class ExtractionQueueResult:
     failures: list[str] = field(default_factory=list)
     # Claimed rows left for later: their org's model calls were switched off.
     skipped: int = 0
+    # Requests of a switched-off org dropped after LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS.
+    dropped: int = 0
 
     @property
     def done_count(self) -> int:
@@ -150,14 +152,21 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
                 await _replay_one(row)
 
     with record_pass("extraction_queue") as rec:
-        # A switched-off org's requests stay pending until it is switched back on.
+        # A switched-off org's requests stay pending until it is switched back
+        # on, or until they have waited LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS.
+        off = await customer.switched_off_orgs()
+        from server.settings import settings
+
+        result.dropped = await q.drop_waiting(
+            off, older_than_days=settings.model_calls_off_max_wait_days, ch=ch
+        )
         rows = await q.claim_batch(
             limit=cfg.max_batches_per_pass,
             lease_seconds=cfg.lease_seconds,
             ch=ch,
             org_filter=cfg.org_filter,
             namespace_filter=cfg.namespace_filter,
-            exclude_orgs=await customer.switched_off_orgs(),
+            exclude_orgs=off,
         )
         groups = order_within_namespace(rows)
         # A group can still raise (its mark_done / mark_error insert failing).
@@ -179,6 +188,7 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
             "written_memories": result.written_memories,
             "failed": len(result.failures),
             "skipped": result.skipped,
+            "dropped": result.dropped,
         }
 
     if result.done_count or result.failures:

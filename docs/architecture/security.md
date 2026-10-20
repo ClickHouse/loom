@@ -435,7 +435,7 @@ anything is sent, and background jobs leave the org's work queued. The server th
 change applies it on its next call, every other within
 `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`; an older build ignores the switch. It
 fails closed: a process whose copy of the switch is older than
-`LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` refuses every model call until it reads it again. An
+`LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` refuses every model call until it reads it again. An
 org admin reaches only its own org's switch.
 
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited

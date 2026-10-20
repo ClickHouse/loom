@@ -19,7 +19,7 @@ sender, checks both before the gateway token, the caches or provider health.
 Each process tries to read the switched-off orgs at most every
 `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and refuses every call for an org
 (`BackendUnavailableError`) once its copy is older than
-`LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`: the switch fails closed. A call that
+`LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`: the switch fails closed. A call that
 names an org is checked even as the deployment's (`system()`); only a
 deployment call that names none is never switched off.
 """
@@ -202,7 +202,7 @@ async def switched_off_orgs() -> frozenset[str]:
         async with _lock:
             if time.monotonic() >= _next_read:
                 await _read()
-    if not _read_at or time.monotonic() - _read_at > settings.jwt_revocation_max_stale_seconds:
+    if not _read_at or time.monotonic() - _read_at > settings.model_calls_policy_max_stale_seconds:
         raise BackendUnavailableError(
             "the model-call switch could not be read; model calls wait until it is"
         )

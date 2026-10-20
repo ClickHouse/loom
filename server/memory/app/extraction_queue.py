@@ -257,6 +257,58 @@ async def mark_error(
     return status
 
 
+# How many waiting requests one pass drops: the rest go on the next pass.
+_DROP_PER_PASS = 500
+
+
+async def drop_waiting(orgs: frozenset[str], *, older_than_days: int, ch: Any | None = None) -> int:
+    """Drop the requests of `orgs` (switched off) that have waited longer than
+    `older_than_days`: each is marked `failed` with a memory_drops record
+    (reason `model_calls_off`). Returns how many."""
+    from server.core.ch import get_client
+    from server.memory.app.drops import record_drop
+
+    if not orgs or older_than_days <= 0:
+        return 0
+    ch = ch or get_client()
+    cols = ", ".join(COLUMNS)
+    rows = await ch.query_all(
+        f"""
+        SELECT {cols}
+        FROM {TABLE} FINAL
+        WHERE status IN ({{pending:String}}, {{running:String}})
+          AND has({{orgs:Array(String)}}, org)
+          AND enqueued_at < now64(3) - toIntervalDay({{days:UInt32}})
+        ORDER BY enqueued_at ASC
+        LIMIT {{lim:UInt32}}
+        """,
+        params={
+            "pending": STATUS_PENDING,
+            "running": STATUS_RUNNING,
+            "orgs": sorted(orgs),
+            "days": int(older_than_days),
+            "lim": _DROP_PER_PASS,
+        },
+    )
+    if not rows:
+        return 0
+    why = f"dropped: model calls switched off, waited over {older_than_days} days"
+    await ch.insert(
+        TABLE,
+        [_mirror(dict(r), status=STATUS_FAILED, last_error=why, lease_until=_EPOCH) for r in rows],
+        settings=_SYNC,
+    )
+    for r in rows:
+        record_drop(
+            str(r["org"]),
+            str(r["namespace"]),
+            "extraction_queue",
+            "model_calls_off",
+            item=str(r.get("queue_id") or ""),
+        )
+    return len(rows)
+
+
 async def pending_count(
     *,
     org: str,

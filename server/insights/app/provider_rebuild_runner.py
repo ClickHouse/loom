@@ -26,6 +26,8 @@ class BatchCheckpoint:
     cursor: int
     rows_written: int
     done: bool
+    # Rows staged without a vector: their org's model calls are switched off.
+    rows_waiting: int = 0
 
 
 class RebuildBackend(Protocol):

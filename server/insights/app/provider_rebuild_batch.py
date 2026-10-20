@@ -138,8 +138,13 @@ async def rebuild_batch(
     target: Embedder,
     *,
     source_texts: Mapping[int, str] | None = None,
+    waiting: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Return full staged rows; never publish partial or malformed embeddings.
+
+    A row whose org's model calls are switched off is staged without a vector,
+    as a tombstone is, and its index added to `waiting`: the rebuild completes,
+    and the row has no vector until the org is back on and it is embedded again.
 
     The caller must hydrate tracker text from its source and supply every stored
     column. Tombstones remain tombstones and are never sent to the provider.
@@ -152,19 +157,32 @@ async def rebuild_batch(
     # One call carries one org's texts: a model call names a single customer.
     by_org = customer.by_org(str(rows[index].get("org", "")) for index, _ in slots)
     vectors: list[list[float]] = [[] for _ in texts]
+    left: set[int] = set()
     for org, positions in by_org.items():
+        if await customer.switched_off(org):
+            left.update(positions)
+            continue
         for start in range(0, len(positions), _CALL_BATCH):
             part = positions[start : start + _CALL_BATCH]
             try:
                 with customer.for_org(org):
                     produced = await target.embed_many([texts[i] for i in part])
+            except customer.ModelCallsDisabled:
+                left.update(positions)  # switched off during the batch
+                break
             except Exception:  # noqa: BLE001 — provider errors must not expose keys or source text in status
                 raise RebuildBatchError("embedding_provider_failed") from None
             _validate_vectors(produced, len(part), target.dim)
             for i, vector in zip(part, produced, strict=True):
                 vectors[i] = vector
     result = [_empty_target_row(table, row, target.model_name) for row in rows]
-    for (index, column), vector in zip(slots, vectors, strict=True):
+    for i in sorted(left):
+        vectors[i] = []  # staged without a vector, as the row's empty target row has
+    if waiting is not None:
+        waiting.extend(sorted({slots[i][0] for i in left}))
+    for i, ((index, column), vector) in enumerate(zip(slots, vectors, strict=True)):
+        if i in left:
+            continue
         result[index][column] = vector
         dimension_column = (
             "memory_key_embedding_dim" if column == "memory_key_embedding" else "embedding_dim"

@@ -80,6 +80,12 @@ def bot_change(name: str) -> AbstractAsyncContextManager[None]:
     return _claimed("bot:" + json.dumps(name), f"the bot {name}")
 
 
+def model_calls_change(org: str) -> AbstractAsyncContextManager[None]:
+    """Hold the org's model-call switch from its read to its write: an org
+    admin's change must not write back the lock a platform admin set since."""
+    return _claimed("model_calls:" + json.dumps(org), f"the model-call switch of {org}")
+
+
 def trusts_change() -> AbstractAsyncContextManager[None]:
     """Hold every workload trust while one is created: its checks against the
     others (names, tokens both could take) and its save are one step."""

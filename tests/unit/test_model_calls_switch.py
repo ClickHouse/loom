@@ -180,7 +180,7 @@ def test_a_copy_too_old_to_trust_refuses_every_call(switch: _Switch, monkeypatch
     switch.down = True
     customer._read_at = time.monotonic() - settings.model_calls_policy_refresh_seconds - 1
     assert asyncio.run(customer.switched_off("acme")) is False  # still young enough
-    customer._read_at = time.monotonic() - settings.jwt_revocation_max_stale_seconds - 1
+    customer._read_at = time.monotonic() - settings.model_calls_policy_max_stale_seconds - 1
     with pytest.raises(BackendUnavailableError):
         asyncio.run(customer.switched_off("beta"))
 
@@ -378,6 +378,11 @@ async def test_the_extraction_queue_leaves_a_switched_off_orgs_requests_pending(
     monkeypatch.setattr(q, "replay_row", replay_row)
     monkeypatch.setattr(q, "mark_done", mark_done)
     monkeypatch.setattr(q, "mark_error", mark_error)
+
+    async def nothing_waited_long(*a: Any, **k: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(q, "drop_waiting", nothing_waited_long)
     monkeypatch.setattr("server.core.ch.get_client", lambda: object())
 
     _off("acme")
@@ -489,8 +494,8 @@ def test_a_failed_read_waits_its_turn_and_the_copy_serves_until_too_old(switch: 
 def test_the_refresh_must_be_shorter_than_the_stale_bound(monkeypatch) -> None:
     from server.settings import Settings
 
-    monkeypatch.setenv("LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS", "600")
-    monkeypatch.setenv("LOOM_JWT_REVOCATION_MAX_STALE_SECONDS", "600")
+    monkeypatch.setenv("LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS", "60")
+    monkeypatch.setenv("LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS", "60")
     with pytest.raises(ValueError, match="LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS"):
         Settings()
 
@@ -507,3 +512,234 @@ def test_the_ops_take_one_org(org: str) -> None:
         )
     with pytest.raises(ValidationError):
         asyncio.run(model_calls.handle_org_model_calls(OrgModelCallsInput(org=org)))
+
+
+def test_a_switched_off_orgs_requests_are_dropped_after_the_wait_with_a_record(
+    monkeypatch,
+) -> None:
+    from server.memory.app import drops
+    from server.memory.app import extraction_queue as q
+
+    written: list[dict[str, Any]] = []
+    recorded: list[tuple[str, str, str, str]] = []
+
+    class _CH:
+        sql = ""
+        params: dict[str, Any] = {}
+
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            self.sql, self.params = sql, params
+            return [{"org": "acme", "namespace": "n", "queue_id": "q1", "status": "pending"}]
+
+        async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+            written.extend(rows)
+
+    def record(org: str, ns: str, stage: str, reason: str, **kw: Any) -> None:
+        recorded.append((org, stage, reason, kw.get("item", "")))
+
+    monkeypatch.setattr(drops, "record_drop", record)
+    ch = _CH()
+    n = asyncio.run(q.drop_waiting(frozenset({"acme"}), older_than_days=7, ch=ch))
+    assert n == 1 and ch.params["orgs"] == ["acme"] and ch.params["days"] == 7
+    assert "toIntervalDay" in ch.sql and "has({orgs:Array(String)}, org)" in ch.sql
+    [row] = written
+    assert row["status"] == q.STATUS_FAILED and "switched off" in row["last_error"]
+    assert recorded == [("acme", "extraction_queue", "model_calls_off", "q1")]
+    assert asyncio.run(q.drop_waiting(frozenset(), older_than_days=7, ch=ch)) == 0
+    assert asyncio.run(q.drop_waiting(frozenset({"acme"}), older_than_days=0, ch=ch)) == 0
+
+
+async def test_the_extraction_queue_drops_with_the_configured_wait(monkeypatch) -> None:
+    from server.memory.app import extraction_queue as q
+    from server.memory.workers import extraction_queue as w
+
+    asked: list[tuple[frozenset[str], int]] = []
+
+    async def drop_waiting(orgs: frozenset[str], *, older_than_days: int, ch: Any) -> int:
+        asked.append((orgs, older_than_days))
+        return 2
+
+    async def claim_batch(**_: Any) -> list[Any]:
+        return []
+
+    monkeypatch.setattr(q, "drop_waiting", drop_waiting)
+    monkeypatch.setattr(q, "claim_batch", claim_batch)
+    monkeypatch.setattr(settings, "model_calls_off_max_wait_days", 3)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: object())
+    _off("acme")
+    result = await w.run_pass(w.ExtractionQueueConfig())
+    assert asked == [(frozenset({"acme"}), 3)] and result.dropped == 2
+
+
+class _Store:
+    """loom.org_model_calls as the handlers read and write it."""
+
+    def __init__(self) -> None:
+        self.rows: list[dict[str, Any]] = []
+
+    async def insert_row(self, row: dict[str, Any], **_: Any) -> None:
+        self.rows.append(row)
+
+    async def get(self, org: str, **_: Any) -> dict[str, Any] | None:
+        mine = [r for r in self.rows if r["org"] == org]
+        return max(mine, key=lambda r: r["version"]) if mine else None
+
+
+@pytest.fixture
+def store(monkeypatch: pytest.MonkeyPatch) -> _Store:
+    from contextlib import asynccontextmanager
+
+    from server.auth import grant_claims
+    from server.identity.app import model_calls
+
+    table = _Store()
+
+    @asynccontextmanager
+    async def held(org: str) -> Any:
+        yield
+
+    monkeypatch.setattr(model_calls.repo, "insert_row", table.insert_row)
+    monkeypatch.setattr(model_calls.repo, "get", table.get)
+    monkeypatch.setattr(grant_claims, "model_calls_change", held)
+    return table
+
+
+def _as(subject: str, *roles: Any) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+
+    set_current_auth(
+        AuthInfo(subject=subject, org="acme", namespaces=(), roles=roles, is_service_account=False)
+    )
+
+
+def _set(**body: Any) -> Any:
+    from server.identity.api.models_model_calls import OrgSetModelCallsInput
+    from server.identity.app import model_calls
+
+    return asyncio.run(model_calls.handle_org_set_model_calls(OrgSetModelCallsInput(**body)))
+
+
+def test_a_platform_lock_holds_against_the_orgs_own_admin(store: _Store) -> None:
+    from server.auth.context import set_current_auth
+    from server.core.errors import AuthInsufficientError
+    from server.identity.api.models_model_calls import OrgModelCallsInput
+    from server.identity.app import model_calls
+    from server.operations.base import Role
+
+    try:
+        _as("ops@acme.com", Role.ORG_ADMIN)
+        with pytest.raises(AuthInsufficientError, match="platform admin"):
+            _set(org="acme", enabled=False, locked=True)  # an org admin cannot lock
+        _as("root@platform", Role.PLATFORM_ADMIN)
+        out = _set(org="acme", enabled=False, reason="offboarded", locked=True)
+        assert (out.enabled, out.locked, out.locked_by) == (False, True, "root@platform")
+        _as("ops@acme.com", Role.ORG_ADMIN)
+        with pytest.raises(AuthInsufficientError, match="locked by 'root@platform'"):
+            _set(org="acme", enabled=True)  # nor switch it back on
+        with pytest.raises(AuthInsufficientError):
+            _set(org="acme", enabled=True, locked=False)  # nor unlock it
+        read = asyncio.run(model_calls.handle_org_model_calls(OrgModelCallsInput(org="acme")))
+        assert (read.enabled, read.locked, read.locked_by) == (False, True, "root@platform")
+        _as("root@platform", Role.PLATFORM_ADMIN)
+        out = _set(org="acme", enabled=True, locked=False)
+        assert (out.enabled, out.locked, out.locked_by) == (True, False, "")
+        _as("ops@acme.com", Role.ORG_ADMIN)
+        assert _set(org="acme", enabled=False).enabled is False  # unlocked: its admin may again
+    finally:
+        set_current_auth(None)
+
+
+def test_a_platform_admins_change_keeps_a_lock_it_does_not_name(store: _Store) -> None:
+    from server.auth.context import set_current_auth
+    from server.operations.base import Role
+
+    try:
+        _as("root@platform", Role.PLATFORM_ADMIN)
+        _set(org="acme", enabled=False, locked=True)
+        out = _set(org="acme", enabled=False, reason="still off")
+        assert (out.locked, out.locked_by) == (True, "root@platform")
+    finally:
+        set_current_auth(None)
+
+
+def test_offboarding_switches_the_org_off_and_locks_it(store: _Store) -> None:
+    from server.identity.app import model_calls
+
+    asyncio.run(model_calls.switch_off("acme", by="offboarding", reason="org deleted"))
+    [row] = store.rows
+    assert (row["enabled"], row["locked"], row["locked_by"], row["reason"]) == (
+        0,
+        1,
+        "offboarding",
+        "org deleted",
+    )
+    with pytest.raises(Exception, match="org must name one org"):
+        asyncio.run(model_calls.switch_off("*", by="offboarding", reason="x"))
+
+
+def test_a_reembed_leaves_a_switched_off_orgs_rows_and_counts_them(monkeypatch) -> None:
+    from server.memory.app import reembed
+
+    seen: list[frozenset[str]] = []
+
+    async def table(ch: Any, embedder: Any, name: str, **kw: Any) -> int:
+        seen.append(kw["exclude_orgs"])
+        return 4
+
+    async def waiting(ch: Any, name: str, *a: Any) -> int:
+        return 3
+
+    async def width(table: str, dim: int) -> None:
+        return None
+
+    monkeypatch.setattr(reembed, "reembed_table", table)
+    monkeypatch.setattr(reembed, "_waiting", waiting)
+    monkeypatch.setattr("server.core.vectors.codes_state.refuse_width", width)
+    _off("acme")
+    lines: list[str] = []
+    embedder = type("E", (), {"model_name": "m", "dim": 8})()
+    out = asyncio.run(reembed.reembed_all(object(), embedder, log=lines.append))
+    assert seen and all(s == frozenset({"acme"}) for s in seen)
+    assert out["skipped_switched_off"] == 3 * len(reembed._TABLES)
+    assert any("switched-off org" in line for line in lines)  # the CLI prints it
+
+
+def test_the_reembed_filter_leaves_out_switched_off_orgs() -> None:
+    from server.memory.app import reembed
+
+    sql, params = reembed.where_sql(
+        ["org", "tombstoned_at"], "m", org=None, namespace=None, exclude_orgs=frozenset({"acme"})
+    )
+    assert "NOT has({off:Array(String)}, org)" in sql and params["off"] == ["acme"]
+
+
+def test_a_rebuild_stages_a_switched_off_orgs_rows_without_a_vector(monkeypatch) -> None:
+    from server.insights.app import provider_rebuild_batch as batch
+
+    monkeypatch.setattr(
+        batch,
+        "_inputs",
+        lambda table, rows, source: (
+            [r["text"] for r in rows],
+            [(i, "embedding") for i in range(len(rows))],
+        ),
+    )
+    monkeypatch.setattr(
+        batch, "_empty_target_row", lambda t, row, m: {**row, "embedding": [], "embedding_dim": 0}
+    )
+
+    class _E:
+        model_name, dim = "fake", 2
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            await customer.require()
+            return [[0.5, 0.5] for _ in texts]
+
+    rows = [{"org": "acme", "text": "a"}, {"org": "beta", "text": "b"}]
+    _off("acme")
+    waiting: list[int] = []
+    out = asyncio.run(batch.rebuild_batch("memory_embeddings", rows, _E(), waiting=waiting))
+    assert waiting == [0]  # the rebuild goes on: acme's row waits for its vector
+    assert (out[0]["embedding"], out[0]["embedding_dim"]) == ([], 0)
+    assert (out[1]["embedding"], out[1]["embedding_dim"]) == ([0.5, 0.5], 2)
