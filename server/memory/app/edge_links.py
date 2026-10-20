@@ -281,17 +281,25 @@ async def drop_undeclared_edges(
         log.warning(
             "%s: undeclared edges of %d rows not dropped (recorded): %s", op, len(versions), e
         )
-        await record_projection_failure(
-            org=input.org,
-            namespace=input.namespace,
-            agent=str(getattr(input, "agent", "") or ""),
-            projection=EDGES_DROP_UNDECLARED,
-            source_operation=op,
-            error=e,
-            payload=drop_payload(versions),
-            ch=ch,
-            user_id=str(getattr(input, "user_id", "") or ""),
-        )
+        await _record_drop(input, versions, op=op, error=e, ch=ch)
+
+
+async def _record_drop(
+    input: Any, versions: Mapping[str, int], *, op: str, error: Any, ch: Any = None
+) -> str:
+    """An EDGES_DROP_UNDECLARED failure for the rows `versions`: the drop the projection
+    repair owes. Returns its id."""
+    return await record_projection_failure(
+        org=input.org,
+        namespace=input.namespace,
+        agent=str(getattr(input, "agent", "") or ""),
+        projection=EDGES_DROP_UNDECLARED,
+        source_operation=op,
+        error=error,
+        payload=drop_payload(versions),
+        ch=ch,
+        user_id=str(getattr(input, "user_id", "") or ""),
+    )
 
 
 async def drop_undeclared_edges_beside(input: Any, versions: Mapping[str, int], *, op: str) -> None:
@@ -307,15 +315,8 @@ async def drop_undeclared_edges_beside(input: Any, versions: Mapping[str, int], 
     if not versions:
         return
     try:
-        intent = await record_projection_failure(
-            org=input.org,
-            namespace=input.namespace,
-            agent=str(getattr(input, "agent", "") or ""),
-            projection=EDGES_DROP_UNDECLARED,
-            source_operation=op,
-            error="rows made high: undeclared edges to drop",
-            payload=drop_payload(versions),
-            user_id=str(getattr(input, "user_id", "") or ""),
+        intent = await _record_drop(
+            input, versions, op=op, error="rows made high: undeclared edges to drop"
         )
     except Exception as e:  # noqa: BLE001 — the drop still runs; a failure is recorded then
         log.warning("%s: drop intent not written for %d rows: %s", op, len(versions), e)
