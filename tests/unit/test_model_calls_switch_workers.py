@@ -14,7 +14,11 @@ from server.llm import customer
 
 
 def _off(*orgs: str) -> None:
-    customer._reset_for_tests(frozenset(orgs))
+    from server.settings import settings
+
+    customer._switch._reset_for_tests(
+        frozenset(orgs), read_age_s=0.0, due_in_s=settings.model_calls_policy_refresh_seconds
+    )
 
 
 class _CH:

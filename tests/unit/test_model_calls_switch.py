@@ -26,7 +26,9 @@ def _identity_left_clean() -> Any:
 
 
 def _off(*orgs: str) -> None:
-    customer._reset_for_tests(frozenset(orgs))
+    customer._switch._reset_for_tests(
+        frozenset(orgs), read_age_s=0.0, due_in_s=settings.model_calls_policy_refresh_seconds
+    )
 
 
 def _request(org: str) -> None:
@@ -188,7 +190,7 @@ class _Switch:
 def switch(monkeypatch: pytest.MonkeyPatch) -> _Switch:
     table = _Switch(set())
     monkeypatch.setattr("server.core.ch.get_client", lambda: table)
-    customer._reset_for_tests(read=False)
+    customer._switch._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
     return table
 
 
@@ -225,7 +227,7 @@ def test_calls_made_during_a_read_wait_for_it(switch: _Switch, monkeypatch) -> N
     plain = switch.query_all
 
     async def slow(sql: str, **kw: Any) -> list[dict[str, Any]]:
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0)  # the other calls arrive while this read runs
         return await plain(sql, **kw)
 
     monkeypatch.setattr(switch, "query_all", slow)
@@ -607,7 +609,9 @@ def test_no_refusal_and_no_unreadable_switch_is_a_provider_failure(
     with pytest.raises(customer.ModelCallsDisabled):
         asyncio.run(client.complete("s", "u"))
     switch.down = True
-    customer._reset_for_tests(read=False)  # never read, and the read fails: fail closed
+    customer._switch._reset_for_tests(
+        None, read_age_s=None, due_in_s=0.0
+    )  # never read, and the read fails: fail closed
     with pytest.raises(BackendUnavailableError):
         asyncio.run(client.complete("s", "u"))
     monkeypatch.setattr(settings, "inference_customer_header", "X-Customer")

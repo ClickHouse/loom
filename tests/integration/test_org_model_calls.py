@@ -22,9 +22,9 @@ pytestmark = pytest.mark.asyncio
 async def ch() -> Any:
     client = get_client()
     await client.connect()
-    customer._reset_for_tests(read=False)
+    customer._switch._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
     yield client
-    customer._reset_for_tests(read=False)
+    customer._switch._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
     await client.disconnect()
 
 

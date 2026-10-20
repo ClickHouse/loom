@@ -91,3 +91,26 @@ async def test_a_failed_read_logs_on_the_callers_logger(caplog, clock: ManualClo
         assert await copy.get(refresh_s=10, max_stale_s=60) is None
     assert [r.name for r in caplog.records] == ["server.llm.customer"]
     assert "model-call switch: read failed" in caplog.records[0].getMessage()
+
+
+async def test_a_cancelled_read_hands_over_to_the_first_queued_call(clock: ManualClock) -> None:
+    """The call that was reading goes away; the calls queued behind it do not
+    find a copy nobody read: the first one reads, the next is served it."""
+    reading = asyncio.Event()
+    reads: list[str] = []
+
+    async def read() -> str:
+        reads.append("read")
+        if len(reads) == 1:
+            reading.set()
+            await asyncio.Event().wait()  # until cancelled
+        return "fresh"
+
+    copy: PolledCopy[str] = PolledCopy("t", read, _LOG)
+    first = asyncio.ensure_future(copy.get(refresh_s=10, max_stale_s=60))
+    await reading.wait()
+    queued = [asyncio.ensure_future(copy.get(refresh_s=10, max_stale_s=60)) for _ in range(2)]
+    await asyncio.sleep(0)
+    first.cancel()
+    assert await asyncio.gather(*queued) == ["fresh", "fresh"]
+    assert reads == ["read", "read"]
