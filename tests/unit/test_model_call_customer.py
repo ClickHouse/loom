@@ -548,8 +548,11 @@ def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_heade
         asyncio.run(write._set_resolve_type(body))
     monkeypatch.setattr(settings, "inference_customer_header", "")
     resolved, _, _ = asyncio.run(write._set_resolve_type(body))
-    # Unset: the classifier is asked, with no customer header, and its type applies.
-    assert resolved.memory_type == "observation" and "X-Customer" not in sent[-1]
+    # Unset: the classifier is asked once, with no metering header, and its type applies.
+    assert resolved.memory_type == "observation" and sent == [{}]
+    from server.observability import provider_health
+
+    provider_health.reset()  # classify recorded a success in the process-wide state
 
 
 def test_the_llm_reranker_lets_a_refusal_through_and_records_no_outage(
@@ -579,4 +582,33 @@ def test_settings_refuse_one_name_for_both_headers(monkeypatch) -> None:
     monkeypatch.setenv("LOOM_INFERENCE_CUSTOMER_HEADER", "X-Meter")
     monkeypatch.setenv("LOOM_INFERENCE_FEATURE_HEADER", "x-meter")
     with pytest.raises(ValueError, match="must differ"):
+        Settings()
+
+
+def test_the_gateway_names_the_customer_and_feature_its_own_way(metered, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "inference_customer_format", "cloud:{org}")
+    monkeypatch.setattr(
+        settings, "inference_feature_map_json", '{"hyde": "search-expand", "*": "loom-other"}'
+    )
+    _request("acme")
+    with genai.llm_stage("hyde"):
+        assert customer.headers() == {"X-Customer": "cloud:acme", "X-Feature": "search-expand"}
+    assert customer.headers()["X-Feature"] == "loom-other"  # memory.search is not mapped
+
+
+@pytest.mark.parametrize(
+    "env, error",
+    [
+        ({"LOOM_INFERENCE_CUSTOMER_REQUIRED": "true"}, "needs LOOM_INFERENCE_CUSTOMER_HEADER"),
+        ({"LOOM_INFERENCE_CUSTOMER_FORMAT": "cloud"}, "must contain"),
+        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '["hyde"]'}, "must map"),
+        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": "{not json"}, ""),
+    ],
+)
+def test_settings_refuse_a_cell_that_could_not_name_its_customers(monkeypatch, env, error) -> None:
+    from server.settings import Settings
+
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    with pytest.raises(ValueError, match=error):
         Settings()

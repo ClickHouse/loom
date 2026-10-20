@@ -266,6 +266,10 @@ the shared HTTP client also carries non-model calls, which name no customer.
   `LOOM_INFERENCE_SYSTEM_CUSTOMER`.
 - **One customer per call.** A job that batches several orgs' rows (the embedding worker,
   `loom reembed`, a model rebuild) splits its batches by org before calling.
+- **The gateway's names.** `LOOM_INFERENCE_CUSTOMER_FORMAT` turns an org id into the gateway's
+  customer id, and `LOOM_INFERENCE_FEATURE_MAP_JSON` maps Loom's feature names to the gateway's.
+  A cell that serves several customers sets `LOOM_INFERENCE_CUSTOMER_REQUIRED`, so it does not
+  start without the header.
 - **No customer, no call.** A call that names none raises `Unattributed`
   (`MODEL_CALL_UNATTRIBUTED`) before anything is sent. A missed call path fails loudly
   instead of being billed to no one.

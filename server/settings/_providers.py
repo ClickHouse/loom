@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -84,6 +85,16 @@ class ProviderSettings(ModelSettings):
     # The customer named on calls made for the deployment itself (startup probe,
     # calibration, provider checks), which belong to no org.
     inference_system_customer: str = "loom"
+    # True (a cell serving several customers): refuse to start without
+    # inference_customer_header, so no model call goes out unattributed.
+    inference_customer_required: bool = False
+    # How the customer header names an org, as the gateway knows it; `{org}` is
+    # replaced by the org id ("{org}" = the id as is).
+    inference_customer_format: str = "{org}"
+    # JSON object from Loom's feature names (hyde, extract_typed, memory.search,
+    # worker.embedding, ...) to the gateway's; "*" names the one for any other.
+    # "" = Loom's own names.
+    inference_feature_map_json: str = ""
     # Shared query-embedding cache in loom.embedding_cache behind the
     # per-process LRU, keyed (model, sha1 of normalised text). Only single-text
     # (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use
@@ -142,6 +153,17 @@ class ProviderSettings(ModelSettings):
             self._inferred_fields |= {"embedding_dim"}
         return self
 
+    def feature_map(self) -> dict[str, str]:
+        """`inference_feature_map_json` parsed: Loom feature -> the gateway's."""
+        if not self.inference_feature_map_json.strip():
+            return {}
+        raw = json.loads(self.inference_feature_map_json)
+        if not isinstance(raw, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) and v for k, v in raw.items()
+        ):
+            raise ValueError("LOOM_INFERENCE_FEATURE_MAP_JSON must map feature names to names")
+        return raw
+
     @model_validator(mode="after")
     def _check_customer_headers(self) -> ProviderSettings:
         """A header name an HTTP client cannot send would fail every model call
@@ -157,6 +179,14 @@ class ProviderSettings(ModelSettings):
                 "LOOM_INFERENCE_FEATURE_HEADER must differ from LOOM_INFERENCE_CUSTOMER_HEADER, "
                 "or the feature overwrites the customer"
             )
+        if self.inference_customer_required and not customer:
+            raise ValueError(
+                "LOOM_INFERENCE_CUSTOMER_REQUIRED needs LOOM_INFERENCE_CUSTOMER_HEADER: "
+                "the header the gateway meters customers by"
+            )
+        if "{org}" not in self.inference_customer_format:
+            raise ValueError("LOOM_INFERENCE_CUSTOMER_FORMAT must contain {org}")
+        self.feature_map()  # a malformed map fails at load, not at the first call
         if self.inference_customer_header and not self.inference_system_customer.strip():
             raise ValueError(
                 "LOOM_INFERENCE_SYSTEM_CUSTOMER must name a customer while "
