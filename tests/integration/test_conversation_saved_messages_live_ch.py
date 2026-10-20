@@ -506,12 +506,14 @@ async def test_unsave_can_be_saved_again(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failed_table", ["loom.conversations", "loom.conversation_embeddings"])
 @pytest.mark.parametrize("recording", [False, True])
 async def test_unsave_retry_finishes_both_tables(
     ch: Any,
     namespace: str,
     monkeypatch: pytest.MonkeyPatch,
     recording: bool,
+    failed_table: str,
 ) -> None:
     from server.knowledge.app import conversations
     from server.knowledge.store import conversations as repo
@@ -523,12 +525,12 @@ async def test_unsave_retry_finishes_both_tables(
     assert (await conversations.handle_conversation_save_message(_save(namespace))).indexed
     real_unsave = repo.unsave_message
 
-    async def fail_embedding(table: str, *args: Any, **kwargs: Any) -> None:
-        if table == "loom.conversation_embeddings":
+    async def fail_write(table: str, *args: Any, **kwargs: Any) -> None:
+        if table == failed_table:
             raise RuntimeError("connection dropped")
         await real_unsave(table, *args, **kwargs)
 
-    monkeypatch.setattr(repo, "unsave_message", fail_embedding)
+    monkeypatch.setattr(repo, "unsave_message", fail_write)
     with pytest.raises(RuntimeError, match="connection dropped"):
         await conversations.handle_conversation_unsave_message(_unsave_request(namespace))
     monkeypatch.setattr(repo, "unsave_message", real_unsave)
@@ -555,23 +557,23 @@ async def test_save_waits_for_an_unsave_to_finish_both_tables(
 
     request = _save(namespace)
     assert (await conversations.handle_conversation_save_message(request)).indexed
-    transcript_done = asyncio.Event()
+    embedding_done = asyncio.Event()
     proceed = asyncio.Event()
     real_unsave = repo.unsave_message
 
-    async def pause_after_transcript(table: str, *args: Any, **kwargs: Any) -> None:
+    async def pause_after_embedding(table: str, *args: Any, **kwargs: Any) -> None:
         await real_unsave(table, *args, **kwargs)
-        if table == "loom.conversations":
-            transcript_done.set()
+        if table == "loom.conversation_embeddings":
+            embedding_done.set()
             await proceed.wait()
 
-    monkeypatch.setattr(repo, "unsave_message", pause_after_transcript)
+    monkeypatch.setattr(repo, "unsave_message", pause_after_embedding)
     unsave = asyncio.create_task(
         conversations.handle_conversation_unsave_message(_unsave_request(namespace))
     )
     save = None
     try:
-        await asyncio.wait_for(transcript_done.wait(), 5)
+        await asyncio.wait_for(embedding_done.wait(), 5)
         save = asyncio.create_task(conversations.handle_conversation_save_message(request))
         done, _ = await asyncio.wait([save], timeout=0.1)
         assert not done

@@ -612,7 +612,7 @@ async def test_unsave_removes_the_turn_only_where_transcripts_are_not_recorded(
 
     assert out.found is True
     assert out.removed is removed
-    assert [c["table"] for c in calls] == ["loom.conversations", "loom.conversation_embeddings"]
+    assert {c["table"] for c in calls} == {"loom.conversations", "loom.conversation_embeddings"}
     assert all(c["remove"] is removed and c["user_id"] == "u-1" for c in calls)
 
 

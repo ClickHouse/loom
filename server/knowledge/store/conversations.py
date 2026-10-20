@@ -459,7 +459,14 @@ async def unsave_message(
     if removing_embedding:
         # One vector can index another agent's live copy of this turn.
         await tombstone_embeddings(
-            org, namespace, agent, thread_id, msg_ids=[msg_id], when=when, ch=ch
+            org,
+            namespace,
+            agent,
+            thread_id,
+            msg_ids=[msg_id],
+            when=when,
+            preserve_saved=False,
+            ch=ch,
         )
     statement = (
         f"DELETE FROM {table}"
@@ -1325,7 +1332,7 @@ _PEER_TURNS = """
     FROM loom.conversations
     WHERE org = {org:String} AND namespace = {ns:String}
       AND thread_id = {tid:String}
-      AND (agent != {agent:String} OR is_saved)
+      AND (agent != {agent:String} OR ({preserve_saved:Bool} AND is_saved))
       AND tombstoned_at IS NULL
       AND (role IN ('user', 'assistant')
            OR (role = 'system' AND notEmpty(JSONExtractArrayRaw(metadata, 'compacted_from'))))
@@ -1403,6 +1410,7 @@ async def tombstone_embeddings(
     *,
     msg_ids: list[str] | None,
     when: datetime,
+    preserve_saved: bool = True,
     ch: _CHClient | None = None,
 ) -> None:
     """Tombstone the embeddings of `agent`'s turns in one thread: `msg_ids`, or every
@@ -1423,6 +1431,7 @@ async def tombstone_embeddings(
         "tid": thread_id,
         "embedded": EMBEDDED_EXCERPT_CHARS,
         "short": _SHORT_EXCERPT_CHARS,
+        "preserve_saved": preserve_saved,
     }
     # Sequential reads: on a multi-replica service a lagging replica could miss a turn
     # appended just before, leaving its embedding live once its message is tombstoned.

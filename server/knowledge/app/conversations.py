@@ -537,7 +537,8 @@ async def _unsave_message(
         )
     with traced("ch.query.conversation_logging_enabled"):
         recording = await conversation_repo.namespace_logging_enabled(input.org, input.namespace)
-    for table in conversation_repo.SAVED_MESSAGE_TABLES:
+    # Reconciliation needs the transcript to interpret older embedding excerpts.
+    for table in reversed(conversation_repo.SAVED_MESSAGE_TABLES):
         with traced("ch.mutate.conversation_unsave", table=table):
             await conversation_repo.unsave_message(
                 table,
