@@ -7931,7 +7931,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "The `sub` claim: retires EVERY token minted for this principal, in every org (verification checks sub against the revoked set); narrow it with --issued-before.",
+       "help": "The `sub` claim: retires EVERY token minted for this principal, in every org (verification checks sub against the revoked set); narrow it with --issued-before. An end user is <org>/user:<id>: their tokens in that org alone.",
        "metavar": null
       },
       {

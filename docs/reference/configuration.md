@@ -40,7 +40,9 @@ Source: `server/settings/_auth.py`
 | `LOOM_JWT_LEEWAY_SECONDS` | `int` | `30` | Clock-skew tolerance on iat/exp, seconds; small enough to give replay no useful post-exp window. |
 | `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` | `float` | `30.0` | Seconds the `loom.revoked_tokens` snapshot is cached; verify checks both jti and sub against it, so a revocation takes effect on other processes within this TTL (at once on the one that wrote it). |
 | `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` | `float` | `600.0` | Oldest revocation snapshot a process still trusts, seconds. Past it (refreshes keep failing) every bearer is refused with a retryable 503. A subject's cached grants are trusted as long when a re-read fails. |
-| `LOOM_GRANT_CACHE_TTL_SECONDS` | `float` | `10.0` | Seconds a subject's grant rows are cached for the namespace gate, which caps a token's claim at the grant it holds there: a revoked or lowered grant takes effect on other processes within this TTL (at once on the one that wrote it). |
+| `LOOM_GRANT_CACHE_TTL_SECONDS` | `float` | `10.0` | Seconds a subject's grant rows are cached for the namespace gate, which caps a token's claim at the grant it holds there. The backstop: a grant change reaches other processes through the watermark below, and this bounds one whose watermark row was never written. |
+| `LOOM_ACL_WATERMARK_POLL_SECONDS` | `float` | `1.0` | Seconds between each process's reads of the per-org grant watermark (loom.acl_versions): a revoke on one replica is enforced on every other within about this long. |
+| `LOOM_ACL_WATERMARK_MAX_STALE_SECONDS` | `float` | `10.0` | Oldest watermark a process still trusts, seconds. Past it (polls keep failing) cached grants are not served and every request reads its own. |
 | `LOOM_AUTH_ATTEMPTS_CONCURRENCY` | `int` | `8` | Sign-ins, sign-ups and workload-token exchanges one process counts at once (each costs ClickHouse statements, a sign-in a password hash); past it a caller waits up to a second, then gets 429 (an exchange 503), so a burst cannot take the shared connection pool. |
 | `LOOM_WORKLOAD_EXCHANGES_PER_TRUST` | `int` | `50000` | Workload-token exchanges (RFC 8693) one trust may make in 10 minutes, deployment-wide; past it /oauth/token answers 429 until older ones age out. |
 | `LOOM_WORKLOAD_EXCHANGES_PER_AGENT` | `int` | `300` | The same for one agent of a trust with an agent claim, so one agent's loop cannot spend the trust's. A trust without agents has only the per-trust limit. |
@@ -49,6 +51,9 @@ Source: `server/settings/_auth.py`
 | `LOOM_IDENTITY_PROVIDER` | `'' \| 'single-user' \| 'trust-network' \| 'gateway'` | `''` | Identity mode; decides how callers authenticate. single-user    — no auth, one anonymous identity. trust-network  — self-signup, first-claim-wins. gateway        — an upstream proxy mints short-lived Loom JWTs with the shared HS256 secret; Loom only validates. Empty = inferred from auth_required + self_signup at boot. |
 | `LOOM_DASHBOARD_REDIRECT_URL` | `str` | `''` | When set, a dashboard page load redirects (302) here instead of serving the SPA (Loom behind an aggregator). Deployment-specific; never hardcode. |
 | `LOOM_TRUSTED_CALLERS` | `str` | `''` | Comma-separated subjects allowed to send `X-Loom-On-Behalf-Of` (a trusted aggregator passing each end-user's identity under one service token). Empty disables the header. |
+| `LOOM_JWT_END_USER_ISSUERS_JSON` | `str` | `''` | The services that sign a short-lived token per end user (a chat app in front of Loom): JSON (or base64 JSON) {issuer: {"orgs": [...], "jwks_url": "https://…", "keys": {kid: RS256 public PEM}}}. `orgs` lists the orgs its tokens may name (exact names, or `prefix*`); its keys come from `jwks_url` (fetched every `jwt_end_user_jwks_refresh_seconds`) and/or `keys`. A key here verifies only its own issuer's tokens, and only as an end user (`sub: user:<id>`, one listed `org`, an optional `agent: agent:<id>`), never any other token. Empty: no end-user tokens. |
+| `LOOM_JWT_END_USER_MAX_TTL_SECONDS` | `int` | `300` | The longest an end-user token may live, from its `iat` to its `exp`. |
+| `LOOM_JWT_END_USER_JWKS_REFRESH_SECONDS` | `float` | `300.0` | Seconds between fetches of each end-user issuer's `jwks_url`; a key it rotates in is honoured from the next fetch. |
 | `LOOM_RESTRICTED_SERVE` | `bool` | `True` | Kill switch for restricted namespaces. True: served to a principal whose token names the namespace AND who holds a live direct grant. False: every read is refused while ingest continues. |
 | `LOOM_RESTRICTED_AUDIT_INLINE` | `bool` | `True` | Commit the `namespace.restricted_access` audit row every admitted read of a restricted namespace writes before answering (inline). True by default: a row written beside the request is lost when the process is killed before it lands. False trades that row for the seconds the awaited insert adds. |
 | `LOOM_CORS_ORIGINS` | `str` | `''` | Comma-separated origin list. "*" allows all (acceptable when auth_required=True). Empty disables CORS entirely. |
@@ -558,6 +563,13 @@ Source: `server/settings/_knowledge.py`
 | `LOOM_CONVERSATION_TITLER_MAX_THREADS_PER_PASS` | `int` | `10` | Threads one pass titles at most. |
 | `LOOM_CONVERSATION_TITLER_MIN_TURNS` | `int` | `4` | Turns a thread needs before it is titled. |
 
+### Search
+
+| Variable | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_SEARCH_MAX_NAMESPACES` | `int` | `10000` | Namespaces an all_mine knowledge.search reads besides the addressed one, at most; the rest come back in `namespaces_skipped`. Each search leg is one statement over all of them (measured 110 ms at 10,000 collections). |
+| `LOOM_KNOWLEDGE_SEARCH_FANOUT_KINDS` | `str` | `'memory,collection,personal'` | Namespace kinds an all_mine knowledge.search spans (comma list over loom.namespaces.kind): the memory fan-out's, and the caller's collections. |
+
 ### Chunking
 
 | Variable | Type | Default | Meaning |
@@ -858,8 +870,8 @@ Source: `server/settings/_memory_search.py`
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE` | `'this' \| 'all_mine'` | `'this'` | Default `namespace_scope` when a request leaves it unset. "this" reads the addressed namespace only; "all_mine" also reads the caller's own namespaces (the MCP loom_search asks for it by name), see docs/concepts/identities-and-namespaces.md#reading-several-namespaces. |
-| `LOOM_MEMORY_SEARCH_FANOUT_KINDS` | `str` | `'memory'` | Namespace kinds an all_mine fan-out spans (memory.search, knowledge.search, conversation.search, MCP loom_search): comma list over loom.namespaces.kind; a namespace with no kind row stays; "" = every kind. Code and QA indexes are reached by name or their own tools (measured sweep of 24 namespaces: 6.2 s). |
-| `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` | `int` | `32` | Upper bound on how many of the caller's namespaces an all_mine fan-out reads besides the addressed one; a search names the rest in `namespaces_skipped`. Every leg issues at least one statement per namespace. A guard, not a tuning knob: set well above what one person holds, so it bounds a runaway sweep rather than trimming normal ones. |
+| `LOOM_MEMORY_SEARCH_FANOUT_KINDS` | `str` | `'memory'` | Namespace kinds an all_mine fan-out spans (memory.search, conversation.search, MCP loom_search; knowledge.search reads knowledge_search_fanout_kinds): comma list over loom.namespaces.kind; a namespace with no kind row stays; "" = every kind. Code and QA indexes are reached by name or their own tools (measured sweep of 24 namespaces: 6.2 s). |
+| `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` | `int` | `32` | Upper bound on how many of the caller's namespaces an all_mine fan-out reads besides the addressed one; a search names the rest in `namespaces_skipped`. Every memory leg issues at least one statement per namespace. A guard, not a tuning knob: set well above what one person holds, so it bounds a runaway sweep rather than trimming normal ones. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS` | `'auto' \| 'on' \| 'off'` | `'auto'` | Key-embedding axis on the fact leg: "on" scores least(value_dist, key_dist) and reads both vector columns (measured 399 vs 203 MB/query on a 30k-row namespace); "off" reads the value vector only; "auto" turns it on per namespace when its key-reuse share is at or above memory_search_key_axis_auto_reuse_share (cached for memory_search_key_axis_auto_ttl_seconds; a failed probe reads as off). A per-request `key_axis` wins. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS_AUTO_REUSE_SHARE` | `float` | `0.05` | "auto" key-axis threshold: share of a namespace's keys written more than once. 0.05 sits between product namespaces and chat namespaces. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS_AUTO_TTL_SECONDS` | `int` | `600` | Seconds a namespace's "auto" key-axis probe result is cached before it is re-read. |

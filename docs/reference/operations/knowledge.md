@@ -27,6 +27,9 @@ WHAT: Ingest a document into the knowledge base for later retrieval via loom_sea
 | `original_bytes_b64` | `str \| None` | `None` | Original file bytes (base64), preserved alongside extracted text so users can download exactly what they uploaded. |
 | `original_filename` | `str` | `''` | Name of the uploaded file; empty keeps the prior document's name when its blob carries over. |
 | `blob_content_type` | `str` | `''` | Media type of `original_bytes_b64`; empty keeps the prior blob's type when it carries over. |
+| `agent` | `str` | `''` | The agent writing the document, stored on it and on every chunk for provenance; an end-user token's signed `agent` takes its place. |
+| `session_id` | `str` | `''` | The session the document was written in (a chat, an agent run): stored on it and on every chunk, and `knowledge.search` filters on it. |
+| `source_class` | `str \| None` | `None` | What the content is, when it is not the writer's own: `derived` (an agent wrote it from other content), `external` (fetched: a page, a tool's result) or `imported`. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -48,6 +51,9 @@ Batched ingestion: many documents in one CH round-trip.
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `entries` | `list[_KnowledgeBulkEntry]` | required | The documents to add (1-500), each chunked and embedded like a `knowledge.add`. |
+| `agent` | `str` | `''` | The agent writing the documents, stored on each and on every chunk for provenance; an end-user token's signed `agent` takes its place. |
+| `session_id` | `str` | `''` | The session the documents were written in (a chat, an agent run): stored on each and on every chunk, and `knowledge.search` filters on it. |
+| `source_class` | `str \| None` | `None` | What the content is, when it is not the writer's own: `derived` (an agent wrote it from other content), `external` (fetched: a page, a tool's result) or `imported`. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -234,12 +240,15 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 | `tags` | `list[str]` | *(computed)* | Keep only chunks carrying at least one of these tags; empty = no tag filter. |
 | `since_seconds` | `int \| None` | `None` | optional recency filter |
 | `top_k` | `int` | `5` | At most this many hits are returned (1-100). |
-| `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | "this" → input.namespace only; "all_mine" → also the caller's own namespaces, up to `memory_search_fanout_max_namespaces`. |
+| `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | "this" → input.namespace only; "all_mine" → also the caller's own namespaces, up to `knowledge_search_max_namespaces`. |
+| `namespaces` | `list[str]` | *(computed)* | Search `namespace` and exactly these (an agent's collection, `@me`) instead of a fan-out; each must be one the caller may read, else the call is refused (403). |
 | `search_mode` | `Literal['hybrid', 'semantic', 'lexical']` | `'hybrid'` | hybrid: vector leg + BM25 lexical leg fused by reciprocal rank; semantic: vector only; lexical: BM25 only. |
 | `lexical_weight` | `float` | `1.0` | Weight of the lexical leg in reciprocal-rank fusion (hybrid mode). 1.0 = equal weight; lower it for queries whose tokens are ubiquitous in the corpus (paths, boilerplate) where the lexical leg cannot discriminate. |
 | `narrow_spans` | `bool` | `False` | Needle reads: also return, per hit, the two-sentence window of the chunk nearest the query as `span`, so a caller after one fact reads a sentence instead of a 1,500-character section. |
 | `collapse_sections` | `bool` | `True` | Keep one hit per (document, section): the best-ranked chunk represents its section and reports how many siblings it folded. |
 | `uri_prefix` | `list[str]` | *(computed)* | Directory scope: only chunks whose source_uri starts with one of these prefixes. |
+| `session_ids` | `list[str]` | *(computed)* | Only chunks of documents written in one of these sessions (a chat's own attachments, an agent run's output). |
+| `source_classes` | `list[str]` | *(computed)* | Only chunks of these classes, e.g. ["asserted"] for what people and their agents wrote as their own, without what an agent derived or fetched. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -319,6 +328,9 @@ Same fields as knowledge.add.
 | `original_bytes_b64` | `str \| None` | `None` | Original file bytes (base64), preserved alongside extracted text so users can download exactly what they uploaded. |
 | `original_filename` | `str` | `''` | Name of the uploaded file; empty keeps the prior document's name when its blob carries over. |
 | `blob_content_type` | `str` | `''` | Media type of `original_bytes_b64`; empty keeps the prior blob's type when it carries over. |
+| `agent` | `str` | `''` | The agent writing the document, stored on it and on every chunk for provenance; an end-user token's signed `agent` takes its place. |
+| `session_id` | `str` | `''` | The session the document was written in (a chat, an agent run): stored on it and on every chunk, and `knowledge.search` filters on it. |
+| `source_class` | `str \| None` | `None` | What the content is, when it is not the writer's own: `derived` (an agent wrote it from other content), `external` (fetched: a page, a tool's result) or `imported`. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

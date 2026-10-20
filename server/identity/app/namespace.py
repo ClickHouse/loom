@@ -336,6 +336,10 @@ async def handle_namespace_register(
 ) -> NamespaceRegisterOutput:
     ch = get_client()
     caller = resolve_subject()
+    from server.auth.sharing import COLLECTION_PREFIX
+
+    if input.namespace.startswith(COLLECTION_PREFIX):
+        raise ValidationError("a collection is changed with the collection operations only")
 
     # Create-or-update. Fresh row ⇒ caller becomes admin; existing row ⇒
     # only an admin may update it. The whole stored row is read, so every setting the
@@ -364,7 +368,7 @@ async def handle_namespace_register(
         row = registry_row(input, existing, now)
         await ch.insert("loom.namespaces", [row])
     # The claim cap reads which accounts tie a person's spellings from this table.
-    grant_cache.invalidate(input.org)
+    await grant_cache.changed(input.org)
     # The class this row implies is what the next request in this process runs as — no
     # re-read.
     from server.identity.app.traffic_class_registry import note_registered
@@ -433,8 +437,13 @@ async def handle_namespace_register(
 
 
 async def handle_namespace_list(input: NamespaceListInput) -> NamespaceListOutput:
-    where = ["org = {org:String}"]
-    params: dict[str, Any] = {"org": input.org, "lim": input.limit}
+    from server.auth.context import collection_clause
+
+    # A collection shows only to whom its grants reach, org admins included;
+    # a platform admin sees every one.
+    collections_where, params = await collection_clause(input.org)
+    where = ["org = {org:String}" + collections_where]
+    params.update({"org": input.org, "lim": input.limit})
     if input.active_only:
         where.append("active = true")
     if input.tags:
@@ -583,29 +592,55 @@ async def handle_namespace_delete(
 
     Idempotent: deleting an already-inactive namespace returns
     `deleted=False`. Deleting a namespace that was never registered
-    is a no-op (returns deleted=False).
+    is a no-op (returns deleted=False). A collection is refused: it goes with
+    what it holds, through `collection.delete`.
     """
+    from server.auth.sharing import is_collection, is_personal
+
+    if is_personal(input.namespace):
+        # It goes with its user's erasure, which also takes the user's id off its row.
+        raise ValidationError("a personal collection goes only with its user's erasure")
+    if is_collection(input.namespace):
+        raise ValidationError("a collection is deleted with collection.delete, with what it holds")
+    return await delete_namespace(input.org, input.namespace)
+
+
+async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
+    """`namespace.delete`'s write, and `collection.delete`'s once its purge ran."""
     ch = get_client()
     # SELECT * so the soft-delete row mirrors EVERY column forward; a
     # partial RMT insert would reset omitted columns to schema defaults.
-    async with account_change(input.org, input.namespace):  # as register holds it
-        existing = await namespaces_repo.fetch_row(input.org, input.namespace, ch=ch)
+    async with account_change(org, namespace):  # as register holds it
+        existing = await namespaces_repo.fetch_row(org, namespace, ch=ch)
         now = naive_utc_now_seconds()
-        if existing is None or not bool(existing.get("active", False)):
-            return NamespaceDeleteOutput(
-                deleted=False,
-                namespace=input.namespace,
-                updated_at=now,
-            )
-        row = dict(existing)
-        row["active"] = False
-        row["updated_at"] = now
-        await ch.insert("loom.namespaces", [row])
+        if existing is None:
+            # A collection whose create stopped before its directory row still
+            # has a tree row the gate admits by: retire it.
+            from server.auth.sharing import is_collection
+            from server.identity.app.collections import retire
+
+            closed = is_collection(namespace) and await retire(org, namespace)
+            return NamespaceDeleteOutput(deleted=closed, namespace=namespace, updated_at=now)
+        active = bool(existing.get("active", False))
+        if active:
+            row = dict(existing)
+            row["active"] = False
+            row["updated_at"] = now
+            await ch.insert("loom.namespaces", [row])
+        if existing.get("kind") == "collection":
+            # The tree last, and on every delete: only it decides access, so a
+            # delete cut short before it is retried (the gate still admits it)
+            # and closes the collection then. Retiring twice changes nothing.
+            from server.identity.app.collections import retire
+
+            await retire(org, namespace)
+        if not active:
+            return NamespaceDeleteOutput(deleted=False, namespace=namespace, updated_at=now)
     # The claim cap reads which accounts tie a person's spellings from this table.
-    grant_cache.invalidate(input.org)
+    await grant_cache.changed(org)
     return NamespaceDeleteOutput(
         deleted=True,
-        namespace=input.namespace,
+        namespace=namespace,
         updated_at=now,
     )
 
@@ -659,7 +694,15 @@ async def handle_namespace_browse(
         "(toString(n.classification) != 'restricted' "
         "OR (ifNull(n.kind, 'memory') = 'code' AND toString(n.join_policy) = 'approval'))",
     ]
-    params: dict[str, Any] = {"org": input.org, "lim": input.limit}
+    from server.auth.sharing import COLLECTION_PREFIX
+
+    # A collection is never joined (its grants open it), so it is not in the directory.
+    where.append("NOT startsWith(n.namespace, {col_prefix:String})")
+    params: dict[str, Any] = {
+        "org": input.org,
+        "lim": input.limit,
+        "col_prefix": COLLECTION_PREFIX,
+    }
     if input.query:
         where.append(
             "(positionCaseInsensitive(n.namespace, {q:String}) > 0 "

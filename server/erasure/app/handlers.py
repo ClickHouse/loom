@@ -13,10 +13,11 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from server.auth import authz
+from server.auth import authz, sharing
 from server.auth import context as auth_context
 from server.auth.jwt import AuthInfo
 from server.core.errors import AuthInsufficientError
+from server.core.principals import personal_name
 from server.erasure.api.erasure import (
     ErasureExportInput,
     ErasureExportOutput,
@@ -76,6 +77,24 @@ async def handle_erasure_request(input: ErasureRequestInput) -> ErasureRequestOu
     )
 
 
+async def erase_namespace(org: str, namespace: str, *, requester: str) -> ErasureRequestOutput:
+    """A purging erasure of one namespace, for an op that deletes it with what it
+    holds (`collection.delete`, whose transport checked admin on it): its rows
+    leave the disk, not just the readable set. A one-name `namespace_list` scope,
+    the scope a purge rides on (and a resume reads it back from)."""
+    input = ErasureRequestInput(
+        org=org,
+        scope_type="namespace_list",
+        scope_value=json.dumps({"namespaces": [namespace], "purge": True}),
+        requester=requester,
+        purge=True,
+    )
+    input, row, erasure_id, now = await begin_erasure(input)
+    return await run_saga(
+        input=input, row=row, erasure_id=erasure_id, requested_at=now, previously_completed=set()
+    )
+
+
 def _serialize_row(row: Mapping[str, object]) -> dict[str, object]:
     """Bytes decoded; datetimes, UUIDs and Decimals stay for Pydantic's JSON dump."""
     return {
@@ -92,10 +111,21 @@ def _page(rows: list[Any], limit: int) -> tuple[list[dict[str, object]], int, bo
 
 
 async def _export_memory(
-    org: str, scope_type: str, scope_value: str, *, include_tombstoned: bool, limit: int
+    org: str,
+    scope_type: str,
+    scope_value: str,
+    *,
+    include_tombstoned: bool,
+    limit: int,
+    shown: erasure_exports.Shown,
 ) -> tuple[list[dict[str, object]], int, bool]:
     rows = await erasure_exports.export_memory(
-        org, scope_type, scope_value, include_tombstoned=include_tombstoned, limit=limit + 1
+        org,
+        scope_type,
+        scope_value,
+        include_tombstoned=include_tombstoned,
+        limit=limit + 1,
+        shown=shown,
     )
     return _page(rows, limit)
 
@@ -123,33 +153,37 @@ async def _audit_high_rows(org: str, rows: list[dict[str, object]]) -> None:
 
 
 async def _export_knowledge(
-    org: str, scope_type: str, scope_value: str, *, limit: int
+    org: str, scope_type: str, scope_value: str, *, limit: int, shown: erasure_exports.Shown
 ) -> tuple[list[dict[str, object]], int, bool]:
-    """Knowledge is namespace-scoped. For user_id exports this section is empty
-    (we don't track per-user knowledge authorship in chunks)."""
-    if scope_type != "namespace":
-        return [], 0, False
-    return _page(await erasure_exports.export_knowledge(org, scope_value, limit=limit + 1), limit)
+    """The chunks of one namespace, or every chunk one user wrote."""
+    rows = await erasure_exports.export_knowledge(
+        org, scope_type, scope_value, limit=limit + 1, shown=shown
+    )
+    return _page(rows, limit)
 
 
 async def _export_agent_events(
-    org: str, scope_type: str, scope_value: str, *, limit: int
+    org: str, scope_type: str, scope_value: str, *, limit: int, shown: erasure_exports.Shown
 ) -> tuple[list[dict[str, object]], int, bool]:
-    rows = await erasure_exports.export_agent_events(org, scope_type, scope_value, limit=limit + 1)
+    rows = await erasure_exports.export_agent_events(
+        org, scope_type, scope_value, limit=limit + 1, shown=shown
+    )
     return _page(rows, limit)
 
 
 async def _export_audit_log(
-    org: str, scope_type: str, scope_value: str, *, limit: int
+    org: str, scope_type: str, scope_value: str, *, limit: int, shown: erasure_exports.Shown
 ) -> tuple[list[dict[str, object]], int, bool]:
     """Audit rows about this subject. namespace scope filters by tag; user_id
     scope filters by substring over the JSON `subject` blob (no native user_id
     column) — coarse but adequate for an export."""
     if scope_type == "namespace":
-        rows = await erasure_exports.export_audit_namespace(org, scope_value, limit=limit + 1)
+        rows = await erasure_exports.export_audit_namespace(
+            org, scope_value, limit=limit + 1, shown=shown
+        )
     else:
         rows = await erasure_exports.export_audit_by_subject_substring(
-            org, scope_value, limit=limit + 1
+            org, scope_value, limit=limit + 1, shown=shown
         )
     return _page(rows, limit)
 
@@ -160,9 +194,12 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
     # The input carries no `namespace`, so the transport bound an org-only check. A
     # namespace export is authorized against the namespace itself (a restricted one needs
     # the two-factor ADMIN check); a subject export spans every namespace of the org and
-    # needs the org-wide view, less the restricted namespaces this caller may not read.
+    # needs the org-wide view, less the restricted namespaces and the collections this
+    # caller may not read (an org admin may erase what it may not read).
     auth = auth_context.current_auth()
     hidden: set[str] = set()
+    # The collections the export may show; None: every one (no auth, a platform admin).
+    readable_collections: set[str] | None = None
     if auth is not None:
         if input.scope_type == "namespace":
             try:
@@ -181,43 +218,49 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
                 raise AuthInsufficientError(
                     f"cannot export {input.org}: namespace classification unavailable"
                 )
+            if not auth.has_role(Role.PLATFORM_ADMIN):
+                readable_collections = set(await sharing.readable(auth, input.org))
+                if input.scope_type == "user_id":
+                    # The subject's own collection is theirs to have exported.
+                    readable_collections.add(personal_name(input.org, "user:" + input.scope_value))
 
-    def _visible(rows: list[dict[str, object]], count: int) -> tuple[list[dict[str, object]], int]:
-        if not hidden:
-            return rows, count
-        kept = [r for r in rows if str(r.get("namespace") or "") not in hidden]
-        return kept, count - (len(rows) - len(kept))
-
+    # Applied in each read, before its LIMIT: a hidden row never takes the
+    # place of one the caller may see.
+    shown = erasure_exports.Shown(
+        hidden=tuple(sorted(hidden)),
+        collections=None if readable_collections is None else tuple(sorted(readable_collections)),
+        collection_prefix=sharing.COLLECTION_PREFIX,
+    )
     mem_rows, mem_count, mem_trunc = await _export_memory(
         input.org,
         input.scope_type,
         input.scope_value,
         include_tombstoned=input.include_tombstoned,
         limit=input.section_limit,
+        shown=shown,
     )
     know_rows, know_count, know_trunc = await _export_knowledge(
         input.org,
         input.scope_type,
         input.scope_value,
         limit=input.section_limit,
+        shown=shown,
     )
     evt_rows, evt_count, evt_trunc = await _export_agent_events(
         input.org,
         input.scope_type,
         input.scope_value,
         limit=input.section_limit,
+        shown=shown,
     )
     aud_rows, aud_count, aud_trunc = await _export_audit_log(
         input.org,
         input.scope_type,
         input.scope_value,
         limit=input.section_limit,
+        shown=shown,
     )
-    mem_rows, mem_count = _visible(mem_rows, mem_count)
     await _audit_high_rows(input.org, mem_rows)
-    know_rows, know_count = _visible(know_rows, know_count)
-    evt_rows, evt_count = _visible(evt_rows, evt_count)
-    aud_rows, aud_count = _visible(aud_rows, aud_count)
 
     await audit.emit(
         event_type="erasure.exported",
@@ -274,7 +317,12 @@ async def _authorize_status_read(row: RequestStatusRow) -> bool:
         return True
     row_org = str(row["org"])
     if str(row["scope_type"]) == "namespace":
-        return await authz.row_in_scope(row_org, str(row["scope_value"]), Role.VIEWER)
+        namespace = str(row["scope_value"])
+        # An org admin may erase a collection its grants do not open (a deleted
+        # one's documents go no other way), so it sees that erasure's status.
+        if sharing.is_collection(namespace) and _org_wide_admin(auth, row_org):
+            return True
+        return await authz.row_in_scope(row_org, namespace, Role.VIEWER)
     # A user_id saga spans every namespace of the org, and a scoped token's authority is its
     # namespaces — org membership is a flat token's gate, never a scoped one's.
     return auth.org in ("*", row_org) and not auth.has_ns_roles()
@@ -329,9 +377,21 @@ async def _list_scope(org: str) -> tuple[str, dict[str, Any]] | None:
         if hidden == ["*"]:
             return None
         where = "" if admin_view else " AND scope_type = 'namespace'"
+        params: dict[str, object] = {}
+        if not (admin_view or auth.has_role(Role.PLATFORM_ADMIN)):
+            # A collection's erasures show only to whom the collection shows, and
+            # to an org admin, who may request them.
+            where += (
+                " AND (scope_type != 'namespace'"
+                " OR NOT startsWith(scope_value, {col_prefix:String})"
+                " OR scope_value IN {col_readable:Array(String)})"
+            )
+            params["col_prefix"] = sharing.COLLECTION_PREFIX
+            params["col_readable"] = await sharing.readable(auth, org)
         if hidden:
             where += " AND NOT (scope_type = 'namespace' AND scope_value IN {hidden:Array(String)})"
-        return where, ({"hidden": hidden} if hidden else {})
+            params["hidden"] = hidden
+        return where, params
     ns_list = await auth_context.rollup_member_namespaces(org)
     if not ns_list:
         return None

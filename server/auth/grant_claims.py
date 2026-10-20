@@ -10,11 +10,12 @@ Keeper.
 Claims nest in one order: account claims first (several sorted by org and
 namespace) or a service-account name's, then the names of the tokens its
 former holder made (parent before child, `hand_down_lineage`); then an
-address's sign-up claim (`self_signup.email_claim`); then a subject's
-repository claim (`maintainers.repo_change`), the repository's admins and the
-namespaces' admins, or the trusts; then a bot or a grant (several sorted by
-namespace). Taken the other way round, two changes wait each other out and
-both answer 503.
+address's sign-up claim (`self_signup.email_claim`); then an org's collection
+tree or a SCIM group; then a subject's repository claim
+(`maintainers.repo_change`), the repository's admins and the namespaces'
+admins, or the trusts; then a bot or a grant (several sorted by namespace).
+Taken the other way round, two changes wait each other out and both answer
+503.
 """
 
 from __future__ import annotations
@@ -64,6 +65,19 @@ def account_change(org: str, namespace: str) -> AbstractAsyncContextManager[None
     release and a password set each rewrite the whole row, so one must not
     write back what it read over the other."""
     return _claimed("account:" + json.dumps([org, namespace]), f"the account {org}/{namespace}")
+
+
+def group_change(org: str, group_id: str) -> AbstractAsyncContextManager[None]:
+    """Hold one SCIM group from its read to its write: two creates of one id
+    must not both find it free, nor two patches each drop the other's members."""
+    return _claimed("group:" + json.dumps([org, group_id]), f"the group {group_id!r}")
+
+
+def collections_change(org: str) -> AbstractAsyncContextManager[None]:
+    """Hold the org's collection tree from the read that checks a move to its
+    write: two moves at once could each pass the cycle check and together close
+    a cycle."""
+    return _claimed("collections:" + json.dumps(org), f"the collections of {org}")
 
 
 def service_account_change(org: str, name: str) -> AbstractAsyncContextManager[None]:

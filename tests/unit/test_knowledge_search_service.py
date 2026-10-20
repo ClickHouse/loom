@@ -21,6 +21,7 @@ class StubCH:
 
 def _row() -> dict[str, Any]:
     return {
+        "namespace": "ns",
         "source_uri": "kb://policy.md",
         "chunk_idx": 0,
         "content": "Deploy Tue/Thu.",
@@ -33,7 +34,7 @@ def _row() -> dict[str, Any]:
 def _q(**overrides) -> HybridSearchQuery:
     base = {
         "org": "clickhouse",
-        "namespace": "ns",
+        "namespaces": ("ns",),
         "embedding_model": "text-embedding-3-small",
         "query_vec": [0.1] * 1536,
         "top_k": 10,

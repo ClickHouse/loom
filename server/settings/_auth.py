@@ -2,12 +2,91 @@
 
 from __future__ import annotations
 
+import functools
+import itertools
 import logging
+from dataclasses import dataclass, field
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from server.settings._env import DEV_JWT_SECRET, json_map_items
+from server.settings._env import DEV_JWT_SECRET, decode_json_or_b64, json_map_items
+
+
+@functools.lru_cache(maxsize=4)
+def _end_user_issuers(raw: str) -> dict[str, EndUserIssuer]:
+    """Decoded once per raw value: every token check reads it."""
+    if not raw:
+        return {}
+    parsed = decode_json_or_b64(raw, "jwt_end_user_issuers_json")
+    if not isinstance(parsed, dict):
+        raise ValueError("jwt_end_user_issuers_json must map issuer to its orgs and keys")
+    return {str(issuer): EndUserIssuer.parse(str(issuer), spec) for issuer, spec in parsed.items()}
+
+
+def _public_numbers(pem: str) -> object:
+    """A PEM public key's numbers, to tell one key under two kids; None when it
+    does not load (it then verifies nothing)."""
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+    try:
+        return load_pem_public_key(pem.encode()).public_numbers()  # type: ignore[union-attr]
+    except Exception:  # noqa: BLE001 — a key that does not load matches none
+        return None
+
+
+def _overlap(a: str, b: str) -> bool:
+    """Whether two org patterns (a name, or `prefix*`) can match one org."""
+    if a.endswith("*") and b.endswith("*"):
+        return a[:-1].startswith(b[:-1]) or b[:-1].startswith(a[:-1])
+    if a.endswith("*"):
+        return b.startswith(a[:-1])
+    if b.endswith("*"):
+        return a.startswith(b[:-1])
+    return a == b
+
+
+@dataclass(frozen=True)
+class EndUserIssuer:
+    """One end-user issuer: the orgs its tokens may name and where its keys are."""
+
+    orgs: tuple[str, ...]
+    jwks_url: str = ""
+    keys: dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def parse(cls, issuer: str, spec: object) -> EndUserIssuer:
+        if not isinstance(spec, dict):
+            raise ValueError(f"end-user issuer {issuer!r}: expected {{orgs, jwks_url, keys}}")
+        orgs = spec.get("orgs")
+        if (
+            not isinstance(orgs, list)
+            or not orgs
+            or not all(isinstance(o, str) and o for o in orgs)
+        ):
+            raise ValueError(f"end-user issuer {issuer!r}: `orgs` lists the orgs it may sign for")
+        if any(o.strip() in ("*", "") for o in orgs):
+            raise ValueError(f"end-user issuer {issuer!r}: name its orgs, not every org (`*`)")
+        jwks_url = str(spec.get("jwks_url") or "")
+        if jwks_url and not jwks_url.startswith("https://"):
+            raise ValueError(f"end-user issuer {issuer!r}: `jwks_url` is https")
+        keys = spec.get("keys") or {}
+        if not isinstance(keys, dict):
+            raise ValueError(f"end-user issuer {issuer!r}: `keys` maps kid to a public PEM")
+        if not jwks_url and not keys:
+            raise ValueError(f"end-user issuer {issuer!r}: give `jwks_url` or `keys`")
+        unknown = sorted(set(spec) - {"orgs", "jwks_url", "keys"})
+        if unknown:
+            raise ValueError(f"end-user issuer {issuer!r}: unknown fields {unknown}")
+        return cls(
+            orgs=tuple(o.strip() for o in orgs),
+            jwks_url=jwks_url,
+            keys={str(k): str(v) for k, v in keys.items()},
+        )
+
+    def signs_for(self, org: str) -> bool:
+        """Whether this issuer's tokens may name `org`: listed, or under a `prefix*`."""
+        return any(org.startswith(o[:-1]) if o.endswith("*") else org == o for o in self.orgs)
 
 
 class AuthSettings(BaseModel):
@@ -173,10 +252,17 @@ class AuthSettings(BaseModel):
     # A subject's cached grants are trusted as long when a re-read fails.
     jwt_revocation_max_stale_seconds: float = 600.0
     # Seconds a subject's grant rows are cached for the namespace gate, which
-    # caps a token's claim at the grant it holds there: a revoked or lowered
-    # grant takes effect on other processes within this TTL (at once on the
-    # one that wrote it).
+    # caps a token's claim at the grant it holds there. The backstop: a grant
+    # change reaches other processes through the watermark below, and this
+    # bounds one whose watermark row was never written.
     grant_cache_ttl_seconds: float = 10.0
+    # Seconds between each process's reads of the per-org grant watermark
+    # (loom.acl_versions): a revoke on one replica is enforced on every other
+    # within about this long.
+    acl_watermark_poll_seconds: float = Field(default=1.0, ge=0.1)
+    # Oldest watermark a process still trusts, seconds. Past it (polls keep
+    # failing) cached grants are not served and every request reads its own.
+    acl_watermark_max_stale_seconds: float = Field(default=10.0, gt=0)
 
     # Sign-ins, sign-ups and workload-token exchanges one process counts at once
     # (each costs ClickHouse statements, a sign-in a password hash); past it a
@@ -212,6 +298,48 @@ class AuthSettings(BaseModel):
     # aggregator passing each end-user's identity under one service token).
     # Empty disables the header.
     trusted_callers: str = ""
+    # The services that sign a short-lived token per end user (a chat app in
+    # front of Loom): JSON (or base64 JSON) {issuer: {"orgs": [...], "jwks_url":
+    # "https://…", "keys": {kid: RS256 public PEM}}}. `orgs` lists the orgs its
+    # tokens may name (exact names, or `prefix*`); its keys come from `jwks_url`
+    # (fetched every `jwt_end_user_jwks_refresh_seconds`) and/or `keys`. A key
+    # here verifies only its own issuer's tokens, and only as an end user
+    # (`sub: user:<id>`, one listed `org`, an optional `agent: agent:<id>`),
+    # never any other token. Empty: no end-user tokens.
+    jwt_end_user_issuers_json: str = ""
+    # The longest an end-user token may live, from its `iat` to its `exp`.
+    jwt_end_user_max_ttl_seconds: int = Field(default=300, ge=60, le=3600)
+    # Seconds between fetches of each end-user issuer's `jwks_url`; a key it
+    # rotates in is honoured from the next fetch.
+    jwt_end_user_jwks_refresh_seconds: float = Field(default=300.0, ge=10.0)
+
+    def end_user_issuers(self) -> dict[str, EndUserIssuer]:
+        """issuer → what it may sign. Empty when none set."""
+        return _end_user_issuers(self.jwt_end_user_issuers_json.strip())
+
+    @model_validator(mode="after")
+    def _end_user_issuers_stand_apart(self) -> AuthSettings:
+        issuers = self.end_user_issuers()
+        # A token's `iss` picks the end-user path, so an issuer is one or the other.
+        both = sorted(set(issuers) & self.trusted_issuers())
+        if both:
+            raise ValueError(
+                f"{both} are both end-user and trusted issuers (LOOM_JWT_ISSUER, "
+                "LOOM_JWT_TRUSTED_ISSUERS)"
+            )
+        # A federated key verifies any token of a trusted `iss`, Loom-shaped ones
+        # included, so an end-user service's key is never one.
+        federated = self.federated_key_numbers()
+        for issuer, spec in issuers.items():
+            same = sorted(k for k, pem in spec.keys.items() if _public_numbers(pem) in federated)
+            if same:
+                raise ValueError(f"end-user issuer {issuer!r}: keys {same} are federated keys")
+        # `user:<id>` names one person per org, so one issuer alone signs for an org.
+        for (a, spec_a), (b, spec_b) in itertools.combinations(issuers.items(), 2):
+            shared = [(x, y) for x in spec_a.orgs for y in spec_b.orgs if _overlap(x, y)]
+            if shared:
+                raise ValueError(f"end-user issuers {a!r} and {b!r} both sign for {shared[0]}")
+        return self
 
     def auth_actually_required(self) -> bool:
         """Whether the HTTP transport should require a bearer.
@@ -243,6 +371,17 @@ class AuthSettings(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _check_watermark_staleness(self) -> AuthSettings:
+        """A watermark is polled every interval, so a stale limit at or under it
+        reads grants on every request between two polls."""
+        if self.acl_watermark_max_stale_seconds <= self.acl_watermark_poll_seconds:
+            raise ValueError(
+                "LOOM_ACL_WATERMARK_MAX_STALE_SECONDS must be larger than "
+                "LOOM_ACL_WATERMARK_POLL_SECONDS"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _check_revocation_staleness(self) -> AuthSettings:
         """A snapshot is refreshed every cache TTL, so a stale limit at or under
         it refuses every bearer between two refreshes."""
@@ -259,6 +398,11 @@ class AuthSettings(BaseModel):
                 "LOOM_JWT_KEYRING_REFRESH_SECONDS"
             )
         return self
+
+    def federated_key_numbers(self) -> set[object]:
+        """The public numbers of every federated key that loads: a key is told
+        apart by these, whatever kid it goes under."""
+        return {_public_numbers(pem) for pem in self.jwt_public_key_map().values()} - {None}
 
     def jwt_public_key_map(self) -> dict[str, str]:
         """For RS256 verifiers: kid → PEM public key. Empty when none set."""

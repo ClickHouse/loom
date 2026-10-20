@@ -114,13 +114,13 @@ def test_key_maps_decode_once_per_value(monkeypatch: pytest.MonkeyPatch) -> None
     from server.settings._auth import AuthSettings
 
     calls: list[str] = []
-    real = _env._decode_json_or_b64
+    real = _env.decode_json_or_b64
 
     def counting(raw: str, field: str) -> object:
         calls.append(field)
         return real(raw, field)
 
-    monkeypatch.setattr(_env, "_decode_json_or_b64", counting)
+    monkeypatch.setattr(_env, "decode_json_or_b64", counting)
     _env.json_map_items.cache_clear()
     s = AuthSettings(jwt_public_keys_json=json.dumps({"k9": "pem-a"}))
     for _ in range(5):

@@ -31,6 +31,35 @@ async def overrides_adopted() -> None:
     await asyncio.sleep(max(1.0, refresh) + 1.0)
 
 
+# The ops that change who may read what: a grant, a SCIM group or the collection tree.
+ACL_OPS = frozenset(
+    {
+        "collection.create",
+        "collection.move",
+        "collection.delete",
+        "grants.create",
+        "grants.revoke",
+        "grants.approve",
+    }
+)
+
+
+def _acl_bound_s() -> float:
+    """A grant, group or collection-tree change binds the server process that
+    made it at once and every other one at its next watermark poll."""
+    return float(os.environ.get("LOOM_ACL_WATERMARK_POLL_SECONDS", "1")) + 0.5
+
+
+def acl_change_adopted() -> None:
+    """Wait out the bound on a grant, group or tree change (`_acl_bound_s`)."""
+    time.sleep(_acl_bound_s())
+
+
+async def acl_change_adopted_async() -> None:
+    """`acl_change_adopted`, for an async test."""
+    await asyncio.sleep(_acl_bound_s())
+
+
 # `max_wait` rather than `timeout` so ruff's ASYNC109 doesn't fire —
 # the rule asks async functions to not accept a `timeout` parameter
 # because callers should use `asyncio.timeout(...)` outside. That

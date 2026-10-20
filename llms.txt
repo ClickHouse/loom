@@ -112,6 +112,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Rolling upgrades: builds N-1 and N side by side](docs/architecture/rolling-upgrades.md): Every Loom process is a full replica behind one URL, and an upgrade replaces them one at a time.
 - [Security](docs/architecture/security.md): Loom separates tenants by columns: every row carries the identity tuple, and every read filters on it.
 - [Server layout](docs/architecture/server-layout.md): `server/` is organised by domain.
+- [Sharing knowledge](docs/architecture/sharing.md): A collection is a namespace that only grants open.
 - [System overview](docs/architecture/system-overview.md): Loom is a Python server (a FastAPI application plus a supervisor of background workers) and one ClickHouse database.
 
 ## Benchmarks

@@ -70,10 +70,10 @@ def keep_kinds(namespaces: Iterable[str], kinds: dict[str, str], keep: frozenset
     return [ns for ns in namespaces if (kinds.get(ns) or "") in keep or not (kinds.get(ns) or "")]
 
 
-def fanout_kinds() -> frozenset[str]:
-    """The kinds a fan-out spans (`memory_search_fanout_kinds`, comma list;
-    empty = every kind)."""
+def fanout_kinds(raw: str | None = None) -> frozenset[str]:
+    """The kinds a fan-out spans (`raw`, else `memory_search_fanout_kinds`;
+    a comma list, empty = every kind)."""
     from server.settings import settings
 
-    raw = str(settings.memory_search_fanout_kinds)
+    raw = str(settings.memory_search_fanout_kinds) if raw is None else raw
     return frozenset(k.strip() for k in raw.split(",") if k.strip())

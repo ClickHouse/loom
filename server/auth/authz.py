@@ -21,6 +21,7 @@ from collections.abc import Iterable
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from server.auth import sharing
 from server.auth.directory import ClassificationUnavailable, directory
 from server.auth.fail_closed import (
     marks_unverified,
@@ -29,9 +30,10 @@ from server.auth.fail_closed import (
     unreadable,
 )
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
+from server.core.principals import USER, principal_id
 
 # Re-export from operations.base so there's one canonical Role definition.
-from server.operations.base import GRANT_ROLES, Role, grant_rank
+from server.operations.base import GRANT_ROLES, Role, grant_rank, rank_role
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
@@ -44,9 +46,6 @@ log = logging.getLogger(__name__)
 # The roles a namespace grant can hold. Org- and platform-wide roles are never
 # grantable per namespace: an unknown grant role maps to no role at all.
 _ROLE_NAME_TO_ENUM: dict[str, Role] = {name: Role[name.upper()] for name in GRANT_ROLES}
-_ROLE_BY_RANK: dict[int, Role] = {
-    grant_rank(name): role for name, role in _ROLE_NAME_TO_ENUM.items()
-}
 
 
 def grant_role(name: str | None) -> Role | None:
@@ -109,26 +108,14 @@ async def check_authorized(
     # (org, namespace). A request that omits either leaves it unaddressable:
     # answer 400 IDENTITY_INCOMPLETE, not a misleading 403.
     if auth.has_ns_roles() and (org is None or namespace is None):
-        # Both admissions below gate on the token's best role anywhere; the
-        # org the op reads must still be the token's own.
-        if (row_scoped or deployment_scoped) and org is not None and auth.org not in ("*", org):
-            raise PermissionError(f"scoped token of org {auth.org!r} cannot act in org {org!r}")
-        if deployment_scoped or row_scoped:
-            best = auth.best_ns_role()
-            if best is not None and best.value >= required_role.value:
-                return
-            raise PermissionError(
-                f"scoped token: {required_role.name} required for a "
-                f"{'row' if row_scoped else 'deployment'}-scoped op; "
-                f"token's best namespace role is {best.name if best else 'none'}"
-            )
-        from server.core.errors import IdentityIncompleteError
+        _check_scoped_without_target(auth, required_role, org, deployment_scoped, row_scoped)
+        return
 
-        raise IdentityIncompleteError(
-            "scoped token requires org and namespace in the request body "
-            "(the token's authority is per-namespace and cannot be applied "
-            "without knowing which namespace the request targets)"
-        )
+    # A collection is reached only through grants (server/auth/sharing.py):
+    # no claim, org role or rule below applies to it.
+    if org is not None and namespace is not None and sharing.is_collection(namespace):
+        await sharing.check(auth, required_role, org, namespace)
+        return
 
     if auth.creator and org is not None and namespace is not None:
         await _check_delegated(auth, required_role, org, namespace, known_grant, grants)
@@ -153,6 +140,8 @@ async def check_authorized(
         and org is not None
         and namespace is not None
         and (auth.org == org or auth.has_role(Role.PLATFORM_ADMIN))
+        # A service's end user is no member of the org's code.
+        and not principal_id(auth.subject, USER)
         and await _is_org_readable_code_namespace(org, namespace)
     ):
         return
@@ -185,7 +174,7 @@ async def check_authorized(
             auth.can_write(org, namespace) if is_write else auth.can_access(org, namespace)
         )
         if cap is not None:
-            live = _rank_role(cap)
+            live = rank_role(cap)
             ns_covered_by_jwt = ns_covered_by_jwt and live is not None and live >= required_role
     else:
         ns_covered_by_jwt = False
@@ -238,6 +227,33 @@ async def check_authorized(
     )
 
 
+def _check_scoped_without_target(
+    auth: AuthInfo, required_role: Role, org: str | None, deployment_scoped: bool, row_scoped: bool
+) -> None:
+    """A scoped token on an op that names no (org, namespace): admitted on its
+    best role anywhere for a row- or deployment-scoped op, else 400."""
+    # Both admissions gate on the token's best role anywhere; the org the op
+    # reads must still be the token's own.
+    if (row_scoped or deployment_scoped) and org is not None and auth.org not in ("*", org):
+        raise PermissionError(f"scoped token of org {auth.org!r} cannot act in org {org!r}")
+    if deployment_scoped or row_scoped:
+        best = auth.best_ns_role()
+        if best is not None and best.value >= required_role.value:
+            return
+        raise PermissionError(
+            f"scoped token: {required_role.name} required for a "
+            f"{'row' if row_scoped else 'deployment'}-scoped op; "
+            f"token's best namespace role is {best.name if best else 'none'}"
+        )
+    from server.core.errors import IdentityIncompleteError
+
+    raise IdentityIncompleteError(
+        "scoped token requires org and namespace in the request body "
+        "(the token's authority is per-namespace and cannot be applied "
+        "without knowing which namespace the request targets)"
+    )
+
+
 async def _grant_role(
     auth: AuthInfo, org: str, namespace: str, cap: int | None, known_grant: Role | None | _Unknown
 ) -> Role | None:
@@ -246,7 +262,7 @@ async def _grant_role(
     and no second read of its own grants may loosen it. A service account with
     none live there still reads through its creator, as the listings do."""
     if cap is not None:
-        role = _rank_role(cap)
+        role = rank_role(cap)
         if role is None:
             from server.auth.service_accounts import inheriting_creator
 
@@ -373,7 +389,7 @@ def _scoped_role(
         return None
     role = auth.effective_role(org, namespace)
     if role is not None and cap is not None:
-        live = _rank_role(cap)
+        live = rank_role(cap)
         role = None if live is None else min(role, live)
     return role
 
@@ -418,10 +434,6 @@ async def claim_cap(auth: AuthInfo, org: str, namespace: str) -> int | None:
     if not names_namespace(auth, org, namespace):
         return None
     return (await grant_map(org, auth.subject)).rank(namespace)
-
-
-def _rank_role(rank: int) -> Role | None:
-    return _ROLE_BY_RANK.get(rank)
 
 
 async def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> list[str]:
@@ -476,7 +488,7 @@ async def _check_restricted(
     if own is None or own.value < required_role.value:
         raise refusal
     if grants is not None:
-        grant = _rank_role(grants.rank(namespace) or 0)
+        grant = rank_role(grants.rank(namespace) or 0)
     else:
         grant = await grant_role_for(org, namespace, auth.subject)
     if grant is None or grant.value < required_role.value:
@@ -624,7 +636,7 @@ class CachedGate:
         if namespace and namespace == self.provisioned:
             known = Role.ADMIN
         elif self.auth.creator:
-            known = _rank_role((await self.grants(self.auth.creator)).rank(namespace) or 0)
+            known = rank_role((await self.grants(self.auth.creator)).rank(namespace) or 0)
         elif self.auth.has_ns_roles() and not _code_namespace_read(
             required_role, self.org, namespace
         ):
@@ -648,14 +660,14 @@ class CachedGate:
         """`_lookup_grant`: the subject's live grant, else the inheriting creator's."""
         from server.auth.service_accounts import inheriting_creator
 
-        role = _rank_role((await self.grants()).rank(namespace) or 0)
+        role = rank_role((await self.grants()).rank(namespace) or 0)
         if role is not None:
             return role
         if self._inherited is _UNKNOWN_GRANT:
             self._inherited = await inheriting_creator(self.org, self.auth.subject)
         if not self._inherited:
             return None
-        return _rank_role((await self.grants(self._inherited)).rank(namespace) or 0)
+        return rank_role((await self.grants(self._inherited)).rank(namespace) or 0)
 
 
 def scope_flags(op: Operation) -> dict[str, bool]:

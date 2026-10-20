@@ -228,7 +228,11 @@ async def test_a_present_bearer_is_honoured_even_when_auth_is_off(
 
     monkeypatch.setattr(w, "settings", SimpleNamespace(auth_actually_required=lambda: False))
     principal = SimpleNamespace(
-        org="acme", subject="eve", is_service_account=False, has_role=lambda role: False
+        org="acme",
+        subject="eve",
+        is_service_account=False,
+        gateway=False,
+        has_role=lambda role: False,
     )
     monkeypatch.setattr("server.auth.bearer.verify_token", lambda tok: principal)
 

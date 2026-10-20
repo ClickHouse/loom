@@ -17,7 +17,7 @@ from server.erasure.store.mutations import (
     purge_mode,
     tombstone_scoped,
 )
-from server.erasure.store.predicates import NS_EQ, ORG_NS, UID, USER_CHUNKS
+from server.erasure.store.predicates import NS_EQ, ORG_NS, ORG_UID, UID, USER_CHUNKS
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
 
@@ -136,14 +136,38 @@ async def scrub_events_by_user(
 ) -> int:
     """Replace user_id with '<erased>' on loom.agent_events, and the
     `memory_key` column and the identifier entries of `args` that named the
-    subject's rows. Preserves aggregate cost rollups; removes the identity
-    and what it pointed at."""
+    subject's rows; on an end user's own calls, the `subject` that
+    names them (`user:<user_id>`) too. Preserves aggregate cost rollups;
+    removes the identity and what it pointed at."""
+    where = "org = {org:String} AND (user_id = {uid:String} OR subject = {p:String})"
     return await count_then_mutate(
         "loom.agent_events",
-        count_where="org = {org:String} AND user_id = {uid:String}",
-        mutation=EVENTS_SCRUB_MUTATION,
-        mutation_where="org = {org:String} AND user_id = {uid:String}",
-        params={"org": org, "uid": user_id},
+        count_where=where,
+        mutation=EVENTS_SCRUB_MUTATION
+        + f", subject = if(subject = {{p:String}}, '{ERASED}', subject)",
+        mutation_where=where,
+        params={"org": org, "uid": user_id, "p": "user:" + user_id},
+        final=False,
+        ch=ch,
+    )
+
+
+async def delete_last_seen_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """The newest-call row of an end user (`user:<user_id>`). Its
+    refresh reads only ledger rows newer than its mark, which the scrub has
+    already taken the subject off, so the row is not written back."""
+    where = "org = {org:String} AND subject = {p:String}"
+    return await count_then_mutate(
+        "loom.subject_last_seen",
+        count_where=where,
+        mutation="DELETE",
+        mutation_where=where,
+        params={"org": org, "p": "user:" + user_id},
         final=False,
         ch=ch,
     )
@@ -244,6 +268,10 @@ async def tombstone_entity_canonical_map_by_namespace(
     )
 
 
+# The rows erasure's mutation stamps; liveness itself is LIVE_CHUNK_SQL.
+_UNSUPERSEDED = "doc_superseded_at IS NULL"
+
+
 async def supersede_chunks_by_namespace(
     org: str,
     namespace: str | Sequence[str],
@@ -268,10 +296,37 @@ async def supersede_chunks_by_namespace(
         # Live = no `doc_superseded_at` and no supersession row.
         count_where="org = {org:String} AND namespace = {ns:String} AND " + LIVE_CHUNK_SQL,
         mutation="UPDATE doc_superseded_at = {now:DateTime}",
-        mutation_where=(
-            "org = {org:String} AND namespace = {ns:String} AND doc_superseded_at IS NULL"
-        ),
+        mutation_where=("org = {org:String} AND namespace = {ns:String} AND " + _UNSUPERSEDED),
         params={"org": org, "ns": namespace},
+        final=False,
+        ch=ch,
+    )
+
+
+async def supersede_chunks_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """The chunks of every document the user wrote, in any namespace of the
+    org: superseded, or deleted, every version, under a purge."""
+    if purge_mode():
+        return await count_then_mutate(
+            "loom.chunks",
+            count_where=ORG_UID,
+            mutation="DELETE",
+            mutation_where=ORG_UID,
+            params={"org": org, "uid": user_id},
+            final=False,
+            ch=ch,
+        )
+    return await count_then_mutate(
+        "loom.chunks",
+        count_where=ORG_UID + " AND " + LIVE_CHUNK_SQL,
+        mutation="UPDATE doc_superseded_at = {now:DateTime}",
+        mutation_where=ORG_UID + " AND " + _UNSUPERSEDED,
+        params={"org": org, "uid": user_id},
         final=False,
         ch=ch,
     )
@@ -724,6 +779,106 @@ async def tombstone_documents_by_namespace(
     )
 
 
+# Another writer's live versions of a document whose newest version is the user's:
+# what deleting the user's rows would otherwise bring back.
+_REPLACED_BY_USER = (
+    "org = {org:String} AND user_id != {uid:String} AND superseded_at IS NULL"
+    " AND (namespace, source_uri) IN ("
+    " SELECT namespace, source_uri FROM loom.documents FINAL"
+    " WHERE org = {org:String} AND user_id = {uid:String})"
+)
+
+
+async def tombstone_documents_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Supersede the documents the user wrote, in any namespace of the org; a
+    purge deletes every version of theirs instead, after superseding another
+    writer's versions that one of theirs replaced, so none reads as live again."""
+    if purge_mode():
+        await count_then_mutate(
+            "loom.documents",
+            count_where=_REPLACED_BY_USER,
+            mutation="UPDATE superseded_at = {now:DateTime}",
+            mutation_where=_REPLACED_BY_USER,
+            params={"org": org, "uid": user_id},
+            final=False,  # those versions are hidden under FINAL until the delete
+            ch=ch,
+        )
+        return await count_then_mutate(
+            "loom.documents",
+            count_where=ORG_UID,
+            mutation="DELETE",
+            mutation_where=ORG_UID,
+            params={"org": org, "uid": user_id},
+            final=False,  # every version the user wrote, the replaced ones too
+            ch=ch,
+        )
+    where = ORG_UID + " AND superseded_at IS NULL"
+    return await count_then_mutate(
+        "loom.documents",
+        count_where=where,
+        mutation="UPDATE superseded_at = {now:DateTime}",
+        mutation_where=where,
+        params={"org": org, "uid": user_id},
+        ch=ch,
+    )
+
+
+# The originals the user uploaded (`loom.blob_uploads`: a document version
+# naming one may since have been replaced and merged away), or that a version
+# of their documents still names, that no other writer's live document shares
+# (two documents with the same bytes share one row).
+_USERS_OWN_BLOBS = (
+    "org = {org:String} AND (namespace, toString(sha256)) IN ("
+    " SELECT namespace, toString(sha256) FROM loom.blob_uploads"
+    " WHERE org = {org:String} AND user_id = {uid:String}"
+    " UNION ALL SELECT namespace, blob_path FROM loom.documents"
+    " WHERE org = {org:String} AND user_id = {uid:String} AND blob_path != '')"
+    " AND (namespace, toString(sha256)) NOT IN ("
+    " SELECT namespace, blob_path FROM loom.documents FINAL"
+    " WHERE org = {org:String} AND user_id != {uid:String} AND blob_path != ''"
+    " AND superseded_at IS NULL)"
+)
+_USERS_UNERASED = ORG_UID + " AND blob_path != '' AND blob_erased_at IS NULL"
+
+
+async def erase_blobs_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
+    """Delete the user's uploaded originals no other writer shares, stamp
+    `blob_erased_at` on every document of the user's that had one, then delete
+    the record of their uploads. Returns the originals deleted."""
+    n = await count_then_mutate(
+        "loom.document_blobs",
+        count_where=_USERS_OWN_BLOBS,
+        mutation="DELETE",
+        mutation_where=_USERS_OWN_BLOBS,
+        params={"org": org, "uid": user_id},
+        final=False,
+        ch=ch,
+    )
+    await count_then_mutate(
+        "loom.documents",
+        count_where=_USERS_UNERASED,
+        mutation="UPDATE blob_erased_at = {now:DateTime}",
+        mutation_where=_USERS_UNERASED,
+        params={"org": org, "uid": user_id},
+        ch=ch,
+    )
+    await count_then_mutate(
+        "loom.blob_uploads",
+        count_where=ORG_UID,
+        mutation="DELETE",
+        mutation_where=ORG_UID,
+        params={"org": org, "uid": user_id},
+        final=False,
+        ch=ch,
+    )
+    return n
+
+
 async def _supersede_documents(
     where: str, org: str, namespace: str | Sequence[str], ch: _CHClient | None
 ) -> int:
@@ -753,6 +908,15 @@ async def delete_document_blobs_by_namespace(
     """Every uploaded original stored for the scope (loom.document_blobs)."""
     return await delete_scoped(
         "loom.document_blobs", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
+async def delete_blob_uploads_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """The record of who uploaded the scope's originals (loom.blob_uploads)."""
+    return await delete_scoped(
+        "loom.blob_uploads", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
     )
 
 

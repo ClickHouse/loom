@@ -273,7 +273,7 @@ async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str)
         q_vec = await embedder.embed(seed)
         ksq = _KSQ(
             org=input.org,
-            namespace=input.namespace,
+            namespaces=(input.namespace,),
             embedding_model=embedder.model_name,
             query_vec=q_vec,
             top_k=int(input.knowledge_top_k),

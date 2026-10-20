@@ -13,21 +13,21 @@ from server.auth.jwt import AuthInfo
 from server.core.errors import AuthInsufficientError
 from server.erasure.api.erasure import ErasureExportInput
 from server.erasure.app import handlers as h
+from server.erasure.store.exports import Shown
 from server.operations.base import Role
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 ORG, PRIV, STD = "clickhouse", "tracker-ops-restricted", "support-bot"
 
 
 @pytest.fixture
 def exports(monkeypatch):
-    async def _mem(org, scope_type, scope_value, *, include_tombstoned, limit):
-        return (
-            [{"namespace": STD, "value": "ok"}, {"namespace": PRIV, "value": "SECRET"}],
-            2,
-            False,
-        )
+    async def _mem(org, scope_type, scope_value, *, include_tombstoned, limit, shown):
+        rows = [{"namespace": STD, "value": "ok"}, {"namespace": PRIV, "value": "SECRET"}]
+        kept = [r for r in rows if _visible(shown, r["namespace"])][:limit]
+        return kept, len(kept), False
 
-    async def _empty(org, scope_type, scope_value, *, limit):
+    async def _empty(org, scope_type, scope_value, *, limit, shown):
         return ([], 0, False)
 
     monkeypatch.setattr(h, "_export_memory", _mem)
@@ -130,9 +130,10 @@ async def test_the_export_audits_each_high_row_it_serves(exports, monkeypatch) -
             "value": "v",
         }
 
-    async def _mem(*_a, **_k):
+    async def _mem(*_a, shown, **_k):
         rows = [row(STD, "plain", ""), row(STD, "vault", "high"), row(PRIV, "hidden", "high")]
-        return rows, len(rows), False
+        kept = [r for r in rows if _visible(shown, r["namespace"])]
+        return kept, len(kept), False
 
     audited: list[tuple[str, list[str]]] = []
 
@@ -149,3 +150,73 @@ async def test_the_export_audits_each_high_row_it_serves(exports, monkeypatch) -
     )
     assert [r["memory_key"] for r in out.memory.rows] == ["plain", "vault"]
     assert audited == [(STD, ["vault"])]
+
+
+@pytest.mark.asyncio
+async def test_a_user_export_carries_their_personal_collection_and_no_other_unread_one(
+    exports, monkeypatch
+) -> None:
+    from server.core.principals import personal_name
+
+    mine, theirs = personal_name(ORG, "user:u1"), personal_name(ORG, "user:u2")
+
+    async def _mem(org, scope_type, scope_value, *, include_tombstoned, limit, shown):
+        rows = [{"namespace": ns, "value": ns} for ns in (STD, mine, theirs, "col-hr")]
+        kept = [r for r in rows if _visible(shown, r["namespace"])][:limit]
+        return kept, len(kept), False
+
+    async def _readable(auth, org):
+        return []
+
+    monkeypatch.setattr(h, "_export_memory", _mem)
+    monkeypatch.setattr(h.sharing, "readable", _readable)
+    set_current_auth(_admin("*", role=Role.ORG_ADMIN))
+    out = await h.handle_erasure_export(
+        ErasureExportInput(org=ORG, scope_type="user_id", scope_value="u1", requester="ops@x")
+    )
+    assert [r["namespace"] for r in out.memory.rows] == [STD, mine]
+    assert out.counts["memory"] == 2
+
+
+def _visible(shown, namespace: str) -> bool:
+    """What `Shown.clause()` keeps, for the fakes above."""
+    if namespace in shown.hidden:
+        return False
+    return (
+        shown.collections is None
+        or not namespace.startswith("col-")
+        or (namespace in shown.collections)
+    )
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.parametrize(
+    ("shown", "first"),
+    [
+        (Shown(hidden=(PRIV,), collections=("col-me-1",)), "col-me-1"),
+        (Shown(), "col-a-hidden"),  # a platform admin: nothing left out
+    ],
+)
+def test_an_export_leaves_out_what_it_may_not_show_before_its_limit(shown, first) -> None:
+    """Run on clickhouse-local: a hidden collection's chunk sorts first, and the
+    page of one still holds the visible chunk after it."""
+    import asyncio
+
+    from server.erasure.store import exports
+
+    class _Local:
+        async def query_all(self, sql, params=None, **_k):
+            names = ", ".join(f"'{ns}'" for ns in ("col-a-hidden", "col-me-1", PRIV, STD))
+            insert = (
+                "INSERT INTO loom.chunks (org, namespace, user_id, source_uri, chunk_idx,"
+                f" content, embedding) SELECT '{ORG}', ns, 'u1', 'doc', 0, 'text',"
+                f" arrayWithConstant(3072, toBFloat16(0)) FROM (SELECT arrayJoin([{names}]) AS ns)"
+            )
+            # The table's vector column uses the codec the migration enables.
+            setup = ["SET enable_quantized_codec = 1", ddl("chunks"), insert]
+            return run(setup, sql, params)
+
+    got = asyncio.run(
+        exports.export_knowledge(ORG, "user_id", "u1", limit=1, shown=shown, ch=_Local())
+    )
+    assert [r["namespace"] for r in got] == [first]

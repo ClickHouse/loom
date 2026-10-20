@@ -28,6 +28,7 @@ class RequestRow(TypedDict):
     scope_value: str
     requester: str
     urgency: str
+    purge: bool
     attempts: int
     requested_at: datetime
 

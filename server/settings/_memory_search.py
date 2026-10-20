@@ -16,14 +16,14 @@ class MemorySearchSettings(BaseModel):
     # docs/concepts/identities-and-namespaces.md#reading-several-namespaces.
     memory_search_default_namespace_scope: Literal["this", "all_mine"] = "this"
     # Namespace kinds an all_mine fan-out spans (memory.search,
-    # knowledge.search, conversation.search, MCP loom_search): comma list over
-    # loom.namespaces.kind; a namespace with no kind row stays; "" = every
-    # kind. Code and QA indexes are reached by name or their own tools
-    # (measured sweep of 24 namespaces: 6.2 s).
+    # conversation.search, MCP loom_search; knowledge.search reads
+    # knowledge_search_fanout_kinds): comma list over loom.namespaces.kind; a
+    # namespace with no kind row stays; "" = every kind. Code and QA indexes
+    # are reached by name or their own tools (measured sweep of 24 namespaces: 6.2 s).
     memory_search_fanout_kinds: str = "memory"
     # Upper bound on how many of the caller's namespaces an all_mine fan-out
     # reads besides the addressed one; a search names the rest in
-    # `namespaces_skipped`. Every leg issues at least one statement per
+    # `namespaces_skipped`. Every memory leg issues at least one statement per
     # namespace. A guard, not a tuning knob: set well above what one person
     # holds, so it bounds a runaway sweep rather than trimming normal ones.
     memory_search_fanout_max_namespaces: int = Field(default=32, ge=1)

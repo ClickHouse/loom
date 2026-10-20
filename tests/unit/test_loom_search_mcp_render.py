@@ -168,7 +168,7 @@ def _make_harness(monkeypatch: pytest.MonkeyPatch) -> Any:
         state["asked"].append({k: v for k, v in kw.items()})
         return _payload(state["payload"])
 
-    async def _fanout(org: str) -> Fanout:
+    async def _fanout(org: str, *_: object) -> Fanout:
         return Fanout(org=org, namespaces=("team", "alice"), cap=32)
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:

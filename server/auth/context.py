@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from server.auth.directory import ClassificationUnavailable, directory
 from server.auth.fail_closed import note_answered_unverified, refused_unverified, reset
@@ -133,7 +133,16 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
             subjects = [*subjects, *await subject_aliases(org, creator)]
         grant_namespaces = await _granted_namespaces(org, subjects)
 
-    return await _gate_readable(auth, org, sorted(jwt_namespaces | grant_namespaces))
+    candidates = jwt_namespaces | grant_namespaces
+    if auth is None:
+        return sorted(candidates)
+    # Collections come from their own resolver (grants of every principal of
+    # the request, inherited down the tree), already decided by the gate's rule.
+    from server.auth import sharing
+
+    shared = await sharing.readable(auth, org)
+    others = sorted(ns for ns in candidates if not sharing.is_collection(ns))
+    return [*await _gate_readable(auth, org, others), *shared]
 
 
 def named_claims(auth: AuthInfo) -> list[str]:
@@ -223,9 +232,10 @@ async def delegated_reach(
 
 
 async def restricted_namespaces_hidden_from(org: str) -> list[str]:
-    """Restricted namespaces of `org` the current caller may NOT read —
-    the set an org-wide rollup must exclude even for an org admin. Empty with auth
-    disabled."""
+    """Restricted namespaces of `org` the current caller may NOT read — the
+    set an org-wide rollup must exclude even for an org admin (collections are
+    left out by `collection_clause`). Empty with auth disabled; `["*"]` when it
+    cannot be told."""
     from server.auth.authz import restricted_allows
     from server.operations.base import Role
 
@@ -247,6 +257,24 @@ async def restricted_namespaces_hidden_from(org: str) -> list[str]:
         for ns in sorted(names)
         if not await restricted_allows(auth, Role.VIEWER, org, ns, hides_answer=False)
     ]
+
+
+async def collection_clause(org: str, column: str = "namespace") -> tuple[str, dict[str, Any]]:
+    """A WHERE fragment that leaves out every collection of `org` the current
+    caller cannot read: by prefix, so it names only the readable ones. Empty
+    with auth disabled and for a platform admin, who read every collection."""
+    from server.auth import sharing
+    from server.operations.base import Role
+
+    auth = current_auth()
+    if auth is None or auth.has_role(Role.PLATFORM_ADMIN):
+        return "", {}
+    readable = await sharing.readable(auth, org)
+    return (
+        f" AND (NOT startsWith({column}, {{col_prefix:String}})"
+        f" OR {column} IN {{col_readable:Array(String)}})",
+        {"col_prefix": sharing.COLLECTION_PREFIX, "col_readable": readable},
+    )
 
 
 @dataclass(frozen=True)
@@ -293,18 +321,16 @@ async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeF
     if auth.has_role(Role.PLATFORM_ADMIN) or (
         auth.has_role(Role.ORG_ADMIN) and auth.org in ("*", org)
     ):
-        # An org admin sees everything EXCEPT the restricted
-        # namespaces it holds no grant + claim for.
+        # An org admin sees everything EXCEPT the restricted namespaces it
+        # holds no grant + claim for, and the collections it cannot read.
         hidden = await restricted_namespaces_hidden_from(org)
-        if not hidden:
-            return OrgScopeFilter(accessible=True, where="", params={})
         if hidden == ["*"]:
             return OrgScopeFilter(accessible=False, where="", params={})
-        return OrgScopeFilter(
-            accessible=True,
-            where=f" AND {column} NOT IN {{ns_hidden:Array(String)}}",
-            params={"ns_hidden": hidden},
-        )
+        where, params = await collection_clause(org, column)
+        if hidden:
+            where += f" AND {column} NOT IN {{ns_hidden:Array(String)}}"
+            params["ns_hidden"] = hidden
+        return OrgScopeFilter(accessible=True, where=where, params=params)
     ns_list = await rollup_member_namespaces(org)
     if not ns_list:
         return OrgScopeFilter(accessible=False, where="", params={})

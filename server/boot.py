@@ -115,6 +115,37 @@ def require_safe_bind(
         )
 
 
+async def warn_collection_named_namespaces() -> list[str]:
+    """Log one WARNING naming the first 20 active namespaces that use a
+    collection's reserved prefix (`col-`) without being one: a `col-` name not in
+    the collection tree admits only a platform admin. Returns the names."""
+    from server.auth.sharing import COLLECTION_PREFIX
+    from server.core.ch import get_client
+
+    try:
+        rows = await get_client().query_all(
+            """
+            SELECT namespace FROM loom.namespaces FINAL
+            WHERE startsWith(namespace, {prefix:String})
+              AND kind NOT IN ('collection', 'personal') AND active
+            ORDER BY namespace
+            LIMIT 20
+            """,
+            params={"prefix": COLLECTION_PREFIX},
+        )
+    except Exception as e:  # noqa: BLE001 — a boot report, never a boot failure
+        logging.getLogger(__name__).warning("could not check for col- namespaces: %s", e)
+        return []
+    names = [str(r["namespace"]) for r in rows]
+    if names:
+        logging.getLogger(__name__).warning(
+            "namespaces named like collections admit only a platform admin (the first 20): %s "
+            "(move their data to a new name, or recreate them with collection.create)",
+            ", ".join(names),
+        )
+    return names
+
+
 async def warn_newer_schema() -> list[str]:
     """Log one WARNING naming the ledger's migrations this build does not
     carry: an older build booting on a newer schema (a rolling upgrade's N-1,
@@ -458,18 +489,25 @@ async def calibrate_similarity_gates() -> None:
 
 
 async def start_token_state() -> list[asyncio.Task[None]]:
-    """Every process that verifies tokens loads the revocation snapshot and
-    the signing keyring at boot and re-reads both on their cadence."""
-    from server.auth import keyring, revocation
+    """Every process that verifies tokens loads the revocation snapshot, the
+    signing keyring, the end-user issuers' JWKS and the grant watermark at boot
+    and re-reads them on their cadence."""
+    from server.auth import end_user_keys, keyring, revocation
+    from server.core import grant_cache
     from server.core.ch import query_tag
 
     with query_tag("revocation.refresh"):
         await revocation.load_at_boot()
     with query_tag("auth.keyring_refresh"):
         await keyring.refresh()
+    with query_tag("grant_cache.poll"):
+        await grant_cache.poll()
+    await end_user_keys.refresh()
     return [
         revocation.start_refresh_loop(settings.jwt_revocation_cache_ttl_seconds),
         keyring.start_refresh_loop(),
+        end_user_keys.start_refresh_loop(),
+        grant_cache.start_poll_loop(settings.acl_watermark_poll_seconds),
     ]
 
 
@@ -639,7 +677,7 @@ def register_readiness_checks(ch: Any) -> None:
     the ledger are cached."""
     from server.auth import keyring, revocation
     from server.code.app.index import mirrors, sandbox
-    from server.core import deployment_config, model_work_gate, readiness
+    from server.core import deployment_config, grant_cache, model_work_gate, readiness
     from server.memory.app import embedder_calibration
     from server.tracker.app import registry_sources
 
@@ -657,6 +695,7 @@ def register_readiness_checks(ch: Any) -> None:
     readiness.register("migrations", _migrations, ttl_s=5.0)
     readiness.register("revocation", revocation.readiness_check)
     readiness.register("keyring", keyring.readiness_check)
+    readiness.register("grant_watermark", grant_cache.readiness_check, required=False)
     readiness.register("tracker_registry", registry_sources.readiness_check)
     readiness.register("runtime_overrides", _overrides_ready)
     readiness.register("calibration", embedder_calibration.readiness_check)

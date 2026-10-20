@@ -275,3 +275,21 @@ def test_bench_kind_is_a_valid_register_kind() -> None:
 
     inp = NamespaceRegisterInput(org="o", namespace="lme-1", owner_email="x", kind="bench")
     assert inp.kind == "bench"
+
+
+@pytest.mark.asyncio
+async def test_a_personal_collection_registers_on_its_first_write() -> None:
+    from server.core.principals import personal_name
+
+    ch = _RecordingCH()
+    name = personal_name("o", "user:a")
+    assert await ar.ensure_registered(
+        "o", name, subject="user:a", op_name="knowledge.upsert", ch=ch
+    )
+    [(table, [row])] = ch.inserts
+    assert (table, row["namespace"], row["kind"], row["owner_email"]) == (
+        "loom.namespaces",
+        name,
+        "personal",
+        "user:a",
+    )

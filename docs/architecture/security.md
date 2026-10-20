@@ -8,19 +8,21 @@ vulnerability, and for the deployment hardening checklist, see
 
 ## Threat model
 
-| Threat                                               | Boundary                                                                      | Enforced by                                                                                                          |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| An unauthenticated caller reads or writes data       | Bearer token on every op; 401 before the body is read                         | `server/transport/http.py` (`_extract_auth`), `server/auth/jwt.py`                                                   |
-| A forged or tampered token                           | Signature, algorithm allow-list, `kid`, issuer, audience, time claims         | `server/auth/jwt.py` (`verify_token`)                                                                                |
-| A revoked token keeps working                        | Per-process revocation snapshot, fail closed until loaded                     | `server/auth/revocation.py`                                                                                          |
-| Tenant A reads tenant B's rows                       | Org + namespace check on every call; row-scoped ops check the row's namespace | `server/auth/authz.py` (`check_authorized`, `row_in_scope`)                                                          |
-| A refusal confirms that an id or namespace exists    | `found=False` or a generic "cannot access", never a 403 naming the target     | Row-scoped handlers; the restricted gate                                                                             |
-| One caller exhausts shared capacity                  | Token buckets per namespace, org and actor                                    | `server/core/ratelimit.py`                                                                                           |
-| An agent is induced to echo or enumerate memory      | `read_scope` ceilings, exposure ledger, breadth budgets, prompt fencing       | `server/identity/domain/read_scope.py`, `server/identity/app/policy_gate.py`, `server/memory/domain/prompt_fence.py` |
-| Stored text carries instructions into a later prompt | Recalled memory is fenced with a per-prompt nonce                             | `server/memory/domain/prompt_fence.py`                                                                               |
-| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows are never embedded                         | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
-| Audit rows are edited or deleted                     | Per-row hashes plus a hash-chained checkpoint per window                      | `server/observability/audit.py`, `audit_verifier` worker                                                             |
-| Erasure leaves residue                               | Checkpointed saga ending in a residue census                                  | `server/erasure/app/saga.py`, `server/erasure/store/census.py`                                                       |
+| Threat                                               | Boundary                                                                                                                   | Enforced by                                                                                                          |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| An unauthenticated caller reads or writes data       | Bearer token on every op; 401 before the body is read                                                                      | `server/transport/http.py` (`_extract_auth`), `server/auth/jwt.py`                                                   |
+| A forged or tampered token                           | Signature, algorithm allow-list, `kid`, issuer, audience, time claims                                                      | `server/auth/jwt.py` (`verify_token`)                                                                                |
+| A revoked token keeps working                        | Per-process revocation snapshot, fail closed until loaded                                                                  | `server/auth/revocation.py`                                                                                          |
+| Tenant A reads tenant B's rows                       | Org + namespace check on every call; row-scoped ops check the row's namespace                                              | `server/auth/authz.py` (`check_authorized`, `row_in_scope`)                                                          |
+| A refusal confirms that an id or namespace exists    | `found=False` or a generic "cannot access", never a 403 naming the target                                                  | Row-scoped handlers; the restricted gate                                                                             |
+| One caller exhausts shared capacity                  | Token buckets per namespace, org and actor                                                                                 | `server/core/ratelimit.py`                                                                                           |
+| An agent is induced to echo or enumerate memory      | `read_scope` ceilings, exposure ledger, breadth budgets, prompt fencing                                                    | `server/identity/domain/read_scope.py`, `server/identity/app/policy_gate.py`, `server/memory/domain/prompt_fence.py` |
+| Stored text carries instructions into a later prompt | Recalled memory is fenced with a per-prompt nonce                                                                          | `server/memory/domain/prompt_fence.py`                                                                               |
+| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows are never embedded                                                                      | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
+| Audit rows are edited or deleted                     | Per-row hashes plus a hash-chained checkpoint per window                                                                   | `server/observability/audit.py`, `audit_verifier` worker                                                             |
+| Erasure leaves residue                               | Checkpointed saga ending in a residue census                                                                               | `server/erasure/app/saga.py`, `server/erasure/store/census.py`                                                       |
+| A service signs beyond its end users                 | Each issuer signs for its listed orgs alone, no two for one org; a token names one user and agent, never a group or a role | `server/auth/jwt.py` (`_verify_end_user`), `server/settings/_auth.py` (`EndUserIssuer`)                              |
+| A collection is read without a grant                 | Only grants of the request's principals, inherited down the tree, open one                                                 | `server/auth/sharing.py`, `server/auth/authz.py` (`check_authorized`)                                                |
 
 Out of scope: an attacker who already operates the ClickHouse database, vulnerabilities
 in ClickHouse or the integrated backends, and third-party MCP clients.
@@ -115,9 +117,12 @@ longer open.
 **Expiry.** Tokens have no `exp` unless minted with a TTL (`--ttl-days`). Every token
 Loom mints carries a `jti`; an outside token without one is identified by its digest.
 
-**Revocation** (`server/auth/revocation.py`). `loom.revoked_tokens` holds revoked `jti`
-or `sub` values, optionally with an issued-before cutoff. Each process loads a snapshot at
-boot and refreshes it on its own loop every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s).
+**Revocation** (`server/auth/revocation.py`). `loom.revoked_tokens` holds revoked `jti` or
+`sub` values, optionally with an issued-before cutoff. An end user's tokens are revoked by
+subject under their org, `<org>/user:<id>`
+(`server.core.principals.end_user_revocation_subject`), since `user:<id>` names one person
+per org. Each process loads a snapshot at boot and refreshes it on its own loop every
+`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s).
 
 - Until the first load succeeds, every token gets 503 `AUTH_UNAVAILABLE`.
 - After that, a ClickHouse outage keeps the last good snapshot for at most
@@ -144,9 +149,16 @@ forgotten.
   statement per (org, subject) into a per-process cache (`server/core/grant_cache.py`) kept
   for `grant_cache_ttl_seconds` (10 s). A grant write in this process drops at once the
   entries whose read covered the spelling it wrote, and any read in flight; a write to the
-  accounts that tie a person's spellings drops the org's. The server's other web processes
-  (`LOOM_WEB_WORKERS`) read again at once: the write marks a file in their runtime directory,
-  and an entry read before the mark is not served. Another server sees either within the TTL.
+  accounts that tie a person's spellings drops the org's.
+- Every other process, on this server or another, drops the org's entries within
+  `acl_watermark_poll_seconds` (1 s). The write adds one change for its org to
+  `loom.acl_versions` (a `SummingMergeTree`, counted per org and kind of change), and each
+  process reads `sum(changes)` per org and kind with sequential consistency; an entry read
+  before its count moved is not served. A sum only grows, so neither a merge nor a writer's
+  clock can hide a change. A process whose last good poll is older than
+  `acl_watermark_max_stale_seconds` (10 s) serves no cached grant and reads per request. The
+  TTL bounds a change whose watermark row was never written, and a change made by a build
+  that predates the table.
 - A failed re-read serves the cached entry while it is younger than
   `jwt_revocation_max_stale_seconds`, the bound a token check already lives with, and
   answers a retryable 503 past it.

@@ -58,15 +58,16 @@ def audit_namespace(scope_type: str, scope_value: str) -> str:
 
 
 def input_from_ledger_row(row: Mapping[str, Any]) -> ErasureRequestInput:
-    """The request a saga's ledger row records, for a resume. `purge` and
-    `external` are not ledger columns: only a `namespace_list` scope_value
-    carries them, and the saga reads them back from there."""
+    """The request a saga's ledger row records, for a resume. `external` is
+    not a ledger column: a `namespace_list` scope_value carries it (and
+    `purge` too), and the saga reads it back from there."""
     return ErasureRequestInput(
         org=row["org"],
         scope_type=row["scope_type"],
         scope_value=row["scope_value"],
         requester=row["requester"],
         urgency=row["urgency"] or "normal",
+        purge=bool(row.get("purge")),
     )
 
 
@@ -85,6 +86,7 @@ def request_row_template(
         "scope_value": input.scope_value,
         "requester": input.requester,
         "urgency": input.urgency,
+        "purge": bool(input.purge),
         "attempts": attempts,
         "requested_at": requested_at,
     }
@@ -255,13 +257,17 @@ async def run_saga(
     with erasure_mutations.saga_scope(erasure_id):
         try:
             if input.scope_type == "user_id":
-                steps = await _saga_user_id(
-                    input.org,
-                    input.scope_value,
-                    completed=completed,
-                    row=row,
-                    verify=verify,
-                )
+                # A user's erasure purges when asked (a GDPR deletion): the rows
+                # leave the parts, not just the readable set.
+                census_purge = bool(input.purge)
+                with erasure_mutations.purge_scope(census_purge):
+                    steps = await _saga_user_id(
+                        input.org,
+                        input.scope_value,
+                        completed=completed,
+                        row=row,
+                        verify=verify,
+                    )
             elif input.scope_type == "namespace":
                 steps = await _saga_namespace(
                     input.org,
