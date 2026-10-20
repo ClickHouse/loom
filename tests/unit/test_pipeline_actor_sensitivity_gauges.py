@@ -184,6 +184,20 @@ async def test_scan_labels_exactly_as_the_write_path_would() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_pages_current_versions_are_read_by_key_range_not_by_key_list() -> None:
+    # A page of 20,000 keys bound as one array parameter outgrows the request URL; the
+    # FINAL read takes the page's first and last keys, the same parameters for any page size.
+    ch = _CH([_mem(str(i), "secret") for i in range(2000)])
+    await sweep.scan(limit=2000, pages=2, ch=ch)
+    finals = [params for sql, params in ch.calls if "FINAL" in sql]
+    assert len(finals) == 2
+    for params in finals:
+        assert not any(isinstance(v, list | tuple) for v in params.values())
+    assert finals[0]["upto_memory_key"] == "k1999" and "after_memory_key" not in finals[0]
+    assert finals[1]["after_memory_key"] == "k1999"
+
+
+@pytest.mark.asyncio
 async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> None:
     from server.memory import store as memory_repo
 

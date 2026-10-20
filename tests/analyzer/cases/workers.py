@@ -21,6 +21,7 @@ async def _pure_builders(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory.app import sensitivity_sweep as sw
     from server.memory.app.reinforcement import reinforcement_lookup_sql
     from server.memory.store import integrity as ir
+    from server.memory.store import sensitivity_sweep_sql as sweep_sql
     from server.memory.store.sweeps import entity_vectors_live_sql
     from server.memory.workers.orphan_vector_reconcile import orphan_identities_sql
     from server.memory.workers.usage_fold import ACTED_STATEMENT
@@ -39,10 +40,15 @@ async def _pure_builders(ch: RecordingCH, c: dict[str, Any]) -> None:
         nc.BENCH_GC_CANDIDATES_SQL,
         budget_violations_sql("AND org = {org:String}" if scoped else ""),
         cl.KEYS_SQL,
-        sw.scan_sql(
-            org=ORG if scoped else None,
-            namespace=NS if scoped else None,
-            since_days=7 if scoped else None,
+        *(
+            build(
+                org=ORG if scoped else None,
+                namespace=NS if scoped else None,
+                since_days=7 if scoped else None,
+                after=after,
+            )
+            for build in (sweep_sql.keys_sql, sweep_sql.scan_sql)
+            for after in (False, True)
         ),
         sw.HIGH_WITH_EMBEDDING_SQL,
         reinforcement_lookup_sql(),
@@ -91,7 +97,11 @@ async def _worker_passes(ch: RecordingCH, c: dict[str, Any]) -> None:
     org = ORG if c["scoped"] else None
     await ovr.run_pass(ch=ch)
     await sw.scan(
-        org=org, namespace=NS if c["scoped"] else None, since_days=7 if c["scoped"] else None, ch=ch
+        org=org,
+        namespace=NS if c["scoped"] else None,
+        since_days=7 if c["scoped"] else None,
+        pages=1,
+        ch=ch,
     )
     await ir.integrity_counts(ch=ch)
     await admin_repo.list_loom_tables(ch=ch)

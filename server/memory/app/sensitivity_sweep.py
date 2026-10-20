@@ -47,6 +47,7 @@ from server.memory.domain.sensitivity import (
     pin_grammar,
     sensitivity_tags,
 )
+from server.memory.store.sensitivity_sweep_sql import SORT_KEY, keys_sql, scan_sql
 
 # The scan matches JSON text: `toString(value_json)` for an object value, the `json.dumps`
 # text in `value` for any other. So an escape (`\n`, `\u000B`, `\/`) or `_` may start a PIN
@@ -173,71 +174,6 @@ def _shapes(text: str, level: str) -> tuple[str, ...]:
     return tuple(shapes) or ("other",)
 
 
-# loom.memory's sort key: a scan pages on it so each page starts where the last one ended.
-_SORT_KEY = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
-
-
-def _after_cursor() -> str:
-    """Rows after `{after_<column>}` in sort key order, as `a > x OR (a = x AND ...)`."""
-    cond = ""
-    for col in reversed(_SORT_KEY):
-        cond = f"{col} > {{after_{col}:String}}" + (
-            f" OR ({col} = {{after_{col}:String}} AND ({cond}))" if cond else ""
-        )
-    return cond
-
-
-# The text the coarse filter matches: an object value's JSON, any other value's text.
-_SCAN_TEXT = "if(length(toString(value_json)) > 2, toString(value_json), value)"
-_KEY_TUPLE = f"({', '.join(_SORT_KEY)})"
-
-
-def _where(*, org: str | None, namespace: str | None, since_days: int | None) -> str:
-    """The conditions a scanned row meets, each on one row version."""
-    where = f"""tombstoned_at IS NULL AND sensitivity = ''
-          AND (expires_at IS NULL OR expires_at > now())
-          AND match({_SCAN_TEXT}, {{shape:String}})"""
-    if org:
-        where += " AND org = {org:String}"
-    if namespace:
-        where += " AND namespace = {ns:String}"
-    if since_days:
-        where += " AND created_at > now() - INTERVAL {days:UInt32} DAY"
-    return where
-
-
-def keys_sql(
-    *, org: str | None, namespace: str | None, since_days: int | None, after: bool = False
-) -> str:
-    """The sort keys of one page, read without FINAL: any row version that meets the
-    conditions gives its key, so the page's keys include every key whose current version
-    meets them. Without FINAL the window prunes partitions, every thread reads, and a read
-    in key order stops at the LIMIT."""
-    where = _where(org=org, namespace=namespace, since_days=since_days)
-    if after:  # the next page, after the last key of the one before
-        where += f" AND ({_after_cursor()})"
-    return f"""
-        SELECT {", ".join(_SORT_KEY)}
-        FROM loom.memory
-        WHERE {where}
-        ORDER BY {", ".join(_SORT_KEY)}
-        LIMIT {{lim:UInt32}}
-    """
-
-
-def scan_sql(*, org: str | None, namespace: str | None, since_days: int | None) -> str:
-    """The current version of each of a page's keys that still meets the conditions."""
-    where = _where(org=org, namespace=namespace, since_days=since_days)
-    return f"""
-        SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key,
-               {_SCAN_TEXT} AS value
-        FROM loom.memory FINAL
-        WHERE {_KEY_TUPLE} IN {{keys:Array(Tuple(String, String, String, String, String, String))}}
-          AND {where}
-        ORDER BY {", ".join(_SORT_KEY)}
-    """
-
-
 async def scan(
     *,
     org: str | None = None,
@@ -276,16 +212,19 @@ async def scan(
     read = 0
     while pages is None or read < pages:
         read += 1
+        after = last is not None
         page_params = dict(params)
         if last is not None:
-            page_params |= {f"after_{col}": last[col] for col in _SORT_KEY}
-        sql = keys_sql(org=org, namespace=namespace, since_days=since_days, after=last is not None)
+            page_params |= {f"after_{col}": last[col] for col in SORT_KEY}
+        sql = keys_sql(org=org, namespace=namespace, since_days=since_days, after=after)
         keys = await ch.query_all(sql, params=page_params)
         rows: list[dict[str, Any]] = []
         if keys:
-            sql = scan_sql(org=org, namespace=namespace, since_days=since_days)
-            key_tuples = [tuple(str(k[col]) for col in _SORT_KEY) for k in keys]
-            rows = await ch.query_all(sql, params=params | {"keys": key_tuples})
+            # The page's key range, not its key list: a list of thousands of keys is a
+            # parameter too long for the request URL.
+            sql = scan_sql(org=org, namespace=namespace, since_days=since_days, after=after)
+            upto = {f"upto_{col}": keys[-1][col] for col in SORT_KEY}
+            rows = await ch.query_all(sql, params=page_params | upto)
         report.scanned += len(rows)
         report.truncated = len(keys) >= limit
         _add_candidates(report, rows, keep)
@@ -476,7 +415,5 @@ __all__ = [
     "apply",
     "coarse_shape_re",
     "high_with_embedding_count",
-    "keys_sql",
     "scan",
-    "scan_sql",
 ]
