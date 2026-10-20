@@ -136,30 +136,59 @@ async def test_the_thread_list_counts_turns_as_an_opened_thread_does() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("fields", "statements", "served"),
-    [(["title"], 1, ("", "", "Titled")), (["last_role"], 2, ("user", "hi", "Titled"))],
+    ("fields", "keyed", "served"),
+    [
+        # Only the title: no keyed read, and the last turn's fields are empty.
+        (["title"], None, (1, "", "", "Titled")),
+        # The role: the keyed read takes the last turn.
+        (["last_role"], {"n": 1, "last_turn": ("bot", "user", "hi")}, (1, "user", "hi", "Titled")),
+        # The count alone: the keyed read counts, and reads no last turn.
+        (["msg_count"], {"n": 7}, (7, "", "", "Titled")),
+    ],
 )
 async def test_a_thread_list_reads_the_last_turn_only_when_asked(
-    monkeypatch, fields, statements, served
+    monkeypatch, fields, keyed, served
 ) -> None:
     """`fields` without the agent, role, excerpt or count is one statement over the
-    transcript; asking for any of them adds the keyed read."""
+    transcript; asking for the count or the last turn adds the keyed read, which reads
+    the last turn only when one of its fields is asked for."""
     from server.knowledge.api.models_conversations import ConversationThreadsInput
     from server.knowledge.app.conversations import handle_conversation_threads
 
     grouped = [{"thread_id": "t-1", "msg_count": 1, "first_seen": _AT, "last_seen": _AT}]
-    keyed = [{"thread_id": "t-1", "n": 1, "last_turn": ("bot", "user", "hi")}]
     titles = [{"thread_id": "t-1", "title": "Titled"}]
-    ch = StubCH([grouped, keyed, titles] if statements == 2 else [grouped, titles])
+    pages = [grouped, [{"thread_id": "t-1", **keyed}], titles] if keyed else [grouped, titles]
+    ch = StubCH(pages)
     monkeypatch.setattr(conversation_repo, "_default_client", lambda: ch)
     out = await handle_conversation_threads(
         ConversationThreadsInput(org="o", namespace="ns", agent="a", fields=fields)
     )
     transcript = [sql for sql, _ in ch.calls if "FROM loom.conversations\n" in sql]
-    assert len(transcript) == statements
+    assert len(transcript) == (2 if keyed else 1)
+    if keyed:
+        assert ("argMax" in transcript[1]) == ("last_turn" in keyed)
     [thread] = out.threads
-    # With only the title asked for, no last turn was read: its fields are empty.
-    assert (thread.last_role, thread.last_content_excerpt, thread.title) == served
+    assert (
+        thread.msg_count,
+        thread.last_role,
+        thread.last_content_excerpt,
+        thread.title,
+    ) == served
+
+
+@pytest.mark.asyncio
+async def test_the_saved_list_reads_the_prefix_it_checks() -> None:
+    """The saved list never carries a long message whole: the aggregate reads the first
+    LISTED_TEXT_CHARS characters, which the listing checks and cuts."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+
+    ch = StubCH()
+    await conversation_repo.list_saved_messages(
+        "o", "ns", "a", scope=WHOLE_NAMESPACE, user_id="u-1", ch=ch
+    )
+    sql, params = ch.calls[0]
+    assert "argMax(substringUTF8(content, 1, {listed:UInt32}), ts) AS content" in sql
+    assert "argMax(content," not in sql and params["listed"] == 1024
 
 
 @pytest.mark.asyncio

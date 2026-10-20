@@ -370,3 +370,28 @@ def test_the_thread_list_names_one_last_turn_on_a_ts_tie(
     [row] = [t for t in r.json()["threads"] if t["thread_id"] == thread]
     assert row["last_content_excerpt"] == "" and _API_KEY not in r.text
     assert (row["last_role"], row["agent"]) == ("user", "a")  # m-b's, not m-a's
+
+
+def test_a_key_that_crosses_the_excerpt_cut_is_listed_empty(
+    control_plane_url: str, ch_client, token: str
+) -> None:
+    """A ~2 KB last turn whose key starts before character 240 and ends after it: the
+    listing checks past the cut and shows no excerpt; a plain one of the same size shows
+    its first 240 characters."""
+    secret_thread, plain_thread = f"t-{uuid.uuid4().hex[:8]}", f"t-{uuid.uuid4().hex[:8]}"
+    head = "x" * 230 + " "  # the key starts at character 232 and runs past 240
+    secret = head + _AWS_KEY_ID + " " + "y" * 1800
+    plain = head + "z" * 1820
+    _insert_turns(ch_client, NS_SAVED, secret_thread, [("m-1", secret, False)])
+    _insert_turns(ch_client, NS_SAVED, plain_thread, [("m-1", plain, False)])
+    r = _post(
+        control_plane_url,
+        token,
+        NS_SAVED,
+        "conversation.threads",
+        {"window_days": 30, "agent": "*", "limit": 50},
+    )
+    assert r.status_code == 200, r.text
+    listed = {t["thread_id"]: t["last_content_excerpt"] for t in r.json()["threads"]}
+    assert listed[secret_thread] == "" and _AWS_KEY_ID[:8] not in r.text
+    assert listed[plain_thread] == plain[:240]

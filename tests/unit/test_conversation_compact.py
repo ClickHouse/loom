@@ -730,7 +730,7 @@ def test_a_summary_inside_the_window_is_replaced_but_not_counted(
 
 
 def test_a_summary_that_reads_as_a_credential_compacts_nothing(monkeypatch) -> None:
-    """A summary that repeats a OPENAI_KEY pasted in one turn would have no vector, so search
+    """A summary that repeats a key pasted in one turn would have no vector, so search
     would lose the window for good: nothing is written and no turn is tombstoned."""
     import server.core.ch
     import server.llm.client

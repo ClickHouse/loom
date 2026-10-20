@@ -1110,7 +1110,8 @@ async def recent_threads(
     # come from one argMax, `msg_id` breaking a `ts` tie, so they name the same turn.
     selected = ["thread_id"]
     if count_turns:
-        selected.append(f"{'count()' if agent else f'uniqExact({TURN})'} AS n")
+        count = "count()" if agent else f"uniqExact({TURN})"
+        selected.append(f"{count} AS n")
     if last_turn:
         selected.append(
             "argMax((agent, toString(role), substringUTF8(content, 1, {listed:UInt32})),"
