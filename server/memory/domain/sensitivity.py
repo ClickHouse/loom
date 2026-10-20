@@ -113,8 +113,8 @@ _SSN = re.compile(r"(?<![\d-])(?!000|666|9)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d
 #
 # `pin` and `pin code`, whose 6-digit values are postal codes ("PIN: 560001"): they take
 # 3-5 digits. `pin code` is the one of them that takes its value directly.
-POSTCODE_LIKE_PIN_LABEL = r"pin(?:[_ ]code)?"
 PIN_CODE_LABEL = r"pin[_ ]code"
+POSTCODE_LIKE_PIN_LABEL = rf"(?:{PIN_CODE_LABEL}|pin)"
 # Every other label: 3-8 digits.
 PIN_LABEL = r"(?:pin[_ ]number|pass[_ ]?code|cv[vc]2?(?:[_ ](?:code|number))?|security[_ ]code)"
 # A label starts after anything but a letter or digit, so a prefix (`atm_pin`) counts and
@@ -138,7 +138,7 @@ _STATED_PIN = re.compile(
     rf"(?i){_LABEL_START}{PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,8}}(?!\d)"
     rf"|{_LABEL_START}{PIN_LABEL}\s+\d{{3,8}}(?!\d)(?!\s+of\b)"
     rf"|{_LABEL_START}{POSTCODE_LIKE_PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,5}}(?!\d)"
-    rf"|{_LABEL_START}{PIN_CODE_LABEL}\s+\d{{3,5}}(?!\d)",
+    rf"|{_LABEL_START}{PIN_CODE_LABEL}\s+\d{{3,5}}(?!\d)(?!\s+of\b)",
     re.ASCII,
 )
 # An IBAN: country code, two check digits, then the BBAN in groups of four (spaced or
@@ -339,37 +339,30 @@ _SCALAR_SEP = "\n;\n"
 # letters nor digits, or at a change of case), and the label each is stated under:
 # `{"pin_code": "4471"}` reads as `pin is 4471`, so the free-text grammar decides the
 # value's length ("pin is 560001", a postal code, stays unlabelled). A key's last one, two
-# or three words are compared as words, so `p_in` is not `pin`. The sweep's prefilter is
-# built from the same list.
-KEYED_SECRET_WORDS: dict[tuple[str, ...], str] = {
+# or three words are compared as words, so `p_in` is not `pin`; a label's words may also be
+# written as one word (`pincode`, `cvv2`). The sweep's prefilter is built from the same list.
+_KEYED_SECRET_PARTS: dict[tuple[str, ...], str] = {
     ("pin",): "pin",
     ("pin", "code"): "pin",
-    ("pincode",): "pin",
     ("pin", "number"): "pin number",
-    ("pinnumber",): "pin number",
     ("pass", "code"): "passcode",
-    ("passcode",): "passcode",
     ("cvv",): "cvv",
     ("cvv", "2"): "cvv",
-    ("cvv2",): "cvv",
     ("cvv", "code"): "cvv",
     ("cvv", "number"): "cvv",
     ("cvc",): "cvc",
     ("cvc", "2"): "cvc",
-    ("cvc2",): "cvc",
     ("cvc", "code"): "cvc",
     ("cvc", "number"): "cvc",
     ("security", "code"): "security code",
-    ("securitycode",): "security code",
 }
-# The key words that state an SSN. The spelled-out `social_security_number` is read as its
-# last three words.
-SSN_KEYS: tuple[tuple[str, ...], ...] = (
-    ("ssn",),
-    ("ssn", "number"),
-    ("ssn", "no"),
-    ("social", "security", "number"),
-)
+KEYED_SECRET_WORDS = _KEYED_SECRET_PARTS | {
+    ("".join(w),): label for w, label in _KEYED_SECRET_PARTS.items() if len(w) > 1
+}
+# The key words that state an SSN, written apart or as one word. The spelled-out
+# `social_security_number` is read as its last three words.
+_SSN_KEY_PARTS = (("ssn",), ("ssn", "number"), ("ssn", "no"), ("social", "security", "number"))
+SSN_KEYS = _SSN_KEY_PARTS + tuple(("".join(w),) for w in _SSN_KEY_PARTS if len(w) > 1)
 _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")  # `PIN`, `badge`, `Pin`, `2`
 
 
@@ -398,9 +391,11 @@ def _keyed_secret(key: str, value: Any) -> str:
 # digits and dashes, for `reads_high`: a quoted value is the whole string, spaces around
 # the digits allowed (`"4471 abc"` is not one), and a bare number ends where the digits
 # do (`4471.5` and a 20-digit run are not read as a shorter number). The key is any
-# quoted string; each attempt reads it to its closing quote, so the scan stays linear.
+# quoted string, escapes included (`"pin\""`, `"door\\pin"`); each attempt reads it to
+# its closing quote, so the scan stays linear.
 _KEYED_PAIR = re.compile(
-    r'"([^"\\]+)"\s*:\s*(?:"\s*([0-9][0-9-]{0,15})\s*"|([0-9][0-9-]{0,15})(?![\w.-]))',
+    r'"((?:[^"\\]|\\.)+)"\s*:\s*'
+    r'(?:"\s*([0-9][0-9-]{0,15})\s*"|([0-9][0-9-]{0,15})(?![\w.-]))',
     re.ASCII,
 )
 

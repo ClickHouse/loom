@@ -71,8 +71,8 @@ _COARSE_PIN = (
 
 # What separates a key's words as the detector splits it: any run of characters that are
 # neither letters nor digits, read in JSON text, where one may be an escape (`\n`, `\/`,
-# `\u00e9`) and a quote ends the key.
-_KEY_SEP = r'(?:[^A-Za-z0-9"\\]|\\(?:[bfnrt/\\]|u[0-9a-fA-F]{4}))*'
+# `\"`, `\\`, `\u00e9`) and an unescaped quote ends the key.
+_KEY_SEP = r'(?:[^A-Za-z0-9"\\]|\\(?:["bfnrt/\\]|u[0-9a-fA-F]{4}))*'
 # After a key's last word: a separator run (`"CVV:"`, `"pin "`, `"Security Code (CVV)"`,
 # `"pin\n"`), the closing quote, then the value.
 _KEY_VALUE = rf'{_KEY_SEP}"{_JSON_SPACE}*:{_JSON_SPACE}*"?{_JSON_SPACE}*'

@@ -672,7 +672,7 @@ that answers it.
 
 A JSON value is read scalar by scalar (`detector_text`). A key whose last one, two or three
 words name a PIN-like secret states its digits under that label, so the free-text rules above
-decide: `pin`, `pin_code` and `pincode` read as `pin is <value>` (3-5 digits), `pin_number` as
+decide (a label's words may also be written as one word, as in `pincode` or `cvv2`): `pin`, `pin_code` and `pincode` read as `pin is <value>` (3-5 digits), `pin_number` as
 `pin number is <value>`, and `passcode`, `cvv`, `cvc` and `security_code` (`pass_code`,
 `cvv_2`, `cvc2`, `cvv_code` and `cvc_number` too) as `<label> is <value>` (3-8 digits). An
 `ssn`, `ssn_number`, `ssn_no` or `social_security_number` key states an SSN with its dashes

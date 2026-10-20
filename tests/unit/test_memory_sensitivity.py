@@ -396,6 +396,9 @@ def test_a_chunk_of_an_object_value_is_read_with_its_escapes_undone() -> None:
     assert not reads_high(human_text({"pin": "4" * 20}))
     assert not reads_high(human_text({"pin": "4471 abc"}))  # the quote closes after the digits
     assert not reads_high(human_text({"p_in": 1013}))
+    # a key holding an escaped quote or backslash
+    assert reads_high(human_text({'pin"': "4471"}))
+    assert reads_high(human_text({"door\\pin": "4471"}))
     # an escaped backslash before `n` stays a backslash and an `n`: no line starts there
     assert not reads_high(human_text({"note": "x\\n" + _TOKEN}))
     assert not reads_high(human_text({"label": "Password:", "placeholder": "Enter one"}))
@@ -505,6 +508,7 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
         "released 2024-01-15",
         "PIN 3 of the header",
         "pin 100 of the connector",
+        "PIN code 100 of the batch",
         "pinned 4471 rows",
         "pin 128 rows before the import",
         "GPIO pin 115",
@@ -603,6 +607,14 @@ def test_a_value_reading_high_is_left_out_of_a_model_prompt_whatever_its_label()
         ({"p_in": 1013}, ""),  # `p` and `in` are not the word `pin`
         ({"passcode": "4471"}, "high"),
         ({"cvv2": "123"}, "high"),
+        # a label's words written as one word
+        ({"cvvcode": "123"}, "high"),
+        ({"cvvnumber": "123"}, "high"),
+        ({"cvccode": "123"}, "high"),
+        ({"cvcnumber": "123"}, "high"),
+        ({"ssnnumber": "123456789"}, "high"),
+        ({"ssnno": "123456789"}, "high"),
+        ({"SOCIALSECURITYNUMBER": "123-45-6789"}, "high"),
         ({"securitycode": "5512"}, "high"),
         ({"ssn": "000-12-3456"}, ""),
         ({"pan": "4111111111111112"}, ""),
@@ -719,6 +731,8 @@ _PREFILTER_OBJECTS = [
     {"SSN:": "123456789"},
     {"Security Code (CVV)": "123"},
     {"pin\n": "4471"},  # written `pin\n`
+    {'pin"': "4471"},  # written `pin\"`
+    {"door\\pin": "4471"},  # written `door\\pin`
     {"p_in": 1013},
     {"cvv_code": "123"},
     {"ssn_no": "123456789"},
