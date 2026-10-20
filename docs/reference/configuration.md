@@ -789,7 +789,7 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY` | `float` | `0.3` | live | conversation.search cosine floor; without it the top_k nearest threads return however far. Stricter than memory recall: chat excerpts are noisy. |
-| `LOOM_CONVERSATION_SEARCH_EXCERPT_CHARS` | `int` | `240` | live | Characters of a turn a conversation.search hit shows; the embedding row keeps the whole embedded text, so this changes no stored row. At most 2048, the most a row stores (EMBEDDED_EXCERPT_CHARS). |
+| `LOOM_CONVERSATION_SEARCH_EXCERPT_CHARS` | `int` | `240` | live | Characters of a turn a conversation.search or conversation.search_saved_messages hit shows; the embedding row keeps the whole embedded text, so this changes no stored row. At most 2048, the most a row stores (EMBEDDED_EXCERPT_CHARS). |
 | `LOOM_CONVERSATION_TITLER_ENABLED` | `bool` | `True` |  | LLM-title untitled threads in namespaces with conversation_logging_enabled (the Sessions "Recording" toggle is the off-switch). Skipped with the fake LLM. |
 | `LOOM_CONVERSATION_TITLER_INTERVAL_SECONDS` | `int` | `1800` |  | Seconds between titler passes. |
 | `LOOM_CONVERSATION_TITLER_WINDOW_HOURS` | `int` | `168` |  | Only threads with a turn in the last this-many hours are titled. |
