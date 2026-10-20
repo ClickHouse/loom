@@ -496,13 +496,14 @@ def _logged_turn_rows(embedded: bool):
                     "role": "assistant",
                     "content": "the logged answer",
                     "run_id": "r1",
+                    "last_ts": _DT,
                     "owners": ["-"],
                     "tombstoned": False,
                     "unsaved": 1,
                 }
             ],
             "countIf(embedding_model": [
-                {"current": 1 if embedded else 0, "unsaved": 1 if embedded else 0}
+                {"current": 1 if embedded else 0, "unsaved": 1 if embedded else 0, "foreign": 0}
             ],
         }
     )
