@@ -190,6 +190,8 @@ def _headers(
         # no-store: the row can be repointed at new bytes.
         "Cache-Control": "no-store",
         "X-Loom-Download-Source": source,
+        # Pinned here too: a download is never sniffed into another type, whatever the
+        # middleware sends.
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": _DOWNLOAD_CSP,
     }
