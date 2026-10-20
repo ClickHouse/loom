@@ -21,7 +21,6 @@ memory_exposure_summary = Operation(
     output_model=ExposureSummaryOutput,
     handler=handle_memory_exposure_summary,
     idempotent=True,
-    budget_p99_ms=300,
     # Who-read-what is an operator view of other principals' activity.
     required_role=Role.ADMIN,
     audit=False,
@@ -35,7 +34,6 @@ memory_owner_report = Operation(
     output_model=MemoryOwnerReportOutput,
     handler=handle_memory_owner_report,
     idempotent=True,
-    budget_p99_ms=800,
     # The owner's own rows: a viewer may ask about themself; the read-scope
     # binding, not the role, is what keeps it to themself.
     required_role=Role.VIEWER,

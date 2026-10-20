@@ -19,6 +19,7 @@ from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from server.core.ch_names import split_table
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.predicates import NS_EQ, NS_IN
 from server.erasure.store.rows import MutationRow
@@ -58,11 +59,6 @@ class MutationFailed(RuntimeError):
 
 class MutationStillRunning(TimeoutError):
     """The saga's mutation was still running when the wait budget ran out."""
-
-
-def _split_table(table: str) -> tuple[str, str]:
-    db, _, name = table.rpartition(".")
-    return (db or "loom", name)
 
 
 # The saga whose steps are running, for the mutation tag. With the saga id in
@@ -107,7 +103,7 @@ def _mutation_sql(*, pending_only: bool) -> str:
 
 
 def _mutation_params(table: str, tag: str) -> dict[str, Any]:
-    db, name = _split_table(table)
+    db, name = split_table(table)
     return {"db": db, "t": name, "pat": f"%{tag}%"}
 
 

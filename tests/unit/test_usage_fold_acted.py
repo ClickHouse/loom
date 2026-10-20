@@ -24,6 +24,7 @@ from server.memory.workers.usage_fold import (
     acted_pass,
     run_pass,
 )
+from server.settings import settings
 from server.workers.status import get_registry
 
 
@@ -137,7 +138,7 @@ def test_cold_start_watermark_is_the_last_acted_event_or_a_day_back(events) -> N
         assert params["since_exp"] == params["since"] - timedelta(
             seconds=usage_fold.ACTED_EXPOSURE_LOOKBACK_SECONDS
         )
-        assert params["lim"] == usage_fold.ACTED_MAX_ROWS_PER_PASS
+        assert params["lim"] == settings.memory_usage_fold_acted_max_rows_per_pass
         assert "event_type = 'acted'" in ch.query_one_calls[0][0]
 
     asyncio.run(_run())
@@ -284,7 +285,7 @@ def test_a_schema_without_the_credits_table_still_credits(events) -> None:
 
 
 def test_a_full_page_holds_the_watermark_at_the_last_credited_write(events, monkeypatch) -> None:
-    monkeypatch.setattr(usage_fold, "ACTED_MAX_ROWS_PER_PASS", 2)
+    monkeypatch.setattr(settings, "memory_usage_fold_acted_max_rows_per_pass", 2)
     ch = StubCH()
     ch.query_one_returns.append(None)
     first = (T0 - timedelta(hours=5)).replace(tzinfo=None)

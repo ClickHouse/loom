@@ -27,7 +27,6 @@ collection_create = Operation(
     output_model=CollectionCreateOutput,
     handler=handle_collection_create,
     idempotent=True,
-    budget_p99_ms=80,
     # The collection does not exist yet; the handler checks writer on the
     # parent, and the creator becomes its admin.
     required_role=Role.VIEWER,
@@ -45,7 +44,6 @@ collection_move = Operation(
     output_model=CollectionMoveOutput,
     handler=handle_collection_move,
     idempotent=True,
-    budget_p99_ms=80,
     # Admin on the collection moved; writer on the new parent, checked by the handler.
     required_role=Role.ADMIN,
     audit=True,
@@ -58,7 +56,6 @@ collection_list = Operation(
     output_model=CollectionListOutput,
     handler=handle_collection_list,
     idempotent=True,
-    budget_p99_ms=80,
     # Lists only what the caller's grants reach (a scoped token: no further
     # than its claim), so a scoped token is gated on its best namespace role.
     required_role=Role.VIEWER,
@@ -74,8 +71,6 @@ collection_delete = Operation(
     output_model=CollectionDeleteOutput,
     handler=handle_collection_delete,
     idempotent=True,
-    # It runs the purging erasure inline, as `erasure.request` does.
-    budget_p99_ms=2000,
     required_role=Role.ADMIN,
     audit=True,
 )

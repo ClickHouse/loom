@@ -53,6 +53,8 @@ async def claim_release(
     input: ClaimReleaseInput,
     request: Request,
 ) -> ClaimReleaseOutput:
+    """Release a self-signup claim: revoke its grants, clear the owner, deactivate it;
+    the name stays reserved."""
     from server.insights.app.admin_routes import refuse_foreign_org, require_org_admin
 
     info = await require_org_admin(request)

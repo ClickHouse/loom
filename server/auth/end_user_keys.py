@@ -56,7 +56,7 @@ async def refresh(*, unloaded_only: bool = False) -> None:
 
 async def _fetch(issuer: str, url: str) -> None:
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=settings.identity_provider_timeout_s) as client:
             response = await client.get(url)
             response.raise_for_status()
         keys = jwt.PyJWKSet.from_dict(response.json()).keys

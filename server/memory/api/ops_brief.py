@@ -14,7 +14,6 @@ memory_brief = Operation(
     output_model=MemoryBriefOutput,
     handler=handle_memory_brief,
     idempotent=True,
-    budget_p99_ms=4000,
     required_role=Role.VIEWER,
     audit=False,
 )

@@ -1,0 +1,15 @@
+{{- range $k, $_ := .Values.settingsFile }}
+{{- if has (printf "LOOM_%s" (upper $k)) (include "loom.guardedNames" $ | fromJsonArray) }}
+{{- fail (printf "set %s through %s, not settingsFile" $k (include "loom.guardedThrough" (dict "key" $k "root" $))) }}
+{{- end }}
+{{- end }}
+{{- /* Rendered and mounted even when empty: a pod of the previous ReplicaSet started
+during a rollout still names this ConfigMap and LOOM_SETTINGS_FILE. */}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "loom.suffixed" (dict "root" . "suffix" "settings") }}
+  labels:
+    {{- include "loom.labels" . | nindent 4 }}
+data:
+  {{- include "loom.settingsFileData" . | nindent 2 }}

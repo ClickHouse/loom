@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import Any
 
 from server.code.app.index.review_brief import FAILED, NOT_BOUND, RESTRICTED, SERVED
+from server.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +24,6 @@ LEDGER_ABSENT = "absent"
 # message, so a merge whose BODY cites `(#N)` can precede the merge OF #N.
 _MIRROR_LOG_CANDIDATES = 8
 _MIRROR_CACHE_MAX = 4096
-# A miss is re-tried after this long (the mirror fetches; a hit never changes).
-_MIRROR_NEGATIVE_TTL_S = 600.0
 _mirror_cache: dict[tuple[str, str, int], tuple[float, dict[str, Any] | None]] = {}
 _MERGE_SUBJECT_RE = re.compile(r"^Merge pull request #\d+ from \S+\s*$")
 
@@ -84,7 +83,9 @@ async def mirror_merge_facts(
     n = int(pr_number)
     key = (git_dir, branch, n)
     hit = _mirror_cache.get(key)
-    if hit is not None and (hit[1] is not None or now() - hit[0] < _MIRROR_NEGATIVE_TTL_S):
+    if hit is not None and (
+        hit[1] is not None or now() - hit[0] < settings.code_review_brief_mirror_miss_ttl_s
+    ):
         return hit[1]
     facts: dict[str, Any] | None = None
     if n > 0:

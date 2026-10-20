@@ -36,6 +36,7 @@ from server.memory.api.models_crud import MemorySetInput
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.store.session_outcomes import insert_outcomes
 from server.observability.genai import llm_stage
+from server.settings.budgets import llm_max_tokens
 
 OUTCOMES = ("unclear", "positive", "negative")
 REFLECTION_KEY_PREFIX = "reflection:contrast:"
@@ -269,7 +270,10 @@ async def label_sessions(ch: Any, llm: Any, cfg: DistillConfig, result: DistillR
             )
             with llm_stage("session_judge"), customer.for_org(str(r["org"])):
                 res = await llm.complete(
-                    system, user, max_tokens=160, response_format={"type": "json_object"}
+                    system,
+                    user,
+                    max_tokens=llm_max_tokens("session_judge"),
+                    response_format={"type": "json_object"},
                 )
             outcome, confidence, reason = parse_judgement(getattr(res, "text", "") or "")
         except customer.HOLDS:
@@ -458,7 +462,10 @@ async def _contrast_pair(ch: Any, llm: Any, cfg: DistillConfig, neg: Any, writer
     )
     with llm_stage("session_contrast"):
         res = await llm.complete(
-            system, user, max_tokens=400, response_format={"type": "json_object"}
+            system,
+            user,
+            max_tokens=llm_max_tokens("session_contrast"),
+            response_format={"type": "json_object"},
         )
     lessons, what_failed = parse_lessons(getattr(res, "text", "") or "")
     if not lessons:

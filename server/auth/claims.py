@@ -29,7 +29,6 @@ from server.auth import shielded
 
 log = logging.getLogger(__name__)
 
-SWEEP_INTERVAL_SECONDS = 300
 _FULL_FOR_S = 900  # how long hitting the key limit stays a health problem
 UNDO_S = 5  # an undo Keeper does not finish by then is left to the key's expiry
 # A write the server gives up on rather than lands late, after a request that

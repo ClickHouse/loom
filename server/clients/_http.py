@@ -66,15 +66,12 @@ async def _on_request(request: httpx.Request) -> None:
 
 def _build(**extra: Any) -> httpx.AsyncClient:
     return _ProviderClient(
-        # 20s default — long enough for embedding APIs which can
-        # be slow on cold paths, short enough that a stalled call
-        # doesn't pin the request thread indefinitely.
-        timeout=httpx.Timeout(20.0, connect=5.0),
-        # Bound the pool so a single misbehaving downstream can't
-        # exhaust sockets; 100 covers batched embedding traffic at peak.
+        timeout=httpx.Timeout(
+            settings.http_client_timeout_s, connect=settings.http_client_connect_timeout_s
+        ),
         limits=httpx.Limits(
-            max_connections=100,
-            max_keepalive_connections=20,
+            max_connections=settings.http_client_max_connections,
+            max_keepalive_connections=settings.http_client_max_keepalive_connections,
         ),
         # Follow a provider's trailing-slash or moved-endpoint redirect.
         follow_redirects=True,

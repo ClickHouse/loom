@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from server.settings import settings
 from server.transport.mcp_config import _DEFAULT_MCP_AGENT
 from server.transport.mcp_identity import (
     _MCP_AGENT_BY_SESSION,
@@ -227,7 +228,7 @@ async def test_loom_search_uses_grant_namespace_and_fans_profile_across_membersh
     # vector) and the fake embedder's vectors carry no meaning: keep this test
     # on the word rule it asserts the fan-out with (on-the-fly scoring would
     # otherwise score the sections from their text).
-    monkeypatch.setattr("server.memory.app.profile_search._ON_THE_FLY_CAP", 0)
+    monkeypatch.setattr(settings, "memory_profile_search_embed_cap", 0)
 
     auth = AuthInfo(
         subject="mcp-user",

@@ -68,33 +68,21 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from clickhouse_connect.driver.external import ExternalData
 
+from server.core.ch_names import split_table
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
 
-# Cadence read by the registry; the worker's only other knob is the enable flag.
-INTERVAL_SECONDS = 300
-
-# Bounds the mutation burst of a single batch (mainly the post-restart catch-up).
-MAX_MEMORIES_PER_PASS = 1000
-# A pass keeps taking batches while it is behind, up to this wall-clock budget.
-PASS_TIME_BUDGET_SECONDS = 120.0
 # Rows per UPDATE statement; keeps the transform() arrays and the IN list bounded.
 UPDATE_CHUNK_ROWS = 500
-# Backpressure: a pass is skipped — watermark untouched — while
-# the destination table already carries this many unfinished mutations on the
-# connected replica. Every lightweight UPDATE is a patch part plus a Keeper log
-# entry; enough of them pending on a large table can expire replicas' Keeper
-# sessions and leave them read-only.
-MAX_PENDING_MUTATIONS = 20
 # ClickHouse error codes that mean "lightweight UPDATE is not available here"
 # (syntax / support disabled / not implemented). Only these earn the ALTER
 # UPDATE fallback; a read-only replica (242), a Keeper session (999) or an
@@ -137,8 +125,12 @@ class _CHClient(Protocol):
 
 @dataclass(frozen=True)
 class UsageFoldConfig:
-    max_memories_per_pass: int = MAX_MEMORIES_PER_PASS
-    pass_time_budget_seconds: float = PASS_TIME_BUDGET_SECONDS
+    max_memories_per_pass: int = field(
+        default_factory=lambda: settings.memory_usage_fold_max_memories_per_pass
+    )
+    pass_time_budget_seconds: float = field(
+        default_factory=lambda: settings.memory_usage_fold_pass_time_budget_s
+    )
     update_chunk_rows: int = UPDATE_CHUNK_ROWS
 
 
@@ -218,7 +210,7 @@ async def _apply_update(
 async def _pending_mutations(ch: _CHClient, table: str) -> int:
     """Unfinished mutations on `table` at the connected replica; 0 when the
     probe itself fails (never block folding on an observability read)."""
-    db, _, name = table.partition(".")
+    db, name = split_table(table)
     try:
         row = await ch.query_one(
             "SELECT count() AS n FROM system.mutations "
@@ -494,13 +486,13 @@ async def _fold_batch(ch: _CHClient, cfg: UsageFoldConfig, result: UsageFoldResu
     # queue of unfinished mutations, folding more only lengthens it. Skip the
     # pass; the watermark stays, so the next pass folds the same rows.
     pending = await _pending_mutations(ch, "loom.memory")
-    if pending > MAX_PENDING_MUTATIONS:
+    if pending > settings.memory_usage_fold_max_pending_mutations:
         result.skipped_pending_mutations = pending
         log.warning(
             "usage_fold: %d unfinished mutations on loom.memory "
             "(cap %d); skipping this pass, watermark held at %s",
             pending,
-            MAX_PENDING_MUTATIONS,
+            settings.memory_usage_fold_max_pending_mutations,
             _watermark.isoformat(),
         )
         return False
@@ -596,8 +588,6 @@ ACTED_EXPOSURE_LOOKBACK_SECONDS = 24 * 3600
 # Writes are re-read this far behind the pass clock (async inserts, the
 # events-stream flush) before the watermark moves past them.
 ACTED_WRITE_LAG_SECONDS = 120
-# Bounds one pass; the watermark stays until a pass drains below it.
-ACTED_MAX_ROWS_PER_PASS = 5000
 
 _acted_watermark: datetime = _EPOCH
 _acted_watermark_derived: bool = False
@@ -754,7 +744,7 @@ async def acted_pass(
         params={
             "since": since,
             "since_exp": since - timedelta(seconds=ACTED_EXPOSURE_LOOKBACK_SECONDS),
-            "lim": ACTED_MAX_ROWS_PER_PASS,
+            "lim": settings.memory_usage_fold_acted_max_rows_per_pass,
         },
     )
     result.acted_candidates += len(rows)
@@ -788,7 +778,7 @@ async def acted_pass(
             result.acted_emitted += await record_usage_for_keys(
                 org, ns_keys, event_type="acted", agent=agent, ch=ch
             )
-    full = len(rows) >= ACTED_MAX_ROWS_PER_PASS
+    full = len(rows) >= settings.memory_usage_fold_acted_max_rows_per_pass
     if full:
         # A full page: hold the watermark at the last write credited so the
         # next pass continues from there (the remembered pairs stop the
@@ -888,7 +878,6 @@ async def run_pass(
 __all__ = [
     "ACTED_STATEMENT",
     "IDENTITY_STATEMENT",
-    "INTERVAL_SECONDS",
     "UsageFoldConfig",
     "UsageFoldResult",
     "acted_pass",

@@ -34,7 +34,6 @@ facts_list = Operation(
     output_model=FactsListOutput,
     handler=handle_facts_list,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -46,7 +45,6 @@ facts_related = Operation(
     output_model=FactsRelatedOutput,
     handler=handle_facts_related,
     idempotent=True,
-    budget_p99_ms=60,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -57,8 +55,6 @@ facts_traverse = Operation(
     output_model=FactsTraverseOutput,
     handler=handle_facts_traverse,
     idempotent=True,
-    # Recursive CTE — heavier than a single hop.
-    budget_p99_ms=200,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -70,8 +66,6 @@ facts_path = Operation(
     output_model=FactsPathOutput,
     handler=handle_facts_path,
     idempotent=True,
-    # One frontier query per hop, at most max_hops of them.
-    budget_p99_ms=250,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -83,7 +77,6 @@ facts_expire_by_adapter = Operation(
     output_model=FactsExpireByAdapterOutput,
     handler=handle_facts_expire_by_adapter,
     idempotent=False,
-    budget_p99_ms=500,
     required_role=Role.ADMIN,
     audit=True,
 )

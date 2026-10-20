@@ -84,7 +84,6 @@ from server.code.app.common import (
 from server.code.app.index import merge_shas
 from server.code.app.index.mirrors import history_dir
 from server.code.app.spans import code_span, set_code_span_attributes
-from server.code.domain.index import blame_introduced as intro
 from server.code.domain.index import blame_range as br
 from server.code.domain.index.coverage_claim import is_test_file
 from server.code.domain.time_window import _iso, _parse_when
@@ -238,8 +237,8 @@ def _diff_targets(
 ) -> list[tuple[bi.Candidate, str]]:
     """Which candidates get one of the bounded diff calls: those the ledger
     knows a merge commit for and no title / body already demoted, newest
-    first, at most MAX_DIFF_CALLS. None on a frameless pool with no paths: a whole-PR diff
-    has no frame to land in and no file to be whitespace-only about."""
+    first, at most `code_blame_introduced_max_diff_calls`. None on a frameless pool with no
+    paths: a whole-PR diff has no frame to land in and no file to be whitespace-only about."""
     out: list[tuple[bi.Candidate, str]] = []
     if not frames_or_paths:
         return out
@@ -248,7 +247,7 @@ def _diff_targets(
         m = marks.get(c.pr_number)
         if sha and not (m is not None and m.demoted):
             out.append((c, sha))
-    return out[: intro.MAX_DIFF_CALLS]
+    return out[: settings.code_blame_introduced_max_diff_calls]
 
 
 async def _mark_stage(
@@ -261,8 +260,9 @@ async def _mark_stage(
     paths: list[str],
 ) -> tuple[list[bi.Candidate], MarkStage]:
     """Mark and re-rank the candidate pool: one ledger read for titles, bodies and merge
-    commits; at most MAX_DIFF_CALLS bounded diffs of each candidate's change to the frames'
-    files on the mirror; the marks folded into the candidates; hard-demoted last."""
+    commits; at most `code_blame_introduced_max_diff_calls` bounded diffs of each candidate's
+    change to the frames' files on the mirror; the marks folded into the candidates;
+    hard-demoted last."""
     stage = MarkStage()
     if not pool:
         return pool, stage

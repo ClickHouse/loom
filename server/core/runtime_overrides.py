@@ -1,5 +1,5 @@
-"""loom.runtime_overrides: limits an operator sets at runtime through
-`/v1/admin/ratelimit.set` and `/v1/admin/budget.set`.
+"""loom.runtime_overrides: limits and settings an operator sets at runtime through
+`/v1/admin/ratelimit.set`, `/v1/admin/budget.set` and `/v1/admin/settings.set`.
 
 The admin route writes the row, then applies it in its own process; every
 process re-reads the table every `runtime_overrides_refresh_seconds`, so an
@@ -27,6 +27,8 @@ RATELIMIT_ORG = "ratelimit.org"
 # key (op,) / (consumer, op) → milliseconds, or "<n>x"
 BUDGET_OP = "budget.op"
 BUDGET_CONSUMER = "budget.consumer"
+# key (field,) → the value of a LIVE setting (server.core.settings_overrides)
+SETTING = "setting"
 
 Snapshot = dict[str, dict[tuple[str, ...], Any]]
 

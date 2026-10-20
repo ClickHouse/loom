@@ -33,6 +33,7 @@ from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from server.core.ch_names import database, logical, split_table
 from server.core.errors import BackendUnavailableError
 
 log = logging.getLogger(__name__)
@@ -175,10 +176,10 @@ def carries(table: str) -> bool:
 
 async def _stored(ch: Any, tables: Iterable[str]) -> dict[str, set[str]]:
     tables = list(tables)
-    rows = await ch.query_all(_STORED_SQL, {"keys": [tuple(t.split(".", 1)) for t in tables]})
+    rows = await ch.query_all(_STORED_SQL, {"keys": [split_table(t) for t in tables]})
     stored: dict[str, set[str]] = {table: set() for table in tables}
     for r in rows:
-        stored.setdefault(f"{r['database']}.{r['table']}", set()).add(str(r["name"]))
+        stored.setdefault(f"{logical(r['database'])}.{r['table']}", set()).add(str(r["name"]))
     return stored
 
 
@@ -384,9 +385,10 @@ async def _still_running(ch: Any, ids: list[str]) -> int | None:
     return None
 
 
+# A carried insert of another schema on the service never acknowledges in this one.
 _WRITERS_SQL = (
     "SELECT DISTINCT splitByChar('/', query_id)[2] AS process FROM {source} "
-    "WHERE startsWith(query_id, {{prefix:String}})"
+    "WHERE startsWith(query_id, {{prefix:String}}) AND current_database = {{db:String}}"
 )
 
 
@@ -401,7 +403,8 @@ async def _running_writers(ch: Any) -> set[str] | None:
     for source in [*sources, "system.processes"]:
         try:
             rows = await ch.query_all(
-                _WRITERS_SQL.format(source=source), {"prefix": CARRY_QUERY_PREFIX}
+                _WRITERS_SQL.format(source=source),
+                {"prefix": CARRY_QUERY_PREFIX, "db": database()},
             )
         except Exception as e:  # noqa: BLE001 — only a missing cluster asks the local server
             if error_code(e) == _CLUSTER_DOESNT_EXIST:
@@ -597,7 +600,7 @@ async def _schema_stamp(ch: Any) -> tuple[Any, ...] | None:
                    (SELECT max(metadata_modification_time) FROM system.tables
                     WHERE (database, name) IN {keys:Array(Tuple(String, String))}) AS altered
             """,
-            {"keys": [tuple(table.split(".", 1)) for table in _TABLES]},
+            {"keys": [split_table(table) for table in _TABLES]},
         )
     except Exception as e:  # noqa: BLE001 — the next poll tries again
         log.debug("rmt carry: schema unreadable (%s)", e)

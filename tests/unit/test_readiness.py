@@ -16,6 +16,7 @@ import server.boot as boot
 from server import health
 from server.core import readiness
 from server.core.readiness import CheckResult
+from server.settings import settings
 
 
 @pytest.fixture(autouse=True)
@@ -62,7 +63,7 @@ def test_draining_makes_the_process_unready() -> None:
 
 @pytest.mark.asyncio
 async def test_a_raising_or_hanging_check_fails_instead_of_erroring(monkeypatch) -> None:
-    monkeypatch.setattr(readiness, "CHECK_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(settings, "readiness_check_timeout_s", 0.05)
 
     def _boom() -> CheckResult:
         raise RuntimeError("no table")

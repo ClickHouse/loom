@@ -69,7 +69,7 @@ async def preflight_snapshot_recovery(
         schemas[table] = await source_schema(names, ch=client)
         target_marker(names, schemas[table].table_uuid, fingerprint)
     rows = await client.query_all(
-        "SELECT name, uuid, engine, comment FROM system.tables WHERE database = 'loom' "
+        "SELECT name, uuid, engine, comment FROM system.tables WHERE database = currentDatabase() "
         "AND startsWith(name, {prefix:String})",
         {"prefix": f"_provider_rebuild_{job_id.hex}_"},
     )

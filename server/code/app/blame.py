@@ -61,15 +61,17 @@ logger = logging.getLogger(__name__)
 _LEDGER_LIMIT = 200
 _RELEASE_BASIS = "branch-cut tags (v<minor>.1.1-new dates); backport titles"
 # (git_dir, kind, key...) -> value; blame text, window graphs and branch points,
-# each CACHE_TTL_S
-_CACHE: TtlCache[tuple[Any, ...], Any] = TtlCache(br.CACHE_TTL_S, maxsize=512)
+# each `code_blame_cache_ttl_s`
+_CACHE: TtlCache[tuple[Any, ...], Any] = TtlCache(
+    lambda: settings.code_blame_cache_ttl_s, maxsize=512
+)
 
 
 # (git_dir, base sha) -> (tip, the `base..tip` graph): the widest window read so
 # far for that base. History does not change, so a narrower window is derived from
 # it in memory (`br.subgraph`) and a newer tip adds only its own commits.
 _WIDE: dict[tuple[str, str], tuple[str, br.WindowGraph]] = {}
-# Bases held at once (each a graph of up to MAX_GRAPH_COMMITS commits); a caller's
+# Bases held at once (each a graph of up to `code_blame_max_graph_commits` commits); a caller's
 # good_version picks the base, so the least recently used one is dropped.
 _WIDE_MAX = 4
 # One build per (git_dir, base) at a time: concurrent ranges of one bisect (same
@@ -307,9 +309,9 @@ async def _rev_list(git_dir: str, *revs: str) -> str:
         "rev-list",
         "--parents",
         "--format=%ct%x09%s",
-        f"--max-count={br.MAX_GRAPH_COMMITS}",
+        f"--max-count={settings.code_blame_max_graph_commits}",
         *revs,
-        timeout_s=br.GRAPH_TIMEOUT_S,
+        timeout_s=settings.code_blame_graph_timeout_s,
     )
 
 
@@ -332,7 +334,7 @@ async def _blame(
         to_sha,
         "--",
         path,
-        timeout_s=br.BLAME_TIMEOUT_S,
+        timeout_s=settings.code_blame_timeout_s,
     )
     lines = br.parse_porcelain(text)
     _CACHE.put(key, lines)
@@ -560,7 +562,7 @@ async def diff_kind(
                 sha,
                 "--",
                 *paths,
-                timeout_s=intro.DIFF_TIMEOUT_S,
+                timeout_s=settings.code_blame_introduced_diff_timeout_s,
             )
         except gitrepo.GitError as e:
             logger.info("blame_range: diff of %s failed: %s", sha[:12], str(e)[:160])
@@ -601,8 +603,8 @@ async def _introduced_stage(
     pre: IntroducedLeg,
 ) -> tuple[list[br.Candidate], IntroducedLeg]:
     """Mark and re-rank the first stage's candidates. Reads: the linked issues' titles when
-    `mentions` is given (one ledger read) and at most MAX_DIFF_CALLS bounded diffs;
-    everything else is already here."""
+    `mentions` is given (one ledger read) and at most `code_blame_introduced_max_diff_calls`
+    bounded diffs; everything else is already here."""
     t0 = time.monotonic()
     out = pre
     out.last_touched = _order_view(candidates)

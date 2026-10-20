@@ -118,7 +118,7 @@ A new storage table, a new wire-op group, an auth-model change, a new external-s
 
 ## Conventions that aren't obvious
 
-- **Settings** live in `server/settings/`, one mixin per area; a field is `LOOM_<FIELD>` in the environment. Give a new field a comment saying what it controls and what its values mean, read it as `settings.<field>` (never `getattr` with a default), and run `python scripts/codegen/settings_reference.py` to regenerate [the configuration reference](./docs/reference/configuration.md).
+- **Settings** are all declared in `server/settings/catalog.py`, one section per area; a field is `LOOM_<FIELD>` in the environment. Give a new field a comment saying what it controls and what its values mean, read it as `settings.<field>` (never `getattr` with a default), and run `python scripts/codegen/settings_reference.py` to regenerate [the configuration reference](./docs/reference/configuration.md).
 - **Migrations** are numbered SQL under `schemas/migrations/`, additive only. A merged migration is never edited or deleted: deployed ledgers verify every file's checksum. After adding one, run `make schema-dump` and commit `schemas/schema.sql`.
 - **ReplacingMergeTree rows carry every column.** A new version row of `loom.memory` / `loom.shared` goes through the builders in `server/memory/store/rows.py`. A new column is added to the builders, and to `loom.memory_versions` and its view, in the same change.
 - **Every write stamps `actor` and `source_class`** from the token, never from the request body. Every write that creates or changes memory leaves a hash-only audit row.

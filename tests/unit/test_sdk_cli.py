@@ -113,6 +113,10 @@ def test_account_and_admin_clients_reach_the_routes_outside_the_registry(wire) -
             await agent.deployment.workers_status()
             await agent.deployment.reset_models("7")
             await agent.deployment.release_claim("acme", "squatted", "abuse")
+            await agent.deployment.set_setting("memory_ask_recency_weight", 0.35)
+            await agent.deployment.set_setting("memory_ask_recency_weight", 0.35, expected=0.2)
+            await agent.deployment.reset_setting("memory_ask_recency_weight", expected=0.35)
+            await agent.deployment.reset_setting("memory_ask_recency_weight")
         finally:
             await agent.close()
 
@@ -136,6 +140,43 @@ def test_account_and_admin_clients_reach_the_routes_outside_the_registry(wire) -
             "/v1/admin/claim_release",
             {"org": "acme", "namespace": "squatted", "reason": "abuse"},
         ),
+        ("POST", "/v1/admin/settings.set", {"name": "memory_ask_recency_weight", "value": 0.35}),
+        (
+            "POST",
+            "/v1/admin/settings.set",
+            {"name": "memory_ask_recency_weight", "value": 0.35, "expected": 0.2},
+        ),
+        (
+            "POST",
+            "/v1/admin/settings.set",
+            {"name": "memory_ask_recency_weight", "clear": True, "expected": 0.35},
+        ),
+        ("POST", "/v1/admin/settings.set", {"name": "memory_ask_recency_weight", "clear": True}),
+    ]
+
+
+def test_the_generated_admin_client_has_a_method_per_route() -> None:
+    from loom.admin_routes import AdminRoutes
+
+    from scripts.codegen.sdk_py_admin_gen import admin_routes
+
+    names = {n for n in dir(AdminRoutes) if not n.startswith("_")}
+    assert names == {r.name for r in admin_routes()}
+
+
+def test_the_generated_admin_client_sends_the_body_as_given(wire) -> None:
+    async def go() -> None:
+        agent = Agent("acme", "support", "t", base_url="http://loom.test", api_key="k")
+        try:
+            await agent.deployment.routes.settings_list({"prefix": "memory_ask_"})
+            await agent.deployment.routes.workers_status()
+        finally:
+            await agent.close()
+
+    asyncio.run(go())
+    assert wire.seen == [
+        ("POST", "/v1/admin/settings.list", {"prefix": "memory_ask_"}),
+        ("GET", "/v1/admin/workers.status", None),
     ]
 
 

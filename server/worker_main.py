@@ -48,11 +48,15 @@ async def _start_services(ch: Any) -> list[asyncio.Task[None]]:
             await asyncio.sleep(max(5.0, float(settings.tracker_sources_refresh_seconds)))
             await registry_sources.refresh_db_sources()
 
-    return [
+    tasks = [
         asyncio.create_task(refresh_loop(), name="provider-configuration-refresh"),
         asyncio.create_task(_trackers(), name="loom-tracker-sources-refresh"),
         await repo_registry.start_refresher(ch),
+        # The workers read LIVE settings too: their passes see the deployment's overrides.
+        boot.start_runtime_overrides(),
     ]
+    await boot.await_warm_up(settings.boot_warmup_timeout_s, ("runtime_overrides",))
+    return tasks
 
 
 async def _drain() -> None:

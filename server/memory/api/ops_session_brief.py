@@ -29,11 +29,6 @@ session_brief_save = Operation(
     # A retry with the same session + cursor is a no-op; a new window is a
     # new revision.
     idempotent=True,
-    # The deterministic builder and an agent-written overlay are one read and
-    # one insert; the `model` shape is up to `session_brief_max_windows`
-    # sequential model calls (about 47 s for four haiku windows).
-    budget_p99_ms=800,
-    shape_budgets_p99_ms={"model": 90_000},
     required_role=Role.WRITER,
     audit=True,
 )
@@ -45,7 +40,6 @@ session_brief_get = Operation(
     output_model=SessionBriefGetOutput,
     handler=handle_session_brief_get,
     idempotent=True,
-    budget_p99_ms=200,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -57,7 +51,6 @@ session_brief_list = Operation(
     output_model=SessionBriefListOutput,
     handler=handle_session_brief_list,
     idempotent=True,
-    budget_p99_ms=200,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -69,7 +62,6 @@ session_brief_delete = Operation(
     output_model=SessionBriefDeleteOutput,
     handler=handle_session_brief_delete,
     idempotent=True,
-    budget_p99_ms=200,
     required_role=Role.WRITER,
     audit=True,
 )

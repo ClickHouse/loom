@@ -12,12 +12,8 @@ from server.insights.api.models_agents import (
     ConnectedAgent,
 )
 from server.insights.store import agents as agents_store
+from server.settings import settings
 
-# The sidebar badge asks agents.connected every 30 s per tab, and the answer is a 24 h scan
-# of agent_events. One answer per (org,
-# namespace, window, caller scope) serves every asker for 60 s — "a new agent in the last
-# day" does not change faster than that.
-_CONNECTED_TTL_S = 60.0
 _connected_cache: dict[tuple[str, str, int, str], tuple[float, AgentsConnectedOutput]] = {}
 # How far back `first_seen` looks. Partitioned by month, so a month is one or two partitions
 # instead of the whole table.
@@ -65,7 +61,7 @@ async def handle_agents_connected(input: AgentsConnectedInput) -> AgentsConnecte
         where + "|" + repr(sorted(params.items())) + ("|count" if count_only else ""),
     )
     hit = _connected_cache.get(cache_key)
-    if hit is not None and time.monotonic() - hit[0] < _CONNECTED_TTL_S:
+    if hit is not None and time.monotonic() - hit[0] < settings.insights_agents_connected_ttl_s:
         return hit[1]
     ch = get_client()
     if count_only:

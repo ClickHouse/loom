@@ -37,6 +37,7 @@ from typing import Any
 
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
+from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
 
@@ -145,7 +146,7 @@ async def select_candidates(
             res = await llm.complete(
                 _SELECT_SYSTEM,
                 f"Question: {question}\n\nCandidates:\n{candidate_lines(memories)}",
-                max_tokens=120,
+                max_tokens=llm_max_tokens("ask_deep_select"),
             )
         picks = parse_picks(
             str(getattr(res, "text", "") or ""), len(memories), max_picks=max_memories

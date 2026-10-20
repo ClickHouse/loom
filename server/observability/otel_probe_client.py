@@ -6,6 +6,7 @@ import sys
 import threading
 from typing import Any
 
+from server.core.ch_names import database, telemetry_database
 from server.observability import otel_exporters as _exporters
 
 
@@ -57,6 +58,15 @@ class _ProbeClient:
         per_query = dict(kwargs.get("settings") or {})
         per_query.setdefault("log_comment", _probe_query_tag(sys._getframe(2).f_code.co_name))
         kwargs["settings"] = per_query
+        # This client's own database is ClickStack's: a probe that filters system
+        # tables by Loom's databases names them as parameters, bound here.
+        sql = args[0] if args and isinstance(args[0], str) else ""
+        if "{loom_db:String}" in sql or "{telemetry_db:String}" in sql:
+            kwargs["parameters"] = {
+                "loom_db": database(),
+                "telemetry_db": telemetry_database(),
+                **dict(kwargs.get("parameters") or {}),
+            }
         with _PROBE_QUERY_LOCK:
             client = self._target()
             try:

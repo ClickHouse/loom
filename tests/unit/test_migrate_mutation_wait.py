@@ -117,7 +117,7 @@ class _MutationsCH:
 
     def query(self, sql: str, parameters=None, settings=None):
         if "system.mutations" in sql:
-            assert "database = 'loom'" in sql and "NOT is_done" in sql and "LIMIT" in sql
+            assert "database = currentDatabase()" in sql and "NOT is_done" in sql and "LIMIT" in sql
             self.reads.append(parameters)
             rows = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
             return SimpleNamespace(result_rows=rows)

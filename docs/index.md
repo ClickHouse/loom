@@ -37,6 +37,7 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
   and the SDK call for every dashboard view.
 - [Upgrades](operations/upgrades.md) · [Backup and recovery](operations/backup-and-recovery.md) ·
   [Monitoring](operations/monitoring.md) · [Maintenance](operations/maintenance.md) ·
+  [Runtime settings](operations/runtime-settings.md) ·
   [Troubleshooting](operations/troubleshooting.md) ·
   [Code-index operations](operations/code-index-operations.md) ·
   [Running N replicas](operations/replicas.md): identical Looms behind one URL ·

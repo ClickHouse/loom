@@ -36,7 +36,6 @@ memory_schema_register = Operation(
     output_model=MemorySchemaRegisterOutput,
     handler=handle_memory_schema_register,
     idempotent=False,
-    budget_p99_ms=120,
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -48,7 +47,6 @@ memory_schema_list = Operation(
     output_model=MemorySchemaListOutput,
     handler=handle_memory_schema_list,
     idempotent=True,
-    budget_p99_ms=120,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -60,7 +58,6 @@ memory_schema_propose = Operation(
     output_model=MemorySchemaRegisterOutput,
     handler=handle_memory_schema_propose,
     idempotent=False,
-    budget_p99_ms=120,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -72,7 +69,6 @@ memory_schema_approve = Operation(
     output_model=MemorySchemaDecisionOutput,
     handler=handle_memory_schema_approve,
     idempotent=False,
-    budget_p99_ms=120,
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -83,7 +79,6 @@ memory_record_write = Operation(
     output_model=MemoryRecordWriteOutput,
     handler=handle_memory_record_write,
     idempotent=False,
-    budget_p99_ms=150,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -94,7 +89,6 @@ memory_record_query = Operation(
     output_model=MemoryRecordQueryOutput,
     handler=handle_memory_record_query,
     idempotent=True,
-    budget_p99_ms=150,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -105,7 +99,6 @@ memory_record_history = Operation(
     output_model=MemoryRecordHistoryOutput,
     handler=handle_memory_record_history,
     idempotent=True,
-    budget_p99_ms=150,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -117,7 +110,6 @@ memory_record_conflicts = Operation(
     output_model=MemoryRecordConflictsOutput,
     handler=handle_memory_record_conflicts,
     idempotent=True,
-    budget_p99_ms=150,
     required_role=Role.VIEWER,
     audit=False,
 )

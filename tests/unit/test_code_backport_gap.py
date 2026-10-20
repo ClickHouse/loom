@@ -17,6 +17,7 @@ import server.tracker.app.binding as binding
 from server.code.api.models_history import CodeBackportGapInput
 from server.operations.base import Role
 from server.operations.registry import OPERATIONS_BY_NAME
+from server.settings import settings
 from server.tracker.domain import backport as bp
 from server.tracker.domain.errors import TrackerUnavailable
 
@@ -640,7 +641,7 @@ async def test_presence_deadline_is_unknown_never_absent(wired, monkeypatch) -> 
                 await asyncio.sleep(0.3)
             return await super().symbol_names_present(org, ns, names)
 
-    monkeypatch.setattr(h, "_PRESENCE_WALL_MS", 50)
+    monkeypatch.setattr(settings, "code_backport_presence_budget_ms", 50)
     repo = _Slow(present={ns: {SYMS[1]} for ns in BRANCHES}, fix=LEDGER_FIX)
     wired(_Source(change=CHANGE), repo)
     out = await h.handle_code_backport_gap(

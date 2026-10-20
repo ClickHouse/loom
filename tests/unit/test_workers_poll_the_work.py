@@ -999,12 +999,14 @@ async def test_the_chain_stops_at_its_wall_time_budget_and_embeds_what_it_has(
         "code_chunks": [{**r, "embedding_dim": 8, "version": r["version"] + 50} for r in stale]
     }
     monkeypatch.setattr(cr, "CodeRepo", lambda: repo)
-    monkeypatch.setattr(cer, "_CHAIN_BUDGET_S", 0.0)  # budget spent after the first scan
+    monkeypatch.setattr(
+        settings, "code_embed_recovery_chain_budget_s", 0.0
+    )  # budget spent after the first scan
     r = await cer.run_pass()
     scans = [c for c in repo.calls if c[0] == "keys" and c[1] == "code_chunks"]
     assert len(scans) == 1 and r.chunks_embedded == 0 and not r.idle
     assert cer._watermark["code_chunks"] == 15  # the next pass continues above the page it read
-    monkeypatch.setattr(cer, "_CHAIN_BUDGET_S", 20.0)
+    monkeypatch.setattr(settings, "code_embed_recovery_chain_budget_s", 20.0)
     repo.calls.clear()
     r2 = await cer.run_pass()
     assert r2.chunks_embedded == 3 and cer._watermark["code_chunks"] == 202
