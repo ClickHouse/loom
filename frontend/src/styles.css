@@ -509,9 +509,9 @@ body {
    ============================================================ */
 
 /* Unlayered, as every ring rule here: in a layer an override would lose to the unlayered
-   *:focus-visible ring. These are the only
-   Loom rules outside a layer besides the base page styles (page, scrollbars, animations,
-   selection); every component rule sits in `@layer components`. */
+   *:focus-visible ring. These are the only Loom rules outside a layer besides the base
+   page styles (page, scrollbars, animations, selection); every component rule sits in
+   `@layer components`. */
 
 /* Click UI's focus ring (outline-default, 2 px, 2 px offset) on every focusable
    element, including the ones Click UI draws none on (checkbox, switch, tabs,
@@ -1211,8 +1211,8 @@ textarea[aria-invalid="true"]:focus-visible {
    stroke; a checked row Click UI's Table row tint, its checkbox carrying the state. The
    scroll margin leaves room for the row's focus ring (2 px out, 2 px wide) when it is
    scrolled to an edge. The browser lays out and paints only the rows in view; a row not
-   drawn yet holds its list's measured height: a thread 76 px, a document 101, a memory 129,
-   and under 640 px, where a row's meta takes its own line, 105, 123 and 151 (below). */
+   drawn yet holds its list's measured height: a thread 73 px, a document 101, a memory 126,
+   and under 640 px, where a row's meta takes its own line, 99, 123 and 148 (below). */
 @layer components {
   .list-row {
     position: relative;
@@ -1614,8 +1614,8 @@ textarea[aria-invalid="true"]:focus-visible {
     white-space: nowrap;
   }
   /* Recall Lab: a score cell's bar is Click UI's table bar chart, its width the score
-     against the top ranked hit; it takes Click UI's hover bar colour with the row's hover. A 4 px bar 2 px under the
-     score: measured hand sizes. */
+     against the top ranked hit; it takes Click UI's hover bar colour with the row's hover.
+     A 4 px bar 2 px under the score: measured hand sizes. */
   .recall-bar {
     display: block;
     height: 4px;
