@@ -360,9 +360,10 @@ async def _judge_one(item: dict[str, Any]) -> None:
     started = time.monotonic()
     cost_accumulator.begin_op()
     try:
-        # Loom's own sampled quality check, so the deployment's customer; with no
-        # stage set its feature is the op, worker.retrieval_judge.
-        with customer.system():
+        # The prompt is the org's query and memory text, so the call is the org's:
+        # metered to it and refused while its model calls are off. With no stage
+        # set its feature is the op, worker.retrieval_judge.
+        with customer.for_org(item["org"]):
             out = await client.complete(
                 _JUDGE_SYSTEM, user, max_tokens=120, response_format={"type": "json_object"}
             )

@@ -248,8 +248,7 @@ LOOM_INFERENCE_FEATURE_MAP_JSON='{"hyde": "search", "*": "memory"}'  # Loom's fe
   per org: the embedding worker, `loom reembed` and a model rebuild split their
   batches by org.
 - The deployment's own calls (the startup check of the embedder, the
-  recalibration worker's fixed pairs, the dashboard's provider check, the
-  sampled retrieval judge) name `LOOM_INFERENCE_SYSTEM_CUSTOMER`.
+  recalibration worker's fixed pairs, the dashboard's provider check) name `LOOM_INFERENCE_SYSTEM_CUSTOMER`.
 - With the customer header set, a model call that names no org is refused
   (`MODEL_CALL_UNATTRIBUTED`) instead of being sent: it is a call path that
   forgot its org, and the gateway would bill it to no one.

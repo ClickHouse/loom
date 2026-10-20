@@ -1029,7 +1029,7 @@ def test_tracker_embeddings_name_the_namespaces_org(metered, caplog) -> None:
     _no_refusal_logged(caplog)
 
 
-def test_the_retrieval_judge_is_the_deployments_own_call(metered, monkeypatch, caplog) -> None:
+def test_the_retrieval_judge_names_the_judged_org(metered, monkeypatch, caplog) -> None:
     from server.llm import client as llm_client
     from server.observability import langfuse_scores, retrieval_judge
     from server.workers import cost_event
@@ -1053,8 +1053,8 @@ def test_the_retrieval_judge_is_the_deployments_own_call(metered, monkeypatch, c
         "excerpts": ["e"],
     }
     asyncio.run(retrieval_judge._judge_one(item))
-    # Observability is an operating cost: not the judged org's, and named as itself.
-    assert seen == [{"X-Customer": "loom", "X-Feature": "worker.retrieval_judge"}]
+    # The prompt is the org's content, so the call is the org's, named as the judge.
+    assert seen == [{"X-Customer": "acme", "X-Feature": "worker.retrieval_judge"}]
     _no_refusal_logged(caplog)
 
 
