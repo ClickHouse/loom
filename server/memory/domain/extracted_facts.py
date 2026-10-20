@@ -14,7 +14,7 @@ from server.memory.domain.forget_requests import (
 # Stored confidence for facts the write-time judge graded UNCERTAIN.
 # An ordering nudge only — bounded by the +0.1*confidence retrieval
 # tiebreak, not a calibrated probability.
-UNCERTAIN_CONFIDENCE = 0.75
+UNCERTAIN_CONFIDENCE = 0.75  # not a setting: a ranking weight a benchmark changes
 
 
 def judged_confidence(fact: dict[str, Any]) -> float:

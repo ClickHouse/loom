@@ -62,7 +62,9 @@ a release changed is kept; whether its CI was green at the time is dropped.
 
 Experimental. A chat bot's replies carry rules about its own behaviour: "I escalate any
 refund over $500 to a human", "I always answer in bullet points". With
-`LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS=true` for the deployment, the extraction call also
+`LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS=true` for the deployment (a live setting:
+`loom settings set memory_extract_agent_learnings true` turns it on without a restart,
+see [runtime settings](../../operations/runtime-settings.md)), the extraction call also
 returns these, marked `"about": "agent"`, at no extra model call. The setting is the
 only way on: a request's `agent_learnings=false` turns it off for that call, and
 `agent_learnings=true` while the setting is off is ignored and named in `ignored_args`

@@ -5,15 +5,17 @@ it to the namespace's knowledge; a user erasure takes that user's quotes and
 leaves a candidate nobody backs only its decision.
 
 Runs on the fake LLM, which reads an assistant's "I always ..." sentence as a
-rule when the extraction prompt carries the assistant-rules block, against a
-server with LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS on (CI's integration posture).
+rule when the extraction prompt carries the assistant-rules block. The module
+turns memory_extract_agent_learnings on through a live override for its own
+tests and clears it after, so every other test keeps the default (off).
 """
 
 from __future__ import annotations
 
 import os
+import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import httpx
@@ -26,24 +28,62 @@ _RULE = "I always escalate any refund over $500 to a human."
 _AGENT = "support-bot"
 
 
-@pytest.fixture
+_SETTING = "memory_extract_agent_learnings"
+
+
+@pytest.fixture(scope="module")
 def base_url() -> str:
-    return os.environ.get("LOOM_BASE_URL") or pytest.skip("LOOM_BASE_URL not set")
-
-
-@pytest.fixture
-def token(base_url: str, mint_test_token: Any) -> tuple[str, str]:
-    """An admin token for a fresh org; skips unless the server runs the fake LLM with
-    assistant-turn learnings on (the only way they turn on is its setting)."""
-    with httpx.Client(base_url=base_url, timeout=5.0) as c:
+    """The server under test; skips unless it runs the fake LLM."""
+    url = os.environ.get("LOOM_BASE_URL") or pytest.skip("LOOM_BASE_URL not set")
+    with httpx.Client(base_url=url, timeout=5.0) as c:
         if not c.get("/v1/health").json().get("fake_llm"):
             pytest.skip("scripts the fake LLM's reading of assistant rules")
+    return url
+
+
+def _set_setting(base_url: str, body: dict[str, Any]) -> None:
+    from server.auth.jwt import mint_token
+
+    tok = mint_token(
+        subject="test-suite",
+        org="*",
+        namespaces=["*"],
+        roles=["platform_admin"],
+        ttl_seconds=600,
+        is_service_account=True,
+    )
+    headers = {"Authorization": f"Bearer {tok}"}
+    with httpx.Client(base_url=base_url, timeout=10.0, headers=headers) as c:
+        r = c.post("/v1/admin/settings.set", json={"name": _SETTING, **body})
+        assert r.status_code == 200, r.text
+        # With several processes, the one that took the write may not answer the
+        # next request: wait until the listing shows the value in force.
+        deadline = time.monotonic() + 30
+        while True:
+            listed = c.post("/v1/admin/settings.list", json={"prefix": _SETTING}).json()
+            (row,) = [s for s in listed["settings"] if s["name"] == _SETTING]
+            if row["value"] == r.json()["setting"]["value"]:
+                return
+            assert time.monotonic() < deadline, f"{_SETTING} never reached {body}"
+            time.sleep(0.2)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def agent_learnings_on(base_url: str) -> Iterator[None]:
+    """Turns assistant-turn learnings on for this module alone, then clears the
+    override so the rest of the suite runs with the setting's default."""
+    _set_setting(base_url, {"value": True})
+    try:
+        yield
+    finally:
+        _set_setting(base_url, {"clear": True})
+
+
+@pytest.fixture
+def token(mint_test_token: Any) -> tuple[str, str]:
+    """An admin token for a fresh org."""
     org = unique_org("asst-rules")
-    tok = mint_test_token(org=org, roles=["admin"])
-    probe = _converse(base_url, tok, org, f"probe-{uuid.uuid4().hex[:8]}", "probe", "s0")
-    if "agent_learnings" in probe.get("ignored_args", []):
-        pytest.skip("the server runs with LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS off")
-    return org, tok
+    return org, mint_test_token(org=org, roles=["admin"])
 
 
 @pytest_asyncio.fixture
