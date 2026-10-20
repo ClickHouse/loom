@@ -9,7 +9,7 @@ the vector-search SQL lives in the search service.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, TypedDict, cast
 from uuid import UUID
@@ -64,7 +64,10 @@ class ChunkInsertRow(TypedDict):
     embedding: list[float]
     created_at: datetime
     content_sha256: str
+    agent: str
     user_id: str
+    session_id: str
+    source_class: str
 
 
 def build_chunk_rows(
@@ -80,12 +83,13 @@ def build_chunk_rows(
     embedding_model: str,
     embedding_dim: int,
     now: datetime,
-    user_id: str,
+    author: Mapping[str, str],
 ) -> list[ChunkInsertRow]:
     """One ingestion's loom.chunks rows, every column set: each chunk with its
     vector, the document's tags and metadata (JSON), its own section metadata
     and content hash (what upsert's duplicate count and the dedup report
-    match on)."""
+    match on), and the document's provenance (`author`: agent, user_id,
+    session_id, source_class) that search returns and filters on."""
     return [
         {
             "org": org,
@@ -104,7 +108,10 @@ def build_chunk_rows(
             "embedding": embedding,
             "created_at": now,
             "content_sha256": sha256_document_text(chunk.text),
-            "user_id": user_id,
+            "agent": author["agent"],
+            "user_id": author["user_id"],
+            "session_id": author["session_id"],
+            "source_class": author["source_class"],
         }
         for chunk, embedding in zip(chunks, embeddings, strict=True)
     ]

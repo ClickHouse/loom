@@ -1,9 +1,10 @@
 """Collections: namespaces read and written only through grants, inherited down
 a tree (docs/architecture/sharing.md).
 
-A request's principals are its subject, the groups that list it, and the agent
-a gateway asserted. On a collection, the best role any of them holds on the
-collection or on one of its ancestors decides; nothing else does. A token's
+A request's principals are its subject, the groups that list it, the agent an
+end-user token signs in, and everyone in the org. On a collection, the best
+role any of them holds on the collection or on one of its ancestors decides;
+nothing else does. A token's
 namespace claim or an org admin role reaches no collection, and a scoped or
 delegated token reaches one no further than its own claim (and its creator's
 role) there. A child only adds to what its parents grant: to narrow, it is
@@ -24,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.core import grant_cache
 from server.core.errors import BackendTimeoutError, BackendUnavailableError, OverloadedError
-from server.core.principals import PERSONAL_PREFIX, USER, personal_name, principal_id
+from server.core.principals import EVERYONE, PERSONAL_PREFIX, USER, personal_name, principal_id
 from server.operations.base import Role, rank_role
 
 if TYPE_CHECKING:
@@ -149,8 +150,9 @@ async def _load_groups(org: str) -> dict[str, list[str]]:
 
 
 async def principals(auth: AuthInfo, org: str) -> list[str]:
-    """Every grant subject this request holds: its own, its groups', its agent's."""
-    out = [auth.subject, *await groups_of(org, auth.subject)]
+    """Every grant subject this request holds: its own, its groups', its
+    agent's, and `everyone` (the caller checked it may act in `org`)."""
+    out = [auth.subject, *await groups_of(org, auth.subject), EVERYONE]
     if auth.agent_principal:
         out.append(auth.agent_principal)
     return out

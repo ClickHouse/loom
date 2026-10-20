@@ -38,13 +38,27 @@ ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, group_id)
 SETTINGS non_replicated_deduplication_window = 1000;
 
--- Who wrote each document, for provenance and for erasure by user. Access
--- never reads these. Rows written before them read '-' and ''.
+-- Who wrote each document and what it is, for provenance, for erasure by user
+-- and for a search to tell an upload from what an agent derived or fetched:
+-- the agent, the end user, the session (a chat, a run) it was written in, the
+-- token's principal and the content's class. Access never reads these. Rows
+-- written before them read '-' and ''. The chunks carry what search returns
+-- and filters on, so a hit needs no join.
 ALTER TABLE loom.documents
     ADD COLUMN IF NOT EXISTS `agent` LowCardinality(String) DEFAULT '-',
     ADD COLUMN IF NOT EXISTS `user_id` String DEFAULT '-',
+    ADD COLUMN IF NOT EXISTS `session_id` String DEFAULT '-',
     ADD COLUMN IF NOT EXISTS `actor` String DEFAULT '',
     ADD COLUMN IF NOT EXISTS `source_class` LowCardinality(String) DEFAULT '';
 
 ALTER TABLE loom.chunks
-    ADD COLUMN IF NOT EXISTS `user_id` String DEFAULT '-';
+    ADD COLUMN IF NOT EXISTS `agent` LowCardinality(String) DEFAULT '-',
+    ADD COLUMN IF NOT EXISTS `user_id` String DEFAULT '-',
+    ADD COLUMN IF NOT EXISTS `session_id` String DEFAULT '-',
+    ADD COLUMN IF NOT EXISTS `source_class` LowCardinality(String) DEFAULT '';
+
+-- Whether a saga purges, so a resumed one keeps purging: a user erasure may
+-- (a namespace_list one also carries it in its scope_value). Rows written
+-- before it read false, as those sagas did not purge.
+ALTER TABLE loom.erasure_requests
+    ADD COLUMN IF NOT EXISTS `purge` Bool DEFAULT false;

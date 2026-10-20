@@ -122,8 +122,6 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
     # the summary can name it beside (or instead of) the token — it is the
     # handle `loom revoke-token --jti` retires and the ledgers' token_id.
     jti = new_jti()
-    if args.gateway:
-        return _mint_gateway_token(args, ttl_seconds, jti)
 
     # Scoped mode: --namespace-role NS=ROLE (repeatable). Arg order = read
     # priority. Emits an ns_roles claim → a scoped token (restricted to these
@@ -195,7 +193,7 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
             subject=args.subject,
             org=args.org,
             namespaces=namespaces,
-            roles=args.roles or ["writer"],
+            roles=args.roles,
             ttl_seconds=ttl_seconds,
             is_service_account=args.service_account,
             read_scope=args.read_scope,
@@ -210,7 +208,7 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
             "subject": args.subject,
             "org": args.org,
             "namespaces": namespaces,
-            "roles": args.roles or ["writer"],
+            "roles": args.roles,
             "ttl_days": args.ttl_days,
             "is_service_account": args.service_account,
             "read_scope": args.read_scope or "namespace",
@@ -219,50 +217,6 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
             "consumer": args.consumer or "",
         }
 
-    return _emit_minted_token(args, token, summary)
-
-
-def _mint_gateway_token(args: argparse.Namespace, ttl_seconds: int | None, jti: str) -> int:
-    """`--gateway`: a token that acts only for the end users each request names."""
-    from server.auth.jwt import TokenError, mint_token
-
-    # Every claim comes from the end user a request names, none from the token.
-    claims = {
-        "--namespaces": args.namespaces,
-        "--namespace-role": args.namespace_role,
-        "--roles": args.roles,
-        "--read-scope": args.read_scope,
-        "--read-user-id": args.read_user_id,
-        "--traffic-class": args.traffic_class,
-        "--user-token": not args.service_account,  # a gateway token is a service account
-    }
-    named = [flag for flag, value in claims.items() if value]
-    if named:
-        print(f"  ✗ a gateway token takes no claim: drop {', '.join(named)}", file=sys.stderr)
-        return 2
-    try:
-        token = mint_token(
-            subject=args.subject,
-            org=args.org,
-            namespaces=[],
-            roles=[],
-            ttl_seconds=ttl_seconds,
-            gateway=True,
-            consumer=args.consumer,
-            jti=jti,
-        )
-    except (TokenError, ValueError) as e:
-        print(f"  ✗ {e}", file=sys.stderr)
-        return 2
-    summary = {
-        "token": token,
-        "jti": jti,
-        "subject": args.subject,
-        "org": args.org,
-        "gateway": True,
-        "ttl_days": args.ttl_days,
-        "consumer": args.consumer or "",
-    }
     return _emit_minted_token(args, token, summary)
 
 
@@ -570,11 +524,7 @@ def _add_mint_token_parser(sub: Any) -> None:
         "for wildcard. Mutually exclusive with --namespace-role.",
     )
     p_mint.add_argument(
-        "--roles",
-        nargs="+",
-        default=None,
-        choices=["viewer", "writer", "admin"],
-        help="Roles on --namespaces (default: writer).",
+        "--roles", nargs="+", default=["writer"], choices=["viewer", "writer", "admin"]
     )
     p_mint.add_argument(
         "--namespace-role",
@@ -615,12 +565,6 @@ def _add_mint_token_parser(sub: Any) -> None:
         "request names), own_session (only rows of the session_id each request "
         "names). Mint own_user for an agent that serves many end users through "
         "one token.",
-    )
-    p_mint.add_argument(
-        "--gateway",
-        action="store_true",
-        help="Mint a gateway token for one org: it reaches nothing itself and acts "
-        "for the end user each HTTP request names (X-Loom-On-Behalf-Of: user:<id>).",
     )
     p_mint.add_argument(
         "--read-user-id",

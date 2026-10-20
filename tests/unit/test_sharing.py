@@ -20,73 +20,87 @@ from server.identity.app.scim_groups import group_row
 from server.identity.store.collections import COLUMNS as COLLECTION_COLUMNS
 from server.identity.store.collections import collection_row
 from server.operations.base import Role
+from tests import end_user_issuer
 from tests.unit.schema_ddl import column_names
 
 ORG = "acme"
 SECRET = "s" * 32
 
 
-def _gateway() -> AuthInfo:
-    return verify_token(
-        mint_token("sa:chat", ORG, [], [], gateway=True, secret=SECRET), secret=SECRET
+# One key for the module's end-user issuer (tests/end_user_issuer.py).
+_PRIVATE, _PUBLIC = end_user_issuer.new_key()
+
+
+@pytest.fixture(autouse=True)
+def _trusts_the_test_issuer(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(
+        settings, "jwt_end_user_issuers_json", end_user_issuer.issuers_setting(_PUBLIC)
     )
 
 
-# ── the gateway token ─────────────────────────────────────────────────────
+def _token(user: str = "u-1", org: str = ORG, **kw: Any) -> str:
+    return end_user_issuer.mint(org, user, private_pem=_PRIVATE, **kw)
 
 
-def test_a_gateway_token_carries_the_claim_and_nothing_else() -> None:
-    auth = _gateway()
-    assert auth.gateway and auth.namespaces == () and auth.roles == ()
+# ── end-user tokens ───────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [{"namespaces": ["team"]}, {"roles": ["admin"]}, {"org": "*"}, {"is_service_account": False}],
-)
-def test_a_gateway_token_is_refused_with_any_claim(kwargs: dict[str, Any]) -> None:
-    args: dict[str, Any] = {"subject": "sa:chat", "org": ORG, "namespaces": [], "roles": []}
-    args.update(kwargs)
-    with pytest.raises(TokenError):
-        mint_token(**args, gateway=True, secret=SECRET)
-
-
-@pytest.mark.parametrize("subject", ["user:alice", "group:finance", "agent:helper"])
-def test_no_token_is_minted_for_a_grant_principal(subject: str) -> None:
-    with pytest.raises(ValueError, match="grant principal"):
-        mint_token(subject, ORG, ["team"], ["viewer"], secret=SECRET)
-
-
-def test_a_request_runs_as_the_user_the_gateway_names_and_nothing_more() -> None:
-    auth = gateway.act_for(_gateway(), "user:u-1", "agent:helper")
+def test_an_end_user_token_runs_as_its_user_and_nothing_more() -> None:
+    auth = verify_token(_token("u-1", agent="helper"))
     assert auth.subject == "user:u-1"
     assert auth.org == ORG
     assert auth.namespaces == () and auth.ns_roles == () and auth.write_namespaces == ()
-    assert auth.roles == (Role.VIEWER,)
+    assert auth.roles == (Role.VIEWER,) and not auth.is_service_account
     assert (auth.read_scope, auth.read_user_id) == ("own_user", "u-1")
-    assert auth.impersonated_by == "sa:chat"
+    assert auth.impersonated_by == end_user_issuer.ISSUER
     assert auth.agent_principal == "agent:helper"
-    assert not auth.gateway, "the asserted identity cannot assert again"
 
 
 @pytest.mark.parametrize(
-    ("on_behalf_of", "agent"),
+    ("user", "claims"),
     [
-        ("", ""),
-        ("alice@example.com", ""),  # a Loom account, not a gateway user
-        ("group:finance", ""),
-        ("sa:other", ""),
-        ("user:", ""),
-        ("user:a b", ""),
-        ("user:u-1", "group:finance"),
-        ("user:u-1", "u-2"),
-        ("user:Alice", ""),  # ids are lowercase: two spellings never name one user
-        ("user:u-1", "agent:Helper"),
+        ("Alice", {}),  # ids are lowercase: two spellings never name one user
+        ("a b", {}),
+        ("u-1", {"org": "*"}),
+        ("u-1", {"org": ""}),
+        ("u-1", {"agent": "group:finance"}),
+        ("u-1", {"agent": "agent:Helper"}),
+        ("u-1", {"namespaces": ["team"]}),
+        ("u-1", {"roles": ["admin"]}),
+        ("u-1", {"read_scope": "namespace"}),
+        ("u-1", {"iss": "loom"}),  # its key signs its own issuer's tokens alone
     ],
 )
-def test_a_gateway_names_only_a_user_and_an_agent(on_behalf_of: str, agent: str) -> None:
-    with pytest.raises(PermissionError):
-        gateway.act_for(_gateway(), on_behalf_of, agent)
+def test_an_end_user_token_names_one_user_of_one_org_and_nothing_else(
+    user: str, claims: dict[str, Any]
+) -> None:
+    with pytest.raises(TokenError):
+        verify_token(_token(user, **claims))
+
+
+def test_an_end_user_token_is_short_lived() -> None:
+    from server.settings import settings
+
+    with pytest.raises(TokenError, match="lives at most"):
+        verify_token(_token(ttl_seconds=settings.jwt_end_user_max_ttl_seconds + 120))
+    with pytest.raises(TokenError, match="expired"):
+        verify_token(_token(ttl_seconds=-120))
+
+
+def test_an_end_user_key_signs_nothing_but_end_users() -> None:
+    """A Loom-shaped admin token under the end-user key is refused: the key
+    never verifies a token as anything but its issuer's end user."""
+    forged = _token(sub="sa:admin")
+    with pytest.raises(TokenError, match="names one user"):
+        verify_token(forged)
+
+
+@pytest.mark.parametrize("subject", ["user:alice", "group:finance", "agent:helper", "everyone"])
+def test_no_loom_token_is_minted_for_a_grant_principal(subject: str) -> None:
+    with pytest.raises(ValueError, match="grant principal"):
+        mint_token(subject, ORG, ["team"], ["viewer"], secret=SECRET)
 
 
 # ── the tree ──────────────────────────────────────────────────────────────
@@ -165,7 +179,7 @@ def org_state(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 def _user(name: str, agent: str = "") -> AuthInfo:
-    return gateway.act_for(_gateway(), f"user:{name}", agent)
+    return verify_token(_token(name, agent=agent))
 
 
 def _shared(auth: AuthInfo) -> list[str]:
@@ -189,11 +203,11 @@ def test_the_best_role_of_every_principal_wins(org_state: dict[str, Any]) -> Non
     assert _role(_user("alice"), "col-q3-docs") is Role.WRITER
 
 
-def test_an_agent_grant_counts_only_when_the_gateway_asserts_the_agent(
+def test_an_agent_grant_counts_only_when_the_token_signs_the_agent_in(
     org_state: dict[str, Any],
 ) -> None:
     org_state["grants"] = {"agent:helper": {"col-hr": 1}}
-    assert _role(_user("bob", "agent:helper"), "col-hr") is Role.VIEWER
+    assert _role(_user("bob", "helper"), "col-hr") is Role.VIEWER
     assert _role(_user("bob"), "col-hr") is None
 
 
@@ -212,10 +226,7 @@ def test_a_removed_member_reads_nothing_through_the_group(org_state: dict[str, A
 
 def test_another_org_s_token_reaches_no_collection(org_state: dict[str, Any]) -> None:
     org_state["grants"] = {"user:alice": {"col-q3": 3}}
-    other = verify_token(
-        mint_token("sa:chat", "globex", [], [], gateway=True, secret=SECRET), secret=SECRET
-    )
-    alice_elsewhere = gateway.act_for(other, "user:alice")
+    alice_elsewhere = verify_token(end_user_issuer.mint("globex", "alice", private_pem=_PRIVATE))
     with pytest.raises(PermissionError):
         asyncio.run(sharing.check(alice_elsewhere, Role.VIEWER, ORG, "col-q3"))
     assert _shared(alice_elsewhere) == []
@@ -339,7 +350,7 @@ def test_an_end_user_gets_no_directory_self_service() -> None:
         target = gates.Target(
             org=ORG, namespace=None, named_namespace=None, register_namespace=None
         )
-        with pytest.raises(PermissionError, match="not open to a gateway"):
+        with pytest.raises(PermissionError, match="not open to an end user"):
             asyncio.run(gates.authorize(op, end_user, target, transport="http"))
     assert {"collection.create", "collection.list"} <= gates.END_USER_ORG_OPS
 
@@ -504,21 +515,23 @@ def test_an_erasure_or_export_of_no_user_is_refused(value: str) -> None:
         ErasureRequestInput(**scope)
 
 
-def test_a_gateway_token_acts_as_no_one_on_a_route_naming_no_end_user(
+def test_an_end_user_token_is_served_only_where_end_users_are(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The op endpoint and downloads serve it; `/v1/me/*`, the admin routes and
+    the task watch refuse it (403): an end user has no account there."""
     from fastapi import HTTPException
 
     from server.auth import bearer
 
-    monkeypatch.setattr(bearer, "verify_bearer", lambda _token: _gateway())
+    monkeypatch.setattr(bearer, "verify_bearer", lambda _token: _user("alice"))
     with pytest.raises(HTTPException) as refused:
-        bearer.verify_bearer_header("Bearer gw")
+        bearer.verify_bearer_header("Bearer eu")
     assert refused.value.status_code == 403
-    assert bearer.verify_bearer_header("Bearer gw", acts_for_end_users=True) is not None
+    assert bearer.verify_bearer_header("Bearer eu", acts_for_end_users=True) is not None
 
 
-def test_the_op_endpoint_runs_a_gateway_token_as_the_user_it_names(
+def test_the_op_endpoint_runs_an_end_user_token_as_its_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
@@ -526,10 +539,12 @@ def test_the_op_endpoint_runs_a_gateway_token_as_the_user_it_names(
     from server.auth import bearer
     from server.transport import http
 
-    monkeypatch.setattr(bearer, "verify_bearer", lambda _token: _gateway())
-    headers = {"Authorization": "Bearer gw", "X-Loom-On-Behalf-Of": "user:alice"}
-    auth = http._extract_auth(SimpleNamespace(headers=headers))  # type: ignore[arg-type]
-    assert auth is not None and auth.subject == "user:alice"
+    monkeypatch.setattr(bearer, "verify_bearer", lambda _token: _user("alice", "helper"))
+    auth = http._extract_auth(SimpleNamespace(headers={"Authorization": "Bearer eu"}))  # type: ignore[arg-type]
+    assert auth is not None and (auth.subject, auth.agent_principal) == (
+        "user:alice",
+        "agent:helper",
+    )
 
 
 def test_a_tree_or_group_row_outranks_the_row_it_replaces_whatever_the_clock() -> None:
@@ -628,7 +643,7 @@ def test_a_grant_to_a_group_is_written_under_the_groups_claim(
         asyncio.run(_run("group:gone"))
 
 
-def test_mcp_refuses_a_gateway_token_as_not_allowed_not_as_invalid(
+def test_mcp_refuses_an_end_user_token_as_not_allowed_not_as_invalid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
@@ -638,8 +653,8 @@ def test_mcp_refuses_a_gateway_token_as_not_allowed_not_as_invalid(
     from server.auth import jwt
     from server.transport import mcp_auth
 
-    monkeypatch.setattr(jwt, "verify_token", lambda _token: _gateway())
-    request = SimpleNamespace(headers={"authorization": "Bearer gw"})
+    monkeypatch.setattr(jwt, "verify_token", lambda _token: _user("alice"))
+    request = SimpleNamespace(headers={"authorization": "Bearer eu"})
     with pytest.raises(PermissionError) as refused:
         mcp_auth._verify_bearer(request)  # type: ignore[arg-type]
     response = Response()
@@ -927,3 +942,71 @@ def test_an_end_users_original_never_passes_to_another_writer_of_new_text() -> N
     assert _original_of(prior, {**b, "user_id": "a"}) is prior, "a's own edit keeps it"
     team = prior.model_copy(update={"user_id": "-"})
     assert _original_of(team, b) is team, "a document no end user wrote carries as before"
+
+
+def test_a_grant_to_everyone_reaches_every_member_of_the_org(org_state: dict[str, Any]) -> None:
+    """The org-wide principal: no group to keep in step with the org's users."""
+    org_state["grants"] = {"everyone": {"col-hr": 1}}
+    assert _role(_user("anyone"), "col-hr") is Role.VIEWER
+    assert _role(_user("anyone"), "col-q3") is None
+
+
+def test_everyone_holds_grants_on_collections_only_and_no_token_is_it() -> None:
+    from server.core.errors import ValidationError
+    from server.core.principals import is_reserved_subject
+    from server.identity.app.grants import _enforce_principal_target
+
+    _enforce_principal_target("col-hr", "everyone")
+    with pytest.raises(ValidationError, match="collections only"):
+        _enforce_principal_target("team", "everyone")
+    assert is_reserved_subject("Everyone"), "no token, in any case, is everyone"
+
+
+def test_a_search_naming_its_namespaces_reads_those_alone_and_each_must_be_readable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import authz, context
+    from server.core.errors import AuthInsufficientError
+    from server.knowledge.api.models_knowledge import KnowledgeSearchInput
+    from server.knowledge.app import knowledge_search
+
+    user = _user("alice")
+    readable = {"col-agent-helper", personal_name(ORG, "user:alice")}
+
+    async def _check(auth: Any, role: Role, *, org: str, namespace: str, **_k: Any) -> None:
+        if namespace not in readable:
+            raise PermissionError(f"cannot read {namespace}")
+
+    monkeypatch.setattr(authz, "check_authorized", _check)
+
+    def _named(*names: str) -> list[str]:
+        query = KnowledgeSearchInput(
+            org=ORG, namespace="col-agent-helper", query="q", namespaces=list(names)
+        )
+        return asyncio.run(knowledge_search._named_namespaces(query))
+
+    context.set_current_auth(user)
+    try:
+        assert _named("@me") == ["col-agent-helper", personal_name(ORG, "user:alice")]
+        with pytest.raises(AuthInsufficientError):
+            _named("col-agent-other")
+    finally:
+        context.set_current_auth(None)
+
+
+def test_an_end_user_issuer_stands_apart_from_loom_and_the_federated_keys() -> None:
+    import json
+
+    from pydantic import ValidationError
+
+    from server.settings._auth import AuthSettings
+
+    with pytest.raises(ValidationError, match="Loom's own"):
+        AuthSettings(jwt_end_user_issuers_json=json.dumps({"loom": {"k": _PUBLIC}}))
+    with pytest.raises(ValidationError, match="both end-user and federated"):
+        AuthSettings(
+            jwt_end_user_issuers_json=json.dumps({"chat": {"k": _PUBLIC}}),
+            jwt_public_keys_json=json.dumps({"k": _PUBLIC}),
+        )
+    keys = AuthSettings(jwt_end_user_issuers_json=end_user_issuer.issuers_setting(_PUBLIC))
+    assert keys.end_user_keys() == {end_user_issuer.KID: (end_user_issuer.ISSUER, _PUBLIC)}

@@ -19,6 +19,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 
 from server.auth.context import quota_key_for
+from server.auth.gateway import is_end_user
 from server.auth.jwt import AuthInfo, AuthUnavailable, TokenError, verify_token
 from server.core.ch import set_quota_key
 from server.observability.metrics import record_auth_refusal
@@ -52,9 +53,9 @@ def verify_bearer_header(
     authorization: str | None, *, acts_for_end_users: bool = False
 ) -> AuthInfo | None:
     """The principal an `Authorization` header names, None when it carries
-    no credential; HTTPException 401 / 503 as `verify_bearer`, and 403 for a
-    gateway token unless the route applies the end user a request names
-    (`acts_for_end_users`): a gateway token acts as no one itself."""
+    no credential; HTTPException 401 / 503 as `verify_bearer`, and 403 for an
+    end-user token unless the route serves end users (`acts_for_end_users`:
+    the op endpoint and downloads, which gate every read by grant)."""
     try:
         token = bearer_token(authorization)
     except TokenError as e:
@@ -64,15 +65,15 @@ def verify_bearer_header(
             detail={"code": "AUTH_INVALID", "message": str(e)},
         ) from e
     info = None if token is None else verify_bearer(token)
-    if info is not None and info.gateway and not acts_for_end_users:
+    if info is not None and not acts_for_end_users and is_end_user(info):
         raise gateway_refused()
     return info
 
 
 def gateway_refused() -> HTTPException:
-    """The 403 for a gateway token on a route that names no end user, counted
-    in `loom.auth.refusals`."""
-    message = "a gateway token acts only for the end user a request names"
+    """The 403 for an end-user token on a route that serves no end user,
+    counted in `loom.auth.refusals`."""
+    message = "an end-user token is served by the op endpoint and downloads only"
     record_auth_refusal(PermissionError(message), transport="http")
     return HTTPException(
         status_code=403,

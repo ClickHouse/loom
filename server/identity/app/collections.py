@@ -183,16 +183,27 @@ async def handle_collection_list(input: CollectionListInput) -> CollectionListOu
 
 
 async def handle_collection_delete(input: CollectionDeleteInput) -> CollectionDeleteOutput:
-    """Soft-delete a collection (the transport checked admin on it): it leaves
-    the directory and the tree, its children become top-level, and its
-    documents stay until an erasure removes them. A personal collection goes
-    with its user's erasure."""
+    """Delete a collection (the transport checked admin on it) with what it
+    holds: an erasure of the namespace first, while its admin still reaches it
+    (a saga that fails is retried by the recovery worker), then it leaves the
+    directory and the tree, and its children become top-level. A personal
+    collection goes with its user's erasure."""
+    from server.erasure.app.handlers import erase_namespace
+
     if sharing.is_personal(input.namespace) or not sharing.is_collection(input.namespace):
         raise ValidationError(f"{input.namespace!r} is not a collection that can be deleted")
+    erasure = await erase_namespace(
+        input.org, input.namespace, requester=resolve_subject() or "collection.delete"
+    )
     out = await handle_namespace_delete(
         NamespaceDeleteInput(org=input.org, namespace=input.namespace)
     )
-    return CollectionDeleteOutput(namespace=input.namespace, deleted=out.deleted)
+    return CollectionDeleteOutput(
+        namespace=input.namespace,
+        deleted=out.deleted,
+        erasure_id=erasure.erasure_id,
+        erasure_status=erasure.status,
+    )
 
 
 async def retire(org: str, namespace: str) -> bool:

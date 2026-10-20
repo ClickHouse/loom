@@ -65,7 +65,7 @@ GDPR Article 17 forgetting.
 | `scope_value` | `str` | required | For `namespace_list`: a JSON array of namespace names (1–500), or a JSON object {"namespaces": [...], "purge": bool}. |
 | `requester` | `str` | required | email or service account that requested the erasure |
 | `urgency` | `Literal['normal', 'urgent']` | `'normal'` | `normal` or `urgent`; recorded on the saga's ledger row, the saga runs the same either way. |
-| `purge` | `bool` | `False` | Hard-delete the rows of the soft-delete tables (memory, embeddings, chunks, summaries, links) instead of stamping tombstoned_at. |
+| `purge` | `bool` | `False` | Hard-delete the rows of the soft-delete tables (memory, embeddings, chunks, documents, summaries, links) instead of stamping tombstoned_at: a tombstone keeps the bytes in every FINAL read and merge; a purge takes them out of the parts. |
 | `external` | `bool` | `True` | External backends (Langfuse traces by tag, ClickStack OTel rows, …) run for every namespace of the scope and fail the saga closed. |
 
 | Output field | Type | Meaning |

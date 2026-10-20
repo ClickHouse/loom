@@ -41,9 +41,10 @@ class DocumentRow(BaseModel):
     blob_content_type: str = ""
     original_filename: str = ""
     blob_erased_at: datetime | None = None
-    # Who wrote it (provenance, erasure by user); access never reads these.
+    # Who wrote it and what it is (provenance, erasure by user); access never reads these.
     agent: str = "-"
     user_id: str = "-"
+    session_id: str = "-"
     actor: str = ""
     source_class: str = ""
 
@@ -70,6 +71,7 @@ def _hydrate(row: dict[str, Any]) -> DocumentRow:
         blob_erased_at=row.get("blob_erased_at"),
         agent=row.get("agent") or "-",
         user_id=row.get("user_id") or "-",
+        session_id=row.get("session_id") or "-",
         actor=row.get("actor") or "",
         source_class=row.get("source_class") or "",
     )
@@ -102,7 +104,7 @@ async def get_one(
                tags, metadata, version, superseded_at, ingested_at, blob_path, blob_size,
                toString(blob_content_type) AS blob_content_type,
                original_filename, content_sha256, blob_erased_at,
-               agent, user_id, actor, toString(source_class) AS source_class
+               agent, user_id, session_id, actor, toString(source_class) AS source_class
         FROM loom.documents FINAL
         WHERE {" AND ".join(where)}
         LIMIT 1
@@ -152,7 +154,7 @@ async def get_many_by_uris(
                tags, metadata, version, superseded_at, ingested_at, blob_path, blob_size,
                toString(blob_content_type) AS blob_content_type,
                original_filename, content_sha256, blob_erased_at,
-               agent, user_id, actor, toString(source_class) AS source_class
+               agent, user_id, session_id, actor, toString(source_class) AS source_class
         FROM loom.documents FINAL
         WHERE {" AND ".join(where)}
         """,
@@ -304,6 +306,7 @@ DOCUMENT_COLUMNS: tuple[str, ...] = (
     "blob_erased_at",
     "agent",
     "user_id",
+    "session_id",
     "actor",
     "source_class",
 )
@@ -334,6 +337,7 @@ class DocumentInsertRow(TypedDict):
     blob_erased_at: datetime | None
     agent: str
     user_id: str
+    session_id: str
     actor: str
     source_class: str
 
@@ -365,6 +369,7 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
         "blob_erased_at": None,
         "agent": "-",
         "user_id": "-",
+        "session_id": "-",
         "actor": "",
         "source_class": "",
     }

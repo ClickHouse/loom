@@ -7575,7 +7575,6 @@
         "ttl_days",
         "save",
         "read_scope",
-        "gateway",
         "read_user_id",
         "traffic_class",
         "consumer",
@@ -7654,7 +7653,9 @@
        ],
        "dest": "roles",
        "action": "_StoreAction",
-       "default": null,
+       "default": [
+        "writer"
+       ],
        "const": null,
        "choices": [
         "viewer",
@@ -7664,7 +7665,7 @@
        "nargs": "+",
        "type": null,
        "required": false,
-       "help": "Roles on --namespaces (default: writer).",
+       "help": null,
        "metavar": null
       },
       {
@@ -7729,21 +7730,6 @@
        "type": null,
        "required": false,
        "help": "Widest read this token may make inside its namespaces: namespace (every row, the default), own_user (only rows of the user_id each request names), own_session (only rows of the session_id each request names). Mint own_user for an agent that serves many end users through one token.",
-       "metavar": null
-      },
-      {
-       "option_strings": [
-        "--gateway"
-       ],
-       "dest": "gateway",
-       "action": "_StoreTrueAction",
-       "default": false,
-       "const": true,
-       "choices": null,
-       "nargs": 0,
-       "type": null,
-       "required": false,
-       "help": "Mint a gateway token for one org: it reaches nothing itself and acts for the end user each HTTP request names (X-Loom-On-Behalf-Of: user:<id>).",
        "metavar": null
       },
       {

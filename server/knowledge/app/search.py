@@ -6,10 +6,11 @@ results to the caller.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Protocol, TypedDict
 
 from server.core import bm25
 from server.core.repo_base import _default_client
@@ -39,6 +40,9 @@ class HybridSearchQuery:
     # `source_uri` is the sort-key column after embedding_model, so each prefix is a
     # primary-key range, not a scan.
     uri_prefixes: list[str] = field(default_factory=list)
+    # Only chunks of documents written in these sessions / of these classes; empty = all.
+    session_ids: list[str] = field(default_factory=list)
+    source_classes: list[str] = field(default_factory=list)
     # Lexical leg inputs; empty tokens = no lexical leg.
     tokens: list[str] = field(default_factory=list)
     idfs: list[float] = field(default_factory=list)
@@ -62,6 +66,10 @@ class ChunkHit:
     score: float = 0.0
     # When the chunk's document was written; None from a source without it.
     ingested_at: datetime | None = None
+    # The document's provenance: the agent and session that wrote it, its class.
+    agent: str = "-"
+    session_id: str = "-"
+    source_class: str = ""
 
     @property
     def section(self) -> str:
@@ -90,12 +98,8 @@ def fuse_rrf(
             by_key[key] = h
         else:
             # Merge: keep the smaller distance and the larger leg scores.
-            by_key[key] = ChunkHit(
-                namespace=h.namespace,
-                source_uri=h.source_uri,
-                chunk_idx=h.chunk_idx,
-                content=h.content,
-                tags=h.tags,
+            by_key[key] = dataclasses.replace(
+                h,
                 distance=min(prev.distance, h.distance),
                 section_path=prev.section_path or h.section_path,
                 lexical_score=max(prev.lexical_score, h.lexical_score),
@@ -110,20 +114,7 @@ def fuse_rrf(
             score += 1.0 / (RRF_K + sem_rank[key])
         if key in lex_rank and h.lexical_score > 0:
             score += w_lex / (RRF_K + lex_rank[key])
-        fused.append(
-            ChunkHit(
-                namespace=h.namespace,
-                source_uri=h.source_uri,
-                chunk_idx=h.chunk_idx,
-                content=h.content,
-                tags=h.tags,
-                distance=h.distance,
-                section_path=h.section_path,
-                lexical_score=h.lexical_score,
-                score=score,
-                ingested_at=h.ingested_at,
-            )
-        )
+        fused.append(dataclasses.replace(h, score=score))
     fused.sort(key=lambda h: (-h.score, h.distance, h.namespace, h.source_uri, h.chunk_idx))
     return fused[:top_k]
 
@@ -161,6 +152,9 @@ async def hybrid_search(
             tags,
             chunk_metadata,
             ingested_at,
+            agent,
+            session_id,
+            toString(source_class) AS source_class,
             cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
         FROM loom.chunks
         WHERE {" AND ".join(where)}
@@ -180,9 +174,24 @@ async def hybrid_search(
             section_path=_section_path_of(r.get("chunk_metadata")),
             score=1.0 - float(r["distance"]),
             ingested_at=r.get("ingested_at"),
+            **_provenance(r),
         )
         for r in rows
     ]
+
+
+class _Provenance(TypedDict):
+    agent: str
+    session_id: str
+    source_class: str
+
+
+def _provenance(row: dict[str, Any]) -> _Provenance:
+    return {
+        "agent": str(row.get("agent") or "-"),
+        "session_id": str(row.get("session_id") or "-"),
+        "source_class": str(row.get("source_class") or ""),
+    }
 
 
 def _common_where(q: HybridSearchQuery) -> tuple[list[str], dict[str, Any]]:
@@ -207,6 +216,12 @@ def _common_where(q: HybridSearchQuery) -> tuple[list[str], dict[str, Any]]:
         cutoff = datetime.now(UTC) - timedelta(seconds=q.since_seconds)
         where.append("ingested_at >= {since:DateTime}")
         params["since"] = cutoff
+    if q.session_ids:
+        where.append("session_id IN {sessions:Array(String)}")
+        params["sessions"] = list(q.session_ids)
+    if q.source_classes:
+        where.append("toString(source_class) IN {classes:Array(String)}")
+        params["classes"] = list(q.source_classes)
     prefixes = [p for p in (q.uri_prefixes or []) if p]
     if prefixes:
         # One startsWith per prefix, OR-ed: the analyzer turns each into a
@@ -260,6 +275,9 @@ async def lexical_search(
             tags,
             chunk_metadata,
             ingested_at,
+            agent,
+            session_id,
+            toString(source_class) AS source_class,
             cosineDistance(embedding, {{q:Array(Float32)}}) AS distance,
             {bm25_expr} AS lexical
         FROM loom.chunks
@@ -280,6 +298,7 @@ async def lexical_search(
             lexical_score=float(r["lexical"] or 0.0),
             ingested_at=r.get("ingested_at"),
             score=float(r["lexical"] or 0.0),
+            **_provenance(r),
         )
         for r in rows
     ]

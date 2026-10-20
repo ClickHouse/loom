@@ -12,30 +12,24 @@ from typing import Any
 import httpx
 import pytest
 
+from tests import end_user_issuer
 from tests.integration._eventually import ACL_OPS, acl_change_adopted, wait_until
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.slow
 
 
-def _gateway_token(org: str) -> str:
-    from server.auth.jwt import mint_token
-
-    return mint_token("sa:chat", org, [], [], gateway=True, ttl_seconds=900)
-
-
 class Gateway:
-    """The service in front of Loom: one token for its org, a user per call."""
+    """The service in front of Loom: it signs a short-lived token for the user
+    (and the agent) of each call, and pushes its groups as the org's admin."""
 
-    def __init__(self, base: str, org: str) -> None:
-        self.base, self.org, self.token = base, org, _gateway_token(org)
+    def __init__(self, base: str, org: str, admin_token: str) -> None:
+        self.base, self.org, self.admin_token = base, org, admin_token
 
     def call(
         self, user: str, op: str, payload: dict[str, Any], *, agent: str = ""
     ) -> httpx.Response:
-        headers = {"Authorization": f"Bearer {self.token}", "X-Loom-On-Behalf-Of": f"user:{user}"}
-        if agent:
-            headers["X-Loom-Agent"] = f"agent:{agent}"
+        headers = {"Authorization": f"Bearer {end_user_issuer.mint(self.org, user, agent=agent)}"}
         r = httpx.post(
             f"{self.base}/v1/{op}", json={"org": self.org, **payload}, headers=headers, timeout=60
         )
@@ -53,7 +47,7 @@ class Gateway:
             method,
             f"{self.base}/scim/v2/{path}",
             json=body,
-            headers={"Authorization": f"Bearer {self.token}"},
+            headers={"Authorization": f"Bearer {self.admin_token}"},
             timeout=30,
         )
         if method != "GET" and r.status_code < 300:
@@ -76,8 +70,12 @@ def _nonce() -> str:
 
 
 @pytest.fixture
-def gw(control_plane_url: str) -> Gateway:
-    return Gateway(control_plane_url, unique_org("share"))
+def gw(control_plane_url: str, mint_test_token: Any) -> Gateway:
+    if not end_user_issuer.configured():
+        pytest.skip("no test end-user issuer: run `python -m tests.end_user_issuer <dir>`")
+    org = unique_org("share")
+    admin = mint_test_token(org=org, namespaces=["*"], roles=["org_admin"], subject="idp")
+    return Gateway(control_plane_url, org, admin)
 
 
 def _collection(gw: Gateway, owner: str, name: str, parent: str = "") -> str:
@@ -190,14 +188,27 @@ def test_no_request_field_makes_a_saved_item_or_widens_a_grant(
         "bob", "grants.create", {"namespace": alices, "subject": "user:bob", "role": "admin"}
     )
     assert r.status_code == 403
-    # A gateway asserts users and agents only.
-    for header in ("group:finance", "alice@example.com", "sa:chat", ""):
-        r = httpx.post(
-            f"{control_plane_url}/v1/knowledge.search",
-            json={"org": gw.org, "namespace": "@me", "query": nonce},
-            headers={"Authorization": f"Bearer {gw.token}", "X-Loom-On-Behalf-Of": header},
-        )
-        assert r.status_code == 403, header
+    # An end-user token names its user in its signed `sub`; the header that a
+    # trusted caller sends names no one else for it.
+    r = httpx.post(
+        f"{control_plane_url}/v1/knowledge.search",
+        json={"org": gw.org, "namespace": "@me", "query": nonce},
+        headers={
+            "Authorization": f"Bearer {end_user_issuer.mint(gw.org, 'bob')}",
+            "X-Loom-On-Behalf-Of": "user:alice",
+        },
+    )
+    assert r.status_code == 200 and nonce not in r.text, r.text
+    # A token no registered key signed is refused.
+    stranger_key, _ = end_user_issuer.new_key()
+    r = httpx.post(
+        f"{control_plane_url}/v1/knowledge.search",
+        json={"org": gw.org, "namespace": "@me", "query": nonce},
+        headers={
+            "Authorization": f"Bearer {end_user_issuer.mint(gw.org, 'alice', private_pem=stranger_key)}"
+        },
+    )
+    assert r.status_code == 401, r.text
     # `@me` is only a gateway user's.
     tok = mint_test_token(org=gw.org, namespaces=["*"], roles=["writer"], subject="sa:other")
     r = httpx.post(
@@ -388,8 +399,10 @@ def test_an_end_user_gets_no_directory_self_service(gw: Gateway) -> None:
 
 
 def test_an_id_with_capitals_is_refused(gw: Gateway) -> None:
+    """Ids are lowercase, so two spellings never name one user: the token itself
+    does not verify."""
     assert (
-        gw.call("Alice", "knowledge.search", {"namespace": "@me", "query": "q"}).status_code == 403
+        gw.call("Alice", "knowledge.search", {"namespace": "@me", "query": "q"}).status_code == 401
     )
 
 
@@ -617,3 +630,210 @@ def test_an_org_admin_erases_a_deleted_collection_and_follows_the_erasure(
     # pinned to its own rows, which a saga's status is not.
     theirs = gw.call("bob", "erasure.status", {"erasure_id": erasure["erasure_id"]})
     assert theirs.status_code == 403, theirs.text
+
+
+def _download(base: str, token: str, org: str, namespace: str, uri: str) -> httpx.Response:
+    return httpx.get(
+        f"{base}/v1/knowledge.download",
+        params={"org": org, "namespace": namespace, "source_uri": uri},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30,
+    )
+
+
+def test_a_download_reads_as_the_end_user_the_token_names(
+    gw: Gateway, control_plane_url: str, mint_test_token: Any
+) -> None:
+    import base64
+
+    data = f"bob's file {_nonce()}".encode()
+    gw.ok(
+        "bob",
+        "knowledge.add",
+        {
+            "namespace": "@me",
+            "source_uri": "f/mine",
+            "content": data.decode(),
+            "original_bytes_b64": base64.b64encode(data).decode(),
+            "original_filename": "mine.txt",
+        },
+    )
+    bob, alice = end_user_issuer.mint(gw.org, "bob"), end_user_issuer.mint(gw.org, "alice")
+    own = _download(control_plane_url, bob, gw.org, "@me", "f/mine")
+    assert own.status_code == 200 and own.content == data
+    from server.core.principals import personal_name as name_for
+
+    bobs = name_for(gw.org, "user:bob")
+    assert _download(control_plane_url, alice, gw.org, bobs, "f/mine").status_code == 403
+    loom = mint_test_token(org=gw.org, namespaces=["*"], roles=["writer"], subject="sa:other")
+    assert _download(control_plane_url, loom, gw.org, "@me", "f/mine").status_code == 400
+
+
+def test_an_agents_files_reach_whoever_runs_it_and_its_search_reads_them_alone(
+    gw: Gateway,
+) -> None:
+    """ClickHouse-Agents-style file search: an agent's files live in its own
+    collection, granted to the agent; a chat's attachments in the user's @me."""
+    agent_files = _collection(gw, "alice", f"col-agent-helper-{uuid.uuid4().hex[:6]}")
+    other_agent = _collection(gw, "alice", f"col-agent-other-{uuid.uuid4().hex[:6]}")
+    for col, agent in ((agent_files, "helper"), (other_agent, "other")):
+        gw.ok(
+            "alice",
+            "grants.create",
+            {"namespace": col, "subject": f"agent:{agent}", "role": "viewer"},
+        )
+    nonce = _nonce()
+    _add(gw, "alice", agent_files, f"helper's handbook {nonce}")
+    _add(gw, "alice", other_agent, f"other's handbook {nonce}")
+    gw.ok(
+        "bob",
+        "knowledge.upsert",
+        {
+            "namespace": "@me",
+            "source_uri": "chat/c7/a1",
+            "content": f"attached {nonce}",
+            "session_id": "c7",
+        },
+    )
+    search = {"namespace": agent_files, "query": nonce, "namespaces": ["@me"], "top_k": 20}
+    hits = gw.ok("bob", "knowledge.search", search, agent="helper")["results"]
+    assert {h["namespace"] for h in hits} == {agent_files, name_for_bob(gw)}, hits
+    # Without the agent signed in, its collection is closed to bob.
+    assert gw.call("bob", "knowledge.search", search).status_code == 403
+    # Another agent's collection, named in the list, is refused, not searched.
+    other = {**search, "namespaces": [other_agent]}
+    assert gw.call("bob", "knowledge.search", other, agent="helper").status_code == 403
+
+
+def name_for_bob(gw: Gateway) -> str:
+    from server.core.principals import personal_name
+
+    return personal_name(gw.org, "user:bob")
+
+
+def test_a_grant_to_everyone_opens_a_collection_to_every_user_of_the_org(gw: Gateway) -> None:
+    col = _collection(gw, "alice", f"col-all-{uuid.uuid4().hex[:6]}")
+    gw.ok("alice", "grants.create", {"namespace": col, "subject": "everyone", "role": "viewer"})
+    nonce = _nonce()
+    _add(gw, "alice", col, f"for everyone {nonce}")
+    assert any(nonce in h["content"] for h in _search(gw, "zed", col, nonce))
+    assert (
+        gw.call(
+            "zed", "knowledge.add", {"namespace": col, "source_uri": "x", "content": "y"}
+        ).status_code
+        == 403
+    )
+
+
+def test_deleting_a_collection_erases_what_it_held(gw: Gateway, ch_client: Any) -> None:
+    col = _collection(gw, "alice", f"col-gone-{uuid.uuid4().hex[:6]}")
+    _add(gw, "alice", col, f"to go {_nonce()}", uri="doc/a")
+    out = gw.ok("alice", "collection.delete", {"namespace": col})
+    assert out["deleted"] and out["erasure_status"] == "completed", out
+    live = ch_client.query(
+        "SELECT count() FROM loom.chunks WHERE org = {o:String} AND namespace = {n:String}"
+        " AND doc_superseded_at IS NULL",
+        parameters={"o": gw.org, "n": col},
+    ).result_rows[0][0]
+    assert live == 0, "the collection's chunks went with it"
+
+
+def test_a_users_purge_removes_every_version_they_wrote(
+    gw: Gateway, control_plane_url: str, mint_test_token: Any, ch_client: Any
+) -> None:
+    col = _collection(gw, "alice", f"col-purge-{uuid.uuid4().hex[:6]}")
+    gw.ok("alice", "grants.create", {"namespace": col, "subject": "user:bob", "role": "writer"})
+    _add(gw, "alice", col, f"alice's draft {_nonce()}", uri="doc/plan")
+    gw.ok("bob", "knowledge.upsert", {"namespace": col, "source_uri": "doc/plan", "content": "b"})
+    _add(gw, "bob", col, f"bob's own {_nonce()}", uri="doc/bobs")
+    admin = mint_test_token(org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="o")
+    r = httpx.post(
+        f"{control_plane_url}/v1/erasure.request",
+        json={
+            "org": gw.org,
+            "scope_type": "user_id",
+            "scope_value": "bob",
+            "requester": "ops@x.io",
+            "purge": True,
+        },
+        headers={"Authorization": f"Bearer {admin}"},
+        timeout=180,
+    )
+    assert r.status_code == 200 and r.json()["status"] == "completed", r.text
+    left = {
+        table: ch_client.query(
+            f"SELECT count() FROM {table} WHERE org = {{o:String}} AND user_id = 'bob'",
+            parameters={"o": gw.org},
+        ).result_rows[0][0]
+        for table in ("loom.documents", "loom.chunks")
+    }
+    assert left == {"loom.documents": 0, "loom.chunks": 0}, left
+    assert _live_documents(ch_client, gw.org, col, "doc/plan") == 0, "alice's draft stays replaced"
+
+
+def test_a_document_says_which_agent_and_session_wrote_it_and_what_it_is(gw: Gateway) -> None:
+    col = _collection(gw, "alice", f"col-prov-{uuid.uuid4().hex[:6]}")
+    nonce = _nonce()
+    gw.ok(
+        "alice",
+        "knowledge.add",
+        {
+            "namespace": col,
+            "source_uri": "up",
+            "content": f"uploaded {nonce}",
+            "session_id": "chat-1",
+        },
+    )
+    gw.ok(
+        "alice",
+        "knowledge.add",
+        {
+            "namespace": col,
+            "source_uri": "summary",
+            "content": f"summarised {nonce}",
+            "session_id": "run-9",
+            "source_class": "derived",
+        },
+        agent="helper",
+    )
+    hits = {
+        h["source_uri"]: h
+        for h in gw.ok(
+            "alice",
+            "knowledge.search",
+            {"namespace": col, "query": nonce, "namespace_scope": "this"},
+        )["results"]
+    }
+    assert (hits["up"]["agent"], hits["up"]["session_id"], hits["up"]["source_class"]) == (
+        "-",
+        "chat-1",
+        "asserted",
+    )
+    assert (
+        hits["summary"]["agent"],
+        hits["summary"]["session_id"],
+        hits["summary"]["source_class"],
+    ) == ("helper", "run-9", "derived")
+    own = gw.ok(
+        "alice",
+        "knowledge.search",
+        {
+            "namespace": col,
+            "query": nonce,
+            "namespace_scope": "this",
+            "source_classes": ["asserted"],
+        },
+    )["results"]
+    assert {h["source_uri"] for h in own} == {"up"}
+    chat = gw.ok(
+        "alice",
+        "knowledge.search",
+        {"namespace": col, "query": nonce, "namespace_scope": "this", "session_ids": ["run-9"]},
+    )["results"]
+    assert {h["source_uri"] for h in chat} == {"summary"}
+    refused = gw.call(
+        "alice",
+        "knowledge.add",
+        {"namespace": col, "source_uri": "x", "content": "y", "source_class": "observed"},
+    )
+    assert refused.status_code == 422, "a body only declares a downgrade"

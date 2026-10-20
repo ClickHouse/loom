@@ -123,7 +123,7 @@ def _extract_auth(request: Request) -> AuthInfo | None:
     Raises HTTPException(401) on present-but-invalid tokens, or on missing
     tokens when auth_required=True.
     """
-    # Counts its own refusals; a gateway token is then bound to the end user it names.
+    # Counts its own refusals; an end-user token is served here.
     auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None:
         if settings.auth_actually_required():
@@ -133,11 +133,7 @@ def _extract_auth(request: Request) -> AuthInfo | None:
     from server.auth.gateway import effective_auth
 
     try:
-        return effective_auth(
-            auth,
-            request.headers.get("X-Loom-On-Behalf-Of") or "",
-            request.headers.get("X-Loom-Agent") or "",
-        )
+        return effective_auth(auth, request.headers.get("X-Loom-On-Behalf-Of") or "")
     except PermissionError as e:
         raise _refused_assertion(e) from e
 

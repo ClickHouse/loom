@@ -1,10 +1,10 @@
 """SCIM 2.0 Groups (RFC 7643 §4.2, RFC 7644) under /scim/v2/Groups: the groups a
-gateway pushes for its org, which grants name as `group:<id>`.
+service in front of Loom pushes for its org, which grants name as `group:<id>`.
 
-The credential is the org's gateway token (`loom mint-token --gateway`): the
-group lands in that token's org and nowhere else. A member is one of the
-gateway's users, `{"value": "<user id>"}`, held as the principal `user:<id>`;
-a nested group is refused. The deployment's own SCIM token (`LOOM_SCIM_TOKEN`)
+The credential is a token of an org admin of exactly one org: the group lands
+in that org and nowhere else. A member is one of the service's end users,
+`{"value": "<user id>"}`, held as the principal `user:<id>`; a nested group is
+refused. The deployment's own SCIM token (`LOOM_SCIM_TOKEN`)
 names no org: it reads an empty list, as an identity provider's connection test
 expects, and writes nothing.
 
@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse
 
 from server.auth import scim
 from server.auth.bearer import bearer_token
+from server.auth.gateway import is_end_user
 from server.auth.grant_claims import group_change
 from server.auth.jwt import AuthInfo, AuthUnavailable, TokenError, verify_token
 from server.auth.scim_routes import (
@@ -45,6 +46,7 @@ from server.core.ch import get_client, own_write_reads, set_query_tag
 from server.core.principals import USER, is_principal_id
 from server.observability import audit
 from server.observability.metrics import record_auth_refusal
+from server.operations.base import Role
 from server.settings import settings
 
 GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"
@@ -66,8 +68,8 @@ COLUMNS = (
 
 @dataclass(frozen=True)
 class _Caller:
-    """Who pushes: the gateway token's org and subject ('' for the deployment's
-    SCIM token, which names no org)."""
+    """Who pushes: the org admin token's org and subject ('' for the
+    deployment's SCIM token, which names no org)."""
 
     org: str
     actor: str
@@ -76,7 +78,7 @@ class _Caller:
 async def _caller(request: Request) -> _Caller:
     """The SCIM client of this request."""
     set_query_tag(f"scim.groups.{request.method.lower()}")
-    message = "a gateway token, or the SCIM bearer token, is required"
+    message = "a token of one org's admin, or the SCIM bearer token, is required"
     try:
         token = bearer_token(request.headers.get("authorization"))
     except TokenError as e:
@@ -95,8 +97,8 @@ async def _caller(request: Request) -> _Caller:
     except TokenError as e:
         record_auth_refusal(e, transport="scim")
         raise ScimError(401, message) from None
-    if not auth.gateway:
-        refused = PermissionError("groups are pushed with the org's gateway token")
+    if not (auth.has_role(Role.ORG_ADMIN) and auth.org not in ("", "*")) or is_end_user(auth):
+        refused = PermissionError("groups are pushed with a token of one org's admin")
         record_auth_refusal(refused, transport="scim")
         raise ScimError(403, str(refused))
     return _Caller(org=auth.org, actor=auth.subject)
@@ -203,10 +205,10 @@ def _answer(body: dict[str, Any], status: int = 200, **headers: str) -> JSONResp
     return JSONResponse(body, status_code=status, media_type=SCIM_JSON, headers=headers or None)
 
 
-def _gateway_org(caller: _Caller) -> str:
+def _caller_org(caller: _Caller) -> str:
     """The org a group request reads or writes; the deployment's SCIM token names none."""
     if not caller.org:
-        raise ScimError(403, "groups are pushed with the org's gateway token")
+        raise ScimError(403, "groups are pushed with a token of one org's admin")
     return caller.org
 
 
@@ -269,14 +271,14 @@ async def list_groups(request: Request, caller: _Caller = _CALLER) -> JSONRespon
 
 @router.get("/Groups/{group_id}")
 async def get_group(group_id: str, request: Request, caller: _Caller = _CALLER) -> JSONResponse:
-    return _answer(_resource(request, await _existing(_gateway_org(caller), group_id)))
+    return _answer(_resource(request, await _existing(_caller_org(caller), group_id)))
 
 
 @router.post("/Groups")
 async def create_group(request: Request, caller: _Caller = _CALLER) -> JSONResponse:
     """The group's id is its externalId when that is a well-formed id, so a
     client can address and grant it by its own id; else a new one."""
-    org = _gateway_org(caller)
+    org = _caller_org(caller)
     body = await read_body(request)
     external = str(body.get("externalId") or "")
     group_id = external if is_principal_id(external) else uuid.uuid4().hex
@@ -299,7 +301,7 @@ async def create_group(request: Request, caller: _Caller = _CALLER) -> JSONRespo
 
 @router.put("/Groups/{group_id}")
 async def replace_group(group_id: str, request: Request, caller: _Caller = _CALLER) -> JSONResponse:
-    org = _gateway_org(caller)
+    org = _caller_org(caller)
     body = await read_body(request)
     members = _members(body.get("members"))
     async with group_change(org, group_id):
@@ -344,7 +346,7 @@ def _patched(name: str, members: set[str], operations: list[Any]) -> tuple[str, 
 @router.patch("/Groups/{group_id}")
 async def patch_group(group_id: str, request: Request, caller: _Caller = _CALLER) -> JSONResponse:
     """`add` / `remove` / `replace` on `members`, and `replace` on `displayName`."""
-    org = _gateway_org(caller)
+    org = _caller_org(caller)
     body = await read_body(request)
     async with group_change(org, group_id):
         current = await _existing(org, group_id)
@@ -370,7 +372,7 @@ async def delete_group(group_id: str, caller: _Caller = _CALLER) -> Response:
     refuses a group that is gone."""
     from server.identity.app.grants import revoke_subject
 
-    org = _gateway_org(caller)
+    org = _caller_org(caller)
     async with group_change(org, group_id):
         current = await _existing(org, group_id)
         row = group_row(

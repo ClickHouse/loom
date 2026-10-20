@@ -42,13 +42,16 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     with traced("embed.compute.query", model=embedder.model_name):
         query_vec = await embedder.embed(input.query)
     search = _namespaces_search(input, embedder, query_vec)
-    namespaces, skipped = await namespaces_to_search(
-        input.org,
-        input.namespace,
-        input.namespace_scope,
-        cap=settings.knowledge_search_max_namespaces,
-        kinds=settings.knowledge_search_fanout_kinds,
-    )
+    if input.namespaces:
+        namespaces, skipped = await _named_namespaces(input), []
+    else:
+        namespaces, skipped = await namespaces_to_search(
+            input.org,
+            input.namespace,
+            input.namespace_scope,
+            cap=settings.knowledge_search_max_namespaces,
+            kinds=settings.knowledge_search_fanout_kinds,
+        )
     results_per_ns = await _search_private_first(input, namespaces, search)
     all_hits = _as_search_hits(results_per_ns)
     all_hits.sort(key=lambda x: (x.score, x.similarity), reverse=True)
@@ -92,6 +95,8 @@ def _namespaces_search(
             tags=list(input.tags or []),
             since_seconds=input.since_seconds,
             uri_prefixes=list(input.uri_prefix or []),
+            session_ids=list(input.session_ids),
+            source_classes=list(input.source_classes),
         )
         if input.search_mode == "semantic" or not tokens:
             return await hybrid_search(base)
@@ -147,6 +152,33 @@ async def _search_private_first(
     )
 
 
+async def _named_namespaces(input: KnowledgeSearchInput) -> list[str]:
+    """`namespace` (the transport gated it) and the ones the request names,
+    each gated as a read of its own (`@me` is the end user's personal
+    collection): AuthInsufficientError for the first the caller may not read."""
+    from server.auth.authz import check_authorized
+    from server.auth.context import current_auth
+    from server.auth.gateway import personal_namespace
+    from server.core.errors import AuthInsufficientError, ValidationError
+    from server.operations.base import Role
+
+    auth = current_auth()
+    out = [input.namespace]
+    for name in input.namespaces:
+        try:
+            namespace = personal_namespace(auth, input.org, name)
+        except ValueError as e:
+            raise ValidationError(str(e)) from e
+        if namespace in out:
+            continue
+        try:
+            await check_authorized(auth, Role.VIEWER, org=input.org, namespace=namespace)
+        except PermissionError as e:
+            raise AuthInsufficientError(str(e)) from e
+        out.append(namespace)
+    return out
+
+
 def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_SearchHit]:
     all_hits: list[_SearchHit] = []
     for ns, hits in results_per_ns:
@@ -167,6 +199,9 @@ def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_S
                     # semantic-only hits rank by similarity; fused / lexical
                     # hits carry the score their leg or the fusion assigned
                     score=h.score if h.score else (1.0 - h.distance),
+                    agent=h.agent,
+                    session_id=h.session_id,
+                    source_class=h.source_class,
                 )
             )
     return all_hits

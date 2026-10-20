@@ -7080,14 +7080,14 @@ class CollectionCreateOutput(TypedDict, total=False):
 
 
 class CollectionDeleteInput(TypedDict, total=False):
-    "Delete a collection: it leaves the directory and the tree, and its name is"
+    "Delete a collection with what it holds: an erasure of the namespace"
 
     org: Required[str]
     namespace: Required[str]
 
 
 class CollectionDeleteBody(TypedDict, total=False):
-    "Delete a collection: it leaves the directory and the tree, and its name is"
+    "Delete a collection with what it holds: an erasure of the namespace"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -7096,6 +7096,8 @@ class CollectionDeleteBody(TypedDict, total=False):
 class CollectionDeleteOutput(TypedDict, total=False):
     namespace: Required[str]
     deleted: Required[bool]
+    erasure_id: NotRequired[str]
+    erasure_status: NotRequired[str]
 
 
 class CollectionListInput(TypedDict, total=False):
@@ -8906,6 +8908,9 @@ class KnowledgeAddInput(TypedDict, total=False):
     original_bytes_b64: NotRequired[Optional[str]]
     original_filename: NotRequired[str]
     blob_content_type: NotRequired[str]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeAddBody(TypedDict, total=False):
@@ -8920,6 +8925,9 @@ class KnowledgeAddBody(TypedDict, total=False):
     original_bytes_b64: NotRequired[Optional[str]]
     original_filename: NotRequired[str]
     blob_content_type: NotRequired[str]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeAddOutput(TypedDict, total=False):
@@ -8937,6 +8945,9 @@ class KnowledgeBulkAddInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
     entries: Required[list["KnowledgeBulkEntry"]]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeBulkEntry(TypedDict, total=False):
@@ -8954,6 +8965,9 @@ class KnowledgeBulkAddBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
     entries: Required[list["KnowledgeBulkEntry"]]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeBulkAddOutput(TypedDict, total=False):
@@ -9228,11 +9242,14 @@ class KnowledgeSearchInput(TypedDict, total=False):
     since_seconds: NotRequired[Optional[int]]
     top_k: NotRequired[int]
     namespace_scope: NotRequired[Literal["this", "all_mine"]]
+    namespaces: NotRequired[list[str]]
     search_mode: NotRequired[Literal["hybrid", "semantic", "lexical"]]
     lexical_weight: NotRequired[float]
     narrow_spans: NotRequired[bool]
     collapse_sections: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
+    session_ids: NotRequired[list[str]]
+    source_classes: NotRequired[list[str]]
 
 
 class KnowledgeSearchBody(TypedDict, total=False):
@@ -9243,11 +9260,14 @@ class KnowledgeSearchBody(TypedDict, total=False):
     since_seconds: NotRequired[Optional[int]]
     top_k: NotRequired[int]
     namespace_scope: NotRequired[Literal["this", "all_mine"]]
+    namespaces: NotRequired[list[str]]
     search_mode: NotRequired[Literal["hybrid", "semantic", "lexical"]]
     lexical_weight: NotRequired[float]
     narrow_spans: NotRequired[bool]
     collapse_sections: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
+    session_ids: NotRequired[list[str]]
+    source_classes: NotRequired[list[str]]
 
 
 class KnowledgeSearchOutput(TypedDict, total=False):
@@ -9275,6 +9295,9 @@ class SearchHit(TypedDict, total=False):
     span_end: NotRequired[int]
     span_similarity: NotRequired[float]
     siblings_folded: NotRequired[int]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[str]
 
 
 class KnowledgeSynthesizeInput(TypedDict, total=False):
@@ -9360,6 +9383,9 @@ class KnowledgeUpsertInput(TypedDict, total=False):
     original_bytes_b64: NotRequired[Optional[str]]
     original_filename: NotRequired[str]
     blob_content_type: NotRequired[str]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeUpsertBody(TypedDict, total=False):
@@ -9376,6 +9402,9 @@ class KnowledgeUpsertBody(TypedDict, total=False):
     original_bytes_b64: NotRequired[Optional[str]]
     original_filename: NotRequired[str]
     blob_content_type: NotRequired[str]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeUpsertOutput(TypedDict, total=False):

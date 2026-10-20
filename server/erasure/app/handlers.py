@@ -76,6 +76,16 @@ async def handle_erasure_request(input: ErasureRequestInput) -> ErasureRequestOu
     )
 
 
+async def erase_namespace(org: str, namespace: str, *, requester: str) -> ErasureRequestOutput:
+    """`erasure.request` of one namespace, for an op that deletes it with what it
+    holds (`collection.delete`); authorized as that request is."""
+    return await handle_erasure_request(
+        ErasureRequestInput(
+            org=org, scope_type="namespace", scope_value=namespace, requester=requester
+        )
+    )
+
+
 def _serialize_row(row: Mapping[str, object]) -> dict[str, object]:
     """Bytes decoded; datetimes, UUIDs and Decimals stay for Pydantic's JSON dump."""
     return {

@@ -451,7 +451,7 @@ _claim_release.attach(app)
 # Sign-in (device grant, SSO) wherever auth is on; MCP connect only with LOOM_OAUTH_ENABLED.
 _oauth.attach(app)
 _password_link.attach(app)
-# SCIM Groups, pushed per org with its gateway token; ahead of the Users
+# SCIM Groups, pushed per org with an org admin's token; ahead of the Users
 # routes, whose catch-all would answer its paths.
 _scim_groups.attach(app)
 # SCIM provisioning (deactivating people from the IdP) only with LOOM_SCIM_TOKEN.

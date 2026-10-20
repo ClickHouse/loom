@@ -136,7 +136,7 @@ async def scrub_events_by_user(
 ) -> int:
     """Replace user_id with '<erased>' on loom.agent_events, and the
     `memory_key` column and the identifier entries of `args` that named the
-    subject's rows; on a gateway's end user's own calls, the `subject` that
+    subject's rows; on an end user's own calls, the `subject` that
     names them (`user:<user_id>`) too. Preserves aggregate cost rollups;
     removes the identity and what it pointed at."""
     where = "org = {org:String} AND (user_id = {uid:String} OR subject = {p:String})"
@@ -158,7 +158,7 @@ async def delete_last_seen_by_user(
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    """The newest-call row of a gateway's end user (`user:<user_id>`). Its
+    """The newest-call row of an end user (`user:<user_id>`). Its
     refresh reads only ledger rows newer than its mark, which the scrub has
     already taken the subject off, so the row is not written back."""
     where = "org = {org:String} AND subject = {p:String}"
@@ -310,8 +310,18 @@ async def supersede_chunks_by_user(
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    """The chunks of every document the user wrote, in any namespace of the org
-    (a user erasure supersedes; it never purges)."""
+    """The chunks of every document the user wrote, in any namespace of the
+    org: superseded, or deleted, every version, under a purge."""
+    if purge_mode():
+        return await count_then_mutate(
+            "loom.chunks",
+            count_where=ORG_UID,
+            mutation="DELETE",
+            mutation_where=ORG_UID,
+            params={"org": org, "uid": user_id},
+            final=False,
+            ch=ch,
+        )
     return await count_then_mutate(
         "loom.chunks",
         count_where=ORG_UID + " AND " + LIVE_CHUNK_SQL,
@@ -770,15 +780,44 @@ async def tombstone_documents_by_namespace(
     )
 
 
+# Another writer's live versions of a document whose newest version is the user's:
+# what deleting the user's rows would otherwise bring back.
+_REPLACED_BY_USER = (
+    "org = {org:String} AND user_id != {uid:String} AND superseded_at IS NULL"
+    " AND (namespace, source_uri) IN ("
+    " SELECT namespace, source_uri FROM loom.documents FINAL"
+    " WHERE org = {org:String} AND user_id = {uid:String})"
+)
+
+
 async def tombstone_documents_by_user(
     org: str,
     user_id: str,
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    """Supersede the documents the user wrote, in any namespace of the org. A
-    user erasure never purges (only a `namespace_list` erasure does): the
-    versions stay, superseded, so none another writer replaced reads as live."""
+    """Supersede the documents the user wrote, in any namespace of the org; a
+    purge deletes every version of theirs instead, after superseding another
+    writer's versions that one of theirs replaced, so none reads as live again."""
+    if purge_mode():
+        await count_then_mutate(
+            "loom.documents",
+            count_where=_REPLACED_BY_USER,
+            mutation="UPDATE superseded_at = {now:DateTime}",
+            mutation_where=_REPLACED_BY_USER,
+            params={"org": org, "uid": user_id},
+            final=False,  # those versions are hidden under FINAL until the delete
+            ch=ch,
+        )
+        return await count_then_mutate(
+            "loom.documents",
+            count_where=ORG_UID,
+            mutation="DELETE",
+            mutation_where=ORG_UID,
+            params={"org": org, "uid": user_id},
+            final=False,  # every version the user wrote, the replaced ones too
+            ch=ch,
+        )
     where = ORG_UID + " AND superseded_at IS NULL"
     return await count_then_mutate(
         "loom.documents",

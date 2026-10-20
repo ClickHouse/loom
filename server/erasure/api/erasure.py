@@ -40,9 +40,10 @@ class ErasureRequestInput(BaseModel):
     # `normal` or `urgent`; recorded on the saga's ledger row, the saga runs the same either way.
     urgency: Literal["normal", "urgent"] = "normal"
     # Hard-delete the rows of the soft-delete tables (memory, embeddings,
-    # chunks, summaries, links) instead of stamping tombstoned_at. For
-    # throwaway namespaces: a tombstone keeps the bytes in every FINAL read
-    # and merge; a purge takes them out of the parts. No restore window.
+    # chunks, documents, summaries, links) instead of stamping tombstoned_at:
+    # a tombstone keeps the bytes in every FINAL read and merge; a purge takes
+    # them out of the parts. For a `user_id` scope (a GDPR deletion) or
+    # throwaway namespaces. No restore window.
     purge: bool = False
     # External backends (Langfuse traces by tag, ClickStack OTel rows, …) run
     # for every namespace of the scope and fail the saga closed. A

@@ -1832,6 +1832,8 @@ export interface CollectionDeleteInput {
 export interface CollectionDeleteOutput {
   namespace: string;
   deleted: boolean;
+  erasure_id?: string;
+  erasure_status?: string;
 }
 
 export interface CollectionListInput {
@@ -3013,6 +3015,9 @@ export interface KnowledgeAddInput {
   original_bytes_b64?: string | null;
   original_filename?: string;
   blob_content_type?: string;
+  agent?: string;
+  session_id?: string;
+  source_class?: string | null;
 }
 
 export interface KnowledgeAddOutput {
@@ -3037,6 +3042,9 @@ export interface KnowledgeBulkAddInput {
   org: string;
   namespace: string;
   entries: KnowledgeBulkEntry[];
+  agent?: string;
+  session_id?: string;
+  source_class?: string | null;
 }
 
 export interface KnowledgeBulkEntryResult {
@@ -3217,11 +3225,14 @@ export interface KnowledgeSearchInput {
   since_seconds?: number | null;
   top_k?: number;
   namespace_scope?: "this" | "all_mine";
+  namespaces?: string[];
   search_mode?: "hybrid" | "semantic" | "lexical";
   lexical_weight?: number;
   narrow_spans?: boolean;
   collapse_sections?: boolean;
   uri_prefix?: string[];
+  session_ids?: string[];
+  source_classes?: string[];
 }
 
 export interface SearchHit {
@@ -3243,6 +3254,9 @@ export interface SearchHit {
   span_end?: number;
   span_similarity?: number;
   siblings_folded?: number;
+  agent?: string;
+  session_id?: string;
+  source_class?: string;
 }
 
 export interface KnowledgeSearchOutput {
@@ -3304,6 +3318,9 @@ export interface KnowledgeUpsertInput {
   original_bytes_b64?: string | null;
   original_filename?: string;
   blob_content_type?: string;
+  agent?: string;
+  session_id?: string;
+  source_class?: string | null;
 }
 
 export interface KnowledgeUpsertOutput {

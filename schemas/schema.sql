@@ -353,7 +353,10 @@ CREATE TABLE IF NOT EXISTS loom.chunks
     `embed_failed_at` Nullable(DateTime),
     `content_sha256` String DEFAULT '',
     `doc_version` UInt64 DEFAULT 0,
+    `agent` LowCardinality(String) DEFAULT '-',
     `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `source_class` LowCardinality(String) DEFAULT '',
     INDEX tags_bloom tags TYPE bloom_filter() GRANULARITY 1,
     INDEX content_text content_lc TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 100000000
 )
@@ -1382,6 +1385,7 @@ CREATE TABLE IF NOT EXISTS loom.documents
     `content_preview` String MATERIALIZED substring(content, 1, 220),
     `agent` LowCardinality(String) DEFAULT '-',
     `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
     `actor` String DEFAULT '',
     `source_class` LowCardinality(String) DEFAULT '',
     INDEX tags_bloom tags TYPE bloom_filter() GRANULARITY 1
@@ -1614,7 +1618,8 @@ CREATE TABLE IF NOT EXISTS loom.erasure_requests
     `last_checkpoint_at` DateTime DEFAULT now(),
     `residue_count` UInt32 DEFAULT 0,
     `residue` String DEFAULT '',
-    `verified_at` Nullable(DateTime) DEFAULT NULL
+    `verified_at` Nullable(DateTime) DEFAULT NULL,
+    `purge` Bool DEFAULT false
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY id

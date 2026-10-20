@@ -159,12 +159,8 @@ class AuthInfo:
     # dashboard), whose children may outlive it (`delegation._child_ttl`);
     # False for a session a third-party client holds.
     first_party: bool = False
-    # `gw` claim: a gateway's token. It reaches nothing itself; each request
-    # names the end user it acts for (`X-Loom-On-Behalf-Of: user:<id>`), and
-    # the HTTP transport swaps in that user's identity (server/auth/gateway.py).
-    gateway: bool = False
-    # The agent a gateway asserted for this request (`agent:<id>`), whose
-    # grants on a collection the request also holds; '' otherwise.
+    # The agent an end-user token names (`agent:<id>`, signed by its issuer),
+    # whose grants on a collection the request also holds; '' otherwise.
     agent_principal: str = ""
     # `iat` as unix seconds; None for an identity no token backs (dev mode).
     issued_at: int | None = None
@@ -256,7 +252,6 @@ def mint_token(
     parent_iats: list[int] | None = None,
     creator: str | None = None,
     issued_at: int | None = None,
-    gateway: bool = False,
 ) -> str:
     """Mint a JWT for service accounts, user onboarding, and tests.
 
@@ -274,8 +269,6 @@ def mint_token(
     authorization per namespace instead of the flat `roles`. No `ttl_seconds`
     => no `exp` => indefinite token. The signing kid goes in the header so
     verifiers pick the matching key during signing-key rotation.
-    `gateway` mints a gateway's token for one org: no namespaces and no roles,
-    since it acts only as the end users it names per request.
     `parents` / `parent_subjects` / `parent_iats` / `creator` are the delegation claims
     `delegation.delegate` computes; a token minted from another token gets
     them from there. `issued_at` (unix seconds; default now) is the `iat`:
@@ -287,7 +280,7 @@ def mint_token(
         # Reserved: revocation keys an operator's cutoffs by a NUL a subject never has.
         raise ValueError("a token subject may not contain a NUL character")
     if is_reserved_subject(subject):
-        # Those name a gateway's end users, whose identity only a gateway asserts.
+        # Those name end users, whom only an end-user issuer signs in.
         raise ValueError(f"a token subject may not be a grant principal: {subject!r}")
     now = int(time.time()) if issued_at is None else issued_at
     payload: dict[str, Any] = {
@@ -337,10 +330,6 @@ def mint_token(
         payload["parent_iats"] = list(parent_iats)
     if creator:
         payload["creator"] = creator
-    if gateway:
-        if org in ("", "*") or namespaces or roles or not is_service_account:
-            raise TokenError("a gateway token is a service account of one org, with no claims")
-        payload["gw"] = True
     if ttl_seconds is not None:
         payload["exp"] = now + ttl_seconds
     if secret is not None:
@@ -363,6 +352,9 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     if secret is None:
         from server.auth import keyring
 
+        end_user_key = _end_user_key(token)
+        if end_user_key is not None:
+            return _verify_end_user(token, *end_user_key)
         if not keyring.loaded():
             raise KeyringUnavailable("the signing keyring is not loaded yet; retry shortly")
         if keyring.stale():
@@ -445,9 +437,91 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         creator=_creator_claim(decoded),
         session_id=_optional_str_claim(decoded, "sid"),
         first_party=_bool_claim(decoded, "fps"),
-        gateway=_bool_claim(decoded, "gw"),
         issued_at=_iat_of(decoded),
         expires_at=int(exp) if exp is not None else None,
+    )
+
+
+def _end_user_key(token: str) -> tuple[str, str] | None:
+    """(issuer, public PEM) when `token` is signed with an end-user issuer's key
+    (by its header's `kid`), else None."""
+    keys = settings.end_user_keys()
+    if not keys:
+        return None
+    try:
+        kid = jwt.get_unverified_header(token).get("kid")
+    except jwt.PyJWTError as e:
+        raise TokenError(f"invalid token header: {e}") from e
+    return keys.get(kid) if isinstance(kid, str) else None
+
+
+# Claims an end-user token may not carry: its identity is the user, nothing more.
+_NOT_FOR_END_USERS = (
+    "namespaces",
+    "ns_write",
+    "ns_roles",
+    "roles",
+    "sa",
+    "read_scope",
+    "read_user_id",
+    "creator",
+    "parents",
+)
+
+
+def _verify_end_user(token: str, issuer: str, public_pem: str) -> AuthInfo:
+    """A short-lived token an end-user issuer signed for one of its users: one
+    org, `sub: user:<id>`, and the agent the request runs inside when there is
+    one (`agent: agent:<id>`, signed, since an agent's grants widen the
+    request). It runs as that user alone: an org member with no claim, whose
+    reads are pinned to the user's rows (`own_user`) and who reaches what
+    grants give the user, the user's groups and the agent."""
+    from server.core.principals import AGENT, USER, principal_id
+
+    try:
+        decoded = _decode(token, [public_pem], "RS256")
+    except jwt.ExpiredSignatureError as e:
+        raise TokenError(f"token expired: {e}", reason="expired") from e
+    except jwt.PyJWTError as e:
+        raise TokenError(f"invalid token: {e}") from e
+    if decoded.get("iss") != issuer:
+        raise TokenError(f"an end-user key of {issuer!r} signed a token of another issuer")
+    user = principal_id(str(decoded.get("sub") or ""), USER)
+    org = decoded.get("org")
+    agent = decoded.get("agent") or ""
+    exp, iat = decoded.get("exp"), decoded.get("iat")
+    if not user:
+        raise TokenError("an end-user token names one user: sub user:<id>")
+    if not isinstance(org, str) or org in ("", "*"):
+        raise TokenError("an end-user token names one org")
+    if not isinstance(agent, str) or (agent and not principal_id(agent, AGENT)):
+        raise TokenError("an end-user token's agent is agent:<id>")
+    if not isinstance(exp, int | float) or isinstance(exp, bool) or not isinstance(iat, int):
+        raise TokenError("an end-user token carries a numeric iat and exp")
+    if exp - iat > settings.jwt_end_user_max_ttl_seconds:
+        raise TokenError(
+            f"an end-user token lives at most {settings.jwt_end_user_max_ttl_seconds} s"
+        )
+    carried = [c for c in _NOT_FOR_END_USERS if c in decoded]
+    if carried:
+        raise TokenError(f"an end-user token carries no {', '.join(carried)} claim")
+    _check_not_revoked(decoded)
+    return AuthInfo(
+        subject=USER + user,
+        org=org,
+        namespaces=(),
+        # A member of the org with no claim: an org-level read it may make, a
+        # namespace only through a grant.
+        roles=(Role.VIEWER,),
+        is_service_account=False,
+        impersonated_by=issuer,
+        read_scope="own_user",
+        read_user_id=user,
+        agent_principal=agent,
+        token_id=token_id_of(token, decoded.get("jti")),
+        consumer=_consumer_claim(decoded.get("consumer")),
+        issued_at=iat,
+        expires_at=int(exp),
     )
 
 

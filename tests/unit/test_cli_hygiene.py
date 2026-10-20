@@ -293,20 +293,3 @@ def test_serve_runs_with_no_command_context_bound() -> None:
 
     assert _dispatch(argparse.Namespace(cmd="serve", func=_serve)) == 0
     assert seen == [("process:worker", "", "")]
-
-
-@pytest.mark.parametrize(
-    ("extra", "said"),
-    [
-        (["--subject", "user:x"], "grant principal"),
-        (["--subject", "sa:chat", "--roles", "writer"], "--roles"),
-        (["--subject", "sa:chat", "--read-scope", "own_user"], "--read-scope"),
-        (["--subject", "sa:chat", "--user-token"], "--user-token"),
-    ],
-)
-def test_a_gateway_mint_refuses_a_principal_or_a_claim(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], extra: list[str], said: str
-) -> None:
-    _auth_on_with(monkeypatch, "a-real-secret-that-is-not-the-default")
-    assert cli.main(["mint-token", "--gateway", "--org", "o", *extra]) == 2
-    assert said in capsys.readouterr().err

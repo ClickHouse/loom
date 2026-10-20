@@ -49,11 +49,7 @@ async def knowledge_download(
         raise missing_bearer()
     try:
         if auth is not None:
-            auth = effective_auth(
-                auth,
-                request.headers.get("X-Loom-On-Behalf-Of") or "",
-                request.headers.get("X-Loom-Agent") or "",
-            )
+            auth = effective_auth(auth, request.headers.get("X-Loom-On-Behalf-Of") or "")
         namespace = personal_namespace(auth, org, namespace)
         await check_authorized(auth, Role.VIEWER, org=org, namespace=namespace)
     except ValueError as e:

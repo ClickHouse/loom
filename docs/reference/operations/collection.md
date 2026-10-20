@@ -29,7 +29,7 @@ Create a collection: a namespace read and written only through grants.
 
 ## `collection.delete`
 
-Delete a collection: it leaves the directory and the tree, and its name is never used again.
+Delete a collection with what it holds: an erasure of the namespace (documents, chunks, originals, memory), then it leaves the directory and the tree, and its name is never used again.
 
 `POST /v1/collection.delete` · MCP `loom_collection_delete` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 
@@ -42,6 +42,8 @@ Delete a collection: it leaves the directory and the tree, and its name is never
 | --- | --- | --- |
 | `namespace` | `str` | The namespace the op reads or writes. |
 | `deleted` | `bool` | False when it was already deleted |
+| `erasure_id` | `str` | The erasure of what the collection held (`erasure.status` follows it), and its outcome: `completed`, or `failed` while the recovery worker retries it. |
+| `erasure_status` | `str` |  |
 
 ## `collection.list`
 

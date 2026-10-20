@@ -37,6 +37,8 @@ _FIELDS = Settings.model_fields
 _CROSS_CHECKED = {
     "default_namespace",
     "jwt_public_keys_json",
+    # Read with the issuer and the federated keys (test_sharing.py).
+    "jwt_end_user_issuers_json",
     "llm_model",
     "llm_provider",
     # Names and URLs checked by a model validator (test_rerank_names.py).

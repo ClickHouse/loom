@@ -66,9 +66,9 @@ class CollectionListOutput(BaseModel):
 
 
 class CollectionDeleteInput(BaseModel):
-    """Delete a collection: it leaves the directory and the tree, and its name is
-    never used again. Its documents stay until an org admin's erasure of the
-    namespace removes them: once deleted, the collection admits no one else."""
+    """Delete a collection with what it holds: an erasure of the namespace
+    (documents, chunks, originals, memory), then it leaves the directory and
+    the tree, and its name is never used again."""
 
     org: str
     namespace: str
@@ -77,3 +77,7 @@ class CollectionDeleteInput(BaseModel):
 class CollectionDeleteOutput(BaseModel):
     namespace: str
     deleted: bool  # False when it was already deleted
+    # The erasure of what the collection held (`erasure.status` follows it), and
+    # its outcome: `completed`, or `failed` while the recovery worker retries it.
+    erasure_id: str = ""
+    erasure_status: str = ""

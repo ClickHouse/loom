@@ -1,6 +1,7 @@
-"""The grant subjects a gateway's end users are known by (server/auth/gateway.py):
-`user:<id>`, `group:<id>` and `agent:<id>`. An id is lowercase: each principal
-has exactly one spelling."""
+"""The grant subjects of collections besides Loom's own accounts
+(server/auth/gateway.py): an end user `user:<id>`, a group `group:<id>`, an
+agent `agent:<id>`, and `everyone`, which every request acting in the org
+holds. An id is lowercase: each principal has exactly one spelling."""
 
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ import re
 
 USER, GROUP, AGENT = "user:", "group:", "agent:"
 PRINCIPAL_PREFIXES = (USER, GROUP, AGENT)
+EVERYONE = "everyone"
 # Subjects with one spelling: service accounts and these principals.
 ONE_SPELLING = ("sa:", *PRINCIPAL_PREFIXES)
 _ID = re.compile(r"[a-z0-9][a-z0-9._@-]{0,127}")
@@ -28,14 +30,17 @@ def principal_id(value: str, prefix: str) -> str:
 
 
 def is_reserved_subject(subject: str) -> bool:
-    """True for anything spelled like a grant principal, in any case: only a
-    gateway's assertion may produce one (not a token, not a trusted caller)."""
-    return subject.lower().startswith(PRINCIPAL_PREFIXES)
+    """True for anything spelled like a grant principal, in any case: only an
+    end-user issuer's token may produce one (not a Loom token, not a trusted
+    caller), and `everyone` none at all."""
+    lowered = subject.lower()
+    return lowered.startswith(PRINCIPAL_PREFIXES) or lowered == EVERYONE
 
 
 def is_principal(subject: str) -> bool:
-    """True for a `user:`, `group:` or `agent:` subject with a well-formed id."""
-    return any(principal_id(subject, p) for p in PRINCIPAL_PREFIXES)
+    """True for `everyone`, and a `user:`, `group:` or `agent:` subject with a
+    well-formed id."""
+    return subject == EVERYONE or any(principal_id(subject, p) for p in PRINCIPAL_PREFIXES)
 
 
 # A user's personal collection: named from the org and the user, so its name

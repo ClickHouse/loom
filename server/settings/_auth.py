@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from server.settings._env import DEV_JWT_SECRET, json_map_items
+from server.settings._env import DEV_JWT_SECRET, decode_json_or_b64, json_map_items
 
 
 class AuthSettings(BaseModel):
@@ -212,6 +212,40 @@ class AuthSettings(BaseModel):
     # aggregator passing each end-user's identity under one service token).
     # Empty disables the header.
     trusted_callers: str = ""
+    # The services that sign a short-lived token per end user (a chat app in
+    # front of Loom): JSON (or base64 JSON) {issuer: {kid: RS256 public PEM}}.
+    # A key here verifies only tokens of its own issuer, and only as an end user
+    # (`sub: user:<id>`, one `org`, an optional `agent: agent:<id>`), never any
+    # other token. Empty: no end-user tokens.
+    jwt_end_user_issuers_json: str = ""
+    # The longest an end-user token may live, from its `iat` (or now) to its `exp`.
+    jwt_end_user_max_ttl_seconds: int = Field(default=900, ge=60, le=3600)
+
+    def end_user_keys(self) -> dict[str, tuple[str, str]]:
+        """kid → (issuer, public PEM) of the end-user issuers. Empty when none set."""
+        raw = self.jwt_end_user_issuers_json.strip()
+        if not raw:
+            return {}
+        parsed = decode_json_or_b64(raw, "jwt_end_user_issuers_json")
+        if not isinstance(parsed, dict) or not all(isinstance(v, dict) for v in parsed.values()):
+            raise ValueError("jwt_end_user_issuers_json must map issuer to {kid: PEM}")
+        out: dict[str, tuple[str, str]] = {}
+        for issuer, keys in parsed.items():
+            for kid, pem in keys.items():
+                if str(kid) in out:
+                    raise ValueError(f"jwt_end_user_issuers_json names kid {kid!r} twice")
+                out[str(kid)] = (str(issuer), str(pem))
+        return out
+
+    @model_validator(mode="after")
+    def _end_user_issuers_stand_apart(self) -> AuthSettings:
+        keys = self.end_user_keys()
+        if any(issuer == self.jwt_issuer for issuer, _ in keys.values()):
+            raise ValueError("an end-user issuer may not be Loom's own (LOOM_JWT_ISSUER)")
+        shared = sorted(set(keys) & set(self.jwt_public_key_map()))
+        if shared:
+            raise ValueError(f"kids {shared} are both end-user and federated keys")
+        return self
 
     def auth_actually_required(self) -> bool:
         """Whether the HTTP transport should require a bearer.

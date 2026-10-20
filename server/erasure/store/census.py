@@ -324,7 +324,7 @@ _CENSUS: tuple[Substrate, ...] = (
 # step cannot appear without saying whether the census sees its table.
 #   entity_canonical_map.tombstone   — alias map, no memory content.
 #   agent_events.scrub               — identity scrubbed, rows kept for cost.
-#   subject_last_seen.delete         — a gateway end user's newest-call row: an
+#   subject_last_seen.delete         — an end user's newest-call row: an
 #                                       identifier, no memory content.
 #   shared*.tombstone                — org-wide promoted rows, matched by
 #                                       provenance not by scope.

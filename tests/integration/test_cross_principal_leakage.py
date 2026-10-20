@@ -1411,32 +1411,31 @@ def test_positive_control_tenant_a_reads_its_canaries_in_the_task_and_agent_plan
 
 # ── knowledge sharing (docs/architecture/sharing.md) ─────────────────────────
 #
-# A gateway's end users own collections: a parent shared with a group and one
+# A service's end users, signed in with end-user tokens, own collections: a parent shared with a group and one
 # user, a child that inherits it, and a personal collection holding a saved
 # item. A user once granted and then revoked, a member once listed and then
 # removed, a stranger, the owner's id in another tenant, an org admin and a
 # writer of another namespace then drive every read op against each of them.
 
 
-def _post_as(base: str, token: str, user: str, op: str, payload: dict[str, Any]) -> httpx.Response:
+def _post_as(base: str, org: str, user: str, op: str, payload: dict[str, Any]) -> httpx.Response:
+    """`op` as the end user `user:<user>` of `org`, under a token the test
+    end-user issuer signs (tests/end_user_issuer.py)."""
+    from tests import end_user_issuer
+
     with httpx.Client(base_url=base, timeout=30.0) as c:
         return c.post(
             f"/v1/{op}",
             json=payload,
-            headers={"Authorization": f"Bearer {token}", "X-Loom-On-Behalf-Of": f"user:{user}"},
+            headers={"Authorization": f"Bearer {end_user_issuer.mint(org, user)}"},
         )
 
 
 class _Shared:
     def __init__(self, base: str, org: str) -> None:
-        from server.auth.jwt import mint_token
         from server.core.principals import personal_name as name_for
 
-        self.org = org
-        self.token = mint_token("sa:leak-chat", org, [], [], gateway=True, ttl_seconds=900)
-        self.other_token = mint_token(
-            "sa:leak-chat", f"{org}-other", [], [], gateway=True, ttl_seconds=900
-        )
+        self.org, self.other_org = org, f"{org}-other"
         tag = uuid.uuid4().hex[:6]
         self.parent, self.child = f"col-leak-{tag}", f"col-leak-{tag}-docs"
         self.personal = name_for(org, "user:owner")
@@ -1447,7 +1446,7 @@ class _Shared:
         self.base = base
 
     def ok(self, user: str, op: str, payload: dict[str, Any]) -> dict[str, Any]:
-        r = _post_as(self.base, self.token, user, op, {"org": self.org, **payload})
+        r = _post_as(self.base, self.org, user, op, {"org": self.org, **payload})
         assert r.status_code == 200, f"{op}: {r.status_code} {r.text}"
         if op in ACL_OPS:
             acl_change_adopted()
@@ -1459,15 +1458,20 @@ _SHARED_CACHE: dict[str, _Shared] = {}
 
 @pytest.fixture
 def shared(control_plane_url: str, mint_test_token) -> _Shared:
+    from tests import end_user_issuer
+
+    if not end_user_issuer.configured():
+        pytest.skip("no test end-user issuer: run `python -m tests.end_user_issuer <dir>`")
     if control_plane_url in _SHARED_CACHE:
         return _SHARED_CACHE[control_plane_url]
     s = _Shared(control_plane_url, unique_org("leak-share"))
+    idp = mint_test_token(org=s.org, namespaces=["*"], roles=["org_admin"], subject="leak-idp")
     s.ok("owner", "collection.create", {"namespace": s.parent})
     s.ok("owner", "collection.create", {"namespace": s.child, "parent": s.parent})
     groups = httpx.post(
         f"{control_plane_url}/scim/v2/Groups",
         json={"externalId": "readers", "members": [{"value": "member"}, {"value": "removed"}]},
-        headers={"Authorization": f"Bearer {s.token}"},
+        headers={"Authorization": f"Bearer {idp}"},
     )
     assert groups.status_code == 201, groups.text
     acl_change_adopted()
@@ -1479,7 +1483,7 @@ def shared(control_plane_url: str, mint_test_token) -> _Shared:
     removed = httpx.patch(
         f"{control_plane_url}/scim/v2/Groups/readers",
         json={"Operations": [{"op": "remove", "path": 'members[value eq "removed"]'}]},
-        headers={"Authorization": f"Bearer {s.token}"},
+        headers={"Authorization": f"Bearer {idp}"},
     )
     assert removed.status_code == 200, removed.text
     acl_change_adopted()
@@ -1510,7 +1514,7 @@ def test_positive_control_the_grantees_read_the_shared_canary(
 ) -> None:
     r = _post_as(
         control_plane_url,
-        shared.token,
+        shared.org,
         user,
         "knowledge.search",
         {"org": shared.org, "namespace": shared.child, "query": shared.seed.value_text},
@@ -1527,13 +1531,13 @@ def test_every_read_op_against_a_collection_leaks_nothing(
 ) -> None:
     def post(op: str, payload: dict[str, Any]) -> httpx.Response:
         if who == "other_tenant":
-            return _post_as(control_plane_url, shared.other_token, "owner", op, payload)
+            return _post_as(control_plane_url, shared.other_org, "owner", op, payload)
         if who in ("org_admin", "b_writer"):
             roles = ["org_admin", "admin", "writer"] if who == "org_admin" else ["writer"]
             names = ["*"] if who == "org_admin" else [f"tenant-b-{uuid.uuid4().hex[:6]}"]
             token = mint_test_token(org=shared.org, namespaces=names, roles=roles, subject=who)
             return _post(control_plane_url, token, op, payload)
-        return _post_as(control_plane_url, shared.token, who, op, payload)
+        return _post_as(control_plane_url, shared.org, who, op, payload)
 
     leaks: dict[str, list[str]] = {}
     bad_status: dict[str, int] = {}

@@ -140,18 +140,19 @@ def _refuse_approval_below(current: str, target: str, input: GrantsApproveInput)
 
 
 def _enforce_principal_target(namespace: str, subject: str) -> None:
-    """A personal collection keeps its one grant; a group or an agent holds
-    grants only on collections; a `user:`/`group:`/`agent:` subject needs a
-    well-formed id."""
+    """A personal collection keeps its one grant; a group, an agent or
+    `everyone` holds grants only on collections; a `user:`/`group:`/`agent:`
+    subject needs a well-formed id."""
     from server.auth import sharing
-    from server.core.principals import AGENT, GROUP, is_principal, is_reserved_subject
+    from server.core.principals import AGENT, EVERYONE, GROUP, is_principal, is_reserved_subject
 
     if sharing.is_personal(namespace):
         raise ValidationError("a personal collection is shared by copying an item out of it")
     if is_reserved_subject(subject) and not is_principal(subject):
         raise ValidationError(f"{subject!r} is not a well-formed principal (prefix:id, lowercase)")
-    if subject.startswith((GROUP, AGENT)) and not sharing.is_collection(namespace):
-        raise ValidationError("groups and agents hold grants on collections only")
+    collection_only = subject.startswith((GROUP, AGENT)) or subject == EVERYONE
+    if collection_only and not sharing.is_collection(namespace):
+        raise ValidationError("groups, agents and everyone hold grants on collections only")
 
 
 @asynccontextmanager

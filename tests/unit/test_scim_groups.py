@@ -1,4 +1,4 @@
-"""SCIM Groups (server/auth/scim_groups.py): a gateway pushes its org's groups;
+"""SCIM Groups (server/identity/app/scim_groups.py): an org's admin pushes its groups;
 members are its user ids, held as `user:<id>`; every change rewrites the row
 and moves the org's grant watermark."""
 
@@ -73,7 +73,7 @@ def _client(org: str = ORG) -> TestClient:
     app = FastAPI()
     scim_groups.attach(app)
     c = TestClient(app)
-    token = mint_token("sa:chat", org, [], [], gateway=True, secret=SECRET)
+    token = mint_token("sa:idp", org, ["*"], ["org_admin"], secret=SECRET)
     c.headers["Authorization"] = f"Bearer {token}"
     return c
 
@@ -130,11 +130,15 @@ def test_a_group_belongs_to_the_token_s_org(store: _Store) -> None:
     assert other.get("/scim/v2/Groups").json()["totalResults"] == 0
 
 
-def test_a_token_that_is_not_a_gateway_s_is_refused(store: _Store) -> None:
+@pytest.mark.parametrize(
+    ("org", "roles"),
+    [(ORG, ["admin"]), ("*", ["org_admin"])],  # no org admin; an admin of no one org
+)
+def test_a_token_that_is_not_one_org_s_admin_is_refused(
+    store: _Store, org: str, roles: list[str]
+) -> None:
     c = _client()
-    c.headers["Authorization"] = "Bearer " + mint_token(
-        "sa:x", ORG, ["*"], ["admin"], secret=SECRET
-    )
+    c.headers["Authorization"] = "Bearer " + mint_token("sa:x", org, ["*"], roles, secret=SECRET)
     assert c.get("/scim/v2/Groups").status_code == 403
 
 
