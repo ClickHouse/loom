@@ -49,35 +49,46 @@ class _TTLCache:
     `MetricsTimeoutError` and a dropped export cycle (all instruments, not just
     the gauges) on every cache expiry.
     `get()` returns the last value immediately (None before the first refresh
-    lands, which observers must render as "no observation", not 0) and kicks off
-    at most one refresh once the TTL has lapsed.
+    lands, and while a census producer's process does not hold the lease,
+    `_census_only`; observers must render it as "no observation", not 0) and
+    kicks off at most one refresh once the TTL has lapsed.
     """
 
     def __init__(self, ttl_s: float, producer: Callable[[], Any]) -> None:
         self._ttl = ttl_s
         self._producer = producer
+        # A census producer's lease check (`otel_probes._census_only`).
+        self._reads_here: Callable[[], bool] | None = getattr(producer, "reads_here", None)
         self._value: Any = None
         self._fetched_at = 0.0
         self._refreshing = False
         self._lock = threading.Lock()
 
     def _refresh(self) -> None:
+        failed = False
         try:
             v = self._producer()
         except Exception as e:  # noqa: BLE001 — never let telemetry break anything
             log.debug("gauge producer failed: %s", e)
-            v = None
+            v, failed = None, True
         with self._lock:
-            if v is not None:
+            # A failed probe keeps the last reading; a None answer (off the lease) clears it.
+            if not failed:
                 self._value = v
-            # Stamped on failure too, so a down CH is re-probed at the TTL
-            # cadence — not with a new thread on every 3s export.
-            self._fetched_at = time.monotonic()
+            # Failures back off for one TTL; skipped censuses remain due.
+            skipped = v is None and not failed
+            self._fetched_at = 0.0 if skipped else time.monotonic()
             self._refreshing = False
 
     def get(self) -> Any:
         start = False
         with self._lock:
+            # A census another process takes is not this one's to export,
+            # whatever it read while it held the lease. In memory, no ClickHouse.
+            # Back on the lease, the first read is never fetched and refreshes at once.
+            if self._reads_here is not None and not self._reads_here():
+                self._value, self._fetched_at = None, 0.0
+                return None
             # "Never fetched" is always due: monotonic() counts from boot, so on
             # a host up for less than one TTL (a fresh CI runner, a container
             # started right after a reboot) `now - 0.0 >= ttl` is false and a
@@ -214,6 +225,28 @@ def _register_storage_gauges(meter: Any, probe: Callable[[], CodeSeries] | None)
             description=description,
             unit=unit,
         )
+
+
+def _register_agent_trust_gauges(meter: Any, probe: Callable[[], CodeSeries] | None) -> None:
+    """How far each agent trust is towards its --max-agents, per `loom.trust`
+    (operator-registered, so bounded). No probe, no gauges. Cached five minutes."""
+    if probe is None:
+        return
+    cache = _TTLCache(300.0, probe)
+    meter.create_observable_gauge(
+        name="loom.auth.trust_agents",
+        callbacks=[_cached_series(cache, "agent_trust_agents")],
+        description="Agents an active workload trust has made, released ones included, "
+        "as its --max-agents counts them, by loom.org and loom.trust",
+        unit="1",
+    )
+    meter.create_observable_gauge(
+        name="loom.auth.trust_agents_used_ratio",
+        callbacks=[_cached_series(cache, "agent_trust_used_ratio")],
+        description="loom.auth.trust_agents over the trust's --max-agents; at 1 every "
+        "new agent of the trust is refused",
+        unit="1",
+    )
 
 
 def _register_code_lag_gauges(meter: Any, series: Callable[[str], Callable[[Any], Any]]) -> None:
@@ -828,6 +861,7 @@ def register_state_gauges(
     retention_probe: Callable[[], CodeSeries] | None = None,
     agent_labels_probe: Callable[[], CodeSeries] | None = None,
     storage_probe: Callable[[], CodeSeries] | None = None,
+    agent_trusts_probe: Callable[[], CodeSeries] | None = None,
 ) -> None:
     """Register observable gauges for system state.
 
@@ -856,6 +890,7 @@ def register_state_gauges(
 
         _register_agent_labels_gauge(meter, agent_labels_probe)
         _register_storage_gauges(meter, storage_probe)
+        _register_agent_trust_gauges(meter, agent_trusts_probe)
         _register_code_lag_gauges(meter, _series)
         _register_backlog_gauges(meter, reading)
         _register_process_gauges(meter)

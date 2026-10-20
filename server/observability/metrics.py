@@ -68,6 +68,7 @@ _llm_response_cache: Any = None
 _worker_passes: Any = None
 _worker_pass_duration: Any = None
 _auth_refusals: Any = None
+_agents_provisioned: Any = None
 
 _initialized = False
 
@@ -355,7 +356,7 @@ def _init_worker_instruments(meter: Any) -> None:
 
 def _init_auth_instruments(meter: Any) -> None:
     """The authentication instruments."""
-    global _auth_refusals
+    global _auth_refusals, _agents_provisioned
     # A refused bearer has no op ledger row (the request has no principal yet;
     # a /v1/me/* route writes only its own me.* row) and never reaches the SLI
     # rollup, so this counter is the trace of a 401 storm or of every caller
@@ -366,6 +367,18 @@ def _init_auth_instruments(meter: Any) -> None:
             "Requests refused for their bearer token (none, one that failed"
             " verification, or one that could not be checked yet), by reason and transport"
             " (http, mcp, or scim for the SCIM provider's token)"
+        ),
+        unit="1",
+    )
+    # A leaked issuer key or a runaway control plane names new agents without
+    # end: each one costs a namespace, and the trust stops at --max-agents.
+    # Trusts are registered by an operator, so `loom.trust` stays bounded.
+    _agents_provisioned = meter.create_counter(
+        name="loom.auth.agents_provisioned",
+        description=(
+            "First exchanges of an agent of a workload trust, by loom.org, loom.trust and"
+            " outcome: made (its namespace was made) or at_cap (refused, the trust had"
+            " made --max-agents)"
         ),
         unit="1",
     )
@@ -394,6 +407,19 @@ def record_auth_refusal(error: BaseException | None, *, transport: str) -> None:
                 "reason": auth_refusal_reason(error),
                 "loom.transport": transport,
             },
+        )
+    except Exception:  # noqa: BLE001 — telemetry must never fail the caller
+        pass
+
+
+def record_agent_provisioned(org: str, trust: str, *, outcome: str) -> None:
+    """One tick of `loom.auth.agents_provisioned`; `outcome` is made or at_cap.
+    Never raises."""
+    if _agents_provisioned is None:
+        return
+    try:
+        _agents_provisioned.add(
+            1, attributes={"loom.org": org, "loom.trust": trust, "outcome": outcome}
         )
     except Exception:  # noqa: BLE001 — telemetry must never fail the caller
         pass

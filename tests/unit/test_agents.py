@@ -129,6 +129,41 @@ def test_a_trust_makes_no_more_agents_than_its_limit(world) -> None:
         _ensure(trust, "a2")
 
 
+class _Counter:
+    def __init__(self) -> None:
+        self.ticks: list[dict[str, str]] = []
+
+    def add(self, n: int, attributes: dict[str, str]) -> None:
+        self.ticks.extend([attributes] * n)
+
+
+def test_each_new_agent_and_each_refusal_at_the_cap_is_counted(world, monkeypatch) -> None:
+    from server.observability import metrics
+
+    counter = _Counter()
+    monkeypatch.setattr(metrics, "_agents_provisioned", counter)
+    trust = {**_TRUST, "max_agents": 1}
+    _ensure(trust)
+    _ensure(trust)  # its own again: not a new agent
+    with pytest.raises(machines.Refused):
+        _ensure(trust, "a2")
+    assert counter.ticks == [
+        {"loom.org": "acme", "loom.trust": "fleet", "outcome": "made"},
+        {"loom.org": "acme", "loom.trust": "fleet", "outcome": "at_cap"},
+    ]
+
+
+def test_a_failing_counter_never_fails_the_exchange(world, monkeypatch) -> None:
+    from server.observability import metrics
+
+    class _Broken:
+        def add(self, *a: object, **k: object) -> None:
+            raise RuntimeError("exporter down")
+
+    monkeypatch.setattr(metrics, "_agents_provisioned", _Broken())
+    assert _ensure() == "fleet-a1"
+
+
 def test_a_first_exchange_cut_off_before_its_grant_is_finished_by_the_next(
     world, monkeypatch
 ) -> None:
@@ -141,18 +176,53 @@ def test_a_first_exchange_cut_off_before_its_grant_is_finished_by_the_next(
             raise RuntimeError("ClickHouse away")
         await real(org, ns, subject)
 
+    from server.observability import metrics
+
+    counter = _Counter()
+    monkeypatch.setattr(metrics, "_agents_provisioned", counter)
     monkeypatch.setattr(self_signup, "insert_owner_grant", fails_once)
     with pytest.raises(RuntimeError):
         _ensure()  # the row landed, its grant did not
     _ensure()  # the next exchange finishes it
+    _ensure()  # and a later one is a repeat
     assert world["granted"] == [("acme", "fleet-a1", "sa:fleet:a1")]
+    # It holds a slot from its row on: counted once, by the exchange that finished it.
+    assert counter.ticks == [{"loom.org": "acme", "loom.trust": "fleet", "outcome": "made"}]
 
 
-def test_a_grant_revoked_since_stays_revoked(world) -> None:
+def test_a_grant_written_since_the_check_is_left_alone_and_not_counted(world, monkeypatch) -> None:
+    from server.observability import metrics
+
+    counter = _Counter()
+    monkeypatch.setattr(metrics, "_agents_provisioned", counter)
+    # A first exchange cut off after the row; a grant change for the agent lands
+    # between this exchange's check and its re-check under the grant's claim.
+    world["rows"]["fleet-a1"] = {
+        "active": True,
+        "tags": ["machine:fleet"],
+        "owner_email": "sa:fleet:a1",
+    }
+    answers = iter([False, True])
+
+    async def granted(org: str, ns: str, who: str) -> bool:
+        return next(answers)
+
+    monkeypatch.setattr(agents, "_granted", granted)
+    assert _ensure() == "fleet-a1"
+    assert world["granted"] == []
+    assert counter.ticks == []
+
+
+def test_a_grant_revoked_since_stays_revoked(world, monkeypatch) -> None:
+    from server.observability import metrics
+
+    counter = _Counter()
+    monkeypatch.setattr(metrics, "_agents_provisioned", counter)
     _ensure()
     world["granted"].clear()  # its row, revoked or not, stays in grant_rows
     _ensure()
     assert world["granted"] == []
+    assert counter.ticks == [{"loom.org": "acme", "loom.trust": "fleet", "outcome": "made"}]
 
 
 def test_the_repair_holds_the_grants_claim(world, monkeypatch) -> None:
