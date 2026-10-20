@@ -39,6 +39,7 @@ from server.auth.scim_routes import (
     ScimError,
     ScimRoute,
     int_param,
+    lowered,
     patch_operations,
     read_body,
 )
@@ -178,7 +179,7 @@ def _members(value: Any) -> list[str]:
     """`members` as principals; a member that is not a user id is refused."""
     out = []
     for m in value or []:
-        ident = str((m or {}).get("value") or "") if isinstance(m, dict) else ""
+        ident = str(lowered(m).get("value") or "") if isinstance(m, dict) else ""
         if not is_principal_id(ident):
             raise ScimError(400, f"a member is a user id, not {ident!r}", "invalidValue")
         out.append(USER + ident)
@@ -280,8 +281,8 @@ async def create_group(request: Request, caller: _Caller = _CALLER) -> JSONRespo
     """The group's id is its externalId when that is a well-formed id, so a
     client can address and grant it by its own id; else a new one."""
     org = _caller_org(caller)
-    body = await read_body(request)
-    external = str(body.get("externalId") or "")
+    body = lowered(await read_body(request))  # names match in any case (RFC 7643 §2.1)
+    external = str(body.get("externalid") or "")
     group_id = external if is_principal_id(external) else uuid.uuid4().hex
     members = _members(body.get("members"))
     async with group_change(org, group_id):
@@ -290,7 +291,7 @@ async def create_group(request: Request, caller: _Caller = _CALLER) -> JSONRespo
         row = group_row(
             org,
             group_id,
-            display_name=str(body.get("displayName") or ""),
+            display_name=str(body.get("displayname") or ""),
             external_id=external,
             members=members,
             after=await _stored_version(org, group_id),  # above a deleted group of this id
@@ -303,15 +304,15 @@ async def create_group(request: Request, caller: _Caller = _CALLER) -> JSONRespo
 @router.put("/Groups/{group_id}")
 async def replace_group(group_id: str, request: Request, caller: _Caller = _CALLER) -> JSONResponse:
     org = _caller_org(caller)
-    body = await read_body(request)
+    body = lowered(await read_body(request))  # names match in any case (RFC 7643 §2.1)
     members = _members(body.get("members"))
     async with group_change(org, group_id):
         current = await _existing(org, group_id)
         row = group_row(
             org,
             group_id,
-            display_name=str(body.get("displayName") or current["display_name"]),
-            external_id=str(body.get("externalId") or current["external_id"]),
+            display_name=str(body.get("displayname") or current["display_name"]),
+            external_id=str(body.get("externalid") or current["external_id"]),
             members=members,
             created_at=current["created_at"],
             after=current["version"],
@@ -339,7 +340,7 @@ def _patched(
         elif (filtered := _MEMBER_FILTER.fullmatch(path)) and kind == "remove":
             members = members - {USER + filtered.group(1)}
         elif not path and kind == "replace" and isinstance(value, dict):
-            value = {str(k).lower(): v for k, v in value.items()}
+            value = lowered(value)
             name = str(value.get("displayname") or name)
             if "members" in value:
                 members = set(_members(value["members"]))

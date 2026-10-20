@@ -623,16 +623,20 @@ async def revoke_subject(org: str, subject: str, *, actor: str) -> int:
                     if row is None or row["revoked_at"] is not None:
                         continue  # revoked meanwhile
                     attempted = True
-                    await grants_repo.insert_row(
-                        {**row, "revoked_at": _now(), "version": _above(row)}, announce=False
-                    )
-                await audit.emit(
-                    "grants.revoke",
-                    org=org,
-                    namespace=namespace,
-                    actor=actor,
-                    subject={"subject": subject},
-                )
+                    try:
+                        await grants_repo.insert_row(
+                            {**row, "revoked_at": _now(), "version": _above(row)}, announce=False
+                        )
+                    finally:
+                        # Audited even when the reply is lost: the row may have
+                        # landed, and the retry would find nothing to audit.
+                        await audit.emit(
+                            "grants.revoke",
+                            org=org,
+                            namespace=namespace,
+                            actor=actor,
+                            subject={"subject": subject},
+                        )
                 revoked += 1
         if not await grants_repo.live_rows_of(org, subject):
             return revoked  # the last pass revoked the last of them
@@ -651,7 +655,7 @@ async def forget_granter(org: str, granter: str) -> int:
     downgrade that landed meanwhile is kept) and versioned above it. The grants
     themselves stay: they are the grantees'. Moves the watermark once. Returns
     how many rows it rewrote."""
-    rewritten: list[str] = []
+    rewritten = 0
     attempted: set[str] = set()  # announced even when a write's reply was lost
     try:
         for listed in await grants_repo.rows_granted_by(org, granter):
@@ -664,11 +668,11 @@ async def forget_granter(org: str, granter: str) -> int:
                 await grants_repo.insert_row(
                     {**row, "granted_by": "", "version": _above(row)}, announce=False
                 )
-            rewritten.append(subject)
+            rewritten += 1
     finally:
         if attempted:
             await grant_cache.changed(org, sorted(attempted))
-    return len(rewritten)
+    return rewritten
 
 
 def _now() -> datetime:

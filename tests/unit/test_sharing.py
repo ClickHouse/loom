@@ -759,6 +759,7 @@ class _GrantRows:
         self.written: list[dict[str, Any]] = []
         self.sticky = sticky
         self.moved: list[list[str]] = []
+        self.audited: list[str] = []
 
     async def live_rows_of(self, org: str, subject: str, **_k: Any) -> list[dict[str, Any]]:
         return [r for r in self.rows.values() if r["subject"] == subject and not r["revoked_at"]]
@@ -793,7 +794,8 @@ def grant_rows(monkeypatch: pytest.MonkeyPatch) -> Any:
         async def _changed(org: str, subjects: Any = None, **_k: Any) -> None:
             store.moved.append(list(subjects or []))
 
-        async def _emit(*_a: Any, **_k: Any) -> str:
+        async def _emit(event: str, *_a: Any, **_k: Any) -> str:
+            store.audited.append(event)
             return "h"
 
         monkeypatch.setattr(grants, "grant_change", _claim)
@@ -849,6 +851,8 @@ def test_a_write_whose_reply_is_lost_still_moves_the_watermark(
         else:
             asyncio.run(grants.forget_granter(ORG, "user:bob"))
     assert len(store.written) == 1 and store.moved == [["user:bob"]]
+    if call == "revoke":
+        assert store.audited == ["grants.revoke"], "a revoke that may have landed is audited"
 
 
 def test_an_erased_user_is_blanked_as_the_issuer_of_grants_others_hold(grant_rows: Any) -> None:

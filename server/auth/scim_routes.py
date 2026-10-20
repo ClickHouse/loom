@@ -168,7 +168,7 @@ def parse_active(value: Any) -> bool:
 _USER_URN = USER_SCHEMA.lower() + ":"
 
 
-def _lowered(attrs: dict[str, Any]) -> dict[str, Any]:
+def lowered(attrs: dict[str, Any]) -> dict[str, Any]:
     """`attrs` with its names lower-cased (RFC 7643 §2.1: they match in any
     case). Two names that differ only in case are one attribute sent twice."""
     out = {str(k).lower(): v for k, v in attrs.items()}
@@ -194,9 +194,9 @@ def patch_operations(body: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _operations(body: dict[str, Any]) -> Any:
-    ops = _lowered(body).get("operations")
+    ops = lowered(body).get("operations")
     return (
-        [_lowered(op) if isinstance(op, dict) else op for op in ops]
+        [lowered(op) if isinstance(op, dict) else op for op in ops]
         if isinstance(ops, list)
         else ops
     )
@@ -332,7 +332,7 @@ def _patched_emails(
         return [{**e, sub: blank} if i in picked else e for i, e in enumerate(emails)]
     if not sub and not isinstance(value, dict):
         raise ScimError(400, "an emails entry must be an object", "invalidValue")
-    changes = _lowered(value) if not sub else {sub: value}
+    changes = lowered(value) if not sub else {sub: value}
     if not picked and comparison is not None:
         # Entra writes `emails[type eq "work"].value` for an entry not there yet,
         # by add or replace; the list it leaves is checked as any other.
@@ -364,7 +364,7 @@ def _naming(named: Any) -> dict[str, str]:
     """What a remove's value says of an entry to drop: its address and/or type."""
     if not isinstance(named, dict):
         raise ScimError(400, "an emails entry must be an object", "invalidValue")
-    named = _lowered(named)
+    named = lowered(named)
     if any(not isinstance(named.get(k), str | None) for k in ("value", "type")):
         raise ScimError(400, "an email's value and type must be strings", "invalidValue")
     said = {k: named[k] for k in ("value", "type") if isinstance(named.get(k), str)}
@@ -423,7 +423,7 @@ def _entries(items: list[Any]) -> list[dict[str, Any]]:
     for e in items:
         if not isinstance(e, dict):
             raise ScimError(400, "an emails entry must be an object", "invalidValue")
-        e = _lowered(e)
+        e = lowered(e)
         value, kind = e.get("value"), e.get("type")
         if not isinstance(value, str | None) or not isinstance(kind, str | None):
             raise ScimError(400, "an email's value and type must be strings", "invalidValue")
@@ -509,7 +509,7 @@ def keyed_entry(emails: Any) -> dict[str, Any] | None:
 def user_name_and_email(body: dict[str, Any]) -> tuple[str, str, list[dict[str, Any]]]:
     """The userName, the email SSO sign-in will carry (the keyed `emails`
     entry's, else the userName) and the `emails` list as Loom keeps it."""
-    body = _lowered(body)
+    body = lowered(body)
     name = body.get("username")
     if not isinstance(name, str) or not name.strip():
         raise ScimError(400, "userName is required", "invalidValue")
@@ -619,7 +619,7 @@ async def get_user(uid: str, request: Request) -> JSONResponse:
 @router.post("/Users")
 async def create_user(request: Request) -> JSONResponse:
     """Records the email; the Loom account comes from the person's first sign-in."""
-    body = _lowered(await read_body(request))
+    body = lowered(await read_body(request))
     name, email, emails = user_name_and_email(body)
     # A null is unassigned (RFC 7643 §2.5): a new user is active.
     active = parse_active(True if body.get("active") is None else body["active"])

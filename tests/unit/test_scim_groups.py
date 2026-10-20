@@ -126,9 +126,28 @@ def test_a_patch_s_names_match_in_any_case(store: _Store) -> None:
     patch = {"operations": [{"OP": "remove", "Path": 'members[value eq "bob"]'}]}
     assert c.patch("/scim/v2/Groups/ops", json=patch).status_code == 200
     assert store.rows[(ORG, "ops")]["members"] == []
-    patch = {"Operations": [{"op": "replace", "value": {"DISPLAYNAME": "Ops", "Members": []}}]}
+    value = {"DISPLAYNAME": "Ops", "Members": [{"Value": "cat"}]}
+    patch = {"Operations": [{"op": "replace", "value": value}]}
     assert c.patch("/scim/v2/Groups/ops", json=patch).status_code == 200
     assert store.rows[(ORG, "ops")]["display_name"] == "Ops"
+    assert store.rows[(ORG, "ops")]["members"] == ["user:cat"]
+    twice = {"Operations": [{"op": "replace", "value": {"displayName": "A", "DisplayName": "B"}}]}
+    assert c.patch("/scim/v2/Groups/ops", json=twice).status_code == 400
+
+
+def test_a_group_s_names_match_in_any_case_when_created_and_replaced(store: _Store) -> None:
+    """A PUT that spells `Members` keeps them, rather than emptying the group."""
+    c = _client()
+    r = c.post(
+        "/scim/v2/Groups",
+        json={"ExternalId": "ops", "DisplayName": "Ops", "Members": [{"value": "bob"}]},
+    )
+    assert r.status_code == 201 and r.json()["id"] == "ops"
+    assert store.rows[(ORG, "ops")]["display_name"] == "Ops"
+    assert store.rows[(ORG, "ops")]["members"] == ["user:bob"]
+    r = c.put("/scim/v2/Groups/ops", json={"MEMBERS": [{"value": "cat"}, {"value": "dan"}]})
+    assert r.status_code == 200
+    assert store.rows[(ORG, "ops")]["members"] == ["user:cat", "user:dan"]
 
 
 @pytest.mark.parametrize(
@@ -196,7 +215,7 @@ def test_a_delete_whose_revoke_fails_leaves_the_group_to_retry(
     c = _client()
     c.post("/scim/v2/Groups", json={"externalId": "ops", "members": [{"value": "bob"}]})
 
-    async def _down(org: str, subject: str) -> int:
+    async def _down(org: str, subject: str, *, actor: str) -> int:
         raise RuntimeError("replica away")
 
     monkeypatch.setattr("server.identity.app.grants.revoke_subject", _down)
