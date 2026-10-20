@@ -13,9 +13,11 @@ from typing import Any, NotRequired, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from server.core import bm25
 from server.core.ch import sequential_reads
 from server.core.errors import OverloadedError
 from server.core.repo_base import _CHClient, _default_client, param_slices
+from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS, ConversationRole
 
 
@@ -405,6 +407,228 @@ async def mark_message_saved(
     )
 
 
+async def unsave_message(
+    table: str,
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    user_id: str,
+    remove: bool,
+    when: datetime,
+    ch: _CHClient | None = None,
+) -> None:
+    """Withdraw `user_id`'s saved rows of a turn in `table` (one of
+    SAVED_MESSAGE_TABLES): clear the flag, and with `remove` tombstone the rows
+    too. Only rows saved by that user change. A synchronous mutation, so the
+    next saved-message search no longer returns the turn."""
+    if table not in SAVED_MESSAGE_TABLES:
+        raise ValueError(f"not a saved-message table: {table}")
+    ch = ch or _default_client()
+    tombstone = ", tombstoned_at = {when:DateTime}" if remove else ""
+    await ch.execute(
+        f"""
+        ALTER TABLE {table}
+        UPDATE is_saved = false{tombstone}
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND agent = {{agent:String}} AND thread_id = {{tid:String}}
+          AND msg_id = {{mid:String}} AND tombstoned_at IS NULL
+          AND is_saved AND user_id = {{uid:String}}
+        SETTINGS mutations_sync = 2
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "tid": thread_id,
+            "mid": msg_id,
+            "uid": user_id,
+            "when": when,
+        },
+    )
+
+
+async def list_saved_messages(
+    org: str,
+    namespace: str,
+    agent: str,
+    *,
+    scope: ReadFilters,
+    user_id: str,
+    conversation_id: str | None = None,
+    before: tuple[datetime, str, str] | None = None,
+    limit: int = 50,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """One page of `user_id`'s live saved messages, newest first, keyed by
+    (saved_at, thread_id, msg_id). Grouped per message: a save racing a
+    transcript append can leave two rows of one turn, and a page lists it once.
+    `before` is the last key of the previous page."""
+    ch = ch or _default_client()
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "is_saved",
+        "tombstoned_at IS NULL",
+        "user_id = {uid:String}",
+    ]
+    params: dict[str, Any] = {"org": org, "ns": namespace, "uid": user_id, "lim": int(limit)}
+    if agent not in ("*", "-"):
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
+    if conversation_id:
+        where.append("thread_id = {tid:String}")
+        params["tid"] = conversation_id
+    where.extend(scope_where(scope, params))
+    having = ""
+    if before is not None:
+        having = (
+            "HAVING (saved_at, thread_id, msg_id) < "
+            "({b_ts:DateTime64(3)}, {b_tid:String}, {b_mid:String})"
+        )
+        params.update(b_ts=before[0], b_tid=before[1], b_mid=before[2])
+    return await ch.query_all(
+        f"""
+        SELECT thread_id, msg_id, any(role) AS role,
+               argMax(content, ts) AS content, max(ts) AS saved_at
+        FROM loom.conversations
+        WHERE {" AND ".join(where)}
+        GROUP BY thread_id, msg_id
+        {having}
+        ORDER BY saved_at DESC, thread_id DESC, msg_id DESC
+        LIMIT {{lim:UInt32}}
+        """,
+        params=params,
+    )
+
+
+async def saved_message_ids(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_ids: list[str],
+    *,
+    scope: ReadFilters,
+    user_id: str,
+    ch: _CHClient | None = None,
+) -> set[str]:
+    """The ids among `msg_ids` of one thread that `user_id` has live saved rows for."""
+    ch = ch or _default_client()
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "thread_id = {tid:String}",
+        "msg_id IN {mids:Array(String)}",
+        "is_saved",
+        "tombstoned_at IS NULL",
+        "user_id = {uid:String}",
+    ]
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "tid": thread_id,
+        "mids": list(msg_ids),
+        "uid": user_id,
+    }
+    if agent not in ("*", "-"):
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
+    where.extend(scope_where(scope, params))
+    rows = await ch.query_all(
+        f"""
+        SELECT DISTINCT msg_id FROM loom.conversations
+        WHERE {" AND ".join(where)}
+        """,
+        params=params,
+    )
+    return {str(r["msg_id"]) for r in rows}
+
+
+async def lexical_saved_messages(
+    org: str,
+    namespace: str,
+    agent: str,
+    tokens: list[str],
+    *,
+    scope: ReadFilters,
+    user_id: str,
+    conversation_id: str | None = None,
+    role: str | None = None,
+    limit: int = 20,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """Okapi BM25 over the whole text of `user_id`'s saved messages, best
+    first, rows scoring 0 dropped. The corpus is one user's explicit saves, so
+    its statistics (size, average length, per-token document frequency) are
+    computed in the same statement rather than kept in a term-frequency view.
+    One row per message: a save racing an append can leave two rows of a turn."""
+    if not tokens:
+        return []
+    ch = ch or _default_client()
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "is_saved",
+        "tombstoned_at IS NULL",
+        "user_id = {uid:String}",
+    ]
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "uid": user_id,
+        "toks": list(tokens),
+        "lim": int(limit),
+    }
+    if agent not in ("*", "-"):
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
+    if conversation_id:
+        where.append("thread_id = {tid:String}")
+        params["tid"] = conversation_id
+    if role:
+        where.append("role = {role:String}")
+        params["role"] = role
+    where.extend(scope_where(scope, params))
+    words = (
+        f"arrayFilter(t -> length(t) >= {bm25.MIN_TERM_LEN}, "
+        "arrayMap(t -> lowerUTF8(t), splitByNonAlpha(body)))"
+    )
+    score = bm25.bm25_sum_sql(
+        "arrayMap(tok -> countEqual(d.words, tok), {toks:Array(String)})",
+        "arrayMap(df -> log(1 + (s.n - df + 0.5) / (df + 0.5)), s.dfs)",
+        dl="length(d.words)",
+        avgdl="greatest(s.avgdl, 1.0)",
+    )
+    return await ch.query_all(
+        f"""
+        WITH docs AS (
+            SELECT thread_id, msg_id, any(role) AS msg_role, argMax(content, ts) AS body,
+                   max(ts) AS saved_at, {words} AS words
+            FROM loom.conversations
+            WHERE {" AND ".join(where)}
+            GROUP BY thread_id, msg_id
+        ),
+        stats AS (
+            SELECT count() AS n, avg(length(words)) AS avgdl,
+                   sumForEach(
+                       arrayMap(tok -> toUInt64(has(words, tok)), {{toks:Array(String)}})
+                   ) AS dfs
+            FROM docs
+        )
+        SELECT d.thread_id AS thread_id, d.msg_id AS msg_id, d.msg_role AS role,
+               d.body AS content, d.saved_at AS saved_at, {score} AS score
+        FROM docs AS d CROSS JOIN stats AS s
+        WHERE score > 0
+        ORDER BY score DESC, saved_at DESC
+        LIMIT {{lim:UInt32}}
+        """,
+        params=params,
+    )
+
+
 async def namespace_logging_enabled(
     org: str,
     namespace: str,
@@ -612,6 +836,7 @@ async def search_substring(
     agent: str,
     query: str,
     *,
+    scope: ReadFilters,
     thread_id: str | None = None,
     role: str | None = None,
     run_id: str | None = None,
@@ -656,6 +881,7 @@ async def search_substring(
     if user_id is not None:
         where.append("user_id = {user_id:String}")
         params["user_id"] = user_id
+    where.extend(scope_where(scope, params))
     if saved_only:
         where.append("is_saved")
 
@@ -924,7 +1150,7 @@ async def live_messages(
     ch = ch or _default_client()
     return await ch.query_all(
         """
-        SELECT msg_id, role, content, ts, metadata, user_id, run_id
+        SELECT msg_id, role, content, ts, metadata, user_id, run_id, is_saved
         FROM loom.conversations
         WHERE org = {org:String}
           AND namespace = {ns:String}
