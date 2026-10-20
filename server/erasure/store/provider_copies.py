@@ -21,7 +21,7 @@ async def copy_residue(
     copies = await ch.query_all(
         "SELECT t.name AS table, groupArray(c.name) AS columns FROM system.tables AS t "
         "INNER JOIN system.columns AS c ON t.database = c.database AND t.name = c.table "
-        "WHERE t.database = 'loom' AND startsWith(t.name, '_provider_rebuild_') "
+        "WHERE t.database = currentDatabase() AND startsWith(t.name, '_provider_rebuild_') "
         "GROUP BY t.name"
     )
     residue = {}

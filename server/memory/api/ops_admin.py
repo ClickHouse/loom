@@ -35,7 +35,6 @@ memory_consolidate = Operation(
     output_model=MemoryConsolidateOutput,
     handler=handle_memory_consolidate,
     idempotent=False,
-    budget_p99_ms=15000,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -47,7 +46,6 @@ consolidations_list = Operation(
     output_model=ConsolidationsListOutput,
     handler=handle_consolidations_list,
     idempotent=True,
-    budget_p99_ms=200,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -58,7 +56,6 @@ memory_health = Operation(
     output_model=MemoryHealthOutput,
     handler=handle_memory_health,
     idempotent=True,
-    budget_p99_ms=400,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -69,7 +66,6 @@ memory_agents_list = Operation(
     output_model=MemoryAgentsListOutput,
     handler=handle_memory_agents_list,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -81,7 +77,6 @@ memory_reindex = Operation(
     output_model=MemoryReindexOutput,
     handler=handle_memory_reindex,
     idempotent=True,
-    budget_p99_ms=5000,
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -92,7 +87,6 @@ memory_resolve_orphan_duplicates = Operation(
     output_model=MemoryResolveOrphanDuplicatesOutput,
     handler=handle_memory_resolve_orphan_duplicates,
     idempotent=True,
-    budget_p99_ms=5000,
     required_role=Role.WRITER,
     audit=True,
 )

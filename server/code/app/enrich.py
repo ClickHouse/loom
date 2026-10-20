@@ -4,7 +4,7 @@ Attached to code.symbol (and optionally code.search top hits): the last merged P
 touched the symbol's file, usage examples ranked by test coverage + recency, and the
 memories linked to the symbol (`server.memory.app.code_links`).
 
-Every enrichment is bounded (`_ENRICH_TIMEOUT_S`) and degrades to an empty block —
+Every enrichment is bounded (`code_enrich_timeout_s`) and degrades to an empty block —
 enrichment must never fail or slow the core answer.
 """
 
@@ -16,15 +16,14 @@ from collections.abc import Awaitable
 from typing import Any
 
 from server.code.store.index import CodeRepo
+from server.settings import settings
 
 logger = logging.getLogger(__name__)
-
-_ENRICH_TIMEOUT_S = 0.5
 
 
 async def _bounded[T](coro: Awaitable[T], fallback: T) -> T:
     try:
-        return await asyncio.wait_for(coro, timeout=_ENRICH_TIMEOUT_S)
+        return await asyncio.wait_for(coro, timeout=settings.code_enrich_timeout_s)
     except Exception as e:  # noqa: BLE001 — enrichment degrades, never fails
         logger.debug("code enrich degraded: %s", e)
         return fallback

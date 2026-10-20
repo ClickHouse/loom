@@ -13,6 +13,7 @@ import pytest
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search import query_spelling as app
 from server.memory.domain.query_spelling import apply_spellings, pick_spellings, spelling_candidates
+from server.settings import settings
 
 
 def _input(query: str = "datalakecatalog") -> MemorySearchInput:
@@ -117,7 +118,7 @@ def test_the_deadline_reaches_clickhouse(monkeypatch):
     from server.core.ch import statement_timeout_var
 
     async def spelling_rows(_ch, _q, _tokens):
-        assert statement_timeout_var.get() == app._LOOKUP_BOUND_S
+        assert statement_timeout_var.get() == settings.memory_search_spelling_lookup_timeout_s
         return {}
 
     monkeypatch.setattr(app, "spelling_rows", spelling_rows)
@@ -254,7 +255,7 @@ async def test_a_busy_pool_does_not_hold_back_the_embed(monkeypatch):
     await client._slots.acquire()  # every connection is busy
     vec, spellings, took = await _embed_beside(monkeypatch, client)
     assert (vec, spellings) == ([1.0], None)
-    assert took < app._LOOKUP_BOUND_S + 0.2
+    assert took < settings.memory_search_spelling_lookup_timeout_s + 0.2
 
 
 async def test_a_slow_reconnect_does_not_hold_back_the_embed(monkeypatch):
@@ -269,7 +270,7 @@ async def test_a_slow_reconnect_does_not_hold_back_the_embed(monkeypatch):
     client.connect = slow_connect
     vec, spellings, took = await _embed_beside(monkeypatch, client)
     assert (vec, spellings) == ([1.0], None)
-    assert took < app._LOOKUP_BOUND_S + 0.2
+    assert took < settings.memory_search_spelling_lookup_timeout_s + 0.2
 
 
 async def test_a_failed_rewrite_embed_serves_the_query_as_typed(monkeypatch):
@@ -500,7 +501,7 @@ async def test_a_dead_embedder_fails_once_the_lookup_has_answered(monkeypatch):
     t = time.monotonic()
     with pytest.raises(RuntimeError, match="401"):
         await app.embed_query(embed, "datalakecatalog", _input(), "m")
-    assert time.monotonic() - t < app._LOOKUP_BOUND_S + 0.2
+    assert time.monotonic() - t < settings.memory_search_spelling_lookup_timeout_s + 0.2
 
 
 async def test_a_cached_rewrite_runs_one_embed(monkeypatch):
@@ -641,7 +642,7 @@ async def test_one_stall_that_catches_several_lookups_does_not_switch_the_namesp
 
     monkeypatch.setattr(app, "spelling_rows", spelling_rows)
     monkeypatch.setattr(app, "get_client", lambda: None)
-    monkeypatch.setattr(app, "_LOOKUP_BOUND_S", 0.05)
+    monkeypatch.setattr(settings, "memory_search_spelling_lookup_timeout_s", 0.05)
     words = ["iceberg", "parquet", "keeper"]
     assert await asyncio.gather(*(_spellings(_input(w)) for w in words)) == [None] * 3
     stalled = False
@@ -654,7 +655,7 @@ async def test_a_stall_that_outlasts_several_deadlines_backs_off_under_load(monk
 
     monkeypatch.setattr(app, "spelling_rows", spelling_rows)
     monkeypatch.setattr(app, "get_client", lambda: None)
-    monkeypatch.setattr(app, "_LOOKUP_BOUND_S", 0.02)
+    monkeypatch.setattr(settings, "memory_search_spelling_lookup_timeout_s", 0.02)
     lookups = []
     for i in range(40):  # four lookups start in each deadline
         word = "word" + chr(97 + i // 26) + chr(97 + i % 26)

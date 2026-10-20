@@ -13,9 +13,9 @@ or a package download gets the same answer:
   second DNS answer cannot point the tunnel inward.
 
 Anything that is not CONNECT (plain http) is refused. One job holds at most
-`MAX_TUNNELS` connections at a time; one more waits up to `_SLOT_WAIT_S` for a
+`MAX_TUNNELS` connections at a time; one more waits up to `code_egress_slot_wait_s` for a
 free slot and is then refused (503), and a tunnel with no bytes either way for
-`_IDLE_TIMEOUT_S` is closed.
+`code_egress_idle_timeout_s` is closed.
 """
 
 from __future__ import annotations
@@ -25,13 +25,11 @@ import logging
 import time
 
 from server.core.hosts import vet_host
+from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.egress")
 
 ALLOWED_PORTS = frozenset({443, 22})
-_CONNECT_TIMEOUT_S = 15.0
-_IDLE_TIMEOUT_S = 300.0
-_SLOT_WAIT_S = 5.0
 MAX_TUNNELS = 32
 
 
@@ -60,14 +58,16 @@ async def _splice(
     reader: asyncio.StreamReader, writer: asyncio.StreamWriter, last_active: list[float]
 ) -> None:
     """Copy `reader` to `writer` until EOF, or until neither direction of the
-    tunnel has moved a byte for `_IDLE_TIMEOUT_S` (`last_active[0]` is shared by
+    tunnel has moved a byte for `code_egress_idle_timeout_s` (`last_active[0]` is shared by
     both directions, so a long download with a silent client stays open)."""
     try:
         while True:
             try:
-                data = await asyncio.wait_for(reader.read(65536), timeout=_IDLE_TIMEOUT_S)
+                data = await asyncio.wait_for(
+                    reader.read(65536), timeout=settings.code_egress_idle_timeout_s
+                )
             except TimeoutError:
-                if time.monotonic() - last_active[0] >= _IDLE_TIMEOUT_S:
+                if time.monotonic() - last_active[0] >= settings.code_egress_idle_timeout_s:
                     return
                 continue
             if not data:
@@ -96,7 +96,9 @@ class EgressProxy:
             self._tunnels.add(task)
         try:
             try:
-                await asyncio.wait_for(self._slots.acquire(), timeout=_SLOT_WAIT_S)
+                await asyncio.wait_for(
+                    self._slots.acquire(), timeout=settings.code_egress_slot_wait_s
+                )
             except TimeoutError:
                 writer.write(b"HTTP/1.1 503 Refused\r\n\r\ntoo many open tunnels\n")
                 return
@@ -111,6 +113,7 @@ class EgressProxy:
 
     async def _tunnel(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
+            # not a setting: a CONNECT head, read before any job byte flows
             head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=10.0)
         except (TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
             return
@@ -123,7 +126,8 @@ class EgressProxy:
             return
         try:
             up_reader, up_writer = await asyncio.wait_for(
-                asyncio.open_connection(address, port), timeout=_CONNECT_TIMEOUT_S
+                asyncio.open_connection(address, port),
+                timeout=settings.code_egress_connect_timeout_s,
             )
         except (OSError, TimeoutError) as e:
             writer.write(f"HTTP/1.1 502 Bad Gateway\r\n\r\n{type(e).__name__}\n".encode())

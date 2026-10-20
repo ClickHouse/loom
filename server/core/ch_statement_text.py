@@ -7,7 +7,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 
 log = logging.getLogger(__name__)
@@ -32,15 +31,11 @@ def statement_digest(sql: str) -> str:
     return f"sql:{shape} {flat[:_DIGEST_HEAD_CHARS]}"
 
 
-def capture_statement(sql: str) -> None:
-    """LOOM_CH_CAPTURE_STATEMENTS=<path>: append one JSON
-    line per executed statement — `digest` and the text —
-    so an acceptance run feeds the analyzer corpus the shapes production
-    actually executes. Off unless the variable is set; a write failure
-    never fails the statement."""
-    path = os.environ.get("LOOM_CH_CAPTURE_STATEMENTS", "")
-    if not path:
-        return
+def capture_statement(sql: str, path: str) -> None:
+    """Append one JSON line per executed statement to `path`
+    (`LOOM_CH_CAPTURE_STATEMENTS`) — `digest` and the text — so an acceptance run
+    feeds the analyzer corpus the shapes production actually executes. A write
+    failure never fails the statement."""
     try:
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps({"digest": statement_digest(sql), "sql": sql}) + "\n")

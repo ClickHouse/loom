@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 
 TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
 # How long an identity token Loom signs itself lives: it is exchanged at once.
-IDENTITY_TOKEN_LIFE_S = 300
+IDENTITY_TOKEN_LIFE_S = 300  # not a setting: a longer life only widens a stolen token's use
 # Its subject: the deployment, which the gateway's trust entry attributes spend to.
 IDENTITY_SUBJECT = "loom"
 _MAX_LIFE_S = 86400
@@ -91,7 +91,10 @@ async def _renew() -> None:
             form["scope"] = settings.inference_token_scope
         # Never followed: a redirect would carry the identity token elsewhere.
         r = await http().post(
-            settings.inference_token_url, data=form, timeout=10.0, follow_redirects=False
+            settings.inference_token_url,
+            data=form,
+            timeout=settings.inference_token_exchange_timeout_s,
+            follow_redirects=False,
         )
         if r.status_code != 200:
             raise ValueError(f"{r.status_code} {_error_code(r)}".strip())

@@ -1,6 +1,7 @@
 """Per-operation and per-consumer latency-budget overrides.
 
-Every Operation declares a `budget_p99_ms` — the p99 latency target.
+Every Operation has a `budget_p99_ms` — the p99 latency target, from the
+`OP_BUDGETS_P99_MS` table in `server/settings/catalog.py`.
 When a handler exceeds it, the transport emits a `budget.violated` event
 on `loom.events` (kind `budget_violation`) so ops can alert
 on SLO breaches through `memory.budget_violations`.
@@ -20,7 +21,8 @@ this order, first match wins:
     2. runtime override for (consumer, "*")       — admin budget.set {consumer, op: "*"}
     3. LOOM_LATENCY_BUDGET_OVERRIDES_BY_CONSUMER   — JSON {consumer: {op | "*": value}}
     4. runtime override for the op                 — admin budget.set {op}
-    5. the op's declared budget_p99_ms
+    5. LOOM_LATENCY_BUDGET_OVERRIDES               — JSON {op: value}
+    6. the op's declared budget_p99_ms
 
 A value is an integer (milliseconds) or a string multiplier such as "3x"
 (the op's declared budget times three), so one entry loosens every op for a
@@ -39,30 +41,11 @@ import logging
 import threading
 from typing import Any
 
-from server.core.numbers import finite_non_negative
+from server.core.numbers import finite_non_negative, parse_budget_value
 
 log = logging.getLogger(__name__)
 
 ANY_OP = "*"
-
-
-def parse_value(raw: Any) -> int | float | None:
-    """An override entry: int/float milliseconds, or "<n>x" multiplier
-    returned as a float factor. None when unusable (negative, not finite)."""
-    if isinstance(raw, bool):
-        return None
-    if isinstance(raw, int | float):
-        return int(raw) if finite_non_negative(raw) else None
-    if isinstance(raw, str):
-        text = raw.strip().lower()
-        try:
-            number = float(text.removesuffix("x"))
-        except ValueError:
-            return None
-        if not finite_non_negative(number):
-            return None
-        return number if text.endswith("x") else int(number)
-    return None
 
 
 def _apply(value: int | float, default_ms: int) -> int:
@@ -87,9 +70,11 @@ class BudgetOverrides:
         self._overrides: dict[str, int] = {}
         self._by_consumer: dict[tuple[str, str], int | float] = {}
         self._lock = threading.Lock()
-        # The settings map, parsed once per distinct raw string.
+        # The settings maps, each parsed once per distinct raw string.
         self._settings_raw: str | None = None
         self._settings_map: dict[str, dict[str, int | float]] = {}
+        self._op_settings_raw: str | None = None
+        self._op_settings_map: dict[str, int | float] = {}
 
     # -- per op (unchanged API) -------------------------------------------
 
@@ -117,7 +102,7 @@ class BudgetOverrides:
         covers every op for the consumer."""
         if not consumer:
             raise ValueError("consumer must be non-empty")
-        parsed = parse_value(value)
+        parsed = parse_budget_value(value)
         if parsed is None:
             raise ValueError("budget must be a non-negative integer (ms) or '<n>x'")
         with self._lock:
@@ -153,7 +138,7 @@ class BudgetOverrides:
         consumers = {
             (k[0], k[1]): parsed
             for k, v in snapshot.get(ro.BUDGET_CONSUMER, {}).items()
-            if len(k) == 2 and (parsed := parse_value(v)) is not None
+            if len(k) == 2 and (parsed := parse_budget_value(v)) is not None
         }
         with self._lock:
             self._overrides, self._by_consumer = ops, consumers
@@ -180,7 +165,7 @@ class BudgetOverrides:
                             raise ValueError(f"{consumer!r}: expected an object of op -> value")
                         entry: dict[str, int | float] = {}
                         for op_name, value in ops.items():
-                            v = parse_value(value)
+                            v = parse_budget_value(value)
                             if v is None:
                                 raise ValueError(
                                     f"{consumer!r}.{op_name!r}: {value!r} is not ms or '<n>x'"
@@ -211,7 +196,31 @@ class BudgetOverrides:
         op_override = self.get(op_name)
         if op_override is not None:
             return op_override
+        value = self.op_settings_map().get(op_name)
+        if value is not None:
+            return _apply(value, default_ms)
         return int(default_ms)
+
+    def op_settings_map(self) -> dict[str, int | float]:
+        """`latency_budget_overrides` parsed: {op: value}, re-parsed only when the raw
+        string changes. The field refuses an unusable budget at startup; an op this build
+        lacks is logged once and ignored."""
+        from server.settings import settings
+        from server.settings.catalog import OP_BUDGETS_P99_MS, parse_latency_budgets
+
+        raw = str(settings.latency_budget_overrides)
+        with self._lock:
+            if raw == self._op_settings_raw:
+                return self._op_settings_map
+            parsed = parse_latency_budgets(raw)
+            unknown = sorted(set(parsed) - set(OP_BUDGETS_P99_MS))
+            if unknown:
+                log.warning(
+                    "LOOM_LATENCY_BUDGET_OVERRIDES names no op of this build, ignored: %s", unknown
+                )
+            self._op_settings_raw = raw
+            self._op_settings_map = parsed
+            return parsed
 
 
 _overrides = BudgetOverrides()

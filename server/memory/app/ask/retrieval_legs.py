@@ -11,6 +11,7 @@ from typing import Any
 from server.memory.app.ask.question_shapes import (
     looks_multihop,
 )
+from server.settings.budgets import llm_max_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +181,11 @@ async def decompose_question(llm: Any, question: str, *, max_parts: int = 4) -> 
         from server.observability.genai import llm_stage
 
         with llm_stage("ask_decompose"):
-            res = await llm.complete(_DECOMPOSE_SYSTEM, f"Question: {question}", max_tokens=200)
+            res = await llm.complete(
+                _DECOMPOSE_SYSTEM,
+                f"Question: {question}",
+                max_tokens=llm_max_tokens("ask_decompose"),
+            )
         text = str(getattr(res, "text", "") or "")
         return parse_decomposition(text, question, max_parts=max_parts)
     except Exception as e:  # noqa: BLE001 — additive

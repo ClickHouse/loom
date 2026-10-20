@@ -31,6 +31,7 @@ from typing import Any
 
 from server.core.model_work_gate import get_model_work_gate
 from server.observability.traffic_class import bind_background
+from server.settings import settings
 from server.workers import leader, pass_context, status_store
 from server.workers.registry import (
     FIRST_PASS_DUE_TIMEOUT_SECONDS,
@@ -42,15 +43,7 @@ from server.workers.status import get_registry, set_worker_identity
 log = logging.getLogger(__name__)
 
 
-# Exponential backoff: 1s, 2s, 4s, ... capped at 60s.
-_BACKOFF_BASE_SECONDS = 1.0
-_BACKOFF_CAP_SECONDS = 60.0
 _ALERT_THRESHOLD = 3
-# A pass with a failed leg on a worker whose interval is longer than this
-# retries after this long, doubling with each further such pass, up to the
-# interval: a weekly pass must not leave one namespace's transient failure
-# standing for a week.
-_PARTIAL_RETRY_SECONDS = 3600.0
 
 
 def _record_cancelled(spec: WorkerSpec, started: float, ctx: Any, state: Any, streak: int) -> None:
@@ -316,8 +309,8 @@ class WorkerSupervisor:
                 )
                 _report_failure(spec, exc, ctx, started, deadline, consecutive_failures)
                 backoff = min(
-                    _BACKOFF_CAP_SECONDS,
-                    _BACKOFF_BASE_SECONDS * (2 ** (consecutive_failures - 1)),
+                    settings.worker_backoff_cap_s,
+                    settings.worker_backoff_base_s * (2 ** (consecutive_failures - 1)),
                 )
                 # A pass cut at its deadline, or any failed pass
                 # of a worker whose interval is longer than its deadline, waits
@@ -387,7 +380,7 @@ def next_interval_seconds(
     that marked itself idle (`pass_context.mark_idle()`: no stub, no orphan,
     no unentitied row) on a spec with an `idle_interval_seconds` waits that
     long. A pass with a noted failed leg on a worker whose interval is longer
-    than `_PARTIAL_RETRY_SECONDS` retries after that long, doubled for each
+    than `worker_partial_retry_s` retries after that long, doubled for each
     further such pass in a row (`streak`), never past the interval. Every other
     pass waits the interval, so the poll follows the work instead of running
     hundreds of empty passes an hour."""
@@ -395,8 +388,8 @@ def next_interval_seconds(
     if idle is not None and idle > 0 and not partial and ctx is not None and ctx.idle:
         return float(idle)
     interval = float(spec.interval_seconds)
-    if partial and interval > _PARTIAL_RETRY_SECONDS:
-        return min(interval, _PARTIAL_RETRY_SECONDS * float(2 ** max(streak - 1, 0)))
+    if partial and interval > settings.worker_partial_retry_s:
+        return min(interval, settings.worker_partial_retry_s * float(2 ** max(streak - 1, 0)))
     return interval
 
 

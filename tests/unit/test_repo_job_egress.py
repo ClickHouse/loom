@@ -15,6 +15,7 @@ import pytest
 
 import server.core.hosts as hosts
 from server.code.app.index import egress
+from server.settings import settings
 
 PUBLIC = "93.184.215.14"
 NAMES = {
@@ -209,7 +210,7 @@ async def test_a_connection_past_the_tunnel_cap_is_refused_after_a_short_wait(
 
     monkeypatch.setattr(egress, "vet_host", slow_vet)
     monkeypatch.setattr(egress, "MAX_TUNNELS", 1)
-    monkeypatch.setattr(egress, "_SLOT_WAIT_S", 0.2)
+    monkeypatch.setattr(settings, "code_egress_slot_wait_s", 0.2)
     sock = str(tmp_path / "p.sock")
     proxy = await egress.start_proxy(sock, None)
     try:
@@ -239,7 +240,7 @@ async def test_a_tunnel_with_no_bytes_either_way_is_closed(
         return await real_open("127.0.0.1", port, **kw)
 
     monkeypatch.setattr(egress.asyncio, "open_connection", open_connection)
-    monkeypatch.setattr(egress, "_IDLE_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(settings, "code_egress_idle_timeout_s", 0.2)
     sock = str(tmp_path / "p.sock")
     proxy = await egress.start_proxy(sock, None)
     try:

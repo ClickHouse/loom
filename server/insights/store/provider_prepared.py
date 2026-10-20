@@ -8,6 +8,7 @@ need a separate DDL plan, not blindly copied replication paths.
 from typing import Any
 from uuid import UUID
 
+from server.core.ch_names import qualify, unqualify
 from server.core.repo_base import _CHClient, _default_client
 from server.core.schema.vector_codec_ddl import statement_settings
 from server.insights.domain.provider_prepared_ddl import PreparedDDL, prepared_ddl
@@ -24,14 +25,16 @@ from server.insights.store.provider_target import _identity, _target, target_mar
 
 async def _prepared(names: StagingNames, client: _CHClient) -> dict[str, Any] | None:
     return await client.query_one(
-        "SELECT uuid, comment FROM system.tables WHERE database = 'loom' AND name = {table:String}",
+        "SELECT uuid, comment FROM system.tables "
+        "WHERE database = currentDatabase() AND name = {table:String}",
         {"table": names.prepared},
     )
 
 
 async def _assert_idle(names: StagingNames, client: _CHClient) -> None:
     prefixes = [
-        f"{op} loom.{names.prepared} " for op in ("CREATE TABLE", "INSERT INTO", "ALTER TABLE")
+        qualify(f"{op} loom.{names.prepared} ")
+        for op in ("CREATE TABLE", "INSERT INTO", "ALTER TABLE")
     ]
     result = await client.query_one(
         "SELECT count() AS running FROM system.processes "
@@ -85,12 +88,13 @@ async def _ddl_plan(
 ) -> PreparedDDL:
     row = await client.query_one(
         "SELECT uuid, engine, create_table_query FROM system.tables "
-        "WHERE database = 'loom' AND name = {table:String}",
+        "WHERE database = currentDatabase() AND name = {table:String}",
         {"table": names.table},
     )
     if row is None or not isinstance(row.get("create_table_query"), str):
         raise ValueError("Cannot establish prepared-table DDL")
-    return prepared_ddl(row["create_table_query"], names.table, names.prepared, marker, dimensions)
+    ddl = unqualify(row["create_table_query"])
+    return prepared_ddl(ddl, names.table, names.prepared, marker, dimensions)
 
 
 async def _create_candidate(plan: PreparedDDL, client: _CHClient) -> None:

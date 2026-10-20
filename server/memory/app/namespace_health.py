@@ -49,9 +49,6 @@ HEALTH_SUMMARY_STEPS: tuple[str, ...] = ("summary_live", "summary_ledger")
 
 # The pack block: one line per finding, hard-capped in characters.
 RENDER_CHARS = 400
-# A failed lookup is remembered this long (bounded by the TTL) so the pack
-# does not re-run six failing reads on every call while the store is down.
-FAILURE_TTL_SECONDS = 300
 # Process cache size cap: (org, namespace) pairs held.
 CACHE_MAX_ENTRIES = 2048
 _TAIL = "Run `namespace.audit` for samples; `loom-optimize` reworks it with redirects."
@@ -150,7 +147,12 @@ async def namespace_health(
     except Exception as exc:  # noqa: BLE001 — advisory; the pack must not fail on it
         log.warning("namespace_health %s/%s failed: %s", org, namespace, exc)
         health = None
-    _cache_put(key, now + (ttl if health is not None else min(ttl, FAILURE_TTL_SECONDS)), health)
+    _cache_put(
+        key,
+        now
+        + (ttl if health is not None else min(ttl, settings.memory_namespace_health_failure_ttl_s)),
+        health,
+    )
     return health
 
 

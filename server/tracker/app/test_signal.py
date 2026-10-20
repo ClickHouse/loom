@@ -320,17 +320,13 @@ def _unavailable_output(
     )
 
 
-# The candidate read's bound — it never holds up the answer.
-CANDIDATES_TIMEOUT_S = 3.0
-
-
 async def _name_candidates(
     org: str, namespace: str, name: str, since: datetime, now: datetime
 ) -> dict[str, Any] | None:
     """For a name with no run in the window, the rolled tests whose names start with it (a
     key range) or, when none does, contain it — `ts.name_candidates`'s answer. None when
-    nothing matches, or the read fails or runs past CANDIDATES_TIMEOUT_S (the `no_signal`
-    answer stands)."""
+    nothing matches, or the read fails or runs past `tracker_test_candidates_timeout_s`
+    (the `no_signal` answer stands)."""
     needle = ts.name_needle(name)
     if len(needle) < 3:
         return None
@@ -352,7 +348,7 @@ async def _name_candidates(
         return None
 
     try:
-        return await asyncio.wait_for(read(), timeout=CANDIDATES_TIMEOUT_S)
+        return await asyncio.wait_for(read(), timeout=settings.tracker_test_candidates_timeout_s)
     except Exception as e:  # noqa: BLE001 — the candidate read never fails the answer
         logger.info("tracker.test_signal candidates on %s failed: %s", namespace, e)
         return None

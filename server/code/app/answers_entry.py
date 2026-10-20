@@ -13,6 +13,7 @@ from typing import Any
 from server.code.app.search import CodeSearchResult
 from server.code.store.index import CodeRepo
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 
 # The cache-hit cosine is per embedding model — a vector space's similarity scale is its
 # own. The values below were measured WITH the identifier guard (`guard_passes`: a hit
@@ -65,7 +66,6 @@ _MEMORY_NOTE = (
     "\n\nRelated project memory — decisions / rationale / prior incidents "
     "(context for WHY, not a code citation; do not cite as code):\n"
 )
-_SYNTH_MAX_TOKENS = 900
 _EXCERPT_CHARS = 4000
 
 # Registered in Langfuse as `loom-code-query-expand` (scripts/codegen/push_langfuse_prompts.py);
@@ -204,7 +204,7 @@ def prompt_version() -> str:
         _MAX_CONTEXT_UNITS,
         _MAX_EXPANSION_UNITS,
         _EXCERPT_CHARS,
-        _SYNTH_MAX_TOKENS,
+        llm_max_tokens("code_answer_synth"),
         _ANSWER_POLICY,
     ]
     blob = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))

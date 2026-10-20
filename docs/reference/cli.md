@@ -253,6 +253,11 @@ python scripts/codegen/docs_reference.py
 | `loom participant retire` | Retire the provider participant of a process that died without shutting down (its id is `participant_id` in that process's /v1/health). | `--participant`, `--yes` |
 | `loom deployment` | The configuration every replica checks itself against. |  |
 | `loom deployment publish` | Publish this env's configuration as the deployment's, replacing its root secret or LOOM_EMBEDDING_MODEL/DIM on purpose. | `--yes`, `--check` |
+| `loom settings` | Every setting's value in force, and overrides of the live ones. |  |
+| `loom settings list` | Each setting: value, where it came from, whether live. | `--prefix`, `--changed`, `--json` |
+| `loom settings set` | Override a live setting for the whole deployment; outlives a restart. | `<name>`, `<value>`, `--expect` |
+| `loom settings reset` | Remove the override: back to the env or the default. | `<name>`, `--expect` |
+| `loom settings history` | Recorded changes, newest first: who, the value before and after. | `<name>`, `--limit`, `--json` |
 | `loom secrets` | Credentials and signing keys stored sealed in ClickHouse. |  |
 | `loom secrets reseal` | Seal again under LOOM_JWT_SECRET what only LOOM_JWT_SECRET_PREVIOUS opens. | `--dry-run`, `--check` |
 | `loom signing-key` | The token signing keys beside LOOM_JWT_SECRET, kept in ClickHouse. |  |
@@ -284,7 +289,7 @@ python scripts/codegen/docs_reference.py
 | `loom sso adopt` | Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. | `--domain`, `--org`, `--skip`, `--keep-tokens`, `--apply`, `--dry-run` |
 | `loom sso link` | Let one person's SSO sign-ins reach their password account registered under another address (a personal one, a +tag). | `--email`, `--org`, `--namespace`, `--apply`, `--dry-run` |
 | `loom sso unlink` | Undo the links of one email. | `--email`, `--apply`, `--dry-run` |
-| `loom sso password-link` | Print a one-time link (a day) that sets the password of an email's SSO accounts, for after single sign-on is turned off. | `--email`, `--org` |
+| `loom sso password-link` | Print a one-time link (valid for LOOM_PASSWORD_LINK_TTL_SECONDS, a day by default) that sets the password of an email's SSO accounts, for after single sign-on is turned off. | `--email`, `--org` |
 | `loom bot` | Bots and CI jobs that sign in with a key or their CI's identity. |  |
 | `loom bot create` | Register a bot: its namespaces, and a key (--generate-key or --public-key) and/or a CI trust (--issuer, --audience, --claim). | `--name`, `--org`, `--namespace-role`, `--generate-key`, `--public-key`, `--issuer`, `--audience`, `--claim`, `--jwks-uri`, `--max-token-age`, `--max-agents`, `--agent-claim`, `--replace` |
 | `loom bot list` | Every bot, active or disabled. |  |

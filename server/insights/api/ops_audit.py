@@ -16,7 +16,6 @@ audit_list = Operation(
     output_model=AuditListOutput,
     handler=handle_audit_list,
     idempotent=True,
-    budget_p99_ms=200,
     # VIEWER (not ADMIN) because the handler self-scopes — platform
     # admins see org-wide, regular users see only their accessible
     # namespaces. ADMIN+namespace-authz would have blocked legitimate

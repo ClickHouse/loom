@@ -18,6 +18,7 @@ from typing import Any, Protocol
 
 from server.core import bm25
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+from server.settings import settings
 
 
 class _StatsClient(Protocol):
@@ -32,9 +33,8 @@ class _StatsClient(Protocol):
 
 MIN_TOKEN_LEN = bm25.MIN_TERM_LEN
 _CORPUS_CACHE: OrderedDict[tuple[str, str, str], tuple[float, int, float]] = OrderedDict()
-_CORPUS_CACHE_TTL_S = 300.0
 # One entry per namespace a search read; the oldest go past this many.
-_CORPUS_CACHE_MAX = 50_000
+_CORPUS_CACHE_MAX = 50_000  # not a setting: an in-process cache's memory bound
 
 
 def tokenize(text: str) -> list[str]:
@@ -47,14 +47,14 @@ async def corpus_stats(
     ch: _StatsClient, *, org: str, namespaces: list[str], embedding_model: str
 ) -> tuple[int, float]:
     """(N, avgdl) over the live chunks of `namespaces`, each namespace's pair
-    cached for 5 minutes and the ones missing read in one statement. avgdl is
+    cached for `knowledge_bm25_corpus_ttl_s` and the ones missing read in one statement. avgdl is
     in words of the same split the lexical leg counts tf and dl in."""
     now = time.time()
     stats: dict[str, tuple[int, float]] = {}
     missing: list[str] = []
     for ns in namespaces:
         cached = _CORPUS_CACHE.get((org, ns, embedding_model))
-        if cached and now - cached[0] < _CORPUS_CACHE_TTL_S:
+        if cached and now - cached[0] < settings.knowledge_bm25_corpus_ttl_s:
             stats[ns] = (cached[1], cached[2])
         else:
             missing.append(ns)

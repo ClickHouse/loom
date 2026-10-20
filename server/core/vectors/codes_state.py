@@ -42,6 +42,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.core.ch_names import database
 from server.core.schema.vector_codec_ddl import CODED_TABLES, codec_width
 from server.core.vectors.code_tables import vector_dim_for_table
 
@@ -292,7 +293,7 @@ async def probe(ch: Any) -> None:
     if _state.codec_available is None:
         _state.codec_available = await _has_codec(ch)
     try:
-        rows = await ch.query_all(CODED_COLUMNS_SQL, {"db": "loom"})
+        rows = await ch.query_all(CODED_COLUMNS_SQL, {"db": database()})
     except Exception as e:  # noqa: BLE001 — advisory; the previous reading stands
         log.info("coded-column probe failed: %s", str(e)[:160])
         return

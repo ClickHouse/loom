@@ -849,3 +849,58 @@ export async function memoryLineage(id: Identity, memoryKey: string): Promise<{ 
     memory_key: memoryKey,
   });
 }
+
+// ===== Deployment settings (platform admin) =====
+
+export type SettingSource = "override" | "dashboard" | "env" | "env_file" | "settings_file" | "inferred" | "default";
+
+/** Mirrors `server/insights/app/admin_models.py::SettingRow`. A secret's value is its length only. */
+export interface SettingRow {
+  name: string;
+  env: string;
+  value: unknown;
+  default: unknown;
+  source: SettingSource;
+  // Takes a deployment-wide override while Loom runs; otherwise read once at startup.
+  live: boolean;
+  description: string;
+}
+
+/** Mirrors `SettingChange`: one recorded change, newest first in a history. */
+export interface SettingChange {
+  ts: string;
+  actor: string;
+  name: string;
+  value: unknown;
+  previous: unknown;
+  // `override`: undo by setting `previous` back; another source was the changing
+  // process's own value, undone with a reset. Null when the setting is one this build
+  // lacks (the reset of a retired setting's override): nothing to undo.
+  previous_source: string | null;
+  cleared: boolean;
+}
+
+/** POST /v1/admin/settings.list — every setting's value in force on the replica that answers. */
+export async function adminSettingsList(opts: RequestOpts = {}): Promise<SettingRow[]> {
+  const out = await post<{ settings: SettingRow[] }>("/v1/admin/settings.list", {}, opts.signal);
+  return out.settings;
+}
+
+/** POST /v1/admin/settings.set — override a live setting, refused (409) unless `expected`
+ *  is still the value in force. */
+export async function adminSettingSet(name: string, value: unknown, expected: unknown): Promise<SettingRow> {
+  const out = await post<{ setting: SettingRow }>("/v1/admin/settings.set", { name, value, expected });
+  return out.setting;
+}
+
+/** POST /v1/admin/settings.set with `clear` — back to the environment's value or the default. */
+export async function adminSettingReset(name: string, expected: unknown): Promise<SettingRow> {
+  const out = await post<{ setting: SettingRow }>("/v1/admin/settings.set", { name, clear: true, expected });
+  return out.setting;
+}
+
+/** POST /v1/admin/settings.history — recorded changes, newest first. */
+export async function adminSettingsHistory(name = "", limit = 50, opts: RequestOpts = {}): Promise<SettingChange[]> {
+  const out = await post<{ changes: SettingChange[] }>("/v1/admin/settings.history", { name, limit }, opts.signal);
+  return out.changes;
+}

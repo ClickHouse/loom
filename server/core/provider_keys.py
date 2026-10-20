@@ -13,6 +13,8 @@ KEY_NAMES: dict[str, tuple[str, ...]] = {
     "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     "compatible": ("LOOM_EMBEDDING_API_KEY",),
 }
+# Hosted rerankers' keys: environment only, the dashboard does not save them.
+RERANK_KEY_NAMES: dict[str, tuple[str, ...]] = {"cohere": ("COHERE_API_KEY",)}
 _keys: dict[str, str] = {}
 
 
@@ -26,6 +28,13 @@ def environment_provider_key(provider: str) -> str:
     """Read deployment credentials without applying a saved dashboard override."""
     return next(
         (os.environ[name] for name in KEY_NAMES.get(provider, ()) if os.environ.get(name)), ""
+    )
+
+
+def rerank_key(provider: str) -> str:
+    return next(
+        (os.environ[name] for name in RERANK_KEY_NAMES.get(provider, ()) if os.environ.get(name)),
+        "",
     )
 
 

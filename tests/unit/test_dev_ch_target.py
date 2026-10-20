@@ -51,6 +51,7 @@ def test_env_names_the_target(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
         LOOM_CH_USER="ops",
         LOOM_CH_PASSWORD="s3cret",
         LOOM_CH_DATABASE="loom_x",
+        LOOM_CH_TELEMETRY_DATABASE="loom_x_telemetry",
     )
     t = _ch_target.resolve_target(_args(), s)
     assert (t.host, t.port, t.user, t.database, t.secure) == (

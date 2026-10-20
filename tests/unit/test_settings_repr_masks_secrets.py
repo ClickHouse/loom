@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from server.settings import Settings
+from server.settings._env import is_secret_field
 
 _SECRET = "s3cr3t-canary-value"
 
@@ -14,6 +17,7 @@ _SECRET = "s3cr3t-canary-value"
     [
         ("ch_password", _SECRET),
         ("jwt_secret", _SECRET),
+        ("jwt_secret_previous", _SECRET),
         ("oidc_client_secret", _SECRET),
         ("scim_token", _SECRET),
         ("langfuse_admin_token", f"pk:{_SECRET}"),
@@ -21,6 +25,7 @@ _SECRET = "s3cr3t-canary-value"
         ("tracker_credentials_json", f'{{"src": {{"user": "u", "password": "{_SECRET}"}}}}'),
         ("code_repos_json", f'[{{"namespace": "n", "github_token": "{_SECRET}"}}]'),
         ("otel_exporter_otlp_headers", f"Authorization=Bearer {_SECRET}"),
+        ("rerank_endpoints_json", f'{{"gw": "https://user:{_SECRET}@rerank.example/v1"}}'),
     ],
 )
 def test_secret_fields_are_masked(field: str, value: str) -> None:
@@ -52,3 +57,29 @@ def test_a_load_error_names_the_field_never_the_environment(bad: dict[str, objec
     text = str(ei.value)
     assert _SECRET not in text
     assert "input_value" not in text
+
+
+# Names with a secret's word in them that hold no secret: TTLs, the token-exchange
+# endpoint's parameters.
+_NOT_SECRETS = {
+    "password_link_ttl_seconds",
+    "oauth_access_token_ttl_seconds",
+    "inference_token_url",
+    "inference_workload_token_file",
+    "inference_token_audience",
+    "inference_token_scope",
+    "inference_token_exchange_timeout_s",
+}
+
+
+def test_every_field_named_for_a_secret_is_a_secret() -> None:
+    """A secret the classifier misses is printed by settings.list and accepted from the
+    settings file; a new field with one of these words in its name must be one or be
+    listed above. `_tokens` and `_token_budget` count tokens and name no secret."""
+    named = {
+        n
+        for n in Settings.model_fields
+        if re.search(r"secret|password|api_key|(?:^|_)key(?:_(?:file|previous|path))?$", n)
+        or re.search(r"token(?!s(?:_|$)|_budget)", n)
+    }
+    assert {n for n in named if not is_secret_field(n)} == _NOT_SECRETS

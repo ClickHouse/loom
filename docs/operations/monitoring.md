@@ -219,7 +219,8 @@ Loom exports OpenTelemetry metrics every `LOOM_OTEL_METRICS_EXPORT_INTERVAL_S` s
 (default 60). With `LOOM_OTEL_EXPORTER=ch` (the default when no OTLP endpoint is set)
 they are written straight into `default.otel_metrics_sum`,
 `default.otel_metrics_histogram` and `default.otel_metrics_gauge` on the same ClickHouse
-service, the tables ClickStack/HyperDX reads; set `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT` to
+service (in `LOOM_CLICKSTACK_DATABASE` when it is set, here and below), the tables
+ClickStack/HyperDX reads; set `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT` to
 ship to a collector instead. Counters and histograms are cumulative unless
 `LOOM_OTEL_METRICS_DELTA_TEMPORALITY=true`. The boot log confirms the exporter:
 

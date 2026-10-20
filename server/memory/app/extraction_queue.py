@@ -29,6 +29,7 @@ from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scop
 from server.llm import customer
 from server.memory.api.models_bulk import MemorySetFromMessagesInput
 from server.memory.store.rows import next_version
+from server.settings import settings
 
 TABLE = "loom.memory_extraction_queue"
 
@@ -257,10 +258,6 @@ async def mark_error(
     return status
 
 
-# How many waiting requests one pass drops: the rest go on the next pass.
-_DROP_PER_PASS = 500
-
-
 async def drop_waiting(
     orgs: frozenset[str],
     *,
@@ -286,7 +283,7 @@ async def drop_waiting(
         "running": STATUS_RUNNING,
         "orgs": sorted(orgs),
         "days": int(older_than_days),
-        "lim": _DROP_PER_PASS,
+        "lim": settings.model_calls_off_drop_per_pass,
     }
     if org_filter is not None:
         scope += " AND org = {org_f:String}"

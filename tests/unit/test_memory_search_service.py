@@ -15,6 +15,7 @@ from server.memory.app.retrieval import (
     vector_search,
     vector_search_trace,
 )
+from server.settings import settings
 
 
 @pytest.fixture(autouse=True)
@@ -927,9 +928,8 @@ async def test_vector_leg_retries_the_fresh_part_empty_block_error_once(monkeypa
     """CH 26.7.1 race: for a few seconds after an insert the vector leg can
     fail with code 10 "Not found column org: in block … (size = 0)"; the same
     statement re-run immediately succeeds. Retry it, briefly, and count it."""
-    from server.memory.app.retrieval import retry as ms
 
-    monkeypatch.setattr(ms, "_EMPTY_BLOCK_RETRY_SLEEP_S", 0.0)
+    monkeypatch.setattr(settings, "memory_retrieval_empty_block_retry_sleep_s", 0.0)
     ch = StubCH()
     calls = {"n": 0}
     real_query_all = ch.query_all
@@ -952,9 +952,8 @@ async def test_vector_leg_retries_the_fresh_part_empty_block_error_once(monkeypa
 
 @pytest.mark.asyncio
 async def test_vector_leg_does_not_retry_other_errors_or_forever(monkeypatch) -> None:
-    from server.memory.app.retrieval import retry as ms
 
-    monkeypatch.setattr(ms, "_EMPTY_BLOCK_RETRY_SLEEP_S", 0.0)
+    monkeypatch.setattr(settings, "memory_retrieval_empty_block_retry_sleep_s", 0.0)
     ch = StubCH()
 
     async def other(sql, params=None):
@@ -975,7 +974,7 @@ async def test_vector_leg_does_not_retry_other_errors_or_forever(monkeypatch) ->
     ch2.query_all = always  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="Not found column"):
         await vector_search(_q(scope="private", agent="a", execution_planes=["fact"]), ch=ch2)
-    assert n["c"] == 1 + ms._EMPTY_BLOCK_RETRY_MAX
+    assert n["c"] == 1 + settings.memory_retrieval_empty_block_retries
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,7 @@ TABLES = {m.group(1): m.group(2) for m in _CREATE.finditer(DDL)}
 
 def test_every_exported_table_is_created() -> None:
     src = (ROOT / "server" / "observability" / "otel_exporters.py").read_text()
-    inserted = set(re.findall(r'"default\.(otel_\w+)"', src))
+    inserted = set(re.findall(r'otel_table\("(otel_\w+)"\)', src))
     assert inserted, "no exporter target found in otel_exporters.py"
     assert inserted <= set(TABLES)
     assert set(OTEL_METRICS_TABLES) <= set(TABLES)

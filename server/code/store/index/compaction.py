@@ -8,20 +8,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.core.ch_names import split_table
+
 logger = logging.getLogger(__name__)
 
 # The code vector tables' ReplacingMergeTree key.
 _KEY = "org, namespace, embedding_model, path, chunk_id"
 
 
-def _split(table: str) -> tuple[str, str]:
-    db, _, name = table.partition(".")
-    return db, name
-
-
 async def active_parts(ch: Any, table: str) -> tuple[int, int]:
     """(active parts, physical rows) from `system.parts`: metadata only."""
-    db, name = _split(table)
+    db, name = split_table(table)
     row = await ch.query_one(
         "SELECT count() AS parts, sum(rows) AS rows FROM system.parts "
         "WHERE database = {db:String} AND table = {t:String} AND active",
@@ -40,7 +37,7 @@ async def distinct_keys(ch: Any, table: str) -> int:
 
 async def merges_running(ch: Any, table: str) -> int:
     """Merges of `table` running on any replica (this node's alone without a cluster)."""
-    db, name = _split(table)
+    db, name = split_table(table)
     params = {"db": db, "t": name}
     where = "WHERE database = {db:String} AND table = {t:String}"
     try:

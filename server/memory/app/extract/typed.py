@@ -17,6 +17,7 @@ from server.memory.app.extract.models import ExtractedRecord, ExtractionError, R
 from server.memory.app.extract.prompts import _build_extraction_user_prompt
 from server.memory.domain.extraction_prompts import with_strict_examples_preamble
 from server.observability.genai import staged
+from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger("server.memory.app.extract")
 
@@ -291,7 +292,7 @@ async def extract_typed_record_iterative(
             '{"present": true|false}.',
         ),
         user=f"Schema fields:\n{field_doc}\n\nSource messages:\n{source}",
-        max_tokens=128,
+        max_tokens=llm_max_tokens("typed_extract_object"),
     )
     usage = object_result  # every call's four token counts, merged as they come
     present_obj = _json_object_from_text(object_result.text)
@@ -310,7 +311,7 @@ async def extract_typed_record_iterative(
                 '{"present": true} or {"present": false}. No other keys.',
             ),
             user=f"Schema fields:\n{field_doc}\n\nSource messages:\n{source}",
-            max_tokens=128,
+            max_tokens=llm_max_tokens("typed_extract_object"),
         )
         usage = _merge_llm_results(usage, retry_present)
         present_val = _interpret_present(_json_object_from_text(retry_present.text).get("present"))
@@ -325,7 +326,9 @@ async def extract_typed_record_iterative(
         '{"fields": ["field_name", ...]}.',
     )
     field_user = f"Schema fields:\n{field_doc}\n\nSource messages:\n{source}"
-    field_result = await client.complete(system=field_system, user=field_user, max_tokens=256)
+    field_result = await client.complete(
+        system=field_system, user=field_user, max_tokens=llm_max_tokens("typed_extract_fields")
+    )
     usage = _merge_llm_results(usage, field_result)
     detected_fields = _parse_detected_fields(field_result.text, schema)
     if detected_fields is None:
@@ -336,7 +339,7 @@ async def extract_typed_record_iterative(
             'JSON. Return ONLY {"fields": [...]} with field names from the '
             "schema.",
             user=field_user,
-            max_tokens=256,
+            max_tokens=llm_max_tokens("typed_extract_fields"),
         )
         usage = _merge_llm_results(usage, retry_detect)
         detected_fields = _parse_detected_fields(retry_detect.text, schema) or set()
