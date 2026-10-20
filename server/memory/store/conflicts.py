@@ -230,15 +230,33 @@ async def tombstone_ids(
     when: datetime,
     *,
     ch: _CHClient | None = None,
-) -> None:
+) -> list[dict[str, Any]]:
     """Tombstone N rows by memory_id. `audit_note` is appended to
     source_trace so the resolution-audit trail is queryable.
-    Empty list short-circuits (an empty IN would mutate every row)."""
+    Empty list short-circuits (an empty IN would mutate every row).
+
+    Returns each tombstoned row's identity tuple, memory_key, memory_id and
+    tombstone version, for the handler's webhook events."""
     if not memory_ids:
-        return
+        return []
     import server.memory.store as memory_repo
 
+    version = memory_repo.next_version()
+    tombstoned: list[dict[str, Any]] = []
+
     def _note(row: memory_repo.MemoryRow) -> dict[str, Any]:
+        tombstoned.append(
+            {
+                "org": row.org,
+                "namespace": row.namespace,
+                "agent": row.agent,
+                "user_id": row.user_id,
+                "session_id": row.session_id,
+                "memory_key": row.memory_key,
+                "memory_id": row.memory_id,
+                "version": version,
+            }
+        )
         trace = carried_trace(row.source_trace)  # the delete_version marker is not carried
         return {"source_trace": f"{trace} | {audit_note}" if trace else audit_note}
 
@@ -249,8 +267,10 @@ async def tombstone_ids(
         memory_ids,
         when=when,
         update=_note,
+        version=version,
         ch=ch,
     )
+    return tombstoned
 
 
 async def mark_active_by_ids(

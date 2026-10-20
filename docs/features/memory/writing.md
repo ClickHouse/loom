@@ -267,7 +267,7 @@ it reads, as for any other read.
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `memory.written`    | `memory.set` or `memory.bulk_set` writes a key that held no live row                                                                                                                                             |
 | `memory.revised`    | a new value of a live key: `memory.set`, `memory.bulk_set`, `memory.update`, `memory.update_by_id`, `namespace.rollback`, the source of `memory.move` with `keep_redirect`, an expiry that demotes or anonymizes |
-| `memory.tombstoned` | `memory.delete`, `memory.delete_version`, `namespace.rollback` back to a tombstone or removing a key born later, an expiry that tombstones                                                                       |
+| `memory.tombstoned` | `memory.delete`, `memory.delete_version`, `memory.clear` (one per row it clears), `conflicts.resolve` for the side it tombstones, `namespace.rollback` back to a tombstone or removing a key born later, an expiry that tombstones |
 | `memory.restored`   | `memory.restore`, or `namespace.rollback` reviving a key that is tombstoned now                                                                                                                                  |
 | `memory.redacted`   | `memory.redact` scrubs a historical version                                                                                                                                                                      |
 | `memory.erased`     | an `erasure.request` saga completes                                                                                                                                                                              |
@@ -282,6 +282,7 @@ These writes send no event: the summaries `memory.delete` retires with the row t
 built from, `memory.consolidate` and the consolidation worker, observations and their
 distillation, period digests, `memory.touch`, `memory.pin` and `memory.unpin`,
 `memory.lock` and `memory.unlock`, `memory.verify`, `memory.apply`, a proposal's decision,
+the status change `conflicts.resolve` makes on the rows it keeps,
 the undo of an automatic supersession through `memory.restore`, copies into another
 namespace (`memory.copy_to`, `memory.cross_promote`), `namespace.restore` from a snapshot,
 entity backfills, typed records (`memory.record.*`) and saved chat messages

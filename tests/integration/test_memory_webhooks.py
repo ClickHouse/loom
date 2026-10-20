@@ -297,6 +297,51 @@ async def test_each_write_path_leaves_its_event_and_version(
     assert sorted(_outbox(ch_client, ops.ns)) == sorted(expected)
 
 
+async def test_clear_and_a_conflict_resolve_announce_what_they_tombstone(
+    ops: Ops, receiver: Receiver, ch_client: Any
+) -> None:
+    a = {"agent": "assistant"}
+    # 0.60 admits the fake n-gram embedder's distance for the two style texts below
+    # (test_memory_conflicts uses the same pair).
+    await ops("namespace.register", owner_email="itest@loom", conflict_threshold=0.60, **a)
+    await ops.register(receiver.url, events=["memory.tombstoned"])
+
+    # memory.clear: every live row of the user, at the version it held.
+    await ops("memory.set", memory_key="k/kept", value="another user's value", **a)
+    cleared = await ops("memory.set", memory_key="k/cleared", user_id="u-42", value="v", **a)
+    out = await ops("memory.clear", user_id="u-42", confirm_subject="u-42")
+    assert out["rows_affected"]["loom.memory"] == 1
+
+    # conflicts.resolve(revise): the peer it tombstones.
+    first = "Always use 2-space indentation"
+    loser = await ops("memory.set", memory_key="style", value=first, **a)
+    for _ in range(60):
+        hits = await ops("memory.search", query=first, **a)
+        if "style" in json.dumps(hits):
+            break
+        await asyncio.sleep(0.25)
+    winner = await ops(
+        "memory.set", memory_key="style_v2", value=first + " throughout the project", **a
+    )
+    for _ in range(60):
+        if len((await ops("conflicts.list", **a))["rows"]) == 2:
+            break
+        await asyncio.sleep(0.25)
+    resolved = await ops(
+        "conflicts.resolve", memory_id=winner["memory_id"], decision="revise", resolved_by="t"
+    )
+    assert resolved["resolved"] is True and loser["memory_id"] in resolved["affected_memory_ids"]
+
+    for _ in range(20):
+        if len(_outbox(ch_client, ops.ns)) >= 2:
+            break
+        await asyncio.sleep(0.25)
+    (clear_event, resolve_event) = sorted(_outbox(ch_client, ops.ns), key=lambda e: e[1])
+    assert clear_event == ("memory.tombstoned", "k/cleared", cleared["version"])
+    assert resolve_event[:2] == ("memory.tombstoned", "style")
+    assert resolve_event[2] > loser["version"]
+
+
 async def test_a_users_erasure_leaves_nothing_to_send(
     ops: Ops, receiver: Receiver, ch_client: Any
 ) -> None:

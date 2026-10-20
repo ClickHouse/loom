@@ -1154,12 +1154,13 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
             },
         )
 
-    counts = await memory_repo.bulk_tombstone_scope(
+    counts, tombstoned = await memory_repo.bulk_tombstone_scope(
         org=input.org,
         namespace=input.namespace,
         user_id=input.user_id,
         agent=input.agent,
     )
+    await webhooks.announce([("memory.tombstoned", row) for row in tombstoned])
     locked_skipped = int(counts.pop("locked_skipped", 0) or 0)
     return MemoryClearOutput(
         cleared_at=naive_utc_now(),

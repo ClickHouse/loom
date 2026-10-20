@@ -27,6 +27,7 @@ from server.memory.api.models_conflicts import (
     _ConflictRevisionSuggestion,
     _ConflictRow,
 )
+from server.memory.app import webhooks
 from server.operations.read_projection import project_rows
 
 log = logging.getLogger(__name__)
@@ -303,14 +304,15 @@ async def handle_conflicts_resolve(
         return unresolved
     affected: list[str] = []
 
+    tombstoned: list[dict[str, Any]] = []
     if input.decision == "revise":
-        await conflicts_repo.tombstone_ids(input.org, peers, audit_note, now)
+        tombstoned = await conflicts_repo.tombstone_ids(input.org, peers, audit_note, now)
         affected.extend(peers)
         await conflicts_repo.mark_active_by_ids(input.org, [input.memory_id])
         affected.append(input.memory_id)
 
     elif input.decision == "contract":
-        await conflicts_repo.tombstone_ids(
+        tombstoned = await conflicts_repo.tombstone_ids(
             input.org,
             [input.memory_id],
             audit_note,
@@ -354,6 +356,9 @@ async def handle_conflicts_resolve(
                         }
                     )
                 await conflicts_repo.allowlist_insert(allowlist_rows)
+
+    # The rows a resolve keeps live change only their status, as on memory.verify: no event.
+    await webhooks.announce([("memory.tombstoned", row) for row in tombstoned])
 
     # The badge's cached counts (one per read scope) are stale now.
     for key in [k for k in _count_cache if k[:2] == (input.org, input.namespace)]:

@@ -261,7 +261,7 @@ async def bulk_tombstone_scope(
     user_id: str | None = None,
     agent: str | None = None,
     ch: _CHClient | None = None,
-) -> dict[str, int]:
+) -> tuple[dict[str, int], list[dict[str, Any]]]:
     """`memory.clear`: bulk-tombstone every live memory row matching
     (org, namespace, user_id?, agent?), plus the loom.memory_embeddings rows.
 
@@ -269,7 +269,9 @@ async def bulk_tombstone_scope(
     repo runs the query as-given (a scope-less call would clear the whole
     namespace — that's `erasure.request_namespace`'s job).
 
-    Returns {table_name: rows_tombstoned}.
+    Returns ({table_name: rows_tombstoned}, the memory rows tombstoned), each
+    row its identity tuple, memory_key, memory_id and version, for the
+    handler's webhook events.
     """
     ch = ch or _default_client()
 
@@ -303,16 +305,26 @@ async def bulk_tombstone_scope(
             f"{scope_sql} AND memory_key NOT IN (SELECT memory_key FROM loom.memory FINAL "
             f"WHERE {scope_sql} AND {locked_predicate()})"
         )
-    counts: dict[str, int] = {}
-    for table in ("loom.memory", "loom.memory_embeddings"):
-        where_sql = where_by_table[table]
-        count_row = await ch.query_one(
-            f"SELECT count() AS n FROM {table} FINAL WHERE {where_sql}",
-            params=params,
-        )
-        n = int((count_row or {}).get("n", 0) or 0)
-        counts[table] = n
-        if n == 0:
+    # The memory rows the mutation tombstones, read before it while they are live.
+    tombstoned = await ch.query_all(
+        f"""
+        SELECT org, namespace, agent, user_id, session_id, memory_key, memory_id, version
+        FROM loom.memory FINAL
+        WHERE {where_by_table["loom.memory"]}
+        """,
+        params=params,
+    )
+    vectors_row = await ch.query_one(
+        f"SELECT count() AS n FROM loom.memory_embeddings FINAL "
+        f"WHERE {where_by_table['loom.memory_embeddings']}",
+        params=params,
+    )
+    counts = {
+        "loom.memory": len(tombstoned),
+        "loom.memory_embeddings": int((vectors_row or {}).get("n", 0) or 0),
+    }
+    for table, where_sql in where_by_table.items():
+        if counts[table] == 0:
             continue
         await ch.execute(
             f"""
@@ -324,7 +336,7 @@ async def bulk_tombstone_scope(
             params=params,
         )
     counts["locked_skipped"] = locked_n
-    return counts
+    return counts, tombstoned
 
 
 async def tombstone_cascade_by_ids(
@@ -333,6 +345,7 @@ async def tombstone_cascade_by_ids(
     *,
     when: datetime,
     update: Callable[[MemoryRow], dict[str, Any]] | None = None,
+    version: int | None = None,
     ch: _CHClient | None = None,
 ) -> int:
     """Tombstone rows by memory_id AND mirror the tombstone onto every tier
@@ -351,6 +364,7 @@ async def tombstone_cascade_by_ids(
          the embeddings table collapses onto a tombstoned version too.
 
     `update(existing)` may add overrides (an audit note on source_trace).
+    `version` is the tombstones' version, a fresh one when None.
     The embeddings mirror is best-effort: the memory tombstone is
     durable and the orphan_vector_reconcile worker heals a missed mirror.
     Returns the number of memory rows tombstoned."""
@@ -368,7 +382,8 @@ async def tombstone_cascade_by_ids(
     if not rows:
         return 0
 
-    version = next_version()  # the tombstones', which the vector retire carries
+    if version is None:
+        version = next_version()  # the tombstones', which the vector retire carries
 
     def _tombstone(existing: MemoryRow) -> dict[str, Any]:
         overrides: dict[str, Any] = {

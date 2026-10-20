@@ -26,7 +26,7 @@ async def test_clear_with_user_id_tombstones_across_tables(
         return {
             "loom.memory": 47,
             "loom.memory_embeddings": 42,
-        }
+        }, []
 
     monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
 
@@ -54,7 +54,7 @@ async def test_clear_with_agent_only(
     from server.memory.app.handlers import handle_memory_clear
 
     async def fake_bulk(*, org, namespace, user_id=None, agent=None, ch=None):
-        return {"loom.memory": 3, "loom.memory_embeddings": 0}
+        return {"loom.memory": 3, "loom.memory_embeddings": 0}, []
 
     monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
 
@@ -116,7 +116,7 @@ async def test_clear_both_scope_args_accepts_either_confirm(
     from server.memory.app.handlers import handle_memory_clear
 
     async def fake_bulk(**_kw):
-        return {"loom.memory": 0, "loom.memory_embeddings": 0}
+        return {"loom.memory": 0, "loom.memory_embeddings": 0}, []
 
     monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
 
@@ -164,7 +164,7 @@ async def test_clear_zero_rows_is_well_formed(
     from server.memory.app.handlers import handle_memory_clear
 
     async def fake_bulk(**_kw):
-        return {"loom.memory": 0, "loom.memory_embeddings": 0}
+        return {"loom.memory": 0, "loom.memory_embeddings": 0}, []
 
     monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
 
