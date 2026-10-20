@@ -148,6 +148,8 @@ async def _run(
     make = source_factory or tracker_source
     emb = embedder or _embedder()
     for ns, cfg in sorted(configured_namespaces().items()):
+        if await customer.switched_off(cfg.org):
+            continue  # its cursor stays put: the pages wait until the org is back on
         # every configured namespace, restricted included: its own source, its
         # own predicate, its own rows (the transport's gate decides who reads them)
         set_namespace(ns)
@@ -406,8 +408,6 @@ async def _flush(
 ) -> None:
     if not pending:
         return
-    if await customer.switched_off(org):
-        return  # the items stay unembedded until the org is switched back on
     with customer.for_org(org):
         vectors = await embed_many(emb, [p["text"] for p in pending])
     rows = build_rows(

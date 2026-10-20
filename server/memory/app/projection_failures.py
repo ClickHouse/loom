@@ -279,9 +279,11 @@ async def retry_projection_failures(
 async def scan_active_projection_failures(
     *,
     limit: int = 50,
+    exclude_orgs: frozenset[str] = frozenset(),
     ch: Any | None = None,
 ) -> list[ProjectionFailureRow]:
-    """Return active failures across orgs for the repair worker."""
+    """Return active failures across orgs for the repair worker; none of
+    `exclude_orgs` (orgs whose model calls are switched off), which wait."""
 
     ch = ch or get_client()
     rows = await ch.query_all(
@@ -302,11 +304,11 @@ async def scan_active_projection_failures(
             created_at,
             resolved_at
         FROM loom.memory_projection_failures
-        WHERE status = 'active'
+        WHERE status = 'active' AND NOT has({off:Array(String)}, org)
         ORDER BY created_at ASC, failure_id ASC
         LIMIT {lim:UInt32}
         """,
-        params={"lim": int(limit)},
+        params={"lim": int(limit), "off": sorted(exclude_orgs)},
     )
     return [_row_from_ch(dict(row)) for row in rows]
 

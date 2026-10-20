@@ -106,6 +106,18 @@ class Settings(
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_model_calls_refresh(self) -> Settings:
+        """A process refuses every model call once its copy of the model-call
+        switch is older than the revocation bound: reading it less often would
+        refuse between reads, with nothing wrong."""
+        if self.model_calls_policy_refresh_seconds >= self.jwt_revocation_max_stale_seconds:
+            raise ValueError(
+                "LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS must be below "
+                "LOOM_JWT_REVOCATION_MAX_STALE_SECONDS"
+            )
+        return self
+
     def _mask(self, key: str, value: object) -> object:
         # Only the length, so an operator can confirm it is set: even a short
         # prefix leaks too much of a low-entropy secret.

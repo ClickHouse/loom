@@ -53,7 +53,12 @@ async def apply_policies(
     result: link_pass.PassResult,
 ) -> None:
     """Run the policy of each memory a change in `cns` left due and clear the marks it
-    settled; what fails or is past the judgement budget stays due."""
+    settled; what fails or is past the judgement budget stays due. An org whose model
+    calls are switched off is left as it is: its links stay due, nothing written."""
+    from server.llm import customer
+
+    if await customer.switched_off(org):
+        return
     # a page a few times the budget: what is left over is read by the next pass
     due = await store.policy_due(org, cns, fingerprint_version(), limit=4 * budget.judgements + 100)
     if not due:

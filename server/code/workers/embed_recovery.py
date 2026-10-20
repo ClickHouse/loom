@@ -120,7 +120,11 @@ async def _run(result: CodeEmbedRecoveryResult) -> None:
     repo = CodeRepo()
     embedder = get_embedder()
     max_attempts = settings.code_embed_max_attempts
-    repos = [(cfg.org, cfg.namespace) for cfg in configured_repos()]
+    # A switched-off org's repositories are not scanned: their stubs wait,
+    # attempts untouched, and the periodic full scan from zero finds them once
+    # the org is back on (the watermark may have moved past them meanwhile).
+    off = await customer.switched_off_orgs()
+    repos = [(cfg.org, cfg.namespace) for cfg in configured_repos() if cfg.org not in off]
     result.full_scan = _full_scan_due()
     for table, text_of in _TABLES:
         embedded = await _recover_table(
@@ -288,8 +292,6 @@ async def _embed_rows(
     for r in rows:
         groups.setdefault((str(r["org"]), str(r["namespace"])), []).append(r)
     for (org, ns), whole in groups.items():
-        if await customer.switched_off(org):
-            continue  # its stubs wait, attempts untouched, until it is switched back on
         set_worker_identity("code_embed_recovery", org=org, namespace=ns)
         pass_context.set_namespace(ns)
         batch = _batch()

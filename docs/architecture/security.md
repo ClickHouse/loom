@@ -432,7 +432,8 @@ only as any namespace's: granted by its admin, or by joining.
 `org.set_model_calls` (`loom.org_model_calls`) stops every model request for the org's data:
 each send point refuses a call for a switched-off org (403 `MODEL_CALLS_DISABLED`) before
 anything is sent, and background jobs leave the org's work queued. The server that took the
-change applies it at once, every other within `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`. It
+change applies it on its next call, every other within
+`LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`; an older build ignores the switch. It
 fails closed: a process whose copy of the switch is older than
 `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` refuses every model call until it reads it again. An
 org admin reaches only its own org's switch.

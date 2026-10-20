@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime
 
+from server.core.errors import ValidationError
 from server.identity.api.models_model_calls import (
     OrgModelCallsInput,
     OrgModelCallsOutput,
@@ -13,11 +14,19 @@ from server.identity.api.models_model_calls import (
 from server.identity.store import model_calls as repo
 
 
+def _one_org(org: str) -> None:
+    # "", "-" and "*" name no org (the identity tuple's none, a wildcard).
+    if org.strip() in ("", "-", "*") or org != org.strip():
+        raise ValidationError(f"org must name one org, got {org!r}")
+
+
 async def handle_org_set_model_calls(input: OrgSetModelCallsInput) -> OrgModelCallsOutput:
     """Switch the org's model calls off or on. This process sees it on its
     next call; every other within `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`."""
     from server.auth.context import current_auth
     from server.llm import customer
+
+    _one_org(input.org)
 
     auth = current_auth()
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -44,6 +53,7 @@ async def handle_org_set_model_calls(input: OrgSetModelCallsInput) -> OrgModelCa
 
 async def handle_org_model_calls(input: OrgModelCallsInput) -> OrgModelCallsOutput:
     """The org's current setting; enabled when it was never set."""
+    _one_org(input.org)
     row = await repo.get(input.org)
     if row is None:
         return OrgModelCallsOutput(org=input.org, enabled=True)

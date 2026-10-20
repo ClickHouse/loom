@@ -450,3 +450,60 @@ def test_the_stub_query_leaves_out_switched_off_orgs() -> None:
     )
     sql, params = sent[0]
     assert "org NOT IN {exclude_orgs:Array(String)}" in sql and params["exclude_orgs"] == ["acme"]
+
+
+def test_no_refusal_and_no_unreadable_switch_is_a_provider_failure(
+    switch: _Switch, monkeypatch
+) -> None:
+    from server.llm import openai as chat_mod
+
+    provider_health.reset()
+    sent = _Recorder()
+    monkeypatch.setattr(chat_mod, "_http_client", lambda: sent)
+    client = chat_mod.OpenAILLMClient(model="gpt-4o-mini", api_key="k")
+    switch.off = {"acme"}
+    _request("acme")
+    with pytest.raises(customer.ModelCallsDisabled):
+        asyncio.run(client.complete("s", "u"))
+    switch.down = True
+    customer._reset_for_tests(read=False)  # never read, and the read fails: fail closed
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(client.complete("s", "u"))
+    monkeypatch.setattr(settings, "inference_customer_header", "X-Customer")
+    genai._identity.set(None)
+    with pytest.raises(customer.Unattributed):
+        asyncio.run(client.complete("s", "u"))
+    assert sent.calls == [] and "openai:chat" not in provider_health.status().get("providers", {})
+
+
+def test_a_failed_read_waits_its_turn_and_the_copy_serves_until_too_old(switch: _Switch) -> None:
+    switch.off = {"acme"}
+    assert asyncio.run(customer.switched_off("acme")) is True and switch.reads == 1
+    switch.down = True
+    customer._next_read = 0.0  # the next read is due
+    assert asyncio.run(customer.switched_off("acme")) is True  # the last copy serves
+    assert asyncio.run(customer.switched_off("acme")) is True
+    assert switch.reads == 2  # the failed read is not tried again before its turn
+
+
+def test_the_refresh_must_be_shorter_than_the_stale_bound(monkeypatch) -> None:
+    from server.settings import Settings
+
+    monkeypatch.setenv("LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS", "600")
+    monkeypatch.setenv("LOOM_JWT_REVOCATION_MAX_STALE_SECONDS", "600")
+    with pytest.raises(ValueError, match="LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS"):
+        Settings()
+
+
+@pytest.mark.parametrize("org", ["", "-", "*", " acme"])
+def test_the_ops_take_one_org(org: str) -> None:
+    from server.core.errors import ValidationError
+    from server.identity.api.models_model_calls import OrgModelCallsInput, OrgSetModelCallsInput
+    from server.identity.app import model_calls
+
+    with pytest.raises(ValidationError):
+        asyncio.run(
+            model_calls.handle_org_set_model_calls(OrgSetModelCallsInput(org=org, enabled=False))
+        )
+    with pytest.raises(ValidationError):
+        asyncio.run(model_calls.handle_org_model_calls(OrgModelCallsInput(org=org)))

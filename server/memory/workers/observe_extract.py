@@ -99,6 +99,9 @@ async def find_ready_sessions(
     if cfg.namespace_filter is not None:
         scope += " AND namespace = {ns_f:String}"
         params["ns_f"] = cfg.namespace_filter
+    # An org whose model calls are switched off waits, and takes no slot.
+    scope += " AND NOT has({off:Array(String)}, org)"
+    params["off"] = sorted(await customer.switched_off_orgs())
     rows = await ch.query_all(
         f"""
         SELECT org, namespace, agent, user_id, session_id,
@@ -380,8 +383,6 @@ async def run_pass(
     with record_pass("observe_extract") as rec:
         sessions = await find_ready_sessions(cfg, ch=ch)
         for session in sessions:
-            if await customer.switched_off(str(session["org"])):
-                continue  # its observations wait until the org is switched back on
             try:
                 observations = await _load_session_observations(session, cfg, ch)
                 if not observations:

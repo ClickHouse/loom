@@ -120,14 +120,19 @@ async def rejudge(r: dict[str, Any], *, ch: _CHClient) -> str:
 
 async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
     from server.core.repo_base import _default_client
+    from server.llm import customer
     from server.memory.store import conflict_marks
 
     ch = ch or _default_client()
     with record_pass("conflict_sweep") as rec:
+        # A switched-off org's marks are not re-judged while it is off. One older
+        # than the lookback when it comes back is past the sweep, as a judge lost
+        # in an outage is: the write stands as made, unjudged.
         rows = await conflict_marks.stale_pending_marks(
             grace_s=conflict_marks.GRACE_SECONDS,
             lookback_s=conflict_marks.LOOKBACK_SECONDS,
             limit=MAX_ROWS_PER_PASS,
+            exclude_orgs=await customer.switched_off_orgs(),
             ch=ch,
         )
         verdicts: dict[str, int] = {}

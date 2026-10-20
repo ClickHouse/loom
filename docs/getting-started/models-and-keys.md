@@ -252,7 +252,8 @@ LOOM_INFERENCE_SYSTEM_CUSTOMER=loom            # calls that belong to no org
 - An org id is sent percent-encoded where it needs to be.
 
 Cached answers make no call: an embedding or a model answer served from Loom's
-cache is not metered again.
+cache is not metered again. The customer is still checked before the cache, so a
+path that names none is refused even on a hit.
 
 #### Switching an org's model calls off
 
@@ -265,13 +266,19 @@ curl -s -X POST "$LOOM_BASE_URL/v1/org.set_model_calls" -H "Authorization: Beare
 ```
 
 - While off, no chat, embedding, rerank or classify request is sent for the
-  org, and no cached vector or answer is served to it either: a request that
-  needs one is refused (403 `MODEL_CALLS_DISABLED`), and background work waits. The embedding worker, the extraction queue and the
-  entity extractor leave the org's queued rows where they are, attempts
-  untouched; the other jobs pass the org over until it is back on.
+  org, and no cached vector or answer is served to it either: the switch is a
+  kill switch. A request that needs one is refused (403 `MODEL_CALLS_DISABLED`).
+  The local embedder runs in-process and sends nothing, but it is switched off
+  too.
+- Background work waits. Each job leaves the org out when it picks its work,
+  so the org's queued rows keep their attempts and no other org waits behind
+  them. Code ingest skips the org's repositories altogether, so its whole code
+  index, lexical search included, stays as it was until the org is back on.
 - `"enabled": true` switches it back on, and the waiting work runs.
-- The server that took the change applies it at once; every other within
-  `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` (default 10).
+- Every server applies a change within `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`
+  (default 10; the process that took it, on its next call).
+- Switch an org off only once every replica runs a build that knows the
+  switch: an older one keeps calling models for the org.
 - A server that cannot read the switch for longer than
   `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` makes no model call for any org
   until it can.

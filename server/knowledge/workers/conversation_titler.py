@@ -152,6 +152,7 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
             window_hours=int(cfg.window_hours),
             min_turns=int(cfg.min_turns),
             limit=int(max(1, cfg.max_threads_per_pass) * 5),
+            exclude_orgs=await customer.switched_off_orgs(),  # theirs wait, taking no slot
         )
         candidates = cast(list[TitleCandidate], rows)
         stored = await conversation_repo.thread_rows(
@@ -172,8 +173,6 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
                 if existing is not None and str(existing.get("title") or "").strip():
                     result.skipped_titled += 1
                     continue
-                if await customer.switched_off(str(row["org"])):
-                    continue  # titled once the org's model calls are switched back on
                 if await _make_title(row, cfg, llm, existing):
                     result.titled += 1
             except Exception as e:

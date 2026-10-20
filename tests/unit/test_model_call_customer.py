@@ -489,7 +489,7 @@ def test_the_llm_reranker_lets_a_refusal_through_and_records_no_outage(
         """A real-looking client: the reranker skips the fake one."""
 
         async def complete(self, *a: Any, **k: Any) -> Any:
-            customer.require()
+            await customer.require()
             raise AssertionError("not reached")
 
     monkeypatch.setattr("server.llm.client.get_llm_client", lambda: _Metered())

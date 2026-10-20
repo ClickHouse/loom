@@ -276,11 +276,12 @@ the shared HTTP client also carries non-model calls, which name no customer.
   switched-off orgs (`customer.switched_off_orgs`). A cached vector or answer is refused
   too: the switch is a kill switch, so nothing model-made reaches the org. The copy is
   read at most every `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted no longer than
-  `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`, past which every call is refused. The embedding
-  worker, the extraction queue and the entity extractor leave out a switched-off org when they
-  select work, so its queued rows keep their attempts and wait; the per-row jobs check the
-  org before the call and leave the row for a later pass. A refusal before sending
-  (`not_sent`) is never recorded as a provider failure.
+  `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`, past which every call is refused. Every job leaves a
+  switched-off org out when it selects work (in the query, so its rows neither spend attempts
+  nor fill the batch ahead of other orgs); code ingest skips its repositories, freezing its
+  whole code index. A conflict mark older than the sweep's hour when the org comes back is
+  past the sweep, as a judge lost in an outage is: the write stands as made. The check runs in
+  `require()`, before provider-health recording, so a refusal is never a provider failure.
 
 **Why headers, not a token per customer.** The gateway already knows Loom as one service
 (its token); a credential per org would mean thousands to issue, rotate and revoke for no
