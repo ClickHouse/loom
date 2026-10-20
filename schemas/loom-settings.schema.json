@@ -2564,7 +2564,7 @@
         "llm_max_tokens_overrides": {
           "default": "",
           "type": "string",
-          "description": "JSON {call: tokens} over LLM_MAX_TOKENS (in server/settings/catalog.py): the most tokens one kind of LLM call may write, keyed as the cost ledger's stage series name it. A name that is no LLM call, or a count below 1, = the map is logged once and ignored. '' = the table as declared."
+          "description": "JSON {call: tokens} over LLM_MAX_TOKENS (in server/settings/catalog.py): the most tokens one kind of LLM call may write, keyed by its `llm_stage`. A name that is no LLM call, or a count below 1, is refused. '' = the table as declared."
         },
         "llm_model": {
           "default": "",

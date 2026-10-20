@@ -24,6 +24,8 @@ _OBJECTS = [
     "tracker_code_namespace_bindings_json",
     "tracker_restricted_repos_json",
 ]
+# An object whose entries the field also checks needs a sample with real entries.
+_OBJECT_SAMPLES = {"llm_max_tokens_overrides": ' {"hyde": 64} '}
 _ARRAYS = ["code_repos_json", "code_test_gate_run_templates"]
 _CANARY = "s3cr3t-canary"
 
@@ -49,7 +51,8 @@ _ENTRIES_CHECKED = {"rerank_endpoints_json"}
 @pytest.mark.parametrize("field", [f for f in _OBJECTS if f not in _ENTRIES_CHECKED])
 def test_an_object_field_takes_empty_or_an_object(field: str) -> None:
     assert getattr(_load(**{field: ""}), field) == ""
-    assert getattr(_load(**{field: ' {"a": {}} '}), field) == ' {"a": {}} '
+    sample = _OBJECT_SAMPLES.get(field, ' {"a": {}} ')
+    assert getattr(_load(**{field: sample}), field) == sample
     for bad in (f'{{"a": "{_CANARY}"', f'["{_CANARY}"]'):
         with pytest.raises(ValidationError, match=field) as caught:
             _load(**{field: bad})

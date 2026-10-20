@@ -12,12 +12,13 @@ settings file, the default.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from server.settings._env import (
     DEV_JWT_SECRET,
@@ -3213,6 +3214,33 @@ def is_provider_api(url: str) -> bool:
 RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
+def parse_llm_max_tokens(raw: str) -> dict[str, int]:
+    """`llm_max_tokens_overrides` as {call: tokens}; ValueError names the first entry that
+    is no LLM call or no positive token count."""
+    if not raw.strip():
+        return {}
+    obj = json.loads(raw)
+    if not isinstance(obj, dict):
+        raise ValueError("not a JSON object")
+    out: dict[str, int] = {}
+    for call, tokens in obj.items():
+        if call not in LLM_MAX_TOKENS:
+            raise ValueError(f"{call!r} is no LLM call (LLM_MAX_TOKENS)")
+        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 1:
+            raise ValueError(f"{call!r}: {tokens!r} is not a positive token count")
+        out[call] = tokens
+    return out
+
+
+def _llm_max_tokens_map(raw: str) -> str:
+    parse_llm_max_tokens(raw)
+    return raw
+
+
+# Startup and `loom settings set` refuse a map naming no LLM call or a count below 1.
+LlmMaxTokensMap = AfterValidator(_llm_max_tokens_map)
+
+
 class ProviderSettings(ModelSettings):
     """Embedding and LLM providers.
 
@@ -3415,10 +3443,9 @@ class ProviderSettings(ModelSettings):
     # Longest backoff, in seconds, between two attempts of an LLM call.
     llm_retry_max_wait_s: Annotated[float, LIVE] = Field(default=20.0, ge=0)
     # JSON {call: tokens} over LLM_MAX_TOKENS (in server/settings/catalog.py): the most
-    # tokens one kind of LLM call may write, keyed as the cost ledger's stage series name it. A name
-    # that is no LLM call, or a count below 1, = the map is logged once and ignored.
-    # '' = the table as declared.
-    llm_max_tokens_overrides: Annotated[str, JsonObject, LIVE] = ""
+    # tokens one kind of LLM call may write, keyed by its `llm_stage`. A name that is no
+    # LLM call, or a count below 1, is refused. '' = the table as declared.
+    llm_max_tokens_overrides: Annotated[str, JsonObject, LlmMaxTokensMap, LIVE] = ""
 
     # JSON {class: {"llm_cache": bool, "strong": bool, "mid": bool}}:
     # `llm_cache` overrides the class's cache default (a per-request pin

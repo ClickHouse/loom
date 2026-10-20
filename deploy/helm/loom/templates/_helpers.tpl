@@ -92,7 +92,7 @@ restarts mid-rollout keeps its own config instead of booting with the new one. *
 {{- fail (printf "set %s through %s, not extraEnv" .name (include "loom.guardedThrough" (dict "key" .name "root" $))) }}
 {{- end }}
 {{- end }}
-{{- range list "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS" }}
+{{- range list "LOOM_EMBEDDING_PROVIDER" "LOOM_EMBEDDING_MODEL" "LOOM_EMBEDDING_DIM" "LOOM_EMBEDDING_BASE_URL" "LOOM_EMBEDDING_SEND_DIMENSIONS" "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS" }}
 {{- if hasKey $.Values.secrets.extra . }}
 {{- fail (printf "set %s through %s, not secrets.extra" . (include "loom.guardedThrough" (dict "key" . "root" $))) }}
 {{- end }}

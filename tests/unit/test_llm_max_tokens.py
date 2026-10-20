@@ -8,8 +8,10 @@ import logging
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from server.settings import settings
+from server.settings import Settings, settings
+from server.settings._live import coerce
 from server.settings.budgets import llm_max_tokens
 from server.settings.catalog import LLM_MAX_TOKENS
 
@@ -63,8 +65,19 @@ def test_a_deployment_override_changes_one_call(monkeypatch: pytest.MonkeyPatch)
     assert llm_max_tokens("hyde") == LLM_MAX_TOKENS["hyde"]
 
 
-@pytest.mark.parametrize("raw", ['{"no_such_call": 64}', '{"hyde": 0}', '{"hyde": "64"}', "[1]"])
-def test_a_bad_override_map_is_ignored_and_said(
+_BAD_MAPS = ['{"no_such_call": 64}', '{"hyde": 0}', '{"hyde": "64"}', "[1]"]
+
+
+@pytest.mark.parametrize("raw", _BAD_MAPS)
+def test_a_bad_override_map_is_refused_at_startup_and_by_settings_set(raw: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, llm_max_tokens_overrides=raw)  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        coerce(Settings, "llm_max_tokens_overrides", raw)
+
+
+@pytest.mark.parametrize("raw", _BAD_MAPS)
+def test_a_bad_stored_map_is_ignored_and_said(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, raw: str
 ) -> None:
     monkeypatch.setattr(settings, "llm_max_tokens_overrides", raw)
