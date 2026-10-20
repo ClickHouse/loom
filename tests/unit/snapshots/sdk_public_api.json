@@ -691,6 +691,14 @@
             "revoke": [
               "body",
               "options"
+            ],
+            "share_agent": [
+              "body",
+              "options"
+            ],
+            "unshare_agent": [
+              "body",
+              "options"
             ]
           }
         },
