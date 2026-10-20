@@ -136,18 +136,18 @@ async def test_the_thread_list_counts_turns_as_an_opened_thread_does() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("fields", "keyed", "served"),
+    ("fields", "keyed_read", "reads_last_turn", "served"),
     [
         # Only the title: no keyed read, and the last turn's fields are empty.
-        (["title"], None, (1, "", "", "Titled")),
+        (["title"], False, False, (1, "", "", "Titled")),
         # The role: the keyed read takes the last turn.
-        (["last_role"], {"n": 1, "last_turn": ("bot", "user", "hi")}, (1, "user", "hi", "Titled")),
+        (["last_role"], True, True, (1, "user", "hi", "Titled")),
         # The count alone: the keyed read counts, and reads no last turn.
-        (["msg_count"], {"n": 7}, (7, "", "", "Titled")),
+        (["msg_count"], True, False, (7, "", "", "Titled")),
     ],
 )
 async def test_a_thread_list_reads_the_last_turn_only_when_asked(
-    monkeypatch, fields, keyed, served
+    monkeypatch, fields, keyed_read, reads_last_turn, served
 ) -> None:
     """`fields` without the agent, role, excerpt or count is one statement over the
     transcript; asking for the count or the last turn adds the keyed read, which reads
@@ -156,17 +156,19 @@ async def test_a_thread_list_reads_the_last_turn_only_when_asked(
     from server.knowledge.app.conversations import handle_conversation_threads
 
     grouped = [{"thread_id": "t-1", "msg_count": 1, "first_seen": _AT, "last_seen": _AT}]
+    keyed_row = {"thread_id": "t-1", "n": 1 if reads_last_turn else 7}
+    if reads_last_turn:
+        keyed_row["last_turn"] = ("bot", "user", "hi")
     titles = [{"thread_id": "t-1", "title": "Titled"}]
-    pages = [grouped, [{"thread_id": "t-1", **keyed}], titles] if keyed else [grouped, titles]
-    ch = StubCH(pages)
+    ch = StubCH([grouped, [keyed_row], titles] if keyed_read else [grouped, titles])
     monkeypatch.setattr(conversation_repo, "_default_client", lambda: ch)
     out = await handle_conversation_threads(
         ConversationThreadsInput(org="o", namespace="ns", agent="a", fields=fields)
     )
     transcript = [sql for sql, _ in ch.calls if "FROM loom.conversations\n" in sql]
-    assert len(transcript) == (2 if keyed else 1)
-    if keyed:
-        assert ("argMax" in transcript[1]) == ("last_turn" in keyed)
+    assert len(transcript) == (2 if keyed_read else 1)
+    if keyed_read:
+        assert ("argMax" in transcript[1]) is reads_last_turn
     [thread] = out.threads
     assert (
         thread.msg_count,
