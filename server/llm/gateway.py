@@ -11,8 +11,8 @@ which `/v1/.well-known/jwks.json` publishes. Either way the gateway must trust
 the issuer. Loom's own verifier never accepts that audience, so the token opens
 nothing here. Unset, the provider's key is the bearer, as always;
 `LOOM_OPENAI_BASE_URL` / `LOOM_ANTHROPIC_BASE_URL` point either at a gateway,
-and `LOOM_INFERENCE_GATEWAY_REQUIRED` refuses every call to a provider's own
-API, as the exchange does.
+and `LOOM_INFERENCE_GATEWAY_REQUIRED` (as the exchange does) refuses every call
+to a host `LOOM_INFERENCE_GATEWAY_HOSTS` does not list.
 """
 
 from __future__ import annotations

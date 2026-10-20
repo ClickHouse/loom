@@ -226,15 +226,19 @@ matches only if it is listed.
   leaves, on every redirect hop too, whatever named it: a model named per
   request, a `LOOM_CODE_SEARCH_VECTOR_MODELS` entry. A refused call is not
   retried, and `/v1/health` reports the provider as failing.
-- **Namespaces**: `namespace.register` refuses a `classify_endpoint` at another
-  host (422), and one stored before is never called: memory.set keeps the
-  caller's type, with a warning in the log. `builtin:cohere` is refused as a
+- **Namespaces**: `namespace.register` refuses a `classify_endpoint` that is not
+  https at the default port of a listed host (422), and one stored before is
+  never called: memory.set keeps the caller's type, with a warning in the log. `builtin:cohere` is refused as a
   rerank choice (422), and a namespace that stored it reranks with nothing,
   with a warning in the log.
 - **Dashboard**: saving a model configuration with an endpoint at another host
   (or the Gemini embedder) answers 422, and the model check answers
-  `gateway_required`. A stored one that the check refuses is not applied: the
-  settings in force stay, and `/v1/health` reports `model_configuration_refused`.
+  `gateway_required`. A stored one that the check refuses is not applied, its
+  serving vector settings included, and `/v1/health` reports
+  `model_configuration_refused`. With the same embedding as the settings in force,
+  those serve on; with another, the vector tables may hold that other space, so
+  model work stays held until a configuration the check accepts replaces it, or
+  the configuration is reset to the environment's.
 - **Rolling it out:** a previous build ignores both settings, so turn them on
   once every replica runs this one. A deployment that already exchanges a token
   refuses to start on this build until `LOOM_INFERENCE_GATEWAY_HOSTS` lists its

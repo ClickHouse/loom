@@ -30,9 +30,9 @@ import logging
 
 import httpx
 
+from server.memory.domain.classify_endpoints import classify_refusal
 from server.observability import degradations as _degradations
 from server.observability import provider_health as _provider_health
-from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ async def classify(
     when the response's memory_type isn't in valid_types (when
     valid_types is non-empty).
     """
-    if not endpoint or settings.off_gateway(endpoint):
+    if not endpoint or classify_refusal(endpoint):
         # Off the gateway: no call, fail closed, and the caller's type stays.
         return ""
     body = {
@@ -116,18 +116,19 @@ async def get_namespace_classify_config(
     if not row:
         return "", ""
     endpoint = row.get("classify_endpoint") or ""
-    host = settings.off_gateway(endpoint) if endpoint else ""
-    if host:
+    refusal = classify_refusal(endpoint) if endpoint else ""
+    if refusal:
         # Stored before the gateway was required: memory content never goes
         # there, and the namespace has no classifier until it is changed.
         full = len(_OFF_GATEWAY_LOGGED) >= _LOGGED_CAP
         if (org, namespace) not in _OFF_GATEWAY_LOGGED and not full:
             _OFF_GATEWAY_LOGGED.add((org, namespace))
             log.warning(
-                "%s/%s classifies at %s, not in LOOM_INFERENCE_GATEWAY_HOSTS: not classified",
+                "%s/%s: its classify_endpoint is refused while the gateway is required "
+                "(%s): not classified",
                 org,
                 namespace,
-                host,
+                refusal,
             )
         return "", ""
     return (endpoint, row.get("classify_prompt_template") or "")

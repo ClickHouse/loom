@@ -80,12 +80,18 @@ code-search default (`gateway_refusal`). Model calls go through their own client
 `server/clients/_http.py::get_model_client`, whose request hook (`_on_request`) refuses
 every other host on every hop, redirects included; GitHub and an issuer's discovery
 document use the other client, which has no such hook. The rerank and classify senders,
-on their own clients, check each URL. `namespace.register` refuses a `classify_endpoint`
-elsewhere (422), and one stored before is never called: a namespace admin can neither
-send memory content off the gateway nor probe an internal host with it. A dashboard
-configuration goes through the same check: refused at save (422), and a stored one that
-fails is not applied (`provider_runtime.apply_configuration`; `/v1/health` reports
-`model_configuration_refused`). A refusal (`GATEWAY_REQUIRED`) is a setting to fix, and
+on their own clients, check each URL. Every check reads the host as httpx sends it
+(`url_host`: httpx's parser, an IDN as punycode), so a URL with several `@` or a
+backslash cannot pass the check for one host and be sent to another.
+`namespace.register` refuses a `classify_endpoint` that is not https at the default
+port of a listed host (422), and one stored before is never called: a namespace admin can
+neither send memory content off the gateway nor reach another port or service with it. A
+dashboard configuration goes through the same check: refused at save (422), and a stored
+one that fails is not applied, its serving vector settings included
+(`provider_runtime.load_active_configuration`), and `/v1/health` reports
+`model_configuration_refused`. When its embedding differs from the one in force the vector
+tables may hold that other space, so model work stays held (fails closed) until a
+configuration the check accepts, or a reset to the environment, replaces it. A refusal (`GATEWAY_REQUIRED`) is a setting to fix, and
 neither SDK retries it.
 
 **Rotation.** `loom signing-key rotate [--algorithm HS256|RS256] [--activate-in 300]`

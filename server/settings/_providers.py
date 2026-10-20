@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
+import httpx
 from pydantic import Field, PrivateAttr, model_validator
 
 from server.core.embedding_space import inferred_provider
@@ -20,8 +21,14 @@ from server.settings._models import (
 
 
 def url_host(url: str) -> str:
-    """The host of `url` as LOOM_INFERENCE_GATEWAY_HOSTS names it: lower-case, no trailing dot."""
-    return (urlsplit(url.strip()).hostname or "").rstrip(".")
+    """The host httpx sends `url` to, as LOOM_INFERENCE_GATEWAY_HOSTS names it:
+    ASCII (an IDN as punycode), lower-case, no trailing dot; "" when httpx
+    cannot parse it. httpx's own parser, so the check and the send never read
+    a URL differently (several `@`, a backslash)."""
+    try:
+        return httpx.URL(url.strip()).raw_host.decode("ascii").lower().rstrip(".")
+    except (httpx.InvalidURL, UnicodeDecodeError):
+        return ""
 
 
 # A DNS name LOOM_INFERENCE_GATEWAY_HOSTS may name: no scheme, port, path or wildcard.
@@ -38,7 +45,7 @@ def _is_gateway_host(host: str) -> bool:
         return False
 
 
-# What the dashboard may change that the gateway check reads.
+# The settings the gateway check reads; a dashboard configuration overrides the embedding ones.
 _GATEWAY_CHECKED = (
     "openai_base_url",
     "anthropic_base_url",

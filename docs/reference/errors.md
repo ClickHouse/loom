@@ -392,7 +392,7 @@ Raised in `server/memory/app/verify.py`.
 
 #### `GATEWAY_REQUIRED`
 
-HTTP 503, raised as `server.core.errors.GatewayRequiredError`. 503 — a model call named a provider's own API while the gateway is required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or a token exchange).
+HTTP 503, raised as `server.core.errors.GatewayRequiredError`. 503 — a model call, or a post to a classifier or reranker, named a host LOOM_INFERENCE_GATEWAY_HOSTS does not list while the gateway is required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or a token…
 
 #### `GRANT_BUSY`
 

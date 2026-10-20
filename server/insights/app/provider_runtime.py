@@ -71,6 +71,8 @@ deployment_config.set_environment_source(_environment_embedding)
 
 def apply_environment_configuration() -> None:
     """Clear dashboard overrides; embedding transitions must already be rebuilt."""
+    global _refused
+    _refused = ""  # the environment's settings passed the gateway check at load
     for name, value in environment_settings().items():
         setattr(settings, name, value)
     install_provider_keys({})
@@ -243,6 +245,8 @@ async def load_active_configuration() -> None:
         )
     )
     changed = target != current_embedding()
+    if setup is not None and _refuse(setup, changed, str(active["config_id"])):
+        return  # held or kept, retried at the next refresh
     if changed and pending is None and _maintenance_config_id is None:
         _hold_admission(str(active["config_id"]))
     serving = _serving_settings(rows, active, target)
@@ -270,6 +274,22 @@ async def load_active_configuration() -> None:
         gate.resume(_maintenance_config_id)
         _maintenance_config_id = None
     _applied_version = str(active["version"])
+
+
+def _refuse(setup: ProviderSetupInput, changed: bool, config_id: str) -> bool:
+    """Whether the gateway check refuses the committed `setup`, as it refuses
+    it at load. Then nothing of it applies, its serving vector settings
+    included. With its embedding the one in force, the settings in force
+    serve on; with another, the index may be built for that other space, so
+    model work stays held until a configuration the check accepts replaces it."""
+    global _refused
+    refusal = gateway_refusal(setup.embedding)
+    if refusal and refusal != _refused:
+        log.error("saved model configuration not applied: %s", refusal)
+    _refused = refusal
+    if refusal and changed and _maintenance_config_id is None:
+        _hold_admission(config_id)
+    return bool(refusal)
 
 
 async def refresh_loop() -> None:

@@ -439,3 +439,96 @@ async def test_unreadable_configuration_fails_closed(monkeypatch: pytest.MonkeyP
     with pytest.raises(RuntimeError) as error:
         await runtime.load_active_configuration()
     assert "secret detail" not in str(error.value)
+
+
+def _behind_the_gateway(settings) -> None:
+    settings.inference_gateway_required = True
+    settings.inference_gateway_hosts = "gateway.example"
+    settings.openai_base_url = "https://gateway.example/v1"
+    settings.anthropic_base_url = "https://gateway.example"
+
+
+def _gemini_setup() -> ProviderSetupInput:
+    return ProviderSetupInput.model_validate(
+        {
+            "llm": {"provider": "anthropic", "model": "claude-test"},
+            "embedding": {
+                "provider": "gemini",
+                "model": "gemini-embedding-001",
+                "dimensions": 3072,
+            },
+            "keys": {"anthropic": "saved-llm-key", "gemini": "saved-embedding-key"},
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_rebuilt_configuration_with_another_embedding_keeps_model_work_held(
+    monkeypatch,
+):
+    # A Gemini index rebuilt at 3072 while the env embeds with OpenAI at 3072:
+    # the widths match, so only holding model work keeps the env embedder off it.
+    s = runtime.settings
+    _behind_the_gateway(s)
+    s.embedding_provider, s.embedding_model, s.embedding_dim = (
+        "openai",
+        "text-embedding-3-large",
+        3072,
+    )
+    gemini = _gemini_setup().embedding
+    row = prepared_serving_row(
+        fingerprint=embedding_space_fingerprint(
+            gemini.provider,
+            gemini.model,
+            gemini.dimensions,
+            gemini.base_url,
+            gemini.send_dimensions,
+        )
+    )
+    monkeypatch.setattr(runtime, "configurations", AsyncMock(return_value=[row]))
+    monkeypatch.setattr(runtime, "open_configuration", Mock(return_value=_gemini_setup()))
+    monkeypatch.setattr(runtime, "_refused", "")
+    before = (s.embedding_model, s.code_search_vector_model_default, s.code_vector_tables)
+    for _ in range(2):  # every refresh keeps it so
+        await runtime.load_active_configuration()
+        assert runtime.get_model_work_gate().closed
+        assert (
+            s.embedding_model,
+            s.code_search_vector_model_default,
+            s.code_vector_tables,
+        ) == before
+        assert runtime._applied_version == ""
+    assert "Gemini" in runtime.refused_configuration()
+    codes = {
+        p.code
+        for p in collect_problems(
+            s, HealthState(refused_configuration=runtime.refused_configuration())
+        )
+    }
+    assert "model_configuration_refused" in codes
+
+
+@pytest.mark.asyncio
+async def test_a_refused_configuration_with_the_same_embedding_leaves_the_settings_serving(
+    monkeypatch,
+):
+    s = runtime.settings
+    _behind_the_gateway(s)
+    s.embedding_provider, s.embedding_model, s.embedding_dim = "openai", "text-embedding-test", 3072
+    s.embedding_base_url, s.embedding_send_dimensions = "", False
+    refused = setup_input()
+    monkeypatch.setattr(runtime, "configurations", AsyncMock(return_value=[prepared_serving_row()]))
+    monkeypatch.setattr(runtime, "open_configuration", Mock(return_value=refused))
+    monkeypatch.setattr(runtime, "gateway_refusal", lambda embedding: "refused for the test")
+    await runtime.load_active_configuration()
+    assert not runtime.get_model_work_gate().closed
+    assert runtime.refused_configuration() == "refused for the test"
+    assert runtime._applied_version == ""
+
+
+def test_a_reset_to_the_environment_clears_a_refused_configuration(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime, "_refused", "LOOM_INFERENCE_GATEWAY_REQUIRED refuses the Gemini embedder"
+    )
+    runtime.apply_environment_configuration()
+    assert runtime.refused_configuration() == ""

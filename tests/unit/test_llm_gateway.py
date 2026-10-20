@@ -466,10 +466,31 @@ def test_with_the_gateway_required_no_redirect_takes_a_call_off_its_hosts(
     assert wire == ["https://gateway.example/v1/moved"]  # the other host's hop never left
 
 
-def test_the_client_for_other_calls_has_no_gateway_hook(required: None) -> None:
+def test_only_the_model_client_refuses_a_host_off_the_gateway(
+    required: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # GitHub and an issuer's discovery document are not model calls.
-    assert _http.get_client().event_hooks["request"] == []
-    assert _http.get_model_client().event_hooks["request"] == [_http._on_request]
+    sent: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(str(request.url))
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(_http, "_client", None)
+    monkeypatch.setattr(_http, "_model_client", None)
+    other, model = _http.get_client(), _http.get_model_client()
+    for client in (other, model):
+        monkeypatch.setattr(client, "_transport", httpx.MockTransport(answer))
+
+    async def send(client: httpx.AsyncClient) -> None:
+        await client.get("https://api.github.com/repos")
+
+    asyncio.run(send(other))
+    with pytest.raises(GatewayRequiredError):
+        asyncio.run(send(model))
+    assert sent == ["https://api.github.com/repos"]
+    for client in (other, model):
+        asyncio.run(client.aclose())
 
 
 @pytest.mark.parametrize("url", _OFF[:7])
@@ -553,13 +574,76 @@ def test_no_rerank_or_classify_endpoint_posts_off_the_gateways_hosts(
     assert _NoPost.posted == []
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://gateway.example@attacker.test/c",  # userinfo, then the host
+        "https://a@gateway.example@attacker.test/c",  # several @
+        "https://attacker.test\\@gateway.example/c",  # a backslash before @
+        "https://gatewаy.example/c",  # a Cyrillic а: an IDN, punycode on the wire
+        "https://xn--gatewy-6ve.example/c",
+        "https://[::1]/c",
+    ],
+)
+def test_the_gateway_check_reads_a_url_as_httpx_sends_it(required: None, url: str) -> None:
+    # Checked with the parser that sends, so the two never disagree: refused
+    # exactly when httpx would send somewhere other than gateway.example.
+    from server.memory.domain.classify_endpoints import classify_refusal
+
+    try:
+        sent_to = httpx.URL(url).raw_host.decode("ascii")
+    except httpx.InvalidURL:
+        sent_to = ""
+    off = sent_to != "gateway.example"
+    assert bool(settings.off_gateway(url)) is off
+    assert bool(classify_refusal(url)) is off
+
+
+def test_an_idn_host_is_matched_as_the_punycode_httpx_sends_to(
+    required: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    punycode = httpx.URL("https://gatewаy.example/").raw_host.decode("ascii")
+    monkeypatch.setattr(settings, "inference_gateway_hosts", punycode)
+    assert settings.off_gateway("https://gatewаy.example/v1") == ""
+    assert settings.off_gateway("https://gateway.example/v1") == "gateway.example"
+
+
+def test_a_classify_endpoint_at_a_listed_host_receives_the_post(
+    required: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app import classify
+
+    class _Answers(_NoPost):
+        async def post(self, url: str, **kw: Any) -> httpx.Response:
+            _NoPost.posted.append(url)
+            body = {"memory_type": "decision"}
+            return httpx.Response(200, json=body, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(_NoPost, "posted", [])
+    monkeypatch.setattr(classify.httpx, "AsyncClient", _Answers)
+    label = asyncio.run(
+        classify.classify(
+            endpoint="https://gateway.example/classify",
+            prompt_template="",
+            value="v",
+            valid_types=["decision"],
+        )
+    )
+    assert label == "decision" and _NoPost.posted == ["https://gateway.example/classify"]
+
+
 def test_a_classify_endpoint_off_the_gateways_hosts_is_refused_at_write(required: None) -> None:
     from pydantic import ValidationError
 
     from server.identity.api.models import NamespaceRegisterInput
 
     base = {"org": "acme", "namespace": "ns", "owner_email": "a@acme.test"}
-    for url in ("https://myres.openai.azure.com/classify", "http://169.254.169.254/latest"):
+    for url in (
+        "https://myres.openai.azure.com/classify",
+        "http://169.254.169.254/latest",
+        "http://gateway.example/classify",  # a listed host, but plain http
+        "https://gateway.example:8080/x",  # a listed host, another port
+    ):
         with pytest.raises(ValidationError, match="classify_endpoint"):
             NamespaceRegisterInput(**base, classify_endpoint=url)
     ok = NamespaceRegisterInput(**base, classify_endpoint="https://gateway.example/classify")
@@ -576,11 +660,13 @@ def test_a_stored_classify_endpoint_off_the_gateways_hosts_is_never_called(
         async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, str]:
             return {"classify_endpoint": "https://10.0.0.5/c", "classify_prompt_template": "p"}
 
+    assert classify.classify_refusal("https://gateway.example:8443/c")  # stored, another port
+
     monkeypatch.setattr(ch, "get_client", lambda: _CH())
     monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", set())
     for _ in range(2):
         assert asyncio.run(classify.get_namespace_classify_config("acme", "ns")) == ("", "")
-    warned = [r for r in caplog.records if "classifies at" in r.getMessage()]
+    warned = [r for r in caplog.records if "classify_endpoint is refused" in r.getMessage()]
     assert len(warned) == 1 and "10.0.0.5" in warned[0].getMessage()
     full = {("acme", f"ns-{i}") for i in range(1000)}
     monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", set(full))
