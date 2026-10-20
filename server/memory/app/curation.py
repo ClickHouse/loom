@@ -630,17 +630,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     # quote in place is not a completed redaction.
     cache_rows = await memory_repo.delete_llm_response_cache_by_key(input.org, target.memory_key)
     precedent_rows = await memory_repo.delete_ask_precedents_by_key(input.org, target.memory_key)
-    change = {
-        "org": input.org,
-        "namespace": target.namespace,
-        "agent": target.agent,
-        "user_id": target.user_id,
-        "session_id": target.session_id,
-        "memory_key": target.memory_key,
-        "memory_id": input.memory_id,
-        "version": input.version,
-    }
-    await webhooks.announce([("memory.redacted", change)])
+    await webhooks.announce([("memory.redacted", webhooks.memory_change(target, input.version))])
     return MemoryRedactOutput(
         redacted=True,
         redacted_at=now,

@@ -137,6 +137,7 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], Any]:
     """This process's copy of the registry, fresh for the test."""
     hooks: dict[tuple[str, str], Any] = {}
     monkeypatch.setattr(app, "_hooks", hooks)
+    monkeypatch.setattr(app, "_loaded", True)
     monkeypatch.setattr(app, "_next_read", float("inf"))
     return hooks
 
@@ -172,6 +173,7 @@ async def test_the_registry_copy_is_read_again_and_kept_when_a_read_fails(
 
     monkeypatch.setattr(store, "live_webhooks", live)
     monkeypatch.setattr(app, "_hooks", {})
+    monkeypatch.setattr(app, "_loaded", False)
     monkeypatch.setattr(app, "_next_read", 0.0)
     assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
     # Within the interval the copy serves without a read.
@@ -187,6 +189,30 @@ async def test_the_registry_copy_is_read_again_and_kept_when_a_read_fails(
     app.forget_registry()
     assert await app.subscribers("acme", "chat", "memory.written") == []
     assert await app.namespaces_with_hooks("acme") == []
+
+
+@pytest.mark.asyncio
+async def test_writes_on_a_cold_copy_wait_for_the_first_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two writes at once on a process that has not read the registry yet: both
+    see the webhook, neither takes the empty copy for "none"."""
+    reads: list[int] = []
+
+    async def slow_live() -> list[dict[str, Any]]:
+        reads.append(1)
+        await asyncio.sleep(0.05)
+        return [_registration("wh1")]
+
+    monkeypatch.setattr(store, "live_webhooks", slow_live)
+    monkeypatch.setattr(app, "_hooks", {})
+    monkeypatch.setattr(app, "_loaded", False)
+    monkeypatch.setattr(app, "_next_read", 0.0)
+    both = await asyncio.gather(
+        app.subscribers("acme", "chat", "memory.written"),
+        app.subscribers("acme", "chat", "memory.written"),
+    )
+    assert both == [["wh1"], ["wh1"]] and len(reads) == 1
 
 
 # ------------------------------------------------------------ announcing
@@ -284,12 +310,20 @@ def _events(announced: list[Any]) -> set[tuple[str, str]]:
     return {(e, c["memory_key"]) for call in announced for e, c in call}
 
 
-def test_memory_set_announces_a_change_and_never_a_restatement() -> None:
-    from server.memory.app.write import set_event
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("existing", "restated", "event"),
+    [(False, False, "memory.written"), (True, False, "memory.revised"), (True, True, None)],
+)
+async def test_memory_set_announces_a_change_and_never_a_restatement(
+    announced: list[Any], existing: bool, restated: bool, event: str | None
+) -> None:
+    from server.memory.app.write import _announce_set
 
-    assert set_event(had_existing_row=False, restated=False) == "memory.written"
-    assert set_event(had_existing_row=True, restated=False) == "memory.revised"
-    assert set_event(had_existing_row=True, restated=True) is None
+    row = {"memory_key": "k", "version": 42}
+    w = SimpleNamespace(had_existing_row=existing, memory_row=row)
+    await _announce_set(w, restated=restated)  # type: ignore[arg-type]
+    assert announced == ([[(event, row)]] if event else [])
 
 
 @pytest.mark.asyncio
@@ -608,10 +642,9 @@ class FakeStore:
         return {k for k in keys if k in self.history}
 
     def erase_user(self, user_id: str) -> None:
-        """What the erasure saga does: the events and their attempts, the history."""
-        gone = {o["event_id"] for o in self.outbox if o["user_id"] == user_id}
-        self.outbox = [o for o in self.outbox if o["event_id"] not in gone]
-        self.attempts = [a for a in self.attempts if a["event_id"] not in gone]
+        """What the erasure saga does: the user's events and history go; attempt
+        rows name no user and stay to expire."""
+        self.outbox = [o for o in self.outbox if o["user_id"] != user_id]
         self.history = {k for k in self.history if k[3] != user_id}
 
     def last(self, event_id: str = "ev-1") -> dict[str, Any]:
@@ -715,7 +748,7 @@ async def test_an_event_waits_while_its_secret_is_not_set_and_dies_before_the_tt
     assert fake.latest("ev-2") is None
     await _pass(lambda r: httpx.Response(204), now=NOW + timedelta(days=2, hours=13), env={})
     assert fake.last("ev-2")["status"] == "dead"
-    assert fake.last("ev-2")["last_error"] == "secret never set"
+    assert fake.last("ev-2")["last_error"] == "no usable secret"
 
 
 @pytest.mark.asyncio
@@ -890,6 +923,25 @@ async def test_the_receivers_last_status_survives_a_lease_and_a_cooldown_wait(
 
 
 @pytest.mark.asyncio
+async def test_a_receiver_that_is_always_down_has_every_event_dead_before_the_ttl(
+    fake: FakeStore,
+) -> None:
+    fake.outbox = [_outbox_row(event_id=f"ev-{i}") for i in range(15)]
+    when = NOW
+    while when < NOW + timedelta(days=store.KEEP_DAYS):
+        await _pass(lambda r: httpx.Response(503), now=when)
+        when += timedelta(hours=1)
+        if all(
+            fake.latest(o["event_id"]) and fake.latest(o["event_id"])["status"] == "dead"
+            for o in fake.outbox
+        ):
+            break
+    assert when < NOW + timedelta(days=store.KEEP_DAYS)
+    reasons = {fake.last(o["event_id"])["last_error"] for o in fake.outbox}
+    assert "not delivered in time" in reasons
+
+
+@pytest.mark.asyncio
 async def test_a_backoff_is_measured_from_the_failure(fake: FakeStore) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         CLOCK.advance(7)  # the receiver takes 7 s to fail
@@ -1061,8 +1113,8 @@ async def test_an_erasure_between_a_pass_read_and_its_writes_leaves_nothing_to_s
 
     await _pass(handler)
     assert fake.outbox == []
-    # The pass's outcome landed after the step; it names no key or user.
-    assert [a["status"] for a in fake.attempts] == ["pending"]
+    # The lease and the pass's outcome stay; they name no key or user.
+    assert [a["status"] for a in fake.attempts] == ["leased", "pending"]
     assert "u1" not in json.dumps(fake.attempts, default=str)
     assert KEY[5] not in json.dumps(fake.attempts, default=str)
     seen: list[httpx.Request] = []
@@ -1188,6 +1240,12 @@ async def test_a_url_resolving_inward_is_refused_without_naming_the_address(
     monkeypatch.setattr(settings, "memory_webhook_private_hosts", "")
     refusal = await app.url_refusal(url)
     assert "a private or local address" in refusal and resolves_to not in refusal
+
+
+@pytest.mark.asyncio
+async def test_a_url_that_does_not_parse_is_refused() -> None:
+    assert await app.url_refusal("https://[::1/x") == "the URL is not valid"
+    assert (await signed.pinned_target("https://[::1/x"))[0] == "the URL is not valid"
 
 
 @pytest.mark.asyncio

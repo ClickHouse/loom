@@ -4,7 +4,8 @@ The write paths leave one loom.memory_webhook_outbox row per (event, webhook)
 (server/memory/app/webhooks.py), and nothing rewrites it. Each pass:
 
 - marks dead, in one statement each, the events of removed webhooks and the
-  events that waited `SECRET_DEADLINE` for a secret that was never set;
+  events that waited `SECRET_DEADLINE` for a usable secret, and those a
+  receiver did not take within `DELIVERY_DEADLINE`;
 - takes the due events of the webhooks it can send to (registered, with a
   usable secret, not cooling down) in turns: every webhook's oldest first, then
   every webhook's second, at most `PER_WEBHOOK` of each and
@@ -63,9 +64,11 @@ PER_WEBHOOK = 10
 # How long a leased event is passed over by another copy of the pass: past the
 # pass deadline, so a crashed pass's events come back.
 LEASE_SECONDS = 180
-# An event that waited this long for its webhook's secret is marked dead before
-# the outbox's 3-day TTL drops it, so webhook.deliveries says why.
+# Events still waiting this long are marked dead before the outbox's 3-day TTL drops
+# them, so webhook.deliveries says why: for a usable secret, and for a receiver to take
+# them (a receiver that is down, or one whose backlog never reached its turn).
 SECRET_DEADLINE = timedelta(days=2, hours=12)
+DELIVERY_DEADLINE = timedelta(days=2, hours=18)
 # After this many failed POSTs in a row a webhook is passed over for a cooldown
 # that doubles from COOLDOWN_SECONDS up to MAX_COOLDOWN_SECONDS, reset by a 2xx.
 FAILURES_BEFORE_COOLDOWN = 5
@@ -210,7 +213,7 @@ def _wait_row(row: Mapping[str, Any], *, until: datetime, why: str) -> dict[str,
     )
 
 
-async def _check(row: Mapping[str, Any]) -> dict[str, Any] | None:
+async def _skip_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
     """Why `row` is not sent (a cooldown, an erased key), or None to send it."""
     until = _cooling_until(_hook(row)[2])
     if until is not None:  # failed its last POSTs earlier in this pass
@@ -245,7 +248,7 @@ async def _send(
         hook = _hook(row)
         async with slots:
             try:
-                skipped = await _check(row)
+                skipped = await _skip_row(row)
             except Exception as e:  # noqa: BLE001 — one event's check must not stop the pass
                 # It keeps its lease and goes again once the lease ends.
                 log.warning("memory_webhook_deliver: %s not checked: %s", row["event_id"], e)
@@ -312,8 +315,16 @@ async def deliver_once(
         now,
         since=since,
         hooks=unsecured,
-        reason="secret never set",
+        reason="no usable secret",
         before=now - SECRET_DEADLINE,
+        version=next_version(),
+    )
+    await store.mark_dead(
+        now,
+        since=since,
+        hooks=list(usable),
+        reason="not delivered in time",
+        before=now - DELIVERY_DEADLINE,
         version=next_version(),
     )
     due = await store.due_events(

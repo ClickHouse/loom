@@ -88,10 +88,14 @@ class HistoryTarget:
     memory_key: str
     version: int
     tombstoned_at: Any
+    org: str = ""
+    memory_id: str = ""
 
     @classmethod
     def from_row(cls, r: Mapping[str, Any]) -> HistoryTarget:
         return cls(
+            org=str(r.get("org") or ""),
+            memory_id=str(r.get("memory_id") or ""),
             namespace=str(r.get("namespace") or ""),
             agent=str(r.get("agent") or ""),
             user_id=str(r.get("user_id") or ""),
@@ -239,7 +243,7 @@ async def find_history_target(
         """,
         params={"org": org, "mid": memory_id},
     )
-    return None if r is None else HistoryTarget.from_row(r)
+    return None if r is None else HistoryTarget.from_row({**r, "org": org, "memory_id": memory_id})
 
 
 async def rollback_change_rows(

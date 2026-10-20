@@ -140,7 +140,7 @@ async def test_mark_dead_with_a_deadline_settles_only_the_older_events() -> None
         NOW,
         since=SINCE,
         hooks=[HOOKS[0]],
-        reason="secret never set",
+        reason="no usable secret",
         version=99,
         before=NOW - timedelta(hours=60),
         ch=ch,

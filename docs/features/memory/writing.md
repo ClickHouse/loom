@@ -313,7 +313,7 @@ every webhook of the org that takes the event.
 | Operation            | Role  | What it does                                                                                                                                                                                                                        |
 | -------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `webhook.register`   | admin | Registers `url`, `secret_ref` and `events` (default all six); the same URL again replaces it. At most 10 per namespace: two registrations of one new URL at the same moment can make two webhooks, one past the cap; remove either. |
-| `webhook.list`       | admin | The namespace's webhooks, with `secret_present` (whether the server holds the secret).                                                                                                                                              |
+| `webhook.list`       | admin | The namespace's webhooks, with `secret_present` (whether the replica that answered holds a usable secret).                                                                                                                          |
 | `webhook.remove`     | admin | Removes one by `webhook_id`; its pending events are not sent.                                                                                                                                                                       |
 | `webhook.deliveries` | admin | The last 3 days of events by state: `pending`, `delivered`, `dead`, with the last HTTP status or error.                                                                                                                             |
 
@@ -329,10 +329,11 @@ A secret belongs to the org, not to one webhook: every webhook that names the sa
 before acting on an event.
 
 **URLs.** `https` only, unless `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` is set (a local receiver
-in development), and with no user name or password in it. The host must resolve to public addresses: loopback, private,
-link-local (cloud metadata) and multicast targets are refused at registration and at
-every delivery, unless `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` names the host. Each delivery
-connects to the address it checked and follows no redirect.
+in development), and with no user name or password in it. The host must resolve to
+public addresses: loopback, private, link-local (cloud metadata) and multicast targets
+are refused at registration and at every delivery, unless
+`LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` names the host. Each delivery connects to the address
+it checked and follows no redirect.
 
 **Delivery.** The write leaves one row per event and webhook in
 `loom.memory_webhook_outbox` and makes no network call; the `memory_webhook_deliver`
@@ -358,7 +359,7 @@ sweep, the `delete_version` check).
   while there is work: some 8 events a second per deployment.
 - **Waiting and dead events.** While the variable `secret_ref` names is unset or not
   usable (a `whsec_` value that is not base64), the webhook's events wait, and the wait
-  counts as no attempt; after 2.5 days they are marked `dead` with "secret never set".
+  counts as no attempt; after 2.5 days they are marked `dead` with "no usable secret".
   The events of a removed webhook are marked `dead` at once; registering the same URL
   again creates a new webhook that does not inherit them. An event whose memory was
   erased before it went out is marked `dead` and not sent: the key's history is read just

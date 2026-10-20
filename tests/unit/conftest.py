@@ -454,10 +454,10 @@ def _no_memory_webhooks() -> Iterator[None]:
     `monkeypatch`: requesting it would set it up ahead of the settings guard."""
     from server.memory.app import webhooks
 
-    before = webhooks._hooks, webhooks._next_read
-    webhooks._hooks, webhooks._next_read = {}, float("inf")
+    before = webhooks._hooks, webhooks._loaded, webhooks._next_read
+    webhooks._hooks, webhooks._loaded, webhooks._next_read = {}, True, float("inf")
     yield
-    webhooks._hooks, webhooks._next_read = before
+    webhooks._hooks, webhooks._loaded, webhooks._next_read = before
 
 
 @pytest.fixture(autouse=True)

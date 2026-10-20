@@ -314,7 +314,8 @@ async def namespace_deliveries(
     if status:
         outer = "WHERE status = {status:String}"
         params["status"] = status
-    events = f"SELECT event_id FROM {OUTBOX} WHERE {' AND '.join(where)}"
+    scope = " AND ".join(where)
+    cols = "event_id, webhook_id, event_type, memory_key, memory_id, memory_version, occurred_at"
     return await ch.query_all(
         f"""
         SELECT * FROM (
@@ -329,9 +330,9 @@ async def namespace_deliveries(
                        AS next_attempt_at,
                    ifNull(a.last_status, 0) AS last_status,
                    ifNull(a.last_error, '') AS last_error
-            FROM {OUTBOX} AS o
-            LEFT JOIN ({_latest_attempts(events)}) AS a ON a.event_id = o.event_id
-            WHERE {" AND ".join(f"o.{w}" for w in where)}
+            FROM (SELECT {cols} FROM {OUTBOX} WHERE {scope}) AS o
+            LEFT JOIN ({_latest_attempts(f"SELECT event_id FROM {OUTBOX} WHERE {scope}")}) AS a
+                ON a.event_id = o.event_id
         )
         {outer}
         ORDER BY occurred_at DESC

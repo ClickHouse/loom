@@ -41,8 +41,8 @@ class WebhookInfo(BaseModel):
     events: list[EventType]
     created_by: str = ""
     created_at: datetime | None = None
-    # Whether this server holds a usable secret in the variable secret_ref names; events
-    # wait until it does.
+    # Whether the replica that answered holds a usable secret in the variable secret_ref
+    # names; events wait until the worker's does.
     secret_present: bool = False
 
 

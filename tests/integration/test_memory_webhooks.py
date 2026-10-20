@@ -35,8 +35,6 @@ pytestmark = pytest.mark.asyncio
 ORG = unique_org("memhook")
 SECRET = "whsec_" + base64.b64encode(b"memory-webhook-test-secret-32by!").decode()
 REF = webhook_secret_org_prefix(ORG) + "CHAT"
-# Every server process reads the registry within its refresh interval.
-REGISTRY_WAIT = settings.memory_webhook_refresh_seconds + 1
 
 
 class Receiver:
@@ -92,7 +90,7 @@ class Ops:
 
     async def __call__(self, op: str, *, expect: int = 200, **body: Any) -> dict[str, Any]:
         body.setdefault("org", ORG)
-        if op != "memory.update_by_id" and op != "memory.redact" and op != "erasure.request":
+        if op not in {"memory.update_by_id", "memory.redact", "erasure.request"}:
             body.setdefault("namespace", self.ns)
         r = await self.client.post(
             f"/v1/{op}", json=body, headers={"authorization": f"Bearer {self.token}"}
@@ -112,8 +110,35 @@ class Ops:
                 "LOOM_MEMORY_WEBHOOK_ALLOW_HTTP=true LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS=127.0.0.1"
             )
         assert r.status_code == 200, r.text
-        await asyncio.sleep(REGISTRY_WAIT)
-        return r.json()["webhook"]
+        hook = r.json()["webhook"]
+        listed = await self("webhook.list")
+        assert hook["webhook_id"] in [h["webhook_id"] for h in listed["webhooks"]]
+        await self._until_announced(url)
+        return hook
+
+    async def _until_announced(self, url: str) -> None:
+        """Until the server's processes announce writes for webhooks registered now:
+        a probe webhook, registered after the test's own, in a namespace of its own,
+        and probe writes until three in a row leave an event (each process reads the
+        registry within its refresh interval, and every registration in one read)."""
+        probe = f"{self.ns}-probe"
+        await self("webhook.register", namespace=probe, url=url, secret_ref=REF)
+        in_a_row = 0
+        for i in range(120):
+            key = f"probe/{i}"
+            await self(
+                "memory.set",
+                namespace=probe,
+                agent="probe",
+                memory_key=key,
+                value=f"probe {uuid.uuid4().hex}",
+            )
+            seen = await self("webhook.deliveries", namespace=probe, limit=500)
+            in_a_row = in_a_row + 1 if key in {d["memory_key"] for d in seen["deliveries"]} else 0
+            if in_a_row == 3:
+                return
+            await asyncio.sleep(0.25)
+        raise AssertionError("the server never announced a probe write")
 
 
 @pytest.fixture

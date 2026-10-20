@@ -28,7 +28,7 @@ import os
 import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 from server.core import webhooks as signed
@@ -64,6 +64,9 @@ MAX_PER_NAMESPACE = 10
 Hooks = dict[tuple[str, str], tuple[tuple[str, frozenset[str]], ...]]
 # (org, namespace) → ((webhook_id, its event types), ...), this process's copy.
 _hooks: Hooks = {}
+# Whether a read has landed: until one has, every caller waits for it rather than
+# taking the empty copy for "no webhook anywhere".
+_loaded = False
 _next_read = 0.0
 _lock = asyncio.Lock()
 
@@ -80,7 +83,10 @@ async def url_refusal(url: str) -> str:
     unless the deployment allows http, no user name or password, and a host
     that resolves to public addresses unless memory_webhook_private_hosts
     names it."""
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "the URL is not valid"
     if parts.username is not None or parts.password is not None:
         return "the URL may not carry a user name or password"
     refusal, *_ = await signed.pinned_target(
@@ -93,19 +99,22 @@ async def url_refusal(url: str) -> str:
 
 
 async def _read() -> None:
-    global _hooks, _next_read
-    _next_read = time.monotonic() + settings.memory_webhook_refresh_seconds
+    """Read the registry; the next read is due an interval after this one ends."""
+    global _hooks, _loaded, _next_read
     try:
         rows = await store.live_webhooks()
     except Exception as e:  # noqa: BLE001 — the last copy serves until a read lands
+        # Before the first read lands there is no copy: this write announces nothing.
         degradations.note("memory.webhook", "registry_unread", e)
         log.warning("memory webhooks: registry read failed (%s); serving the last copy", e)
+        _next_read = time.monotonic() + settings.memory_webhook_refresh_seconds
         return
     hooks: dict[tuple[str, str], list[tuple[str, frozenset[str]]]] = {}
     for r in rows:
         key = (str(r["org"]), str(r["namespace"]))
         hooks.setdefault(key, []).append((str(r["webhook_id"]), frozenset(r["events"])))
-    _hooks = {k: tuple(v) for k, v in hooks.items()}
+    _hooks, _loaded = {k: tuple(v) for k, v in hooks.items()}, True
+    _next_read = time.monotonic() + settings.memory_webhook_refresh_seconds
 
 
 def forget_registry() -> None:
@@ -115,11 +124,14 @@ def forget_registry() -> None:
 
 
 async def _fresh_hooks() -> Hooks:
-    """This process's copy of the registry, read again once its interval is up."""
-    if time.monotonic() >= _next_read:
-        async with _lock:
-            if time.monotonic() >= _next_read:
-                await _read()
+    """This process's copy of the registry, read again once its interval is up. A
+    caller that finds no copy yet waits for the first read; later callers wait
+    only while a refresh is under way."""
+    if _loaded and time.monotonic() < _next_read:
+        return _hooks
+    async with _lock:
+        if not _loaded or time.monotonic() >= _next_read:
+            await _read()
     return _hooks
 
 
@@ -197,7 +209,32 @@ async def announce(changes: Sequence[tuple[EventType, Mapping[str, Any]]]) -> No
         log.warning("memory webhooks: %d changes not announced: %s", len(changes), e)
 
 
-def memory_change(memory: Any, version: int) -> dict[str, Any]:
+class MemoryRef(Protocol):
+    """What names a memory version for an event: a memory row, a history target."""
+
+    @property
+    def org(self) -> str: ...
+
+    @property
+    def namespace(self) -> str: ...
+
+    @property
+    def agent(self) -> str: ...
+
+    @property
+    def user_id(self) -> str: ...
+
+    @property
+    def session_id(self) -> str: ...
+
+    @property
+    def memory_key(self) -> str: ...
+
+    @property
+    def memory_id(self) -> str: ...
+
+
+def memory_change(memory: MemoryRef, version: int) -> dict[str, Any]:
     """The change `announce` takes, for a memory row object at `version`."""
     return {
         "org": memory.org,

@@ -104,8 +104,11 @@ async def pinned_target(
     addresses only (`vet_host`), and the request goes to the address vetted
     here. A host named in `private_hosts` (an operator's allowlist, lower case)
     may resolve to a private or loopback address and is reached by its name."""
-    parts = urlsplit(url)
-    host = parts.hostname or ""
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+    except ValueError:
+        return "the URL is not valid", "", "", ""
     if parts.scheme not in schemes or not host:
         return f"the URL must be {' or '.join(sorted(schemes))} with a host", "", "", ""
     try:
@@ -157,7 +160,10 @@ async def post(
     delivery has its own client: a pooled connection is keyed by the pinned
     address, so a second registration on the same address would reuse a TLS
     session verified for another name."""
-    host = urlsplit(url).hostname or ""
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:
+        host = ""
     try:
         async with asyncio.timeout(ACK_TIMEOUT_SECONDS):
             refusal, pinned, host_header, server_name = await pinned_target(

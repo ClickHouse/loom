@@ -208,7 +208,7 @@ async def apply_rollback(
     )
 
 
-def _reinstate_event(historical: Any, action: svc.RollbackAction) -> EventType:
+def _reinstate_event(historical: store.MemoryRow, action: svc.RollbackAction) -> EventType:
     """What reinstating `historical` is to a webhook: back to a tombstone, a
     revival of a key that is tombstoned now, or a revision."""
     if historical.tombstoned_at:

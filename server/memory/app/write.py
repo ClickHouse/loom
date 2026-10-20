@@ -700,19 +700,14 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     return out
 
 
-def set_event(*, had_existing_row: bool, restated: bool) -> EventType | None:
-    """The webhook event a committed memory.set is: a new key is written, a new
-    value of one is revised, and the same value said again (a reinforcement)
-    is no change to announce."""
-    if restated:
-        return None
-    return "memory.revised" if had_existing_row else "memory.written"
-
-
 async def _announce_set(w: _SetWrite, *, restated: bool) -> None:
-    event = set_event(had_existing_row=w.had_existing_row, restated=restated)
-    if event:
-        await webhooks.announce([(event, w.memory_row)])
+    """The committed row, to the namespace's webhooks: a new key is written, a new
+    value of one is revised, and the same value said again (a reinforcement) is no
+    change to announce."""
+    if restated:
+        return
+    event: EventType = "memory.revised" if w.had_existing_row else "memory.written"
+    await webhooks.announce([(event, w.memory_row)])
 
 
 def _stamp_lifecycle(
