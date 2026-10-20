@@ -278,8 +278,8 @@ class SearchHit:
     # Not on the wire; "" for every other plane.
     parent_memory_key: str = ""
     # Stable, caller-facing decomposition of the final score. Values are
-    # approximate for blended modes but let normal memory.search callers
-    # see the major ranking signals without calling search_trace.
+    # approximate for blended modes but let memory.search callers see the
+    # major ranking signals.
     score_components: dict[str, float] = field(default_factory=dict)
     # Provenance class of the row (asserted | extracted | observed | derived |
     # imported | external; '' when unset).
@@ -310,6 +310,11 @@ class SearchTraceHit(SearchHit):
 
     entity_boost: float = 0.0
     rank_score: float = 0.0
+
+
+# The score_components entry holding a reranked row's own fused score: its rank_score is
+# then the score of the rank the reranker gave it (`search/ranking.py`).
+RANK_SCORE_PRE_RERANK = "rank_score_pre_rerank"
 
 
 def hit_sort_key(h: Any) -> tuple[float, float, str]:
