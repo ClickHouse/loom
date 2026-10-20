@@ -540,9 +540,9 @@ def test_an_agents_token_names_lent_namespaces_by_name_until_the_next_would_not_
     "lent",
     [
         [f"{i:03}" + "x" * 125 for i in range(30)],  # the longest names a namespace may have
-        [f"{i:03}" for i in range(600)],  # the shortest: the overhead per name dominates
+        [f"{i:03}" for i in range(600)],  # three-byte names: the per-name overhead dominates
     ],
-    ids=["longest", "shortest"],
+    ids=["longest", "short"],
 )
 def test_an_agents_token_stays_under_a_proxys_header_limit(bots, lent: list[str]) -> None:
     bots["active"].update({"fleet-a1", *lent})
@@ -550,8 +550,10 @@ def test_an_agents_token_stays_under_a_proxys_header_limit(bots, lent: list[str]
     r = _exchange(TestClient(oauth_app()), _ci_token(bots, agent_id="a1"), client_id="fleet")
     token = r.json()["access_token"]
     claims = pyjwt.decode(token, options={"verify_signature": False})
-    named = [ns for ns in claims["namespaces"] if ns in set(lent)]
-    assert agents.token_bytes(named) <= agents.LENT_TOKEN_BYTES < agents.token_bytes(lent)
+    wanted = set(lent)
+    named = [ns for ns in claims["namespaces"] if ns in wanted]
+    used = sum(map(agents.token_bytes, named))
+    assert used <= agents.LENT_TOKEN_BYTES < used + agents.token_bytes(lent[len(named)])  # full
     assert len(f"Authorization: Bearer {token}") < 8192 - 1024  # room for the other headers
 
 

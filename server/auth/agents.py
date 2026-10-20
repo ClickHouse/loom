@@ -73,10 +73,10 @@ def lent(roles: dict[str, str], held: dict[str, str]) -> list[str]:
     return [ns for ns in held if ns not in roles]
 
 
-def token_bytes(names: list[str]) -> int:
-    """What `names` cost in a token: each goes in `namespaces` ("ns",) and in
-    `ns_roles` ("ns":"viewer",)."""
-    return sum(2 * len(ns.encode()) + 15 for ns in names)
+def token_bytes(ns: str) -> int:
+    """What one name costs in a token: `"ns",` in `namespaces` and
+    `"ns":"viewer",` in `ns_roles`."""
+    return 2 * len(ns.encode()) + 15
 
 
 async def with_grants(
@@ -97,16 +97,14 @@ async def with_grants(
     for ns, role in held.items():
         if ns in roles and grant_rank(role) > grant_rank(roles[ns]):
             roles[ns] = role
-    used = 0
-    for kept, ns in enumerate(extra):
-        cost = token_bytes([ns])
-        if used + cost > LENT_TOKEN_BYTES:
-            left_out = len(extra) - kept
+    used = kept = 0
+    for ns in extra:
+        used += token_bytes(ns)
+        if used > LENT_TOKEN_BYTES:
             break
         roles[ns] = held[ns]
-        used += cost
-    else:
-        left_out = 0
+        kept += 1
+    left_out = len(extra) - kept
     if left_out:
         log.warning(
             "agent %s of %s: %d granted namespaces left out of its token",

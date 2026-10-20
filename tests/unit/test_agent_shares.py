@@ -193,7 +193,7 @@ def test_an_agent_whose_lent_names_fill_its_token_takes_no_new_one(calls, world)
     _as("sa:fleet:a")
     full = {f"ns-{i:02}-" + "x" * 58: 1 for i in range(agents.LENT_TOKEN_BYTES // 143)}  # 143 each
     full["filler1"] = 1  # what is left is less than fleet-a's 29 bytes
-    assert agents.token_bytes([*full, "fleet-a"]) > agents.LENT_TOKEN_BYTES
+    assert sum(map(agents.token_bytes, [*full, "fleet-a"])) > agents.LENT_TOKEN_BYTES
     world["ranks"] = full | {"fleet-b": 3}
     with pytest.raises(PreconditionFailedError):
         _share()

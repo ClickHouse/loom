@@ -88,7 +88,7 @@ async def handle_grants_share_agent(input: GrantsShareAgentInput) -> GrantsShare
     roles = {agents.home_of(subject): "writer", **dict(m["ns_roles"] if m else [])}
     extra = agents.lent(roles, await agents.granted(input.org, subject))
     if input.namespace not in extra and (
-        agents.token_bytes([*extra, input.namespace]) > agents.LENT_TOKEN_BYTES
+        sum(map(agents.token_bytes, [*extra, input.namespace])) > agents.LENT_TOKEN_BYTES
     ):
         raise PreconditionFailedError(
             f"agent {input.agent} holds as many lent namespaces as its token names; "
