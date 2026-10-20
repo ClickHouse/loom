@@ -3,11 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SearchHit } from "../api";
 import { axeViolations } from "../test/axe";
-import { SearchWhy } from "./SearchWhy";
+import { SearchScores, SearchWhy } from "./SearchWhy";
 
-// A ranked hit's "Why this result": an info button in the row's meta slot
-// whose popover says the rank, similarity, blended score and the signed ranking terms, so
-// the Memories list says why a row is there without a debug line under every row.
+// A ranked hit's similarity and score, shown in the row's meta line, and its "Why this
+// result": an info button after the meta whose popover says the rank, similarity, blended
+// score and the signed ranking terms.
 
 const hit = (over: Partial<SearchHit> = {}): SearchHit => ({
   memory_key: "k1",
@@ -28,23 +28,20 @@ const open = async () => {
 describe("SearchWhy", () => {
   afterEach(cleanup);
 
-  it("is closed until opened; the popover shows rank, similarity, score and the terms by magnitude", async () => {
-    // In <main>, as on the page: the row's scores are page content.
+  it("is one button until opened; the popover shows rank, similarity, score and the terms by magnitude", async () => {
     const { container } = render(
-      <main>
-        <SearchWhy
-          rank={3}
-          hit={hit({
-            explanation: "fact hit from namespace alice; similarity=0.62; rank_score=0.71; mode=hybrid",
-            score_components: {
-              rank_score: 0.71,
-              key_match_boost_effective: 0.12,
-              date_proximity_boost: -0.05,
-              semantic: 0.25,
-            },
-          })}
-        />
-      </main>,
+      <SearchWhy
+        rank={3}
+        hit={hit({
+          explanation: "fact hit from namespace alice; similarity=0.62; rank_score=0.71; mode=hybrid",
+          score_components: {
+            rank_score: 0.71,
+            key_match_boost_effective: 0.12,
+            date_proximity_boost: -0.05,
+            semantic: 0.25,
+          },
+        })}
+      />,
     );
     expect(screen.queryByTestId("search-why")).toBeNull();
     const why = await open();
@@ -58,15 +55,14 @@ describe("SearchWhy", () => {
     expect(await axeViolations(container.ownerDocument.body)).toEqual([]);
   });
 
-  it("shows the similarity and score on the row without opening the popover", () => {
-    render(<SearchWhy rank={1} hit={hit()} />);
+  it("shows a hit's similarity and score", () => {
+    render(<SearchScores hit={hit()} />);
     expect(screen.getByTestId("search-score")).toHaveTextContent("similarity 0.62 · score 0.71");
-    expect(screen.queryByTestId("search-why")).toBeNull();
   });
 
-  it("shows no score for a keyword row", () => {
-    render(<SearchWhy contains="refund" />);
-    expect(screen.queryByTestId("search-score")).toBeNull();
+  it("leaves out a score the server did not send", () => {
+    render(<SearchScores hit={hit({ similarity: Number.NaN })} />);
+    expect(screen.getByTestId("search-score")).toHaveTextContent(/^score 0\.71$/);
   });
 
   it("marks a term that pushed the hit down", async () => {
