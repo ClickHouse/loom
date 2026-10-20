@@ -193,7 +193,8 @@ with more than one admin, registered first, in one org); its tokens are for
   condition, never as the only one). `--jwks-uri`
   names where the issuer publishes its keys when its discovery document is not
   reachable from Loom. A token that lives minutes is fine: Loom's never
-  outlives it, and the SDK and the coding-agent plugins renew halfway through.
+  outlives it, and the SDKs and the coding-agent plugins renew it before it
+  runs out (below).
   Instead of the agent holding its token, a proxy in front of it can make the
   same exchange and add the `Authorization` header itself. An exchange may
   leave out `client_id` (RFC 8693 does not require it): Loom then takes the one
@@ -223,9 +224,14 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   issuer's key can use up a trust's budget, and an agent refused at its own
   limit spends none of the trust's. Raise the trust's limit for a fleet whose
   agents renew often. The SDKs and the plugins renew five minutes before the
-  token runs out, or halfway through its life when that comes sooner, in each
-  process: a one-hour workload token renews after 55 minutes, a five-minute
-  one every 2.5 minutes (four exchanges per 10 minutes per process).
+  token runs out, or halfway through its life when that comes sooner; the
+  SDKs renew in each process, the plugins once per agent home. A one-hour
+  workload token renews after 55 minutes; a five-minute one every 2.5
+  minutes, four exchanges per 10 minutes when each renewal presents a fresh
+  token. Loom's token lives only as long as the workload token has left, so
+  a workload token the platform replaces partway through its life is renewed
+  more often: about 7 exchanges per 10 minutes for a five-minute token
+  replaced at 80 % of its life.
 
 - `loom bot list` shows them; `loom bot disable --name …` refuses every later
   proof and revokes the tokens the bot holds, and `loom bot create --replace`
