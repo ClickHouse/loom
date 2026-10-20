@@ -665,6 +665,62 @@ async def test_an_org_under_erasure_is_left_out_of_the_queue(
     assert (await queue.queued_namespaces() == []) is left_out
 
 
+@pytest.mark.parametrize("path", ["memory.set", "memory.bulk_set"])
+async def test_an_empty_user_is_the_anonymous_user_and_owes_no_other_session(
+    ch, wired, monkeypatch, path
+) -> None:
+    """A write sent with user_id "" stores '-', so the anonymous user's rules hold: the
+    same key from another session is owed no judgement."""
+    from server.embedding import get_embedder
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write, bulk_set, set_commit
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    org, _ = wired
+    _policy(monkeypatch, "auto_reinforce")
+    real = get_embedder()
+
+    class Apart:
+        """Every text in its own direction: no cosine peer at all."""
+
+        dim, model_name = real.dim, real.model_name
+        n = 200
+
+        async def embed(self, text: str) -> list[float]:
+            Apart.n += 1
+            return _vec((Apart.n, 1.0))
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            return [await self.embed(t) for t in texts]
+
+    monkeypatch.setattr(set_commit, "get_embedder", lambda: Apart())
+    monkeypatch.setattr(bulk_set, "get_embedder", lambda: Apart(), raising=False)
+
+    async def write(session: str, value: str) -> None:
+        if path == "memory.set":
+            await _set(org, session, "office", value, user="")
+            return
+        entry = {"memory_key": "office", "value": value, "memory_type": "semantic"}
+        await handle_memory_bulk_set(
+            MemoryBulkSetInput(
+                org=org, namespace=NS, agent="bot", user_id="", session_id=session, entries=[entry]
+            )
+        )
+
+    await write("s1", "office: Paris")
+    await after_write.drain()
+    await write("s2", "The office moved to Rome last week")
+    await after_write.drain()
+    rows = await ch.query_all(
+        "SELECT user_id, session_id, toUnixTimestamp(conflict_checked_at) AS mark"
+        " FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND memory_key = 'office'"
+        " AND tombstoned_at IS NULL SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert {r["user_id"] for r in rows} == {"-"}
+    assert {r["session_id"]: r["mark"] for r in rows} == {"s1": None, "s2": None}
+
+
 async def test_a_point_write_of_a_key_another_session_holds_is_owed(ch, wired, monkeypatch) -> None:
     """memory.set and memory.update_by_id from s2 of a key s1 holds live are owed a
     judgement under auto_reinforce, though no peer sits near them."""
