@@ -618,9 +618,10 @@ drop, and its replay, reads the row as it is then: a row no longer `high` is ski
 later plain write's links are its own), and one still `high` keeps only the edges of
 the entities on it, whatever later write (a pin, a lock, a relabel) kept it high. A
 write of the row that lands during the drop keeps its links and edges: after its DELETE
-the drop reads the rows again, writes back the links a row still holds and opens their
-edges again. A close recorded for a high row names no value: its repair ends each of the row's values
-with an open edge that the row no longer holds, and keeps the edges between entities
+the drop reads the rows again, writes back the links a row still holds and undoes the
+ends its own close stamped on their edges, so a stated end or a weight stays. A close
+recorded for a high row names no value: its repair ends each of the row's values with an
+open edge that the row no longer holds, and keeps the edges between entities
 the row names. It reads only values with a pair that can close (no other live row holds
 it), 20 pages of 100 a pass, its own queued closes read as applied; each value it reads
 closes, so a pass that runs out leaves the failure active and the next pass reads what is

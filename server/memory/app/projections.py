@@ -1212,7 +1212,7 @@ async def end_edges(
     ends: list[tuple[str, str, datetime]],
     open_only: bool = False,
     skip_versions: Sequence[tuple[str, str]] = (),
-) -> None:
+) -> list[str]:
     """End each edge (entity_a, entity_b, end) still valid after its `end`, or only the
     still-open ones with `open_only`, as a close ends a triple, unless a live row still
     names both entities: its current value has a link to the pair (`entity_edge_rows`),
@@ -1226,9 +1226,11 @@ async def end_edges(
     the reopen opens only those. The links of the values `skip_versions` ((memory_id,
     content_sha256)) hold nothing while their row is 'high': they are about to be
     deleted. The edges go a parameter's worth at a time (`param_slices`): long entity
-    names make a long list of pairs."""
+    names make a long list of pairs. Returns the ids the closes stamped, one per slice
+    that ended an open edge (`reopen_closed_by` undoes them)."""
+    close_ids = []
     for part in param_slices(ends):
-        await _end_edges_slice(
+        close_id = await _end_edges_slice(
             ch,
             org=org,
             namespace=namespace,
@@ -1236,6 +1238,9 @@ async def end_edges(
             open_only=open_only,
             skip_versions=skip_versions,
         )
+        if close_id:
+            close_ids.append(close_id)
+    return close_ids
 
 
 async def _end_edges_slice(
@@ -1246,8 +1251,10 @@ async def _end_edges_slice(
     ends: list[tuple[str, str, datetime]],
     open_only: bool,
     skip_versions: Sequence[tuple[str, str]],
-) -> None:
-    """`end_edges` for edges whose pairs bind as one parameter."""
+) -> str:
+    """`end_edges` for edges whose pairs bind as one parameter; the id it stamped on the
+    open edges it ended, or "" when it ended none."""
+    close_id = uuid.uuid4().hex
     params = {
         "org": org,
         "ns": namespace,
@@ -1255,7 +1262,7 @@ async def _end_edges_slice(
         "pairs": [(a, b) for a, b, _end in ends],
         "ends": [end.replace(microsecond=0) for _a, _b, end in ends],
         "edge_links": EDGE_ROW_LINKS_MIGRATION,
-        "close_id": uuid.uuid4().hex,
+        "close_id": close_id,
     }
     where = _STILL_OPEN_EDGES_WHERE if open_only else _OPEN_EDGES_WHERE
     found = await ch.query_all(
@@ -1273,7 +1280,7 @@ async def _end_edges_slice(
         params=params,
     )
     if not found:
-        return
+        return ""
     pairs = {(str(r["entity_a"]), str(r["entity_b"])): r for r in found}
     # The open edges first: if a row names the pair meanwhile, the check after opens them
     # again. An edge with a stated later end ("until Dec 2026") ends after that check,
@@ -1290,6 +1297,7 @@ async def _end_edges_slice(
     later = sorted(p for p, r in pairs.items() if r["later"] and p not in held)
     if later:
         await _end_edge_rows(ch, f"{_OPEN_EDGES_WHERE} AND valid_to IS NOT NULL", params, later)
+    return close_id if closing else ""
 
 
 async def _end_edge_rows(
@@ -1358,6 +1366,30 @@ async def reopen_held_edges(
 
     _graph_marks.note_write(params["org"], params["ns"])
     return held_pairs
+
+
+async def reopen_closed_by(
+    ch: Any, *, org: str, namespace: str, close_ids: list[str], pairs: list[tuple[str, str]]
+) -> None:
+    """Undo the ends the closes `close_ids` (from `end_edges`) stamped on the edges of
+    `pairs`: only those rows open again, so a stated end, a weight or a start another row
+    gave the pair stays as it was."""
+    if not close_ids or not pairs:
+        return
+    for part in param_slices(pairs):
+        await ch.execute(
+            """
+            ALTER TABLE loom.entity_edges
+            UPDATE valid_to = NULL, closed_by = ''
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND closed_by IN {close_ids:Array(String)}
+              AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
+            """,
+            params={"org": org, "ns": namespace, "close_ids": close_ids, "pairs": part},
+        )
+    from server.memory.app import graph_write_marks as _graph_marks
+
+    _graph_marks.note_write(org, namespace)
 
 
 async def open_triples_among(

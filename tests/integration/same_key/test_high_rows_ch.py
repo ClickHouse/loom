@@ -1276,11 +1276,11 @@ async def test_a_link_written_inside_a_drop_keeps_its_edge_and_survives(
     )
     real = projections.end_edges
 
-    async def a_later_link_first(*a: Any, **kw: Any) -> None:
+    async def a_later_link_first(*a: Any, **kw: Any) -> list[str]:
         monkeypatch.setattr(projections, "end_edges", real)
         # The writer re-sets the row plain, naming Carol King: its own links land.
         await _high_set(org, "s1", "contact", later, sensitivity="low")
-        await real(*a, **kw)
+        return await real(*a, **kw)
 
     monkeypatch.setattr(projections, "end_edges", a_later_link_first)
     scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
@@ -1321,7 +1321,7 @@ async def test_a_high_re_set_naming_more_inside_a_drop_keeps_those_links(
     )
     real = projections.end_edges
 
-    async def named_more_first(*a: Any, **kw: Any) -> None:
+    async def named_more_first(*a: Any, **kw: Any) -> list[str]:
         monkeypatch.setattr(projections, "end_edges", real)
         await _high_set(
             org,
@@ -1331,7 +1331,7 @@ async def test_a_high_re_set_naming_more_inside_a_drop_keeps_those_links(
             sensitivity="high",
             entities=["Alice Smith", "Bob Lane", "Carol King"],
         )
-        await real(*a, **kw)
+        return await real(*a, **kw)
 
     monkeypatch.setattr(projections, "end_edges", named_more_first)
     scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
@@ -1346,14 +1346,85 @@ async def test_a_high_re_set_naming_more_inside_a_drop_keeps_those_links(
     assert ("alice smith", "carol king") in await _open_edge_pairs(ch, org)
 
 
+async def test_a_restored_link_keeps_its_edges_stated_end_and_weight(ch, org, monkeypatch) -> None:
+    """A value stated to hold until 2030 links Alice and Carol; the row is made high and,
+    inside its drop, re-set plain with the same value: the link comes back and the edge
+    rows are as they were, end and weight, not a fresh open row."""
+    from datetime import datetime
+
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write, edge_links, projections
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+    from server.memory.app.projection_errors import ProjectionScope
+
+    value = "Alice Smith met Bob Lane and Carol King in Berlin"
+    until = datetime(2030, 12, 31)
+
+    async def stated(**kw: Any) -> None:
+        entry = {
+            "memory_key": "contact",
+            "value": value,
+            "valid_to": until,
+            "entities": ["Alice Smith", "Bob Lane", "Carol King"],
+            **kw,
+        }
+        await handle_memory_bulk_set(
+            MemoryBulkSetInput(
+                org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=[entry]
+            )
+        )
+        await after_write.drain()
+
+    async def edge_rows() -> list[tuple[Any, Any, int]]:
+        await _mutations_done(ch, org)
+        rows = await ch.query_all(
+            "SELECT valid_from, valid_to, co_occur FROM loom.entity_edges"
+            " WHERE org = {org:String} AND entity_a = 'alice smith' AND entity_b = 'carol king'"
+            " AND invalid_at IS NULL SETTINGS select_sequential_consistency = 1",
+            params={"org": org},
+        )
+        return sorted((r["valid_from"], r["valid_to"], int(r["co_occur"])) for r in rows)
+
+    await stated()
+    before = await edge_rows()
+    assert before and all(valid_to is not None for _, valid_to, _ in before)
+
+    async def nothing(*a: Any, **kw: Any) -> None:
+        return None
+
+    with monkeypatch.context() as m:
+        m.setattr(edge_links, "drop_undeclared_links", nothing)  # the drop runs below
+        out = await _high_set(
+            org, "s1", "contact", value, sensitivity="high", entities=["Alice Smith", "Bob Lane"]
+        )
+    head = await ch.query_one(
+        "SELECT version FROM loom.memory FINAL WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    real = projections.end_edges
+
+    async def plain_before_the_delete(*a: Any, **kw: Any) -> list[str]:
+        monkeypatch.setattr(projections, "end_edges", real)
+        close_ids = await real(*a, **kw)
+        await stated(sensitivity="low")
+        return close_ids
+
+    monkeypatch.setattr(projections, "end_edges", plain_before_the_delete)
+    scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    await edge_links.drop_undeclared_links(scope, {str(out.memory_id): int(head["version"])}, ch=ch)
+    after = await edge_rows()
+    assert all(valid_to is not None for _, valid_to, _ in after), after
+    assert sum(w for *_, w in after) == sum(w for *_, w in before) + 1  # the re-set's own
+
+
 async def test_a_same_value_plain_re_set_before_the_drops_delete_keeps_its_links(
     ch, org, monkeypatch
 ) -> None:
-    """A row made high; its drop reads its links twice, and right after the second read
-    the row is re-set plain with the same value, before the DELETE: its links come back
-    and its edges stay open."""
+    """A row made high; its drop ends the edges, and right after, before the DELETE, the
+    row is re-set plain with the same value: its links come back and its edges open."""
     from server.core.hashing import sha256_value
-    from server.memory.app import edge_links
+    from server.memory.app import edge_links, projections
     from server.memory.app.projection_errors import ProjectionScope
 
     value = "Alice Smith met Bob Lane and Carol King in Berlin"
@@ -1372,17 +1443,15 @@ async def test_a_same_value_plain_re_set_before_the_drops_delete_keeps_its_links
         " SETTINGS select_sequential_consistency = 1",
         params={"org": org},
     )
-    real_high = edge_links._rows_still_high
-    reads: list[int] = []
+    real = projections.end_edges
 
-    async def plain_after_the_second_read(*a: Any, **kw: Any) -> dict[str, set[str]]:
-        got = await real_high(*a, **kw)
-        reads.append(1)
-        if len(reads) == 2:  # the read right before the DELETE
-            await _high_set(org, "s1", "contact", value, sensitivity="low")
-        return got
+    async def plain_before_the_delete(*a: Any, **kw: Any) -> list[str]:
+        monkeypatch.setattr(projections, "end_edges", real)
+        close_ids = await real(*a, **kw)
+        await _high_set(org, "s1", "contact", value, sensitivity="low")
+        return close_ids
 
-    monkeypatch.setattr(edge_links, "_rows_still_high", plain_after_the_second_read)
+    monkeypatch.setattr(projections, "end_edges", plain_before_the_delete)
     scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
     await edge_links.drop_undeclared_links(scope, {str(out.memory_id): int(head["version"])}, ch=ch)
     linked = await ch.query_all(
