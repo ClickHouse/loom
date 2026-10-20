@@ -77,8 +77,7 @@ def _reset_for_tests(
     _policies._reset_for_tests(
         dict(policies or {}) if read else None,
         read_age_s=0.0 if read else None,
-        due=not read,
-        refresh_s=settings.model_calls_policy_refresh_seconds,
+        due_in_s=settings.model_calls_policy_refresh_seconds if read else 0.0,
     )
 
 
@@ -89,7 +88,8 @@ def _scope(
     one_org(input.org)
     if input.scope == "org":
         return input.org, ""
-    # "", "-" and "*" name no namespace; "@me" is an end user's alias, never a row.
+    # "", "-" and "*" name no namespace. "@me" is an end user's alias, never a row:
+    # HTTP resolves it first, so this is defence in depth for in-process callers.
     namespace = input.namespace
     if namespace.strip() in ("", "-", "*", PERSONAL_ALIAS) or namespace != namespace.strip():
         raise ValidationError(f"scope 'namespace' needs one namespace, got {namespace!r}")

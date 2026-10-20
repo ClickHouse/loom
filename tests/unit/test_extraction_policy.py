@@ -97,7 +97,7 @@ async def test_the_extractor_sends_the_policy_and_keys_its_cache_on_it(provider)
     from server.memory.app.extract import extract_from_messages
 
     common: dict[str, Any] = {"judge": False, "org": "o", "namespace": "n", "llm_cache": False}
-    plain = await extract_from_messages(_MSGS, **common)
+    plain = await extract_from_messages(_MSGS, **common, operator_policy="")
     ruled = await extract_from_messages(_MSGS, operator_policy=_POLICY, **common)
     assert _POLICY not in provider.systems[0]
     assert provider.systems[1].endswith(policy_block(_POLICY))
@@ -164,7 +164,7 @@ async def test_under_a_policy_no_row_is_recovered_past_the_model(provider) -> No
     provider.text = '{"facts": [{"key": "user_city", "value": "User lives in Lisbon."}]}'
     msgs = [{"role": "user", "content": "I am 34 years old and I live in Lisbon these days."}]
     common: dict[str, Any] = {"judge": False, "org": "o", "namespace": "n", "llm_cache": False}
-    plain = await extract_from_messages(msgs, **common)
+    plain = await extract_from_messages(msgs, **common, operator_policy="")
     ruled = await extract_from_messages(msgs, operator_policy=_POLICY, **common)
     assert "user_age" in {f.memory_key for f in plain.facts}
     assert {f.memory_key for f in ruled.facts} == {"user_city"}
@@ -243,7 +243,7 @@ def test_under_a_policy_a_forget_request_keeps_no_words_the_model_did_not_write(
     ]
     requests = forget_requests_from_messages(msgs)
     assert requests
-    kept, _, _ = replacement_facts([], requests, [], msgs)
+    kept, _, _ = replacement_facts([], requests, [], msgs, keep_said=True)
     assert any(f["key"].startswith("user_said_") for f in kept)
     ruled, _, _ = replacement_facts([], requests, [], msgs, keep_said=False)
     assert ruled == []
@@ -391,10 +391,10 @@ async def test_a_copy_too_old_to_trust_refuses_the_extraction(table) -> None:
     table.down = True
     rules = {("acme", ""): "org rule"}
     refresh = settings.model_calls_policy_refresh_seconds
-    extraction_policy._policies._reset_for_tests(rules, read_age_s=refresh + 1, due=True)
+    extraction_policy._policies._reset_for_tests(rules, read_age_s=refresh + 1, due_in_s=0.0)
     assert await extraction_policy.effective("acme", "n") == "org rule", "still young enough"
     stale = settings.model_calls_policy_max_stale_seconds + 1
-    extraction_policy._policies._reset_for_tests(rules, read_age_s=stale, due=True)
+    extraction_policy._policies._reset_for_tests(rules, read_age_s=stale, due_in_s=0.0)
     with pytest.raises(BackendUnavailableError):
         await extraction_policy.effective("acme", "n")
 
@@ -672,7 +672,7 @@ async def test_conversation_compact_summarizes_under_the_policy(monkeypatch) -> 
     import server.llm.client
     from server.knowledge.api.models_conversations import ConversationCompactInput
     from server.knowledge.app import conversations
-    from tests.unit.test_conversation_compact import _FakeCH
+    from tests.unit.ch_fake import ConversationsCH
 
     t0 = datetime(2026, 9, 1, 12, 0, 0)
     rows = [
@@ -688,7 +688,7 @@ async def test_conversation_compact_summarizes_under_the_policy(monkeypatch) -> 
         for i in range(6)
     ]
     llm = _System()  # an empty summary: the handler stops before any write
-    monkeypatch.setattr(server.core.ch, "get_client", lambda: _FakeCH(rows))
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: ConversationsCH(rows))
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
     extraction_policy._reset_for_tests({("acme", ""): _POLICY})
     await conversations.handle_conversation_compact(
@@ -822,7 +822,7 @@ async def test_unreadable_conversation_compact_is_refused(unreadable, monkeypatc
     from server.knowledge.api.models_conversations import ConversationCompactInput
     from server.knowledge.app import conversations
     from server.llm import customer
-    from tests.unit.test_conversation_compact import _FakeCH
+    from tests.unit.ch_fake import ConversationsCH
 
     t0 = datetime(2026, 9, 1, 12, 0, 0)
     rows = [
@@ -837,7 +837,7 @@ async def test_unreadable_conversation_compact_is_refused(unreadable, monkeypatc
         }
         for i in range(6)
     ]
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     llm = _System("a summary")
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
@@ -919,3 +919,80 @@ async def test_unreadable_titler_holds_the_thread_and_titles_it_once_read(
     later = await titler.run_pass()
     assert (later.titled, later.errors) == (1, 0)
     assert [r["title"] for r in inserted] == ["Login bug"]
+
+
+async def test_unreadable_trajectory_events_and_notes_hold_without_a_model_call(
+    unreadable, settings_override
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from server.llm import customer
+    from server.memory.app import trajectory_notes as tn
+
+    settings_override(observe_extract_notes_min_observations=1)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    observations = [
+        tn.Observation("k0", "command_run", "Bash", "output: line 0", "", (), now, now),
+        tn.Observation(
+            "k1", "command_run", "Bash", "output: done", "", (), now + timedelta(seconds=1), None
+        ),
+    ]
+    llm = _System("{}")
+    session = {"org": "acme", "namespace": "n", "session_id": "s"}
+    with pytest.raises(customer.SwitchUnread):
+        await tn.distill_events(session, observations, llm=llm, max_events=2)
+    with pytest.raises(customer.SwitchUnread):
+        await tn.distill_notes(session, observations, llm=llm)
+    assert llm.systems == []
+
+
+async def test_unreadable_policy_leaves_an_observe_session_undistilled(
+    unreadable, monkeypatch, settings_override
+) -> None:
+    """Through the worker: the session's facts and its events are held, the
+    model is never called, and no source is marked DONE, so the session is
+    distilled once the policy is read."""
+    from types import SimpleNamespace
+
+    import server.memory.store as memory_repo
+    from server.llm import customer
+    from server.memory.workers import observe_extract as ox
+
+    done: list[Any] = []
+
+    async def insert(rows: list[Any], **_: Any) -> None:
+        done.extend(rows)
+
+    async def no_context(*a: Any, **k: Any) -> list[Any]:
+        return []
+
+    llm = _System("{}")
+    settings_override(observe_extract_notes_min_observations=1)
+    monkeypatch.setattr("server.llm.client.get_llm_client", lambda: llm)
+    monkeypatch.setattr(ox, "_load_session_context", no_context)
+    monkeypatch.setattr(ox, "get_client_for_context", lambda: None)
+    monkeypatch.setattr(memory_repo, "build_memory_version_row", lambda o, **_k: o)
+    monkeypatch.setattr(memory_repo, "insert_memory_versions", insert)
+    session = {"org": "acme", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "s"}
+    observations = [
+        SimpleNamespace(
+            memory_key=f"o{i}",
+            value={"kind": "command_run", "tool_name": "Bash", "narrative": f"output: step {i}"},
+            sensitivity="",
+            tags=[],
+            created_at=None,
+            valid_at=None,
+        )
+        for i in range(2)
+    ]
+    with pytest.raises(customer.SwitchUnread):  # the facts' replay reads the policy first
+        await ox._distill_session(session, observations)
+
+    async def replayed(*a: Any, **k: Any) -> int:
+        return 0  # the facts are written: the extras hold on their own
+
+    monkeypatch.setattr(ox, "_extract_replay", replayed)
+    with pytest.raises(customer.SwitchUnread):
+        await ox._distill_session(session, observations)
+    assert llm.systems == []
+    assert done == []

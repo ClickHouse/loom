@@ -452,9 +452,9 @@ async def test_request_level_coverage_sweep_override(monkeypatch) -> None:
             )
 
     monkeypatch.setattr(extract_client, "get_llm_client", lambda: _LLM())
-    await extract.extract_from_messages(MSGS, judge=False, coverage_sweep=True)
+    await extract.extract_from_messages(MSGS, judge=False, coverage_sweep=True, operator_policy="")
     assert calls == [True]
-    await extract.extract_from_messages(MSGS, judge=False, coverage_sweep=None)
+    await extract.extract_from_messages(MSGS, judge=False, coverage_sweep=None, operator_policy="")
     assert calls == [True]  # no override, no dense turn → no sweep
 
 

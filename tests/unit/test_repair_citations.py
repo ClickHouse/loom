@@ -114,6 +114,8 @@ async def test_extraction_repairs_citations_with_or_without_a_date(
             )
 
     monkeypatch.setattr("server.memory.app.extract.client.get_llm_client", lambda: _Scripted())
-    result = await extract_from_messages(MESSAGES, judge=False, observation_date=observation_date)
+    result = await extract_from_messages(
+        MESSAGES, judge=False, observation_date=observation_date, operator_policy=""
+    )
     [fact] = [f for f in result.facts if f.memory_key.startswith("user_spark_plug")]
     assert fact.source_message_indices == [0]

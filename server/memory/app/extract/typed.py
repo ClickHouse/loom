@@ -252,7 +252,7 @@ async def extract_typed_record_iterative(
     *,
     max_tokens: int = 1024,
     observation_date: str | None = None,
-    operator_policy: str = "",
+    operator_policy: str,
 ) -> tuple[ExtractedRecord, LLMResult]:
     """Gated, per-field schema-aware extraction.
 

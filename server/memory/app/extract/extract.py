@@ -240,8 +240,8 @@ async def _complete_and_parse(
     answer: a larger budget when it reads as truncated (salvaging complete
     fact objects if it truncates again), else the stricter addendum. Returns
     (accumulated LLM result, facts, truncation). `base_prompt` is the system
-    prompt without the operator's policy: every call, retries included, ends
-    with it."""
+    prompt without the operator's policy: every call, retries included, appends
+    the policy to it."""
     calls: list[Any] = []
 
     async def complete(base: str, tokens: int) -> Any:
@@ -366,7 +366,7 @@ def _settle_facts(
     observation_date: str | None,
     existing_memories: list[dict[str, str]] | None,
     speaker_attribution: bool,
-    recover_rows: bool = True,
+    recover_rows: bool,
 ) -> list[ExtractedFact]:
     """The deterministic passes between the model's answer and the judge:
     stable and relation keys, citation repair, temporal anchors and
@@ -444,7 +444,7 @@ async def extract_from_messages(
     existing_memories: list[dict[str, str]] | None = None,
     last_messages: list[dict[str, object]] | None = None,
     custom_instructions: str = "",
-    operator_policy: str = "",
+    operator_policy: str,
     judge: bool = True,
     namespace_categories: list[dict[str, str]] | None = None,
     coverage_sweep: bool | None = None,

@@ -636,7 +636,7 @@ session digest, observation distillation, conversation summaries and titles, ses
 briefs and `bulk_set` context lines) ends its system prompt with it, after the
 request's `extraction_instructions` and any retry addendum, in a delimited block that
 states it outranks them and the messages. The deterministic passes that would add rows
-the model left out do not run under a policy, and the response names them. The rule
+the model left out do not run under a policy, and the response says so (`under_operator_policy`). The rule
 is given to the model, not checked against what it returns; verbatim evidence, chunks
 and observations are stored as sent. The
 [extraction guide](../features/memory/extraction.md#operator-extraction-policy) lists

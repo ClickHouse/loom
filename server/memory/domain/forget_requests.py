@@ -151,7 +151,7 @@ def replacement_facts(
     existing: list[dict[str, Any]],
     messages: list[dict[str, Any]],
     *,
-    keep_said: bool = True,
+    keep_said: bool,
 ) -> tuple[list[dict[str, Any]], set[str], set[str]]:
     """The facts that carry what the user said INSTEAD of what they asked to
     forget, the batch with any forget entry that also
@@ -231,8 +231,8 @@ def replacement_facts(
         out.append(copy)
         protected.add(copy["key"])
         kept_msgs |= src & msgs
-    # Not with `keep_said=False` (an operator's extraction policy is in force):
-    # only the model, given the policy, decides what of the user's words is written.
+    # Under an operator policy (`keep_said=False`) only the model, given the
+    # policy, decides which of the user's words are written.
     if keep_said:
         said = _said_corrections(messages, kept_msgs, clauses + list(by_key.values()))
         out.extend(said)

@@ -89,6 +89,9 @@ async def _make_title(
     )
     if not snippet:
         return False
+    # A title is written from the thread's own turns and stored: the model is
+    # given the operator's extraction policy, as extraction is.
+    policy = await extraction_policy.effective(str(row["org"]), str(row["namespace"]))
 
     # Bind a cost accumulator, label the leg, and drain it into an AgentEvent
     # afterwards: `begin_op()` alone only gives `report_llm()` somewhere to
@@ -98,9 +101,6 @@ async def _make_title(
     cost_accumulator.begin_op()
     try:
         with llm_stage("title"), customer.for_org(str(row["org"])):
-            # A title is written from the thread's own turns and stored: the model
-            # is given the operator's extraction policy, as extraction is.
-            policy = await extraction_policy.effective(str(row["org"]), str(row["namespace"]))
             out = await llm.complete(
                 system=with_policy(_TITLE_SYSTEM, policy), user=snippet, max_tokens=30
             )
@@ -183,7 +183,9 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
                 if await _make_title(row, cfg, llm, existing):
                     result.titled += 1
             except customer.HOLDS:
-                continue  # a held call is no failure: the thread is titled once the org is back
+                # A held call is no failure: the thread is titled once the org is back
+                # on and the policy is read.
+                continue
             except Exception as e:
                 result.errors += 1
                 log.exception("conversation titling failed for %s", dict(row))
