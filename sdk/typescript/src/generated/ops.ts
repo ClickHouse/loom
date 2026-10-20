@@ -2269,7 +2269,7 @@ export interface ConversationSaveMessageOutput {
   conversation_id: string;
   message_id: string;
   indexed: boolean;
-  reason?: "" | "duplicate" | "owner_mismatch" | "deleted";
+  reason?: "" | "duplicate" | "owner_mismatch" | "deleted" | "unsupported_role" | "embed_failed";
   ts: string; // date-time
 }
 

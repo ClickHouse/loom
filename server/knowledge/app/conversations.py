@@ -8,7 +8,6 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from server.auth.fanout import namespaces_to_search
@@ -67,6 +66,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Why conversation.save_message did not index a turn (`indexed=False`).
+SaveRefusal = Literal["owner_mismatch", "deleted", "unsupported_role", "embed_failed"]
+
 
 async def namespace_recording_enabled(org: str, namespace: str) -> bool:
     """The namespace owner's "record my conversations" switch. Fails closed: a
@@ -105,20 +107,9 @@ async def handle_conversation_create(
 async def handle_conversation_append(
     input: ConversationAppendInput,
 ) -> ConversationAppendOutput:
-    return await _append_conversation(input, saved=False)
-
-
-async def _append_conversation(
-    input: ConversationAppendInput,
-    *,
-    saved: bool,
-) -> ConversationAppendOutput:
     """Insert one message row, then its embedding row once the message landed.
 
     A failed embed still stores the turn; its embedding row records the error.
-
-    `saved` is conversation.save_message's write: both rows carry the saved
-    flag and the namespace's logging switch does not apply.
     """
     from server.knowledge.store import conversations as conversation_repo
 
@@ -136,17 +127,13 @@ async def _append_conversation(
     )
 
     # Per-namespace logging switch (the dashboard toggle). When off, accept the call
-    # but store nothing — a client can't override the user's choice. A saved
-    # message is the user's own choice for that one turn.
-    if not saved:
-        with traced("ch.query.conversation_logging_enabled"):
-            logging_on = await conversation_repo.namespace_logging_enabled(
-                input.org, input.namespace
-            )
-        if not logging_on:
-            return ConversationAppendOutput(
-                msg_id=msg_id, ts=now, stored=False, reason="logging_disabled"
-            )
+    # but store nothing — a client can't override the user's choice.
+    with traced("ch.query.conversation_logging_enabled"):
+        logging_on = await conversation_repo.namespace_logging_enabled(input.org, input.namespace)
+    if not logging_on:
+        return ConversationAppendOutput(
+            msg_id=msg_id, ts=now, stored=False, reason="logging_disabled"
+        )
 
     # Idempotency: loom.conversations is append-only (plain MergeTree, no engine
     # dedup), so skip the write when this (thread_id, msg_id) already landed —
@@ -172,7 +159,6 @@ async def _append_conversation(
         run_id=input.run_id,
         metadata=json.dumps(input.metadata, sort_keys=True),
         tokens=input.tokens,
-        is_saved=saved,
         ts=now,
     )
     # Only user/assistant turns are embedded for recall. System/tool messages
@@ -204,22 +190,21 @@ async def _append_conversation(
         ),
     )
     await _store_embedding(msg_row, embedded)
-    if not saved:
-        # A save that ran while this turn was embedding flagged the rows it could
-        # see, not the embedding row that only just landed, which replaces the
-        # save's own row under FINAL when its ts is later (a save on a replica
-        # whose clock is behind). Asked after the insert, so either the save's
-        # mutation covered this row or this read sees the saved flag.
-        with traced("ch.query.conversation_saved_owner"):
-            owner = await conversation_repo.saved_message_owner(
-                input.org, input.namespace, input.agent, input.thread_id, msg_id
-            )
-        if owner is not None:
-            await _mark_saved(
-                _TurnKey(input.org, input.namespace, input.agent, input.thread_id, msg_id),
-                owner,
-                tables=("loom.conversation_embeddings",),
-            )
+    # A save that ran while this turn was embedding flagged the rows it could see,
+    # not the embedding row that only just landed, which replaces the save's own row
+    # under FINAL when its ts is later (a save on a replica whose clock is behind).
+    # Asked after the insert, so either the save's mutation covered this row or this
+    # read sees the saved flag.
+    with traced("ch.query.conversation_saved_owner"):
+        owner = await conversation_repo.saved_message_owner(
+            input.org, input.namespace, input.agent, input.thread_id, msg_id
+        )
+    if owner is not None:
+        await _mark_saved(
+            _TurnKey(input.org, input.namespace, input.agent, input.thread_id, msg_id),
+            owner,
+            tables=("loom.conversation_embeddings",),
+        )
     return ConversationAppendOutput(msg_id=msg_id, ts=now)
 
 
@@ -325,106 +310,80 @@ async def handle_conversation_save_message(
 ) -> ConversationSaveMessageOutput:
     """Persist one user's explicit search opt-in without enabling transcript capture.
 
-    Safe to retry after any partial failure: each call re-checks the stored
-    rows and repairs what an interrupted or racing write left behind — a
-    missing embedding row, or a row not yet flagged saved.
+    The transcript row decides who owns the turn: its embedding row is written or
+    flagged only once that row reads back as the caller's. Safe to retry after any
+    partial failure: each call re-reads both tables and finishes what an interrupted,
+    racing or failed write left behind — a missing embedding row, a failed embed's
+    placeholder, or a row not yet flagged saved.
     """
     from server.knowledge.store import conversations as conversation_repo
 
     key = _TurnKey(input.org, input.namespace, input.agent, input.conversation_id, input.message_id)
-    with traced("ch.query.conversation_message_state"):
-        stored = await conversation_repo.message_state(
-            key.org, key.namespace, key.agent, key.thread_id, key.msg_id, user_id=input.user_id
-        )
-    if stored is not None:
-        refusal = _save_refusal(stored, input.user_id)
-        if refusal is not None:
-            return _save_refused(input, naive_utc_now(), refusal)
-    else:
-        appended = await _append_conversation(
-            ConversationAppendInput(
-                org=input.org,
-                namespace=input.namespace,
-                agent=input.agent,
-                thread_id=input.conversation_id,
-                msg_id=input.message_id,
-                role=input.role,
-                content=input.content,
-                user_id=input.user_id,
+    user_id = input.user_id
+    changed = False
+    embedded: EmbeddedTurn | None = None
+    stored = await _stored_turn(key, user_id)
+    if stored is None:
+        # The vector is needed either way, so embed while the row is written.
+        _, embedded = await asyncio.gather(
+            _write_saved_turn(input, once_per_identity=True),
+            _embed_turn(
+                input.content,
+                org=key.org,
+                namespace=key.namespace,
+                thread_id=key.thread_id,
+                msg_id=key.msg_id,
             ),
-            saved=True,
         )
-        if appended.reason != "duplicate":
-            # Both rows were written saved. A transcript append that raced this
-            # one may have written its own unflagged embedding row, which can
-            # replace the saved one under FINAL: the repair flags it. Its
-            # duplicate transcript row is harmless beside the saved one.
-            await _repair_saved(key, input.user_id, None)
-            return ConversationSaveMessageOutput(
-                conversation_id=input.conversation_id,
-                message_id=input.message_id,
-                indexed=True,
-                ts=appended.ts,
-            )
-        # Another writer landed the turn between the read and the append.
-        stored = await conversation_repo.message_state(
-            key.org, key.namespace, key.agent, key.thread_id, key.msg_id, user_id=input.user_id
-        )
+        stored = await _stored_turn(key, user_id)
+        if stored is None:
+            # The deduplication window still holds a block of this turn whose rows
+            # were since erased, and dropped this one.
+            await _write_saved_turn(input, once_per_identity=False)
+            stored = await _stored_turn(key, user_id)
         if stored is None:
             raise RuntimeError("conversation turn vanished between its write and its re-read")
-        refusal = _save_refusal(stored, input.user_id)
+        changed = True
+
+    refusal = _save_refusal(stored, user_id)
+    if refusal is not None:
+        return _save_refused(input, refusal)
+    if stored.unsaved:
+        await _mark_saved(key, user_id, tables=("loom.conversations",))
+        stored = await _stored_turn(key, user_id)
+        if stored is None:
+            raise RuntimeError("conversation turn vanished while it was flagged saved")
+        # Another user's save claimed the turn first.
+        refusal = _save_refusal(stored, user_id)
         if refusal is not None:
-            return _save_refused(input, naive_utc_now(), refusal)
+            return _save_refused(input, refusal)
+        changed = True
 
-    repaired = await _repair_saved(key, input.user_id, stored)
-    return ConversationSaveMessageOutput(
-        conversation_id=input.conversation_id,
-        message_id=input.message_id,
-        indexed=True,
-        reason="" if repaired or stored.unsaved else "duplicate",
-        ts=naive_utc_now(),
-    )
-
-
-def _save_refusal(
-    stored: StoredMessage, user_id: str
-) -> Literal["owner_mismatch", "deleted"] | None:
-    """Why a stored turn must not be (re)claimed by `user_id`, or None. Checked
-    on every save, already-saved turns included."""
-    if stored.tombstoned:
-        return "deleted"
-    if any(owner not in ("-", "", user_id) for owner in stored.owners):
-        return "owner_mismatch"
-    return None
-
-
-async def _repair_saved(key: _TurnKey, user_id: str, stored: StoredMessage | None) -> bool:
-    """Bring a saved turn's rows to their end state: an embedding row under the
-    current embedder, and the saved flag and owner on every live row of both
-    tables. `stored` is the transcript verdict already read (None: this call
-    just wrote the turn saved). True when anything had to change."""
-    from server.knowledge.store import conversations as conversation_repo
-
-    changed = False
-    tables: list[str] = []
-    if stored is not None and stored.unsaved:
-        tables.append("loom.conversations")
-    if stored is None or stored.role in ("user", "assistant"):
-        model = get_embedder().model_name
-        with traced("ch.query.conversation_embedding_state"):
-            emb = await conversation_repo.embedding_state(
-                key.org,
-                key.namespace,
-                key.agent,
-                key.thread_id,
-                key.msg_id,
-                user_id=user_id,
-                embedding_model=model,
+    with traced("ch.query.conversation_embedding_state"):
+        emb = await conversation_repo.embedding_state(
+            key.org,
+            key.namespace,
+            key.agent,
+            key.thread_id,
+            key.msg_id,
+            user_id=user_id,
+            embedding_model=get_embedder().model_name,
+        )
+    if emb.foreign:
+        return _save_refused(input, "owner_mismatch")
+    if emb.current == 0:
+        # A save interrupted between its two writes, a failed embed's placeholder, or
+        # a transcript turn whose embedding never landed: embed the stored text.
+        if embedded is None or embedded.excerpt != stored.content[:EMBEDDED_EXCERPT_CHARS]:
+            embedded = await _embed_turn(
+                stored.content,
+                org=key.org,
+                namespace=key.namespace,
+                thread_id=key.thread_id,
+                msg_id=key.msg_id,
             )
-        if emb.current == 0 and stored is not None:
-            # A save interrupted between its two writes, or a transcript turn
-            # whose embedding never landed: write the vector from the stored turn.
-            msg = conversation_repo.MessageInsert(
+        await _store_embedding(
+            conversation_repo.MessageInsert(
                 org=key.org,
                 namespace=key.namespace,
                 agent=key.agent,
@@ -436,35 +395,82 @@ async def _repair_saved(key: _TurnKey, user_id: str, stored: StoredMessage | Non
                 run_id=stored.run_id,
                 is_saved=True,
                 ts=stored.ts,
-            )
-            embedded = await _embed_turn(
-                stored.content,
-                org=key.org,
-                namespace=key.namespace,
-                thread_id=key.thread_id,
-                msg_id=key.msg_id,
-            )
-            await _store_embedding(msg, embedded)
-            changed = True
-        if emb.unsaved:
-            tables.append("loom.conversation_embeddings")
-    if tables:
-        await _mark_saved(key, user_id, tables=tuple(tables))
+            ),
+            embedded,
+        )
+        if embedded.error:
+            return _save_refused(input, "embed_failed")
         changed = True
-    return changed
+    elif emb.unsaved:
+        await _mark_saved(key, user_id, tables=("loom.conversation_embeddings",))
+        changed = True
+    return ConversationSaveMessageOutput(
+        conversation_id=input.conversation_id,
+        message_id=input.message_id,
+        indexed=True,
+        reason="" if changed else "duplicate",
+        ts=stored.ts,
+    )
+
+
+async def _stored_turn(key: _TurnKey, user_id: str) -> StoredMessage | None:
+    from server.knowledge.store import conversations as conversation_repo
+
+    with traced("ch.query.conversation_message_state"):
+        return await conversation_repo.message_state(
+            key.org, key.namespace, key.agent, key.thread_id, key.msg_id, user_id=user_id
+        )
+
+
+async def _write_saved_turn(
+    input: ConversationSaveMessageInput, *, once_per_identity: bool
+) -> None:
+    """The transcript row of a turn the transcript does not hold, flagged saved
+    for its user. The namespace's logging switch does not apply: saving is the
+    user's own choice for that one turn."""
+    from server.knowledge.store import conversations as conversation_repo
+
+    with traced("ch.insert.conversation", role=input.role):
+        await conversation_repo.append(
+            conversation_repo.MessageInsert(
+                org=input.org,
+                namespace=input.namespace,
+                agent=input.agent,
+                thread_id=input.conversation_id,
+                msg_id=input.message_id,
+                role=input.role,
+                content=input.content,
+                user_id=input.user_id,
+                is_saved=True,
+                ts=naive_utc_now(),
+            ),
+            once_per_identity=once_per_identity,
+        )
+
+
+def _save_refusal(stored: StoredMessage, user_id: str) -> SaveRefusal | None:
+    """Why a stored turn must not be (re)claimed by `user_id`, or None. Checked
+    on every save, already-saved turns included, before anything is changed."""
+    if stored.tombstoned:
+        return "deleted"
+    # The stored role wins over the request's: only user and assistant turns are
+    # embedded, so a system or tool turn cannot be found by the saved search.
+    if stored.role not in ("user", "assistant"):
+        return "unsupported_role"
+    if any(owner not in ("-", "", user_id) for owner in stored.owners):
+        return "owner_mismatch"
+    return None
 
 
 def _save_refused(
-    input: ConversationSaveMessageInput,
-    now: datetime,
-    reason: Literal["owner_mismatch", "deleted"],
+    input: ConversationSaveMessageInput, reason: SaveRefusal
 ) -> ConversationSaveMessageOutput:
     return ConversationSaveMessageOutput(
         conversation_id=input.conversation_id,
         message_id=input.message_id,
         indexed=False,
         reason=reason,
-        ts=now,
+        ts=naive_utc_now(),
     )
 
 

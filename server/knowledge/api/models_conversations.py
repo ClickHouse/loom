@@ -109,13 +109,20 @@ class ConversationSaveMessageInput(BaseModel):
 class ConversationSaveMessageOutput(BaseModel):
     conversation_id: str
     message_id: str
-    # True on a new write, a re-save (repairing what an interrupted save left
-    # behind), and a transcript turn that is now flagged saved; false when the
-    # message cannot be saved (`reason`), never for a disabled logging switch.
+    # True when the turn is saved and has a vector the saved search ranks: a new
+    # write, a re-save (finishing what an interrupted save left behind), and a
+    # transcript turn that is now flagged saved. False with a `reason` otherwise,
+    # never for a disabled logging switch.
     indexed: bool
     # "duplicate": already saved, nothing changed. "owner_mismatch": the stored
     # turn belongs to another user. "deleted": the stored turn was tombstoned.
-    reason: Literal["", "duplicate", "owner_mismatch", "deleted"] = ""
+    # "unsupported_role": the stored turn is a system or tool turn, which is not
+    # embedded. "embed_failed": the turn is saved but its embed failed; saving it
+    # again retries the embed.
+    reason: Literal[
+        "", "duplicate", "owner_mismatch", "deleted", "unsupported_role", "embed_failed"
+    ] = ""
+    # The stored turn's timestamp; the time of the refusal when one is refused.
     ts: datetime
 
 

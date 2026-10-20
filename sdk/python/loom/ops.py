@@ -7895,7 +7895,9 @@ class ConversationSaveMessageOutput(TypedDict, total=False):
     conversation_id: Required[str]
     message_id: Required[str]
     indexed: Required[bool]
-    reason: NotRequired[Literal["", "duplicate", "owner_mismatch", "deleted"]]
+    reason: NotRequired[
+        Literal["", "duplicate", "owner_mismatch", "deleted", "unsupported_role", "embed_failed"]
+    ]
     ts: Required[str]  # date-time as ISO-8601 text
 
 

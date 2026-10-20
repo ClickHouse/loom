@@ -177,9 +177,9 @@ Save one chat message a user picked for search, whether or not the namespace rec
 | --- | --- | --- |
 | `conversation_id` | `str` |  |
 | `message_id` | `str` |  |
-| `indexed` | `bool` | True on a new write, a re-save (repairing what an interrupted save left behind), and a transcript turn that is now flagged saved; false when the message cannot be saved (`reason`), never for a disabled logging switch. |
-| `reason` | `Literal['', 'duplicate', 'owner_mismatch', 'deleted']` | "duplicate": already saved, nothing changed. "owner_mismatch": the stored turn belongs to another user. "deleted": the stored turn was tombstoned. |
-| `ts` | `datetime` |  |
+| `indexed` | `bool` | True when the turn is saved and has a vector the saved search ranks: a new write, a re-save (finishing what an interrupted save left behind), and a transcript turn that is now flagged saved. |
+| `reason` | `Literal['', 'duplicate', 'owner_mismatch', 'deleted', 'unsupported_role', 'embed_failed']` | "duplicate": already saved, nothing changed. "owner_mismatch": the stored turn belongs to another user. "deleted": the stored turn was tombstoned. "unsupported_role": the stored turn is a system or tool turn, which is not embedded.… |
+| `ts` | `datetime` | The stored turn's timestamp; the time of the refusal when one is refused. |
 
 ## `conversation.search`
 

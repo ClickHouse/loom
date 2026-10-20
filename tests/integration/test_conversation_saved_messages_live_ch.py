@@ -225,3 +225,83 @@ async def test_an_already_saved_message_is_refused_to_another_user(ch: Any, name
     assert other.indexed is False
     assert other.reason == "owner_mismatch"
     assert await _saved_hits(namespace, user_id="u-2") == []
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_saves_of_a_new_message_store_one_transcript_row(
+    ch: Any, namespace: str
+) -> None:
+    """Both saves read no row and both write one; the identity token lands it once."""
+    import asyncio
+
+    from server.knowledge.app.conversations import handle_conversation_save_message
+
+    outs = await asyncio.gather(
+        handle_conversation_save_message(_save(namespace)),
+        handle_conversation_save_message(_save(namespace)),
+    )
+
+    assert all(o.indexed for o in outs)
+    assert len(await _rows(ch, "loom.conversations", namespace)) == 1
+    assert [h.message_id for h in await _saved_hits(namespace)] == ["m-1"]
+
+
+@pytest.mark.asyncio
+async def test_two_users_claiming_one_logged_turn_leave_one_owner_on_both_tables(
+    ch: Any, namespace: str
+) -> None:
+    import asyncio
+
+    from server.knowledge.app.conversations import (
+        handle_conversation_append,
+        handle_conversation_save_message,
+    )
+
+    await handle_conversation_append(_transcript_turn(namespace))
+    outs = await asyncio.gather(
+        handle_conversation_save_message(_save(namespace, user_id="u-1")),
+        handle_conversation_save_message(_save(namespace, user_id="u-2")),
+    )
+
+    [winner] = [u for u, o in zip(("u-1", "u-2"), outs, strict=True) if o.indexed]
+    [loser] = [o for o in outs if not o.indexed]
+    assert loser.reason == "owner_mismatch"
+    for table in ("loom.conversations", "loom.conversation_embeddings"):
+        assert {r["user_id"] for r in await _rows(ch, table, namespace)} == {winner}
+
+
+@pytest.mark.asyncio
+async def test_a_save_during_an_embedder_outage_is_embedded_by_the_retry(
+    ch: Any, namespace: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.embedding import get_embedder
+    from server.knowledge.app.conversations import handle_conversation_save_message
+
+    async def down(_text: str) -> list[float]:
+        raise RuntimeError("embedder down")
+
+    with monkeypatch.context() as m:
+        m.setattr(get_embedder(), "embed", down)
+        out = await handle_conversation_save_message(_save(namespace))
+    assert (out.indexed, out.reason) == (False, "embed_failed")
+    assert await _saved_hits(namespace) == []
+
+    again = await handle_conversation_save_message(_save(namespace))
+    assert (again.indexed, again.reason) == (True, "")
+    assert [h.message_id for h in await _saved_hits(namespace)] == ["m-1"]
+
+
+@pytest.mark.asyncio
+async def test_a_stored_system_turn_is_refused_and_left_unsaved(ch: Any, namespace: str) -> None:
+    from server.knowledge.app.conversations import (
+        handle_conversation_append,
+        handle_conversation_save_message,
+    )
+
+    await handle_conversation_append(
+        _transcript_turn(namespace).model_copy(update={"role": "system"})
+    )
+    out = await handle_conversation_save_message(_save(namespace))
+
+    assert (out.indexed, out.reason) == (False, "unsupported_role")
+    assert [r["is_saved"] for r in await _rows(ch, "loom.conversations", namespace)] == [False]
