@@ -775,6 +775,15 @@ class ConversationOps:
             await self._agent.call("conversation.list", body, **options),
         )
 
+    async def list_saved_messages(
+        self, body: _ops.ConversationListSavedMessagesBody | None = None, /, **options: Any
+    ) -> _ops.ConversationListSavedMessagesOutput:
+        """`conversation.list_saved_messages`."""
+        return cast(
+            "_ops.ConversationListSavedMessagesOutput",
+            await self._agent.call("conversation.list_saved_messages", body, **options),
+        )
+
     async def save_message(
         self, body: _ops.ConversationSaveMessageBody | None = None, /, **options: Any
     ) -> _ops.ConversationSaveMessageOutput:

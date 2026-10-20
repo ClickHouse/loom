@@ -156,6 +156,28 @@ Enumerate stored conversation threads for an agent / namespace.
 | `rows` | `list[_ConversationEntry]` | The page of messages in chronological order. |
 | `next_cursor` | `str \| None` | Pass as `cursor` for the next page; None when this is the last page. |
 
+## `conversation.list_saved_messages`
+
+Page through the messages a user saved, newest first, with no query: the first view of a "Saved" panel before anything is typed.
+
+`POST /v1/conversation.list_saved_messages` · MCP `loom_conversation_list_saved_messages` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | required | Only this user's saved messages are listed. |
+| `conversation_id` | `str \| None` | `None` | Optional: only the messages saved from one conversation. |
+| `limit` | `int` | `50` | At most this many messages per page (1-200). |
+| `cursor` | `str \| None` | `None` | Opaque; pass the previous page's `next_cursor`. |
+| `fields` | `list[str] \| None` | `None` | The output fields the caller reads (a whitelist resolved against the row model; an unknown name is a 422); unset, every field. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `rows` | `list[_SavedMessageHit]` | The page, most recently saved first. |
+| `next_cursor` | `str \| None` | Pass as `cursor` for the next page; None when this is the last page. |
+
 ## `conversation.save_message`
 
 Save one chat message a user picked for search, whether or not the namespace records transcripts.

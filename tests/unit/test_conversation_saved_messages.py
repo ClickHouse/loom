@@ -10,6 +10,7 @@ import pytest
 
 from server.knowledge.api.models_conversations import (
     ConversationAppendInput,
+    ConversationListSavedMessagesInput,
     ConversationSaveMessageInput,
     ConversationSearchInput,
     ConversationSearchOutput,
@@ -508,3 +509,64 @@ def test_unsave_is_registered_as_an_idempotent_write() -> None:
     op = OPERATIONS_BY_NAME["conversation.unsave_message"]
     assert op.required_role is Role.WRITER
     assert op.idempotent is True
+
+
+@pytest.mark.asyncio
+async def test_the_saved_list_cursor_carries_the_conversation_and_the_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A message id is unique only within its conversation, so the page key
+    names both; the next page starts strictly after the last row."""
+    from server.knowledge.app import conversations
+    from server.knowledge.store import conversations as conversation_repo
+
+    seen: list[object] = []
+    at = datetime(2026, 1, 1, 12, 0, 0)
+
+    async def fake_list(*_a: object, **kw: object) -> list[dict[str, object]]:
+        seen.append(kw["before"])
+        return [
+            {"thread_id": "c-1", "msg_id": "m-2", "role": "user", "content": "b", "saved_at": at},
+            {"thread_id": "c-1", "msg_id": "m-1", "role": "user", "content": "a", "saved_at": at},
+        ]
+
+    monkeypatch.setattr(conversation_repo, "list_saved_messages", fake_list)
+    first = await conversations.handle_conversation_list_saved_messages(
+        ConversationListSavedMessagesInput(
+            org="o", namespace="n", agent="librechat", user_id="u-1", limit=1
+        )
+    )
+    assert [r.message_id for r in first.rows] == ["m-2"]
+    assert first.next_cursor is not None
+
+    await conversations.handle_conversation_list_saved_messages(
+        ConversationListSavedMessagesInput(
+            org="o", namespace="n", agent="librechat", user_id="u-1", cursor=first.next_cursor
+        )
+    )
+    assert seen == [None, (at, "c-1", "m-2")]
+
+
+@pytest.mark.asyncio
+async def test_the_saved_list_serializes_only_the_fields_asked_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.app import conversations
+    from server.knowledge.store import conversations as conversation_repo
+
+    at = datetime(2026, 1, 1, 12, 0, 0)
+
+    async def fake_list(*_a: object, **_kw: object) -> list[dict[str, object]]:
+        return [
+            {"thread_id": "c-1", "msg_id": "m-1", "role": "user", "content": "a", "saved_at": at}
+        ]
+
+    monkeypatch.setattr(conversation_repo, "list_saved_messages", fake_list)
+    out = await conversations.handle_conversation_list_saved_messages(
+        ConversationListSavedMessagesInput(
+            org="o", namespace="n", agent="client", user_id="u-1", fields=["role"]
+        )
+    )
+    assert out.model_dump()["rows"] == [
+        {"conversation_id": "c-1", "message_id": "m-1", "role": "user"}
+    ]

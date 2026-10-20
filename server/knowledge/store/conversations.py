@@ -449,6 +449,60 @@ async def unsave_message(
     )
 
 
+async def list_saved_messages(
+    org: str,
+    namespace: str,
+    agent: str,
+    *,
+    scope: ReadFilters,
+    user_id: str,
+    conversation_id: str | None = None,
+    before: tuple[datetime, str, str] | None = None,
+    limit: int = 50,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """One page of `user_id`'s live saved messages, newest first, keyed by
+    (saved_at, thread_id, msg_id). Grouped per message: a save racing a
+    transcript append can leave two rows of one turn, and a page lists it once.
+    `before` is the last key of the previous page."""
+    ch = ch or _default_client()
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "is_saved",
+        "tombstoned_at IS NULL",
+        "user_id = {uid:String}",
+    ]
+    params: dict[str, Any] = {"org": org, "ns": namespace, "uid": user_id, "lim": int(limit)}
+    if agent not in ("*", "-"):
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
+    if conversation_id:
+        where.append("thread_id = {tid:String}")
+        params["tid"] = conversation_id
+    where.extend(scope_where(scope, params))
+    having = ""
+    if before is not None:
+        having = (
+            "HAVING (saved_at, thread_id, msg_id) < "
+            "({b_ts:DateTime64(3)}, {b_tid:String}, {b_mid:String})"
+        )
+        params.update(b_ts=before[0], b_tid=before[1], b_mid=before[2])
+    return await ch.query_all(
+        f"""
+        SELECT thread_id, msg_id, any(role) AS role,
+               argMax(content, ts) AS content, max(ts) AS saved_at
+        FROM loom.conversations
+        WHERE {" AND ".join(where)}
+        GROUP BY thread_id, msg_id
+        {having}
+        ORDER BY saved_at DESC, thread_id DESC, msg_id DESC
+        LIMIT {{lim:UInt32}}
+        """,
+        params=params,
+    )
+
+
 async def namespace_logging_enabled(
     org: str,
     namespace: str,

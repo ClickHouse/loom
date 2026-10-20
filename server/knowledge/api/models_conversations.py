@@ -388,7 +388,7 @@ class ConversationSearchSavedMessagesInput(BaseModel):
     top_k: int = Field(default=20, ge=1, le=200)
 
 
-class _SavedMessageHit(BaseModel):
+class _SavedMessageHit(ProjectedRow):
     conversation_id: str
     message_id: str
     role: Literal["user", "assistant"]
@@ -398,6 +398,33 @@ class _SavedMessageHit(BaseModel):
 
 class ConversationSearchSavedMessagesOutput(BaseModel):
     hits: list[_SavedMessageHit]
+
+
+class ConversationListSavedMessagesInput(BaseModel):
+    """Page through the messages a user saved, newest first, with no query: the
+    first view of a "Saved" panel before anything is typed."""
+
+    org: str
+    namespace: str
+    agent: str
+    # Only this user's saved messages are listed.
+    user_id: str = Field(min_length=1, max_length=256)
+    # Optional: only the messages saved from one conversation.
+    conversation_id: str | None = Field(default=None, max_length=256)
+    # At most this many messages per page (1-200).
+    limit: int = Field(default=50, ge=1, le=200)
+    # Opaque; pass the previous page's `next_cursor`.
+    cursor: str | None = None
+    # The output fields the caller reads (a whitelist resolved against the row model;
+    # an unknown name is a 422); unset, every field.
+    fields: list[str] | None = None
+
+
+class ConversationListSavedMessagesOutput(BaseModel):
+    # The page, most recently saved first.
+    rows: list[_SavedMessageHit]
+    # Pass as `cursor` for the next page; None when this is the last page.
+    next_cursor: str | None = None
 
 
 # conversation.threads — recent thread list (grouped over loom.conversations),

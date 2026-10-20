@@ -8,6 +8,7 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from server.auth.fanout import namespaces_to_search
@@ -32,6 +33,8 @@ from server.knowledge.api.models_conversations import (
     ConversationGetOutput,
     ConversationListInput,
     ConversationListOutput,
+    ConversationListSavedMessagesInput,
+    ConversationListSavedMessagesOutput,
     ConversationSaveMessageInput,
     ConversationSaveMessageOutput,
     ConversationSearchInput,
@@ -959,6 +962,55 @@ async def handle_conversation_search_saved_messages(
             if hit.role in ("user", "assistant")
         ]
     )
+
+
+async def handle_conversation_list_saved_messages(
+    input: ConversationListSavedMessagesInput,
+) -> ConversationListSavedMessagesOutput:
+    """List one user's saved messages, newest first, a page at a time."""
+    from server.knowledge.store import conversations as conversation_repo
+
+    scope = _conversation_read_scope()
+    before: tuple[datetime, str, str] | None = None
+    if input.cursor:
+        ts, ids = _decode_cursor(input.cursor)
+        thread_id, _, msg_id = ids.partition("\x1f")
+        before = (ts, thread_id, msg_id)
+    with traced("ch.query.conversation_list_saved"):
+        rows = await conversation_repo.list_saved_messages(
+            input.org,
+            input.namespace,
+            input.agent,
+            scope=scope,
+            user_id=input.user_id,
+            conversation_id=input.conversation_id,
+            before=before,
+            limit=input.limit + 1,  # +1 to detect "more"
+        )
+    page = rows[: input.limit]
+    hits = [
+        _SavedMessageHit(
+            conversation_id=r["thread_id"],
+            message_id=r["msg_id"],
+            role=r["role"],
+            content_excerpt=_excerpt(r["content"]),
+            ts=r["saved_at"],
+        )
+        for r in page
+        if r["role"] in ("user", "assistant")
+    ]
+    next_cursor = None
+    if len(rows) > input.limit and page:
+        last = page[-1]
+        next_cursor = _encode_cursor(last["saved_at"], f"{last['thread_id']}\x1f{last['msg_id']}")
+    project_rows(
+        hits, _SavedMessageHit, input.fields, always=frozenset({"conversation_id", "message_id"})
+    )
+    return ConversationListSavedMessagesOutput(rows=hits, next_cursor=next_cursor)
+
+
+def _excerpt(content: str) -> str:
+    return content[:HIT_EXCERPT_CHARS] + "…" if len(content) > HIT_EXCERPT_CHARS else content
 
 
 def _safe_load_json(s: Any) -> dict[str, Any]:

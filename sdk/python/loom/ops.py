@@ -118,6 +118,7 @@ OpName = Literal[
     "conversation.delete",
     "conversation.get",
     "conversation.list",
+    "conversation.list_saved_messages",
     "conversation.save_message",
     "conversation.search",
     "conversation.search_saved_messages",
@@ -436,6 +437,7 @@ OP_NAMES: tuple[str, ...] = (
     "conversation.delete",
     "conversation.get",
     "conversation.list",
+    "conversation.list_saved_messages",
     "conversation.save_message",
     "conversation.search",
     "conversation.search_saved_messages",
@@ -1620,6 +1622,18 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "experimental",
         80,
+        False,
+        True,
+    ),
+    "conversation.list_saved_messages": OpSpec(
+        "conversation.list_saved_messages",
+        "ConversationListSavedMessagesInput",
+        "ConversationListSavedMessagesBody",
+        "ConversationListSavedMessagesOutput",
+        True,
+        "viewer",
+        "experimental",
+        150,
         False,
         True,
     ),
@@ -7879,6 +7893,45 @@ class ConversationListOutput(TypedDict, total=False):
     next_cursor: NotRequired[Optional[str]]
 
 
+class ConversationListSavedMessagesInput(TypedDict, total=False):
+    "Page through the messages a user saved, newest first, with no query: the"
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: Required[str]
+    conversation_id: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+    fields: NotRequired[Optional[list[str]]]
+
+
+class ConversationListSavedMessagesBody(TypedDict, total=False):
+    "Page through the messages a user saved, newest first, with no query: the"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    conversation_id: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+    fields: NotRequired[Optional[list[str]]]
+
+
+class ConversationListSavedMessagesOutput(TypedDict, total=False):
+    rows: Required[list["SavedMessageHit"]]
+    next_cursor: NotRequired[Optional[str]]
+
+
+class SavedMessageHit(TypedDict, total=False):
+    conversation_id: Required[str]
+    message_id: Required[str]
+    role: Required[Literal["user", "assistant"]]
+    content_excerpt: Required[str]
+    ts: Required[str]  # date-time as ISO-8601 text
+
+
 class ConversationSaveMessageInput(TypedDict, total=False):
     "Save one chat message a user picked for search, whether or not the"
 
@@ -7987,14 +8040,6 @@ class ConversationSearchSavedMessagesBody(TypedDict, total=False):
 
 class ConversationSearchSavedMessagesOutput(TypedDict, total=False):
     hits: Required[list["SavedMessageHit"]]
-
-
-class SavedMessageHit(TypedDict, total=False):
-    conversation_id: Required[str]
-    message_id: Required[str]
-    role: Required[Literal["user", "assistant"]]
-    content_excerpt: Required[str]
-    ts: Required[str]  # date-time as ISO-8601 text
 
 
 class ConversationSetLoggingInput(TypedDict, total=False):

@@ -474,6 +474,16 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
     await R.message_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", ch=ch)
     await R.embedding_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", embedding_model="m", ch=ch)
     await R.saved_message_owner(ORG, NS, AGENT, "t1", "m1", ch=ch)
+    await R.list_saved_messages(
+        ORG,
+        NS,
+        AGENT,
+        scope=pinned,
+        user_id="u1",
+        conversation_id="t1" if f else None,
+        before=(_DT, "t1", "m1") if f else None,
+        ch=ch,
+    )
     for table in R.SAVED_MESSAGE_TABLES:
         await R.unsave_message(
             table, ORG, NS, AGENT, "t1", "m1", user_id="u1", remove=f, when=_DT, ch=ch
