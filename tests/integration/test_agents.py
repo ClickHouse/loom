@@ -190,3 +190,48 @@ async def test_an_agent_reads_what_another_lent_it_until_it_is_taken_back(ch: An
         assert await roles("a2") == {a2: "writer"}
     finally:
         set_current_auth(None)
+
+
+async def test_an_agent_neither_lowers_nor_takes_back_an_admins_grant(ch: Any) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.core.errors import GrantWouldDowngradeError, PreconditionFailedError
+    from server.identity.api.models_grants import (
+        GrantsCreateInput,
+        GrantsShareAgentInput,
+        GrantsUnshareAgentInput,
+    )
+    from server.identity.app import agent_shares
+    from server.identity.app.grants import handle_grants_create
+    from server.identity.store import grants as grants_repo
+
+    m = _trust()
+    a1 = await agents.ensure_namespace(m, "a1")
+    a2 = agents.subject(m["name"], "a2")
+    await handle_grants_create(
+        GrantsCreateInput(org=m["org"], namespace=a1, subject=a2, role="writer")
+    )
+    try:
+        set_current_auth(
+            AuthInfo(
+                subject=agents.subject(m["name"], "a1"),
+                org=m["org"],
+                namespaces=(a1,),
+                roles=(),
+                is_service_account=True,
+                ns_roles=((a1, "writer"),),
+            )
+        )
+        with pytest.raises(GrantWouldDowngradeError):
+            await agent_shares.handle_grants_share_agent(
+                GrantsShareAgentInput(org=m["org"], namespace=a1, agent="a2")
+            )
+        with pytest.raises(PreconditionFailedError):
+            await agent_shares.handle_grants_unshare_agent(
+                GrantsUnshareAgentInput(org=m["org"], namespace=a1, agent="a2")
+            )
+    finally:
+        set_current_auth(None)
+    with own_write_reads():
+        row = await grants_repo.find_any_grant(m["org"], a1, a2)
+    assert row is not None and row.role == "writer"

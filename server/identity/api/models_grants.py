@@ -180,7 +180,7 @@ class GrantsShareAgentOutput(BaseModel):
     # The subject the grant is stored under, `sa:<trust>:<agent>`.
     subject: str
     # The role now active for that agent.
-    role: GrantRoleStr
+    role: Literal["viewer", "writer"]
     # When the grant row was written (UTC).
     granted_at: datetime
 

@@ -197,15 +197,20 @@ with more than one admin, registered first, in one org); its tokens are for
     -d '{"org":"acme","namespace":"fleet-a","agent":"b","role":"viewer"}'
   ```
 
-  Agent `b`'s next token names `fleet-a` as viewer; `a` gets nothing of `b`'s.
-  `role` is `viewer` or `writer`. An agent shares only its own namespace and
-  only with agents of its trust
+  Agent `b`'s next token names `fleet-a` as viewer (minted on another server,
+  within `LOOM_GRANT_CACHE_TTL_SECONDS`); `a` gets nothing of `b`'s. `role` is
+  `viewer` or `writer`. An agent shares only its own namespace, only with
+  agents of its trust, and never a restricted namespace
   ([`grants.share_agent`](../reference/operations/grants.md#grantsshare_agent)).
-  [`grants.unshare_agent`](../reference/operations/grants.md#grantsunshare_agent) with the same body
-  (no `role`) takes it back: `b` is refused at once on that server, and within
-  `LOOM_GRANT_CACHE_TTL_SECONDS` on the others. An admin of the
-  namespace can also grant `sa:fleet:b` with `grants.create`; an agent's token
-  takes any grant its subject holds in the org, as writer at most.
+  A share never lowers a grant `b` holds: to lower its own share, an agent
+  takes it back and shares again.
+  [`grants.unshare_agent`](../reference/operations/grants.md#grantsunshare_agent)
+  with the same body (no `role`) takes back what the agent lent: `b` is
+  refused at once on that server, and within `LOOM_GRANT_CACHE_TTL_SECONDS` on
+  the others. A grant an admin made stays (409). An admin of the namespace
+  grants or revokes `sa:fleet:b` with `grants.create` and `grants.revoke`; an
+  agent's token takes any grant its subject holds in the org, as writer at
+  most, and names at most 50 namespaces besides its own and the trust's.
 
   An exact `tenant_id` keeps one trust to one tenant, so each tenant's agents
   land in their own org (a prefix of `sub` may be added as a further

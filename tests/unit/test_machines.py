@@ -89,8 +89,10 @@ def bots(monkeypatch) -> dict[str, Any]:
 
     # Each subject's grant ranks, as `grant_cache.grant_map` reads them.
     grants: dict[str, dict[str, int]] = {}
+    read_grants: list[str] = []
 
     async def grant_map(org: str, subject: str) -> grant_cache.GrantMap:
+        read_grants.append(subject)
         return grant_cache.GrantMap(ranks=dict(grants.get(subject, {})))
 
     async def active_namespaces(org: str, names: list[str]) -> set[str]:
@@ -112,6 +114,7 @@ def bots(monkeypatch) -> dict[str, Any]:
         "active": active,
         "made": made,
         "grants": grants,
+        "read_grants": read_grants,
     }
 
 
@@ -504,16 +507,31 @@ def test_a_grant_counts_as_writer_at_most_and_raises_a_shared_role(bots) -> None
 
 
 def test_a_revoked_grant_or_a_released_namespace_lends_nothing(bots) -> None:
-    bots["active"].add("fleet-a1")
+    bots["active"].update({"fleet-a1", "fleet-a2"})
     bots["grants"]["sa:fleet:a1"] = {"fleet-a2": 0, "gone": 1}  # revoked; not active
     assert _agent_roles(bots) == {"fleet-a1": "writer", "docs": "viewer"}
 
 
 def test_a_keyed_bot_takes_only_its_registered_roles(bots) -> None:
-    bots["grants"]["sa:triage"] = {"deploys": 2}
     r = _with_key(TestClient(oauth_app()), _assertion(bots["key"]))
     claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
-    assert claims["namespaces"] == ["triage", "docs"]
+    assert claims["namespaces"] == ["triage", "docs"] and bots["read_grants"] == []
+
+
+def test_a_lower_grant_leaves_the_trusts_role_for_the_gate_to_cap(bots) -> None:
+    bots["active"].add("fleet-a1")
+    bots["registered"]["fleet"]["ns_roles"] = [("docs", "writer")]
+    bots["grants"]["sa:fleet:a1"] = {"docs": 1}
+    assert _agent_roles(bots)["docs"] == "writer"  # authz.claim_cap reads it as viewer
+
+
+def test_an_agents_token_names_at_most_its_limit_of_lent_namespaces(bots) -> None:
+    lent = [f"ns-{i:03}" for i in range(agents.MAX_LENT + 5)]
+    bots["active"].update({"fleet-a1", *lent})
+    bots["grants"]["sa:fleet:a1"] = {ns: 1 for ns in lent} | {"docs": 2}
+    roles = _agent_roles(bots)
+    assert [ns for ns in roles if ns.startswith("ns-")] == lent[: agents.MAX_LENT]  # first by name
+    assert roles["docs"] == "writer"  # a raised role is never left out
 
 
 @pytest.mark.parametrize("agent", [None, "", "A1", "a/b", "-a", "a" * 64])

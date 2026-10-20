@@ -104,7 +104,7 @@ Remove a subject's grant on a namespace.
 
 ## `grants.share_agent`
 
-Grant the agent `input.role` on the caller's namespace.
+Let another agent of the caller's trust read, or write, the caller's own namespace.
 
 `POST /v1/grants.share_agent` · MCP `loom_grants_share_agent` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
 
@@ -119,12 +119,12 @@ Grant the agent `input.role` on the caller's namespace.
 | --- | --- | --- |
 | `namespace` | `str` | The namespace the op reads or writes. |
 | `subject` | `str` | The subject the grant is stored under, `sa:<trust>:<agent>`. |
-| `role` | `Literal['viewer', 'writer', 'admin']` | The role now active for that agent. |
+| `role` | `Literal['viewer', 'writer']` | The role now active for that agent. |
 | `granted_at` | `datetime` | When the grant row was written (UTC). |
 
 ## `grants.unshare_agent`
 
-Revoke the agent's grant on the caller's namespace; idempotent.
+Take back what the caller lent another agent of its trust.
 
 `POST /v1/grants.unshare_agent` · MCP `loom_grants_unshare_agent` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
 

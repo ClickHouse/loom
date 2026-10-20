@@ -11,6 +11,7 @@ namespace the trust did not make.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -21,6 +22,12 @@ from server.core.ch import get_client
 # The agent's name as its claim must give it: it becomes part of a subject and
 # a namespace, so it is refused, never rewritten into another agent's name.
 AGENT = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
+
+# The most namespaces an agent's token names beyond its own and its trust's:
+# each adds about 64 bytes twice, and a proxy's default header limit is 8 KB.
+MAX_LENT = 50
+
+log = logging.getLogger(__name__)
 
 
 def subject(trust: str, agent: str) -> str:
@@ -51,18 +58,34 @@ async def with_grants(
     m: machines.Machine, agent: str, ns_roles: list[tuple[str, str]]
 ) -> list[tuple[str, str]]:
     """`ns_roles` and the namespaces of the trust's org the agent holds a live
-    grant on (another agent's share, an admin's grant), each at the higher of
-    the two. A grant counts as writer at most: an agent never re-shares a
-    namespace it was only lent."""
+    grant on (another agent's share, an admin's grant). A grant counts as
+    writer at most, so an agent never re-shares a namespace it was only lent;
+    it raises a role `ns_roles` gives, and a lower or revoked one caps that
+    role at the gate (`authz.claim_cap`). At most MAX_LENT namespaces are
+    added, the first by name, so the token stays within a proxy's header limit."""
     from server.core.grant_cache import grant_map
     from server.operations.base import grant_rank
 
     ranks = (await grant_map(m["org"], subject(m["name"], agent))).ranks
     lent = {ns: "viewer" if rank == 1 else "writer" for ns, rank in ranks.items() if rank > 0}
     roles = dict(ns_roles)
-    for ns in await machines.active_namespaces(m["org"], sorted(lent)):
-        if grant_rank(lent[ns]) > grant_rank(roles.get(ns)):
+    added = left_out = 0
+    for ns in sorted(await machines.active_namespaces(m["org"], sorted(lent))):
+        if ns in roles:
+            if grant_rank(lent[ns]) > grant_rank(roles[ns]):
+                roles[ns] = lent[ns]
+        elif added < MAX_LENT:
             roles[ns] = lent[ns]
+            added += 1
+        else:
+            left_out += 1
+    if left_out:
+        log.warning(
+            "agent %s of %s: %d granted namespaces left out of its token",
+            agent,
+            m["name"],
+            left_out,
+        )
     return list(roles.items())
 
 

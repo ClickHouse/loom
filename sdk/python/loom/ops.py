@@ -8604,7 +8604,7 @@ class GrantsShareAgentBody(TypedDict, total=False):
 class GrantsShareAgentOutput(TypedDict, total=False):
     namespace: Required[str]
     subject: Required[str]
-    role: Required[Literal["viewer", "writer", "admin"]]
+    role: Required[Literal["viewer", "writer"]]
     granted_at: Required[str]  # date-time as ISO-8601 text
 
 

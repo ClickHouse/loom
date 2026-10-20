@@ -9,9 +9,11 @@ from typing import Any
 
 import pytest
 
+from server.auth import agents, authz
 from server.auth.context import set_current_auth
 from server.auth.jwt import AuthInfo
-from server.core.errors import AuthInsufficientError, ValidationError
+from server.core import grant_cache
+from server.core.errors import AuthInsufficientError, PreconditionFailedError, ValidationError
 from server.identity.api.models_grants import (
     GrantsCreateOutput,
     GrantsRevokeOutput,
@@ -19,13 +21,37 @@ from server.identity.api.models_grants import (
     GrantsUnshareAgentInput,
 )
 from server.identity.app import agent_shares
+from server.identity.domain.grants import GrantState
 from server.operations.base import Role
 
 _NOW = datetime(2026, 10, 20, 12, 0, 0)
 
 
 @pytest.fixture
-def calls(monkeypatch) -> list[tuple[str, Any]]:
+def world(monkeypatch) -> dict[str, Any]:
+    """The grantee's grant ranks, the restricted namespaces, and the row an
+    unshare finds."""
+    state: dict[str, Any] = {"ranks": {}, "restricted": set(), "row": _row("sa:fleet:a")}
+
+    async def grant_map(org: str, subject: str) -> grant_cache.GrantMap:
+        return grant_cache.GrantMap(ranks=dict(state["ranks"]))
+
+    async def may_be_restricted(org: str, namespace: str) -> bool:
+        return namespace in state["restricted"]
+
+    monkeypatch.setattr(grant_cache, "grant_map", grant_map)
+    monkeypatch.setattr(authz, "may_be_restricted", may_be_restricted)
+    return state
+
+
+def _row(granted_by: str, role: str = "viewer") -> GrantState:
+    return GrantState(
+        role=role, granted_by=granted_by, status="active", pending_role=None, pending_since=None
+    )
+
+
+@pytest.fixture
+def calls(monkeypatch, world) -> list[tuple[str, Any]]:
     seen: list[tuple[str, Any]] = []
 
     async def create(input: Any) -> GrantsCreateOutput:
@@ -38,12 +64,13 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
             granted_at=_NOW,
         )
 
-    async def revoke(input: Any) -> GrantsRevokeOutput:
+    async def revoke(input: Any, may_take: Any) -> GrantsRevokeOutput:
+        may_take(world["row"])  # as revoke_grant checks it, before and under the claim
         seen.append(("revoke", input))
         return GrantsRevokeOutput(revoked=True, revoked_at=_NOW)
 
     monkeypatch.setattr(agent_shares, "handle_grants_create", create)
-    monkeypatch.setattr(agent_shares, "handle_grants_revoke", revoke)
+    monkeypatch.setattr(agent_shares, "revoke_grant", revoke)
     yield seen
     set_current_auth(None)
 
@@ -76,13 +103,50 @@ def test_an_agent_lends_its_namespace_to_an_agent_of_its_trust(calls) -> None:
     assert _share(role="writer").role == "writer"
 
 
+def _unshare() -> Any:
+    body = GrantsUnshareAgentInput(org="acme", namespace="fleet-a", agent="b")
+    return asyncio.run(agent_shares.handle_grants_unshare_agent(body))
+
+
 def test_an_agent_takes_its_share_back(calls) -> None:
     _as("sa:fleet:a")
-    body = GrantsUnshareAgentInput(org="acme", namespace="fleet-a", agent="b")
-    out = asyncio.run(agent_shares.handle_grants_unshare_agent(body))
+    out = _unshare()
     [(op, revoke)] = calls
     assert op == "revoke" and revoke.subject == "sa:fleet:b" and revoke.namespace == "fleet-a"
     assert out.revoked and out.revoked_at == _NOW
+
+
+@pytest.mark.parametrize(
+    "row",
+    [_row("alice@acme.com"), _row("sa:fleet:a", role="admin"), _row("sa:fleet:c")],
+    ids=["an-admins-grant", "an-admin-role", "another-agents"],
+)
+def test_an_agent_takes_back_only_what_it_lent(calls, world, row: GrantState) -> None:
+    _as("sa:fleet:a")
+    world["row"] = row
+    with pytest.raises(PreconditionFailedError):
+        _unshare()
+    assert calls == []
+
+
+def test_a_restricted_namespace_is_shared_only_by_its_admin(calls, world) -> None:
+    _as("sa:fleet:a")
+    world["restricted"].add("fleet-a")
+    with pytest.raises(AuthInsufficientError):
+        _share()
+    assert calls == []
+
+
+def test_an_agent_holding_its_limit_of_namespaces_takes_no_new_one(calls, world) -> None:
+    _as("sa:fleet:a")
+    world["ranks"] = {f"ns-{i}": 1 for i in range(agents.MAX_LENT)} | {"fleet-b": 3}
+    with pytest.raises(PreconditionFailedError):
+        _share()
+    world["ranks"]["fleet-a"] = 1  # one it holds already may be raised
+    assert _share(role="writer").role == "writer"
+    del world["ranks"]["ns-0"]
+    del world["ranks"]["fleet-a"]
+    assert _share().role == "viewer"  # its own namespace never counts
 
 
 @pytest.mark.parametrize(

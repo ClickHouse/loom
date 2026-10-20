@@ -287,13 +287,27 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     Refuses to revoke a namespace's last active admin — that would leave it
     ownerless; promote a replacement first.
     """
+    return await revoke_grant(input)
 
+
+async def revoke_grant(
+    input: GrantsRevokeInput, may_take: Callable[[GrantState], None] | None = None
+) -> GrantsRevokeOutput:
+    """`grants.revoke`; `may_take` raises for a row this caller must not
+    revoke, checked before any change and again on the row read under the
+    grant's claim."""
     subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
     if row is None:
         return GrantsRevokeOutput(revoked=False)
+    if may_take is not None:
+        may_take(row)
 
     async def _write(row: GrantState | None) -> tuple[GrantState, datetime] | None:
-        return None if row is None else (row, await _write_revoke(input, subject, row))
+        if row is None:
+            return None
+        if may_take is not None:
+            may_take(row)
+        return row, await _write_revoke(input, subject, row)
 
     done = None
     if not _active_admin(row):

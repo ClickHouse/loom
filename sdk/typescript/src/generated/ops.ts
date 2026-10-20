@@ -2833,7 +2833,7 @@ export interface GrantsShareAgentInput {
 export interface GrantsShareAgentOutput {
   namespace: string;
   subject: string;
-  role: "viewer" | "writer" | "admin";
+  role: "viewer" | "writer";
   granted_at: string; // date-time
 }
 
