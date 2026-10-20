@@ -67,7 +67,7 @@ Why: an imported component brings its keyboard and focus behaviour, which a redr
 - **Tab rows**: `styles.css` keeps every tab label on one line and lets a tab row wider than the page scroll sideways in its own box, with the tab's focus ring drawn inside it.
 - **Disabled with a reason**: Click UI styles only a natively disabled button; `ui/Unavailable` marks its button `data-unavailable` (with the button's type), and `styles.css` gives that button Click UI's disabled colours.
 - **Layers on top**: dialogs z-50 (a confirm z-[60]), toasts z-[65], every Radix popper (menus, selects, popovers, tooltips) z-[70].
-- **Type**: Click UI's sizes, 12, 14, 16, 18, 20 and 32 px. Captions are 12 px (`text-xs`); Click UI's small badge and small avatar keep its 10 and 11 px. Page titles are 20 px. Inter and Inconsolata, latin and latin-ext, are declared in `styles.css` under Click UI's family names.
+- **Type**: Click UI's sizes, 10 to 32 px: captions are 12 px (`text-xs`), the small badge 10 px and the small avatar 11 px; page titles are 20 px. Inter and Inconsolata, latin and latin-ext, are declared in `styles.css` under Click UI's family names.
 
 ## What ships of Click UI
 

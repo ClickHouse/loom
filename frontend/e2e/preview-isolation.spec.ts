@@ -63,7 +63,7 @@ async function serveUnderDashboardCsp(page: Page) {
       window.__cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`),
     );
   });
-  // Dashboard page loads only: an API document (a preview frame's download URL) keeps its own headers.
+  // Dashboard page loads only: an API document (the download URL opened on its own) keeps its own headers.
   await page.route(
     (url) => !url.pathname.startsWith("/v1/"),
     async (r) => {
@@ -137,7 +137,7 @@ async function setup(page: Page): Promise<Probe> {
 async function openPreview(page: Page, f: Fixture) {
   await page.getByRole("button", { name: `Preview ${f.title}`, exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText("Loading thread")).toHaveCount(0);
+  await expect(dialog.getByText("Loading preview")).toHaveCount(0);
   return dialog;
 }
 
