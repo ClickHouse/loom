@@ -35,11 +35,16 @@ def _refusal(day: date, today: date) -> str:
 
     if day >= today:
         return f"{day} has not ended yet (UTC): export a past day"
-    if len(settings.analytics_export_name_key) < MIN_NAME_KEY_CHARS:
+    key = settings.analytics_export_name_key
+    if len(key) < MIN_NAME_KEY_CHARS:
         return (
             f"export-analytics needs LOOM_ANALYTICS_EXPORT_NAME_KEY: a random string of at "
             f"least {MIN_NAME_KEY_CHARS} characters"
         )
+    # A Secret made from a file keeps its trailing newline, and every hash would
+    # be keyed on it: a warehouse hashing with the bare key would join nothing.
+    if key != key.strip():
+        return "LOOM_ANALYTICS_EXPORT_NAME_KEY has leading or trailing whitespace: remove it"
     # A missing boto3, or a botocore without put_object's IfNoneMatch, fails at
     # the first upload, after the month's read: refuse before it instead.
     try:
@@ -79,7 +84,8 @@ def _cmd_export(args: argparse.Namespace) -> int:
     def new_client() -> Any:
         return s3_client(role_arn=args.role_arn, region=args.region)
 
-    # Credentials that cannot upload fail here, not after the month's read.
+    # Missing or expired credentials, or a role that cannot be assumed, fail
+    # here, not after the month's read; a missing write grant fails at the upload.
     check_credentials(role_arn=args.role_arn, region=args.region)
     put = s3_put(new_client, args.bucket, expected_owner=args.expected_bucket_owner)
 

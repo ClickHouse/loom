@@ -84,9 +84,10 @@ def s3_client(*, role_arn: str = "", region: str = "") -> Any:
 
 
 def check_credentials(*, role_arn: str = "", region: str = "") -> None:
-    """Raise now, before any read, when the export could not upload: assume
-    `role_arn`, or without one ask STS whose the default credentials are (a call
-    no IAM policy can deny)."""
+    """Raise now, before any read, on missing or expired credentials or a role
+    that cannot be assumed: assume `role_arn`, or without one ask STS who the
+    default credentials belong to (a call no IAM policy can deny). A missing
+    `s3:PutObject` grant still fails at the upload."""
     if role_arn:
         s3_client(role_arn=role_arn, region=region)
         return

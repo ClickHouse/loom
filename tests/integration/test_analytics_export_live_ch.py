@@ -34,6 +34,7 @@ from server.insights.store.analytics_export import (
     parquet,
 )
 from tests.integration._resources import unique_org
+from tests.siphash_reference import siphash_2_4_128
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("LOOM_CH_HOST"),
@@ -205,57 +206,6 @@ async def test_the_file_is_in_hash_order_never_name_order(ch: CHClient, entity: 
         assert order == sorted(order), prefer_column
 
 
-_M = (1 << 64) - 1
-
-
-def _rotl(x: int, b: int) -> int:
-    return ((x << b) | (x >> (64 - b))) & _M
-
-
-def _siphash_2_4_128(key: bytes, msg: bytes) -> bytes:
-    """The reference SipHash-2-4-128, written out to check ClickHouse against."""
-    k0, k1 = int.from_bytes(key[:8], "little"), int.from_bytes(key[8:], "little")
-    v = [
-        k0 ^ 0x736F6D6570736575,
-        k1 ^ 0x646F72616E646F6D ^ 0xEE,
-        k0 ^ 0x6C7967656E657261,
-        k1 ^ 0x7465646279746573,
-    ]
-
-    def rounds(n: int) -> None:
-        for _ in range(n):
-            v[0] = (v[0] + v[1]) & _M
-            v[1] = _rotl(v[1], 13) ^ v[0]
-            v[0] = _rotl(v[0], 32)
-            v[2] = (v[2] + v[3]) & _M
-            v[3] = _rotl(v[3], 16) ^ v[2]
-            v[0] = (v[0] + v[3]) & _M
-            v[3] = _rotl(v[3], 21) ^ v[0]
-            v[2] = (v[2] + v[1]) & _M
-            v[1] = _rotl(v[1], 17) ^ v[2]
-            v[2] = _rotl(v[2], 32)
-
-    tail = len(msg) % 8
-    blocks = [int.from_bytes(msg[i : i + 8], "little") for i in range(0, len(msg) - tail, 8)]
-    blocks.append((len(msg) & 0xFF) << 56 | int.from_bytes(msg[len(msg) - tail :], "little"))
-    for m in blocks:
-        v[3] ^= m
-        rounds(2)
-        v[0] ^= m
-    v[2] ^= 0xEE
-    rounds(4)
-    first = (v[0] ^ v[1] ^ v[2] ^ v[3]).to_bytes(8, "little")
-    v[1] ^= 0xDD
-    rounds(4)
-    return first + (v[0] ^ v[1] ^ v[2] ^ v[3]).to_bytes(8, "little")
-
-
-def test_the_reference_implementation_matches_the_published_vectors() -> None:
-    key = bytes(range(16))
-    assert _siphash_2_4_128(key, b"").hex() == "a3817f04ba25a8e66df67214c7550293"
-    assert _siphash_2_4_128(key, bytes(range(15))).hex() == "5493e99933b0a8117e08ec0f97cfc3d9"
-
-
 async def test_the_operator_guides_join_sql_computes_the_exported_hash(ch: CHClient) -> None:
     # The ```sql block of the operator guide, run as a warehouse would run it.
     guide = (Path(__file__).parents[2] / "docs/operations/analytics-export.md").read_text()
@@ -280,7 +230,7 @@ async def test_a_hashed_name_is_reference_siphash_under_the_documented_key(
         f"SELECT {name_hash_sql('{name:String}')} AS h", {"k0": k0, "k1": k1, "name": name}
     )
     key = hashlib.sha256(secret.encode()).digest()[:16]
-    assert row["h"] == _siphash_2_4_128(key, name.encode()).hex()
+    assert row["h"] == siphash_2_4_128(key, name.encode()).hex()
 
 
 @pytest.mark.parametrize("entity", sorted(ENTITIES))

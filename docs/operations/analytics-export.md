@@ -65,7 +65,9 @@ same name share a hash. The warehouse can link those rows without the key, for e
 same personal namespace in two orgs.
 
 - The key is a random string of 32 or more characters in `LOOM_ANALYTICS_EXPORT_NAME_KEY`;
-  the export refuses to run with a shorter or empty one.
+  the export refuses to run with a shorter or empty one, or one with leading or trailing
+  whitespace (a Secret made `--from-file` keeps the file's newline, which would key every
+  hash on it).
 - The 16-byte SipHash key is the first 16 bytes of SHA-256 of that string (UTF-8). The hash
   is ClickHouse's `sipHash128ReferenceKeyed`, which any SipHash-2-4-128 library reproduces
   from those 16 bytes, so a system that holds the key hashes its own ids to join on them.
@@ -94,10 +96,13 @@ same personal namespace in two orgs.
 ## Credentials
 
 The command uses the default AWS credentials of its process, and checks them once before
-any ClickHouse work: with `--role-arn` by assuming the role, without one by asking STS whose
-they are (`GetCallerIdentity`). Credentials it cannot use fail there, not after the read.
-With `--role-arn` it assumes the role again before each upload and writes under its
-credentials.
+any ClickHouse work: with `--role-arn` by assuming the role, without one by asking STS who
+they belong to (`GetCallerIdentity`). Missing or expired credentials, or a role that cannot
+be assumed, fail there, not after the read; a missing `s3:PutObject` grant, a wrong bucket
+or a bucket owner other than `--expected-bucket-owner` fails at the first upload. With
+`--role-arn` it assumes the role again before each upload and writes under its credentials.
+Pass `--region` (the bucket's) where the process has no AWS region: boto3 then falls back
+to the global STS and S3 endpoints.
 That fits a bucket in another account: the bucket's account grants `s3:PutObject` to a
 writer role, and the writer role trusts only the export's own identity. The export needs no
 read, list or delete permission on the bucket. `--expected-bucket-owner` makes S3 refuse

@@ -218,6 +218,8 @@ def test_a_day_that_has_not_ended_is_refused(
         ("", "needs LOOM_ANALYTICS_EXPORT_NAME_KEY"),
         ("k" * 31, "at least 32 characters"),
         ("k" * 32, ""),
+        ("k" * 32 + "\n", "leading or trailing whitespace"),
+        (" " + "k" * 32, "leading or trailing whitespace"),
     ],
 )
 def test_a_missing_or_short_name_key_is_refused(
@@ -330,3 +332,20 @@ def test_the_chart_fails_the_job_on_the_clis_refusal_code() -> None:
     template = (REPO_ROOT / "deploy/helm/loom/templates/analytics-export.yaml").read_text()
     rule = re.search(r"- action: FailJob\s+onExitCodes:.*?values: \[(\d+)\]", template, re.S)
     assert rule is not None and int(rule.group(1)) == cli.REFUSED
+
+
+def test_the_reference_siphash_matches_the_published_vectors() -> None:
+    from tests.siphash_reference import siphash_2_4_128
+
+    key = bytes(range(16))
+    assert siphash_2_4_128(key, b"").hex() == "a3817f04ba25a8e66df67214c7550293"
+    assert siphash_2_4_128(key, bytes(range(15))).hex() == "5493e99933b0a8117e08ec0f97cfc3d9"
+
+
+def test_the_key_words_are_the_documented_sha256_halves() -> None:
+    import hashlib
+
+    secret = "s" * 32
+    digest = hashlib.sha256(secret.encode()).digest()
+    k0, k1 = name_hash_key(secret)
+    assert k0.to_bytes(8, "little") + k1.to_bytes(8, "little") == digest[:16]
