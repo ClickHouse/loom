@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from server.memory.api.models_common import _Identity
+from server.memory.domain.delete_marks import caller_trace
 
 # Matches the SDK constant.
 DEFAULT_CHAR_LIMIT = 8192
@@ -30,13 +31,19 @@ class ProfileSetInput(_Identity):
     value: str
     # The section's size cap, measured on the JSON-encoded value; a longer value is a 422.
     char_limit: int = DEFAULT_CHAR_LIMIT
-    # Where the section came from. A worker that folds facts with an LLM
+    # Where the section came from; a trace starting with `memory.delete_version:` is
+    # refused (that op's tombstone marker). A worker that folds facts with an LLM
     # writes "profile.fold:<label>" so provenance classes the row `derived`;
     # a client writing a persona leaves it empty (`asserted`).
     source_trace: str = ""
     # Write only if the section's current content hash equals this (409 otherwise);
     # empty = no check.
     if_match_sha256: str = ""
+
+    @field_validator("source_trace")
+    @classmethod
+    def _source_trace(cls, v: str) -> str:
+        return caller_trace(v)  # memory.set's own check, before the handler builds its input
 
 
 class ProfileAppendInput(_Identity):

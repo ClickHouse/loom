@@ -48,6 +48,10 @@ _MCP_HIDDEN_OPS: frozenset[str] = frozenset(
         "memory.search_trace",
         "memory.bulk_set",
         "memory.bulk_get",
+        # A sync job's reads and deletes: one answer of every key in the namespace, and a
+        # delete of one exact version (import-okf --prune).
+        "memory.keys",
+        "memory.delete_version",
         # Deferred-batch lifecycle is an SDK/dashboard view; the agent sees
         # `pending_extraction` on search/ask instead.
         "memory.extraction_status",

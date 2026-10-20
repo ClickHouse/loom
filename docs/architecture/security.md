@@ -654,17 +654,18 @@ leg returns it. The other reads that could serve its value follow three rules:
 - Listed without the value: `memory.list` (no value or hash, `value_truncated: true`, and
   `contains` does not search it), `conflicts.list`, `memory.proposals`, and the preview of a
   `memory.move` dry run.
-- Read by key and audited: `memory.get`, `memory.get_by_id`, `memory.bulk_get` (which, like
-  `memory.list`, serves a row past `expires_at` until the expiry sweep; it,
-  `memory.get_by_id` and `memory.get` (with or without `as_of`) never serve a `high` row
-  past its retention window, while `memory.history` and `memory.evidence` still do until the
-  sweep), `memory.history` (one row per version it serves of a row with any `high` version,
-  since the version before a sweep labelled the row holds the same value unlabelled; a
-  redacted version, which served no value, is not) and `memory.evidence` each write a
+- Read by key and audited: `memory.get`, `memory.get_by_id`, `memory.bulk_get`,
+  `memory.history` (one row per version it serves of a row with any `high` version, since
+  the version before a sweep labelled the row holds the same value unlabelled; a redacted
+  version, which served no value, is not) and `memory.evidence` each write a
   `memory.sensitive_read` row. The admin dumps `namespace.snapshot` and `erasure.export`
   carry `high` rows on purpose and write one per row. `memory.copy_to` and
   `memory.cross_promote` read a `high` row by key and copy it to another namespace with its
   label; each writes its own audit row (both are `audit=True` ops), which records the copy.
+  `memory.get` (with or without `as_of`), `memory.get_by_id` and `memory.bulk_get` never
+  serve a `high` row past its retention window; `memory.history` and `memory.evidence` still
+  do until the sweep. `memory.bulk_get`, like `memory.list`, serves any other row past
+  `expires_at` until the expiry sweep.
 
 Raw evidence (conversation chunks, session digests, the passages `bodies: "source"` serves)
 has no sensitivity column. `memory.export_evidence` leaves out the chunks and digests linked

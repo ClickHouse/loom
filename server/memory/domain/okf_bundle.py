@@ -15,8 +15,11 @@ feeds these pure functions from the HTTP API and writes the files.
 
 Mapping, memory → concept:
 
-  memory_key                → file name (slug) and `loom.memory_key`
-  memory_type               → directory and `type` (semantic→Fact,
+  memory_key                → file name and `loom.memory_key` (the key's slug, capped at
+                              160 bytes; `-<hash>` when another key holds it or it is
+                              a bundle file's or a Windows device's name)
+  memory_type               → directory (its lowercased slug; `type-<slug>` for a
+                              reserved name) and `type` (semantic→Fact,
                               procedural→Procedure, preference→Preference,
                               episodic→Event; anything else Title-cased)
   value                     → body (text as-is; JSON as a fenced block)
@@ -43,6 +46,7 @@ trip cannot launder an inference into a first-hand fact.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -55,6 +59,26 @@ from server.memory.domain.sensitivity import LEVELS, is_high
 
 OKF_VERSION = "0.2"
 RESERVED_FILES = frozenset({"index.md", "log.md", "AGENTS.md", "README.md"})
+# Names a concept file or type directory never takes, compared case-insensitively as macOS
+# and Windows filesystems compare them: the bundle's own files, and the device names Windows
+# refuses as a file name with any extension.
+_WINDOWS_DEVICES = frozenset(
+    {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        *(f"com{i}" for i in range(10)),
+        *(f"lpt{i}" for i in range(10)),
+    }
+)
+_RESERVED_NAMES = frozenset(f.casefold() for f in RESERVED_FILES)
+# The longest file or directory name slug: a filesystem refuses a name over 255 bytes.
+_MAX_SLUG_BYTES = 160
+# Directory names a bundle reader skips or treats as something other than concepts: the
+# evidence and digest planes (okf_evidence.EVIDENCE_DIRS), the lint's staging area, and
+# tooling directories. A memory type that slugs to one of them is written under `type-<slug>`.
+_RESERVED_DIRS = frozenset({"evidence", "digests", "staging", "node_modules"})
 
 _TYPE_BY_MEMORY_TYPE: dict[str, str] = {
     "semantic": "Fact",
@@ -200,7 +224,7 @@ def _date(ts: Any) -> str:
 
 
 def okf_type_for(memory_type: str) -> str:
-    mt = (memory_type or "semantic").strip()
+    mt = (memory_type or "").strip() or "semantic"
     return _TYPE_BY_MEMORY_TYPE.get(mt, mt[:1].upper() + mt[1:])
 
 
@@ -237,10 +261,10 @@ def memory_to_concept(
     verified_by, verified_at, verification. Missing keys fall back.
     """
     memory_key = str(entry["memory_key"])
-    memory_type = str(entry.get("memory_type") or "semantic")
+    memory_type = str(entry.get("memory_type") or "").strip() or "semantic"
     okf_type = okf_type_for(memory_type)
-    directory = directory if directory is not None else memory_type
-    slug = slug or slugify(memory_key)
+    directory = directory if directory is not None else type_directory(memory_type)
+    slug = slug or file_slug(memory_key)
     value = entry.get("value")
     body_text = value_to_body(value if value is not None else "")
     title = humanise_key(memory_key)
@@ -404,13 +428,15 @@ def parse_concept(rel_path: str, text: str) -> Concept:
     verified_raw = fm.get("verified") or []
     if isinstance(verified_raw, dict):
         verified_raw = [verified_raw]
+    # okf-lint reports a `tags` that is not a list; --force-import still reads the file.
+    tags = fm.get("tags")
     return Concept(
         id=cid,
         type=str(fm.get("type") or "").strip(),
         title=str(fm.get("title") or humanise_key(cid.rsplit("/", 1)[-1])),
         description=str(fm.get("description") or ""),
         body=body.strip("\n"),
-        tags=[str(t) for t in (fm.get("tags") or [])],
+        tags=[str(t) for t in tags] if isinstance(tags, list) else [],
         generated=(
             {str(k): _scalar(v) for k, v in fm["generated"].items()}
             if isinstance(fm.get("generated"), dict)
@@ -686,15 +712,63 @@ def concept_paths_by_key(concepts: list[Concept]) -> dict[str, str]:
 # ------------------------------------------------------------------
 
 
+def type_directory(memory_type: str) -> str:
+    """The bundle directory of a memory type: its slug, prefixed when a reader would skip it
+    or read it as something other than concepts (a free-form type like `evidence`,
+    `.notes` or `../x` would otherwise drop its rows from the bundle or escape it)."""
+    # Lowercase: `Semantic` and `semantic` would share one directory on a case-insensitive
+    # filesystem, and their index files would overwrite each other.
+    slug = file_slug(memory_type).lower()
+    if slug in _RESERVED_DIRS or slug in _RESERVED_NAMES or _is_device(slug):
+        return f"type-{slug}"
+    return slug
+
+
+def file_slug(text: str) -> str:
+    """A key's (or type's) file name: its slug, cut to `_MAX_SLUG_BYTES` with a hash of the
+    whole text when longer (so two long keys that share a prefix still differ)."""
+    slug = slugify(text)
+    if len(slug.encode()) <= _MAX_SLUG_BYTES:
+        return slug
+    cut = slug.encode()[:_MAX_SLUG_BYTES].decode(errors="ignore").rstrip("-.")
+    return f"{cut}-{_short_hash(text)}"
+
+
+def _short_hash(text: str, attempt: int = 0) -> str:
+    salted = f"{text}\0{attempt}" if attempt else text
+    return hashlib.sha256(salted.encode()).hexdigest()[:8]
+
+
+def _is_device(name: str) -> bool:
+    return name.split(".", 1)[0].casefold() in _WINDOWS_DEVICES
+
+
+def _suffixed(concept_id: str, suffix: str) -> str:
+    """`concept_id` with `-<suffix>` before the first dot of its name: Windows reads a device
+    name (`lpt9.txt`) by the part before the dot, so a suffix after it would not help."""
+    directory, name = concept_id.rsplit("/", 1)  # every concept id is `<type dir>/<slug>`
+    stem, dot, rest = name.partition(".")
+    return f"{directory}/{stem}-{suffix}{dot}{rest}"
+
+
+def _is_reserved(concept_id: str) -> bool:
+    name = concept_id.rsplit("/", 1)[-1]
+    return f"{name}.md".casefold() in _RESERVED_NAMES or _is_device(name)
+
+
 def _dedupe_slugs(concepts: list[Concept]) -> None:
-    seen: dict[str, int] = {}
+    """Give each concept an id no other concept has, compared case-insensitively. A taken or
+    reserved name gets `-<hash of its key and row id>`, which no other key changes."""
+    used: set[str] = set()
     for c in concepts:
-        base = c.id
-        if base in seen:
-            seen[base] += 1
-            c.id = f"{base}-{seen[base]}"
-        else:
-            seen[base] = 0
+        if c.id.casefold() in used or _is_reserved(c.id):
+            identity = f"{c.memory_key}\0{c.loom.get('memory_id') or ''}"
+            # a counter makes each attempt a new name, so the loop ends
+            attempt = 0
+            while (renamed := _suffixed(c.id, _short_hash(identity, attempt))).casefold() in used:
+                attempt += 1
+            c.id = renamed
+        used.add(c.id.casefold())
 
 
 def related_links(
@@ -737,7 +811,11 @@ def plan_concepts(
 ) -> list[Concept]:
     """Entries → sorted, slug-deduped concepts carrying their typed edges."""
     concepts = [memory_to_concept(e) for e in entries]
-    concepts.sort(key=lambda c: c.id)
+    # Ties on a slug break on the key and the row id, never the listing's order, so the same
+    # rows keep the same files on every run. A file moves only when the key holding its bare
+    # name changes (a new key sorts first, or the holder leaves and the next in order takes
+    # it), and the copy of the key that moved is rewritten once.
+    concepts.sort(key=lambda c: (c.id, c.memory_key, str(c.loom.get("memory_id") or "")))
     _dedupe_slugs(concepts)
     typed = authored_relates_to(concepts, edges)
     for c in concepts:
@@ -792,12 +870,14 @@ def plan_bundle(
     title: str | None = None,
     edges: list[dict[str, Any]] | None = None,
     build_commit: str = "",
+    complete: bool = False,
 ) -> dict[str, str]:
     """Return {relative_path: file_text} for a complete OKF v0.2 bundle.
     `edges` are the namespace's live `operator_edges` rows.
     The root `index.md` frontmatter carries the generation pointer:
-    `corpus_digest`, `concepts`, `exported_at` (a date) and, when known, the
-    `build_commit` that rendered it."""
+    `corpus_digest`, `concepts`, `exported_at` (a date), when known the
+    `build_commit` that rendered it, and `complete: true` when `entries` is
+    every row of the namespace (prune trusts nothing else)."""
     concepts = plan_concepts(entries, edges)
     by_id = {c.id: c for c in concepts}
     links = related_links(concepts)
@@ -821,6 +901,8 @@ def plan_bundle(
     }
     if build_commit:
         pointer["build_commit"] = build_commit
+    if complete:
+        pointer["complete"] = True
     root_fm = (
         yaml.safe_dump(
             {"okf_version": OKF_VERSION, "loom": pointer},

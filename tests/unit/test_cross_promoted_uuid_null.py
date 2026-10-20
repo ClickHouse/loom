@@ -100,3 +100,24 @@ def test_hydrate_reads_zero_uuid_as_not_promoted() -> None:
         ).cross_promoted_from_memory_id
         == _REAL
     )
+
+
+def test_a_copy_drops_a_delete_version_marker_an_older_restore_left() -> None:
+    # The marker stays on memory.delete_version's own tombstone; a copy of a live row an
+    # older build restored with it writes the row without it, as the row builder does.
+    from server.memory.app.copy_ops import copied_memory_row
+
+    row = copied_memory_row(
+        _row(source_trace="memory.delete_version:42"),
+        org="o",
+        namespace="dst",
+        agent="a",
+        memory_key="k",
+        memory_id="22222222-2222-2222-2222-222222222222",
+        version=2,
+        value="v",
+        from_memory_id=None,
+        from_namespace="ns",
+        actor="t",
+    )
+    assert row["source_trace"] == ""

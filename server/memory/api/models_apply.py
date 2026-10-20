@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from server.memory.api.models_common import _Identity
+from server.memory.domain.expire_reasons import caller_reason
 
 MAX_KEYS = 500
 
@@ -144,8 +145,8 @@ class MemoryApplyInput(_Identity):
     target: ApplyTarget
     # What to do to each row; every action but `delete` needs its block below.
     action: Literal["delete", "expire", "lock", "label", "demote"]
-    # Why (1..512 chars); stored as lock_reason / expire_reason where the action has
-    # such a column.
+    # Why (1..512 chars, and for `expire` not starting with `blacklist.sweep:`); stored as
+    # lock_reason / expire_reason where the action has such a column.
     reason: str = Field(..., min_length=1, max_length=512)
     # Row cap for a `filter` or `search` target, where it is required; unused for
     # `keys`.
@@ -176,6 +177,8 @@ class MemoryApplyInput(_Identity):
         }
         if self.action in need and need[self.action] is None:
             raise ValueError(f"action {self.action!r} needs its `{self.action}` block")
+        if self.action == "expire":
+            caller_reason(self.reason, "reason")  # stored as the rows' expire_reason
         return self
 
 

@@ -29,6 +29,7 @@ from server.memory.app import set_chunks as _set_chunks
 from server.memory.app import write as write_mod
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
+from server.memory.domain.delete_marks import carried_trace
 from server.memory.domain.memory_types import is_searchable_type
 from server.memory.store.rows import next_version
 
@@ -116,7 +117,9 @@ def _destination_input(input: MemoryMoveInput, source: MemoryRow) -> Any:
         tags=list(source.tags or []) if input.tags is None else list(input.tags),
         entities=list(source.entities or []) if input.entities is None else list(input.entities),
         confidence=float(source.confidence),
-        source_trace=source.source_trace or "",
+        # A row an older build restored from a delete_version tombstone still holds its
+        # marker, which no write may carry; the move's row drops it, as the row builder does.
+        source_trace=carried_trace(source.source_trace),
         source_class=source_class if source_class in _prov.CALLER_DECLARABLE else None,
         source_resource_id=input.source_resource_id or (source.source_resource_id or ""),
         valid_at=input.valid_at if input.valid_at is not None else source.valid_at,
