@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core import readiness
+from server.llm import customer
 from server.memory.store.rows import next_version
 from server.settings import settings
 
@@ -343,8 +344,6 @@ async def calibrate_embedder(
         return None
 
     async def _embed_pair(a: str, b: str) -> float:
-        from server.llm import customer
-
         with customer.system():  # fixed probe pairs, no org's data
             va, vb = await asyncio.gather(embedder.embed(a), embedder.embed(b))
         return _cosine(va, vb)

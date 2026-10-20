@@ -29,6 +29,10 @@ def is_provider_api(url: str) -> bool:
 RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
+# RFC 9110 token characters: what an HTTP header name may hold.
+_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+
+
 class ProviderSettings(ModelSettings):
     # Inherits ModelSettings for `llm_model`, which the provider resolution below
     # reads and fills.
@@ -139,6 +143,22 @@ class ProviderSettings(ModelSettings):
         if alias in LOCAL_EMBEDDING_MODELS:  # an unknown alias fails when the embedder is built
             self.embedding_dim = LOCAL_EMBEDDING_MODELS[alias][1]
             self._inferred_fields |= {"embedding_dim"}
+        return self
+
+    @model_validator(mode="after")
+    def _check_customer_headers(self) -> ProviderSettings:
+        """A header name an HTTP client cannot send would fail every model call
+        as a provider outage; an empty system customer would bill the
+        deployment's own calls to no one."""
+        for field in ("inference_customer_header", "inference_feature_header"):
+            name = getattr(self, field)
+            if name and not _HEADER_NAME.fullmatch(name):
+                raise ValueError(f"LOOM_{field.upper()} must be an HTTP header name, got {name!r}")
+        if self.inference_customer_header and not self.inference_system_customer.strip():
+            raise ValueError(
+                "LOOM_INFERENCE_SYSTEM_CUSTOMER must name a customer while "
+                "LOOM_INFERENCE_CUSTOMER_HEADER is set"
+            )
         return self
 
     @model_validator(mode="after")

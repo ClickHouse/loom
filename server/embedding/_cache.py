@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable
 
 from server.core.background import TaskSet
 from server.embedding.normalize import normalize_whitespace, query_text
+from server.llm import customer
 from server.settings import settings
 
 # The key hashes the whitespace-normalised text, and the provider sees the
@@ -90,12 +91,17 @@ async def cached_embed(
     width: a shared-tier row of another width (the same model before a
     `LOOM_EMBEDDING_DIM` change) is not this embedder's vector.
 
+    Checks the call's customer first (`server.llm.customer.require`): a hit
+    or a joined flight must not hide a path that names none, and one caller's
+    refusal must never reach another's waiter.
+
     The hit flag is returned rather than inferred from the `hits`/`misses`
     counters: those are process-wide, so diffing them across an `await` races
     with every other concurrent embed. The caller needs it to distinguish a
     served-from-cache embedding (no upstream tokens, no cost) from a billed one
     on its telemetry span.
     """
+    await customer.admit()
     k = _key(model, text)
     hit = _cache.get(k)
     if hit is not None:

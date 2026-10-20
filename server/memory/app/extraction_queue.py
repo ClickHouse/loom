@@ -26,6 +26,7 @@ from typing import Any
 
 from server.core.datetimes import utc_now as _now
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scope_and
+from server.llm import customer
 from server.memory.api.models_bulk import MemorySetFromMessagesInput
 from server.memory.store.rows import next_version
 
@@ -413,7 +414,6 @@ async def replay_row(row: dict[str, Any]) -> int:
     """Run one queued request through the inline handler under the enqueuer's
     principal and read scope; returns memories written."""
     from server.identity.domain.read_scope import read_filters_bound
-    from server.llm import customer
     from server.memory.app.extract.handler import handle_memory_set_from_messages
     from server.memory.domain import provenance as _prov
 

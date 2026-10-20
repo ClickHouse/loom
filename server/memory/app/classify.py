@@ -30,6 +30,7 @@ import logging
 
 import httpx
 
+from server.llm import customer
 from server.observability import degradations as _degradations
 from server.observability import provider_health as _provider_health
 
@@ -56,10 +57,9 @@ async def classify(
         "prompt_template": prompt_template,
         "valid_types": valid_types,
     }
-    from server.llm import customer
-
     # Outside the fail-open: a refused call is an error, not a kept type.
-    headers = await customer.headers()
+    await customer.admit()
+    headers = customer.headers()
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(endpoint, json=body, headers=headers)

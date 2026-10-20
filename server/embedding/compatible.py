@@ -64,6 +64,7 @@ class CompatibleEmbedder:
         self._cache_model = "compatible:" + hashlib.sha256(identity.encode()).hexdigest()
 
     async def _request(self, texts: list[str]) -> list[list[float]]:
+        await customer.admit()
         payload: dict[str, object] = {
             "model": self.model_name,
             "input": texts,
@@ -72,7 +73,7 @@ class CompatibleEmbedder:
         if self._send_dimensions:
             payload["dimensions"] = self.dim
         headers = {"Authorization": f"Bearer {self._key}"} if self._key else {}
-        headers |= await customer.headers()
+        headers |= customer.headers()
         async for attempt in retrying():
             with attempt:
                 response = await get_client().post(

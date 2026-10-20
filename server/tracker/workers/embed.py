@@ -32,6 +32,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now_seconds as _now
+from server.llm import customer
 from server.settings import settings
 from server.tracker.app.embed_index import (
     KINDS,
@@ -405,8 +406,6 @@ async def _flush(
 ) -> None:
     if not pending:
         return
-    from server.llm import customer
-
     if await customer.switched_off(org):
         return  # the items stay unembedded until the org is switched back on
     with customer.for_org(org):

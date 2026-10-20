@@ -22,6 +22,8 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from server.llm import customer
+
 # (text-source column, vector column) per table, plus an optional secondary
 # (key text -> key vector, key dim) embedding.
 _TABLES: dict[str, dict[str, Any]] = {
@@ -299,18 +301,13 @@ def _without_key(row: dict[str, Any]) -> dict[str, Any]:
 async def _rewrite_page(
     ch: Any, embedder: Any, table: str, chunk: list[dict[str, Any]], key_only: bool
 ) -> None:
-    from server.llm import customer
-
     cfg = _TABLES[table]
     model, dim = embedder.model_name, embedder.dim
     vecs: list[list[float]] | None = [[] for _ in chunk] if not key_only else None
     kvecs: list[list[float]] | None = [[] for _ in chunk] if cfg.get("key_text") else None
     # A page can span two orgs (the keyset leads with org): one call per org,
     # since a model call names a single customer.
-    by_org: dict[str, list[int]] = {}
-    for i, r in enumerate(chunk):
-        by_org.setdefault(str(r.get("org") or ""), []).append(i)
-    for org, positions in by_org.items():
+    for org, positions in customer.by_org(str(r.get("org") or "") for r in chunk).items():
         with customer.for_org(org):
             if vecs is not None:
                 texts = [str(chunk[i].get(cfg["text"]) or "") for i in positions]

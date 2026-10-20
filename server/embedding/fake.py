@@ -12,6 +12,7 @@ import hashlib
 import math
 
 from server.embedding.normalize import query_text
+from server.llm import customer
 
 
 class FakeNGramEmbedder:
@@ -21,7 +22,9 @@ class FakeNGramEmbedder:
 
     async def embed(self, text: str) -> list[float]:
         # Queries are whitespace-normalised like the real providers';
-        # `embed_many` (the write path) is raw.
+        # `embed_many` (the write path) is raw. It checks the call's customer
+        # as a metered provider would, so a path that names none fails in tests.
+        await customer.admit()
         return self._embed_raw(query_text(text))
 
     def _embed_raw(self, text: str) -> list[float]:
@@ -43,4 +46,5 @@ class FakeNGramEmbedder:
 
     async def embed_many(self, texts: list[str]) -> list[list[float]]:
         """One vector per raw text, in input order."""
+        await customer.admit()
         return [self._embed_raw(t) for t in texts]

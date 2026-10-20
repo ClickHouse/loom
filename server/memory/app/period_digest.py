@@ -36,6 +36,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.llm import customer
 from server.memory.app.provenance import writer_actor
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
@@ -426,8 +427,6 @@ async def _source_memories(ch: Any, period: Period) -> tuple[list[str], list[str
 async def _write_period(
     ch: Any, llm: Any, embedder: Any, period: Period, result: PeriodDigestResult
 ) -> bool:
-    from server.llm import customer
-
     system, user = build_period_prompt(period)
     try:
         with llm_stage("period_digest"), customer.for_org(period.org):

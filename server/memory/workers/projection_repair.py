@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from server.llm import customer
 from server.settings import settings
 from server.workers.status import record_pass
 
@@ -48,8 +49,6 @@ async def run_pass(
             limit=max(1, int(cfg.max_failures_per_pass)),
         )
         result.scanned = len(failures)
-        from server.llm import customer
-
         for failure in failures:
             if await customer.switched_off(str(failure.org)):
                 continue  # retried once the org is switched back on, no attempt spent

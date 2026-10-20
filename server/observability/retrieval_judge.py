@@ -35,6 +35,7 @@ import logging
 import time
 from typing import Any
 
+from server.llm import customer
 from server.observability.worker_queue import LoopBoundQueue
 from server.settings import settings
 
@@ -333,8 +334,6 @@ async def _judge_one(item: dict[str, Any]) -> None:
         + "\n\nRETURNED:\n"
         + "\n---\n".join(f"[{i}] {e}" for i, e in enumerate(excerpts, start=1))
     )
-
-    from server.llm import customer
 
     if await customer.switched_off(str(item["org"])):
         return  # a sample, not owed work: an org switched off sends none of its text

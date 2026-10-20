@@ -123,7 +123,7 @@ async def _post(client: Any, model: str, api_key: str, payload: dict[str, Any]) 
         "x-api-key": api_key,
         "anthropic-version": _API_VERSION,
         "Content-Type": "application/json",
-        **(await customer.headers()),
+        **customer.headers(),
     }
     if root != _ANTHROPIC_ROOT:
         headers["Authorization"] = f"Bearer {api_key}"  # what gateways in front of it take
@@ -156,6 +156,9 @@ class AnthropicLLMClient:
         response_format: dict[str, str] | None = None,
         temperature: float | None = 0.0,
     ) -> LLMResult:
+        # Before the gateway token and outside `recording`: a call naming no
+        # customer is the caller's to fix, not a provider failure.
+        await customer.admit()
         client = _http_client()
         data: dict[str, Any] = {}
         json_mode = (response_format or {}).get("type") == "json_object"

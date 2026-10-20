@@ -143,6 +143,9 @@ class OpenAILLMClient:
         response_format: dict[str, str] | None = None,
         temperature: float | None = 0.0,
     ) -> LLMResult:
+        # Before the gateway token and outside `recording`: a call naming no
+        # customer is the caller's to fix, not a provider failure.
+        await customer.admit()
         client = _http_client()
         data: dict[str, Any] = {}
         payload = _payload(self.model, system, user, max_tokens, response_format, temperature)
@@ -162,7 +165,7 @@ class OpenAILLMClient:
                 headers = {
                     "Authorization": f"Bearer {bearer}",
                     "Content-Type": "application/json",
-                    **(await customer.headers()),
+                    **customer.headers(),
                 }
                 async for attempt in retrying():
                     with attempt:

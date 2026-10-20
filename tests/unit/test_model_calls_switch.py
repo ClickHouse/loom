@@ -78,9 +78,59 @@ def test_it_holds_with_no_customer_header_and_lets_an_unknown_org_through(monkey
     _off("acme")
     _request("acme")
     with pytest.raises(customer.ModelCallsDisabled):
-        asyncio.run(customer.headers())
+        asyncio.run(customer.admit())
     genai._identity.set(None)  # a dev call naming no org: nothing to check, no header to send
-    assert asyncio.run(customer.headers()) == {}
+    assert asyncio.run(customer.admit()) == "" and customer.headers() == {}
+
+
+def test_a_switched_off_org_is_served_no_cached_vector(monkeypatch) -> None:
+    # The switch is a kill switch: a vector another org's call cached is not
+    # served to it, though it would cost nothing.
+    from server.embedding.fake import FakeNGramEmbedder
+    from server.embedding.openai import OpenAIEmbedder
+
+    calls: list[str] = []
+
+    async def fetch(self: Any, text: str) -> list[float]:
+        calls.append(text)
+        return [0.5] * 8
+
+    monkeypatch.setattr(OpenAIEmbedder, "_embed_one_raw", fetch)
+    embedder = OpenAIEmbedder(model="text-embedding-3-small", dim=8, api_key="k")
+    _off("acme")
+    _request("beta")
+    asyncio.run(embedder.embed("the same text"))
+    _request("acme")
+    with pytest.raises(customer.ModelCallsDisabled):
+        asyncio.run(embedder.embed("the same text"))
+    assert calls == ["the same text"]
+    with pytest.raises(customer.ModelCallsDisabled):  # the fakes stand in for a provider
+        asyncio.run(FakeNGramEmbedder(dim=8).embed("text"))
+
+
+def test_a_switched_off_org_is_served_no_cached_answer(monkeypatch) -> None:
+    from server.llm import cache as cache_mod
+    from server.llm.client import LLMResult
+
+    asked: list[str] = []
+
+    class _Inner:
+        provider, model = "openai", "m"
+
+        async def complete(self, system: str, user: str, **kw: Any) -> LLMResult:
+            asked.append(user)
+            return LLMResult(text="answer", tokens_in=1, tokens_out=1)
+
+    async def hit(self: Any, key: str) -> LLMResult:
+        return LLMResult(text="cached", tokens_in=0, tokens_out=0)
+
+    monkeypatch.setattr(cache_mod.CachedLLMClient, "_get", hit, raising=False)
+    client = cache_mod.CachedLLMClient(_Inner())
+    _off("acme")
+    _request("acme")
+    with pytest.raises(customer.ModelCallsDisabled):
+        asyncio.run(client.complete("s", "u"))
+    assert asked == []
 
 
 class _Switch:

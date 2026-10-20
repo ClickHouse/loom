@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 
 from server.code.domain.anchor import Definition
+from server.llm import customer
 from server.memory.store.code_links import LinkRow
 
 # A claim or code longer than the judge reads is never judged.
@@ -65,8 +66,6 @@ async def judge(
     the code now (`new`, `d` at `head`): a claim that holds re-anchors it; a
     contradicted one keeps it `changed` with the corrected claim as `suggestion`. None
     on an unsure verdict; `Malformed` when the reply is no verdict."""
-    from server.llm import customer
-
     with customer.for_org(link["org"]):
         verdict, revised = await judge_claim(claim, old, new)
     if verdict == "malformed":

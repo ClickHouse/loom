@@ -263,6 +263,11 @@ class CachedLLMClient:
         **kw: Any,
     ) -> LLMResult:
         global hits, misses, saved_usd
+        from server.llm import customer
+
+        # Before the lookup: a hit is never served to a call naming no customer
+        # or for an org whose model calls are switched off.
+        await customer.admit()
         if _BYPASS.get() or (
             self._deterministic_only and float(kw.get("temperature") or 0.0) != 0.0
         ):

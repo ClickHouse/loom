@@ -265,8 +265,8 @@ curl -s -X POST "$LOOM_BASE_URL/v1/org.set_model_calls" -H "Authorization: Beare
 ```
 
 - While off, no chat, embedding, rerank or classify request is sent for the
-  org: a request that needs one is refused (403 `MODEL_CALLS_DISABLED`), and
-  background work waits. The embedding worker, the extraction queue and the
+  org, and no cached vector or answer is served to it either: a request that
+  needs one is refused (403 `MODEL_CALLS_DISABLED`), and background work waits. The embedding worker, the extraction queue and the
   entity extractor leave the org's queued rows where they are, attempts
   untouched; the other jobs pass the org over until it is back on.
 - `"enabled": true` switches it back on, and the waiting work runs.

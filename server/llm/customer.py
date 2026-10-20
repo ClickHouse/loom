@@ -13,11 +13,14 @@ startup probe, calibration, a provider check) runs under `system()` and names
 customers, so a job batching several orgs' rows splits them first.
 
 An org an admin switched off (`org.set_model_calls`, loom.org_model_calls)
-gets no model call at all, header or not: each process reads the switched-off
-orgs at most every `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`, and refuses
-every call for an org (`BackendUnavailableError`) once its copy is older than
-`LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`: the switch is a security path and
-fails closed. The deployment's own calls are never switched off.
+gets no model call at all, header or not, and no cached vector or answer
+either: the switch is a kill switch. `admit()`, at the top of every sender,
+checks both before the gateway token, the caches or provider health. Each
+process reads the switched-off orgs at most every
+`LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and refuses every call for an org
+(`BackendUnavailableError`) once its copy is older than
+`LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`: the switch fails closed. The
+deployment's own calls are never switched off.
 """
 
 from __future__ import annotations
@@ -27,14 +30,12 @@ import contextlib
 import contextvars
 import logging
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from urllib.parse import quote
 
 from server.core.errors import BackendUnavailableError, LoomServerError
 from server.observability import genai
 from server.settings import settings
-
-log = logging.getLogger(__name__)
 
 # The org a background job is working for; a request's comes from its identity.
 _org: contextvars.ContextVar[str] = contextvars.ContextVar("loom_model_call_org", default="")
@@ -44,6 +45,11 @@ _system: contextvars.ContextVar[bool] = contextvars.ContextVar(
 
 # Not an org: the identity tuple's "none", and an org-wide token's wildcard.
 _NO_ORG = ("", "-", "*")
+
+log = logging.getLogger(__name__)
+# A missed call path is logged once a minute per feature, not on every call.
+_LOG_EVERY_S = 60.0
+_logged_at: dict[str, float] = {}
 
 
 class Unattributed(LoomServerError):
@@ -101,25 +107,50 @@ def current() -> str:
     return "" if org in _NO_ORG else org
 
 
-async def headers() -> dict[str, str]:
+def require() -> str:
+    """The customer the current model call is for, checked before anything is
+    sent, cached or recorded: "" with no customer header configured. Raises
+    Unattributed, and logs it, when the call names none."""
+    if not settings.inference_customer_header:
+        return ""
+    org = current()
+    if org:
+        return org
+    if _system.get():
+        return settings.inference_system_customer
+    what = feature()
+    # Logged here: a fail-open caller (a reranker, a degraded leg) may swallow
+    # the error, and the missed path must still show by its code.
+    now = time.monotonic()
+    if now - _logged_at.get(what, -_LOG_EVERY_S) >= _LOG_EVERY_S:
+        _logged_at[what] = now
+        log.error("MODEL_CALL_UNATTRIBUTED: a model call (%s) names no customer", what)
+    raise Unattributed(
+        f"a model call ({what}) names no customer: run it for an org "
+        "(server.llm.customer.for_org) or as the deployment's (customer.system)"
+    )
+
+
+async def admit() -> str:
+    """`require()`, then the switch: raises ModelCallsDisabled when the
+    call's org is switched off. Called first by every sender, so a refused
+    call reaches no gateway, cache or provider-health record."""
+    org = require()
+    known = org or current()
+    if known and not _system.get() and await switched_off(known):
+        raise ModelCallsDisabled(f"model calls are switched off for org {known!r}")
+    return org
+
+
+def headers() -> dict[str, str]:
     """The customer and feature headers for one model request; {} with no
     customer header configured. Raises Unattributed when the call names no
-    customer, ModelCallsDisabled when its org is switched off."""
-    org = current()
-    if org and not _system.get() and await switched_off(org):
-        raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
-    name = settings.inference_customer_header
-    if not name:
-        return {}
+    customer."""
+    org = require()
     if not org:
-        if not _system.get():
-            raise Unattributed(
-                f"a model call ({feature()}) names no customer: run it for an org "
-                "(server.llm.customer.for_org) or as the deployment's (customer.system)"
-            )
-        org = settings.inference_system_customer
+        return {}
     # Header values are latin-1 with no line breaks; an org id never needs more.
-    out = {name: quote(org, safe="-._~:@")}
+    out = {settings.inference_customer_header: quote(org, safe="-._~:@")}
     if settings.inference_feature_header:
         out[settings.inference_feature_header] = quote(feature(), safe="-._~:")
     return out
@@ -133,6 +164,15 @@ def feature() -> str:
     if stage != "other":
         return stage
     return genai.current_operation() or "other"
+
+
+def by_org(orgs: Iterable[str]) -> dict[str, list[int]]:
+    """The positions of `orgs` grouped by org, in first-seen order: one model
+    call per group, since a call names a single customer."""
+    out: dict[str, list[int]] = {}
+    for i, org in enumerate(orgs):
+        out.setdefault(org, []).append(i)
+    return out
 
 
 async def switched_off(org: str) -> bool:

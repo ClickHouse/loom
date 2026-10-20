@@ -271,9 +271,11 @@ the shared HTTP client also carries non-model calls, which name no customer.
   instead of being billed to no one.
 
 - **An org switched off makes no call.** `org.set_model_calls` writes `loom.org_model_calls`;
-  every send point checks the call's org against each process's copy of the switched-off
-  orgs (`customer.switched_off_orgs`), read at most every
-  `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted no longer than
+  `customer.admit()`, first in every sender (before the gateway token, the embedding caches
+  and provider health), checks the call's org against each process's copy of the
+  switched-off orgs (`customer.switched_off_orgs`). A cached vector or answer is refused
+  too: the switch is a kill switch, so nothing model-made reaches the org. The copy is
+  read at most every `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted no longer than
   `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`, past which every call is refused. The embedding
   worker, the extraction queue and the entity extractor leave out a switched-off org when they
   select work, so its queued rows keep their attempts and wait; the per-row jobs check the
