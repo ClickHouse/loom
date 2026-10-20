@@ -22,31 +22,28 @@ from collections.abc import Awaitable, Callable
 
 
 class PolledCopy[T]:
-    def __init__(
-        self, name: str, empty: T, read: Callable[[], Awaitable[T]], log: logging.Logger
-    ) -> None:
-        self.name = name
-        self._value = empty
+    def __init__(self, name: str, read: Callable[[], Awaitable[T]], log: logging.Logger) -> None:
+        self._name = name
         self._read = read
         self._log = log
-        # When the copy was read (monotonic, from the start of its query; 0.0 =
-        # never), when the next read is due (0.0 = now), and when a change here
-        # last asked for one.
-        self._read_at = 0.0
+        self._value: T | None = None
+        # When the copy was read (monotonic, from the start of its query; None =
+        # never), when the next read is due (0.0 = asked for by a change here),
+        # and how many changes were made here.
+        self._read_at: float | None = None
         self._next_read = 0.0
-        self._forgot_at = 0.0
+        self._changes = 0
         self._lock = asyncio.Lock()
 
     def _fresh(self, now: float, max_stale_s: float) -> bool:
-        return bool(self._read_at) and now - self._read_at <= max_stale_s
+        return self._read_at is not None and now - self._read_at <= max_stale_s
 
     async def get(self, *, refresh_s: float, max_stale_s: float) -> T | None:
         """The copy, read first when a read is due; None when it is too old to
         serve (never read, or every read since `max_stale_s` ago failed)."""
         now = time.monotonic()
-        serve_in_hand = (
-            self._lock.locked() and self._fresh(now, max_stale_s) and self._next_read != 0.0
-        )
+        change_waiting = self._next_read == 0.0
+        serve_in_hand = self._lock.locked() and self._fresh(now, max_stale_s) and not change_waiting
         if now >= self._next_read and not serve_in_hand:
             async with self._lock:
                 if time.monotonic() >= self._next_read:
@@ -57,23 +54,34 @@ class PolledCopy[T]:
 
     async def _refresh(self, refresh_s: float) -> None:
         started = time.monotonic()
+        changes = self._changes
         try:
             value = await self._read()
         except Exception as e:  # noqa: BLE001 — the last copy serves until it is too old
-            self._log.warning("%s: read failed (%s); serving the last copy", self.name, e)
+            self._log.warning("%s: read failed (%s); serving the last copy", self._name, e)
         else:
-            self._value, self._read_at = value, started
-        # A failed read waits its turn too, so the waiters do not each query in turn.
+            self._value = value
+            self._read_at = started
+        # A failed read waits its turn too, so the waiters do not each query in
+        # turn; a change made here during the read is read again at once.
         done = time.monotonic()
-        self._next_read = 0.0 if self._forgot_at >= started else done + refresh_s
+        self._next_read = 0.0 if self._changes != changes else done + refresh_s
 
     def forget(self) -> None:
         """Make the next call read again, for a change just made here. The copy
         in hand keeps its age, so a failed read serves it as before."""
-        self._next_read, self._forgot_at = 0.0, time.monotonic()
+        self._changes += 1
+        self._next_read = 0.0
 
-    def _reset_for_tests(self, value: T, *, read: bool, refresh_s: float) -> None:
+    def _reset_for_tests(
+        self, value: T | None, *, read_age_s: float | None, due: bool, refresh_s: float = 0.0
+    ) -> None:
+        """The copy `value`, read `read_age_s` ago (None: never read), with the
+        next read due now (`due`) or `refresh_s` from now; a fresh lock, since a
+        test's event loop is not the last one's."""
         now = time.monotonic()
-        self._value, self._read_at, self._forgot_at = value, (now if read else 0.0), 0.0
-        self._next_read = now + refresh_s if read else 0.0
-        self._lock = asyncio.Lock()  # a test's event loop is not the last one's
+        self._value = value
+        self._read_at = None if read_age_s is None else now - read_age_s
+        self._next_read = now if due else now + refresh_s
+        self._changes = 0
+        self._lock = asyncio.Lock()

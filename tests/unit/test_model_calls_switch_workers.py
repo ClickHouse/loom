@@ -5,7 +5,6 @@ fill no batch ahead of another org's, which still runs."""
 from __future__ import annotations
 
 import asyncio
-import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -382,8 +381,12 @@ def _stale() -> None:
     """A copy of the switch too old to trust, and not due to be read again."""
     from server.settings import settings
 
-    _off()
-    customer._switch._read_at = time.monotonic() - settings.model_calls_policy_max_stale_seconds - 1
+    customer._switch._reset_for_tests(
+        frozenset(),
+        read_age_s=settings.model_calls_policy_max_stale_seconds + 1,
+        due=False,
+        refresh_s=settings.model_calls_policy_refresh_seconds,
+    )
 
 
 def test_a_stale_switch_stops_the_embedding_worker_before_any_write(monkeypatch) -> None:

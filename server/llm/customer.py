@@ -94,7 +94,7 @@ async def _read() -> frozenset[str]:
 
 
 # The orgs switched off, as this process last read them.
-_switch: PolledCopy[frozenset[str]] = PolledCopy("model-call switch", frozenset(), _read, log)
+_switch: PolledCopy[frozenset[str]] = PolledCopy("model-call switch", _read, log)
 
 
 @contextlib.contextmanager
@@ -245,4 +245,10 @@ def forget_switch() -> None:
 
 
 def _reset_for_tests(off: frozenset[str] = frozenset(), *, read: bool = True) -> None:
-    _switch._reset_for_tests(off, read=read, refresh_s=settings.model_calls_policy_refresh_seconds)
+    """The switch as just read (`off`), or never read when not `read`."""
+    _switch._reset_for_tests(
+        off if read else None,
+        read_age_s=0.0 if read else None,
+        due=not read,
+        refresh_s=settings.model_calls_policy_refresh_seconds,
+    )
