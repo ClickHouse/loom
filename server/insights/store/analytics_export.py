@@ -108,7 +108,8 @@ ROW_ORDER = {"usage": USAGE_KEY, "namespaces": "org, namespace"}
 
 # Pinned whatever the server's profile says. A whole file or an error: a `limit`
 # or a `break` / `any` overflow mode returns a partial result with no error, and
-# an upload never replaces it. Then sums that are never Nullable, strings as
+# an upload never replaces it. FINAL that merges every version before a filter
+# reads it. Then sums that are never Nullable, strings as
 # Parquet STRING, not BINARY (a warehouse joins the hashes as strings), and
 # dates as DATE, not UInt16.
 _WHOLE = ("group_by", "result", "timeout", "read", "sort", "join", "set", "distinct", "transfer")
@@ -116,6 +117,8 @@ STATEMENT_SETTINGS = (
     "SETTINGS limit = 0, offset = 0, "
     + ", ".join(f"{m}_overflow_mode = 'throw'" for m in _WHOLE)
     + ", read_overflow_mode_leaf = 'throw', timeout_overflow_mode_leaf = 'throw'"
+    # FINAL merges every version before the tombstone filter reads it.
+    + ", optimize_move_to_prewhere_if_final = 0, do_not_merge_across_partitions_select_final = 0"
     + ", aggregate_functions_null_for_empty = 0, "
     "output_format_parquet_string_as_string = 1, output_format_parquet_date_as_uint16 = 0"
 )

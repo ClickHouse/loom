@@ -301,20 +301,29 @@ TRUNCATING_PROFILES = (
     {"offset": 1},
     {"max_result_rows": 1, "result_overflow_mode": "break"},
     {"max_rows_to_group_by": 1, "group_by_overflow_mode": "any"},
+    {"max_rows_to_read_leaf": 1, "read_overflow_mode_leaf": "break"},
 )
 
 
+@pytest.mark.parametrize("entity", sorted(ENTITIES))
 @pytest.mark.parametrize("profile", TRUNCATING_PROFILES, ids=lambda p: ",".join(p))
 async def test_a_profile_never_cuts_the_file_short(
-    ch: CHClient, profile: dict[str, object]
+    ch: CHClient, entity: str, profile: dict[str, object]
 ) -> None:
     org = unique_org("analytics")
+    names = [f"n{i}" for i in range(3)]
     await ch.insert(
-        "loom.agent_events",
-        [_event(org, "2026-01-02 05:00:00", namespace=f"n{i}") for i in range(3)],
+        "loom.agent_events", [_event(org, "2026-01-02 05:00:00", namespace=n) for n in names]
+    )
+    await ch.insert(
+        "loom.namespaces",
+        [
+            {"org": org, "namespace": n, "owner_email": "x@example.com", "kind": "memory"}
+            for n in names
+        ],
     )
     params = {"day": DAY, "k0": KEY[0], "k1": KEY[1]}
-    shipped = f"{_hashed('usage')} {STATEMENT_SETTINGS}"
+    shipped = f"{_hashed(entity)} {STATEMENT_SETTINGS}"
     whole = await ch.client.query(shipped, parameters=params)
     # A whole file or an error: never a partial file, which an upload would keep.
     try:
@@ -378,13 +387,26 @@ async def test_namespaces_lists_registered_and_unregistered_with_live_counts(
             {**live, "org": org, "namespace": "loose", "memory_key": "k1", "value": "v"},
         ],
     )
-    for join_use_nulls, prefer_column in itertools.product((0, 1), (0, 1)):
-        rows = await ch.query_all(
-            f"SELECT * FROM ({NAMESPACES_SQL}) WHERE org = {{org:String}} "
-            f"SETTINGS join_use_nulls = {join_use_nulls}, "
-            f"prefer_column_name_to_alias = {prefer_column}",
-            {"day": DAY, "org": org},
+    # As shipped (STATEMENT_SETTINGS last), under profiles that change joins,
+    # aliases or how FINAL meets the tombstone filter.
+    shipped = f"SELECT * FROM ({NAMESPACES_SQL}) WHERE org = {{org:String}} {STATEMENT_SETTINGS}"
+    for values in itertools.product((0, 1), repeat=4):
+        profile = dict(
+            zip(
+                (
+                    "join_use_nulls",
+                    "prefer_column_name_to_alias",
+                    "optimize_move_to_prewhere_if_final",
+                    "do_not_merge_across_partitions_select_final",
+                ),
+                values,
+                strict=True,
+            )
         )
+        result = await ch.client.query(
+            shipped, parameters={"day": DAY, "org": org}, settings=profile
+        )
+        rows = [dict(zip(result.column_names, r, strict=True)) for r in result.result_rows]
         _assert_namespaces({r["namespace"]: r for r in rows})
 
 

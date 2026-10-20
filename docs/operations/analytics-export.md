@@ -75,13 +75,15 @@ same personal namespace in two orgs.
 - The 16-byte SipHash key is the first 16 bytes of SHA-256 of that string (UTF-8). The hash
   is ClickHouse's `sipHash128ReferenceKeyed`, which any SipHash-2-4-128 library reproduces
   from those 16 bytes, so a system that holds the key hashes its own ids to join on them.
-  ClickHouse takes the key as two words, each 8-byte half read little-endian:
+  ClickHouse takes the key as two words, each 8-byte half read little-endian. Hash the id
+  as the same string Loom stores (`toString` of a UUID or a number): SipHash of a typed
+  column hashes its binary form, which never matches.
 
   ```sql
   WITH SHA256({key:String}) AS d
   SELECT lower(hex(sipHash128ReferenceKeyed(
       (reinterpretAsUInt64(substring(d, 1, 8)), reinterpretAsUInt64(substring(d, 9, 8))),
-      tenant_id))) AS hashed_tenant_id
+      toString(tenant_id)))) AS hashed_tenant_id
   FROM tenants
   ```
 
