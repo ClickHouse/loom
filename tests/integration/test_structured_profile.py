@@ -82,12 +82,11 @@ def _read(base: str, token: str, ns: str, user: str | None) -> dict[str, Any]:
 async def _build(ns: str) -> None:
     """One worker pass over the test's namespace only, with a fresh scan: the worker
     keeps a namespace's last scan for minutes, longer than a test waits."""
-    from server.memory.workers import structured_profile
-    from server.memory.workers.structured_profile import StructuredProfileConfig, run_pass
+    from server.memory.workers import structured_profile as sp
 
-    structured_profile._scans.pop((ORG, ns), None)
-    cfg = StructuredProfileConfig(cooldown_seconds=0, max_users_per_pass=50, only=(ORG, ns))
-    result = await run_pass(cfg)
+    sp.forget_scans(ORG, ns)
+    cfg = sp.StructuredProfileConfig(cooldown_seconds=0, max_users_per_pass=50, only=(ORG, ns))
+    result = await sp.run_pass(cfg)
     assert result.errors == 0
 
 

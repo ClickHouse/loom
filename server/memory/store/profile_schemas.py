@@ -41,11 +41,14 @@ async def list_active(
     after: tuple[str, str] | None,
     limit: int,
     only: tuple[str, str] | None = None,
+    waiting: list[tuple[str, str, str]] | None = None,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """At most `limit` active namespaces with a schema in (org, namespace) order,
     starting just after `after` and wrapping around to the first; `only` keeps
-    one namespace. Those of `exclude_orgs` are left out."""
+    one namespace. Those of `exclude_orgs` are left out, and so is each
+    (org, namespace, schema hash) in `waiting`, so the limit counts only
+    namespaces a pass can run; a new schema hash ends the wait."""
     ch = ch or _default_client()
     rows: list[dict[str, Any]] = await ch.query_all(
         "SELECT s.org AS org, s.namespace AS namespace, s.schema_json AS schema_json, "
@@ -56,6 +59,8 @@ async def list_active(
         "AND (s.org, s.namespace) NOT IN "
         "(SELECT org, namespace FROM loom.namespaces FINAL WHERE active = false) "
         "AND ({o_org:String} = '' OR (s.org, s.namespace) = ({o_org:String}, {o_ns:String})) "
+        "AND (s.org, s.namespace, s.schema_sha256) NOT IN "
+        "{waiting:Array(Tuple(String, String, String))} "
         # Those after the cursor first (false sorts first), then from the start.
         "ORDER BY (s.org, s.namespace) <= ({a_org:String}, {a_ns:String}), s.org, s.namespace "
         "LIMIT {lim:UInt32}",
@@ -65,6 +70,7 @@ async def list_active(
             "a_ns": after[1] if after else "",
             "o_org": only[0] if only else "",
             "o_ns": only[1] if only else "",
+            "waiting": list(waiting or []),
             "lim": int(limit),
         },
     )

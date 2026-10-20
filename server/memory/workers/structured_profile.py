@@ -16,8 +16,11 @@ gets an all-null profile without a model call.
 A pass reaches namespaces in (org, namespace) order from where the last one
 stopped (the pass cursor), and each gets an equal share of the pass's
 budget. A user whose build failed is skipped for a while, longer after each
-failure; one whose profile row refuses the write (locked, pinned, over a
-limit, blacklisted) is skipped until their memories change.
+failure, and so is a namespace whose scan or stored schema failed, until its
+wait is over or its schema changes. A user whose profile row refuses the
+write (locked, pinned, over a limit, blacklisted) is skipped until their
+sources digest or the profile row's version changes (an unpin, an unlock),
+or REFUSAL_RETRY_SECONDS pass.
 """
 
 from __future__ import annotations
@@ -78,9 +81,11 @@ SCAN_FACTOR = 10
 SCAN_MAX_AGE_SECONDS = 600.0
 
 # Both kept in this process only, so they start over when the worker lease moves.
-# (org, namespace, user_id) -> (monotonic time it may be retried, its last wait); a
-# user_id of '' backs off the whole namespace (its scan failed, or its schema).
+# (org, namespace, user_id) -> (monotonic time it may be retried, its last wait).
 _backoff: dict[tuple[str, str, str], tuple[float, float]] = {}
+# (org, namespace) -> (monotonic time it may be retried, its last wait, the schema
+# hash that failed): a namespace whose scan or schema failed. A new hash ends it.
+_namespace_backoff: dict[tuple[str, str], tuple[float, float, str]] = {}
 # (org, namespace, user_id) -> (digest, profile row version, monotonic time it lapses):
 # what a refused build saw.
 _refused: dict[tuple[str, str, str], tuple[str, int, float]] = {}
@@ -128,10 +133,13 @@ class Refused(Exception):
     `digest` and `profile_version` are what the build saw; the user waits until
     either moves on."""
 
-    def __init__(self, digest: str, profile_version: int) -> None:
-        super().__init__(f"refused at digest {digest!r}, profile version {profile_version}")
+    def __init__(self, digest: str, profile_version: int, status: int) -> None:
+        # status: the write's HTTP status, 0 for a lock or pin seen before the model call.
+        what = f"status {status}" if status else "locked or pinned"
+        super().__init__(f"{what}, at digest {digest!r}, profile version {profile_version}")
         self.digest = digest
         self.profile_version = profile_version
+        self.status = status
 
 
 @dataclass
@@ -143,6 +151,12 @@ class StructuredProfileConfig:
     memory_limit: int = field(default_factory=lambda: settings.structured_profile_memory_limit)
     cooldown_seconds: int = field(
         default_factory=lambda: settings.structured_profile_cooldown_seconds
+    )
+    scan_timeout_seconds: int = field(
+        default_factory=lambda: settings.structured_profile_scan_timeout_seconds
+    )
+    scan_max_memory_bytes: int = field(
+        default_factory=lambda: settings.structured_profile_scan_max_memory_bytes
     )
     label: str = field(default_factory=lambda: settings.structured_profile_label)
     model: str = field(default_factory=lambda: settings.structured_profile_model)
@@ -186,10 +200,28 @@ def parse_answer(text: str) -> Any:
         return None
 
 
+def _next_wait(wait: float) -> float:
+    return min(BACKOFF_CAP_SECONDS, wait * 2 if wait else BACKOFF_BASE_SECONDS)
+
+
 def _note_failure(key: tuple[str, str, str]) -> None:
     _, wait = _backoff.get(key, (0.0, 0.0))
-    wait = min(BACKOFF_CAP_SECONDS, wait * 2 if wait else BACKOFF_BASE_SECONDS)
+    wait = _next_wait(wait)
     _backoff[key] = (time.monotonic() + wait, wait)
+
+
+def _note_namespace_failure(org: str, namespace: str, schema_sha256: str) -> None:
+    _, wait, sha = _namespace_backoff.get((org, namespace), (0.0, 0.0, ""))
+    wait = _next_wait(wait if sha == schema_sha256 else 0.0)
+    _namespace_backoff[(org, namespace)] = (time.monotonic() + wait, wait, schema_sha256)
+
+
+def namespaces_waiting() -> list[tuple[str, str, str]]:
+    """(org, namespace, schema hash) of each namespace still backing off."""
+    now = time.monotonic()
+    return sorted(
+        (o, n, sha) for (o, n), (until, _, sha) in _namespace_backoff.items() if until > now
+    )
 
 
 def _prune() -> None:
@@ -199,6 +231,9 @@ def _prune() -> None:
     for key, (until, _) in list(_backoff.items()):
         if until + BACKOFF_CAP_SECONDS < now:
             del _backoff[key]
+    for space, (until, _, _) in list(_namespace_backoff.items()):
+        if until + BACKOFF_CAP_SECONDS < now:
+            del _namespace_backoff[space]
     for key, (_, _, lapses) in list(_refused.items()):
         if lapses <= now:
             del _refused[key]
@@ -213,14 +248,9 @@ def backing_off(org: str, namespace: str) -> tuple[str, ...]:
     waiting = [
         u
         for (o, n, u), (until, _) in _backoff.items()
-        if (o, n) == (org, namespace) and u and until > now
+        if (o, n) == (org, namespace) and until > now
     ]
     return tuple(sorted(waiting))
-
-
-def _namespace_waiting(org: str, namespace: str) -> bool:
-    until, _ = _backoff.get((org, namespace, ""), (0.0, 0.0))
-    return until > time.monotonic()
 
 
 def refused_at(org: str, namespace: str) -> dict[str, tuple[str, int]]:
@@ -231,6 +261,11 @@ def refused_at(org: str, namespace: str) -> dict[str, tuple[str, int]]:
         for (o, n, u), (digest, version, lapses) in _refused.items()
         if (o, n) == (org, namespace) and lapses > now
     }
+
+
+def forget_scans(org: str, namespace: str) -> None:
+    """Drop the namespace's last scan, so the next pass scans it again."""
+    _scans.pop((org, namespace), None)
 
 
 def _cursor() -> tuple[str, str] | None:
@@ -257,6 +292,7 @@ async def _build_users(
             continue  # a held call is no failure: the user is built once the org is back
         except Refused as e:
             result.refused += 1
+            log.info("structured profile refused for %s/%s: %s", schema.namespace, user_id, e)
             _refused[key] = (e.digest, e.profile_version, time.monotonic() + REFUSAL_RETRY_SECONDS)
             continue
         except Exception as e:  # one user's build never stops the pass
@@ -321,14 +357,16 @@ async def _scan(
             limit=asked,
             skip=backing_off(schema.org, schema.namespace),
             refused=refused_at(schema.org, schema.namespace),
+            timeout_seconds=cfg.scan_timeout_seconds,
+            max_memory_bytes=cfg.scan_max_memory_bytes,
         )
     except Exception as e:  # one namespace's failure never stops the pass
         result.errors += 1
-        _note_failure((schema.org, schema.namespace, ""))
+        _note_namespace_failure(schema.org, schema.namespace, schema.sha256)
         log.exception("structured profile scan failed for %s/%s", schema.org, schema.namespace)
         pass_context.note_failure(e, schema.namespace)
         return None
-    _backoff.pop((schema.org, schema.namespace, ""), None)
+    _namespace_backoff.pop((schema.org, schema.namespace), None)
     _scans[(schema.org, schema.namespace)] = _Scanned(
         schema.sha256, time.monotonic(), deque(behind), complete=len(behind) < asked
     )
@@ -341,7 +379,7 @@ def _parse(row: dict[str, Any], result: StructuredProfileResult) -> ActiveSchema
         props = profile_schema.parse(json.loads(row["schema_json"]))
     except (ValueError, ValidationError) as e:
         result.errors += 1
-        _note_failure((row["org"], row["namespace"], ""))
+        _note_namespace_failure(row["org"], row["namespace"], row["schema_sha256"])
         log.warning("profile schema of %s/%s does not parse: %s", row["org"], row["namespace"], e)
         pass_context.note_failure(e, row["namespace"])
         return None
@@ -356,11 +394,15 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
         off = sorted(await customer.switched_off_orgs())
         budget = max(1, cfg.max_users_per_pass)
         # Every namespace reached can build at least once, so a pass reaches at most `budget`.
+        # A namespace backing off (its scan or its schema failed) waits like a user does,
+        # left out in SQL so the limit counts only namespaces this pass can run.
         rows = await profile_schemas.list_active(
-            exclude_orgs=off, after=_cursor(), limit=budget, only=cfg.only
+            exclude_orgs=off,
+            after=_cursor(),
+            limit=budget,
+            only=cfg.only,
+            waiting=namespaces_waiting(),
         )
-        # A namespace backing off (its scan or its schema failed) waits like a user does.
-        rows = [r for r in rows if not _namespace_waiting(r["org"], r["namespace"])]
         spaces = [s for s in (_parse(r, result) for r in rows) if s is not None]
         share = math.ceil(budget / len(spaces)) if spaces else 0
         # Namespaces that used their whole share: the budget others left goes to them,
@@ -426,7 +468,7 @@ async def build_profile(
     if existing and profile_sources.is_current(existing["tags"], schema.sha256, digest):
         return None  # built since the scan listed the user (another pass, another replica)
     if _refuses_a_write(existing):
-        raise Refused(digest, profile_version)  # checked before paying for the model call
+        raise Refused(digest, profile_version, 0)  # checked before paying for the model call
     rows = await profile_sources.user_facts(
         org=org,
         namespace=ns,
@@ -470,8 +512,9 @@ async def build_profile(
             # A 4xx from memory.set (a lock or pin set since the check, the char
             # limit, the blacklist) refuses the same build again; anything else is a
             # failure to retry.
-            if 400 <= getattr(e, "status_code", 500) < 500:
-                raise Refused(digest, profile_version) from e
+            status = getattr(e, "status_code", 500)
+            if 400 <= status < 500:
+                raise Refused(digest, profile_version, status) from e
             raise
     return dropped
 

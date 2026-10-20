@@ -325,8 +325,10 @@ and `LOOM_STRUCTURED_PROFILE_SCAN_MAX_MEMORY_BYTES`. Each scan lists up to ten t
 namespace's share of a pass, kept in the worker's process; later passes take from that
 list until it is drained, the schema hash changes or it is ten minutes old, and a
 complete list that drained is not rescanned before then, so a namespace is read at most
-once per ten minutes in the steady state. A namespace whose scan fails backs off. A build skips a user whose profile is already current. `profile.structured` recomputes one user's
-digest to answer `stale` without a model call ([structured profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).
+once per ten minutes in the steady state. A namespace whose scan fails backs off. A build
+skips a user whose profile is already current. `profile.structured` recomputes one user's
+digest to answer `stale` without a model call ([structured
+profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).
 
 `memory.consolidate` is an op, not a worker. It clusters similar active memories by
 cosine and entity overlap and asks the LLM to merge each cluster into one row. It writes

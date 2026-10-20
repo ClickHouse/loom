@@ -25,7 +25,6 @@ from typing import Any
 from server.core.ch import statement_timeout
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and
-from server.settings import settings
 
 # `{types:Array(String)}` is the caller's parameter.
 CURRENT_FACTS = """
@@ -245,13 +244,16 @@ async def users_behind(
     limit: int,
     skip: tuple[str, ...] = (),
     refused: dict[str, tuple[str, int]] | None = None,
+    timeout_seconds: float,
+    max_memory_bytes: int,
     ch: _CHClient | None = None,
 ) -> list[Behind]:
     """Users of the namespace whose structured profile is missing, built under
-    another schema, or built from other sources than they have now; at most
+    another schema, or built from other sources than they have now: at most
     `limit`, none of `skip`, and none still at the (digest, profile version) a
-    refusal in `refused` was made at. Those with no profile under this schema come
-    first, then the oldest; refused users last.
+    refusal in `refused` was made at. Those with no profile under this schema
+    come first, then the oldest; refused users last. The statement runs under
+    `timeout_seconds` and `max_memory_bytes`.
 
     One aggregate digests every user's current facts, so the answer is exact: a
     recall or a backfill changes no digest, and an edit, a revert, a restore, a
@@ -261,9 +263,6 @@ async def users_behind(
     from (a deletion), and a user whose sources are all gone is behind too."""
     ch = ch or _default_client()
     refused = refused or {}
-    # The scan reads a whole namespace's current facts: one that runs past these caps
-    # fails (the worker counts it and backs the namespace off) instead of holding the pass.
-    max_memory = int(settings.structured_profile_scan_max_memory_bytes)
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
@@ -277,9 +276,9 @@ async def users_behind(
     }
     # join_use_nulls = 0: a user missing from one side reads '' / 0 / [], so
     # `NOT has(p.tags, ...)` is true for a user with no profile, never NULL.
-    with statement_timeout(settings.structured_profile_scan_timeout_seconds):
-        rows = await ch.query_all(
-            f"""
+    # The scan reads a whole namespace's current facts: one that runs past these caps
+    # fails (the worker counts it and backs the namespace off) instead of holding the pass.
+    sql = f"""
         SELECT if(s.user_id != '', s.user_id, p.user_id) AS who, s.digest AS digest,
                p.version AS profile_version
         FROM (
@@ -306,10 +305,10 @@ async def users_behind(
         ORDER BY has({{refused:Array(String)}}, who), has(p.tags, {{schema_tag:String}}),
                  p.updated_at, who
         LIMIT {{lim:UInt32}}
-        SETTINGS join_use_nulls = 0, max_memory_usage = {max_memory}
-        """,
-            params=params,
-        )
+        SETTINGS join_use_nulls = 0, max_memory_usage = {int(max_memory_bytes)}
+    """
+    with statement_timeout(timeout_seconds):
+        rows = await ch.query_all(sql, params=params)
     behind = [Behind(r["who"], r["digest"], int(r["profile_version"])) for r in rows]
     # A refused user comes back once their digest or their profile row moved on
     # (an unpin, an unlock, an edit).

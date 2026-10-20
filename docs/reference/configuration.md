@@ -690,8 +690,8 @@ Source: `server/settings/_memory.py`
 | `LOOM_STRUCTURED_PROFILE_ENABLED` | `bool` | `True` | Keep each user's structured profile (memory_type='profile') current in the shape `profile_schema.set` gives the namespace. LLM calls, only for a namespace with a schema: setting one is the opt-in. |
 | `LOOM_STRUCTURED_PROFILE_INTERVAL_SECONDS` | `int` | `120` | Seconds between structured profile passes. |
 | `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` | `int` | `600` | Seconds to wait after a pass that found no profile to build. |
-| `LOOM_STRUCTURED_PROFILE_SCAN_TIMEOUT_SECONDS` | `int` | `60` | Seconds one namespace's scan for users behind may run; past it the scan fails and the namespace backs off. |
-| `LOOM_STRUCTURED_PROFILE_SCAN_MAX_MEMORY_BYTES` | `int` | `4294967296` | Bytes of memory one namespace's scan may use (ClickHouse max_memory_usage). |
+| `LOOM_STRUCTURED_PROFILE_SCAN_TIMEOUT_SECONDS` | `int` | `60` | Seconds one namespace's scan for users behind may run; past it the scan fails and the namespace backs off. At least 1. |
+| `LOOM_STRUCTURED_PROFILE_SCAN_MAX_MEMORY_BYTES` | `int` | `4294967296` | Bytes of memory one namespace's scan may use (ClickHouse max_memory_usage). At least 1 MiB. |
 | `LOOM_STRUCTURED_PROFILE_MAX_USERS_PER_PASS` | `int` | `20` | Profiles one pass builds; each namespace the pass reaches gets an equal share. |
 | `LOOM_STRUCTURED_PROFILE_MEMORY_LIMIT` | `int` | `100` | Memories read into one build, highest confidence then newest first. |
 | `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` | `int` | `600` | Seconds after a profile is built before new memories rebuild it; a schema change rebuilds it at once. |

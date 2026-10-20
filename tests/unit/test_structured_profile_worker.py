@@ -50,6 +50,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
         "bad": set(),
     }
     w._backoff.clear()
+    w._namespace_backoff.clear()
     w._refused.clear()
     w._scans.clear()
 
@@ -57,9 +58,20 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
         return set(state["off"])
 
     async def list_active(
-        *, exclude_orgs: list[str], after: Any, limit: int, only: Any = None, ch: Any = None
+        *,
+        exclude_orgs: list[str],
+        after: Any,
+        limit: int,
+        only: Any = None,
+        waiting: Any = None,
+        ch: Any = None,
     ) -> list[dict[str, Any]]:
-        keys = [k for k in _SPACES if k[0] not in exclude_orgs and (only is None or k == only)]
+        held = {(o, n) for o, n, sha in waiting or [] if sha == "h" * 64}
+        keys = [
+            k
+            for k in _SPACES
+            if k[0] not in exclude_orgs and (only is None or k == only) and k not in held
+        ]
         # After the cursor first, then from the start: the store's order.
         keys.sort(key=lambda k: (after is not None and k <= after, k))
         return [
@@ -76,7 +88,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
         if key in state["fail"]:
             raise ValueError("the profile model's answer is not a JSON object")
         if key in state["refuse"]:
-            raise w.Refused("d1", 3)
+            raise w.Refused("d1", 3, 0)
         state["built"].append(key)
         return 0
 
@@ -86,6 +98,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     monkeypatch.setattr(w, "build_profile", build)
     yield state
     w._backoff.clear()
+    w._namespace_backoff.clear()
     w._refused.clear()
     w._scans.clear()
     pass_context.clear()
@@ -472,8 +485,8 @@ async def test_a_failing_namespace_backs_off_without_keeping_the_pass_busy(
     result = await w.run_pass(cfg)
     assert world["scans"] == 1 and result.errors == 0 and ctx.idle
     # Once its wait is over it is scanned again.
-    until, wait = w._backoff[("o2", "a", "")]
-    w._backoff[("o2", "a", "")] = (0.0, wait)
+    _, wait, sha = w._namespace_backoff[("o2", "a")]
+    w._namespace_backoff[("o2", "a")] = (0.0, wait, sha)
     await w.run_pass(cfg)
     assert world["scans"] == 2
 
@@ -516,4 +529,20 @@ async def test_a_schema_that_does_not_parse_is_counted_and_passed_over(
     result = await w.run_pass(_cfg(3))
     assert result.errors == 1 and ctx.count == 1
     assert ("o1", "a") not in _spaces_built(world["built"])
-    assert ("o1", "a", "") in w._backoff  # it backs off like a failing scan
+    assert ("o1", "a") in w._namespace_backoff  # it backs off like a failing scan
+
+
+@pytest.mark.asyncio
+async def test_a_waiting_namespace_does_not_take_the_only_place_in_a_pass(
+    world: dict[str, Any],
+) -> None:
+    w._note_namespace_failure("o1", "a", "h" * 64)
+    await w.run_pass(_cfg(1))
+    assert _spaces_built(world["built"]) == [("o1", "b")]
+
+
+@pytest.mark.asyncio
+async def test_a_new_schema_ends_a_namespace_wait(world: dict[str, Any]) -> None:
+    w._note_namespace_failure("o1", "a", "x" * 64)  # it failed under an older schema
+    await w.run_pass(_cfg(1))
+    assert _spaces_built(world["built"]) == [("o1", "a")]

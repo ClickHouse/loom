@@ -783,7 +783,12 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
 
     await profile_schemas.get(ORG, NS, ch=ch)
     await profile_schemas.list_active(
-        exclude_orgs=["o2"], after=("o1", "a"), limit=10, only=("o1", "b"), ch=ch
+        exclude_orgs=["o2"],
+        after=("o1", "a"),
+        limit=10,
+        only=("o1", "b"),
+        waiting=[("o1", "c", "0" * 64)],
+        ch=ch,
     )
     own = ReadFilters(scope="own_user", user_id="u1", session_id=None)
     for scope in (WHOLE_NAMESPACE, own):
@@ -816,6 +821,8 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
         limit=10,
         skip=("u2",),
         refused={"u3": ("0" * 16, 1)},
+        timeout_seconds=60,
+        max_memory_bytes=4 * 1024**3,
         ch=ch,
     )
 

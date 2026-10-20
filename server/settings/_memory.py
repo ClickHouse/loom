@@ -188,10 +188,11 @@ class MemorySettings(BaseModel):
     # Seconds to wait after a pass that found no profile to build.
     structured_profile_idle_interval_seconds: int = 600
     # Seconds one namespace's scan for users behind may run; past it the scan fails
-    # and the namespace backs off.
-    structured_profile_scan_timeout_seconds: int = 60
-    # Bytes of memory one namespace's scan may use (ClickHouse max_memory_usage).
-    structured_profile_scan_max_memory_bytes: int = 4 * 1024**3
+    # and the namespace backs off. At least 1.
+    structured_profile_scan_timeout_seconds: int = Field(default=60, ge=1)
+    # Bytes of memory one namespace's scan may use (ClickHouse max_memory_usage). At
+    # least 1 MiB.
+    structured_profile_scan_max_memory_bytes: int = Field(default=4 * 1024**3, ge=1024**2)
     # Profiles one pass builds; each namespace the pass reaches gets an equal share.
     structured_profile_max_users_per_pass: int = 20
     # Memories read into one build, highest confidence then newest first.

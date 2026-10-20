@@ -187,18 +187,19 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   profiles. It reaches the namespaces with a schema in order from where the last pass
   stopped, and each gets an equal share; what a namespace leaves goes to those with more
   users behind. One scan of a namespace lists up to ten times its share, and the next
-  passes take from that list until it is drained, the schema changes, or it is ten
-  minutes old; a scan that found every user behind (fewer than it asked for) is not
-  repeated for ten minutes once drained, so a namespace is scanned at most once per ten
-  minutes while nobody else is behind. A namespace whose scan or stored schema fails is
-  counted and backs off as a failing user does (5 minutes, doubling up to 6 hours). A user whose build failed (a model error, an
-  answer that is not a JSON object) is skipped for 5 minutes, doubling up to 6 hours, and
-  tried again after. A build the profile row refuses (locked, pinned, over its size cap,
-  blacklisted) is not retried until the user's memories or the profile row change (an
-  unpin, an unlock), or 6 hours pass, so a lock that lapses on its own is retried. Both
-  waits are kept by the worker's process and start over when another process takes the
-  worker lease. A pass that finds nothing to build waits
-  `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` (600) before the next.
+  passes take from that list until it is drained, the schema changes, or it is ten minutes
+  old; a scan that found every user behind (fewer than it asked for) is not repeated for
+  ten minutes once drained, so a namespace is scanned at most once per ten minutes while
+  nobody else is behind. A namespace whose scan or stored schema fails is counted and
+  backs off as a failing user does (5 minutes, doubling up to 6 hours) until the wait is
+  over or its schema changes; a namespace that is waiting takes no place in the pass. A
+  user whose build failed (a model error, an answer that is not a JSON object) is skipped
+  for 5 minutes, doubling up to 6 hours, and tried again after. A build the profile row
+  refuses (locked, pinned, over its size cap, blacklisted) is not retried until the user's
+  memories or the profile row change (an unpin, an unlock), or 6 hours pass, so a lock
+  that lapses on its own is retried. Both waits are kept by the worker's process and start
+  over when another process takes the worker lease. A pass that finds nothing to build
+  waits `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` (600) before the next.
 - **Erasure.** A build writes nothing when a fact it read is no longer current once the
   model has answered (erased or deleted while it ran). That narrows the window in which a
   profile could land above an erasure; one that does is a live row the erasure saga's

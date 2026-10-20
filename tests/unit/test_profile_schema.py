@@ -4,7 +4,6 @@ to it, and when a built profile is behind its user's memories."""
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 import pytest
@@ -245,6 +244,8 @@ async def _behind(
         cooldown_seconds=cool,
         limit=limit,
         refused=refused,
+        timeout_seconds=60,
+        max_memory_bytes=4 * 1024**3,
         ch=ch,
     )
     return [b.user_id for b in behind]
@@ -731,8 +732,7 @@ async def test_a_build_reads_at_most_the_configured_number_of_facts(
     monkeypatch.setattr(schema_app, "write_structured_profile", write)
     schema = w.ActiveSchema("o", "n", ps.parse(_schema(tz=_TZ)), _SHA)
     assert await w.build_profile(schema, "u1", w.StructuredProfileConfig()) == 0
-    (line,) = read[0].splitlines()
-    assert re.fullmatch(r"- \[\d{4}-\d{2}-\d{2}\] My timezone is Tokyo\.", line)
+    assert read == ["- [2026-01-03] My timezone is Tokyo."]  # _DAY2
 
 
 @_needs_ch
@@ -761,23 +761,35 @@ async def test_restating_an_older_fact_makes_it_the_latest_the_build_reads() -> 
     assert render_facts(rows).splitlines()[-1].endswith("My timezone is Berlin.")
 
 
+def _active() -> Any:
+    from server.memory.workers import structured_profile as w
+
+    return w.ActiveSchema("o", "n", ps.parse(_schema(tz=_TZ)), _SHA)
+
+
 @_needs_ch
 @pytest.mark.asyncio
 async def test_the_scan_runs_under_the_configured_memory_cap(
-    monkeypatch: pytest.MonkeyPatch,
+    local_store: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from server.memory.workers import structured_profile as w
     from server.settings import settings
 
-    built = await _built(_fact(_A, "u1", "tz", "a"))
+    local_store(*await _built(_fact(_A, "u1", "tz", "a")))
     monkeypatch.setattr(settings, "structured_profile_scan_max_memory_bytes", 1024)
-    with pytest.raises(AssertionError, match="MEMORY_LIMIT_EXCEEDED"):
-        await _behind(_LocalCH(*built))
+    w._namespace_backoff.clear()
+    result = w.StructuredProfileResult()
+    assert await w._scan(_active(), w.StructuredProfileConfig(), result, 1) is None
+    # Past the cap the scan fails, is counted, and the namespace backs off.
+    assert result.errors == 1 and ("o", "n", _SHA) in w.namespaces_waiting()
+    w._namespace_backoff.clear()
 
 
 @pytest.mark.asyncio
 async def test_the_scan_runs_under_the_configured_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.core import ch as core_ch
     from server.memory.store import profile_sources as src
+    from server.memory.workers import structured_profile as w
     from server.settings import settings
 
     seen: list[float | None] = []
@@ -787,14 +799,43 @@ async def test_the_scan_runs_under_the_configured_timeout(monkeypatch: pytest.Mo
             seen.append(core_ch.statement_timeout_var.get())
             return []
 
+    monkeypatch.setattr(src, "_default_client", lambda: _Timed())
     monkeypatch.setattr(settings, "structured_profile_scan_timeout_seconds", 7)
-    await src.users_behind(
-        org="o",
-        namespace="n",
-        label="structured_profile",
-        schema_sha256=_SHA,
-        cooldown_seconds=0,
-        limit=1,
-        ch=_Timed(),
-    )
+    w.forget_scans("o", "n")
+    await w._scan(_active(), w.StructuredProfileConfig(), w.StructuredProfileResult(), 1)
+    w.forget_scans("o", "n")
     assert seen == [7]
+
+
+def test_a_scan_timeout_or_memory_cap_below_its_floor_is_refused() -> None:
+    from pydantic import ValidationError as PydanticError
+
+    from server.settings._memory import MemorySettings
+
+    with pytest.raises(PydanticError):
+        MemorySettings(structured_profile_scan_timeout_seconds=0)
+    with pytest.raises(PydanticError):
+        MemorySettings(structured_profile_scan_max_memory_bytes=1000)
+
+
+@_needs_ch
+@pytest.mark.asyncio
+async def test_the_listing_leaves_out_waiting_namespaces_before_its_limit() -> None:
+    from server.memory.store import profile_schemas
+
+    def schema(org: str, ns: str, sha: str = "h") -> str:
+        return (
+            "INSERT INTO loom.profile_schemas (org, namespace, schema_json, schema_sha256, "
+            f"updated_at, version) VALUES ('{org}', '{ns}', '{{}}', '{sha}', now(), 1)"
+        )
+
+    ch = _LocalCH(ddl("profile_schemas"), ddl("namespaces"), schema("o1", "a"), schema("o1", "b"))
+    rows = await profile_schemas.list_active(
+        exclude_orgs=[], after=None, limit=1, waiting=[("o1", "a", "h")], ch=ch
+    )
+    assert [(r["org"], r["namespace"]) for r in rows] == [("o1", "b")]
+    # A wait recorded under another schema hash no longer holds.
+    rows = await profile_schemas.list_active(
+        exclude_orgs=[], after=None, limit=1, waiting=[("o1", "a", "old")], ch=ch
+    )
+    assert [(r["org"], r["namespace"]) for r in rows] == [("o1", "a")]
