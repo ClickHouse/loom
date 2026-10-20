@@ -251,10 +251,11 @@ async def _lift_after_insert(
 async def _announce_set(w: _SetWrite) -> None:
     """The row just inserted, to the namespace's webhooks: a new key is written, a new
     value of one is revised, and the same value said again (a reinforcement) is no
-    change to announce. Called once the row is in, even when the rest of the write
-    fails, so the event is not lost: a retry of the same value is a restatement and
-    announces nothing."""
-    if w.restated:
+    change to announce. A proposal is not served, so it is announced when
+    `memory.proposal_decide` accepts it. Called once the row is in, even when the rest
+    of the write fails, so the event is not lost: a retry of the same value is a
+    restatement and announces nothing."""
+    if w.restated or w.memory_row.get("status") == "proposed":
         return
     event: EventType = "memory.revised" if w.had_existing_row else "memory.written"
     await webhooks.announce([(event, w.memory_row)])

@@ -451,3 +451,38 @@ async def test_a_batch_at_another_width_is_refused_before_it_embeds(
         _bulk_input([_BulkSetEntry(memory_key="rv/ep/a", memory_type="episodic", value="ran")])
     )
     assert [r.memory_key for r in out.written] == ["rv/ep/a"] and captured == []
+
+
+@pytest.mark.asyncio
+async def test_bulk_set_announces_its_rows_when_the_embedding_insert_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The memory rows land while the embedding insert fails: the batch answers an
+    error, and its events are already in the outbox (a retry of the same values
+    writes nothing and would announce nothing)."""
+    ch = _StubCH()
+    _wire_stubs(monkeypatch, ch, _BatchEmbedder(), [])
+    announced: list[Any] = []
+
+    async def _announce(changes: Any) -> None:
+        announced.extend(changes)
+
+    async def _fail(*_: Any, **__: Any) -> None:
+        raise RuntimeError("insert into loom.memory_embeddings unavailable")
+
+    monkeypatch.setattr("server.memory.app.webhooks.announce", _announce)
+    monkeypatch.setattr("server.memory.store.insert_embedding_rows", _fail)
+    with pytest.raises(RuntimeError, match="memory_embeddings"):
+        await mem_extract.handle_memory_bulk_set(
+            _bulk_input(
+                [
+                    _BulkSetEntry(memory_key="deploy_window", value="Tue/Thu only."),
+                    _BulkSetEntry(memory_key="user_dog_name", value="Dog is Biscuit."),
+                ]
+            )
+        )
+    assert len(ch.rows_for("loom.memory")) == 2
+    assert [(event, row["memory_key"]) for event, row in announced] == [
+        ("memory.written", "deploy_window"),
+        ("memory.written", "user_dog_name"),
+    ]

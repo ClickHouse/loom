@@ -291,7 +291,9 @@ async def _bulk_intra_batch_pairs(
 
 async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     """Phase 10: the two core writes — the memory rows and their embedding
-    rows — gathered, each a committed insert."""
+    rows — gathered, each a committed insert. Once the memory rows are in, the
+    batch is announced even when the embedding insert or the tail after it fails:
+    a retry of the same values writes nothing and would announce nothing."""
     import server.memory.store as memory_repo
 
     if state.memory_rows:
@@ -313,26 +315,34 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     state.embedding_rows = [
         r for r in state.embedding_rows if str(r.get("memory_key")) not in retire
     ]
-    await asyncio.gather(
+    memory_done, embedding_done = await asyncio.gather(
         _insert_memory_rows(),
         memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
+        return_exceptions=True,
     )
-    if state.memory_rows:
-        # A memory.delete_version that landed after the fence read: the rows go above it.
-        lifted = await lift_after_insert(
-            first["org"], first["namespace"], state.memory_rows, state.embedding_rows, ch=ch
-        )
-        if lifted:
-            for res in state.results:
-                res.version = lifted.get((res.memory_key, res.version), res.version)
-            retire = _vectors_to_retire(state)
-    # The entries' versions were drawn before the batch embedded: a slow batch indexes
-    # its own BM25 stats.
-    after_write.index_late_rows(state.embedding_rows, ch=ch)
-    await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
-    fences = _high_winners(state)
-    if fences:
-        await fence_high(fences, ch=ch)
+    if isinstance(memory_done, BaseException):
+        raise memory_done
+    try:
+        if isinstance(embedding_done, BaseException):
+            raise embedding_done
+        if state.memory_rows:
+            # A memory.delete_version that landed after the fence read: the rows go above it.
+            lifted = await lift_after_insert(
+                first["org"], first["namespace"], state.memory_rows, state.embedding_rows, ch=ch
+            )
+            if lifted:
+                for res in state.results:
+                    res.version = lifted.get((res.memory_key, res.version), res.version)
+                retire = _vectors_to_retire(state)
+        # The entries' versions were drawn before the batch embedded: a slow batch indexes
+        # its own BM25 stats.
+        after_write.index_late_rows(state.embedding_rows, ch=ch)
+        await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
+        fences = _high_winners(state)
+        if fences:
+            await fence_high(fences, ch=ch)
+    finally:
+        await _bulk_announce(state)  # the rows are in, whatever failed after them
 
 
 def _winners(state: _BulkWriteState) -> dict[str, dict[str, Any]]:
@@ -678,7 +688,6 @@ async def handle_memory_bulk_set(
 
     await _bulk_insert(ch, state)
     _bulk_clock.mark("insert")
-    await _bulk_announce(state)
 
     _value_links = await _bulk_post_insert_links(ch, input, state)
 

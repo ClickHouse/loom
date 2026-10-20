@@ -304,9 +304,12 @@ async def handle_conflicts_resolve(
         return unresolved
     affected: list[str] = []
 
-    tombstoned: list[dict[str, Any]] = []
+    # The tombstones are announced as soon as they are in, before the kept side's status
+    # change: a retry finds the tombstoned side gone and would not announce it. The rows a
+    # resolve keeps live change only their status, as on memory.verify: no event.
     if input.decision == "revise":
         tombstoned = await conflicts_repo.tombstone_ids(input.org, peers, audit_note, now)
+        await webhooks.announce([("memory.tombstoned", row) for row in tombstoned])
         affected.extend(peers)
         await conflicts_repo.mark_active_by_ids(input.org, [input.memory_id])
         affected.append(input.memory_id)
@@ -318,6 +321,7 @@ async def handle_conflicts_resolve(
             audit_note,
             now,
         )
+        await webhooks.announce([("memory.tombstoned", row) for row in tombstoned])
         affected.append(input.memory_id)
         await conflicts_repo.mark_active_by_ids(input.org, peers)
         affected.extend(peers)
@@ -356,9 +360,6 @@ async def handle_conflicts_resolve(
                         }
                     )
                 await conflicts_repo.allowlist_insert(allowlist_rows)
-
-    # The rows a resolve keeps live change only their status, as on memory.verify: no event.
-    await webhooks.announce([("memory.tombstoned", row) for row in tombstoned])
 
     # The badge's cached counts (one per read scope) are stale now.
     for key in [k for k in _count_cache if k[:2] == (input.org, input.namespace)]:

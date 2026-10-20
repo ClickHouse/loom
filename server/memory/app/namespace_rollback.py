@@ -190,8 +190,11 @@ async def apply_rollback(
             _retire(head, new_version)
 
     for i in range(0, len(memory_rows), _INSERT_BATCH):
-        await insert_memory_versions(memory_rows[i : i + _INSERT_BATCH], ch=ch)
-    await webhooks.announce(list(zip(row_events, memory_rows, strict=True)))
+        chunk = memory_rows[i : i + _INSERT_BATCH]
+        await insert_memory_versions(chunk, ch=ch)
+        # Each chunk as it lands: a retry skips the keys already at their target version.
+        events = row_events[i : i + _INSERT_BATCH]
+        await webhooks.announce(list(zip(events, chunk, strict=True)))
     for i in range(0, len(embedding_rows), _INSERT_BATCH):
         await store.insert_embedding_rows(embedding_rows[i : i + _INSERT_BATCH], ch=ch)
     # After the memory insert, as memory.set does, so no reader sees the vector

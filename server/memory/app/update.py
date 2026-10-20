@@ -698,8 +698,8 @@ async def _write_revision(
         return_exceptions=True,
     )
     if not isinstance(memory_done, BaseException):
-        # The row is in: announce it even when the rest of the write fails, since a
-        # retry of the same value is a restatement and announces nothing.
+        # The row is in: announce it even when the rest of the write fails; a retry
+        # writes and announces a new version.
         await webhooks.announce([("memory.revised", memory_row)])
     try:
         for done in [memory_done, *others_done]:
