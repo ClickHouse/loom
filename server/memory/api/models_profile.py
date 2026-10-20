@@ -157,8 +157,9 @@ class ProfileSchemaOutput(BaseModel):
     json_schema: dict[str, Any] = {}
     # SHA-256 of the canonical schema; each built profile names the hash it was built under.
     schema_sha256: str = ""
-    # Who set it and when; empty when not found.
+    # The subject that set it; empty when not found.
     updated_by: str = ""
+    # When it was set; None when not found.
     updated_at: datetime | None = None
 
 
@@ -181,6 +182,7 @@ class ProfileStructuredOutput(BaseModel):
     built_at: datetime | None = None
     # The memory row the profile is stored in; its history is the profile's history.
     memory_id: str = ""
+    # The row's version, higher for each rebuild; 0 while pending.
     version: int = 0
     # The hash of the schema the namespace has now.
     schema_sha256: str = ""

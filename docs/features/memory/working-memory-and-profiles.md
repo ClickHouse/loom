@@ -120,7 +120,8 @@ of one of those and an optional `maxItems` up to 50) and a `description`, which 
 model reads. Strings take `enum`, `pattern`, `minLength` and `maxLength`; numbers take
 `minimum` and `maximum`, the constraints [typed records](./writing.md#typed-records) use.
 Every property is in every profile, `null` when the memories do not settle it, so the
-schema has no `required`; `additionalProperties` may only be `false`.
+schema has no `required`; `additionalProperties` may only be `false`. A `title` is
+accepted at any level and ignored.
 
 ```python
 schema = {
@@ -165,8 +166,16 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600). A user whose facts are all gone gets
   an all-`null` profile without a model call.
 - **Validation.** The model's answer is held to the schema before it is written: a value
-  of the wrong type, outside its enum or constraints, or a property the schema does not
-  declare is dropped (`null`).
+  of the wrong type, outside its enum or constraints, a number that is not finite (or an
+  integer past 2^53), or a property the schema does not declare is dropped (`null`).
+- **Passes.** A pass builds at most `LOOM_STRUCTURED_PROFILE_MAX_USERS_PER_PASS` (20)
+  profiles. It reaches the namespaces with a schema in order from where the last pass
+  stopped, and each gets an equal share. A user whose build failed (a model error, an
+  answer that is not a JSON object) is skipped for 5 minutes, doubling up to 6 hours, and
+  tried again after; the wait is kept by the worker's process and starts over when another
+  process takes the worker lease.
+- **Erasure.** A build whose user's facts are erased while its model call runs writes
+  nothing, so the profile cannot come back above the erasure.
 - **Scope.** The read is always for one `user_id`. A token pinned to a user
   (`read_user_id`, an end user's token) reads only that user's profile, with or without
   `user_id` in the body; another user is 403.

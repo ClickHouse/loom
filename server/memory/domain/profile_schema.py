@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,7 +26,7 @@ from fastapi import HTTPException
 
 from server.core.errors import ValidationError
 from server.memory.domain import record_constraints
-from server.memory.domain.record_values import _FIELD_RE, _coerce_record_value
+from server.memory.domain.record_values import FIELD_RE, coerce_record_value
 
 # The field cap memory_schema.register puts on a typed record.
 MAX_PROPERTIES = 64
@@ -35,10 +36,14 @@ MAX_ENUM_VALUES = 64
 # An array property holds at most this many items unless it says fewer.
 MAX_ITEMS = 50
 SCALAR_TYPES = ("string", "number", "integer", "boolean")
+# The integers a profile stores: what a JSON reader takes for an exact integer.
+MAX_SAFE_INTEGER = 2**53 - 1
 
 _SCHEMA_KEYS = {"type", "properties", "title", "description", "additionalProperties"}
+# `title` is accepted wherever JSON Schema puts it and ignored: the model reads `description`.
 _PROPERTY_KEYS = {
     "type",
+    "title",
     "description",
     "enum",
     "items",
@@ -50,6 +55,7 @@ _PROPERTY_KEYS = {
     "maximum",
 }
 _ITEM_KEYS = _PROPERTY_KEYS - {"description", "items", "maxItems"}
+_ARRAY_KEYS = {"type", "title", "description", "items", "maxItems"}
 # JSON Schema keyword -> the typed-record constraint it is checked as.
 _CONSTRAINT_KEYS = {
     "pattern": "pattern",
@@ -139,8 +145,8 @@ def parse(schema: Any) -> list[ProfileProperty]:
         raise _bad(f"at most {MAX_PROPERTIES} properties, got {len(props)}")
     out: list[ProfileProperty] = []
     for name, spec in props.items():
-        if not _FIELD_RE.match(name):
-            raise _bad(f"property name {name!r} must match {_FIELD_RE.pattern}")
+        if not FIELD_RE.match(name):
+            raise _bad(f"property name {name!r} must match {FIELD_RE.pattern}")
         if not isinstance(spec, dict):
             raise _bad(f"property {name!r} must be an object")
         description = spec.get("description")
@@ -149,7 +155,7 @@ def parse(schema: Any) -> list[ProfileProperty]:
         if len(description) > MAX_DESCRIPTION_CHARS:
             raise _bad(f"property {name!r}: description longer than {MAX_DESCRIPTION_CHARS}")
         if spec.get("type") == "array":
-            unknown = sorted(set(spec) - {"type", "description", "items", "maxItems"})
+            unknown = sorted(set(spec) - _ARRAY_KEYS)
             if unknown:
                 raise _bad(f"property {name!r}: unsupported keyword(s) {unknown}")
             items = spec.get("items")
@@ -163,14 +169,28 @@ def parse(schema: Any) -> list[ProfileProperty]:
             kind, enum, constraints = _scalar_spec(f"{name}.items", items, _ITEM_KEYS)
             out.append(
                 ProfileProperty(
-                    name, "array", description.strip(), kind, enum, constraints, max_items
+                    name=name,
+                    type="array",
+                    description=description.strip(),
+                    item_type=kind,
+                    enum=enum,
+                    constraints=constraints,
+                    max_items=max_items,
                 )
             )
         else:
             kind, enum, constraints = _scalar_spec(
                 name, spec, _PROPERTY_KEYS - {"items", "maxItems"}
             )
-            out.append(ProfileProperty(name, kind, description.strip(), "", enum, constraints))
+            out.append(
+                ProfileProperty(
+                    name=name,
+                    type=kind,
+                    description=description.strip(),
+                    enum=enum,
+                    constraints=constraints,
+                )
+            )
     return out
 
 
@@ -178,8 +198,10 @@ def _scalar(prop: ProfileProperty, value: Any) -> Any:
     """`value` as the property's type, or None when it is not one."""
     if value is None or isinstance(value, dict | list):
         return None
+    if prop.scalar_type in ("number", "integer") and not _finite(value, prop.scalar_type):
+        return None
     try:
-        text, number, flag = _coerce_record_value(
+        text, number, flag = coerce_record_value(
             value,
             prop.scalar_type,
             field_name=prop.name,
@@ -195,6 +217,17 @@ def _scalar(prop: ProfileProperty, value: Any) -> Any:
     if prop.scalar_type == "number":
         return number
     return text if text.strip() else None
+
+
+def _finite(value: Any, kind: str) -> bool:
+    """Whether a numeric answer is a finite number (an integer within the exact range)."""
+    if isinstance(value, bool):
+        return False
+    try:
+        n = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return math.isfinite(n) and (kind == "number" or abs(n) <= MAX_SAFE_INTEGER)
 
 
 def conform(props: list[ProfileProperty], answer: Any) -> tuple[dict[str, Any], int]:

@@ -309,10 +309,14 @@ term plus a tag boost can exceed the gap between a good and a mediocre match.
 `structured_profile` reads only namespaces with a row in `loom.profile_schemas`
 (`profile_schema.set`, one ReplacingMergeTree row per namespace, holding no memory
 content). A profile is a `profile` memory row, so its history, erasure and read scope are
-memory's own. It carries two tags: the schema's hash and a digest of its sources'
-`(memory_id, content_sha256)` pairs. `profile.structured` recomputes the digest to answer
-`stale` without a model call, and the worker rebuilds the users whose tags no longer
-match ([structured profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).
+memory's own. It carries two tags, the schema's hash and a digest of its sources'
+`(memory_id, content_sha256)` pairs, and `valid_at`, when the sources were read.
+`profile.structured` recomputes the digest to answer `stale` without a model call. The
+worker finds the users behind in two statements: one aggregate of `max(updated_at)` per
+user over every version, without `FINAL` (a recall or a backfill carries `updated_at`
+forward), lists those with a source row newer than their profile's `valid_at` or no
+profile under the schema, at most `LOOM_STRUCTURED_PROFILE_CANDIDATES_PER_NAMESPACE`;
+the digest of only those decides who is rebuilt ([structured profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).
 
 `memory.consolidate` is an op, not a worker. It clusters similar active memories by
 cosine and entity overlap and asks the LLM to merge each cluster into one row. It writes

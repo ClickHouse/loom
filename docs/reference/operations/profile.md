@@ -162,7 +162,7 @@ The user's structured profile and whether it is current.
 | `profile` | `dict[str, Any]` | The profile in the schema's shape: every property, null when the user's memories do not settle it. |
 | `built_at` | `datetime \| None` | When the profile was built; None while pending. |
 | `memory_id` | `str` | The memory row the profile is stored in; its history is the profile's history. |
-| `version` | `int` |  |
+| `version` | `int` | The row's version, higher for each rebuild; 0 while pending. |
 | `schema_sha256` | `str` | The hash of the schema the namespace has now. |
 
 <!-- prettier-ignore-end -->

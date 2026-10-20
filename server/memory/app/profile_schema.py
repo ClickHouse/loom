@@ -63,6 +63,7 @@ async def handle_profile_schema_set(input: ProfileSchemaSetInput) -> ProfileSche
 
 
 async def handle_profile_schema_get(input: ProfileSchemaInput) -> ProfileSchemaOutput:
+    """The namespace's profile schema, its hash, and who set it when."""
     from server.core.ch import own_write_reads
 
     with own_write_reads():  # an admin reads right after setting it, on any replica
@@ -105,14 +106,6 @@ def _output(row: dict[str, Any]) -> ProfileSchemaOutput:
     )
 
 
-def profile_tags(schema_sha256: str, sources_digest: str) -> list[str]:
-    """The tags a built profile carries: the schema and the sources it was built from."""
-    return [
-        profile_sources.SCHEMA_TAG + schema_sha256[:16],
-        profile_sources.SOURCES_TAG + sources_digest,
-    ]
-
-
 async def write_structured_profile(
     *,
     org: str,
@@ -121,10 +114,12 @@ async def write_structured_profile(
     value: dict[str, Any],
     schema_sha256: str,
     sources_digest: str,
+    sources_read_at: datetime,
     memory_ids: list[str],
 ) -> None:
     """Write a built profile as a new version of the user's profile row. The trace
-    names the build and the memories it read, so provenance classes it `derived`."""
+    names the build and the memories it read, so provenance classes it `derived`;
+    `valid_at` is when those memories were read, the point the profile is true as of."""
     from server.memory.app.profile import _write_section
 
     label = settings.structured_profile_label
@@ -137,7 +132,8 @@ async def write_structured_profile(
             memory_key=label,
             memory_type="profile",
             value=value,
-            tags=profile_tags(schema_sha256, sources_digest),
+            tags=profile_sources.profile_tags(schema_sha256, sources_digest),
+            valid_at=sources_read_at,
             char_limit=STRUCTURED_CHAR_LIMIT,
             source_trace=f"profile.fold:{label}:" + ",".join(memory_ids),
         )
@@ -180,14 +176,11 @@ async def handle_profile_structured(input: ProfileStructuredInput) -> ProfileStr
         digest = await profile_sources.sources_digest(
             org=input.org, namespace=input.namespace, user_id=uid
         )
-    try:
-        stored = json.loads(row["value"] or "{}")
-    except ValueError:
-        stored = {}
-    current = set(profile_tags(sha, digest)) <= set(row.get("tags") or [])
+    current = profile_sources.is_current(list(row.get("tags") or []), sha, digest)
     return ProfileStructuredOutput(
         status="ready" if current else "stale",
-        profile=profile_schema.project(props, stored),
+        # memory.set stores canonical JSON; a value that is no object projects to all null.
+        profile=profile_schema.project(props, json.loads(row["value"])),
         built_at=row["updated_at"],
         memory_id=str(row["memory_id"]),
         version=int(row["version"]),

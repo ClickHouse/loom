@@ -24,10 +24,12 @@ Clear the schema: no profile is built or rebuilt for the namespace, and reads an
 | `found` | `bool` | False when the namespace has no profile schema. |
 | `json_schema` | `dict[str, Any]` | The schema as stored (canonical JSON key order); {} when not found. |
 | `schema_sha256` | `str` | SHA-256 of the canonical schema; each built profile names the hash it was built under. |
-| `updated_by` | `str` | Who set it and when; empty when not found. |
-| `updated_at` | `datetime \| None` |  |
+| `updated_by` | `str` | The subject that set it; empty when not found. |
+| `updated_at` | `datetime \| None` | When it was set; None when not found. |
 
 ## `profile_schema.get`
+
+The namespace's profile schema, its hash, and who set it when.
 
 `POST /v1/profile_schema.get` · MCP `loom_profile_schema_get` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -41,8 +43,8 @@ Clear the schema: no profile is built or rebuilt for the namespace, and reads an
 | `found` | `bool` | False when the namespace has no profile schema. |
 | `json_schema` | `dict[str, Any]` | The schema as stored (canonical JSON key order); {} when not found. |
 | `schema_sha256` | `str` | SHA-256 of the canonical schema; each built profile names the hash it was built under. |
-| `updated_by` | `str` | Who set it and when; empty when not found. |
-| `updated_at` | `datetime \| None` |  |
+| `updated_by` | `str` | The subject that set it; empty when not found. |
+| `updated_at` | `datetime \| None` | When it was set; None when not found. |
 
 ## `profile_schema.set`
 
@@ -61,7 +63,7 @@ Set the namespace's profile schema.
 | `found` | `bool` | False when the namespace has no profile schema. |
 | `json_schema` | `dict[str, Any]` | The schema as stored (canonical JSON key order); {} when not found. |
 | `schema_sha256` | `str` | SHA-256 of the canonical schema; each built profile names the hash it was built under. |
-| `updated_by` | `str` | Who set it and when; empty when not found. |
-| `updated_at` | `datetime \| None` |  |
+| `updated_by` | `str` | The subject that set it; empty when not found. |
+| `updated_at` | `datetime \| None` | When it was set; None when not found. |
 
 <!-- prettier-ignore-end -->

@@ -274,7 +274,6 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # Memory enrichment searches under the caller's scope. The shared answer cache
     # has no user or session in its key, so a narrowed caller skips it (answers.ask).
     "code.ask": "code answers; memory excerpts read under the caller's scope",
-    "profile_schema.get": "the namespace's profile schema: operator configuration, no memory",
     "code.backport_gap": _CODE_INDEX,
     "code.backport_gaps": _CODE_INDEX,
     "code.bisect_candidates": _CODE_INDEX,
@@ -354,6 +353,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # Not memory_schema.register / propose / approve: a schema is namespace-wide and
     # refuses every user's non-matching writes.
     "memory_schema.list": "value schemas",
+    "profile_schema.get": "the namespace's profile schema: configuration, no memory",
     "admin.users": "the deployment's users",
     # Not agents.connected: no user axis; it lists every user's agents, their ops,
     # when they were seen and what they cost.

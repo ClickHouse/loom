@@ -210,6 +210,7 @@ async def _behind(ch: _LocalCH, sha: str = "s" * 64, cool: int = 0) -> list[str]
         schema_sha256=sha,
         cooldown_seconds=cool,
         limit=10,
+        candidates=10,
         ch=ch,
     )
 
@@ -223,7 +224,7 @@ async def _digest(ch: _LocalCH, user: str) -> str:
 @_needs_ch
 @pytest.mark.asyncio
 async def test_a_profile_is_behind_its_users_memories_until_rebuilt() -> None:
-    from server.memory.app.profile_schema import profile_tags
+    from server.memory.store.profile_sources import profile_tags
 
     facts = [ddl("memory"), _fact(_A, "u1", "tz", "a"), _fact(_B, "u2", "tz", "b")]
     # No profile yet: both users are behind.
@@ -260,10 +261,97 @@ async def test_a_high_row_or_a_fact_about_someone_else_is_no_source() -> None:
 @_needs_ch
 @pytest.mark.asyncio
 async def test_a_user_whose_memories_are_gone_is_rebuilt_empty() -> None:
-    from server.memory.app.profile_schema import profile_tags
+    from server.memory.store.profile_sources import profile_tags
 
-    built = [ddl("memory"), _profile("u1", profile_tags("s" * 64, "0123456789abcdef"))]
+    # The fact's delete is a version written after the profile was built.
+    deleted = _fact(_A, "u1", "tz", "a", tombstoned_at="now()")
+    built = [ddl("memory"), deleted, _profile("u1", profile_tags("s" * 64, "0123456789abcdef"))]
     assert await _digest(_LocalCH(*built), "u1") == ""
     assert await _behind(_LocalCH(*built)) == ["u1"]
-    emptied = [ddl("memory"), _profile("u1", profile_tags("s" * 64, ""))]
+    emptied = [ddl("memory"), deleted, _profile("u1", profile_tags("s" * 64, ""))]
     assert await _behind(_LocalCH(*emptied)) == []
+
+
+def test_a_number_that_is_not_finite_or_exact_reads_null() -> None:
+    props = ps.parse(
+        _schema(n={"type": "number", "description": "d"}, i={"type": "integer", "description": "d"})
+    )
+    for bad in ("NaN", "inf", float("inf"), float("nan"), "1e999", True):
+        assert ps.conform(props, {"n": bad, "i": bad}) == ({"n": None, "i": None}, 2)
+    assert ps.conform(props, {"n": 1.5, "i": 2**60}) == ({"n": 1.5, "i": None}, 1)
+    assert ps.conform(props, {"n": "-2", "i": "7"}) == ({"n": -2.0, "i": 7}, 0)
+
+
+def test_a_title_is_accepted_and_ignored_at_every_level() -> None:
+    props = ps.parse(
+        {
+            "type": "object",
+            "title": "Profile",
+            "properties": {
+                "tz": {**_TZ, "title": "Time zone"},
+                "langs": {
+                    **_LANGS,
+                    "title": "Languages",
+                    "items": {"type": "string", "title": "L"},
+                },
+            },
+        }
+    )
+    assert [p.name for p in props] == ["tz", "langs"]
+
+
+@_needs_ch
+@pytest.mark.asyncio
+async def test_a_fact_written_while_the_profile_was_built_puts_it_behind() -> None:
+    from server.memory.store.profile_sources import profile_tags
+
+    facts = [ddl("memory"), _fact(_A, "u1", "tz", "a", updated_at="now() - 7200")]
+    digest = await _digest(_LocalCH(*facts), "u1")
+    # The sources were read an hour ago and the row written now; the fact landed between.
+    built = (
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
+        "memory_type, value, version, tags, valid_at, updated_at) VALUES ('o', 'n', '-', 'u1', "
+        f"'-', 'structured_profile', 'profile', '{{}}', 1, {profile_tags('s' * 64, digest)!r}, "
+        "now() - 3600, now() - 600)"
+    )
+    late = _fact(_B, "u1", "lang", "b", updated_at="now() - 1800")
+    assert await _behind(_LocalCH(*facts, built)) == []
+    assert await _behind(_LocalCH(*facts, late, built)) == ["u1"]
+
+
+@_needs_ch
+@pytest.mark.asyncio
+async def test_the_schema_listing_skips_deactivated_namespaces_and_resumes_after_a_cursor() -> None:
+    from server.memory.store import profile_schemas
+
+    def schema(org: str, ns: str) -> str:
+        return (
+            "INSERT INTO loom.profile_schemas (org, namespace, schema_json, schema_sha256, "
+            f"updated_at, version) VALUES ('{org}', '{ns}', '{{}}', 'h', now(), 1)"
+        )
+
+    ch = _LocalCH(
+        ddl("profile_schemas"),
+        ddl("namespaces"),
+        schema("o1", "a"),
+        schema("o1", "b"),
+        schema("o1", "off"),
+        schema("o2", "a"),
+        schema("o3", "a"),
+        "INSERT INTO loom.namespaces (org, namespace, owner_email, active) "
+        "VALUES ('o1', 'off', 'x', false)",
+    )
+
+    async def names(**kw: Any) -> list[tuple[str, str]]:
+        rows = await profile_schemas.list_active(ch=ch, **kw)
+        return [(r["org"], r["namespace"]) for r in rows]
+
+    everything = [("o1", "a"), ("o1", "b"), ("o2", "a"), ("o3", "a")]
+    assert await names(exclude_orgs=[], after=None, limit=10) == everything
+    assert await names(exclude_orgs=["o2"], after=None, limit=10) == [
+        ("o1", "a"),
+        ("o1", "b"),
+        ("o3", "a"),
+    ]
+    assert await names(exclude_orgs=[], after=("o1", "b"), limit=1) == [("o2", "a")]
+    assert await names(exclude_orgs=[], after=None, limit=10, only=("o2", "a")) == [("o2", "a")]

@@ -699,7 +699,9 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory.store import profile_schemas, profile_sources
 
     await profile_schemas.get(ORG, NS, ch=ch)
-    await profile_schemas.list_active(exclude_orgs=["o2"], limit=10, ch=ch)
+    await profile_schemas.list_active(
+        exclude_orgs=["o2"], after=("o1", "a"), limit=10, only=("o1", "b"), ch=ch
+    )
     for keys in (False, True):
         await profile_sources.user_facts(
             org=ORG,
@@ -721,8 +723,11 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
         schema_sha256="0" * 64,
         cooldown_seconds=600,
         limit=10,
+        candidates=40,
+        skip=("u2",),
         ch=ch,
     )
+    await profile_sources.digests(org=ORG, namespace=NS, user_ids=["u1", "u2"], ch=ch)
 
 
 def cases() -> list[Case]:

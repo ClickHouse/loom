@@ -50,8 +50,13 @@ async def _ch_connected():
 
 
 @pytest.fixture
-def ns() -> str:
-    return f"structured-profile-{os.urandom(3).hex()}"
+def ns(control_plane_url: str, mint_test_token):
+    """The test's own namespace; any schema it set is cleared afterwards, so later
+    passes on this ClickHouse never reach it."""
+    name = f"structured-profile-{os.urandom(3).hex()}"
+    yield name
+    token = mint_test_token(org=ORG, namespaces=[name], roles=["admin"], subject="op")
+    _ok(_post(control_plane_url, token, "profile_schema.clear", {"org": ORG, "namespace": name}))
 
 
 @pytest.fixture
@@ -74,10 +79,12 @@ def _read(base: str, token: str, ns: str, user: str | None) -> dict[str, Any]:
     return _ok(_post(base, token, "profile.structured", body))
 
 
-async def _build() -> None:
+async def _build(ns: str) -> None:
+    """One worker pass over the test's namespace only."""
     from server.memory.workers.structured_profile import StructuredProfileConfig, run_pass
 
-    result = await run_pass(StructuredProfileConfig(cooldown_seconds=0, max_users_per_pass=500))
+    cfg = StructuredProfileConfig(cooldown_seconds=0, max_users_per_pass=50, only=(ORG, ns))
+    result = await run_pass(cfg)
     assert result.errors == 0
 
 
@@ -109,7 +116,7 @@ async def test_a_profile_is_built_in_the_schema_shape_and_kept_current(
     assert pending["status"] == "pending"
     assert pending["profile"] == {"timezone": None, "languages": None}
 
-    await _build()
+    await _build(ns)
     ready = _read(base, admin, ns, "u1")
     assert ready["status"] == "ready", ready
     assert ready["profile"] == {
@@ -138,7 +145,7 @@ async def test_a_profile_is_built_in_the_schema_shape_and_kept_current(
     # A new fact puts the profile behind its memories until the next pass.
     _remember(base, admin, ns, "u1", "u1_tz", "My timezone is America/New_York.")
     assert _read(base, admin, ns, "u1")["status"] == "stale"
-    await _build()
+    await _build(ns)
     again = _read(base, admin, ns, "u1")
     assert again["status"] == "ready"
     assert again["profile"]["timezone"] == "My timezone is America/New_York"
@@ -160,7 +167,7 @@ async def test_a_profile_is_built_in_the_schema_shape_and_kept_current(
     stale = _read(base, admin, ns, "u1")
     assert stale["status"] == "stale"
     assert stale["profile"] == {"timezone": "My timezone is America/New_York", "pronouns": None}
-    await _build()
+    await _build(ns)
     assert _read(base, admin, ns, "u1")["status"] == "ready"
 
     _ok(_post(base, admin, "profile_schema.clear", {"org": ORG, "namespace": ns}))
@@ -205,7 +212,7 @@ async def test_a_token_pinned_to_a_user_reads_only_that_users_profile(
     )
     _remember(base, admin, ns, "alice", "alice_tz", "My timezone is Europe/Paris.")
     _remember(base, admin, ns, "bob", "bob_tz", "My timezone is Europe/Rome.")
-    await _build()
+    await _build(ns)
 
     alice = mint_token(
         subject="alice-app",
@@ -244,7 +251,7 @@ async def test_erasing_a_user_removes_their_profile(
     body = {"org": ORG, "namespace": ns, "json_schema": SCHEMA}
     _ok(_post(base, admin, "profile_schema.set", body))
     _remember(base, admin, ns, "carol", "carol_tz", "My timezone is Europe/Madrid.")
-    await _build()
+    await _build(ns)
     assert _read(base, admin, ns, "carol")["status"] == "ready"
 
     org_admin = mint_test_token(org=ORG, namespaces=["*"], roles=["org_admin", "admin", "writer"])

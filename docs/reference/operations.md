@@ -594,7 +594,7 @@ Fields for every `profile_schema` op: [operations/profile_schema.md](operations/
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
 | [`profile_schema.clear`](operations/profile_schema.md#profile_schemaclear) | Clear the schema: no profile is built or rebuilt for the namespace, and reads answer `no_schema`. | admin | idempotent | no | yes |
-| [`profile_schema.get`](operations/profile_schema.md#profile_schemaget) |  | viewer | read | no |  |
+| [`profile_schema.get`](operations/profile_schema.md#profile_schemaget) | The namespace's profile schema, its hash, and who set it when. | viewer | read | no |  |
 | [`profile_schema.set`](operations/profile_schema.md#profile_schemaset) | Set the namespace's profile schema. | admin | idempotent | no | yes |
 
 ### run

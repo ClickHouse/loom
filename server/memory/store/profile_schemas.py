@@ -36,9 +36,16 @@ async def get(org: str, namespace: str, *, ch: _CHClient | None = None) -> dict[
 
 
 async def list_active(
-    *, exclude_orgs: list[str], limit: int, ch: _CHClient | None = None
+    *,
+    exclude_orgs: list[str],
+    after: tuple[str, str] | None,
+    limit: int,
+    only: tuple[str, str] | None = None,
+    ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Every active namespace with a schema, but those of `exclude_orgs`; at most `limit`."""
+    """Active namespaces with a schema, ordered by (org, namespace) from just after
+    `after` (from the start when None), at most `limit`; `only` keeps one namespace.
+    Those of `exclude_orgs` are left out."""
     ch = ch or _default_client()
     rows: list[dict[str, Any]] = await ch.query_all(
         "SELECT s.org AS org, s.namespace AS namespace, s.schema_json AS schema_json, "
@@ -48,7 +55,16 @@ async def list_active(
         # A deactivated namespace waits; one never registered has no row and is served.
         "AND (s.org, s.namespace) NOT IN "
         "(SELECT org, namespace FROM loom.namespaces FINAL WHERE active = false) "
+        "AND (s.org, s.namespace) > ({a_org:String}, {a_ns:String}) "
+        "AND ({o_org:String} = '' OR (s.org, s.namespace) = ({o_org:String}, {o_ns:String})) "
         "ORDER BY s.org, s.namespace LIMIT {lim:UInt32}",
-        params={"off": exclude_orgs, "lim": int(limit)},
+        params={
+            "off": exclude_orgs,
+            "a_org": after[0] if after else "",
+            "a_ns": after[1] if after else "",
+            "o_org": only[0] if only else "",
+            "o_ns": only[1] if only else "",
+            "lim": int(limit),
+        },
     )
     return rows
