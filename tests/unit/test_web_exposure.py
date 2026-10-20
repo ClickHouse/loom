@@ -1,7 +1,8 @@
 """What a server reachable from a browser or a network refuses: startup on a
 non-loopback bind without its safeguards, CORS `*` with credentials, a foreign
 Host while auth is off, URLs built from spoofed forwarded headers, and the
-dashboard page's inline script without its nonce."""
+dashboard page's inline script without its nonce; and the headers every answer
+carries."""
 
 from __future__ import annotations
 
@@ -249,6 +250,16 @@ def test_auth_on_serves_same_origin_listed_and_originless_posts(
     monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
     assert _post(origin="https://loom.example:443").status_code == 200
     assert _post(origin="http://localhost:7777").status_code == 403
+
+
+@pytest.mark.usefixtures("auth_on")
+def test_auth_on_refuses_a_post_with_origin_null() -> None:
+    # Origin: null is foreign even same-origin: a no-referrer page here, or a sandboxed
+    # frame on another site, sends it.
+    for site in ("same-origin", "cross-site"):
+        r = _post(origin="null", **{"sec-fetch-site": site})
+        assert r.status_code == 403
+        assert r.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
 
 
 def _post_to(base_url: str, **headers: str) -> int:

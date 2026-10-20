@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.security_headers import assert_security_headers
+
 pytestmark = pytest.mark.skipif(
     os.environ.get("LOOM_SKIP_APP_IMPORT") == "1", reason="app import disabled"
 )
@@ -169,8 +171,6 @@ def test_a_missing_build_answers_503_on_pages(client, tmp_path, monkeypatch) -> 
 
 @pytest.mark.parametrize("path", ["/v1/whoami", "/", "/assets/index-deadbeef.js"])
 def test_api_page_and_asset_answers_carry_the_browser_security_headers(client, path: str) -> None:
-    from tests.unit.security_headers import assert_security_headers
-
     r = client.get(path)
     assert r.status_code == 200
     assert_security_headers(r)

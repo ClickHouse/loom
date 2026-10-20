@@ -426,8 +426,9 @@ class AuthSettings(BaseModel):
     # Request-body cap, bytes, enforced by ASGI middleware before any parser
     # (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables.
     max_request_bytes: int = 32 * 1024 * 1024
-    # Strict-Transport-Security max-age, seconds, on every response but an unhandled
-    # 500 (browsers ignore it over plain HTTP). 0 sends no header.
+    # Strict-Transport-Security max-age, seconds, on every response except an unhandled
+    # 500, which Starlette's error middleware answers outside the app's own (browsers
+    # ignore it over plain HTTP). 0 sends no header.
     hsts_max_age_seconds: int = Field(default=31_536_000, ge=0)
 
     # History policy over the agent trace: "off" reads/writes nothing;

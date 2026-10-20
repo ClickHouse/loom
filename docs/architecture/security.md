@@ -561,8 +561,8 @@ is not trusted still works. `loom doctor` and `/v1/health` report each of these.
 
 ## Response headers
 
-Every response carries these except an unhandled 500, which Starlette answers outside every
-middleware. A route that sets one of them itself keeps its value.
+Every response carries these except an unhandled 500, which Starlette's error middleware
+answers outside the app's own. A route that sets one of them itself keeps its value.
 
 | Header                      | Value                                                                      |
 | --------------------------- | -------------------------------------------------------------------------- |
@@ -580,7 +580,10 @@ middleware. A route that sets one of them itself keeps its value.
   the page, which these headers do not govern.
 - `same-origin`: a dashboard URL, which can name a record, is never sent to another origin,
   and a same-origin non-GET request still carries its real `Origin`, which the cross-site
-  check reads. Under `no-referrer` a browser sends `Origin: null` on a form POST.
+  check reads. Under `no-referrer` a browser sends `Origin: null` on a form POST, which the
+  check refuses. The sign-in pages under `/oauth/` run no script and send the same policy:
+  their URLs can carry a user code or an authorization request, so no other site receives
+  them as a referrer, and their form POSTs carry the page's own `Origin`.
 - HSTS, without `includeSubDomains` or `preload`: Loom serves plain HTTP behind a TLS
   terminator, and a browser ignores the header over plain HTTP and honours it over HTTPS.
 

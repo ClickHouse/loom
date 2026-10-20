@@ -382,8 +382,8 @@ async def _web_gate(request: Request, call_next: Any) -> Response:
     return response
 
 
-async def _cache_and_security_headers(request: Request, call_next: Any) -> Response:
-    """Asset caching, security headers (a route's own value wins), Connection: close on drain."""
+async def _response_headers(request: Request, call_next: Any) -> Response:
+    """Headers every answer leaves with."""
     response: Response = await call_next(request)
     path = request.url.path
     # A year-long immutable cache for content-hashed /assets/* names: the hash is the
@@ -441,7 +441,7 @@ def attach_browser_middleware(target: FastAPI) -> None:
     so the gate's refusals and CORS preflights carry the headers."""
     _attach_cors(target)
     target.middleware("http")(_web_gate)
-    target.middleware("http")(_cache_and_security_headers)
+    target.middleware("http")(_response_headers)
 
 
 attach_browser_middleware(app)
