@@ -94,6 +94,36 @@ def test_delete_steps_are_keyed_alter_deletes_over_the_namespace_list(fn, tables
         assert " FINAL" not in sql  # none of these carries a live predicate
 
 
+class _CandidatesCH(_StubCH):
+    """Answers the candidate-id read with `ids`."""
+
+    def __init__(self, ids: list[str], count: int = 1) -> None:
+        super().__init__(count)
+        self.ids = ids
+
+    async def query_all(self, sql, params=None):
+        if "SELECT DISTINCT candidate_id" in sql:
+            self.counts.append((sql, params or {}))
+            return [{"candidate_id": i} for i in self.ids]
+        return await super().query_all(sql, params)
+
+
+def test_the_learnings_user_step_deletes_every_version_of_the_users_candidates() -> None:
+    ch = _CandidatesCH(["c1", "c2"], count=3)
+    assert asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch)) == 3
+    read_sql, read_params = ch.counts[0]
+    assert "has(supporter_users, {uid:String})" in read_sql and read_params["uid"] == "alice"
+    ((sql, params),) = ch.commands
+    assert "ALTER TABLE loom.learnings_queue" in sql and "DELETE" in sql
+    assert "candidate_id IN {cids:Array(UUID)}" in sql and params["cids"] == ["c1", "c2"]
+
+
+def test_the_learnings_user_step_with_no_candidates_submits_nothing() -> None:
+    ch = _CandidatesCH([])
+    assert asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch)) == 0
+    assert ch.commands == []
+
+
 def test_the_agent_runs_step_drops_the_runs_claims_too() -> None:
     ch = _StubCH(count=3)
     assert asyncio.run(ledger_steps.delete_agent_runs_by_namespace("o", ["a", "b"], ch=ch)) == 3

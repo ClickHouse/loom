@@ -74,10 +74,11 @@ def test_the_review_moved_the_named_tables_into_the_census() -> None:
         "loom.memory_exposures",
         "loom.events",
         "loom.code_search_trace",
+        # Through the candidates' supporter_users.
+        "loom.learnings_queue",
     ):
         assert t in user, t
-    for t in ("loom.search_trace_log", "loom.learnings_queue"):
-        assert t not in user, t  # no user axis on these
+    assert "loom.search_trace_log" not in user  # no user axis
     # namespace_snapshots stays out: it holds counts and a namespace name, never the payload
     assert "loom.namespace_snapshots" in erasure_census.NO_MEMORY_CONTENT
     # embedding_cache is deleted at both scopes but not counted: traffic refills it

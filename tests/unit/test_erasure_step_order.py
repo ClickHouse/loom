@@ -208,6 +208,8 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("events.delete", ((D, "loom.events"),)),
     ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
+    # The fake answers no candidate ids, so the step deletes nothing.
+    ("learnings_queue.delete", ()),
     ("consolidation_runs.delete", ((D, "loom.consolidation_runs"),)),
     ("idempotency.delete", ((D, "loom.idempotency"), (L, "loom.embedding_cache"))),
 ]

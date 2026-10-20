@@ -11,7 +11,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
-from server.erasure.store.predicates import NS_EQ, NS_IN, UID
+from server.erasure.store.predicates import NS_EQ, NS_IN, UID, USER_SUPPORTED_LEARNINGS
 
 log = logging.getLogger(__name__)
 
@@ -257,6 +257,30 @@ async def delete_learnings_queue_by_namespace(
     """Promotion candidates quote the proposed value and its supporters."""
     return await delete_scoped(
         "loom.learnings_queue", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
+async def delete_learnings_queue_by_user(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    """Every version of each candidate the user's conversations back
+    (`predicates.USER_LEARNINGS`). The ids are read first, so the delete never
+    reads the table it mutates."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT DISTINCT candidate_id FROM loom.learnings_queue "
+        f"WHERE org = {{org:String}} AND {USER_SUPPORTED_LEARNINGS}",
+        params={"org": org, "uid": user_id},
+    )
+    ids = [str(r["candidate_id"]) for r in rows]
+    if not ids:
+        return 0
+    return await delete_scoped(
+        "loom.learnings_queue",
+        org=org,
+        scope_where="candidate_id IN {cids:Array(UUID)}",
+        params={"cids": ids},
+        ch=ch,
     )
 
 

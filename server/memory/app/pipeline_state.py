@@ -53,6 +53,10 @@ class WorkflowState:
     # Per-call pin of the extractor's response cache
     # (None = the class policy, else off).
     llm_cache: bool | None = None
+    # Per-call switch for assistant-turn learnings (None = the deployment setting).
+    agent_learnings: bool | None = None
+    # Assistant rules filed to, or backing, a learnings queue candidate.
+    learning_candidates: int = 0
     segments: int = 1
     # Facts written as time-bounded foresight.
     foresight: int = 0

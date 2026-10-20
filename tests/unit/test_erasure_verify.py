@@ -159,8 +159,9 @@ def test_census_user_scope_skips_namespace_only_tables() -> None:
         "loom.llm_response_cache",
     } <= set(out)
     assert "loom.memory_answers" not in out
-    assert len(out) == 41
+    assert len(out) == 42
     assert "loom.blob_uploads" in out  # who uploaded what: the user's go
+    assert "loom.learnings_queue" in out  # the candidates the user's conversations back
     assert all(params["uid"] == "alice" for _, params in ch.query_one_calls)
 
 

@@ -186,6 +186,11 @@ class MemorySetFromMessagesInput(_Identity):
     # statement-dense ingest (a fact list, a long update) asks for it; a chat
     # transcript keeps the default, which its asides do not repay.
     coverage_sweep: bool | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
+    # Rules the assistant states about its own behaviour become pending
+    # `assistant_turn` candidates in the learnings queue for an admin to promote,
+    # never memories. None = the deployment setting memory_extract_agent_learnings
+    # (default off); a coding capture never uses it.
+    agent_learnings: bool | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
     # Per-call workflow override. Empty = default pipeline
     # (fetch_existing → llm_extract → hash_dedup → bulk_write). Each step ID names
     # a registered step (loom.fetch_existing_memories / loom.llm_extract /
@@ -251,6 +256,9 @@ class MemorySetFromMessagesOutput(BaseModel):
     # The user's facts read from the assistant's premises ("since you enjoy
     # X…"), added to the batch.
     premise_facts: int = 0
+    # Rules the assistant stated about itself, each filed as a learnings queue
+    # candidate or counted as a new supporter of one; none is written as a memory.
+    learning_candidates: int = 0
     # Which planner cut them: whole | size. With `segments`
     # this makes the segmentation fire rate one GROUP BY on agent_events
     # (out_segmenter / out_segments).

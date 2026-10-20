@@ -623,6 +623,7 @@ async def handle_memory_set_from_messages(
         forget_requests=int(getattr(state, "forget_requests", 0) or 0),
         about_other=int(getattr(state, "about_other", 0) or 0),
         premise_facts=int(getattr(state, "premise_facts", 0) or 0),
+        learning_candidates=state.learning_candidates,
         segmenter=str(getattr(state, "segmenter", "") or "whole"),
         cached_tokens_in=int(getattr(state, "cached_tokens_in", 0) or 0),
         ontology_warnings=ontology_warnings,
@@ -719,6 +720,7 @@ def _extract_request_pins(input: Any) -> dict[str, Any]:
     return {
         "coverage_sweep": getattr(input, "coverage_sweep", None),
         "llm_cache": getattr(input, "llm_cache", None),
+        "agent_learnings": getattr(input, "agent_learnings", None),
         # The keys the session's tools served ride into the workflow state so the echo filter
         # can judge against them.
         "recalled_keys": list(getattr(input, "recalled_keys", None) or []),

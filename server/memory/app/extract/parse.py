@@ -205,9 +205,7 @@ def _parse_fact_list(
                 valid_at=valid_at,
                 valid_to=valid_to,
                 foresight=_foresight,
-                about=(
-                    "other" if str(raw.get("about") or "").strip().lower() == "other" else "user"
-                ),
+                about=_parse_about(raw.get("about")),
                 forget=raw.get("forget") is True,
                 question_topic=question_topic,
                 topics=topics,
@@ -215,6 +213,13 @@ def _parse_fact_list(
             )
         )
     return facts
+
+
+def _parse_about(raw_about: object) -> str:
+    """Whose fact it is: "other", "agent" (a rule the assistant states about
+    itself) or "user" for anything else."""
+    about = str(raw_about or "").strip().lower()
+    return about if about in ("other", "agent") else "user"
 
 
 _MAX_TOPICS = 3

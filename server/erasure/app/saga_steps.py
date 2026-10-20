@@ -202,6 +202,7 @@ _UNCOUNTED_STEPS_USER: tuple[UserStep, ...] = (
     ("events.delete", ledger_steps.delete_events_by_user),
     ("delete_version_checks.delete", ledger_steps.delete_delete_version_checks_by_user),
     ("agent_runs.delete", ledger_steps.delete_agent_runs_by_user),
+    ("learnings_queue.delete", ledger_steps.delete_learnings_queue_by_user),
     ("consolidation_runs.delete", ledger_steps.delete_consolidation_runs_by_user),
     # Org-wide, not by the stamped subject: a replay a service account stored
     # while acting for the user carries the user's text under the account's

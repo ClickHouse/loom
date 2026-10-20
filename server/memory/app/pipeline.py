@@ -253,6 +253,7 @@ async def _step_llm_extract(
             # The WHOLE input decides, so a short
             # segment of a long transcript keeps the full prompt.
             compact_prompt=_use_compact_prompt(state.messages),
+            agent_learnings=_agent_learnings_on(state),
         )
 
     if len(segments) == 1:
@@ -588,6 +589,17 @@ def _is_coding_capture(state: WorkflowState) -> bool:
     return any(str(t).lower().startswith(_CODING_SOURCES) for t in (state.extra_tags or []))
 
 
+def _agent_learnings_on(state: WorkflowState) -> bool:
+    """Whether the extractor is asked for the assistant's rules about itself: the
+    request's switch, else the deployment's. A coding session's assistant
+    narrates its work, so a coding capture never is."""
+    if _is_coding_capture(state):
+        return False
+    if state.agent_learnings is not None:
+        return state.agent_learnings
+    return settings.memory_extract_agent_learnings
+
+
 def _user_turns(messages: list[dict[str, Any]] | None) -> int:
     return sum(1 for m in messages or [] if str(m.get("role") or "") == "user")
 
@@ -778,12 +790,26 @@ async def _forget_plan(
     return facts, forget_keys, keep
 
 
+async def _file_agent_rules(state: WorkflowState) -> None:
+    """Move the rules the assistant stated about itself out of the batch and into
+    the learnings queue. Never a memory: an end user can talk a bot into saying
+    anything, and an agent-level row would reach every user of the bot."""
+    agent_rules = [f for f in state.extracted_facts if f.get("about") == "agent"]
+    if not agent_rules:
+        return
+    from server.memory.app.assistant_learnings import file_assistant_rules
+
+    state.extracted_facts = [f for f in state.extracted_facts if f.get("about") != "agent"]
+    state.learning_candidates = await file_assistant_rules(state, agent_rules)
+
+
 async def _step_bulk_write(
     state: WorkflowState,
     config: dict[str, Any],
 ) -> WorkflowState:
     """Convert extracted_facts to bulk_set entries and write."""
     del config
+    await _file_agent_rules(state)
     # The deterministic passes read the messages, not
     # the extractor's output — a session that is only "please forget X" /
     # "got it" extracts to nothing and still has work here.

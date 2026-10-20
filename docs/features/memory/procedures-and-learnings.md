@@ -189,12 +189,18 @@ with `memory.search(memory_type="reflection")`.
 
 ## Learnings review queue
 
-No worker files candidates into the queue; it stays empty unless your process writes to
-`loom.learnings_queue`.
-
 A learning is a candidate fact with its supporters (`supporter_count`, `supporters`,
 `confidence_avg`, `rationale`, `source_kind`), waiting for a person to decide. Loom
 records the reviewer's choice and never makes it.
+
+Extraction files one kind of candidate itself. With assistant-turn learnings on, a rule
+a bot states about its own behaviour in a conversation becomes an `assistant_turn`
+candidate for that agent (`agent`), never a memory
+([extraction](./extraction.md#rules-the-assistant-states-about-itself)). Each user and
+session that states it again is one more supporter; promoting it writes the rule as the
+agent's memory for every user. A user erasure deletes every candidate that user's
+conversations back, since its rationale may quote them. Any other candidate is written by
+your own process to `loom.learnings_queue`.
 
 | Op                  | Role   | Does                                                                                                               |
 | ------------------- | ------ | ------------------------------------------------------------------------------------------------------------------ |

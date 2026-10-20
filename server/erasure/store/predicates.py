@@ -97,3 +97,12 @@ USER_COMMUNITY_ROWS = (
 # table with a user_id column.
 LIVE = "tombstoned_at IS NULL"
 UID = "user_id = {uid:String}"
+
+# A learnings queue candidate belongs to every end user whose conversation backs
+# it (`supporter_users`): its rationale may quote their turn. Every version of such
+# a candidate is in scope, the review's status rows included.
+USER_SUPPORTED_LEARNINGS = "has(supporter_users, {uid:String})"
+USER_LEARNINGS = (
+    "candidate_id IN (SELECT candidate_id FROM loom.learnings_queue "
+    f"WHERE org = {{org:String}} AND {USER_SUPPORTED_LEARNINGS})"
+)

@@ -24,6 +24,7 @@ from server.erasure.store.predicates import (
     USER_CHUNKS,
     USER_COMMUNITY_ROWS,
     USER_CONFLICT_RECORD_IDS,
+    USER_LEARNINGS,
     USER_PARENT_KEYS,
     USER_PRECEDENT_KEYS,
     USER_RECORD_IDS,
@@ -285,7 +286,13 @@ _CENSUS: tuple[Substrate, ...] = (
         "delete_version_checks.delete",
     ),
     Substrate("loom.entity_degree", "1", None, "entity_graph.delete", None),
-    Substrate("loom.learnings_queue", "1", None, "learnings_queue.delete", None),
+    Substrate(
+        "loom.learnings_queue",
+        "1",
+        USER_LEARNINGS,
+        "learnings_queue.delete",
+        "learnings_queue.delete",
+    ),
     # Task inbox plane: the brief and the notes quote source
     # and issue text; keyed on the inbox's owner namespace, no user axis.
     Substrate("loom.tasks", "is_deleted = 0", None, "tasks.delete", None),

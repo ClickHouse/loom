@@ -18,6 +18,7 @@ from server.memory.api.models_learnings import (
     _LearningEntry,
 )
 from server.memory.api.models_lifecycle import MemoryPromoteInput
+from server.memory.domain.assistant_rules import SOURCE_KIND as ASSISTANT_TURN
 from server.memory.store import learnings as learnings_repo
 from server.memory.store.rows import next_version
 
@@ -52,6 +53,7 @@ async def handle_learnings_list(
                 supporters=list(r["supporters"]),
                 rationale=r["rationale"],
                 source_kind=r.get("source_kind", "memory_supporters"),
+                agent=str(r.get("agent") or ""),
                 status=r["status"],
                 proposed_at=r["proposed_at"],
                 decided_at=r["decided_at"],
@@ -216,6 +218,8 @@ async def handle_learnings_review(
             "supporters": list(row["supporters"]),
             "rationale": row["rationale"],
             "source_kind": row.get("source_kind", "memory_supporters"),
+            "agent": str(row.get("agent") or ""),
+            "supporter_users": list(row.get("supporter_users") or []),
             "seeded_from_thread_id": row.get("seeded_from_thread_id"),
             "seeded_from_msg_id": row.get("seeded_from_msg_id"),
             "status": target_status,
@@ -330,18 +334,21 @@ async def _promote_via_memory_set(
 
     # Seeder supporters encode the originating thread, not a memory row.
     # Sentinel "-" puts the row at namespace scope; approver lands as
-    # user_id so audit retains accountability.
+    # user_id so audit retains accountability. A rule an assistant stated about
+    # itself becomes its agent's memory for every user (user_id "-"); the
+    # approver is the row's `actor`, stamped from the review's token.
     # Persist the originating conversation on the durable memory row's
     # source_trace (the seeded_from link otherwise lives only on the
     # learnings_queue candidate, which ages out) — so a promoted fact keeps a
     # path back to the thread that produced it, for audit + "memories from this
     # thread".
     seeded_thread = candidate_row.get("seeded_from_thread_id")
+    agent_rule = candidate_row.get("source_kind") == ASSISTANT_TURN
     set_input = MemorySetInput(
         org=org,
         namespace=namespace,
-        agent="-",
-        user_id=approver or "-",
+        agent=str(candidate_row.get("agent") or "-") if agent_rule else "-",
+        user_id="-" if agent_rule else (approver or "-"),
         session_id="-",
         memory_key=candidate_row["memory_key"],
         memory_type=candidate_row.get("memory_type") or "semantic",

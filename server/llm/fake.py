@@ -14,6 +14,11 @@ from server.llm import customer
 from server.llm.client import LLMResult
 
 _EXTRACTION_ANCHOR = "evidence-bound memory extractor"
+# The assistant-rules block (server.memory.domain.extraction_prompts).
+_AGENT_RULES_ANCHOR = "THE ASSISTANT'S OWN STANDING RULES"
+# An assistant sentence the fake reads as a standing rule about itself.
+_AGENT_RULE_RE = re.compile(r"^I (?:always|never) ")
+_ASSISTANT_TURN_RE = re.compile(r"^\[(\d+):assistant[^\]]*\]\s*(.*)$", re.M)
 _SCHEMA_ANCHOR = "extract one structured record"
 _STAGE1_ANCHOR = "decide whether the source messages contain"
 _STAGE2_ANCHOR = "decide which schema fields are CLEARLY mentioned"
@@ -71,17 +76,44 @@ def _synthesize_typed_record(system: str, user: str) -> dict[str, object]:
     return {"record": record, "entities": entities}
 
 
-def _extract_facts_from_user_prompt(user: str) -> dict[str, list[dict[str, object]]]:
+def _agent_rules(user: str) -> list[dict[str, object]]:
+    """Under the assistant-rules block: each current assistant sentence that
+    opens "I always" / "I never", as an `about: "agent"` fact."""
+    current = user.split("current_messages (extract from these):")[-1]
+    rules: list[dict[str, object]] = []
+    for m in _ASSISTANT_TURN_RE.finditer(current):
+        for sentence in _SENTENCE_SPLIT_RE.split(m.group(2).strip()):
+            sentence = sentence.strip()
+            if not _AGENT_RULE_RE.match(sentence):
+                continue
+            words = re.findall(r"[a-zA-Z]+", sentence.lower())[1:5]
+            rules.append(
+                {
+                    "key": "assistant_rule_" + "_".join(words),
+                    "value": "Assistant rule: " + sentence,
+                    "about": "agent",
+                    "source_message_indices": [int(m.group(1))],
+                    "evidence": sentence,
+                }
+            )
+    return rules
+
+
+def _extract_facts_from_user_prompt(
+    user: str, *, agent_rules: bool = False
+) -> dict[str, list[dict[str, object]]]:
     """Synthesize a few plausible facts from the messages body so tests
     can assert on a non-empty round-trip. Picks the first 3 sentences
-    that look declarative."""
-    facts: list[dict[str, object]] = []
+    that look declarative; with `agent_rules`, the assistant's "I always" /
+    "I never" sentences come back as rules instead."""
+    facts: list[dict[str, object]] = _agent_rules(user) if agent_rules else []
+    rule_sentences = {str(f["evidence"]).rstrip(".") for f in facts}
     seen: set[str] = set()
     # User prompt is "[role] content\n..." — strip role tags before splitting.
     stripped = re.sub(r"\[[^\]]+\]\s*", "", user).strip()
     for sentence in _SENTENCE_SPLIT_RE.split(stripped):
         sentence = sentence.strip().rstrip(".")
-        if len(sentence) < 8:
+        if len(sentence) < 8 or sentence in rule_sentences:
             continue
         words = re.findall(r"[a-zA-Z]+", sentence.lower())[:4]
         if not words:
@@ -100,7 +132,7 @@ def _extract_facts_from_user_prompt(user: str) -> dict[str, list[dict[str, objec
                 "entities": entities,
             }
         )
-        if len(facts) == 3:
+        if len(facts) == 3 + len(rule_sentences):
             break
     return {"facts": facts}
 
@@ -132,7 +164,9 @@ class FakeLLMClient:
         elif _STAGE3_ANCHOR in system or _SCHEMA_ANCHOR in system:
             synthesized = json.dumps(_synthesize_typed_record(system, user))
         elif _EXTRACTION_ANCHOR in system:
-            payload = _extract_facts_from_user_prompt(user)
+            payload = _extract_facts_from_user_prompt(
+                user, agent_rules=_AGENT_RULES_ANCHOR in system
+            )
             synthesized = json.dumps(payload)
         else:
             body = user[:200].replace("\n", " ").strip()

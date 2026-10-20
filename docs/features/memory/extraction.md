@@ -58,6 +58,32 @@ from the observe plane. Only these run `loom.drop_non_durable` and `loom.verify_
 The rules in `server/memory/domain/durable_facts.py` match sentence shape, not topic words: what
 a release changed is kept; whether its CI was green at the time is dropped.
 
+## Rules the assistant states about itself
+
+A chat bot's replies carry rules about its own behaviour: "I escalate any refund over
+$500 to a human", "I always answer in bullet points". With `agent_learnings=true` on the
+request, or `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS=true` for the deployment, the extraction
+call also returns these, marked `"about": "agent"`, at no extra model call. Both are off
+by default: the switch adds a block to the extraction prompt, and extraction quality is
+benchmarked on the prompt without it. Coding captures never use it.
+
+Such a rule is never written as a memory. An end user can talk a bot into saying
+anything, and a memory at the agent's level would reach every user of the bot. The rule
+becomes a pending `assistant_turn` candidate in the
+[learnings review queue](./procedures-and-learnings.md#learnings-review-queue) for the
+request's `(org, namespace, agent)`:
+
+- The end user and session are recorded as a supporter, never as the candidate's owner.
+  The `rationale` quotes the assistant turn.
+- A candidate is keyed by the agent and the rule's memory key. The same rule stated in
+  another session adds a supporter to the pending candidate, so a reviewer sees how many
+  users and sessions back it. A decided candidate takes no new supporters.
+- Support never promotes a candidate. An admin's `learnings.review` does, and the rule
+  becomes the agent's memory (`user_id` `-`) for every user of the bot.
+
+`learning_candidates` in the response counts the rules filed or supported. A failed queue
+write is named in `pipeline_errors` and the rule is dropped.
+
 ## Echoes: `recalled_keys` and `session_values`
 
 Most junk in session captures is the session repeating what Loom already told it. Two
@@ -118,17 +144,18 @@ Field lists: [operations reference](../../reference/operations.md#memory) and
 
 ### Request fields
 
-| Field                          | Effect                                                                                                                     |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `messages`                     | 1–400 turns: `role`, `content`, optional `timestamp` (anchors facts to the turn) and `name` (speaker).                     |
-| `last_messages`                | Up to 20 earlier turns, shown for context and not re-extracted.                                                            |
-| `observation_date`             | `YYYY-MM-DD` anchor for relative dates. Unset: `LOOM_MEMORY_EXTRACT_OBSERVATION_DATE_DEFAULT` (`request_time`, today UTC). |
-| `extra_tags`                   | Added to every extracted fact. `source:<client>` marks a coding capture.                                                   |
-| `extraction_instructions`      | A prompt suffix (up to 4,096 characters).                                                                                  |
-| `record_schema` + `memory_key` | Extract one typed record ([typed records](./writing.md#typed-records)). Never deferred by the allowlist.                   |
-| `valid_at`                     | Fallback validity time for facts the extractor did not anchor.                                                             |
-| `recalled_keys`                | Keys the session was served ([echoes](#echoes-recalled_keys-and-session_values)).                                          |
-| `defer`                        | Queue instead of extracting inline.                                                                                        |
+| Field                          | Effect                                                                                                                      |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `messages`                     | 1–400 turns: `role`, `content`, optional `timestamp` (anchors facts to the turn) and `name` (speaker).                      |
+| `last_messages`                | Up to 20 earlier turns, shown for context and not re-extracted.                                                             |
+| `observation_date`             | `YYYY-MM-DD` anchor for relative dates. Unset: `LOOM_MEMORY_EXTRACT_OBSERVATION_DATE_DEFAULT` (`request_time`, today UTC).  |
+| `extra_tags`                   | Added to every extracted fact. `source:<client>` marks a coding capture.                                                    |
+| `extraction_instructions`      | A prompt suffix (up to 4,096 characters).                                                                                   |
+| `record_schema` + `memory_key` | Extract one typed record ([typed records](./writing.md#typed-records)). Never deferred by the allowlist.                    |
+| `valid_at`                     | Fallback validity time for facts the extractor did not anchor.                                                              |
+| `recalled_keys`                | Keys the session was served ([echoes](#echoes-recalled_keys-and-session_values)).                                           |
+| `defer`                        | Queue instead of extracting inline.                                                                                         |
+| `agent_learnings`              | File the assistant's rules about itself for review ([above](#rules-the-assistant-states-about-itself)). Unset: the setting. |
 
 ### Response fields
 
@@ -136,6 +163,8 @@ Field lists: [operations reference](../../reference/operations.md#memory) and
 - `tokens_in`, `tokens_out`, `cached_tokens_in`: cost attribution.
 - `segments`, `segmenter` (`whole` or `size`).
 - `forgotten`, `forgotten_keys`, `evidence_ids`.
+- `learning_candidates`: assistant rules filed to the learnings queue, or added as a
+  supporter of a candidate already pending.
 - `stage_ms`: wall time per stage (`step.<step_id>`, `bulk.<phase>`).
 - `observation_date_source`: `caller`, `request_time` or empty.
 - `stubbed_fields`: typed-record fields written as null after validation retries.
@@ -188,6 +217,7 @@ See the [Extraction section](../../reference/configuration.md#extraction) unless
 | `LOOM_MEMORY_EXTRACT_SIZE_SEGMENT_*`                      | When a long session is split into fixed windows, and their size.                               |
 | `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_*`                    | A second reading of turns the first pass cited nowhere (one more call).                        |
 | `LOOM_MEMORY_EXTRACT_VALUE_UPDATES`                       | Off by default: supersede an older memory when a fresh one restates it with a different value. |
+| `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS`                     | Off by default: file the assistant's rules about itself to the learnings queue.                |
 | `LOOM_EXTRACTION_QUEUE_*`, `LOOM_EXTRACTION_DEFER_AGENTS` | The deferred queue: cadence, lease, attempts, concurrency, forced deferral.                    |
 | `LOOM_OBSERVE_EXTRACT_*`                                  | The observe plane's distillation worker (off by default; makes model calls).                   |
 | `LOOM_MEMORY_CHUNKS_MAX_PER_CALL`                         | Verbatim chunks one call writes ([Chunking](../../reference/configuration.md#chunking)).       |

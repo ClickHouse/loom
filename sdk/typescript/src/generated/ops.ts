@@ -3385,6 +3385,7 @@ export interface LearningEntry {
   supporters: string[];
   rationale: string;
   source_kind?: string;
+  agent?: string;
   status: "pending" | "promoted" | "rejected";
   proposed_at: string; // date-time
   decided_at?: string | null;
@@ -5699,6 +5700,7 @@ export interface MemorySetFromMessagesInput {
   last_messages?: Message[];
   extraction_instructions?: string;
   coverage_sweep?: boolean | null;
+  agent_learnings?: boolean | null;
   pipeline_steps?: Array<Record<string, unknown>>;
   valid_at?: string | null;
   defer?: boolean;
@@ -5717,6 +5719,7 @@ export interface MemorySetFromMessagesOutput {
   forget_requests?: number;
   about_other?: number;
   premise_facts?: number;
+  learning_candidates?: number;
   segmenter?: string;
   cached_tokens_in?: number;
   ontology_warnings?: string[];

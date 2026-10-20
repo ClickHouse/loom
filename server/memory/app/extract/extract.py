@@ -166,11 +166,14 @@ def _extraction_system_prompt(
     existing_memories: list[dict[str, str]] | None,
     namespace_categories: list[dict[str, str]] | None,
     custom_instructions: str,
+    agent_learnings: bool = False,
 ) -> str:
     """The extractor's system prompt: the base prompt under the strict-examples
     preamble, the fence note, the namespace's categories and the caller's
     instructions."""
-    system_prompt = with_strict_examples_preamble(_extraction_base_prompt(compact))
+    system_prompt = with_strict_examples_preamble(
+        _extraction_base_prompt(compact, agent_learnings=agent_learnings)
+    )
     if existing_memories:
         from server.memory.domain.prompt_fence import FENCE_NOTE
 
@@ -442,6 +445,7 @@ async def extract_from_messages(
     namespace: str = "",
     llm_cache: bool | None = None,
     compact_prompt: bool | None = None,  # None = judge `messages`
+    agent_learnings: bool = False,
 ) -> ExtractionResult:
     """Run one LLM completion to extract memorable facts from messages.
 
@@ -468,6 +472,10 @@ async def extract_from_messages(
     misfire), one retry with a stricter prompt addendum is attempted.
     Token cost in the misfire case: one extra LLM call. In the
     legitimately-empty case (greetings, trivial replies): no retry.
+
+    `agent_learnings` asks the same call for the assistant's standing rules
+    about itself, returned as facts with `about="agent"`. Off, a fact the
+    model still marks that way is the user's, as without the block.
     """
     if not messages:
         client = get_llm_client()
@@ -492,6 +500,7 @@ async def extract_from_messages(
         existing_memories=existing_memories,
         namespace_categories=namespace_categories,
         custom_instructions=custom_instructions,
+        agent_learnings=agent_learnings,
     )
     # JSON mode constrains the model to valid JSON; the try/except below
     # is a single belt-and-suspenders parse-retry on top of it.
@@ -577,6 +586,8 @@ async def extract_from_messages(
         existing_memories=existing_memories,
         speaker_attribution=speaker_attribution,
     )
+    if not agent_learnings:
+        facts = [replace(f, about="user") if f.about == "agent" else f for f in facts]
 
     # Judge gate: drop WRONG, keep CORRECT/UNCERTAIN. observation_date
     # lets the judge verify temporal resolutions instead of flagging them

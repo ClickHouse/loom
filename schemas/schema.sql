@@ -1817,7 +1817,9 @@ CREATE TABLE IF NOT EXISTS loom.learnings_queue
     `version` UInt64,
     `source_kind` LowCardinality(String) DEFAULT 'memory_supporters',
     `seeded_from_msg_id` Nullable(String) DEFAULT NULL,
-    `seeded_from_thread_id` Nullable(String) DEFAULT NULL
+    `seeded_from_thread_id` Nullable(String) DEFAULT NULL,
+    `agent` LowCardinality(String) DEFAULT '',
+    `supporter_users` Array(String) DEFAULT []
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(proposed_at)

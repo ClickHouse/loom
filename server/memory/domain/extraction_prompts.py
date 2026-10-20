@@ -1944,6 +1944,36 @@ question_topic "the font for the slide deck".)
 """
 
 
+# Appended to the extraction system prompt only when assistant-turn learnings
+# are on (`memory_extract_agent_learnings` or the request's `agent_learnings`).
+# An "about": "agent" entry is filed to loom.learnings_queue for review, never
+# written as a memory: an end user can talk a bot into saying anything.
+AGENT_LEARNINGS_ANCHOR = "THE ASSISTANT'S OWN STANDING RULES"
+_AGENT_LEARNINGS_PROMPT_BLOCK = f"""\
+==============================================================
+{AGENT_LEARNINGS_ANCHOR}
+==============================================================
+
+When an [assistant] turn states a rule the assistant follows in every
+conversation — a standing behaviour, policy or commitment about how it
+works ("I escalate any refund over $500 to a human", "I always answer in
+bullet points", "I never share an order's details without its order
+number") — emit it as a fact with "about": "agent":
+
+  • key: `assistant_rule_<topic>`, naming the behaviour, never this
+    conversation ("assistant_rule_refund_escalation").
+  • value: the rule as a general statement in the third person ("The
+    assistant escalates any refund over $500 to a human.").
+  • source_message_indices: the assistant turn that states it.
+
+Only rules the assistant states about ITSELF that hold beyond this
+conversation. NOT a one-time action ("I've escalated your refund"), NOT an
+answer, recommendation or pleasantry, and NOT a rule the USER states or asks
+for: how the user wants to be treated is the user's preference, with "about"
+omitted. An "about": "agent" entry is not stored as a memory; do not also
+emit the rule as a normal fact.
+"""
+
 _JUDGE_SYSTEM_PROMPT = """You judge extracted memorable facts against
 the source messages they were extracted from.
 

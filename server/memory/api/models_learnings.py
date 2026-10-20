@@ -31,6 +31,8 @@ class _LearningEntry(BaseModel):
     supporters: list[str]
     rationale: str
     source_kind: str = "memory_supporters"
+    # The agent an `assistant_turn` candidate is a rule for; '' for other producers.
+    agent: str = ""
     status: LearningStatus
     proposed_at: datetime
     decided_at: datetime | None = None

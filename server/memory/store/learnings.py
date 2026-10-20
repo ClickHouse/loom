@@ -40,7 +40,7 @@ async def list_by_status(
         f"""
         SELECT candidate_id, memory_key, memory_type, proposed_value,
                supporter_count, confidence_avg, supporters, rationale,
-               source_kind,
+               source_kind, agent,
                status, proposed_at, decided_at, decided_by, decision_reason
         FROM loom.learnings_queue FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
@@ -64,8 +64,8 @@ async def find_candidate(
     and the candidate side of `memory.lineage`'s provenance chain.
 
     `seeded_from_*` is surfaced so lineage can point at the originating
-    conversation turn; `supporter_count`, `confidence_avg` and `proposed_at` so a review's
-    new version carries them forward.
+    conversation turn; `supporter_count`, `confidence_avg`, `proposed_at`, `agent` and
+    `supporter_users` so a review's or a new supporter's version carries them forward.
     """
     ch = ch or _default_client()
     return await ch.query_one(
@@ -73,7 +73,8 @@ async def find_candidate(
         SELECT candidate_id, memory_key, memory_type, proposed_value,
                status, supporters, rationale, source_kind,
                seeded_from_thread_id, seeded_from_msg_id,
-               supporter_count, confidence_avg, proposed_at
+               supporter_count, confidence_avg, proposed_at,
+               agent, supporter_users
         FROM loom.learnings_queue FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND candidate_id = {cid:UUID}
