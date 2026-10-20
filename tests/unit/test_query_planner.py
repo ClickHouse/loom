@@ -166,13 +166,34 @@ def test_work_estimate_counts_agentic_fanout() -> None:
         entity_count=2,
         graph_triples_enabled=False,
         external_rerank_enabled=True,
+        llm_rerank=True,
     )
 
     assert est["namespace_count"] == 2
     assert est["vector_queries"] == 10
     assert est["embedding_calls"] == 6
-    assert est["llm_calls"] == 2
+    assert est["llm_calls"] == 2  # enrichment and the LLM reranker
     assert est["candidate_pool"] > 30
+
+
+def test_a_rerank_service_is_no_llm_call_in_the_estimate() -> None:
+    plan = plan_memory_search(
+        current_search_mode="rrf",
+        current_hyde=False,
+        current_include_top_n_unmatched=0,
+        current_rerank="",
+        query_shape="",
+        resolved_dates=[],
+    )
+
+    def llm_calls(**rerank: bool) -> int:
+        est = estimate_memory_search_work(
+            plan, namespace_count=1, top_k=5, pool_top_k=15, query_enrichment_used=False, **rerank
+        )
+        return int(est["llm_calls"])
+
+    assert llm_calls(external_rerank_enabled=True) == 0  # builtin:cohere, a configured endpoint
+    assert llm_calls(external_rerank_enabled=True, llm_rerank=True) == 1  # builtin:openai
 
 
 def test_recipe_does_not_clobber_caller_set_fields() -> None:

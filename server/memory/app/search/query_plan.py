@@ -203,4 +203,4 @@ def _is_fast_posture(input: MemorySearchInput) -> bool:
 def _is_llm_free(input: MemorySearchInput) -> bool:
     """True when the read makes no LLM call: under the fast posture, or when the
     caller asked for an LLM-free read (context.pack) whatever its recipe."""
-    return _is_fast_posture(input) or bool(getattr(input, "_llm_free", False))
+    return _is_fast_posture(input) or input._llm_free

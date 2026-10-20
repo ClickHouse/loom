@@ -444,6 +444,12 @@ def llm_attempts(search_env, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr(llm_client, "get_llm_client_for_model", lambda *a, **k: _RefusingLLM())
     monkeypatch.setattr(sllm, "extract_derived_intent_llm", lambda *a, **k: refused("intent"))
     monkeypatch.setattr(sllm, "judge_results_iteratively", lambda *a, **k: refused("judge"))
+
+    async def no_triples(*a: Any, **k: Any) -> list[tuple[str, str, str]]:
+        attempts.append("triples")  # recorded; empty, as the extractor fails open
+        return []
+
+    monkeypatch.setattr(sllm, "extract_query_triples_llm", no_triples)
     monkeypatch.setattr(sllm, "_VERB_SYNONYM_CACHE", type(sllm._VERB_SYNONYM_CACHE)())
     monkeypatch.setattr(msearch, "fetch_derived_aggregate", fetch_derived_aggregate)
     search_env.hits = [_svc_hit("a", sim=0.80, rank=0.8), _svc_hit("b", sim=0.40, rank=0.4)]
@@ -505,7 +511,11 @@ _PACK_QUESTIONS = [
 
 @pytest.mark.parametrize("query", _PACK_QUESTIONS)
 @pytest.mark.parametrize("mode", ["task", "startup", "debug", "handoff"])
-@pytest.mark.parametrize("reranker", ["", "builtin:openai"], ids=["no-rerank", "llm-rerank"])
+@pytest.mark.parametrize(
+    "reranker",
+    ["", "builtin:openai", "builtin:cohere"],
+    ids=["no-rerank", "llm-rerank", "service-rerank"],
+)
 async def test_a_context_pack_makes_no_llm_call(
     search_env,
     llm_attempts,
@@ -521,7 +531,7 @@ async def test_a_context_pack_makes_no_llm_call(
     from server.memory.app.context_pack import handle_context_pack
 
     async def namespace_rerank(org: str, ns: str) -> tuple[str, str]:
-        return (reranker, "")  # builtin:openai is an LLM
+        return (reranker, "")  # builtin:openai is an LLM; builtin:cohere a rerank service
 
     monkeypatch.setattr(rerank_mod, "get_namespace_rerank_config", namespace_rerank)
     import server.knowledge.app.conversations as conversations_mod
@@ -568,6 +578,42 @@ async def test_a_context_pack_makes_no_llm_call(
     assert searched  # the memories search, and the procedures section's
     for search_out in searched:
         _assert_plans_no_llm(search_out)
+
+
+async def test_a_debug_pack_never_asks_the_retry_judge(search_env, llm_attempts) -> None:
+    # Mid-range hits open the judge on the quality recipe (debug mode's) off the
+    # LLM-free posture; the pack keeps it closed.
+    from server.memory.api.models_context import ContextPackInput
+    from server.memory.app.context_pack import handle_context_pack
+
+    search_env.hits = [_svc_hit("mid", sim=0.50, rank=1.0), _svc_hit("other", sim=0.48, rank=0.2)]
+    await handle_context_pack(
+        ContextPackInput(org="o", namespace="ns", agent="a", query="what is my plan", mode="debug")
+    )
+    assert "judge" not in llm_attempts
+
+
+async def test_off_the_llm_free_posture_the_judge_runs_on_the_same_hits(
+    search_env, llm_attempts
+) -> None:
+    search_env.hits = [_svc_hit("mid", sim=0.50, rank=1.0), _svc_hit("other", sim=0.48, rank=0.2)]
+    with pytest.raises(AssertionError, match="an LLM call"):  # the judge does not fail open
+        await _run(search_env, recipe="quality", query="what is my plan")
+    assert "judge" in llm_attempts
+
+
+async def test_off_the_llm_free_posture_graph_mode_extracts_triples(
+    search_env, llm_attempts
+) -> None:
+    await _run(search_env, recipe="graph")
+    assert "triples" in llm_attempts
+
+
+async def test_off_the_llm_free_posture_a_count_expands_its_verb(search_env, llm_attempts) -> None:
+    await _run(
+        search_env, query="how many model kits have I bought?", observation_date="2023-07-15"
+    )
+    assert any(a.startswith('complete: verb: "buy"') for a in llm_attempts)
 
 
 async def test_off_the_llm_free_posture_the_llm_reranker_runs(search_env, llm_attempts) -> None:

@@ -545,9 +545,9 @@ async def _pack_memories(st: _PackState) -> None:
         include_tags=True,
     )
     search_input._context_pack_block_tokens = int(_memories_token_budget)
-    # A pack runs on every chat turn: its read costs the query embedding and no LLM
-    # call in any mode, while the recipe keeps its recall width. A caller that wants
-    # the recipe's LLM legs calls memory.search.
+    # A pack runs on every chat turn: its read costs embeddings and ClickHouse reads,
+    # and no LLM call in any mode, while the recipe keeps its recall width. A caller
+    # that wants the recipe's LLM legs calls memory.search.
     search_input._llm_free = True
     out = await handle_memory_search(search_input)
     hits = _without_transcript_rows(list(out.results or []))

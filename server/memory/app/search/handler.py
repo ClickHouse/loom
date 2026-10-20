@@ -230,7 +230,6 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
             search_plan,
             endpoint,
             prompt_template,
-            external_rerank_enabled,
         ) = await _resolve_rerank_endpoint(input, search_plan, run, actual_work)
 
         search_plan, pool_top_k, retrieval_cost_estimate = _size_candidate_pool(
@@ -240,7 +239,7 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
             query_shape,
             parsed_intent is not None,
             sub_queries,
-            external_rerank_enabled,
+            endpoint,
             actual_work,
         )
 

@@ -281,6 +281,7 @@ def estimate_memory_search_work(
     entity_count: int = 0,
     graph_triples_enabled: bool = False,
     external_rerank_enabled: bool = False,
+    llm_rerank: bool = False,
 ) -> dict[str, Any]:
     """Estimate retrieval work before executing the expensive legs.
 
@@ -307,7 +308,7 @@ def estimate_memory_search_work(
         llm_calls += 1
     if graph_triples_enabled:
         llm_calls += 1
-    if external_rerank_enabled:
+    if llm_rerank:  # the builtin:openai reranker; a rerank service is no LLM call
         llm_calls += 1
 
     candidate_pool = ns * int(pool_top_k)

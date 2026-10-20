@@ -92,15 +92,10 @@ def _plan_retrieval(
     and the plan."""
     from server.memory.domain.query_planner import plan_memory_search
 
-    llm_free = _is_llm_free(input)
-    initial_hyde_allowed = (
-        bool(getattr(input, "hyde", False))
-        and (
-            caller_hyde_explicit
-            or getattr(input, "retrieval_budget", "standard") == "deep"
-            or getattr(input, "recipe", "") == "quality"
-        )
-        and not llm_free
+    initial_hyde_allowed = bool(getattr(input, "hyde", False)) and (
+        caller_hyde_explicit
+        or getattr(input, "retrieval_budget", "standard") == "deep"
+        or getattr(input, "recipe", "") == "quality"
     )
     search_plan = plan_memory_search(
         current_search_mode=input.search_mode,
@@ -118,7 +113,7 @@ def _plan_retrieval(
         mode_pinned=not bool(getattr(input, "_search_mode_defaulted", False)),
         namespace_defaults=tuple(getattr(input, "_namespace_defaults_applied", ()) or ()),
     )
-    if llm_free:
+    if _is_llm_free(input):
         # The plan an LLM-free read reports runs no LLM step, whatever the planner chose
         # (the deep budget turns HyDE on after `current_hyde`).
         search_plan = replace(
@@ -135,12 +130,11 @@ async def _resolve_rerank_endpoint(
     search_plan: MemorySearchPlan,
     run: _SearchRun,
     actual_work: dict[str, Any],
-) -> tuple[MemorySearchInput, MemorySearchPlan, str, str, bool]:
+) -> tuple[MemorySearchInput, MemorySearchPlan, str, str]:
     """Phase 12: the relevance authority. Awaits the namespace rerank config
     (or takes the request override); without an external reranker the
     planner's unmatched plane is pruned. Returns the (possibly re-planned)
-    input and plan, the endpoint, its prompt template, and whether external
-    rerank is on."""
+    input and plan, the endpoint ("" for none) and its prompt template."""
 
     if run.rerank_cfg_task is None:
         endpoint = "" if run.rerank_override == "none" else run.rerank_override
@@ -150,8 +144,7 @@ async def _resolve_rerank_endpoint(
     if endpoint.startswith(BUILTIN_OPENAI) and _is_llm_free(input):
         # The built-in reranker is an LLM call, which an LLM-free read never makes.
         endpoint, prompt_template = "", ""
-    external_rerank_enabled = bool(endpoint)
-    if search_plan.include_top_n_unmatched > 0 and not external_rerank_enabled:
+    if search_plan.include_top_n_unmatched > 0 and not endpoint:
         search_plan = replace(
             search_plan,
             include_top_n_unmatched=0,
@@ -159,7 +152,7 @@ async def _resolve_rerank_endpoint(
             reason=f"{search_plan.reason}:unmatched_pruned_no_rerank",
         )
         input = input.model_copy(update=search_plan.input_updates)
-    return input, search_plan, endpoint, prompt_template, external_rerank_enabled
+    return input, search_plan, endpoint, prompt_template
 
 
 def _size_candidate_pool(
@@ -169,7 +162,7 @@ def _size_candidate_pool(
     query_shape: str,
     query_enrichment_used: bool,
     sub_queries: list[str],
-    external_rerank_enabled: bool,
+    endpoint: str,
     actual_work: dict[str, Any],
 ) -> tuple[MemorySearchPlan, int, dict[str, Any]]:
     """Phase 13: first-stage pool size (budget / rerank / shape multipliers,
@@ -177,6 +170,8 @@ def _size_candidate_pool(
     estimate, pool_top_k, and the estimate."""
     from server.memory.domain.query_planner import estimate_memory_search_work
     from server.settings import settings as _settings
+
+    external_rerank_enabled = bool(endpoint)
 
     namespaces = run.namespaces
     effective_entity_filter = run.effective_entity_filter
@@ -215,6 +210,7 @@ def _size_candidate_pool(
         entity_count=len(effective_entity_filter),
         graph_triples_enabled=input.search_mode == "graph" and not llm_free,
         external_rerank_enabled=external_rerank_enabled,
+        llm_rerank=endpoint.startswith(BUILTIN_OPENAI),
     )
     search_plan = replace(search_plan, estimated_work=retrieval_cost_estimate)
     return search_plan, pool_top_k, retrieval_cost_estimate
