@@ -816,7 +816,7 @@ sweep labels it, an unlabelled row that holds a credential is embedded like any 
 search serves it, and `memory.ask` and the conflict judge can send it to their models. A
 pass reads its window in the table's sort key order, in pages of
 `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` rows, until that many candidates are found or
-`LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` (10) pages are read. The ClickHouse filter selects
+`LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` pages are read. The ClickHouse filter selects
 only the shapes in the shape filter, so a ten-digit run (an epoch timestamp, a run id) the
 default filter leaves alone is never selected. A selected row the detector leaves
 unlabelled is selected again on every pass, and paging past it keeps a run of them from
