@@ -28,11 +28,12 @@ class PolledCopy[T]:
         self._log = log
         self._value: T | None = None
         # When the copy was read (monotonic, from the start of its query; None =
-        # never), when the next read is due (0.0 = asked for by a change here),
-        # and how many changes were made here.
+        # never), when the next read is due, how many changes were made here, and
+        # how many of them the copy in hand was read after.
         self._read_at: float | None = None
         self._next_read = 0.0
         self._changes = 0
+        self._changes_read = 0
         self._lock = asyncio.Lock()
 
     def _fresh(self, now: float, max_stale_s: float) -> bool:
@@ -43,11 +44,12 @@ class PolledCopy[T]:
         than `max_stale_s`, counted from the start of the read that brought it
         (or it was never read)."""
         now = time.monotonic()
-        change_waiting = self._next_read == 0.0
+        change_waiting = self._changes != self._changes_read
+        due = now >= self._next_read or change_waiting
         serve_in_hand = self._lock.locked() and self._fresh(now, max_stale_s) and not change_waiting
-        if now >= self._next_read and not serve_in_hand:
+        if due and not serve_in_hand:
             async with self._lock:
-                if time.monotonic() >= self._next_read:
+                if time.monotonic() >= self._next_read or self._changes != self._changes_read:
                     await self._refresh(refresh_s)
         if not self._fresh(time.monotonic(), max_stale_s):
             return None
@@ -64,15 +66,15 @@ class PolledCopy[T]:
             self._value = value
             self._read_at = started
         # A failed read waits its turn too, so the waiters do not each query in
-        # turn; a change made here during the read is read again at once.
-        done = time.monotonic()
-        self._next_read = 0.0 if self._changes != changes else done + refresh_s
+        # turn. A change made here during the read stays waiting, so it is read
+        # again at once.
+        self._changes_read = changes
+        self._next_read = time.monotonic() + refresh_s
 
     def forget(self) -> None:
         """Make the next call read again, for a change just made here. The copy
         in hand keeps its age, so a failed read serves it as before."""
         self._changes += 1
-        self._next_read = 0.0
 
     def _reset_for_tests(
         self, value: T | None, *, read_age_s: float | None, due_in_s: float
@@ -84,5 +86,5 @@ class PolledCopy[T]:
         self._value = value
         self._read_at = None if read_age_s is None else now - read_age_s
         self._next_read = now + due_in_s
-        self._changes = 0
+        self._changes = self._changes_read = 0
         self._lock = asyncio.Lock()
