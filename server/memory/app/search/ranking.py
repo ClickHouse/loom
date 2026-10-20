@@ -154,8 +154,8 @@ def _apply_chronological_sort(ctx: SearchContext) -> None:
 
 async def _run_external_rerank(ctx: SearchContext) -> None:
     """Pluggable rerank: if the namespace has a rerank_endpoint, POST the
-    pool to the operator's reranker. Fail-open so a broken reranker degrades
-    to cosine ordering. Yields to chronological_intent (the date-sort above
+    pool to the operator's reranker. Fail-open so a broken reranker keeps the
+    fused order. Yields to chronological_intent (the date-sort above
     owns the final order)."""
     from server.memory.app.rerank import RerankCandidate, rerank
 

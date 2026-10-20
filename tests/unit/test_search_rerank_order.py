@@ -123,7 +123,7 @@ async def test_a_score_tie_still_gates_on_the_fused_rank_one(
 ) -> None:
     """Under rrf two rows often share a fused score; the fused order then breaks the tie
     on distance, and the gates read that row, not the reranker's pick."""
-    from server.memory.app.search.verdict import _gate_second_sim, _gate_top_sim
+    from server.memory.app.search.verdict import _gate_top_sim, gate_order
 
     near, far = _hit("near", 0.5), _hit("far", 0.5)
     near.distance, far.distance = 0.3, 0.6
@@ -133,7 +133,8 @@ async def test_a_score_tie_still_gates_on_the_fused_rank_one(
     block = assemble_context_block(ctx.all_hits, top_k=10)
     assert [h.memory_key for h in block] == ["far", "near"]
     assert _gate_top_sim(block) == pytest.approx(0.7)
-    assert _gate_second_sim(block) == pytest.approx(0.4)
+    gated = gate_order(block)
+    assert 1.0 - gated[1].distance == pytest.approx(0.4)
 
 
 @pytest.mark.asyncio
@@ -144,7 +145,9 @@ async def test_the_retry_gate_reads_the_fused_rank_one(monkeypatch: pytest.Monke
     from server.memory.app.search import fallbacks
 
     fused_top, pick = _hit("user_location", 0.5), _hit("user_name", 0.3)
-    fused_top.score_components["rerank_from"], pick.score_components["rerank_from"] = 0.0, 1.0
+    # As the rerank trail stamps them: the pick moved up from 1 to 0, the fused top down.
+    fused_top.score_components.update({"rerank_from": 0.0, "rerank_delta": -1.0})
+    pick.score_components.update({"rerank_from": 1.0, "rerank_delta": 1.0})
     judged: list[str] = []
 
     async def _judge(query: str, excerpts: list[str]) -> tuple[bool, str]:
@@ -228,3 +231,44 @@ async def test_a_retrys_rows_carry_no_rerank_position_into_the_gates(
     assert set(merged) == {"user_location", "user_employer"}
     assert "rerank_from" not in merged["user_employer"].score_components
     assert merged["user_location"].score_components["rerank_from"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_a_reranker_that_moved_nothing_leaves_the_floors_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timeout keeps the fused order; the floor then puts a weak lexical rank 1 last. The
+    gates must read what an unreranked search would: the floor's order."""
+    from server.memory.app.search.verdict import _gate_top_sim, gate_order
+
+    weak, strong = _hit("lexical", 0.9), _hit("cosine", 0.5)
+    weak.distance, strong.distance = 0.85, 0.4  # cosines 0.15 and 0.6
+
+    async def _kept(*, candidates: list[Any], **_k: Any) -> list[Any]:
+        return candidates
+
+    ctx = _ctx([weak, strong])
+    monkeypatch.setattr("server.memory.app.rerank.rerank", _kept)
+    await ranking._run_external_rerank(ctx)
+    weak.score_components["below_floor"] = 1.0
+    floored = [strong, weak]  # the floor's readmit order: kept rows, then fillers
+    assert gate_order(floored) is floored
+    assert _gate_top_sim(floored) == pytest.approx(0.6)
+
+
+@pytest.mark.asyncio
+async def test_a_row_under_the_floor_stays_last_after_a_real_rerank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app.search.verdict import _gate_top_sim, gate_order
+
+    weak, a, b = _hit("lexical", 0.9), _hit("a", 0.5), _hit("b", 0.4)
+    weak.distance, a.distance, b.distance = 0.85, 0.4, 0.5
+    ctx = _ctx([weak, a, b])
+    order = ["b in s1", "lexical in s1", "a in s1"]
+    monkeypatch.setattr("server.memory.app.rerank.rerank", _reranker(order))
+    await ranking._run_external_rerank(ctx)
+    weak.score_components["below_floor"] = 1.0
+    floored = [b, a, weak]
+    assert [h.memory_key for h in gate_order(floored)] == ["a", "b", "lexical"]
+    assert _gate_top_sim(floored) == pytest.approx(0.6)

@@ -15,28 +15,21 @@ if TYPE_CHECKING:
 
 def gate_order(hits: list[Any]) -> list[Any]:
     """The served rows in the order the confidence gates read them: as served, except that
-    the rows an external reranker ordered go back to their fused positions (`rerank_from`,
+    the rows an external reranker moved go back to their fused positions (`rerank_from`,
     stamped by `scoring._record_rerank_trail`). The gates measure how well the first stage
     matched, and a reranker's pick may answer in vocabulary the query does not share: read
-    as rank 1, its cosine would abstain on the answer it serves."""
-    slots = [
-        i
-        for i, h in enumerate(hits)
-        if "rerank_from" in (getattr(h, "score_components", None) or {})
-    ]
-    if not slots:
+    as rank 1, its cosine would abstain on the answer it serves. Only the reranker's own
+    effect is undone: a reranker that moved nothing changes nothing here, and a row the
+    similarity floor kept under it stays where the floor put it."""
+    comps = [getattr(h, "score_components", None) or {} for h in hits]
+    slots = [i for i, c in enumerate(comps) if "rerank_from" in c and not c.get("below_floor")]
+    if not any(comps[i].get("rerank_delta") for i in slots):
         return hits
     fused = sorted((hits[i] for i in slots), key=lambda h: float(h.score_components["rerank_from"]))
     out = list(hits)
     for i, h in zip(slots, fused, strict=True):
         out[i] = h
     return out
-
-
-def _gate_second_sim(hits: list[Any]) -> float:
-    """The calibrator's margin term: the cosine of the gates' second row (`gate_order`)."""
-    gated = gate_order(hits)
-    return 1.0 - float(gated[1].distance) if len(gated) > 1 else 0.0
 
 
 def _gate_top_sim(hits: list[Any]) -> float | None:
@@ -194,7 +187,8 @@ def _calibrate_final_hits(
     # 0.327/"abstain"); (c) the iterative judge reads the same first row, and would disagree
     # with the verdict about what the top hit is.
     # A real fix needs the hit model to distinguish cosine from synthesized distances.
-    second_similarity = _gate_second_sim(final_hits)
+    gated = gate_order(final_hits)
+    second_similarity = 1.0 - gated[1].distance if len(gated) > 1 else 0.0
     calibration = calibrate_retrieval(
         top_similarity=_gate_top_sim(final_hits) or 0.0,
         second_similarity=second_similarity,
