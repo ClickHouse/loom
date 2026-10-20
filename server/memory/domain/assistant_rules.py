@@ -9,6 +9,8 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from server.memory.domain.sensitivity import reads_high
+
 SOURCE_KIND = "assistant_turn"
 
 # A supporter row quotes this much of the rule as said and of the user turn before it.
@@ -38,7 +40,8 @@ def _bounded(text: str, limit: int) -> str:
 def quotes(fact: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[str, str]:
     """What one supporter's conversation shows a reviewer: the user turn before the
     rule, and the rule as said (the span the extractor cited as evidence, else the
-    cited assistant turn, else the rule itself), each bounded."""
+    cited assistant turn, else the rule itself), each bounded. A quote that reads as
+    a credential is left blank, so no secret lands in the queue."""
     cited = [
         i
         for i in fact.get("source_message_indices") or []
@@ -52,7 +55,9 @@ def quotes(fact: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[str, s
         (str(m.get("content") or "") for m in reversed(messages[:at]) if m.get("role") == "user"),
         "",
     )
-    return _bounded(asked, _USER_CHARS), _bounded(said or str(fact.get("value") or ""), _RULE_CHARS)
+    asked = _bounded(asked, _USER_CHARS)
+    said = _bounded(said or str(fact.get("value") or ""), _RULE_CHARS)
+    return ("" if reads_high(asked) else asked), ("" if reads_high(said) else said)
 
 
 def rationale(asked: str, said: str) -> str:

@@ -73,13 +73,13 @@ ENQUEUED_BY_KEY = "enqueued_by"
 # the inline call's would. Stamped by the server like `enqueued_by`.
 READ_SCOPE_KEY = "read_filters"
 # The agent a filed assistant rule is for, resolved from the enqueuing token
-# (`assistant_learnings.request_learning_agent`), so the replay files as the inline
+# (`assistant_learnings.request_rule_agent`), so the replay files as the inline
 # call would; '' (or a payload without it) files nothing.
-LEARNING_AGENT_KEY = "learning_agent"
+RULE_AGENT_KEY = "learning_agent"
 
 
 def payload_for(
-    input: Any, *, scope: ReadFilters, enqueued_by: str | None = None, learning_agent: str = ""
+    input: Any, *, scope: ReadFilters, enqueued_by: str | None = None, rule_agent: str = ""
 ) -> tuple[str, int, int]:
     """Serialize a MemorySetFromMessagesInput for storage: the request minus
     `defer` (the replay must run inline), plus the enqueuing principal
@@ -93,7 +93,7 @@ def payload_for(
     actor = writer_actor() if enqueued_by is None else str(enqueued_by)
     if actor:
         data[ENQUEUED_BY_KEY] = actor
-    data[LEARNING_AGENT_KEY] = learning_agent
+    data[RULE_AGENT_KEY] = rule_agent
     data[READ_SCOPE_KEY] = {
         "scope": scope.scope,
         "user_id": scope.user_id,
@@ -112,7 +112,7 @@ def enqueued_actor(row: dict[str, Any]) -> str:
 
 
 async def enqueue(
-    input: Any, *, scope: ReadFilters, learning_agent: str = "", ch: Any | None = None
+    input: Any, *, scope: ReadFilters, rule_agent: str = "", ch: Any | None = None
 ) -> str:
     """Persist one deferred set_from_messages request, with the agent a rule it
     files is for ('' files nothing). Returns the queue_id the caller can poll with
@@ -120,7 +120,7 @@ async def enqueue(
     from server.core.ch import get_client
 
     ch = ch or get_client()
-    payload, n_msgs, chars = payload_for(input, scope=scope, learning_agent=learning_agent)
+    payload, n_msgs, chars = payload_for(input, scope=scope, rule_agent=rule_agent)
     now = _now()
     qid = uuid.uuid4().hex
     row = {
@@ -432,7 +432,7 @@ async def list_status(
 __all__ = [
     "COLUMNS",
     "ENQUEUED_BY_KEY",
-    "LEARNING_AGENT_KEY",
+    "RULE_AGENT_KEY",
     "READ_SCOPE_KEY",
     "STATUS_DONE",
     "STATUS_FAILED",
@@ -456,7 +456,7 @@ def rebuild_input(row: dict[str, Any]) -> Any:
     data["defer"] = False
     data.pop(ENQUEUED_BY_KEY, None)  # server stamps, not request fields
     data.pop(READ_SCOPE_KEY, None)
-    data.pop(LEARNING_AGENT_KEY, None)
+    data.pop(RULE_AGENT_KEY, None)
     return MemorySetFromMessagesInput.model_validate(data)
 
 
@@ -492,10 +492,10 @@ def replay_actor(row: dict[str, Any]) -> str:
     return enqueued_actor(row) or _prov.EXTRACTION_WORKER_ACTOR
 
 
-def queued_learning_agent(row: dict[str, Any]) -> str:
-    """The learning agent stored at enqueue time; '' (nothing is filed) for a row
+def queued_rule_agent(row: dict[str, Any]) -> str:
+    """The rule agent stored at enqueue time; '' (nothing is filed) for a row
     that stored none."""
-    return str(json.loads(row["payload"]).get(LEARNING_AGENT_KEY) or "")
+    return str(json.loads(row["payload"]).get(RULE_AGENT_KEY) or "")
 
 
 async def replay_row(row: dict[str, Any]) -> int:
@@ -512,6 +512,6 @@ async def replay_row(row: dict[str, Any]) -> int:
         customer.for_org(str(row.get("org") or "")),
     ):
         out = await handle_memory_set_from_messages(
-            rebuild_input(row), learning_agent=queued_learning_agent(row)
+            rebuild_input(row), rule_agent=queued_rule_agent(row)
         )
     return len(out.written)

@@ -73,7 +73,7 @@ async def test_handler_takes_the_queue_path_for_an_allowlisted_agent(
     _set(monkeypatch, "supportbot")
     seen: list[Any] = []
 
-    async def _enqueue(inp: Any, *, scope: Any, learning_agent: str = "") -> str:
+    async def _enqueue(inp: Any, *, scope: Any, rule_agent: str = "") -> str:
         seen.append(inp)
         return "q-1"
 

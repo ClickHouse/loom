@@ -183,7 +183,10 @@ async def handle_learnings_review(
         input.namespace,
         input.candidate_id,
     )
-    if row is None:
+    # A bot rule whose last supporter was erased keeps only its decision: there is
+    # no rule left to review, so it answers as a missing candidate does.
+    blanked = row is not None and row.get("source_kind") == ASSISTANT_TURN
+    if row is None or (blanked and not row.get("proposed_value")):
         raise HTTPException(
             status_code=404,
             detail={
@@ -295,6 +298,8 @@ async def _do_promote(
       Route through `handle_memory_set` so the row lands in loom.memory
       AND check_on_commit fires (enforces pinned-conflict reject + the
       semantic-conflict / canonical-merge / duplicate verdicts).
+    - `assistant_turn` takes the same `handle_memory_set` path, written as the
+      candidate's agent's memory for every user of it (`user_id` '-').
     """
     source_kind = candidate_row.get("source_kind") or "memory_supporters"
 
@@ -355,10 +360,12 @@ async def _promote_via_memory_set(
     approver: str,
     reason: str,
 ) -> None:
-    """Seeder path: candidate has no source memory yet. Write it as a
-    new memory via handle_memory_set so check_on_commit enforces the
-    same pinned-reject / dedup / canonical-merge verdicts a regular
-    write would get."""
+    """Seeder and bot-rule path: the candidate has no source memory yet. Write it
+    as a new memory via handle_memory_set so check_on_commit enforces the same
+    pinned-reject / dedup / canonical-merge verdicts a regular write would get. A
+    seeder candidate lands at namespace scope under the approver; a bot rule
+    (`assistant_turn`) as its agent's memory for every user, with the supporters'
+    mean confidence."""
     from server.memory.app.write import handle_memory_set
 
     raw_value = candidate_row["proposed_value"]

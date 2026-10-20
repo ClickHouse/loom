@@ -121,7 +121,7 @@ async def test_the_fake_provider_files_rules_under_the_block(
 
 def test_only_the_setting_turns_agent_learnings_on(monkeypatch: pytest.MonkeyPatch) -> None:
     def on(**state: Any) -> bool:
-        return pipeline._agent_learnings_on(WorkflowState(**{"learning_agent": "bot", **state}))
+        return pipeline._agent_learnings_on(WorkflowState(**{"rule_agent": "bot", **state}))
 
     monkeypatch.setattr(settings, "memory_extract_agent_learnings", True)
     assert on() is True
@@ -129,7 +129,7 @@ def test_only_the_setting_turns_agent_learnings_on(monkeypatch: pytest.MonkeyPat
     # The request can turn it off.
     assert on(agent_learnings=False) is False
     # No agent to file for (a pinned token that names none): never.
-    assert on(learning_agent="") is False
+    assert on(rule_agent="") is False
     # A coding session's assistant narrates its work: never.
     assert on(extra_tags=["source:claude-code"]) is False
     # The request cannot turn it on.
@@ -220,7 +220,7 @@ def _state(user_id: str, session_id: str, **extra: Any) -> WorkflowState:
             "org": "o",
             "namespace": "ns",
             "agent": "support-bot",
-            "learning_agent": "support-bot",
+            "rule_agent": "support-bot",
             "user_id": user_id,
             "session_id": session_id,
             "messages": list(_MESSAGES),
@@ -310,13 +310,52 @@ async def test_a_decided_candidate_takes_no_more_supporters(queue: _Queue) -> No
 
 @pytest.mark.asyncio
 async def test_a_rule_files_for_the_resolved_agent_and_nothing_without_one(queue: _Queue) -> None:
-    await _file(_state("alice", "s1", learning_agent="signed-bot"))
+    await _file(_state("alice", "s1", rule_agent="signed-bot"))
     (row,) = queue.rows.values()
     assert row["agent"] == "signed-bot"
     assert row["candidate_id"] == _cid(agent="signed-bot")
     # '' (a pinned token naming no agent): nothing is filed, never the body's agent.
-    assert await _file(_state("bob", "s2", learning_agent="")) == 0
+    assert await _file(_state("bob", "s2", rule_agent="")) == 0
     assert len(queue.rows) == 1 and queue.support(_cid()) == []
+
+
+_KEY_ID = "AKIAIOSFODNN7EXAMPLE"
+
+
+def test_a_quote_that_reads_as_a_credential_is_stored_blank() -> None:
+    leaky = [
+        {"role": "user", "content": f"My key is {_KEY_ID}, refund me."},
+        {"role": "assistant", "content": f"{_RULE} I saw {_KEY_ID}."},
+    ]
+    assert assistant_rules.quotes(_rule_fact(), leaky) == ("", "")
+    # Only the quote that leaks is blanked.
+    assert assistant_rules.quotes(_rule_fact(evidence=_RULE), leaky) == ("", _RULE)
+
+
+@pytest.mark.asyncio
+async def test_a_rule_that_reads_as_a_credential_is_never_filed(queue: _Queue) -> None:
+    leaky = _rule_fact(value=f"The assistant shares the key {_KEY_ID} on request.")
+    assert await _file(_state("alice", "s1"), leaky) == 0
+    assert queue.rows == {} and queue.supporters == {}
+
+
+@pytest.mark.asyncio
+async def test_a_candidate_an_erasure_removed_meanwhile_is_written_again(
+    queue: _Queue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _file(_state("alice", "s1"))
+    pending = dict(queue.rows[_cid()])
+    reads = iter([pending, None])
+
+    async def find_then_gone(*_a: Any) -> dict[str, Any] | None:
+        # Pending when read, then deleted by an erasure before bob's supporter row.
+        return next(reads)
+
+    monkeypatch.setattr(learnings_repo, "find_candidate", find_then_gone)
+    del queue.rows[_cid()]
+    assert await _file(_state("bob", "s2")) == 1
+    assert queue.rows[_cid()]["status"] == "pending"
+    assert queue.support(_cid()) == [("alice", "s1"), ("bob", "s2")]
 
 
 @pytest.mark.asyncio
@@ -357,12 +396,12 @@ def _auth(**extra: Any) -> Any:
         ({}, "body-bot"),
     ],
 )
-def test_the_learning_agent_comes_from_the_token(auth: dict[str, Any], agent: str) -> None:
+def test_the_rule_agent_comes_from_the_token(auth: dict[str, Any], agent: str) -> None:
     from server.auth.context import current_auth_var
 
     token = current_auth_var.set(_auth(**auth))
     try:
-        assert assistant_learnings.request_learning_agent("body-bot") == agent
+        assert assistant_learnings.request_rule_agent("body-bot") == agent
     finally:
         current_auth_var.reset(token)
 
@@ -390,8 +429,8 @@ async def test_a_request_cannot_turn_filing_on(
 
     seen: list[tuple[Any, str]] = []
 
-    async def fake_inner(input: Any, learning_agent: str) -> MemorySetFromMessagesOutput:
-        seen.append((input.agent_learnings, learning_agent))
+    async def fake_inner(input: Any, rule_agent: str) -> MemorySetFromMessagesOutput:
+        seen.append((input.agent_learnings, rule_agent))
         return MemorySetFromMessagesOutput()
 
     monkeypatch.setattr(settings, "memory_extract_agent_learnings", setting)
@@ -410,18 +449,18 @@ async def test_a_replay_files_for_the_agent_stored_with_it(monkeypatch: pytest.M
 
     seen: list[str | None] = []
 
-    async def fake_handler(input: Any, *, learning_agent: str | None = None) -> Any:
-        seen.append(learning_agent)
+    async def fake_handler(input: Any, *, rule_agent: str | None = None) -> Any:
+        seen.append(rule_agent)
         return MemorySetFromMessagesOutput()
 
     monkeypatch.setattr(handler, "handle_memory_set_from_messages", fake_handler)
     stored, _, _ = extraction_queue.payload_for(
-        _body(), scope=WHOLE_NAMESPACE, learning_agent="signed-bot"
+        _body(), scope=WHOLE_NAMESPACE, rule_agent="signed-bot"
     )
     await extraction_queue.replay_row({"payload": stored, "org": "o"})
     # A payload that stored none files nothing: the replay fails closed.
     bare = json.loads(stored)
-    bare.pop(extraction_queue.LEARNING_AGENT_KEY)
+    bare.pop(extraction_queue.RULE_AGENT_KEY)
     await extraction_queue.replay_row({"payload": json.dumps(bare), "org": "o"})
     assert seen == ["signed-bot", ""]
 
@@ -562,6 +601,38 @@ async def test_the_list_counts_a_rules_users_and_sessions(monkeypatch: pytest.Mo
     assert rule.supporters[2] == "o/ns/support-bot/bob/s3/assistant_rule_refund_escalation"
     assert rule.agent == "support-bot"
     assert (other.supporter_count, other.supporter_sessions, other.rationale) == (4, 0, "r")
+
+
+@pytest.mark.asyncio
+async def test_reviewing_a_rule_an_erasure_blanked_answers_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import HTTPException
+
+    from server.memory.api.models_learnings import LearningsReviewInput
+    from server.memory.app import learnings as h
+
+    blanked = {
+        "candidate_id": _cid(),
+        "source_kind": "assistant_turn",
+        "status": "rejected",
+        "proposed_value": "",
+    }
+
+    async def fake_find(*_a: Any) -> dict[str, Any]:
+        return blanked
+
+    async def must_not_write(*_a: Any, **_kw: Any) -> None:
+        raise AssertionError("a blanked rule is never reviewed")
+
+    monkeypatch.setattr(learnings_repo, "find_candidate", fake_find)
+    monkeypatch.setattr(learnings_repo, "insert_row", must_not_write)
+    monkeypatch.setattr(h, "_do_promote", must_not_write)
+    with pytest.raises(HTTPException) as e:
+        await h.handle_learnings_review(
+            LearningsReviewInput(org="o", namespace="ns", candidate_id=_cid(), decision="promote")
+        )
+    assert e.value.status_code == 404
 
 
 @pytest.mark.asyncio

@@ -130,7 +130,7 @@ async def test_handler_defer_short_circuits_before_extraction(
 ) -> None:
     import server.memory.app.extract.handler as mx
 
-    async def _enqueue(input, *, scope, learning_agent="", ch=None):
+    async def _enqueue(input, *, scope, rule_agent="", ch=None):
         assert input.defer is True
         return "abc123"
 
@@ -151,7 +151,7 @@ async def test_handler_defer_short_circuits_before_extraction(
 async def test_handler_defer_enqueue_failure_is_503(monkeypatch: pytest.MonkeyPatch) -> None:
     import server.memory.app.extract.handler as mx
 
-    async def _enqueue(input, *, scope, learning_agent="", ch=None):
+    async def _enqueue(input, *, scope, rule_agent="", ch=None):
         raise RuntimeError("ch down")
 
     monkeypatch.setattr(q, "enqueue", _enqueue)
@@ -268,7 +268,7 @@ def test_defer_with_a_scope_that_does_not_resolve_is_refused_not_queued(
     import server.memory.app.extract.handler as mx
     from server.core.errors import IdentityIncompleteError
 
-    async def _enqueue(input, *, scope, learning_agent="", ch=None):
+    async def _enqueue(input, *, scope, rule_agent="", ch=None):
         raise AssertionError("nothing is queued")
 
     monkeypatch.setattr(q, "enqueue", _enqueue)

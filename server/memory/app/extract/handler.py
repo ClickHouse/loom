@@ -85,7 +85,7 @@ def _deferred_by_allowlist(input: MemorySetFromMessagesInput) -> bool:
 
 
 async def _enqueue_deferred(
-    input: MemorySetFromMessagesInput, learning_agent: str
+    input: MemorySetFromMessagesInput, rule_agent: str
 ) -> MemorySetFromMessagesOutput:
     """defer=true: persist the request, return the queue handle.
 
@@ -102,9 +102,7 @@ async def _enqueue_deferred(
     scope = request_scope()
     try:
         with traced("extract.defer_enqueue", messages=len(input.messages)):
-            queue_id = await extraction_queue.enqueue(
-                input, scope=scope, learning_agent=learning_agent
-            )
+            queue_id = await extraction_queue.enqueue(input, scope=scope, rule_agent=rule_agent)
     except Exception as e:
         log.warning("memory_extraction_queue enqueue failed: %s", e)
         raise HTTPException(
@@ -486,24 +484,24 @@ async def _project_extraction(
 async def handle_memory_set_from_messages(
     input: MemorySetFromMessagesInput,
     *,
-    learning_agent: str | None = None,
+    rule_agent: str | None = None,
 ) -> MemorySetFromMessagesOutput:
-    """Extract memorable facts from raw messages and bulk-write them.
+    """The op: settle the request's learnings switch and rule agent, then extract.
 
     Only the deployment setting turns assistant-turn learnings on; a request can
     only turn them off, so its `agent_learnings=true` while the setting is off is
-    dropped and named in `ignored_args`. `learning_agent` is the agent a filed rule
+    dropped and named in `ignored_args`. `rule_agent` is the agent a filed rule
     is for: None resolves it from the request's token, a deferred replay passes the
     one stored when it was queued ('' files nothing)."""
-    from server.memory.app.assistant_learnings import request_learning_agent
+    from server.memory.app.assistant_learnings import request_rule_agent
     from server.settings import settings as _settings
 
     refused = bool(input.agent_learnings) and not _settings.memory_extract_agent_learnings
     if refused:
         input = input.model_copy(update={"agent_learnings": None})
-    if learning_agent is None:
-        learning_agent = request_learning_agent(input.agent)
-    out = await _set_from_messages(input, learning_agent)
+    if rule_agent is None:
+        rule_agent = request_rule_agent(input.agent)
+    out = await _set_from_messages(input, rule_agent)
     if refused:
         out.ignored_args = [*out.ignored_args, "agent_learnings"]
     return out
@@ -511,9 +509,9 @@ async def handle_memory_set_from_messages(
 
 async def _set_from_messages(
     input: MemorySetFromMessagesInput,
-    learning_agent: str,
+    rule_agent: str,
 ) -> MemorySetFromMessagesOutput:
-    """Extract memorable facts from raw messages and bulk-write them.
+    """Extract memorable facts from raw messages and bulk-write them (or queue them).
 
     Extractor errors surface as 502 — silently writing zero memories is
     worse than telling the caller the extractor is broken.
@@ -523,9 +521,9 @@ async def _set_from_messages(
     from server.memory.app.extract import ExtractionError
 
     if input.defer:
-        return await _enqueue_deferred(input, learning_agent)
+        return await _enqueue_deferred(input, rule_agent)
     if _deferred_by_allowlist(input):
-        out = await _enqueue_deferred(input, learning_agent)
+        out = await _enqueue_deferred(input, rule_agent)
         out.deferred_by = "allowlist"
         return out
     msgs = [_message_dict(m) for m in input.messages]
@@ -586,7 +584,7 @@ async def _set_from_messages(
         max_tokens=input.max_tokens,
         extra_tags=list(input.extra_tags or []),
         valid_at=input.valid_at,
-        learning_agent=learning_agent,
+        rule_agent=rule_agent,
         **_extract_request_pins(input),
     )
     # The session digest is a function of the transcript, not of the extraction result, so
@@ -751,7 +749,6 @@ def _extract_request_pins(input: Any) -> dict[str, Any]:
     extractor's response cache and assistant-turn learnings (None = the namespace's or
     the deployment's setting; the request can only turn learnings off), and the
     session's served keys and tool values for the echo filters."""
-
     return {
         "coverage_sweep": getattr(input, "coverage_sweep", None),
         "llm_cache": getattr(input, "llm_cache", None),

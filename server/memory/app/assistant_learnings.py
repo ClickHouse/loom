@@ -19,6 +19,7 @@ from server.core.datetimes import naive_utc_now
 from server.memory.app.pipeline_state import WorkflowState
 from server.memory.domain import assistant_rules
 from server.memory.domain.extracted_facts import judged_confidence
+from server.memory.domain.sensitivity import reads_high
 from server.memory.store import learnings as learnings_repo
 
 log = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ log = logging.getLogger(__name__)
 _FILED_VERSION = 1
 
 
-def request_learning_agent(body_agent: str) -> str:
+def request_rule_agent(body_agent: str) -> str:
     """The agent a rule filed by the request in flight is for. A token bound to one
     end user files for the agent its issuer signed, and for none ('': nothing is
     filed) when it names none, never for the body's. Any other caller files for the
@@ -59,8 +60,10 @@ async def file_assistant_rules(state: WorkflowState, facts: list[dict[str, Any]]
 
 async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> bool:
     value = str(fact.get("value") or "").strip()
-    agent = state.learning_agent
-    if not key or not value or not agent:
+    agent = state.rule_agent
+    # A rule that reads as a credential is never filed: promoted, it would reach
+    # every user of the bot.
+    if not key or not value or not agent or reads_high(value):
         return False
     cid = assistant_rules.candidate_id(state.org, state.namespace, agent, key, value)
     row = await learnings_repo.find_candidate(state.org, state.namespace, cid)
@@ -83,6 +86,13 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
                 "created_at": naive_utc_now(),
             }
         )
+    # A user erasure may have deleted the candidate (pending, no supporter left)
+    # between the read above and this session's supporter row: write it again.
+    if (
+        row is not None
+        and await learnings_repo.find_candidate(state.org, state.namespace, cid) is None
+    ):
+        row = None
     if row is None:
         # The candidate holds the rule and nothing of any user's conversation.
         await learnings_repo.insert_row(

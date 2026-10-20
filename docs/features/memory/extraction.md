@@ -68,7 +68,10 @@ only way on: a request's `agent_learnings=false` turns it off for that call, and
 `agent_learnings=true` while the setting is off is ignored and named in `ignored_args`
 (and the `X-Loom-Ignored-Args` header). It is off by default: it adds a block to the
 extraction prompt, and extraction quality has not been benchmarked with it on. Turn it
-on only once every replica runs a build that has it. Coding captures never use it.
+on only once every replica runs a build that has it. Before rolling back to a build
+without it, turn it off and delete the rows of `loom.learnings_supporters`, where users'
+quotes live: an older build's erasure does not cover that table. Coding captures never
+use it.
 
 Such a rule is never written as a memory. An end user can talk a bot into saying
 anything, and a memory at the agent's level would reach every user of the bot. The rule

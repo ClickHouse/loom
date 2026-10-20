@@ -147,10 +147,30 @@ def test_an_orphaned_candidate_goes_when_pending_and_keeps_its_decision_when_dec
     assert "loom.learnings_supporters" in supporters[0]
     # ...the pending one goes whole, and only the rejected one's rows holding the rule go.
     assert pending[1]["cids"] == ["p"] and "proposed_value" not in pending[0]
+    # Only its pending rows: a review landing in between survives.
+    assert "status = 'pending'" in pending[0]
     assert decided[1]["cids"] == ["r"] and "proposed_value != ''" in decided[0]
     # The blank row is written before the rows holding the rule are deleted.
     sqls = [sql for sql, _ in ch.commands]
     assert sqls.index("INSERT INTO loom.learnings_queue") < sqls.index(decided[0])
+
+
+def test_a_review_between_the_read_and_the_delete_is_blanked_when_the_step_reopens() -> None:
+    """The first run read a pending candidate; a review rejected it before the
+    delete, whose `status = 'pending'` spares the review row. That row still holds
+    the rule, so the census counts it and the reopened step blanks it."""
+    first = _LearningsCH(
+        ["c"], [{"candidate_id": "c", "status": "pending", "proposed_value": '"r"', "version": 1}]
+    )
+    asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=first))
+    assert first.inserted == []
+    reopened = _LearningsCH(
+        ["c"], [{"candidate_id": "c", "status": "rejected", "proposed_value": '"r"', "version": 9}]
+    )
+    asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=reopened))
+    assert reopened.inserted == [
+        {"candidate_id": "c", "status": "rejected", "proposed_value": "", "version": 10}
+    ]
 
 
 def test_the_agent_runs_step_drops_the_runs_claims_too() -> None:

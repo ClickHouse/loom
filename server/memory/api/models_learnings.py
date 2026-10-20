@@ -75,7 +75,8 @@ class LearningsReviewOutput(BaseModel):
     # The status the candidate holds after this call.
     new_status: LearningStatus
     # True when this call wrote the memory destination: `loom.shared` for a
-    # supporters candidate, a namespace memory row for a seeder one.
+    # supporters candidate, a namespace memory row for a seeder one, the agent's
+    # memory for every user (`user_id` '-') for an `assistant_turn` one.
     promoted_to_shared: bool = False
     # True when this call upserted the candidate as a knowledge document.
     promoted_to_knowledge: bool = False
