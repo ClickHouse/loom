@@ -1,8 +1,8 @@
 """What a server reachable from a browser or a network refuses: startup on a
 non-loopback bind without its safeguards, CORS `*` with credentials, a foreign
 Host while auth is off, URLs built from spoofed forwarded headers, and the
-dashboard page's inline script without its nonce; and the headers every answer
-carries."""
+dashboard page's inline script without its nonce. It also checks the headers every
+answer carries."""
 
 from __future__ import annotations
 
