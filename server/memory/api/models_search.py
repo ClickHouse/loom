@@ -885,7 +885,7 @@ class _SearchTraceHit(BaseModel):
 
 
 class MemorySearchTraceOutput(BaseModel):
-    # Every candidate the fact leg scored, in final rank order, with its breakdown.
+    # Every candidate the fact leg scored, in the leg's rank order, with its breakdown.
     results: list[_SearchTraceHit]
     # The embedding model the query was embedded with.
     embedding_model: str

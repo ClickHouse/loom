@@ -87,8 +87,8 @@ def _finalize_abstain(
     query_text: str = "",
     work: dict[str, Any] | None = None,
 ) -> tuple[bool, str, str]:
-    """Decide the abstain envelope for a finished hit list, in the gates' order
-    (`gate_order`).
+    """Decide the abstain envelope for a finished hit list; `hits` arrive in the gates'
+    order (`gate_order`).
 
     Precedence is load-bearing and matches the main path: an empty set is `no_match`, a weak
     top hit is `below_threshold` (carrying the actual threshold, which is what an operator

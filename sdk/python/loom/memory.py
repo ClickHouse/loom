@@ -226,9 +226,11 @@ class MemorySearchHit:
     # `moved`, `changed` (check the code before relying on it), `unresolved` (gone
     # where it was, maybe renamed) or `missing`.
     code_state: str = ""
-    # Final blended rank score: the fused value the served order follows,
+    # Final blended rank score: the value the served order follows,
     # mode-dependent (about 0.03 under rrf), not a similarity. The terms that
-    # moved the row are itemised in `score_components`.
+    # moved the row are itemised in `score_components`. After a reranker that
+    # changed the order it is the score of the rank the row holds; its own is
+    # `score_components["rank_score_pre_rerank"]`.
     rank_score: float = 0.0
     # True when this row's `similarity` is below the abstain threshold the
     # response's gate used; the server sends the key only
