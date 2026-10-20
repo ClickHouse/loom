@@ -20,14 +20,12 @@ ORG, PRIV, STD = "clickhouse", "tracker-ops-restricted", "support-bot"
 
 @pytest.fixture
 def exports(monkeypatch):
-    async def _mem(org, scope_type, scope_value, *, include_tombstoned, limit):
-        return (
-            [{"namespace": STD, "value": "ok"}, {"namespace": PRIV, "value": "SECRET"}],
-            2,
-            False,
-        )
+    async def _mem(org, scope_type, scope_value, *, include_tombstoned, limit, shown):
+        rows = [{"namespace": STD, "value": "ok"}, {"namespace": PRIV, "value": "SECRET"}]
+        kept = [r for r in rows if shown.admits(r["namespace"])][:limit]
+        return kept, len(kept), False
 
-    async def _empty(org, scope_type, scope_value, *, limit):
+    async def _empty(org, scope_type, scope_value, *, limit, shown):
         return ([], 0, False)
 
     monkeypatch.setattr(h, "_export_memory", _mem)
@@ -130,9 +128,10 @@ async def test_the_export_audits_each_high_row_it_serves(exports, monkeypatch) -
             "value": "v",
         }
 
-    async def _mem(*_a, **_k):
+    async def _mem(*_a, shown, **_k):
         rows = [row(STD, "plain", ""), row(STD, "vault", "high"), row(PRIV, "hidden", "high")]
-        return rows, len(rows), False
+        kept = [r for r in rows if shown.admits(r["namespace"])]
+        return kept, len(kept), False
 
     audited: list[tuple[str, list[str]]] = []
 
@@ -159,9 +158,10 @@ async def test_a_user_export_carries_their_personal_collection_and_no_other_unre
 
     mine, theirs = personal_name(ORG, "user:u1"), personal_name(ORG, "user:u2")
 
-    async def _mem(org, scope_type, scope_value, *, include_tombstoned, limit):
+    async def _mem(org, scope_type, scope_value, *, include_tombstoned, limit, shown):
         rows = [{"namespace": ns, "value": ns} for ns in (STD, mine, theirs, "col-hr")]
-        return rows, len(rows), False
+        kept = [r for r in rows if shown.admits(r["namespace"])][:limit]
+        return kept, len(kept), False
 
     async def _readable(auth, org):
         return []
@@ -174,3 +174,34 @@ async def test_a_user_export_carries_their_personal_collection_and_no_other_unre
     )
     assert [r["namespace"] for r in out.memory.rows] == [STD, mine]
     assert out.counts["memory"] == 2
+
+
+def test_an_export_filters_what_it_may_not_show_before_its_limit() -> None:
+    """The filter is in the statement, ahead of its LIMIT, so a hidden row never
+    takes a visible row's place on the page."""
+    import asyncio
+
+    from server.erasure.store import exports
+
+    sent: list[tuple[str, dict]] = []
+
+    class _CH:
+        async def query_all(self, sql, params=None, **_k):
+            sent.append((sql, params))
+            return []
+
+    shown = exports.Shown(hidden=(PRIV,), collections=("col-me-1",))
+    for read in (
+        exports.export_knowledge(ORG, "user_id", "u1", limit=2, shown=shown, ch=_CH()),
+        exports.export_agent_events(ORG, "user_id", "u1", limit=2, shown=shown, ch=_CH()),
+        exports.export_audit_by_subject_substring(ORG, "u1", limit=2, shown=shown, ch=_CH()),
+        exports.export_memory(
+            ORG, "user_id", "u1", include_tombstoned=True, limit=2, shown=shown, ch=_CH()
+        ),
+    ):
+        asyncio.run(read)
+    for sql, params in sent:
+        assert sql.index("shown_collections") < sql.index("LIMIT"), sql
+        assert params["shown_hidden"] == [PRIV] and params["shown_collections"] == ["col-me-1"]
+    assert shown.admits(STD) and shown.admits("col-me-1")
+    assert not shown.admits(PRIV) and not shown.admits("col-hr")

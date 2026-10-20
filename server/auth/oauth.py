@@ -1681,6 +1681,13 @@ async def revoke_token(request: Request) -> Response:
         info = verify_token(token_value)
     except TokenError:
         return Response(status_code=200)  # unknown, expired or already revoked
+    from server.auth.gateway import is_end_user
+
+    if is_end_user(info):
+        # Its `jti` is its issuer's choice, and the revocation list is
+        # deployment-wide: an issuer would name another org's token or subject.
+        # It lives minutes; its issuer stops signing for the user instead.
+        return Response(status_code=200)
     # A session's access token ends its whole session; any other token itself.
     key = info.session_id or info.token_id
     if key:

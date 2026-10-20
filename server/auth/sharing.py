@@ -174,7 +174,10 @@ def _capped(
 ) -> Role | None:
     """`granted`, for a scoped or delegated token no further than its own claim
     names `namespace`, and for a delegated one no further than its creator's
-    role there (`creator`)."""
+    role there (`creator`); outside a token's `ns_write` set, `viewer` at most,
+    as on any namespace."""
+    if granted is not None and auth.write_namespaces and not auth.can_write(org, namespace):
+        granted = min(granted, Role.VIEWER, key=lambda r: r.value)
     if granted is None or not (auth.has_ns_roles() or auth.creator):
         return granted
     from server.auth.authz import names_namespace

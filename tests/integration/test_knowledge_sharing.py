@@ -541,6 +541,17 @@ def test_a_users_erasure_deletes_the_originals_no_one_else_shares(
         },
     )
     gw.ok("alice", "knowledge.upsert", {"namespace": col, "source_uri": "f/r", "content": "new"})
+    # A merge keeps only alice's version of f/r: no document row names bob's
+    # upload there any more, and his erasure still finds it.
+    ch_client.command("OPTIMIZE TABLE loom.documents FINAL")
+    assert (
+        ch_client.query(
+            "SELECT count() FROM loom.documents WHERE org = {o:String} AND namespace = {n:String}"
+            " AND source_uri = 'f/r' AND user_id = 'bob'",
+            parameters={"o": gw.org, "n": col},
+        ).result_rows[0][0]
+        == 0
+    ), "the merge took bob's version of f/r"
     admin = mint_test_token(org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="o")
     _erase_user(control_plane_url, admin, gw.org, "bob")
 
@@ -553,6 +564,11 @@ def test_a_users_erasure_deletes_the_originals_no_one_else_shares(
 
     assert (_stored(own), _stored(shared)) == (0, 1), "bob's own file goes; the shared one stays"
     assert _stored(rewritten) == 0, "his file under a document alice rewrote goes too"
+    uploads = ch_client.query(
+        "SELECT count() FROM loom.blob_uploads WHERE org = {o:String} AND user_id = 'bob'",
+        parameters={"o": gw.org},
+    ).result_rows[0][0]
+    assert uploads == 0, "the record of what he uploaded goes with it"
 
 
 def test_a_resave_of_the_same_text_keeps_the_document_its_writers(

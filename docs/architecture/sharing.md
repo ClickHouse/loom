@@ -33,8 +33,9 @@ flowchart LR
   `server/auth/sharing.py` before any other rule, with no read. A token's namespace claim,
   an org admin role and the code-namespace rules reach no collection; a scoped or
   delegated token reaches one no further than its own claim names it, and a delegated one
-  no further than its creator's role there. A platform admin passes, for operator erasure
-  and export.
+  no further than its creator's role there. A token with an `ns_write` claim writes no
+  collection outside it (it holds `viewer` there at most), as on any namespace. A platform
+  admin passes, for operator erasure and export.
 - **Principals.** A request holds its subject, every group whose members include it, the
   agent its end-user token signs in, and `everyone`. A grant names any of them: a login
   handle or email, an `sa:` service account, `user:<id>`, `group:<id>`, `agent:<id>` or
@@ -81,7 +82,9 @@ An issuer's `orgs` are exact names or `prefix*` patterns, never `*`: one issuer 
 orgs of its own deployment, and a stolen key reaches no other. A `jwks_url` is fetched by
 every process at boot and every `LOOM_JWT_END_USER_JWKS_REFRESH_SECONDS` (5 min); a
 failed fetch keeps the last keys, and until the first fetch lands the issuer's tokens are
-answered 503, never admitted. An issuer rotates by publishing the new key one refresh
+answered 503, never admitted, and its fetch is retried every 2 s. A key is never both an
+end user's and a federated one (`LOOM_JWT_PUBLIC_KEYS_JSON`), compared by key, not kid:
+a federated key verifies Loom-shaped tokens. An issuer rotates by publishing the new key one refresh
 before it signs with it.
 
 Ids are lowercase (`server/core/principals.py`), so two spellings never name one user; a
@@ -92,7 +95,10 @@ An end-user token is served by the op endpoint and `knowledge.download`; MCP, `/
 the admin routes and the task watch refuse it (403). A trusted caller
 (`LOOM_TRUSTED_CALLERS`) acts for Loom subjects only and cannot assert a `user:`,
 `group:` or `agent:` principal. One user is cut off by revoking their tokens
-(`loom revoke-token --subject user:<id>`) and grants, or by erasing them.
+(`loom revoke-token --subject user:<id>`) and grants, or by erasing them. `/oauth/revoke`
+revokes nothing for an end-user token: its `jti` is its issuer's to choose, and the
+revocation list spans the deployment, so revoking it there could name another org's token
+or subject.
 
 **Everyone** is a built-in principal every request acting in the org holds: a grant to
 `everyone` on a collection opens it to the whole org (a chat app's "public"), with no
@@ -194,7 +200,8 @@ wrote in any namespace of the org (an end-user token, or a token minted with
 `--read-user-id`, stamps its `user_id`), or, with `purge` (a GDPR deletion), deletes every
 version of them from disk, after superseding another writer's versions that one of theirs
 replaced, so none reads as live again. It deletes their uploaded originals that no other
-writer's document shares, revokes and then deletes every grant naming `user:<id>`, blanks
+writer's document shares (each upload by an end user is recorded in `loom.blob_uploads`,
+since the document version that named it may since have been replaced and merged away), revokes and then deletes every grant naming `user:<id>`, blanks
 their id as the issuer of the grants they gave others (those grants stay), removes them
 from every group, and retires their personal
 collection's directory row (`namespace.delete` and `collection.delete` refuse a personal
@@ -206,9 +213,10 @@ Loom deletes only what its writer asked to delete. `collection.delete` purges wh
 collection held (a namespace erasure that takes the rows off disk) before the collection
 leaves the tree. A user-scope
 `erasure.export` returns the chunks that user wrote in the collections its caller may
-read and in the user's own personal collection, theirs to have exported: an org admin
-may erase a collection's rows without reading them, and a platform admin sees every
-collection.
+read, and in the user's own personal collection. An org admin may erase a collection's
+rows without reading them; a platform admin sees every collection. Each section's read
+leaves out what the caller may not see before its limit, so a hidden row never takes a
+visible row's place on the page.
 
 ## Alternatives not taken
 

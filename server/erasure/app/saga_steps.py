@@ -160,10 +160,12 @@ async def _step_tombstone_documents_by_user(org: str, user_id: str) -> int:
 
 
 async def _step_erase_blobs_by_ns(org: str, namespace: _NS) -> int:
-    """Delete the uploaded originals of the namespace(s), then stamp
-    `blob_erased_at` on their documents. Returns the originals deleted."""
+    """Delete the uploaded originals of the namespace(s), stamp
+    `blob_erased_at` on their documents, then delete the record of who
+    uploaded them. Returns the originals deleted."""
     n = await memory_steps.delete_document_blobs_by_namespace(org, namespace)
     await memory_steps.stamp_blobs_erased(org, namespace)
+    await memory_steps.delete_blob_uploads_by_namespace(org, namespace)
     return n
 
 

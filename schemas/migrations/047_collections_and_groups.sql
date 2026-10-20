@@ -62,3 +62,19 @@ ALTER TABLE loom.chunks
 -- before it read false, as those sagas did not purge.
 ALTER TABLE loom.erasure_requests
     ADD COLUMN IF NOT EXISTS `purge` Bool DEFAULT false;
+
+-- Who uploaded each original, one row per upload by an end user. Documents
+-- that named an original are replaced and merged away, and two uploads of the
+-- same bytes share one loom.document_blobs row, so a user's erasure finds their
+-- originals here. Rows hold ids and hashes, no content.
+CREATE TABLE IF NOT EXISTS loom.blob_uploads
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `sha256` FixedString(64),
+    `user_id` String,
+    `created_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = MergeTree
+ORDER BY (org, user_id, namespace, sha256)
+SETTINGS non_replicated_deduplication_window = 1000;

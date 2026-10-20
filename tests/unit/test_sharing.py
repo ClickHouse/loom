@@ -319,6 +319,32 @@ def test_a_scoped_token_reaches_a_collection_no_further_than_its_claim(
     assert _role(named, "col-q3") is Role.VIEWER, "capped at the claim's viewer"
 
 
+@pytest.mark.parametrize(
+    "token",
+    [
+        {"ns_roles": (("col-q3", "writer"), ("ns-a", "writer"))},
+        {"roles": (Role.WRITER,)},
+        {"roles": (Role.WRITER,), "creator": "ann@acme.io"},
+    ],
+    ids=["scoped", "flat", "delegated"],
+)
+def test_a_write_outside_a_token_s_ns_write_is_refused_on_a_collection_as_anywhere(
+    org_state: dict[str, Any], token: dict[str, Any]
+) -> None:
+    """A writer token whose `ns_write` names another namespace writes neither
+    an ordinary namespace nor a collection; it still reads both."""
+    from server.auth.authz import _scoped_role
+
+    org_state["grants"] = {"sa:ci": {"col-q3": 2}, "ann@acme.io": {"col-q3": 2}}
+    auth = _person(namespaces=("col-q3", "ns-a"), write_namespaces=("ns-b",), **token)
+    assert _role(auth, "col-q3") is Role.VIEWER
+    if auth.has_ns_roles():
+        assert _scoped_role(auth, Role.WRITER, ORG, "ns-a", cap=None) is None
+        assert _scoped_role(auth, Role.VIEWER, ORG, "ns-a", cap=None) is Role.WRITER
+    writable = _person(namespaces=("col-q3",), write_namespaces=("col-q3",), **token)
+    assert _role(writable, "col-q3") is Role.WRITER
+
+
 def test_a_delegated_token_reaches_a_collection_no_further_than_its_creator(
     org_state: dict[str, Any],
 ) -> None:
@@ -1201,6 +1227,11 @@ def test_an_end_user_issuer_s_jwks_is_refetched_every_refresh_period(
     from server.settings import settings
 
     monkeypatch.setattr(settings, "jwt_end_user_jwks_refresh_seconds", 42.0)
+    # Every issuer's keys are at hand, so the loop keeps the full period.
+    monkeypatch.setattr(
+        settings, "jwt_end_user_issuers_json", end_user_issuer.issuers_setting(_PUBLIC)
+    )
+    end_user_keys.clear()
     slept: list[float] = []
 
     class _Done(Exception):
@@ -1209,7 +1240,7 @@ def test_an_end_user_issuer_s_jwks_is_refetched_every_refresh_period(
     async def _sleep(seconds: float) -> None:
         slept.append(seconds)
 
-    async def _refresh() -> None:
+    async def _refresh(**_k: Any) -> None:
         if len(slept) == 2:
             raise _Done
 
@@ -1242,6 +1273,7 @@ def test_a_failed_first_jwks_fetch_is_retried_within_seconds(
     monkeypatch.setattr(settings, "jwt_end_user_jwks_refresh_seconds", 300.0)
     slept: list[float] = []
     fetches = 0
+    asked: list[dict[str, Any]] = []
 
     class _Done(Exception):
         pass
@@ -1249,8 +1281,9 @@ def test_a_failed_first_jwks_fetch_is_retried_within_seconds(
     async def _sleep(seconds: float) -> None:
         slept.append(seconds)
 
-    async def _refresh() -> None:
+    async def _refresh(**_k: Any) -> None:
         nonlocal fetches
+        asked.append(_k)
         fetches += 1
         if fetches == 2:  # the retry lands
             end_user_keys._keys[end_user_issuer.ISSUER] = {
@@ -1270,6 +1303,115 @@ def test_a_failed_first_jwks_fetch_is_retried_within_seconds(
     try:
         asyncio.run(_run())
         assert slept == [2.0, 2.0, 300.0]
+        # The fast retries fetch only the issuers still unloaded.
+        assert asked == [{"unloaded_only": True}, {"unloaded_only": True}, {}]
         assert verify_token(_token()).subject == "user:u-1"
+    finally:
+        end_user_keys.clear()
+
+
+def test_a_user_in_many_groups_reaches_a_grant_of_the_last_one(org_state: dict[str, Any]) -> None:
+    """Grant maps are read in batches; every principal's still counts."""
+    groups = [f"group:g{i}" for i in range(12)]
+    org_state["groups"] = {"user:alice": groups}
+    org_state["grants"] = {groups[-1]: {"col-hr": 1}}
+    assert _role(_user("alice"), "col-hr") is Role.VIEWER
+    assert _shared(_user("alice")) == ["col-hr"]
+
+
+def test_one_key_is_never_both_an_end_user_and_a_federated_key() -> None:
+    """Compared by key, not kid: a federated key verifies Loom-shaped tokens."""
+    import json
+
+    from pydantic import ValidationError
+
+    from server.settings._auth import AuthSettings
+
+    with pytest.raises(ValidationError, match="are federated keys"):
+        AuthSettings(
+            jwt_end_user_issuers_json=end_user_issuer.issuers_setting(_PUBLIC),
+            jwt_public_keys_json=json.dumps({"gateway-1": _PUBLIC}),
+        )
+    other = end_user_issuer.new_key()[1]
+    AuthSettings(
+        jwt_end_user_issuers_json=end_user_issuer.issuers_setting(_PUBLIC),
+        jwt_public_keys_json=json.dumps({"gateway-1": other}),
+    )
+
+
+def test_a_fetched_key_that_is_a_federated_one_is_dropped_and_issuers_fetch_side_by_side(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+    from server.auth import end_user_keys
+    from server.settings import settings
+
+    other_private, other_public = end_user_issuer.new_key()
+    del other_private
+    issuers = json.loads(
+        end_user_issuer.issuers_setting(_PUBLIC, keys={}, jwks_url="https://a.example/jwks")
+    )
+    issuers["second"] = {"orgs": ["zeta"], "jwks_url": "https://b.example/jwks"}
+    monkeypatch.setattr(settings, "jwt_end_user_issuers_json", json.dumps(issuers))
+    monkeypatch.setattr(settings, "jwt_public_keys_json", json.dumps({"gw": other_public}))
+    in_flight = peak = 0
+
+    class _Set:
+        def __init__(self, keys: list[Any]) -> None:
+            self.keys = keys
+
+    class _Key:
+        def __init__(self, kid: str, pem: str) -> None:
+            self.key_id, self.key = kid, load_pem_public_key(pem.encode())
+
+    async def _fetch_json(url: str) -> dict[str, Any]:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.05)
+        in_flight -= 1
+        return {"url": url}
+
+    class _Response:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"url": self.url}
+
+    class _Client:
+        def __init__(self, **_k: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_a: Any) -> None:
+            return None
+
+        async def get(self, url: str) -> _Response:
+            await _fetch_json(url)
+            return _Response(url)
+
+    def _from_dict(body: dict[str, str]) -> _Set:
+        if "a.example" in body["url"]:
+            return _Set([_Key(end_user_issuer.KID, _PUBLIC), _Key("leaked", other_public)])
+        return _Set([_Key("b-1", _PUBLIC)])
+
+    monkeypatch.setattr(end_user_keys.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(end_user_keys.jwt.PyJWKSet, "from_dict", staticmethod(_from_dict))
+    end_user_keys.clear()
+    try:
+        asyncio.run(end_user_keys.refresh())
+        assert peak == 2, "the issuers are fetched side by side"
+        assert end_user_keys.key(end_user_issuer.ISSUER, end_user_issuer.KID) is not None
+        assert end_user_keys.key(end_user_issuer.ISSUER, "leaked") is None
+        assert end_user_keys.loaded("second")
     finally:
         end_user_keys.clear()

@@ -317,6 +317,10 @@ _CENSUS: tuple[Substrate, ...] = (
         "documents.tombstone",
     ),
     Substrate("loom.document_blobs", "1", None, "documents.tombstone", None, final=False),
+    # Who uploaded each original: a user's rows go with their originals.
+    Substrate(
+        "loom.blob_uploads", "1", UID, "documents.tombstone", "documents.tombstone", final=False
+    ),
 )
 
 # Steps that mutate a table the census does not count, with the reason. The

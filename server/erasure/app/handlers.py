@@ -111,10 +111,21 @@ def _page(rows: list[Any], limit: int) -> tuple[list[dict[str, object]], int, bo
 
 
 async def _export_memory(
-    org: str, scope_type: str, scope_value: str, *, include_tombstoned: bool, limit: int
+    org: str,
+    scope_type: str,
+    scope_value: str,
+    *,
+    include_tombstoned: bool,
+    limit: int,
+    shown: erasure_exports.Shown,
 ) -> tuple[list[dict[str, object]], int, bool]:
     rows = await erasure_exports.export_memory(
-        org, scope_type, scope_value, include_tombstoned=include_tombstoned, limit=limit + 1
+        org,
+        scope_type,
+        scope_value,
+        include_tombstoned=include_tombstoned,
+        limit=limit + 1,
+        shown=shown,
     )
     return _page(rows, limit)
 
@@ -142,31 +153,37 @@ async def _audit_high_rows(org: str, rows: list[dict[str, object]]) -> None:
 
 
 async def _export_knowledge(
-    org: str, scope_type: str, scope_value: str, *, limit: int
+    org: str, scope_type: str, scope_value: str, *, limit: int, shown: erasure_exports.Shown
 ) -> tuple[list[dict[str, object]], int, bool]:
     """The chunks of one namespace, or every chunk one user wrote."""
-    rows = await erasure_exports.export_knowledge(org, scope_type, scope_value, limit=limit + 1)
+    rows = await erasure_exports.export_knowledge(
+        org, scope_type, scope_value, limit=limit + 1, shown=shown
+    )
     return _page(rows, limit)
 
 
 async def _export_agent_events(
-    org: str, scope_type: str, scope_value: str, *, limit: int
+    org: str, scope_type: str, scope_value: str, *, limit: int, shown: erasure_exports.Shown
 ) -> tuple[list[dict[str, object]], int, bool]:
-    rows = await erasure_exports.export_agent_events(org, scope_type, scope_value, limit=limit + 1)
+    rows = await erasure_exports.export_agent_events(
+        org, scope_type, scope_value, limit=limit + 1, shown=shown
+    )
     return _page(rows, limit)
 
 
 async def _export_audit_log(
-    org: str, scope_type: str, scope_value: str, *, limit: int
+    org: str, scope_type: str, scope_value: str, *, limit: int, shown: erasure_exports.Shown
 ) -> tuple[list[dict[str, object]], int, bool]:
     """Audit rows about this subject. namespace scope filters by tag; user_id
     scope filters by substring over the JSON `subject` blob (no native user_id
     column) — coarse but adequate for an export."""
     if scope_type == "namespace":
-        rows = await erasure_exports.export_audit_namespace(org, scope_value, limit=limit + 1)
+        rows = await erasure_exports.export_audit_namespace(
+            org, scope_value, limit=limit + 1, shown=shown
+        )
     else:
         rows = await erasure_exports.export_audit_by_subject_substring(
-            org, scope_value, limit=limit + 1
+            org, scope_value, limit=limit + 1, shown=shown
         )
     return _page(rows, limit)
 
@@ -207,49 +224,43 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
                     # The subject's own collection is theirs to have exported.
                     readable_collections.add(personal_name(input.org, "user:" + input.scope_value))
 
-    def _shown(namespace: str) -> bool:
-        if namespace in hidden:
-            return False
-        return (
-            readable_collections is None
-            or not sharing.is_collection(namespace)
-            or namespace in readable_collections
-        )
-
-    def _visible(rows: list[dict[str, object]], count: int) -> tuple[list[dict[str, object]], int]:
-        kept = [r for r in rows if _shown(str(r.get("namespace") or ""))]
-        return kept, count - (len(rows) - len(kept))
-
+    # Applied in each read, before its LIMIT: a hidden row never takes the
+    # place of one the caller may see.
+    shown = erasure_exports.Shown(
+        hidden=tuple(sorted(hidden)),
+        collections=None if readable_collections is None else tuple(sorted(readable_collections)),
+        collection_prefix=sharing.COLLECTION_PREFIX,
+    )
     mem_rows, mem_count, mem_trunc = await _export_memory(
         input.org,
         input.scope_type,
         input.scope_value,
         include_tombstoned=input.include_tombstoned,
         limit=input.section_limit,
+        shown=shown,
     )
     know_rows, know_count, know_trunc = await _export_knowledge(
         input.org,
         input.scope_type,
         input.scope_value,
         limit=input.section_limit,
+        shown=shown,
     )
     evt_rows, evt_count, evt_trunc = await _export_agent_events(
         input.org,
         input.scope_type,
         input.scope_value,
         limit=input.section_limit,
+        shown=shown,
     )
     aud_rows, aud_count, aud_trunc = await _export_audit_log(
         input.org,
         input.scope_type,
         input.scope_value,
         limit=input.section_limit,
+        shown=shown,
     )
-    mem_rows, mem_count = _visible(mem_rows, mem_count)
     await _audit_high_rows(input.org, mem_rows)
-    know_rows, know_count = _visible(know_rows, know_count)
-    evt_rows, evt_count = _visible(evt_rows, evt_count)
-    aud_rows, aud_count = _visible(aud_rows, aud_count)
 
     await audit.emit(
         event_type="erasure.exported",

@@ -828,12 +828,15 @@ async def tombstone_documents_by_user(
     )
 
 
-# The originals any version of the user's documents pointed at (a version
-# another writer replaced included) that no other writer's live document
-# shares (two documents with the same bytes share one row).
+# The originals the user uploaded (`loom.blob_uploads`: a document version
+# naming one may since have been replaced and merged away), or that a version
+# of their documents still names, that no other writer's live document shares
+# (two documents with the same bytes share one row).
 _USERS_OWN_BLOBS = (
     "org = {org:String} AND (namespace, toString(sha256)) IN ("
-    " SELECT namespace, blob_path FROM loom.documents"
+    " SELECT namespace, toString(sha256) FROM loom.blob_uploads"
+    " WHERE org = {org:String} AND user_id = {uid:String}"
+    " UNION ALL SELECT namespace, blob_path FROM loom.documents"
     " WHERE org = {org:String} AND user_id = {uid:String} AND blob_path != '')"
     " AND (namespace, toString(sha256)) NOT IN ("
     " SELECT namespace, blob_path FROM loom.documents FINAL"
@@ -844,9 +847,9 @@ _USERS_UNERASED = ORG_UID + " AND blob_path != '' AND blob_erased_at IS NULL"
 
 
 async def erase_blobs_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
-    """Delete the user's uploaded originals no other writer shares, then stamp
-    `blob_erased_at` on every document of the user's that had one. Returns the
-    originals deleted."""
+    """Delete the user's uploaded originals no other writer shares, stamp
+    `blob_erased_at` on every document of the user's that had one, then delete
+    the record of their uploads. Returns the originals deleted."""
     n = await count_then_mutate(
         "loom.document_blobs",
         count_where=_USERS_OWN_BLOBS,
@@ -862,6 +865,15 @@ async def erase_blobs_by_user(org: str, user_id: str, *, ch: _CHClient | None = 
         mutation="UPDATE blob_erased_at = {now:DateTime}",
         mutation_where=_USERS_UNERASED,
         params={"org": org, "uid": user_id},
+        ch=ch,
+    )
+    await count_then_mutate(
+        "loom.blob_uploads",
+        count_where=ORG_UID,
+        mutation="DELETE",
+        mutation_where=ORG_UID,
+        params={"org": org, "uid": user_id},
+        final=False,
         ch=ch,
     )
     return n
@@ -896,6 +908,15 @@ async def delete_document_blobs_by_namespace(
     """Every uploaded original stored for the scope (loom.document_blobs)."""
     return await delete_scoped(
         "loom.document_blobs", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
+async def delete_blob_uploads_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """The record of who uploaded the scope's originals (loom.blob_uploads)."""
+    return await delete_scoped(
+        "loom.blob_uploads", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
     )
 
 

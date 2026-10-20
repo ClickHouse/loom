@@ -24,6 +24,17 @@ def _end_user_issuers(raw: str) -> dict[str, EndUserIssuer]:
     return {str(issuer): EndUserIssuer.parse(str(issuer), spec) for issuer, spec in parsed.items()}
 
 
+def _public_numbers(pem: str) -> object:
+    """A PEM public key's numbers, to tell one key under two kids; None when it
+    does not load (it then verifies nothing)."""
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+    try:
+        return load_pem_public_key(pem.encode()).public_numbers()  # type: ignore[union-attr]
+    except Exception:  # noqa: BLE001 — a key that does not load matches none
+        return None
+
+
 def _overlap(a: str, b: str) -> bool:
     """Whether two org patterns (a name, or `prefix*`) can match one org."""
     if a.endswith("*") and b.endswith("*"):
@@ -316,6 +327,13 @@ class AuthSettings(BaseModel):
                 f"{both} are both end-user and trusted issuers (LOOM_JWT_ISSUER, "
                 "LOOM_JWT_TRUSTED_ISSUERS)"
             )
+        # A federated key verifies any token of a trusted `iss`, Loom-shaped ones
+        # included, so an end-user service's key is never one.
+        federated = {_public_numbers(pem) for pem in self.jwt_public_key_map().values()} - {None}
+        for issuer, spec in issuers.items():
+            same = sorted(k for k, pem in spec.keys.items() if _public_numbers(pem) in federated)
+            if same:
+                raise ValueError(f"end-user issuer {issuer!r}: keys {same} are federated keys")
         # `user:<id>` names one person per org, so one issuer alone signs for an org.
         for (a, spec_a), (b, spec_b) in itertools.combinations(issuers.items(), 2):
             shared = [(x, y) for x in spec_a.orgs for y in spec_b.orgs if _overlap(x, y)]

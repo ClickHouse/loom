@@ -181,7 +181,12 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("chunks.supersede", ((U, "loom.chunks"),)),
     (
         "documents.tombstone",
-        ((D, "loom.document_blobs"), (U, "loom.documents"), (U, "loom.documents")),
+        (
+            (D, "loom.document_blobs"),
+            (U, "loom.documents"),
+            (D, "loom.blob_uploads"),
+            (U, "loom.documents"),
+        ),
     ),
     ("grants.revoke", ((D, "loom.namespace_grants"),)),  # revoked rows of the user, deleted
     ("groups.remove_member", (("OTHER", "INSERT"),)),
@@ -257,7 +262,12 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("chunks.supersede", ((U, "loom.chunks"),)),
     (
         "documents.tombstone",
-        ((D, "loom.document_blobs"), (U, "loom.documents"), (U, "loom.documents")),
+        (
+            (D, "loom.document_blobs"),
+            (U, "loom.documents"),
+            (D, "loom.blob_uploads"),
+            (U, "loom.documents"),
+        ),
     ),
     (
         "conversations.tombstone",
@@ -338,7 +348,12 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("chunks.supersede", ((L, "loom.chunks"),)),
     (
         "documents.tombstone",
-        ((D, "loom.document_blobs"), (U, "loom.documents"), (D, "loom.documents")),
+        (
+            (D, "loom.document_blobs"),
+            (U, "loom.documents"),
+            (D, "loom.blob_uploads"),
+            (D, "loom.documents"),
+        ),
     ),
     (
         "conversations.tombstone",

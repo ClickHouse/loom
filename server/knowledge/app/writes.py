@@ -133,9 +133,12 @@ async def _resolve_blob(
             from server.core.errors import ValidationError
 
             raise ValidationError(f"original_bytes_b64 is not valid base64: {e}") from e
+        from server.auth.context import current_auth
         from server.knowledge.store import blobs
 
-        blob_path = await blobs.put(input.org, input.namespace, raw)
+        auth = current_auth()
+        uploader = (auth.read_user_id if auth is not None else "") or "-"
+        blob_path = await blobs.put(input.org, input.namespace, raw, uploader=uploader)
         blob_size = len(raw)
     elif prior is not None and serves_original(prior):
         blob_path = prior.blob_path

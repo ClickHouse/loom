@@ -6,7 +6,9 @@ Each process fetches every such issuer's JWKS at boot and then every
 `jwt_end_user_jwks_refresh_seconds`; a fetch that fails keeps the last keys it
 had. A key the issuer rotates in is honoured from the next fetch, so an issuer
 publishes a new key before it signs with it. Until an issuer's first fetch lands,
-its tokens are answered 503 (retry), never admitted.
+its tokens are answered 503 (retry), never admitted, and that issuer alone is
+fetched again every 2 s. A fetched key that is also a federated key
+(`jwt_public_keys_json`) is dropped: it could sign Loom-shaped tokens.
 """
 
 from __future__ import annotations
@@ -37,12 +39,17 @@ def key(issuer: str, kid: str) -> Any | None:
     return _keys.get(issuer, {}).get(kid)
 
 
-async def refresh() -> None:
-    """Fetch the JWKS of every end-user issuer that names a `jwks_url`, side by
-    side: an unreachable one delays boot by one timeout, not one each."""
+async def refresh(*, unloaded_only: bool = False) -> None:
+    """Fetch the JWKS of every end-user issuer that names a `jwks_url` (or of
+    those not loaded yet), side by side: an unreachable one delays boot by one
+    timeout, not one each."""
     issuers = settings.end_user_issuers()
     await asyncio.gather(
-        *(_fetch(issuer, spec.jwks_url) for issuer, spec in issuers.items() if spec.jwks_url)
+        *(
+            _fetch(issuer, spec.jwks_url)
+            for issuer, spec in issuers.items()
+            if spec.jwks_url and not (unloaded_only and loaded(issuer))
+        )
     )
 
 
@@ -52,7 +59,12 @@ async def _fetch(issuer: str, url: str) -> None:
             response = await client.get(url)
             response.raise_for_status()
         keys = jwt.PyJWKSet.from_dict(response.json()).keys
-        _keys[issuer] = {k.key_id: k.key for k in keys if k.key_id}
+        federated = federated_key_numbers()
+        found = {k.key_id: k.key for k in keys if k.key_id}
+        shared = sorted(kid for kid, k in found.items() if _numbers(k) in federated)
+        if shared:
+            log.warning("end-user issuer %r: keys %s are federated keys, dropped", issuer, shared)
+        _keys[issuer] = {kid: k for kid, k in found.items() if kid not in shared}
     except Exception as e:  # noqa: BLE001 — a failed fetch keeps the last keys
         if issuer not in _warned:
             _warned.add(issuer)
@@ -61,12 +73,33 @@ async def _fetch(issuer: str, url: str) -> None:
     _warned.discard(issuer)
 
 
+def _numbers(key: Any) -> Any:
+    try:
+        return key.public_numbers()
+    except Exception:  # noqa: BLE001 — a key with no numbers matches none
+        return None
+
+
+def federated_key_numbers() -> set[Any]:
+    """The public numbers of every federated key that loads."""
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+    out = set()
+    for pem in settings.jwt_public_key_map().values():
+        try:
+            out.add(load_pem_public_key(pem.encode()).public_numbers())  # type: ignore[union-attr]
+        except Exception:  # noqa: BLE001 — a key that does not load verifies nothing
+            continue
+    return out
+
+
 def _all_loaded() -> bool:
     return all(loaded(i) for i, spec in settings.end_user_issuers().items() if spec.jwks_url)
 
 
 def start_refresh_loop() -> asyncio.Task[None]:
-    """Re-fetch every `jwt_end_user_jwks_refresh_seconds` until cancelled."""
+    """Re-fetch every `jwt_end_user_jwks_refresh_seconds` until cancelled;
+    while an issuer's first fetch has not landed, that issuer every 2 s."""
 
     async def _run() -> None:
         from server.core.ch import set_query_tag
@@ -75,9 +108,12 @@ def start_refresh_loop() -> asyncio.Task[None]:
         while True:
             # Until every issuer's first fetch lands, retry within seconds: its
             # tokens are answered 503 until then.
-            period = settings.jwt_end_user_jwks_refresh_seconds if _all_loaded() else 2.0
-            await asyncio.sleep(period)
-            await refresh()
+            if _all_loaded():
+                await asyncio.sleep(settings.jwt_end_user_jwks_refresh_seconds)
+                await refresh()
+            else:
+                await asyncio.sleep(2.0)
+                await refresh(unloaded_only=True)
 
     return asyncio.get_running_loop().create_task(_run(), name="loom-end-user-jwks")
 
