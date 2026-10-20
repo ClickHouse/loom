@@ -344,7 +344,9 @@ async def calibrate_embedder(
         return None
 
     async def _embed_pair(a: str, b: str) -> float:
-        with customer.system():  # fixed probe pairs, no org's data
+        # The recalibration worker's fixed pairs are the deployment's; code.calibrate
+        # probes a namespace's corpus under its request's org, which wins.
+        with customer.system():
             va, vb = await asyncio.gather(embedder.embed(a), embedder.embed(b))
         return _cosine(va, vb)
 

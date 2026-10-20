@@ -7,7 +7,8 @@ takes its org from the verified token, through the identity the transports
 record for every op (`observability.genai`); a background job or a CLI names
 the org of the rows it works on with `for_org`, never inheriting a worker's
 identity; a call for the deployment itself (its
-startup probe, calibration, a provider check) runs under `system()` and names
+startup probe, the recalibration worker's fixed pairs, a provider check, the
+sampled retrieval judge) runs under `system()` and names
 `LOOM_INFERENCE_SYSTEM_CUSTOMER`. A call that names none is refused
 (`Unattributed`), never sent to be billed to no one: one call never carries two
 customers, so a job batching several orgs' rows splits them first.

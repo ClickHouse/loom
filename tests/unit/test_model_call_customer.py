@@ -21,6 +21,7 @@ def metered(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(settings, "inference_customer_header", "X-Customer")
     monkeypatch.setattr(settings, "inference_feature_header", "X-Feature")
     monkeypatch.setattr(settings, "inference_system_customer", "loom")
+    monkeypatch.setattr(customer, "_logged_at", {})  # each test sees its own refusals logged
     genai._identity.set(None)
     yield
     genai._identity.set(None)  # the tests stamp identities a later test must not inherit
@@ -313,6 +314,7 @@ def test_a_refusal_comes_before_the_gateway_the_cache_and_provider_health(
     with pytest.raises(customer.Unattributed):
         asyncio.run(embedder._embed_one_raw("text"))
     # A cached vector does not hide the missed path either.
+    monkeypatch.setattr(_cache, "_cache", _cache._LRU(max_size=8, ttl_s=60.0))
     _cache._cache.put(_cache._key(embedder.model_name, "cached"), [1.0] * 8)
     with pytest.raises(customer.Unattributed):
         asyncio.run(embedder.embed("cached"))
@@ -655,4 +657,530 @@ def test_a_jwt_key_map_with_a_non_string_key_refuses_to_start(monkeypatch) -> No
 
     monkeypatch.setenv("LOOM_JWT_PUBLIC_KEYS_JSON", '{"kid-1": null}')
     with pytest.raises(ValueError, match="map names to strings"):
+        Settings()
+
+
+# --- each job names the org of its rows ---------------------------------------
+
+
+async def _model_call(seen: list[str]) -> None:
+    """One embedding and one chat call on the fakes, which refuse a call naming
+    no customer as a metered provider would; records the customer it ran for."""
+    from server.embedding.fake import FakeNGramEmbedder
+    from server.llm.fake import FakeLLMClient
+
+    await FakeNGramEmbedder(dim=8).embed("text")
+    await FakeLLMClient().complete("s", "u")
+    seen.append(customer.current())
+
+
+class _MeteredLLM:
+    """A canned LLM that checks the customer first, as the fake LLM does."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    async def complete(self, *a: Any, **k: Any) -> Any:
+        customer.require()
+        return type("Out", (), {"text": self.text, "tokens_in": 1, "tokens_out": 1})()
+
+
+def _no_refusal_logged(caplog: pytest.LogCaptureFixture) -> None:
+    assert not [r for r in caplog.records if "MODEL_CALL_UNATTRIBUTED" in r.getMessage()]
+
+
+def test_code_ingest_names_each_repos_org_in_its_commits_bootstrap_and_walk(
+    metered, monkeypatch, caplog
+) -> None:
+    from types import SimpleNamespace
+
+    from server.code.app.index import ingest_pass as w
+    from server.code.app.index import pass_budget, repo_registry
+
+    seen: list[str] = []
+    cfg = SimpleNamespace(org="acme", namespace="code-a", label="code-a")
+
+    async def nothing(*a: Any, **k: Any) -> Any:
+        return set()
+
+    async def run_repo(cfg: Any, result: Any, budget: Any) -> Any:
+        await _model_call(seen)
+        return SimpleNamespace(cfg=cfg, bootstrap=True, walk=True)
+
+    async def leg(plan: Any, result: Any, budget: Any) -> None:
+        await _model_call(seen)
+
+    monkeypatch.setattr(repo_registry, "refresh_db_repos", nothing)
+    monkeypatch.setattr(w, "_inactive_namespaces", nothing)
+    monkeypatch.setattr(w, "selected_repos", lambda org, ns: [cfg])
+    monkeypatch.setattr(w, "_without_unsandboxed", lambda repos, result: repos)
+    monkeypatch.setattr(w, "prefetch_mirrors", nothing)
+    monkeypatch.setattr(w, "ingest_oldest_first", nothing)
+    monkeypatch.setattr(w, "_post_steps", nothing)
+    monkeypatch.setattr(w, "_run_repo", run_repo)
+    monkeypatch.setattr(w, "_bootstrap_leg", leg)
+    monkeypatch.setattr(w, "_walk_leg", leg)
+    result = pass_budget.CodeIngestResult()
+    asyncio.run(w._run(result))
+    assert seen == ["acme"] * 3 and not result.errors
+    _no_refusal_logged(caplog)
+
+
+def test_code_ingest_names_each_entrys_org_for_its_commits(metered, monkeypatch, caplog) -> None:
+    from server.code.app.index import pass_budget, pass_stream
+    from server.code.app.index import pass_commit as commit_mod
+    from tests.unit.test_code_ingest_fair_fetch import _plan, _wire_streams
+    from tests.unit.test_code_ingest_pass_budget import _Clock
+
+    seen: list[str] = []
+    clock = _Clock()
+    _wire_streams(monkeypatch, clock, {"a1": int(clock.time()) - 50})
+
+    async def ingest_commit(*a: Any, **k: Any) -> None:
+        await _model_call(seen)
+
+    monkeypatch.setattr(commit_mod, "_ingest_commit", ingest_commit)
+    monkeypatch.setattr(pass_stream, "_ingest_commit", ingest_commit)
+    plan, _ = _plan("code-a", ["a1"])
+    result = pass_budget.CodeIngestResult()
+    budget = pass_budget.PassBudget(clock.now, clock.now + 1000.0)
+    asyncio.run(pass_stream.ingest_oldest_first([plan], result, budget))
+    assert seen == [plan.cfg.org] and not result.errors
+    _no_refusal_logged(caplog)
+
+
+def test_code_summary_names_each_repos_org(metered, monkeypatch, caplog) -> None:
+    from types import SimpleNamespace
+
+    from server.code.domain.index import repos
+    from server.code.workers import summary
+
+    seen: list[str] = []
+
+    async def summarize(org: str, ns: str, result: Any, cap: int) -> None:
+        await _model_call(seen)
+
+    cfg = SimpleNamespace(org="acme", namespace="code-a")
+    monkeypatch.setattr(repos, "configured_repos", lambda: [cfg])
+    monkeypatch.setattr(summary, "_summarize_repo", summarize)
+    monkeypatch.setattr(settings, "code_summary_max_scopes_per_pass", 10)
+    result = summary.CodeSummaryResult()
+    asyncio.run(summary._run(result))
+    assert seen == ["acme"] and not result.errors
+    _no_refusal_logged(caplog)
+
+
+def test_code_embed_recovery_embeds_each_group_for_its_org(metered, caplog) -> None:
+    from server.code.workers import embed_recovery
+    from server.embedding.fake import FakeNGramEmbedder
+
+    class _Repo:
+        rows: list[Any] = []
+
+        def tombstone_of(self, table: str, live: dict[str, Any]) -> dict[str, Any]:
+            return dict(live)
+
+        async def insert_rows(self, table: str, rows: list[Any]) -> None:
+            self.rows = rows
+
+    rows = [
+        {"org": "acme", "namespace": "code-a", "text": "def f(): pass", "embed_attempts": 0},
+        {"org": "beta", "namespace": "code-b", "text": "class A: ...", "embed_attempts": 0},
+    ]
+    result = embed_recovery.CodeEmbedRecoveryResult()
+    embedded = asyncio.run(
+        embed_recovery._embed_rows(
+            _Repo(),
+            "code_chunks",
+            rows,
+            FakeNGramEmbedder(dim=8),
+            text_of=lambda r: r["text"],
+            max_attempts=5,
+            result=result,
+        )
+    )
+    assert embedded == 2
+    _no_refusal_logged(caplog)
+
+
+def test_the_conversation_titler_names_the_threads_org(metered, monkeypatch, caplog) -> None:
+    import server.knowledge.store.conversations as repo
+    from server.knowledge.workers.conversation_titler import run_pass
+    from tests.unit.test_conversation_titler import _CAND, _TURNS, StubCH, _patch
+
+    _patch(monkeypatch, StubCH([_CAND], _TURNS, None))
+    monkeypatch.setattr("server.llm.client.get_llm_client", lambda: _MeteredLLM("A title"))
+
+    async def insert(row: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(repo, "insert_thread", insert)
+    assert asyncio.run(run_pass()).titled == 1
+    _no_refusal_logged(caplog)
+
+
+def test_the_entity_extractor_names_each_rows_org(metered, monkeypatch, caplog) -> None:
+    from server.memory import store as memory_repo
+    from server.memory.workers import entity_extractor as ee
+    from tests.unit.test_entity_extractor_parse_failures import _Repo, _row
+
+    seen: list[str] = []
+    repo = _Repo([_row()])
+    monkeypatch.setattr(memory_repo, "find_unentitied_memories", repo.find_unentitied_memories)
+    monkeypatch.setattr(memory_repo, "apply_entities_batch", repo.apply_entities_batch)
+
+    async def under_cap(pairs: Any) -> dict[Any, bool]:
+        return dict.fromkeys(pairs, False)
+
+    async def extract(value: str) -> list[str]:
+        await _model_call(seen)
+        return ["alice"]
+
+    monkeypatch.setattr(ee, "namespaces_over_cap", under_cap)
+    monkeypatch.setattr(ee, "emit_worker_cost_event_for", lambda **kw: None)
+    monkeypatch.setattr(ee, "_extract", extract)
+    result = asyncio.run(ee.run_pass(ee.EntityExtractorConfig()))
+    assert seen == [_row()["org"]] and not result.failures
+    _no_refusal_logged(caplog)
+
+
+def test_observe_extract_names_each_sessions_org(metered, monkeypatch, caplog) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.workers import observe_extract
+
+    seen: list[str] = []
+    session = {"org": "acme", "namespace": "ns", "agent": "a", "session_id": "s1"}
+
+    async def sessions(cfg: Any, ch: Any) -> list[dict[str, Any]]:
+        return [session]
+
+    async def observations(session: Any, cfg: Any, ch: Any) -> list[dict[str, Any]]:
+        return [{"memory_key": "obs:1"}]
+
+    async def distill(session: Any, observations: Any) -> Any:
+        await _model_call(seen)
+        return SimpleNamespace(written=1, observations=1, events=0, extra_failures=[])
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: None)
+    monkeypatch.setattr(observe_extract, "find_ready_sessions", sessions)
+    monkeypatch.setattr(observe_extract, "_load_session_observations", observations)
+    monkeypatch.setattr(observe_extract, "_distill_session", distill)
+    result = asyncio.run(observe_extract.run_pass())
+    assert seen == ["acme"] and result.written_memories == 1 and not result.failures
+    _no_refusal_logged(caplog)
+
+
+def test_the_profile_fold_names_the_identitys_org(metered, monkeypatch, caplog) -> None:
+    from server.llm.fake import FakeLLMClient
+    from server.memory.app import profile
+    from server.memory.workers import profile_consolidation as pc
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return [{"value": "prefers tea", "since": "2026-01-01"}]
+
+    written: list[str] = []
+
+    async def write_section(**kw: Any) -> None:
+        written.append(kw["org"])
+
+    monkeypatch.setattr("server.llm.client.get_llm_client", lambda: FakeLLMClient())
+    monkeypatch.setattr(pc, "emit_worker_cost_event_for", lambda **kw: None)
+    monkeypatch.setattr(profile, "write_folded_section", write_section)
+    row = {"org": "acme", "namespace": "ns", "user_id": "u1"}
+    cfg = pc.ProfileConsolidationConfig(model="")
+    assert asyncio.run(pc._consolidate_identity(_CH(), row, cfg)) is True
+    assert written == ["acme"]
+    _no_refusal_logged(caplog)
+
+
+def test_projection_repair_names_each_failures_org(metered, monkeypatch, caplog) -> None:
+    from server.memory.app import projection_failures as pf
+    from server.memory.workers import projection_repair
+    from tests.unit.test_memory_repair_workers import _failure
+
+    seen: list[str] = []
+
+    async def scan(**k: Any) -> list[Any]:
+        return [_failure(1, "memory_chunks")]
+
+    async def retry(f: Any, **k: Any) -> Any:
+        await _model_call(seen)
+        return pf.ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
+
+    monkeypatch.setattr(pf, "scan_active_projection_failures", scan)
+    monkeypatch.setattr(pf, "retry_projection_failure", retry)
+    result = asyncio.run(projection_repair.run_pass())
+    assert seen == ["acme"] and result.resolved == 1
+    _no_refusal_logged(caplog)
+
+
+def test_the_deferred_conflict_judge_names_the_writes_org(metered, monkeypatch, caplog) -> None:
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from server.memory.app import conflict_deferred as cd
+    from server.memory.app import conflicts as cf
+
+    seen: list[str] = []
+
+    async def judge(pj: Any) -> Any:
+        await _model_call(seen)
+        return None
+
+    async def moved(*a: Any, **k: Any) -> bool:
+        return False  # a newer write took the key: nothing lands
+
+    monkeypatch.setattr(cf, "settle_deferred_judgement", judge)
+    monkeypatch.setattr(cd, "still_current", moved)
+    monkeypatch.setattr(cd, "emit_settle_row", lambda *a, **k: None)
+    ident = SimpleNamespace(org="acme", namespace="ns", memory_key="k")
+    verdict = asyncio.run(
+        cd.settle(ident, None, memory_id="m1", version=1, created_at=datetime.now(UTC))
+    )
+    assert seen == ["acme"] and verdict == cd.MOVED
+    _no_refusal_logged(caplog)
+
+
+def test_the_code_link_judge_names_the_links_org(metered, monkeypatch, caplog) -> None:
+    from server.code.domain.anchor import Definition
+    from server.memory.app import code_link_judge
+
+    monkeypatch.setattr(
+        "server.llm.client.get_llm_client_for_model",
+        lambda model: _MeteredLLM('{"verdict": "unsure"}'),
+    )
+    link: Any = {"org": "acme"}
+    out = asyncio.run(
+        code_link_judge.judge("f adds", link, "old", "new", Definition("a.py", "a.f", "f"), "h")
+    )
+    assert out is None  # unsure: judged, and nothing to change
+    _no_refusal_logged(caplog)
+
+
+def test_the_period_digest_names_the_periods_org(metered, monkeypatch, caplog) -> None:
+    from server.embedding.fake import FakeNGramEmbedder
+    from server.memory.app.period_digest import PeriodDigestConfig, run_period_digest
+    from tests.unit.test_period_digest import _digest, _FakeCH
+
+    async def link(**kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.memory.app.evidence.link_belief_sources", link)
+    cfg = PeriodDigestConfig(sessions_per_period=5, namespace_filter="ns", require_opt_in=False)
+    res = asyncio.run(
+        run_period_digest(
+            cfg,
+            ch=_FakeCH([_digest(n, n) for n in range(1, 6)]),
+            llm=_MeteredLLM("Between 2023-07-01 and 2023-07-05, Caroline painted."),
+            embedder=FakeNGramEmbedder(dim=3),
+        )
+    )
+    assert res.periods_written == 1 and not res.failures
+    _no_refusal_logged(caplog)
+
+
+def test_an_extraction_queue_replay_names_the_rows_org(metered, monkeypatch, caplog) -> None:
+    import server.memory.app.extract.handler as mx
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory.api.models_bulk import MemorySetFromMessagesOutput
+    from server.memory.app import extraction_queue as queue
+    from tests.unit.test_extraction_queue import _input
+
+    seen: list[str] = []
+
+    async def handler(inp: Any) -> Any:
+        await _model_call(seen)
+        return MemorySetFromMessagesOutput()
+
+    monkeypatch.setattr(mx, "handle_memory_set_from_messages", handler)
+    payload, _, _ = queue.payload_for(
+        _input(org="acme"), scope=ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    )
+    asyncio.run(queue.replay_row({"org": "acme", "payload": payload}))
+    assert seen == ["acme"]
+    _no_refusal_logged(caplog)
+
+
+def test_tracker_embeddings_name_the_namespaces_org(metered, caplog) -> None:
+    from datetime import UTC, datetime
+
+    from server.embedding.fake import FakeNGramEmbedder
+    from server.tracker.workers import embed as tracker_embed
+
+    class _Repo:
+        rows: list[Any] = []
+
+        async def insert_rows(self, rows: list[Any]) -> None:
+            self.rows = rows
+
+    repo = _Repo()
+    pending = [{"kind": "issue", "number": 1, "source_id": "s", "text": "a bug", "sha": "x"}]
+    result = tracker_embed.TrackerEmbedResult()
+    asyncio.run(
+        tracker_embed._flush(
+            repo,
+            FakeNGramEmbedder(dim=8),
+            "acme",
+            "tracker",
+            pending,
+            result=result,
+            now=datetime.now(UTC),
+        )
+    )
+    assert result.rows_embedded == 1 and repo.rows[0]["org"] == "acme"
+    _no_refusal_logged(caplog)
+
+
+def test_the_retrieval_judge_is_the_deployments_own_call(metered, monkeypatch, caplog) -> None:
+    from server.llm import client as llm_client
+    from server.observability import langfuse_scores, retrieval_judge
+    from server.workers import cost_event
+
+    seen: list[dict[str, str]] = []
+
+    class _Client:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            seen.append(customer.headers())
+            return type("Out", (), {"text": "{}"})()
+
+    monkeypatch.setattr(retrieval_judge.settings, "retrieval_judge_model", "")
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Client())
+    monkeypatch.setattr(langfuse_scores, "post_score", lambda **kw: None)
+    monkeypatch.setattr(cost_event, "emit_worker_cost_event_for", lambda **kw: None)
+    item = {
+        "trace_id": "0" * 32,
+        "org": "acme",
+        "namespace": "ns",
+        "query": "q",
+        "excerpts": ["e"],
+    }
+    asyncio.run(retrieval_judge._judge_one(item))
+    # Observability is an operating cost: not the judged org's, and named as itself.
+    assert seen == [{"X-Customer": "loom", "X-Feature": "worker.retrieval_judge"}]
+    _no_refusal_logged(caplog)
+
+
+# --- transports ----------------------------------------------------------------
+
+
+def test_an_http_request_names_the_org_it_addresses(metered, monkeypatch) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from pydantic import BaseModel
+
+    from server.operations.base import Operation, Role
+    from server.transport import http as http_mod
+
+    class _In(BaseModel):
+        org: str = "-"
+        namespace: str = "-"
+
+    class _Out(BaseModel):
+        sent: dict[str, str] = {}
+
+    async def handler(_: _In) -> _Out:
+        return _Out(sent=customer.headers())
+
+    op = Operation(
+        name="probe.customer",
+        input_model=_In,
+        output_model=_Out,
+        handler=handler,
+        idempotent=False,
+        budget_p99_ms=100,
+        required_role=Role.VIEWER,
+    )
+    monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)
+    monkeypatch.setattr(
+        type(http_mod.settings), "auth_actually_required", lambda self: False, raising=False
+    )
+    app = FastAPI()
+    app.add_api_route(op.http_path, http_mod._make_endpoint(op), methods=["POST"])
+    resp = TestClient(app).post(op.http_path, json={"org": "acme", "namespace": "ns"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["sent"] == {"X-Customer": "acme", "X-Feature": "probe.customer"}
+
+
+def test_an_mcp_call_whose_identity_fails_names_no_earlier_entrys_org(metered, monkeypatch) -> None:
+    # In a JSON-RPC batch the identity is task state: entry N must not bill entry N-1's org.
+    import dataclasses
+
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp_call, mcp_outcome
+
+    base = OPERATIONS_BY_NAME["code.repos"]
+    seen: list[str] = []
+
+    async def handler(inp: Any) -> Any:
+        seen.append(customer.current())
+        return base.output_model.model_construct()
+
+    def broken(*a: Any, **k: Any) -> dict[str, Any]:
+        raise RuntimeError("identity unavailable")
+
+    async def none(*a: Any, **k: Any) -> None:
+        return None
+
+    op = dataclasses.replace(base, handler=handler)
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, op.mcp_tool_name, op)
+    monkeypatch.setattr(settings, "code_org", "acme")
+    monkeypatch.setattr(settings, "code_namespace", "code-acme")
+    monkeypatch.setattr(mcp_call, "_caller_defaults", none)
+    monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
+    monkeypatch.setattr(mcp_outcome, "_emit_mcp_event", lambda *a, **k: None)
+    monkeypatch.setattr(mcp_call, "_span_identity", broken)
+    _request("previous-entry")
+    out = asyncio.run(mcp_call._call_tool(1, {"name": op.mcp_tool_name, "arguments": {}}))
+    assert out["result"]["isError"] is False, out
+    assert seen == [""]  # its model calls refuse instead of billing another org
+
+
+# --- embedders and settings ----------------------------------------------------
+
+
+@pytest.mark.parametrize("provider", ["openai", "gemini"])
+def test_a_batch_embed_refuses_before_reading_the_cache(metered, monkeypatch, provider) -> None:
+    from server.embedding import gemini as gemini_mod
+    from server.embedding import openai as embed_mod
+
+    mod = embed_mod if provider == "openai" else gemini_mod
+    monkeypatch.setattr(mod, "split_cached", lambda *a: pytest.fail("read the cache"))
+    embedder = (
+        embed_mod.OpenAIEmbedder(model="text-embedding-3-small", dim=8, api_key="k")
+        if provider == "openai"
+        else gemini_mod.GeminiEmbedder(model="gemini-embedding-001", dim=8, api_key="k")
+    )
+    with pytest.raises(customer.Unattributed):
+        asyncio.run(embedder._embed_many_raw(["text"]))
+
+
+def test_settings_refuse_a_feature_header_without_the_customer_header(monkeypatch) -> None:
+    from server.settings import Settings
+
+    monkeypatch.delenv("LOOM_INFERENCE_CUSTOMER_HEADER", raising=False)
+    monkeypatch.setenv("LOOM_INFERENCE_FEATURE_HEADER", "X-Feature")
+    with pytest.raises(ValueError, match="needs LOOM_INFERENCE_CUSTOMER_HEADER"):
+        Settings()
+
+
+@pytest.mark.parametrize(
+    "field, name",
+    [
+        ("CUSTOMER", "Authorization"),
+        ("CUSTOMER", "X-API-Key"),
+        ("CUSTOMER", "x-goog-api-key"),
+        ("CUSTOMER", "Content-Type"),
+        ("CUSTOMER", "content-length"),
+        ("CUSTOMER", "HOST"),
+        ("FEATURE", "Anthropic-Version"),
+    ],
+)
+def test_settings_refuse_a_header_the_senders_set(monkeypatch, field: str, name: str) -> None:
+    from server.settings import Settings
+
+    monkeypatch.setenv("LOOM_INFERENCE_CUSTOMER_HEADER", "X-Customer")
+    monkeypatch.setenv(f"LOOM_INFERENCE_{field}_HEADER", name)
+    with pytest.raises(ValueError, match="senders set themselves"):
         Settings()

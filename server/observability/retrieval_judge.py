@@ -313,7 +313,7 @@ async def _judge_one(item: dict[str, Any]) -> None:
     from server.llm.client import get_llm_client, get_llm_client_for_model
     from server.observability import cost_accumulator
     from server.observability import langfuse_scores as _scores
-    from server.observability.genai import llm_stage, set_identity
+    from server.observability.genai import set_identity
 
     excerpts = item["excerpts"]
     if not excerpts:
@@ -362,7 +362,9 @@ async def _judge_one(item: dict[str, Any]) -> None:
     started = time.monotonic()
     cost_accumulator.begin_op()
     try:
-        with llm_stage("classify"), customer.for_org(str(item["org"])):
+        # Loom's own sampled quality check, so the deployment's customer; with no
+        # stage set its feature is the op, worker.retrieval_judge.
+        with customer.system():
             out = await client.complete(
                 _JUDGE_SYSTEM, user, max_tokens=120, response_format={"type": "json_object"}
             )
