@@ -221,6 +221,7 @@ def test_with_no_customer_header_a_mixed_org_pass_is_one_call(monkeypatch) -> No
     from server.memory.workers import embedding
 
     monkeypatch.setattr(settings, "inference_customer_header", "")
+    genai._identity.set(None)
     rows = [
         {"org": "acme", "content_excerpt": "a"},
         {"org": "beta", "content_excerpt": "bb"},
@@ -820,6 +821,51 @@ def test_code_embed_recovery_embeds_each_group_for_its_org(metered, caplog) -> N
     )
     assert embedded == 2 and seen == ["acme", "beta"]
     _no_refusal_logged(caplog)
+
+
+def test_code_embed_recovery_gives_up_on_a_row_naming_no_customer_without_a_call(
+    metered, caplog
+) -> None:
+    from server.code.workers import embed_recovery
+
+    seen: list[str] = []
+
+    class _Embedder:
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            seen.append(customer.current())  # a row naming no customer is never sent
+            return [[0.5, 0.5] for _ in texts]
+
+    class _Repo:
+        rows: list[Any] = []
+
+        def tombstone_of(self, table: str, live: dict[str, Any]) -> dict[str, Any]:
+            return dict(live)
+
+        async def insert_rows(self, table: str, rows: list[Any]) -> None:
+            self.rows = self.rows + list(rows)
+
+    repo = _Repo()
+    rows = [
+        {"org": "", "namespace": "code-a", "text": "def f(): pass", "embed_attempts": 0},
+        {"org": "acme", "namespace": "code-a", "text": "def g(): pass", "embed_attempts": 0},
+    ]
+    result = embed_recovery.CodeEmbedRecoveryResult()
+    embedded = asyncio.run(
+        embed_recovery._embed_rows(
+            repo,
+            "code_chunks",
+            rows,
+            _Embedder(),
+            text_of=lambda r: r["text"],
+            max_attempts=5,
+            result=result,
+        )
+    )
+    assert embedded == 1 and result.poisoned == 1 and seen == ["acme"]
+    (row,) = [r for r in repo.rows if r["org"] == ""]
+    assert row["embed_last_error"] == customer.NO_CUSTOMER and row["embed_failed_at"]
+    assert row["embed_attempts"] == 1
+    _no_refusal_logged(caplog)  # bad data, not a missed call path
 
 
 def test_the_conversation_titler_names_the_threads_org(metered, monkeypatch, caplog) -> None:

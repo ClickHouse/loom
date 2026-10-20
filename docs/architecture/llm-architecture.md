@@ -274,7 +274,9 @@ the shared HTTP client also carries non-model calls, which name no customer.
   start without the header.
 - **No customer, no call.** A call that names none raises `Unattributed`
   (`MODEL_CALL_UNATTRIBUTED`) before anything is sent. A missed call path fails loudly
-  instead of being billed to no one.
+  instead of being billed to no one. The embedding workers (memory and code) check first and
+  give up on a row that names no org at once, recording that error with no model call, since a
+  retry cannot help and the refusal is not a provider failure.
 
 - **An org switched off makes no call.** `org.set_model_calls` writes `loom.org_model_calls`;
   `customer.require()`, first in every sender (before the gateway token, the embedding caches
