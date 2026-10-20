@@ -344,9 +344,9 @@ revision that races a delete stays deleted. If the fence's read fails, the write
 version; `memory.set`'s answer names the degradation. `memory.delete_version` removes one
 version a caller read (`memory.get` and the list ops return it as `version` and, exact for
 a JavaScript caller, as the decimal string `version_text`) and nothing when the row has
-moved on; the key lock orders it against `if_match_sha256` writes. A plain write or delete
-takes no lock, so both sides check again after their insert, and a write after the named
-version stays whichever lands first. The delete stamps the version it removed in its
+moved on; the key lock orders it against `if_match_sha256` writes. A plain `memory.set` or
+`memory.bulk_set` takes no lock, so both sides check again after their insert, and a write
+after the named version stays whichever lands first. The delete stamps the version it removed in its
 tombstone's `source_trace` and reads the key's newest version other than its own tombstone
 after writing it. A live row means the key moved on (`version_changed`); one below the
 tombstone, a plain write between the check and the tombstone, is written back above it, at
