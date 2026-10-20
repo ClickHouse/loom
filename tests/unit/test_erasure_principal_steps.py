@@ -1,7 +1,8 @@
 """A user erasure's identity steps (server/erasure/app/saga_steps.py): each
 holds the claims an online writer of the same rows holds, in the documented
-order, and moves the watermark when it changed something or a write failed
-(one whose reply was lost may have landed)."""
+order. The group step moves the groups watermark when it changed something
+or a write failed (one whose reply was lost may have landed); the owner
+rewrite moves none, since no cached value holds an owner."""
 
 from __future__ import annotations
 
@@ -100,19 +101,5 @@ def test_the_creators_id_goes_under_each_directory_claim_then_the_trees(
     assert asyncio.run(saga_steps._step_forget_collection_owner_by_user(ORG, "bob")) == rewritten
     claims = [f"account {ns}" for ns in created] + [f"tree {ORG}"]
     # The tree's claim even with none listed: a create racing the erasure is
-    # rewritten under it. Announced only when something changed.
-    assert held == claims + (["changed collections"] if rewritten else [])
-
-
-def test_an_owner_rewrite_whose_reply_is_lost_still_moves_the_watermark(
-    monkeypatch: pytest.MonkeyPatch, held: list[str]
-) -> None:
-    _returns(monkeypatch, "collections_created_by", ["col-a"])
-
-    async def _lost(*_a: Any, **_k: Any) -> int:
-        raise TimeoutError("reply lost")
-
-    monkeypatch.setattr(saga_steps.principal_steps, "forget_collection_owner_by_user", _lost)
-    with pytest.raises(TimeoutError):
-        asyncio.run(saga_steps._step_forget_collection_owner_by_user(ORG, "bob"))
-    assert held == ["account col-a", f"tree {ORG}", "changed collections"]
+    # rewritten under it. No watermark: the cached tree holds no owner.
+    assert held == claims

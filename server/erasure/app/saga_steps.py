@@ -148,15 +148,8 @@ async def _step_forget_collection_owner_by_user(org: str, user_id: str) -> int:
         for namespace in await principal_steps.collections_created_by(org, user_id):
             await held.enter_async_context(account_change(org, namespace))
         await held.enter_async_context(collections_change(org))
-        try:
-            n = await principal_steps.forget_collection_owner_by_user(org, user_id)
-        except BaseException:
-            # A rewrite whose reply was lost may have landed; its retry finds nothing.
-            await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
-            raise
-    if n:
-        await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
-    return n
+        # No watermark: the cached tree holds parents, not owners.
+        return await principal_steps.forget_collection_owner_by_user(org, user_id)
 
 
 async def _step_tombstone_documents_by_user(org: str, user_id: str) -> int:

@@ -204,7 +204,8 @@ writer's live document shares (each upload by an end user is recorded in
 `loom.blob_uploads`, because the document version that named it may have been replaced and
 merged away since), revokes and then deletes every grant naming `user:<id>`, blanks their
 id as the issuer of the grants they gave others (those grants stay), removes them from
-every group, and retires their personal collection's directory row (`namespace.delete` and
+every group, blanks their id as the creator of the collections they made (the collections
+stay), and retires their personal collection's directory row (`namespace.delete` and
 `collection.delete` refuse a personal collection: it goes only with its user's erasure).
 The request ledger keeps the user's calls for cost with their `user:<id>` subject
 scrubbed, and the user's newest-call row is deleted. Deleting a SCIM group revokes the
