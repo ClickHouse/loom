@@ -92,6 +92,31 @@ def test_it_holds_with_no_customer_header_and_lets_an_unknown_org_through(monkey
     assert asyncio.run(customer.require()) == ""
 
 
+@pytest.mark.parametrize("cmd", ["rechunk", "code"])
+def test_a_cli_command_for_a_switched_off_org_sends_nothing(monkeypatch, cmd: str) -> None:
+    # `--org` (or LOOM_CODE_ORG for `loom code`) is the CLI's only identity: with no
+    # customer header it is what puts the org's switch in force.
+    import argparse
+
+    from server.cli import app
+    from server.embedding.fake import FakeNGramEmbedder
+
+    monkeypatch.setattr(settings, "inference_customer_header", "")
+    monkeypatch.setattr(settings, "code_org", "acme")
+    _off("acme")
+    sent: list[list[float]] = []
+
+    def command(args: argparse.Namespace) -> int:
+        sent.append(asyncio.run(FakeNGramEmbedder(dim=8).embed("text")))  # as run_connected does
+        return 0
+
+    with pytest.raises(customer.ModelCallsDisabled):
+        app._dispatch(
+            argparse.Namespace(cmd=cmd, org="acme" if cmd != "code" else None, func=command)
+        )
+    assert sent == []
+
+
 def test_a_switched_off_org_is_served_no_cached_vector(monkeypatch) -> None:
     # The switch is a kill switch: a vector another org's call cached is not
     # served to it, though it would cost nothing.
