@@ -29,7 +29,7 @@ from server.auth.jwt import AuthInfo
 from server.code.app.common import (
     schedule_code_trace_validation_failure,
 )
-from server.core import idempotency
+from server.core import idempotency, llm_free
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, LoomServerError
 from server.observability.consumer import (
     bind_current_consumer,
@@ -544,7 +544,7 @@ async def _run_handler(op: Operation, payload: Any, call: _HttpCall) -> tuple[An
     request_id, raw_body, identity = call.request_id, call.raw_body, call.identity
     start = time.perf_counter()
     try:
-        with gates.tenant_slot(call.auth, call.target):
+        with gates.tenant_slot(call.auth, call.target), llm_free.serving(op):
             result = await op.handler(payload)
     except HTTPException as he:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
@@ -646,15 +646,17 @@ async def _finish_success(
     # Retrieval-quality metrics. Duck-typed on the response, so every
     # search-shaped op is covered without a per-op branch here; a no-op for
     # everything else. Latency and error rate say nothing about whether
-    # retrieval actually worked — this is what does.
-    _metrics.record_search_quality(
-        op.name,
-        namespace=identity["namespace"],
-        result=result,
-        org=identity["org"],
-        # The judge needs the query; nothing else here does.
-        query=str(getattr(payload, "query", "") or ""),
-    )
+    # retrieval actually worked — this is what does. Inside the read's mark: an
+    # LLM-free read queues no judge.
+    with llm_free.serving(op):
+        _metrics.record_search_quality(
+            op.name,
+            namespace=identity["namespace"],
+            result=result,
+            org=identity["org"],
+            # The judge needs the query; nothing else here does.
+            query=str(getattr(payload, "query", "") or ""),
+        )
     # One INFO log per successful op, carrying the span's trace_id so the
     # log source correlates each line back to its trace.
     log.info(

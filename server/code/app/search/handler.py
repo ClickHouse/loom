@@ -38,6 +38,7 @@ from server.code.app.spans import (
 from server.code.domain import deadline as code_deadline
 from server.code.store.index import CodeRepo
 from server.core.ch import caller_shaped
+from server.core.llm_free import reads_llm_free
 from server.identity.domain.read_scope import ReadFilters
 from server.settings import settings
 
@@ -105,7 +106,11 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
 
     extra_terms: list[str] | None = None
     expand_calls = 0
-    if input.expand and _budget_allows(budget, "query expansion", MODEL_LEG_MIN_MS):
+    if (
+        input.expand
+        and not reads_llm_free()  # an LLM-free read expands no query
+        and _budget_allows(budget, "query expansion", MODEL_LEG_MIN_MS)
+    ):
         from server.code.app.answers import _propose_identifiers
         from server.observability.budget import namespace_over_cap
 

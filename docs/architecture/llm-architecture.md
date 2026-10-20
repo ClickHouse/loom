@@ -277,26 +277,55 @@ cost and latency to every write. The deterministic gates run on the fake provide
 through the production code path. The cost: a cosine threshold cannot tell a revision
 from a contradiction, which is why the optional LLM conflict judge exists.
 
-| Feature                                       | LLM?          | Switch (default)                                                                                                                              |
-| --------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory.set`, `memory.search` core            | No            | —                                                                                                                                             |
-| Conflict and duplicate verdicts               | No, cosine    | `LOOM_CONFLICT_THRESHOLD`; optional judge `LOOM_MEMORY_CONFLICT_JUDGE` (off)                                                                  |
-| `memory.set_from_messages` extraction         | Yes           | Always; deferred runs through the `extraction_queue` worker                                                                                   |
-| Extraction verifier (coding captures)         | Yes           | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` (`claude-opus-5-5`; `""` turns it off); fails open                                                        |
-| `memory.ask` synthesis                        | Yes           | `LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_MEMORY_ASK_SYNTH_MODEL_CHEAP`, `LOOM_MEMORY_ASK_MID_MODEL`                                               |
-| `memory.search` HyDE and fallback helpers     | Yes, bounded  | Per-request `hyde`; `LOOM_MEMORY_SEARCH_FALLBACK_MAX_LLM_CALLS` (2)                                                                           |
-| `memory.search` rerank                        | Yes, opt-in   | Namespace `rerank_endpoint` or per-request `rerank` (`builtin:openai[:model]`, `builtin:cohere[:model]`, a `LOOM_RERANK_ENDPOINTS_JSON` name) |
-| Entity extraction                             | Yes           | `entity_extractor` worker, `LOOM_ENTITY_EXTRACT_ENABLED` (on)                                                                                 |
-| Conversation titles                           | Yes           | `conversation_titler` worker (on; skips on the fake LLM)                                                                                      |
-| Observation mining, reflection, profile folds | Yes           | `observe_extract`, `reflection_distill`, `profile_consolidation` workers (off)                                                                |
-| Code summaries                                | Yes           | `code_summary` worker (off), `LOOM_CODE_SUMMARY_MODEL`                                                                                        |
-| `code.ask`                                    | Yes           | `LOOM_CODE_ASK_LLM_MODEL`                                                                                                                     |
-| Session briefs (`session.brief_save`)         | Yes, optional | `LOOM_SESSION_BRIEF_LLM` (on), `LOOM_SESSION_BRIEF_LLM_MODEL`                                                                                 |
-| Retrieval-quality judge                       | Yes, sampled  | `LOOM_RETRIEVAL_JUDGE_SAMPLE_RATE` (0)                                                                                                        |
-| Embedding recovery, calibration               | No            | —                                                                                                                                             |
+| Feature                                       | LLM?          | Switch (default)                                                                                                                                                                                                                                                                                             |
+| --------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `memory.set`, `memory.search` core            | No            | —                                                                                                                                                                                                                                                                                                            |
+| Conflict and duplicate verdicts               | No, cosine    | `LOOM_CONFLICT_THRESHOLD`; optional judge `LOOM_MEMORY_CONFLICT_JUDGE` (off)                                                                                                                                                                                                                                 |
+| `memory.set_from_messages` extraction         | Yes           | Always; deferred runs through the `extraction_queue` worker                                                                                                                                                                                                                                                  |
+| Extraction verifier (coding captures)         | Yes           | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` (`claude-opus-5-5`; `""` turns it off); fails open                                                                                                                                                                                                                       |
+| `memory.ask` synthesis                        | Yes           | `LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_MEMORY_ASK_SYNTH_MODEL_CHEAP`, `LOOM_MEMORY_ASK_MID_MODEL`                                                                                                                                                                                                              |
+| `memory.search` HyDE and fallback helpers     | Yes, bounded  | Per-request `hyde`; `LOOM_MEMORY_SEARCH_FALLBACK_MAX_LLM_CALLS` (2); [none](../features/memory/search-and-ask.md#modes-and-recipes) under `retrieval_budget: "fast"`, `recipe: "fast"` or in `context.pack`                                                                                                  |
+| `memory.search` rerank                        | Yes, opt-in   | Namespace `rerank_endpoint` or per-request `rerank` (`builtin:openai[:model]`, `builtin:cohere[:model]`, a `LOOM_RERANK_ENDPOINTS_JSON` name); `builtin:openai` makes [none](../features/memory/search-and-ask.md#modes-and-recipes) under `retrieval_budget: "fast"`, `recipe: "fast"` or in `context.pack` |
+| Entity extraction                             | Yes           | `entity_extractor` worker, `LOOM_ENTITY_EXTRACT_ENABLED` (on)                                                                                                                                                                                                                                                |
+| Conversation titles                           | Yes           | `conversation_titler` worker (on; skips on the fake LLM)                                                                                                                                                                                                                                                     |
+| Observation mining, reflection, profile folds | Yes           | `observe_extract`, `reflection_distill`, `profile_consolidation` workers (off)                                                                                                                                                                                                                               |
+| Code summaries                                | Yes           | `code_summary` worker (off), `LOOM_CODE_SUMMARY_MODEL`                                                                                                                                                                                                                                                       |
+| `code.ask`                                    | Yes           | `LOOM_CODE_ASK_LLM_MODEL`                                                                                                                                                                                                                                                                                    |
+| Session briefs (`session.brief_save`)         | Yes, optional | `LOOM_SESSION_BRIEF_LLM` (on), `LOOM_SESSION_BRIEF_LLM_MODEL`                                                                                                                                                                                                                                                |
+| Retrieval-quality judge                       | Yes, sampled  | `LOOM_RETRIEVAL_JUDGE_SAMPLE_RATE` (0)                                                                                                                                                                                                                                                                       |
+| Embedding recovery, calibration               | No            | —                                                                                                                                                                                                                                                                                                            |
 
 Whether an agent calls `memory.set` at all is the client model's decision. The MCP tool
 descriptions (`server/transport/mcp_descriptions.py`) describe intent, not a syntax.
+
+### LLM-free reads
+
+`LOOM_READS_LLM_FREE=true` makes every read op (`Operation.read_only`) run with no LLM
+call, so a deployment can promise that reads never reach a model. The HTTP and MCP transports mark the
+request while the handler runs (`server/core/llm_free.py`); the memory search reads the mark through the
+same gate as the fast posture and `context.pack` (`_is_llm_free`), and every other read step that could
+call a model reads `reads_llm_free()`:
+
+- `memory.search`, `search.query` (the MCP `loom_search` tool), `context.pack` and every read built on
+  them: no HyDE, graph triples, retry judge, LLM count intent or verb synonyms. The
+  spelling-fix and set-expansion embeddings are skipped, so a plain search or pack embeds its query once.
+- `code.search`: no HyDE, model-named concept expansion or query expansion; its memo keeps LLM-free
+  answers apart.
+- Reranking: a reranker is a model call, and an LLM-free read makes only the ones it names. A
+  namespace's `rerank_endpoint` and code search's default (`LOOM_CODE_SEARCH_RERANK_DEFAULT`) do not
+  run; a reranker the request names runs, except `builtin:openai`, which keeps the fused order.
+- `tracker.duplicate_check` and `tracker.answer`: no rerank or uncertainty judge; `code.bisect_candidates`:
+  no rerank. Each keeps the deterministic answer it already falls back to.
+- `memory.ask` and `code.ask` answer 409 `READS_LLM_FREE` naming the setting unless the request
+  sets `allow_synthesis=false` / `synthesize=false`, even when a deterministic route could answer it;
+  with that flag they return the recalled evidence with no LLM call.
+  A model's answer is the purpose of those calls, so the setting refuses it rather than answering
+  without one. `memory.brief` asks for the evidence alone and returns it with its unknowns, no answer.
+- The sampled retrieval-quality judge queues nothing: both transports record a search's quality inside
+  the same mark.
+
+Writes (`memory.set_from_messages` extraction, the conflict judge, `knowledge.synthesize`, session briefs)
+and the background workers still call models.
 
 ## Prompts
 

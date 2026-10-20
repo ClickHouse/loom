@@ -3,6 +3,7 @@ memory.search."""
 
 from __future__ import annotations
 
+from server.core.llm_free import reads_llm_free
 from server.memory.api.models_search import MemorySearchInput
 
 
@@ -191,10 +192,14 @@ def _enrichment_parser_gate_active(input: MemorySearchInput) -> bool:
 
 
 def _is_fast_posture(input: MemorySearchInput) -> bool:
-    """True when the caller asked for the cheap path (recipe or budget).
-
-    Fast posture means NO optional LLM spend: the iterative judge and
-    HyDE auto-fallback stay off so the latency floor is a
-    vector query, not an LLM round-trip.
-    """
+    """True when the caller asked for the cheap path (recipe or budget): no set
+    expansion, the parser-first enrichment gate, and an LLM-free read
+    (`_is_llm_free`)."""
     return input.recipe == "fast" or input.retrieval_budget == "fast"
+
+
+def _is_llm_free(input: MemorySearchInput) -> bool:
+    """True when the read makes no LLM call: under the fast posture, when the
+    caller asked for an LLM-free read (context.pack) whatever its recipe, or
+    while reads are LLM-free (`LOOM_READS_LLM_FREE`)."""
+    return _is_fast_posture(input) or input._llm_free or reads_llm_free()
