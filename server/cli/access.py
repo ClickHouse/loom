@@ -234,6 +234,7 @@ def _mint_gateway_token(args: argparse.Namespace, ttl_seconds: int | None, jti: 
         "--read-scope": args.read_scope,
         "--read-user-id": args.read_user_id,
         "--traffic-class": args.traffic_class,
+        "--user-token": not args.service_account,  # a gateway token is a service account
     }
     named = [flag for flag, value in claims.items() if value]
     if named:

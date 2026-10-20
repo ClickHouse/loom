@@ -7,8 +7,10 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from typing import Any
 
 from server.auth.grant_claims import admins_change, grant_change, group_change
+from server.core import grant_cache
 from server.core.errors import GrantBusyError, ValidationError
 from server.identity.api.models_grants import (
     GrantsApproveInput,
@@ -566,47 +568,72 @@ async def _decide_request(input: GrantsApproveInput) -> GrantsApproveOutput:
 async def revoke_subject(org: str, subject: str, *, actor: str) -> int:
     """Revoke every live grant naming `subject` in `org` (a deleted group, an
     erased user), each under its grant's claim and audited as `grants.revoke`,
-    versioned above the row it replaces whatever this host's clock says.
-    Reads again until none is live: a grant written meanwhile is revoked too,
-    and one that still stands fails the call (503) for its caller to retry.
-    Returns how many."""
+    from the row read under that claim and versioned above it whatever this
+    host's clock says. Reads again until none is live: a grant written
+    meanwhile is revoked too, and one that still stands fails the call (503)
+    for its caller to retry. Moves the watermark once. Returns how many."""
     from server.core.errors import BackendUnavailableError
     from server.observability import audit
 
     revoked = 0
-    for _ in range(3):
-        rows = await grants_repo.live_rows_of(org, subject)
-        if not rows:
-            return revoked
-        for row in rows:
-            namespace = str(row["namespace"])
-            async with grant_change(org, namespace, subject):
-                now = datetime.now(UTC).replace(tzinfo=None)
-                version = max(_version(), int(row["version"]) + 1)
-                await grants_repo.insert_row({**row, "revoked_at": now, "version": version})
-            await audit.emit(
-                "grants.revoke",
-                org=org,
-                namespace=namespace,
-                actor=actor,
-                subject={"subject": subject},
-            )
-            revoked += 1
-    raise BackendUnavailableError(
-        f"grants of {subject!r} are still live after their revoke; retry", operation="grants.revoke"
-    )
+    try:
+        for _ in range(3):
+            listed = await grants_repo.live_rows_of(org, subject)
+            if not listed:
+                return revoked
+            for namespace in sorted({str(r["namespace"]) for r in listed}):
+                async with grant_change(org, namespace, subject):
+                    row = await grants_repo.newest_row(org, namespace, subject)
+                    if row is None or row["revoked_at"] is not None:
+                        continue  # revoked meanwhile
+                    await grants_repo.insert_row(
+                        {**row, "revoked_at": _now(), "version": _above(row)}, announce=False
+                    )
+                await audit.emit(
+                    "grants.revoke",
+                    org=org,
+                    namespace=namespace,
+                    actor=actor,
+                    subject={"subject": subject},
+                )
+                revoked += 1
+        raise BackendUnavailableError(
+            f"grants of {subject!r} are still live after their revoke; retry",
+            operation="grants.revoke",
+        )
+    finally:
+        if revoked:
+            await grant_cache.changed(org, [subject])
 
 
 async def forget_granter(org: str, granter: str) -> int:
     """Blank `granter` as the issuer of the grants it gave others (an erased
-    user), each under its grant's claim and versioned above the row it
-    replaces. The grants themselves stay: they are the grantees'. Returns how
-    many rows it rewrote."""
-    rewritten = 0
-    for row in await grants_repo.rows_granted_by(org, granter):
-        namespace, subject = str(row["namespace"]), str(row["subject"])
-        async with grant_change(org, namespace, subject):
-            version = max(_version(), int(row["version"]) + 1)
-            await grants_repo.insert_row({**row, "granted_by": "", "version": version})
-        rewritten += 1
-    return rewritten
+    user), each under its grant's claim from the row read there (a revoke or a
+    downgrade that landed meanwhile is kept) and versioned above it. The grants
+    themselves stay: they are the grantees'. Moves the watermark once. Returns
+    how many rows it rewrote."""
+    rewritten: list[str] = []
+    try:
+        for listed in await grants_repo.rows_granted_by(org, granter):
+            namespace, subject = str(listed["namespace"]), str(listed["subject"])
+            async with grant_change(org, namespace, subject):
+                row = await grants_repo.newest_row(org, namespace, subject)
+                if row is None or row["granted_by"] != granter:
+                    continue  # rewritten meanwhile by someone else's grant
+                await grants_repo.insert_row(
+                    {**row, "granted_by": "", "version": _above(row)}, announce=False
+                )
+            rewritten.append(subject)
+    finally:
+        if rewritten:
+            await grant_cache.changed(org, rewritten)
+    return len(rewritten)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _above(row: dict[str, Any]) -> int:
+    """A version above `row`'s whatever this host's clock says."""
+    return max(_version(), int(row["version"]) + 1)

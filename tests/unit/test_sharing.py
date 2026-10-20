@@ -706,73 +706,115 @@ def test_a_scoped_token_may_list_and_create_collections(op_name: str) -> None:
     )
 
 
-def _grants_store(monkeypatch: pytest.MonkeyPatch, live: list[list[dict[str, Any]]]) -> list[dict]:
-    """grants.revoke_subject's store: `live` answers each read in turn."""
+class _GrantRows:
+    """loom.namespace_grants as revoke_subject and forget_granter read it: the
+    newest row per (namespace, subject); `sticky` keeps writes from landing."""
+
+    def __init__(self, *rows: dict[str, Any], sticky: bool = False) -> None:
+        self.rows = {(r["namespace"], r["subject"]): r for r in rows}
+        self.written: list[dict[str, Any]] = []
+        self.sticky = sticky
+        self.moved: list[list[str]] = []
+
+    async def live_rows_of(self, org: str, subject: str, **_k: Any) -> list[dict[str, Any]]:
+        return [r for r in self.rows.values() if r["subject"] == subject and not r["revoked_at"]]
+
+    async def newest_row(self, org: str, ns: str, subject: str, **_k: Any) -> dict | None:
+        return self.rows.get((ns, subject))
+
+    async def rows_granted_by(self, org: str, granter: str, **_k: Any) -> list[dict[str, Any]]:
+        return [r for r in self.rows.values() if r["granted_by"] == granter]
+
+    async def insert_row(self, row: dict[str, Any], **_k: Any) -> None:
+        self.written.append(row)
+        if not self.sticky:
+            self.rows[(row["namespace"], row["subject"])] = row
+
+
+@pytest.fixture
+def grant_rows(monkeypatch: pytest.MonkeyPatch) -> Any:
     from contextlib import asynccontextmanager
 
     from server.identity.app import grants
 
-    written: list[dict[str, Any]] = []
+    def _install(*rows: dict[str, Any], sticky: bool = False) -> _GrantRows:
+        store = _GrantRows(*rows, sticky=sticky)
+        for name in ("live_rows_of", "newest_row", "rows_granted_by", "insert_row"):
+            monkeypatch.setattr(grants.grants_repo, name, getattr(store, name))
 
-    async def _live(*_a: Any, **_k: Any) -> list[dict[str, Any]]:
-        return live.pop(0) if live else []
+        @asynccontextmanager
+        async def _claim(*_a: Any) -> Any:
+            yield
 
-    async def _insert(row: dict[str, Any], **_k: Any) -> None:
-        written.append(row)
+        async def _changed(org: str, subjects: Any = None, **_k: Any) -> None:
+            store.moved.append(list(subjects or []))
 
-    async def _emit(*_a: Any, **_k: Any) -> str:
-        return "h"
+        async def _emit(*_a: Any, **_k: Any) -> str:
+            return "h"
 
-    @asynccontextmanager
-    async def _claim(*_a: Any) -> Any:
-        yield
+        monkeypatch.setattr(grants, "grant_change", _claim)
+        monkeypatch.setattr(grants.grant_cache, "changed", _changed)
+        monkeypatch.setattr("server.observability.audit.emit", _emit)
+        return store
 
-    monkeypatch.setattr(grants.grants_repo, "live_rows_of", _live)
-    monkeypatch.setattr(grants.grants_repo, "insert_row", _insert)
-    monkeypatch.setattr(grants, "grant_change", _claim)
-    monkeypatch.setattr("server.observability.audit.emit", _emit)
-    return written
+    return _install
 
 
-def test_a_revoke_outranks_a_grant_versioned_by_a_faster_clock(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _grant_row(subject: str, **over: Any) -> dict[str, Any]:
+    row = {"org": ORG, "namespace": "col-hr", "subject": subject, "version": 1}
+    row.update({"revoked_at": None, "granted_by": "user:alice", **over})
+    return row
+
+
+def test_a_revoke_outranks_a_grant_versioned_by_a_faster_clock(grant_rows: Any) -> None:
     from server.identity.app.grants import revoke_subject
 
-    ahead = {"org": ORG, "namespace": "col-hr", "subject": "user:bob", "version": 2**62}
-    written = _grants_store(monkeypatch, [[ahead]])
+    store = grant_rows(_grant_row("user:bob", version=2**62))
     assert asyncio.run(revoke_subject(ORG, "user:bob", actor="ops")) == 1
-    assert written[0]["version"] > 2**62 and written[0]["revoked_at"] is not None
+    assert store.written[0]["version"] > 2**62 and store.written[0]["revoked_at"] is not None
+    assert store.moved == [["user:bob"]], "the watermark moves once"
 
 
-def test_a_grant_that_stays_live_after_its_revoke_fails_the_call(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_grant_that_stays_live_after_its_revoke_fails_the_call(grant_rows: Any) -> None:
     from server.core.errors import BackendUnavailableError
     from server.identity.app.grants import revoke_subject
 
-    row = {"org": ORG, "namespace": "col-hr", "subject": "user:bob", "version": 1}
-    _grants_store(monkeypatch, [[row], [row], [row]])  # every read finds it live again
+    grant_rows(_grant_row("user:bob"), sticky=True)  # every read finds it live again
     with pytest.raises(BackendUnavailableError, match="still live"):
         asyncio.run(revoke_subject(ORG, "user:bob", actor="ops"))
 
 
-def test_an_erased_user_is_blanked_as_the_issuer_of_grants_others_hold(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_an_erased_user_is_blanked_as_the_issuer_of_grants_others_hold(grant_rows: Any) -> None:
     from server.identity.app import grants
 
-    issued = {"org": ORG, "namespace": "col-hr", "subject": "user:carol", "version": 5}
-    issued["granted_by"] = "user:bob"
-    written = _grants_store(monkeypatch, [])
-
-    async def _issued(*_a: Any, **_k: Any) -> list[dict[str, Any]]:
-        return [issued]
-
-    monkeypatch.setattr(grants.grants_repo, "rows_granted_by", _issued)
+    store = grant_rows(_grant_row("user:carol", version=5, granted_by="user:bob"))
     assert asyncio.run(grants.forget_granter(ORG, "user:bob")) == 1
-    assert written[0]["granted_by"] == "" and written[0]["subject"] == "user:carol"
-    assert written[0]["version"] > 5 and "revoked_at" not in written[0]
+    [row] = store.written
+    assert (row["granted_by"], row["subject"], row["revoked_at"]) == ("", "user:carol", None)
+    assert row["version"] > 5
+
+
+def test_blanking_the_issuer_keeps_a_revoke_that_landed_meanwhile(
+    grant_rows: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The row is read again under its claim: a revoke written after the list
+    read is carried, never undone by the rewrite."""
+    from datetime import datetime
+
+    from server.identity.app import grants
+
+    listed = _grant_row("user:carol", version=5, granted_by="user:bob")
+    store = grant_rows(listed)
+    revoked = {**listed, "revoked_at": datetime(2026, 1, 2), "version": 6}
+
+    async def _listed(*_a: Any, **_k: Any) -> list[dict[str, Any]]:
+        store.rows[("col-hr", "user:carol")] = revoked  # the revoke lands after this read
+        return [listed]
+
+    monkeypatch.setattr(grants.grants_repo, "rows_granted_by", _listed)
+    asyncio.run(grants.forget_granter(ORG, "user:bob"))
+    [row] = store.written
+    assert row["revoked_at"] == datetime(2026, 1, 2) and row["version"] > 6
 
 
 def test_a_personal_collection_is_not_deleted_as_a_namespace() -> None:
@@ -785,22 +827,29 @@ def test_a_personal_collection_is_not_deleted_as_a_namespace() -> None:
         asyncio.run(handle_namespace_delete(mine))
 
 
+@pytest.mark.parametrize("read", ["tree", "groups_of"])
+@pytest.mark.parametrize(
+    "error", ["BackendUnavailableError", "BackendTimeoutError", "OverloadedError"]
+)
 def test_an_outage_answers_503_for_a_collection_as_for_any_namespace(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, org_state: dict[str, Any], read: str, error: str
 ) -> None:
-    """A service in front of Loom must tell an outage from a revoke: the
-    collection gate and the readable set raise the 503, never a 403 or an
-    empty list."""
-    from server.core.errors import BackendUnavailableError
+    """A service in front of Loom must tell an outage from a revoke: when the
+    tree or the groups cannot be read now (down, past the deadline, out of
+    connections), the collection gate and the readable set raise the 503,
+    never a 403 or an empty list."""
+    from server.core import errors
 
-    async def _down(_org: str) -> sharing.Tree:
-        raise BackendUnavailableError("tree unreadable", operation="tree")
+    failure = getattr(errors, error)
 
-    monkeypatch.setattr(sharing, "tree", _down)
+    async def _down(*_a: Any) -> Any:
+        raise failure("unreadable")
+
+    monkeypatch.setattr(sharing, read, _down)
     user = _user("alice")
-    with pytest.raises(BackendUnavailableError):
+    with pytest.raises(failure):
         asyncio.run(sharing.check(user, Role.VIEWER, ORG, "col-hr"))
-    with pytest.raises(BackendUnavailableError):
+    with pytest.raises(failure):
         asyncio.run(sharing.readable(user, ORG))
 
 
@@ -819,3 +868,36 @@ def test_every_op_an_end_user_reaches_without_a_namespace_is_known() -> None:
         and "namespace" not in o.input_model.model_fields
     )
     assert reachable == ["erasure.status", "memory.get_by_id"], reachable
+
+
+def test_a_collection_whose_create_stopped_short_is_still_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tree row with no directory row (a create cut short) still admits by
+    its grants, so a delete retires it."""
+    from contextlib import asynccontextmanager
+
+    from server.identity.api.models import NamespaceDeleteInput
+    from server.identity.app import collections, namespace
+
+    retired: list[str] = []
+
+    @asynccontextmanager
+    async def _claim(*_a: Any) -> Any:
+        yield
+
+    async def _no_row(*_a: Any, **_k: Any) -> None:
+        return None
+
+    async def _retire(org: str, ns: str) -> bool:
+        retired.append(ns)
+        return True
+
+    monkeypatch.setattr(namespace, "account_change", _claim)
+    monkeypatch.setattr(namespace, "get_client", lambda: object())
+    monkeypatch.setattr(namespace.namespaces_repo, "fetch_row", _no_row)
+    monkeypatch.setattr(collections, "retire", _retire)
+    out = asyncio.run(
+        namespace.handle_namespace_delete(NamespaceDeleteInput(org=ORG, namespace="col-hr"))
+    )
+    assert out.deleted is True and retired == ["col-hr"]

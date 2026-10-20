@@ -301,6 +301,7 @@ def test_serve_runs_with_no_command_context_bound() -> None:
         (["--subject", "user:x"], "grant principal"),
         (["--subject", "sa:chat", "--roles", "writer"], "--roles"),
         (["--subject", "sa:chat", "--read-scope", "own_user"], "--read-scope"),
+        (["--subject", "sa:chat", "--user-token"], "--user-token"),
     ],
 )
 def test_a_gateway_mint_refuses_a_principal_or_a_claim(

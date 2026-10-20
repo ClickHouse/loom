@@ -606,7 +606,13 @@ async def handle_namespace_delete(
         existing = await namespaces_repo.fetch_row(input.org, input.namespace, ch=ch)
         now = naive_utc_now_seconds()
         if existing is None:
-            return NamespaceDeleteOutput(deleted=False, namespace=input.namespace, updated_at=now)
+            # A collection whose create stopped before its directory row still
+            # has a tree row the gate admits by: retire it.
+            from server.auth.sharing import is_collection
+            from server.identity.app.collections import retire
+
+            closed = is_collection(input.namespace) and await retire(input.org, input.namespace)
+            return NamespaceDeleteOutput(deleted=closed, namespace=input.namespace, updated_at=now)
         active = bool(existing.get("active", False))
         if active:
             row = dict(existing)

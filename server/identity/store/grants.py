@@ -19,10 +19,12 @@ from server.identity.domain.grants import GrantState, PendingGrant
 async def insert_row(
     row: dict[str, Any],
     *,
+    announce: bool = True,
     ch: _CHClient | None = None,
 ) -> None:
     """Insert one grant row. Used by both create and revoke (revoke is
-    a new row with `revoked_at` populated + bumped version)."""
+    a new row with `revoked_at` populated + bumped version). `announce=False`
+    leaves the watermark to a caller that writes many rows and moves it once."""
     ch = ch or _default_client()
     try:
         await ch.insert(
@@ -31,7 +33,8 @@ async def insert_row(
             settings={"async_insert": 0, "wait_for_async_insert": 1},
         )
     finally:
-        await _changed([row])  # a reply lost after the write landed still drops it
+        if announce:
+            await _changed([row])  # a reply lost after the write landed still drops it
 
 
 async def insert_rows(
@@ -174,6 +177,23 @@ async def live_rows_of(
             WHERE org = {org:String} AND subject = {sub:String} AND revoked_at IS NULL
             """,
             params={"org": org, "sub": subject},
+        )
+
+
+async def newest_row(
+    org: str, namespace: str, subject: str, *, ch: _CHClient | None = None
+) -> dict[str, Any] | None:
+    """The newest row of one grant, whole, for a rewrite under its claim."""
+    from server.core.ch import own_write_reads
+
+    ch = ch or _default_client()
+    with own_write_reads():
+        return await ch.query_one(
+            """
+            SELECT * FROM loom.namespace_grants FINAL
+            WHERE org = {org:String} AND namespace = {ns:String} AND subject = {sub:String}
+            """,
+            params={"org": org, "ns": namespace, "sub": subject},
         )
 
 

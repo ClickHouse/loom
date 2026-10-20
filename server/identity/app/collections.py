@@ -1,5 +1,6 @@
-"""collection.create, collection.move and collection.list (server/auth/sharing.py
-holds the rules they keep)."""
+"""collection.create, collection.move, collection.list and collection.delete,
+and the retirement a delete ends with (server/auth/sharing.py holds the rules
+they keep)."""
 
 from __future__ import annotations
 
@@ -194,13 +195,13 @@ async def handle_collection_delete(input: CollectionDeleteInput) -> CollectionDe
     return CollectionDeleteOutput(namespace=input.namespace, deleted=out.deleted)
 
 
-async def retire(org: str, namespace: str) -> None:
+async def retire(org: str, namespace: str) -> bool:
     """A deleted collection leaves the tree; its children become top-level,
-    keeping their own grants."""
+    keeping their own grants. False when it was not in the tree."""
     async with collections_change(org):
         current = await collections_repo.fetch(org, namespace)
         if current is None:
-            return
+            return False
         for child in await collections_repo.children(org, namespace):
             await collections_repo.write(
                 collections_repo.collection_row(
@@ -223,3 +224,4 @@ async def retire(org: str, namespace: str) -> None:
             )
         )
     await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
+    return True

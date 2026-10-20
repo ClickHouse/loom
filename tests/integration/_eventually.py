@@ -44,12 +44,20 @@ ACL_OPS = frozenset(
 )
 
 
-def acl_change_adopted() -> None:
+def _acl_bound_s() -> float:
     """A grant, group or collection-tree change binds the server process that
-    made it at once and every other one at its next watermark poll; wait out
-    that bound."""
-    poll = float(os.environ.get("LOOM_ACL_WATERMARK_POLL_SECONDS", "1"))
-    time.sleep(poll + 0.5)
+    made it at once and every other one at its next watermark poll."""
+    return float(os.environ.get("LOOM_ACL_WATERMARK_POLL_SECONDS", "1")) + 0.5
+
+
+def acl_change_adopted() -> None:
+    """Wait out the bound on a grant, group or tree change (`_acl_bound_s`)."""
+    time.sleep(_acl_bound_s())
+
+
+async def acl_change_adopted_async() -> None:
+    """`acl_change_adopted`, for an async test."""
+    await asyncio.sleep(_acl_bound_s())
 
 
 # `max_wait` rather than `timeout` so ruff's ASYNC109 doesn't fire —
