@@ -19,6 +19,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.llm import customer
 from server.tracker.domain.llm_reply import clip, json_object
 
 log = logging.getLogger(__name__)
@@ -110,7 +111,8 @@ async def judge(
     stage: str = "dupcheck_judge",
 ) -> Judgement:
     """One call over the candidates the caller chose (title + body head each).
-    Fails open: `ran=False` and empty labels on any error."""
+    Fails open: `ran=False` and empty labels on any error but a call the
+    model-call switch holds (`customer.HOLDS`), which the request answers."""
     numbers = [int(c.get("number") or 0) for c in candidates if int(c.get("number") or 0) > 0]
     if llm is None or not numbers or not (title or body):
         return Judgement()
@@ -124,6 +126,8 @@ async def judge(
                 max_tokens=80 + 60 * len(numbers),
                 response_format={"type": "json_object"},
             )
+    except customer.HOLDS:
+        raise
     except Exception as e:  # noqa: BLE001 — a judge never breaks the verdict
         log.warning("dupcheck judge failed (open, the fit's verdict stands): %s", e)
         return Judgement(error=f"{type(e).__name__}: {str(e)[:120]}")

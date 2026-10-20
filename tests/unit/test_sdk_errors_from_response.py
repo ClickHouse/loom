@@ -132,6 +132,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "OVERRIDE_NOT_STORED": LoomError,  # a 409 refusal by ClickHouse: no precondition, not retried
     "ENTRY_LEASE_NOT_HELD": PreconditionFailed,  # the uploading pass no longer holds its entry
     "MODEL_CALL_UNATTRIBUTED": BackendUnavailable,  # a 500 with no SDK class: mapped by status
+    "MODEL_CALLS_DISABLED": AuthInsufficient,  # a 403 with no SDK class: mapped by status
 }
 
 

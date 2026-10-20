@@ -11,10 +11,22 @@ probe, the recalibration worker's fixed pairs, a provider check) runs under
 `system()` and names `LOOM_INFERENCE_SYSTEM_CUSTOMER`. A call that names none
 is refused (`Unattributed`), never sent to be billed to no one: one call never
 carries two customers, so a job batching several orgs' rows splits them first.
+
+An org an admin switched off (`org.set_model_calls`, loom.org_model_calls)
+gets no model call at all, header or not, and no cached vector or answer
+either: the switch is a kill switch. `require()`, at the top of every
+sender, checks both before the gateway token, the caches or provider health.
+Each process tries to read the switched-off orgs at most every
+`LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and refuses every call for an org
+(`SwitchUnread`, a BackendUnavailableError) once its copy is older than
+`LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`: the switch fails closed. A call that
+names an org is checked even as the deployment's (`system()`); only a
+deployment call that names none is never switched off.
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import contextvars
 import logging
@@ -22,7 +34,7 @@ import time
 from collections.abc import Iterable, Iterator
 from urllib.parse import quote
 
-from server.core.errors import LoomServerError
+from server.core.errors import BackendUnavailableError, LoomServerError
 from server.observability import genai
 from server.settings import settings
 
@@ -47,6 +59,34 @@ class Unattributed(LoomServerError):
 
     code = "MODEL_CALL_UNATTRIBUTED"
     status_code = 500
+
+
+class ModelCallsDisabled(LoomServerError):
+    """The org's admin switched its model calls off: nothing is sent for it."""
+
+    code = "MODEL_CALLS_DISABLED"
+    status_code = 403
+
+
+class SwitchUnread(BackendUnavailableError):
+    """This process's copy of the switch is too old to trust: no call is made
+    for an org until it is read, and a job leaves its rows as they are."""
+
+
+# What require() holds a call with: a refusal, or a switch it cannot read. None
+# is a provider fault, so a fail-open caller (a reranker, classify) lets these
+# through, and a job leaves its rows as they are to try again later; a queued
+# extraction request naming no customer still fails, since it never clears.
+HOLDS: tuple[type[LoomServerError], ...] = (Unattributed, ModelCallsDisabled, SwitchUnread)
+
+
+# The orgs switched off, as this process last read them, when (monotonic; 0.0 =
+# never read), and when the next read is due (a failed read waits its turn too,
+# so the waiters do not each query in turn).
+_off: frozenset[str] = frozenset()
+_read_at = 0.0
+_next_read = 0.0
+_lock = asyncio.Lock()
 
 
 @contextlib.contextmanager
@@ -76,10 +116,15 @@ def current() -> str:
     return org if org not in _NO_ORG else genai.request_org()
 
 
-def require() -> str:
+async def require() -> str:
     """The customer the current model call is for, checked before anything is
     sent, cached or recorded: "" with no customer header configured. Raises
-    Unattributed, and logs it, when the call names none."""
+    ModelCallsDisabled when the call's org is switched off (header or not),
+    and Unattributed, logged, when a header is configured and the call names
+    no org."""
+    org = current()
+    if org and await switched_off(org):
+        raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
     if not settings.inference_customer_header:
         # Load refuses this pairing; a value set after load still never sends unmetered.
         if settings.inference_customer_required:
@@ -87,7 +132,6 @@ def require() -> str:
                 "LOOM_INFERENCE_CUSTOMER_REQUIRED is set without LOOM_INFERENCE_CUSTOMER_HEADER"
             )
         return ""
-    org = current()
     if org:
         return org
     if _system.get():
@@ -119,11 +163,9 @@ def names_one() -> bool:
 NO_CUSTOMER = "MODEL_CALL_UNATTRIBUTED: the row names no org to bill"
 
 
-def headers() -> dict[str, str]:
-    """The customer and feature headers for one model request; {} with no
-    customer header configured. Raises Unattributed when the call names no
-    customer."""
-    org = require()
+def headers(org: str) -> dict[str, str]:
+    """The customer and feature headers for one model request, for the org
+    `require()` returned; {} when it returned none (no header configured)."""
     if not org:
         return {}
     # An org is named as the gateway knows it; the system customer as configured.
@@ -153,14 +195,69 @@ def feature() -> str:
     return genai.current_operation() or "other"
 
 
-def by_org(orgs: Iterable[str]) -> dict[str, list[int]]:
+async def by_org(orgs: Iterable[str]) -> dict[str, list[int]]:
     """The positions of `orgs` grouped by org, in first-seen order: one model
     call per group, since a call names a single customer. With no customer
-    header nothing reads the customer, so every position is one group."""
+    header nothing reads the customer, so every position is one group, unless
+    an org among them is switched off: then each org is its own group, so the
+    switch refuses that org's call and the others go on."""
     orgs = list(orgs)
-    if not settings.inference_customer_header:
-        return {"": list(range(len(orgs)))} if orgs else {}
+    if not orgs:
+        return {}
+    if not settings.inference_customer_header and set(orgs).isdisjoint(await switched_off_orgs()):
+        return {"": list(range(len(orgs)))}
     out: dict[str, list[int]] = {}
     for i, org in enumerate(orgs):
         out.setdefault(org, []).append(i)
     return out
+
+
+async def switched_off(org: str) -> bool:
+    """Whether `org`'s model calls are switched off. Raises SwitchUnread
+    when this process's copy of the switch is too old to trust."""
+    return org in await switched_off_orgs()
+
+
+async def switched_off_orgs() -> frozenset[str]:
+    """The orgs whose model calls are switched off, for a job to pass over;
+    raises SwitchUnread when this process's copy is too old."""
+    if time.monotonic() >= _next_read:
+        async with _lock:
+            if time.monotonic() >= _next_read:
+                await _read()
+    if not _read_at or time.monotonic() - _read_at > settings.model_calls_policy_max_stale_seconds:
+        raise SwitchUnread("the model-call switch could not be read; model calls wait until it is")
+    return _off
+
+
+async def _read() -> None:
+    global _off, _read_at, _next_read
+    from server.core.ch import get_client, own_write_reads
+
+    _next_read = time.monotonic() + settings.model_calls_policy_refresh_seconds
+    try:
+        # Every org switched off, one row each: never cut short, which would fail open.
+        # Sequentially consistent: the read after `forget_switch` must see the change
+        # just written, and every process's read the newest change on any replica.
+        with own_write_reads():
+            rows = await get_client().query_all(
+                "SELECT org FROM loom.org_model_calls FINAL WHERE enabled = 0"
+            )
+    except Exception as e:  # noqa: BLE001 — the last copy serves until it is too old
+        log.warning("model-call switch: read failed (%s); serving the last copy", e)
+        return
+    _off, _read_at = frozenset(str(r["org"]) for r in rows), time.monotonic()
+
+
+def forget_switch() -> None:
+    """Make the next call read the switch again, for a change just made here.
+    The copy in hand keeps its age, so a failed read serves it as before."""
+    global _next_read
+    _next_read = 0.0
+
+
+def _reset_for_tests(off: frozenset[str] = frozenset(), *, read: bool = True) -> None:
+    global _off, _read_at, _next_read
+    now = time.monotonic()
+    _off, _read_at = off, (now if read else 0.0)
+    _next_read = now + settings.model_calls_policy_refresh_seconds if read else 0.0

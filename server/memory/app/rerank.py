@@ -178,7 +178,8 @@ async def rerank(
     # reranker read as slow retrieval.
     from server.observability.otel import traced
 
-    headers = customer.headers()  # outside the fail-open: a call naming no customer is a bug
+    # Outside the fail-open: a refused call is an error, not a kept order.
+    headers = customer.headers(await customer.require())
     try:
         with traced("rerank.http", candidates=len(candidates), endpoint_host=_host_of(url)):
             refuse_off_gateway(url)  # its own client: the model client's hook never runs
@@ -251,10 +252,11 @@ async def _rerank_with_builtin_cohere(
     }
     from server.observability.otel import traced
 
+    org = await customer.require()  # outside the fail-open: a refusal is an error, not a kept order
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        **customer.headers(),  # outside the fail-open: a call naming no customer is a bug
+        **customer.headers(org),
     }
     try:
         with traced("rerank.cohere", model=model, candidates=len(candidates)):
@@ -342,8 +344,8 @@ async def _rerank_with_builtin_openai(
                 user=user_prompt,
                 max_tokens=rerank_max_tokens,
             )
-    except customer.Unattributed:
-        raise  # a missed path, not a provider fault: never "kept the input order"
+    except customer.HOLDS:
+        raise  # a refusal or an unread switch: never "kept the input order"
     except Exception as e:  # noqa: BLE001 — a failed LLM rerank keeps the input order
         log.warning("builtin:openai rerank failed (%s); fallback", e)
         _degradations.note("rerank:openai", "input_order_kept", e)

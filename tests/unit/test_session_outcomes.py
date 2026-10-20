@@ -188,7 +188,7 @@ async def test_label_sessions_judges_unlabelled_summaries_and_isolates_failures(
     assert (
         "LEFT ANTI JOIN" in sql
         and "loom.session_outcomes" in sql
-        and params == {"days": 7, "lim": 5}
+        and params == {"days": 7, "lim": 5, "off": []}  # no org switched off
     )
     table, rows = ch.inserted[0]
     assert table == OUTCOMES_TABLE

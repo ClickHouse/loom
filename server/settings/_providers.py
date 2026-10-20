@@ -157,6 +157,17 @@ class ProviderSettings(ModelSettings):
     # JSON object from Loom's feature names (hyde, memory.search, worker.embedding, ...)
     # to the gateway's (letters, digits, . _ ~ : @ -); "*" for any other; "" = Loom's.
     inference_feature_map_json: Annotated[str, JsonObject] = ""
+    # Seconds between each process's reads of the orgs whose model calls are
+    # switched off (loom.org_model_calls); a change reaches every process within it.
+    model_calls_policy_refresh_seconds: float = Field(10.0, gt=0)
+    # Seconds a process trusts its copy of that switch when it cannot read it
+    # again; past it, every model call for an org is refused (fail closed). 15 to 300.
+    model_calls_policy_max_stale_seconds: float = Field(60.0, ge=15, le=300)
+    # Days a switched-off org's queued requests (the extraction queue) wait, from
+    # when the org was switched off, before they are dropped, each with a
+    # memory_drops record. 1 to 29: the queue's own 30-day TTL would otherwise
+    # remove them first, with no record.
+    model_calls_off_max_wait_days: int = Field(7, ge=1, le=29)
     # Shared query-embedding cache in loom.embedding_cache behind the per-process LRU,
     # rows keyed (model, sha1(org, model, version salt, normalised text)); a call outside
     # a request skips both tiers. Only single-text (query) embeds up to

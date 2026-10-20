@@ -65,10 +65,12 @@ def where_sql(
     org: str | None,
     namespace: str | None,
     key_only: bool = False,
+    exclude_orgs: frozenset[str] = frozenset(),
 ) -> tuple[str, dict[str, Any]]:
     """Pure: the row filter of a re-embed. Default selects off-model rows;
     `key_only` selects every live row of the scope regardless of model — the
-    value vectors stay, only the key axis is rebuilt."""
+    value vectors stay, only the key axis is rebuilt. `exclude_orgs` (orgs
+    whose model calls are switched off) leaves their rows for a later run."""
     where = [] if key_only else [f"embedding_model != '{model}'"]
     where.append("embedding_dim > 0")
     params: dict[str, Any] = {}
@@ -80,6 +82,9 @@ def where_sql(
     if namespace:
         where.append("namespace = {ns:String}")
         params["ns"] = namespace
+    if exclude_orgs:
+        where.append("NOT has({off:Array(String)}, org)")
+        params["off"] = sorted(exclude_orgs)
     return " AND ".join(where), params
 
 
@@ -184,6 +189,7 @@ async def reembed_table_in_database(
     org: str | None = None,
     namespace: str | None = None,
     dry_run: bool = False,
+    exclude_orgs: frozenset[str] = frozenset(),
     log: Callable[..., None] = print,
 ) -> int:
     """Re-embed one table's off-model rows inside ClickHouse.
@@ -201,6 +207,9 @@ async def reembed_table_in_database(
     if namespace:
         where.append("namespace = {ns:String}")
         params["ns"] = namespace
+    if exclude_orgs:  # aiEmbed calls the provider too: a switched-off org's rows wait
+        where.append("NOT has({off:Array(String)}, org)")
+        params["off"] = sorted(exclude_orgs)
     where_sql = " AND ".join(where)
     total = (
         await ch.query_one(
@@ -241,11 +250,14 @@ async def reembed_table(
     dry_run: bool = False,
     key_only: bool = False,
     start_after: list[str] | None = None,
+    exclude_orgs: frozenset[str] = frozenset(),
+    left_orgs: set[str] | None = None,
     log: Callable[..., None] = print,
 ) -> int:
     """Re-embed one table's off-model rows to `embedder`. Returns rows written.
     Pages of `batch` rows in sort-key order; `start_after` (a resume token's
-    key) continues after that row.
+    key) continues after that row. `left_orgs` collects the orgs switched off
+    during the run whose rows were left unwritten.
     `key_only`: every live row of the scope gets its key-axis vector rebuilt
     from `key_axis_text` (the value vector is kept); tables without a key
     axis are skipped."""
@@ -254,7 +266,9 @@ async def reembed_table(
         return 0
     model, dim = embedder.model_name, embedder.dim
     cols = await _cols(ch, table)
-    where_clause, params = where_sql(cols, model, org=org, namespace=namespace, key_only=key_only)
+    where_clause, params = where_sql(
+        cols, model, org=org, namespace=namespace, key_only=key_only, exclude_orgs=exclude_orgs
+    )
     total = (
         await ch.query_one(
             f"SELECT count() AS n FROM loom.{table} FINAL WHERE {where_clause}", params=params
@@ -285,8 +299,15 @@ async def reembed_table(
         )
         if not rows:
             break
-        await _rewrite_page(ch, embedder, table, [_without_key(r) for r in rows], key_only)
-        written += len(rows)
+        left = await _rewrite_page(ch, embedder, table, [_without_key(r) for r in rows], key_only)
+        written += len(rows) - sum(left.values())
+        if left:
+            if left_orgs is not None:
+                left_orgs.update(left)
+            log(
+                f"  {table}: {sum(left.values())} rows of an org switched off during the run "
+                "left for later"
+            )
         after = [str(x) for x in rows[-1]["_k"]]
         log(f"  {table}: {written}/{total}  resume: {encode_resume(table, after)}")
         if len(rows) < batch:
@@ -300,28 +321,42 @@ def _without_key(row: dict[str, Any]) -> dict[str, Any]:
 
 async def _rewrite_page(
     ch: Any, embedder: Any, table: str, chunk: list[dict[str, Any]], key_only: bool
-) -> None:
+) -> dict[str, int]:
+    """Re-embed and write `chunk`; returns the rows it left unwritten per org,
+    of an org whose model calls were switched off during the run."""
     cfg = _TABLES[table]
     model, dim = embedder.model_name, embedder.dim
     vecs: list[list[float]] | None = [[] for _ in chunk] if not key_only else None
     kvecs: list[list[float]] | None = [[] for _ in chunk] if cfg.get("key_text") else None
     # A page can span two orgs (the keyset leads with org): one call per org,
     # since a model call names a single customer.
-    for org, positions in customer.by_org(str(r.get("org") or "") for r in chunk).items():
-        with customer.for_org(org):
-            if vecs is not None:
-                texts = [str(chunk[i].get(cfg["text"]) or "") for i in positions]
-                for i, v in zip(positions, await embedder.embed_many(texts), strict=True):
-                    vecs[i] = v
-            if kvecs is not None:
-                keys = [_key_input(chunk[i]) for i in positions]
-                for i, v in zip(positions, await embedder.embed_many(keys), strict=True):
-                    kvecs[i] = v
+    left: set[int] = set()
+    left_by_org: dict[str, int] = {}
+    groups = await customer.by_org(str(r.get("org") or "") for r in chunk)
+    for org, positions in groups.items():
+        try:
+            with customer.for_org(org):
+                if vecs is not None:
+                    texts = [str(chunk[i].get(cfg["text"]) or "") for i in positions]
+                    for i, v in zip(positions, await embedder.embed_many(texts), strict=True):
+                        vecs[i] = v
+                if kvecs is not None:
+                    keys = [_key_input(chunk[i]) for i in positions]
+                    for i, v in zip(positions, await embedder.embed_many(keys), strict=True):
+                        kvecs[i] = v
+        except customer.ModelCallsDisabled:
+            left.update(positions)  # switched off since the run began: its rows wait
+            left_by_org[org] = len(positions)
     out = [
         rewrite_row(r, cfg, model, dim, vecs[i] if vecs else None, kvecs[i] if kvecs else None)
         for i, r in enumerate(chunk)
+        if i not in left
     ]
-    await ch.insert(f"loom.{table}", out, settings={"async_insert": 0, "wait_for_async_insert": 1})
+    if out:
+        await ch.insert(
+            f"loom.{table}", out, settings={"async_insert": 0, "wait_for_async_insert": 1}
+        )
+    return left_by_org
 
 
 # Each table's sort key as strings (the Enum `scope` by name), the keyset a
@@ -361,8 +396,16 @@ def decode_resume(token: str) -> tuple[str, list[str]]:
 
 
 async def delete_off_model(
-    ch: Any, table: str, model: str, *, org: str | None = None, namespace: str | None = None
+    ch: Any,
+    table: str,
+    model: str,
+    *,
+    org: str | None = None,
+    namespace: str | None = None,
+    keep_orgs: frozenset[str] = frozenset(),
 ) -> None:
+    """Delete the off-model rows a run replaced. `keep_orgs`: orgs whose rows
+    the run left unwritten (switched off); their old vectors are all they have."""
     where = [f"embedding_model != '{model}'"]
     params: dict[str, Any] = {}
     if org:
@@ -371,6 +414,9 @@ async def delete_off_model(
     if namespace:
         where.append("namespace = {ns:String}")
         params["ns"] = namespace
+    if keep_orgs:
+        where.append("NOT has({off:Array(String)}, org)")
+        params["off"] = sorted(keep_orgs)
     await ch.execute(f"DELETE FROM loom.{table} WHERE {' AND '.join(where)}", params=params)
 
 
@@ -400,6 +446,12 @@ async def reembed_all(
     for table in _TABLES:
         await codes_state.refuse_width(table, embedder.dim)
     written: dict[str, int] = {}
+    # A switched-off org's rows are left out and wait for a later run.
+    off = await customer.switched_off_orgs()
+    if org:
+        off = off & {org}
+    waiting = 0
+    left_orgs: set[str] = set()
     resume_table, resume_key = decode_resume(resume) if resume else ("", None)
     tables = list(_TABLES)
     if resume_table:
@@ -417,6 +469,7 @@ async def reembed_all(
                 org=org,
                 namespace=namespace,
                 dry_run=dry_run,
+                exclude_orgs=off,
                 log=log,
             )
         else:
@@ -430,10 +483,44 @@ async def reembed_all(
                 dry_run=dry_run,
                 key_only=key_only,
                 start_after=resume_key if table == resume_table else None,
+                exclude_orgs=off,
+                left_orgs=left_orgs,
                 log=log,
             )
+        if off:
+            waiting += await _waiting(ch, table, embedder.model_name, off, org, namespace, key_only)
+    if off:
+        written["skipped_switched_off"] = waiting
+        log(f"{waiting} rows of {len(off)} switched-off org(s) left for a later run")
     if delete_old and not dry_run:
+        # Every org whose rows wait keeps its old vectors: off at the start, off
+        # during the run, or off by now.
+        keep = frozenset(off | left_orgs | await customer.switched_off_orgs())
         for table in _TABLES:
-            await delete_off_model(ch, table, embedder.model_name, org=org, namespace=namespace)
+            await delete_off_model(
+                ch, table, embedder.model_name, org=org, namespace=namespace, keep_orgs=keep
+            )
             log(f"[{table}] deleted off-model rows")
     return written
+
+
+async def _waiting(
+    ch: Any,
+    table: str,
+    model: str,
+    off: frozenset[str],
+    org: str | None,
+    namespace: str | None,
+    key_only: bool,
+) -> int:
+    """The rows of `table` a run left out because their org is switched off."""
+    if key_only and not _TABLES[table].get("key_text"):
+        return 0
+    cols = await _cols(ch, table)
+    where_clause, params = where_sql(cols, model, org=org, namespace=namespace, key_only=key_only)
+    row = await ch.query_one(
+        f"SELECT count() AS n FROM loom.{table} FINAL "
+        f"WHERE {where_clause} AND has({{off:Array(String)}}, org)",
+        params={**params, "off": sorted(off)},
+    )
+    return int((row or {}).get("n") or 0)

@@ -47,6 +47,7 @@ async def run_pass(
 
         failures = await scan_active_projection_failures(
             limit=max(1, int(cfg.max_failures_per_pass)),
+            exclude_orgs=await customer.switched_off_orgs(),  # theirs wait, taking no slot
         )
         result.scanned = len(failures)
         for failure in failures:

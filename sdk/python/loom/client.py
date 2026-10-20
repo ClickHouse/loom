@@ -2176,6 +2176,33 @@ class OpsOps:
         )
 
 
+class OrgOps:
+    """The `org.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def model_calls(
+        self, body: _ops.OrgModelCallsBody | None = None, /, **options: Any
+    ) -> _ops.OrgModelCallsOutput:
+        """`org.model_calls`."""
+        return cast(
+            "_ops.OrgModelCallsOutput", await self._agent.call("org.model_calls", body, **options)
+        )
+
+    async def set_model_calls(
+        self, body: _ops.OrgSetModelCallsBody | None = None, /, **options: Any
+    ) -> _ops.OrgModelCallsOutput:
+        """`org.set_model_calls`."""
+        return cast(
+            "_ops.OrgModelCallsOutput",
+            await self._agent.call("org.set_model_calls", body, **options),
+        )
+
+
 class PolicyOps:
     """The `policy.*` operations."""
 
@@ -2879,6 +2906,7 @@ class OpsClient:
         self.namespace = NamespaceOps(agent)
         self.observe = ObserveOps(agent)
         self.ops = OpsOps(agent)
+        self.org = OrgOps(agent)
         self.policy = PolicyOps(agent)
         self.procedure = ProcedureOps(agent)
         self.profile = ProfileOps(agent)

@@ -284,6 +284,25 @@ the shared HTTP client also carries non-model calls, which name no customer.
   give up on a row that names no org at once, recording that error with no model call, since a
   retry cannot help and the refusal is not a provider failure.
 
+- **An org switched off makes no call.** `org.set_model_calls` writes `loom.org_model_calls`;
+  `customer.require()`, first in every sender (before the gateway token, the embedding caches
+  and provider health), checks the call's org against each process's copy of the switched-off
+  orgs (`customer.switched_off_orgs`). A cached vector or answer is refused too: the switch is
+  a kill switch, so nothing model-made reaches the org. The copy is read at most every
+  `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted no longer than
+  `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`, past which every model call for an org is
+  refused (`customer.SwitchUnread`). A job treats that as it treats a switch-off
+  (`customer.HOLDS`): its rows stay as they are with no attempt spent, a rebuild step runs
+  again, and a fail-open reranker, classifier or judge lets it through. Every job leaves a
+  switched-off org out when it selects work (in the query, so its rows neither spend attempts
+  nor fill the batch ahead of other orgs); code ingest skips its repositories, freezing its
+  whole code index. A conflict mark older than the sweep's hour when the org comes back is past
+  the sweep, as a judge lost in an outage is: the write stands as made. The check runs in
+  `require()`, before provider-health recording, so a refusal is never a provider failure. With
+  no customer header a job's batch of several orgs is one call, unless an org in it is switched
+  off: `customer.by_org` then splits it by org, so the switch refuses that org's call and the
+  others go on.
+
 **Why headers, not a token per customer.** The gateway already knows Loom as one service
 (its token); a credential per org would mean thousands to issue, rotate and revoke for no
 gain in what the gateway can check. The org in the header is the org the request addresses,

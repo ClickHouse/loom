@@ -11,6 +11,8 @@ Contract:
     call from sync helpers and from any async context; a failure to
     schedule or flush is logged at debug and the drop is kept in the buffer
     for the next flush (or discarded when the buffer is over its cap).
+  * `write_drops` is the exception, for a caller whose drop must not be
+    lost: it inserts synchronously and raises, so the caller keeps the item.
   * Stage and reason are bounded enums by convention — they land in
     LowCardinality columns and OTel attributes. Free text goes in `item`
     (a memory key, field name, ...), which is NEVER used as a metric label.
@@ -46,6 +48,29 @@ _lock = threading.Lock()
 _flush_scheduled = False
 
 
+def _row(org: str, namespace: str, stage: str, reason: str, item: str, n: int) -> dict[str, Any]:
+    return {
+        "org": str(org or ""),
+        "namespace": str(namespace or ""),
+        "stage": str(stage or "")[:64],
+        "reason": str(reason or "")[:64],
+        "item": str(item or "")[:_ITEM_MAX_LEN],
+        "n": int(n),
+        "ts": naive_utc_now(),
+    }
+
+
+def _count(row: dict[str, Any]) -> None:
+    try:
+        from server.observability.metrics import record_memory_drop
+
+        record_memory_drop(
+            namespace=row["namespace"], stage=row["stage"], reason=row["reason"], n=row["n"]
+        )
+    except Exception as e:  # noqa: BLE001 — the metric must not lose the drop row
+        log.debug("drops: metric emit failed: %s", e)
+
+
 def record_drop(
     org: str,
     namespace: str,
@@ -64,23 +89,8 @@ def record_drop(
     try:
         if n <= 0:
             return
-        row: dict[str, Any] = {
-            "org": str(org or ""),
-            "namespace": str(namespace or ""),
-            "stage": str(stage or "")[:64],
-            "reason": str(reason or "")[:64],
-            "item": str(item or "")[:_ITEM_MAX_LEN],
-            "n": int(n),
-            "ts": naive_utc_now(),
-        }
-        try:
-            from server.observability.metrics import record_memory_drop
-
-            record_memory_drop(
-                namespace=row["namespace"], stage=row["stage"], reason=row["reason"], n=row["n"]
-            )
-        except Exception as e:  # noqa: BLE001 — the metric must not lose the drop row
-            log.debug("drops: metric emit failed: %s", e)
+        row = _row(org, namespace, stage, reason, item, n)
+        _count(row)
         with _lock:
             if len(_buffer) >= _BUFFER_CAP:
                 log.debug("drops: buffer over cap (%d); discarding oldest row", _BUFFER_CAP)
@@ -146,6 +156,23 @@ async def _flush_and_rearm() -> None:
             if not _flush_later(_FLUSH_DELAY_S):
                 with _lock:
                     _flush_scheduled = False
+
+
+async def write_drops(
+    items: list[tuple[str, str, str]], stage: str, reason: str, *, ch: Any | None = None
+) -> None:
+    """Write one row per `(org, namespace, item)` now, synchronously; raises
+    when ClickHouse does not take them, so the caller can keep the items."""
+    from server.core.ch import get_client
+
+    rows = [_row(org, ns, stage, reason, item, 1) for org, ns, item in items]
+    if not rows:
+        return
+    await (ch or get_client()).insert(
+        TABLE, rows, settings={"async_insert": 0, "wait_for_async_insert": 1}
+    )
+    for row in rows:
+        _count(row)
 
 
 async def flush_drops() -> int:

@@ -1259,6 +1259,19 @@
             ]
           }
         },
+        "org": {
+          "class": "OrgOps",
+          "methods": {
+            "model_calls": [
+              "body",
+              "options"
+            ],
+            "set_model_calls": [
+              "body",
+              "options"
+            ]
+          }
+        },
         "policy": {
           "class": "PolicyOps",
           "methods": {

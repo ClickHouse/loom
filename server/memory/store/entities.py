@@ -30,6 +30,7 @@ async def find_unentitied_keys(
     namespace_filter: str | None = None,
     since_seconds: int | None = None,
     per_namespace: int | None = None,
+    exclude_orgs: frozenset[str] = frozenset(),
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Phase one of the entity extractor's candidate read:
@@ -48,6 +49,9 @@ async def find_unentitied_keys(
     if namespace_filter is not None:
         extra_where += " AND namespace = {ns_filter:String}"
         params["ns_filter"] = namespace_filter
+    if exclude_orgs:  # orgs whose model calls are switched off keep their rows for later
+        extra_where += " AND org NOT IN {exclude_orgs:Array(String)}"
+        params["exclude_orgs"] = sorted(exclude_orgs)
     if since_seconds is not None and since_seconds > 0:
         extra_where += " AND m.created_at > now() - toIntervalSecond({since_s:UInt32})"
         params["since_s"] = int(since_seconds)
@@ -130,6 +134,7 @@ async def find_unentitied_memories(
     org_filter: str | None = None,
     namespace_filter: str | None = None,
     since_seconds: int | None = None,
+    exclude_orgs: frozenset[str] = frozenset(),
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Memories whose entities[] array is still empty: phase one then phase
@@ -141,6 +146,7 @@ async def find_unentitied_memories(
         org_filter=org_filter,
         namespace_filter=namespace_filter,
         since_seconds=since_seconds,
+        exclude_orgs=exclude_orgs,
         ch=ch,
     )
     return await read_unentitied_rows(keys, ch=ch)

@@ -313,7 +313,63 @@ LOOM_INFERENCE_FEATURE_MAP_JSON='{"hyde": "search", "*": "memory"}'  # Loom's fe
 - An org id is sent percent-encoded where it needs to be.
 
 Cached answers make no call: an embedding or a model answer served from Loom's
-cache is not metered again.
+cache is not metered again. The customer is still checked before the cache, so a
+path that names none is refused even on a hit.
+
+#### Switching an org's model calls off
+
+An org admin can stop every model call for the org's data, with or without a
+gateway:
+
+```bash
+curl -s -X POST "$LOOM_BASE_URL/v1/org.set_model_calls" -H "Authorization: Bearer $ORG_ADMIN_TOKEN" \
+  -d '{"org":"acme","enabled":false,"reason":"customer turned AI off"}'
+```
+
+- While off, no chat, embedding, rerank or classify request is sent for the
+  org, and no cached vector or answer is served to it either: the switch is a
+  kill switch. A request that needs one is refused (403 `MODEL_CALLS_DISABLED`):
+  `memory.set` of a memory that is embedded on write, or in a namespace with a
+  classify endpoint, `memory.search`, and `tracker.similar`,
+  `tracker.duplicate_check` and `code.bisect_candidates` when they embed, judge
+  or rerank, among them. A read by key (`memory.get`) and a delete make no
+  model call and answer.
+  The local embedder runs in-process and sends nothing, but it is switched off
+  too. A call that names the org is checked even when Loom makes it for itself;
+  only its own calls that name no org (the startup check, calibration) go on.
+- `"enabled": true` switches it back on, and the waiting work runs.
+- **A platform admin's lock.** A platform admin can add `"locked": true`: the
+  org's own admins can then still switch it off, but switching it back on or
+  unlocking it is refused (403, naming who locked it) until a platform admin
+  sends `"locked": false`. A platform admin's change that sends no `locked`
+  keeps the lock. [`org.model_calls`](../reference/operations/org.md#orgmodel_calls)
+  reads the setting, the lock and who set it.
+- **Offboarding an org** is manual: a platform admin sends
+  `"enabled": false, "locked": true`. The org's cached query vectors expire
+  after 30 days. No Loom path switches an org off by itself.
+- Every server applies a change within `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`
+  (default 10; the process that took it, on its next call). A server that
+  cannot read the switch for longer than
+  `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` (default 60, 15 to 300) makes no
+  model call for any org until it can.
+- Switch an org off only once every replica runs a build that knows the
+  switch: an older one keeps calling models for the org.
+
+What waits, and for how long, while an org is off:
+
+| Work                                                                                                      | While the org is off                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Memory embeddings (the embedding worker)                                                                  | Not picked: the memories stay, without a vector, and are embedded once the org is back on. Never dropped.                                                                                                                                                                                                                                                                                                                                                        |
+| Extraction requests (the extraction queue)                                                                | Stay pending, unclaimed. Once a request has waited `LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS` (default 7, 1 to 29) since it was queued and since the org was switched off, it is marked failed with a `memory_drops` record, reason `model_calls_off`. The record is written synchronously first: a request whose record cannot be written stays pending. The limit stays under 30 days because the queue's 30-day TTL would remove the request first, with no record. |
+| Entity tagging, profile folds, period digests, conversation titles, reflections, observation distillation | Not selected; done once the org is back on. They are derived from rows that stay, so nothing is dropped.                                                                                                                                                                                                                                                                                                                                                         |
+| Projection repairs                                                                                        | Not scanned; retried once the org is back on.                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Pending conflict judgements                                                                               | Not re-judged. One older than the sweep's hour when the org comes back is past the sweep, as a judgement lost in an outage is: the write stands as made.                                                                                                                                                                                                                                                                                                         |
+| Code ingest, code summaries, code embedding recovery                                                      | The org's repositories are skipped, so its whole code index, lexical search included, stays as it was. A stub the recovery scan moved past is found by its periodic full scan.                                                                                                                                                                                                                                                                                   |
+| Code-link judgements                                                                                      | Left due.                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Tracker embeddings, tracker link scoring                                                                  | The namespace is skipped before its cursor moves.                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Retrieval-judge samples                                                                                   | Dropped: a sample is not owed work.                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `loom reembed`                                                                                            | The org's rows are left out, counted (`skipped_switched_off`) and reported; run it again once the org is back on. `--delete-old` keeps the old vectors of every org whose rows it left.                                                                                                                                                                                                                                                                          |
+| A model change's rebuild                                                                                  | Completes; the org's rows are staged without a vector and counted in the rebuild's progress (`rows_waiting`). Once the org is back on, memory embeddings, code chunks and code summaries are embedded again by their recovery workers; a row of any other table has no vector until it is written again or a later rebuild covers it.                                                                                                                            |
 
 #### Without a workload token
 

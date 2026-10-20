@@ -65,6 +65,7 @@ def _cmd_tracker_dupcheck_fit(args: argparse.Namespace) -> int:
         raise SystemExit("no tracker org: pass --org or set LOOM_TRACKER_ORG")
 
     async def _run(ch: Any) -> tuple[int, dict[str, Any]]:
+        from server.llm import customer
         from server.tracker.app import dupcheck_fit as df
         from server.tracker.app.source import tracker_source
         from server.tracker.store.source import qa_intel
@@ -76,16 +77,19 @@ def _cmd_tracker_dupcheck_fit(args: argparse.Namespace) -> int:
             if done % 25 == 0 or done == total:
                 print(f"  replayed {done}/{total}", file=sys.stderr)
 
-        out = await df.refit_namespace(
-            src,
-            df.state_repo(),
-            org,
-            args.namespace,
-            force=True,
-            write=not args.dry_run,
-            negatives=args.negatives,
-            progress=progress,
-        )
+        # The replay embeds the org's issue text: its model calls name the org, so the
+        # switch holds them and the command fails rather than send them.
+        with customer.for_org(org):
+            out = await df.refit_namespace(
+                src,
+                df.state_repo(),
+                org,
+                args.namespace,
+                force=True,
+                write=not args.dry_run,
+                negatives=args.negatives,
+                progress=progress,
+            )
         fit = dict(out.fit or {})
         shown = {k: v for k, v in fit.items() if k != "curve"}
         shown["curve"] = [

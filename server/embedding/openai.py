@@ -86,7 +86,7 @@ class OpenAIEmbedder:
             payload["dimensions"] = width
         return payload
 
-    async def _post(self, payload: dict[str, object]) -> dict[str, Any]:
+    async def _post(self, payload: dict[str, object], org: str) -> dict[str, Any]:
         from server.settings import settings
 
         url = f"{settings.openai_base_url.rstrip('/')}/embeddings"
@@ -94,7 +94,10 @@ class OpenAIEmbedder:
         resp = await _http_client().post(
             url,
             json=payload,
-            headers={"Authorization": f"Bearer {bearer}", **customer.headers()},
+            headers={
+                "Authorization": f"Bearer {bearer}",
+                **customer.headers(org),
+            },
         )
         _raise_for_status(resp, _HEALTH)
         data: dict[str, Any] = resp.json()
@@ -103,15 +106,15 @@ class OpenAIEmbedder:
     async def _embed_one_raw(self, text: str) -> list[float]:
         # Outside `recording`: an oversized text, or a call naming no customer,
         # is the caller's to fix, not a provider failure for /v1/health to report.
-        customer.require()
+        org = await customer.require()
         check_size(text, _MAX_INPUT_TOKENS, "OpenAI text-embedding-3")
         with recording(_HEALTH):
-            return await self._embed_one_raw_inner(text)
+            return await self._embed_one_raw_inner(text, org)
 
-    async def _embed_one_raw_inner(self, text: str) -> list[float]:
+    async def _embed_one_raw_inner(self, text: str, org: str) -> list[float]:
         async for attempt in retrying():
             with attempt:
-                data = await self._post(self._payload(text))
+                data = await self._post(self._payload(text), org)
                 self._last_billed_tokens = _report_billed(self.model_name, data)
                 return vector(data["data"][0]["embedding"], self._pinned_width())
         raise RuntimeError("embedding retry loop exited without result")
@@ -151,7 +154,7 @@ class OpenAIEmbedder:
     async def _embed_many_raw(self, texts: list[str]) -> tuple[list[list[float]], int, list[str]]:
         """`(vectors in input order, billed_tokens, cache_hit_texts)`; misses go
         to the API `_OPENAI_BATCH_LIMIT` at a time."""
-        customer.require()  # before the cache: a hit must not hide a missed path
+        org = await customer.require()  # before the cache: a hit must not hide a missed path
         results, misses, hits = split_cached(self.model_name, texts)
         billed = 0
         for start in range(0, len(misses), _OPENAI_BATCH_LIMIT):
@@ -163,7 +166,7 @@ class OpenAIEmbedder:
             with recording(_HEALTH):
                 async for attempt in retrying():
                     with attempt:
-                        data = await self._post(self._payload([t for _, t in batch]))
+                        data = await self._post(self._payload([t for _, t in batch]), org)
                 billed += _report_billed(self.model_name, data)
                 self._store_batch(results, batch, list(data["data"]))
         return filled(results), billed, hits

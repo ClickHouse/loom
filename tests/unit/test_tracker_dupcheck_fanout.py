@@ -221,6 +221,37 @@ async def test_a_failing_secondary_namespace_is_dropped_and_a_failing_bound_one_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("held", ["switched_off", "unread"])
+async def test_a_held_secondary_namespace_answers_the_refusal(monkeypatch, held) -> None:
+    from server.llm import customer
+
+    error = (
+        customer.ModelCallsDisabled("model calls are switched off for org 'clickhouse'")
+        if held == "switched_off"
+        else customer.SwitchUnread("the model-call switch could not be read")
+    )
+    _wire_namespaces(monkeypatch, readable={PRIV, PUB})
+    monkeypatch.setattr(settings, "tracker_dupcheck_fanout_namespaces", 4)
+
+    async def _bind(input):
+        return input.model_copy(update={"namespace": PRIV})
+
+    monkeypatch.setattr(tcommon, "_bound_input", _bind)
+    monkeypatch.setattr(tcommon, "_with_default_org", lambda i: i)
+
+    async def _one(input, wall, **_kw):
+        if input.namespace == PUB:
+            raise error  # the public record's judge or embed is held
+        return _out("none", [])
+
+    monkeypatch.setattr(hd, "_check_one", _one)
+    with pytest.raises(type(error)):  # not the private record's answer alone
+        await hd.handle_tracker_duplicate_check(
+            TrackerDuplicateCheckInput(org=ORG, namespace="code-example-private", title="x")
+        )
+
+
+@pytest.mark.asyncio
 async def test_a_namespace_with_no_tracker_of_its_own_reads_no_other_repositorys(
     monkeypatch,
 ) -> None:

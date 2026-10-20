@@ -6770,6 +6770,27 @@ export interface OpsProjectionFailuresRetryOutput {
   resolved: number;
 }
 
+export interface OrgModelCallsInput {
+  org: string;
+}
+
+export interface OrgModelCallsOutput {
+  org: string;
+  enabled: boolean;
+  reason?: string;
+  updated_by?: string;
+  updated_at?: string | null;
+  locked?: boolean;
+  locked_by?: string;
+}
+
+export interface OrgSetModelCallsInput {
+  org: string;
+  enabled: boolean;
+  reason?: string;
+  locked?: boolean | null;
+}
+
 export interface PolicyCheckInput {
   org: string;
   namespace: string;
@@ -8644,6 +8665,8 @@ export type OpName =
   | "ops.projection_failures.list"
   | "ops.projection_failures.resolve"
   | "ops.projection_failures.retry"
+  | "org.model_calls"
+  | "org.set_model_calls"
   | "policy.check"
   | "policy.decisions"
   | "policy.delete"
@@ -8953,6 +8976,8 @@ export interface OpMap {
   "ops.projection_failures.list": { input: OpsProjectionFailuresListInput; output: OpsProjectionFailuresListOutput };
   "ops.projection_failures.resolve": { input: OpsProjectionFailuresResolveInput; output: OpsProjectionFailuresResolveOutput };
   "ops.projection_failures.retry": { input: OpsProjectionFailuresRetryInput; output: OpsProjectionFailuresRetryOutput };
+  "org.model_calls": { input: OrgModelCallsInput; output: OrgModelCallsOutput };
+  "org.set_model_calls": { input: OrgSetModelCallsInput; output: OrgModelCallsOutput };
   "policy.check": { input: PolicyCheckInput; output: PolicyCheckOutput };
   "policy.decisions": { input: PolicyDecisionsInput; output: PolicyDecisionsOutput };
   "policy.delete": { input: PolicyDeleteInput; output: PolicyDeleteOutput };
@@ -9262,6 +9287,8 @@ export const OPS: readonly OpSpec[] = [
   { name: "ops.projection_failures.list", group: "ops", method: "projectionFailuresList", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: false },
   { name: "ops.projection_failures.resolve", group: "ops", method: "projectionFailuresResolve", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 500, audit: true, readOnly: false },
   { name: "ops.projection_failures.retry", group: "ops", method: "projectionFailuresRetry", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 3000, audit: true, readOnly: false },
+  { name: "org.model_calls", group: "org", method: "modelCalls", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: false },
+  { name: "org.set_model_calls", group: "org", method: "setModelCalls", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "policy.check", group: "policy", method: "check", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 500, audit: false, readOnly: true },
   { name: "policy.decisions", group: "policy", method: "decisions", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
   { name: "policy.delete", group: "policy", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
@@ -9343,4 +9370,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 306;
+export const GENERATED_OP_COUNT = 308;

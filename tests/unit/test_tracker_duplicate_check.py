@@ -1767,3 +1767,54 @@ async def test_a_failed_hydrate_marks_the_legs_whose_rows_it_dropped() -> None:
         "fix_path": "tracker_unavailable",
     }
     assert hd_answer._epistemic({"coef": {}}, status) == "degraded"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held", ["switched_off", "unread"])
+async def test_a_refit_whose_vector_leg_is_held_raises_and_stores_nothing(
+    monkeypatch, held
+) -> None:
+    """The replay's vector leg embeds each gold query: a call the model-call switch
+    holds is no outage of the leg, so the refit raises it (the links pass skips the
+    namespace) rather than fitting, or degrading, without vectors."""
+    from server.llm import customer
+
+    error = (
+        customer.ModelCallsDisabled("model calls are switched off for org 'clickhouse'")
+        if held == "switched_off"
+        else customer.SwitchUnread("the model-call switch could not be read")
+    )
+    monkeypatch.setattr(df, "PACE_S", 0.0)
+    monkeypatch.setattr(df, "MIN_POSITIVES", 1)
+    monkeypatch.setattr(settings, "tracker_similar_vector_leg", True, raising=False)
+    s = _Src()
+    monkeypatch.setattr(tsrc, "tracker_source", lambda org, ns: s)
+    s.gold = [{"number": 117352, "created_at": T0, "targets": [31768], "label": 1}]
+    s.items[117352] = _item(117352, "avgWeighted incorrect float", 0)
+
+    class _Repo:
+        async def stored_vector(self, org, ns, kind, number):
+            return None  # the query text is embedded
+
+        async def namespace_stats(self, org, ns):
+            return {"live": 10, "dead": 0, "last_updated": None, "dims": []}
+
+    class _Refusing:
+        model_name, dim = "fake-ngram-8", 8
+
+        async def embed(self, text):
+            raise error
+
+    class _NoCursor:
+        async def get(self, org, ns, kind):
+            return None
+
+    monkeypatch.setattr(tsim, "_embed_repo", lambda: _Repo())
+    monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: _Refusing())
+    monkeypatch.setattr(
+        "server.tracker.app.embed_index.cursor_state", lambda code_repo=None: _NoCursor()
+    )
+    state = _State()
+    with pytest.raises(type(error)):
+        await df.refit_namespace(s, state, ORG, NS, now=T0, negatives=0)
+    assert not state.rows

@@ -37,6 +37,9 @@ SETTLED = "settled"
 SETTLE_OPERATION = "memory.set.settle"
 # A settle whose write a newer one replaced before the verdict could land.
 MOVED = "moved"
+# The judge's call was held by the model-call switch: no verdict, nothing stamped,
+# so the conflict sweep judges the write once the org is back.
+HELD = "held"
 DROP_STAGE = "conflict.deferred"
 
 _TASKS: set[asyncio.Task[Any]] = set()
@@ -232,8 +235,10 @@ async def settle(
     (`version`) `conflict_checked_at`; returns the settled verdict (`error` when the
     settle itself failed — the row stays as inserted, its mark left for the
     conflict sweep; `moved` when a newer write took the key while the judge ran,
-    which lands nothing). Never raises. Writes one `memory_drops` row and one
-    ledger row (`memory.set.settle`, the write's `request_id`)."""
+    which lands nothing; `held` when the model-call switch held the judge's call,
+    which stamps nothing, so the sweep judges it once the org is back). Never
+    raises. Writes one `memory_drops` row and one ledger row
+    (`memory.set.settle`, the write's `request_id`)."""
     from server.memory.app import conflicts as cf
     from server.memory.app.drops import record_drop
     from server.observability import cost_accumulator
@@ -254,6 +259,8 @@ async def settle(
             )
         else:
             verdict = MOVED
+    except customer.HOLDS:
+        verdict = HELD
     except Exception as e:  # noqa: BLE001 — the row is in; the verdict is best effort
         log.warning(
             "deferred conflict judge failed for %s/%s key=%r: %s",
@@ -264,7 +271,7 @@ async def settle(
         )
     finally:
         _PENDING.pop(str(memory_id), None)
-    if verdict not in ("error", MOVED):
+    if verdict not in ("error", MOVED, HELD):
         try:
             await stamp_checked(
                 ident, version=version, created_at=created_at, content_sha256=content_sha256

@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 from server.core.errors import ValidationError
+from server.llm import customer
 from server.settings import settings
 from server.tracker.api.models import (
     TrackerSimilarInput,
@@ -60,9 +61,12 @@ def _merge_similar(namespaces: list[str], outs: list[Any], top_k: int) -> Tracke
     """One `tracker.similar` answer over several trackers: every item names
     its `namespace`; ranked by the fused score (reciprocal-rank based, so
     comparable across trackers); `query` and `legs` are the primary's; a
-    tracker that failed inside the fan-out is left out and logged."""
+    tracker that failed inside the fan-out is left out and logged, except a
+    held model call (`customer.HOLDS`), which is the answer."""
     served: list[tuple[str, Any]] = []
     for ns, o in zip(namespaces, outs, strict=False):
+        if isinstance(o, customer.HOLDS):
+            raise o  # the org's model calls are held: the request answers that
         if isinstance(o, BaseException):
             logger.info("tracker.similar on %s failed inside a fan-out: %s", ns, o)
             continue
@@ -283,9 +287,11 @@ async def _similar_legs(
             )
         except TrackerUnavailable:
             raise
+        except customer.HOLDS:
+            raise  # the org's model calls are held: the request answers that, not an outage
         except Exception as e:
             # The leg's own store or embedder failed: the leg is unavailable and the
-            # answer degraded (guarded() records it), never a 500 that also leaves the
+            # answer degraded (`_guarded` records it), never a 500 that also leaves the
             # sibling legs running.
             raise TrackerUnavailable(f"vector leg: {type(e).__name__}: {e}") from e
 
@@ -293,26 +299,50 @@ async def _similar_legs(
     if meta is not None:
         meta["timings_ms"] = timings
 
-    async def guarded(name: str, coro: Any) -> tuple[str, list[dict[str, Any]]]:
-        t0 = time.monotonic()
-        try:
-            return name, await coro
-        except TrackerUnavailable as e:
-            common._unavailable(f"tracker.similar/{name}", input.namespace, e)
-            status[name] = "tracker_unavailable"
-            if errors is not None:
-                errors[name] = e
-            return name, []
-        finally:
-            timings[name] = int((time.monotonic() - t0) * 1000)
+    def leg(name: str, coro: Any) -> Any:
+        return _guarded(
+            name, coro, ns=input.namespace, status=status, errors=errors, timings=timings
+        )
 
+    # Every leg runs to its end; then a held model call (`customer.HOLDS`) is the
+    # request's answer, rather than a degraded one without the vector leg.
     results = await asyncio.gather(
-        guarded("lexical", lexical()),
-        guarded("frames", frames()),
-        guarded("mentions", mentions()),
-        guarded("vector", vector()),
+        leg("lexical", lexical()),
+        leg("frames", frames()),
+        leg("mentions", mentions()),
+        leg("vector", vector()),
+        return_exceptions=True,
     )
-    return {name: rows for name, rows in results if rows}
+    legs: dict[str, list[dict[str, Any]]] = {}
+    for res in results:
+        if isinstance(res, BaseException):
+            raise res
+        if res[1]:
+            legs[res[0]] = res[1]
+    return legs
+
+
+async def _guarded(
+    name: str,
+    coro: Any,
+    ns: str,
+    status: dict[str, str],
+    errors: dict[str, BaseException] | None,
+    timings: dict[str, int],
+) -> tuple[str, list[dict[str, Any]]]:
+    """One leg's rows; an unavailable leg is named in `status` (and `errors`) and
+    answers none, so its siblings still serve."""
+    t0 = time.monotonic()
+    try:
+        return name, await coro
+    except TrackerUnavailable as e:
+        common._unavailable(f"tracker.similar/{name}", ns, e)
+        status[name] = "tracker_unavailable"
+        if errors is not None:
+            errors[name] = e
+        return name, []
+    finally:
+        timings[name] = int((time.monotonic() - t0) * 1000)
 
 
 async def _similar_frames_leg(

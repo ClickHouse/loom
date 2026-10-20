@@ -65,6 +65,19 @@ def detached_task[T](coro: Coroutine[Any, Any, T], *, name: str) -> asyncio.Task
     return asyncio.get_running_loop().create_task(coro, name=name, context=contextvars.Context())
 
 
+async def gather_or_cancel[T](*aws: Awaitable[T]) -> list[T]:
+    """`asyncio.gather`, except that the first awaitable to raise cancels the
+    others, and its error (unwrapped, unlike a TaskGroup's) escapes only once
+    they have stopped: no sibling outlives the caller's scope."""
+    tasks = [asyncio.ensure_future(a) for a in aws]
+    try:
+        return await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 class TaskSet:
     """Strong references to fire-and-forget tasks until each is done."""
 
