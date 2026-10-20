@@ -36,7 +36,9 @@ def json_map_items(raw: str, field: str) -> tuple[tuple[str, str], ...]:
     parsed = _decode_json_or_b64(raw, field)
     if not isinstance(parsed, dict):
         raise ValueError(f"{field} must be a JSON object")
-    return tuple((str(k), str(v)) for k, v in parsed.items())
+    if not all(isinstance(v, str) for v in parsed.values()):
+        raise ValueError(f"{field} must map names to strings")
+    return tuple((str(k), v) for k, v in parsed.items())
 
 
 # The checked-in HS256 default. Fine for a single-user dev box (auth is off);
