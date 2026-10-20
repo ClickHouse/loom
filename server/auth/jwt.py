@@ -460,9 +460,9 @@ def _end_user_key(token: str) -> tuple[str, EndUserIssuer, Any] | None:
         kid = jwt.get_unverified_header(token).get("kid")
     except jwt.PyJWTError as e:
         raise TokenError(f"invalid token: {e}") from e
-    spec = issuers.get(iss) if isinstance(iss, str) else None
-    if spec is None or not isinstance(iss, str):
+    if not isinstance(iss, str) or iss not in issuers:
         return None
+    spec = issuers[iss]
     found = spec.keys.get(kid) if isinstance(kid, str) else None
     if found is None and isinstance(kid, str):
         found = end_user_keys.key(iss, kid)

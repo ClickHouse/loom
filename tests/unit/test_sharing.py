@@ -999,7 +999,7 @@ def test_a_search_naming_its_namespaces_reads_those_alone_and_each_must_be_reada
 @pytest.mark.parametrize(
     ("spec", "said"),
     [
-        ({"loom": {"orgs": ["acme"], "keys": {"k": "pem"}}}, "Loom's own"),
+        ({"loom": {"orgs": ["acme"], "keys": {"k": "pem"}}}, "both end-user and trusted"),
         ({"chat": {"orgs": ["*"], "keys": {"k": "pem"}}}, "not every org"),
         ({"chat": {"orgs": [], "keys": {"k": "pem"}}}, "lists the orgs"),
         ({"chat": {"orgs": ["acme"]}}, "jwks_url` or `keys"),
@@ -1025,19 +1025,19 @@ def test_an_end_user_issuer_names_its_orgs_and_its_keys(spec: dict[str, Any], sa
         AuthSettings(jwt_end_user_issuers_json=json.dumps(spec))
 
 
-def test_an_end_user_key_is_never_a_federated_one_and_signs_for_its_orgs_alone() -> None:
+def test_an_end_user_issuer_is_never_a_trusted_one_and_signs_for_its_orgs_alone() -> None:
     import json
 
     from pydantic import ValidationError
 
     from server.settings._auth import AuthSettings
 
-    with pytest.raises(ValidationError, match="both end-user and federated"):
+    with pytest.raises(ValidationError, match="both end-user and trusted issuers"):
         AuthSettings(
             jwt_end_user_issuers_json=json.dumps(
-                {"chat": {"orgs": ["acme"], "keys": {"k": _PUBLIC}}}
+                {"idp": {"orgs": ["acme"], "keys": {"k": _PUBLIC}}}
             ),
-            jwt_public_keys_json=json.dumps({"k": _PUBLIC}),
+            jwt_trusted_issuers="idp",
         )
     issuers = AuthSettings(
         jwt_end_user_issuers_json=end_user_issuer.issuers_setting(_PUBLIC)
@@ -1222,3 +1222,54 @@ def test_an_end_user_issuer_s_jwks_is_refetched_every_refresh_period(
 
     asyncio.run(_run())
     assert slept == [42.0, 42.0]
+
+
+def test_a_failed_first_jwks_fetch_is_retried_within_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Until an issuer's first fetch lands its tokens are refused (503), so the
+    loop retries every 2 s, not every refresh period."""
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+    from server.auth import end_user_keys
+    from server.settings import settings
+
+    monkeypatch.setattr(
+        settings,
+        "jwt_end_user_issuers_json",
+        end_user_issuer.issuers_setting(_PUBLIC, keys={}, jwks_url="https://chat.example/jwks"),
+    )
+    monkeypatch.setattr(settings, "jwt_end_user_jwks_refresh_seconds", 300.0)
+    slept: list[float] = []
+    fetches = 0
+
+    class _Done(Exception):
+        pass
+
+    async def _sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    async def _refresh() -> None:
+        nonlocal fetches
+        fetches += 1
+        if fetches == 2:  # the retry lands
+            end_user_keys._keys[end_user_issuer.ISSUER] = {
+                end_user_issuer.KID: load_pem_public_key(_PUBLIC.encode())
+            }
+        if fetches == 3:
+            raise _Done
+
+    monkeypatch.setattr(end_user_keys.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(end_user_keys, "refresh", _refresh)
+    end_user_keys.clear()
+
+    async def _run() -> None:
+        with pytest.raises(_Done):
+            await end_user_keys.start_refresh_loop()
+
+    try:
+        asyncio.run(_run())
+        assert slept == [2.0, 2.0, 300.0]
+        assert verify_token(_token()).subject == "user:u-1"
+    finally:
+        end_user_keys.clear()

@@ -45,7 +45,8 @@ flowchart LR
   its own grants only.
 - **Personal collections.** Each end user has one, `col-me-<hash of org and user>`; a
   request names it `namespace: "@me"`, which only the server maps. Its name says whose it
-  is: it admits that user (as admin) and no one else, takes no grant, sits in no tree, and
+  is: it admits that user (as admin) and no one else (an org admin's export of that user
+  reads it, see below), takes no grant, sits in no tree, and
   needs no setup (its directory row appears with its first write). A chat service's saved
   messages are documents there, at
   `chat/<conversation>/<message>`: `knowledge.upsert` saves one, `knowledge.delete`
@@ -63,13 +64,13 @@ identity: subject `user:<id>`, the `viewer` role of an org member with no claim,
 reads pinned to that user's rows (`read_scope = own_user`). There is no long-lived
 secret per customer, and no header can name a different user.
 
-| An end-user token may name                         | It may not                                                   |
-| -------------------------------------------------- | ------------------------------------------------------------ |
-| one user id and one agent id, of an org its issuer | name an org its issuer does not list, or none                |
-| lists                                              | carry namespaces, roles or a read scope                      |
-|                                                    | lack a `jti`                                                 |
-|                                                    | live longer than `LOOM_JWT_END_USER_MAX_TTL_SECONDS` (5 min) |
-|                                                    | be signed by a key of another issuer                         |
+| An end-user token may name              | It may not                                                   |
+| --------------------------------------- | ------------------------------------------------------------ |
+| one user and one agent, in a listed org | name an org its issuer does not list, or none                |
+|                                         | carry namespaces, roles or a read scope                      |
+|                                         | lack a `jti`                                                 |
+|                                         | live longer than `LOOM_JWT_END_USER_MAX_TTL_SECONDS` (5 min) |
+|                                         | be signed by a key of another issuer                         |
 
 An end-user key verifies only its own issuer's tokens, and only as an end user: it can
 never sign a Loom-shaped token (another `sub`, roles, Loom's own issuer). The agent is a
@@ -205,8 +206,9 @@ Loom deletes only what its writer asked to delete. `collection.delete` purges wh
 collection held (a namespace erasure that takes the rows off disk) before the collection
 leaves the tree. A user-scope
 `erasure.export` returns the chunks that user wrote in the collections its caller may
-read: an org admin may erase a collection's rows without reading them, and a platform
-admin sees every collection.
+read and in the user's own personal collection, theirs to have exported: an org admin
+may erase a collection's rows without reading them, and a platform admin sees every
+collection.
 
 ## Alternatives not taken
 

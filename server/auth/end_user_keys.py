@@ -38,22 +38,31 @@ def key(issuer: str, kid: str) -> Any | None:
 
 
 async def refresh() -> None:
-    """Fetch the JWKS of every end-user issuer that names a `jwks_url`."""
-    for issuer, spec in settings.end_user_issuers().items():
-        if not spec.jwks_url:
-            continue
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(spec.jwks_url)
-                response.raise_for_status()
-            keys = jwt.PyJWKSet.from_dict(response.json()).keys
-            _keys[issuer] = {k.key_id: k.key for k in keys if k.key_id}
-        except Exception as e:  # noqa: BLE001 — a failed fetch keeps the last keys
-            if issuer not in _warned:
-                _warned.add(issuer)
-                log.warning("end-user issuer %r: JWKS not fetched: %s", issuer, e)
-            continue
-        _warned.discard(issuer)
+    """Fetch the JWKS of every end-user issuer that names a `jwks_url`, side by
+    side: an unreachable one delays boot by one timeout, not one each."""
+    issuers = settings.end_user_issuers()
+    await asyncio.gather(
+        *(_fetch(issuer, spec.jwks_url) for issuer, spec in issuers.items() if spec.jwks_url)
+    )
+
+
+async def _fetch(issuer: str, url: str) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+        keys = jwt.PyJWKSet.from_dict(response.json()).keys
+        _keys[issuer] = {k.key_id: k.key for k in keys if k.key_id}
+    except Exception as e:  # noqa: BLE001 — a failed fetch keeps the last keys
+        if issuer not in _warned:
+            _warned.add(issuer)
+            log.warning("end-user issuer %r: JWKS not fetched: %s", issuer, e)
+        return
+    _warned.discard(issuer)
+
+
+def _all_loaded() -> bool:
+    return all(loaded(i) for i, spec in settings.end_user_issuers().items() if spec.jwks_url)
 
 
 def start_refresh_loop() -> asyncio.Task[None]:
@@ -64,7 +73,10 @@ def start_refresh_loop() -> asyncio.Task[None]:
 
         set_query_tag("auth.end_user_jwks_refresh")
         while True:
-            await asyncio.sleep(settings.jwt_end_user_jwks_refresh_seconds)
+            # Until every issuer's first fetch lands, retry within seconds: its
+            # tokens are answered 503 until then.
+            period = settings.jwt_end_user_jwks_refresh_seconds if _all_loaded() else 2.0
+            await asyncio.sleep(period)
             await refresh()
 
     return asyncio.get_running_loop().create_task(_run(), name="loom-end-user-jwks")

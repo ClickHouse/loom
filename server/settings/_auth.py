@@ -309,18 +309,18 @@ class AuthSettings(BaseModel):
     @model_validator(mode="after")
     def _end_user_issuers_stand_apart(self) -> AuthSettings:
         issuers = self.end_user_issuers()
-        if self.jwt_issuer in issuers:
-            raise ValueError("an end-user issuer may not be Loom's own (LOOM_JWT_ISSUER)")
-        shared = sorted(
-            {kid for spec in issuers.values() for kid in spec.keys} & set(self.jwt_public_key_map())
-        )
-        if shared:
-            raise ValueError(f"kids {shared} are both end-user and federated keys")
+        # A token's `iss` picks the end-user path, so an issuer is one or the other.
+        both = sorted(set(issuers) & self.trusted_issuers())
+        if both:
+            raise ValueError(
+                f"{both} are both end-user and trusted issuers (LOOM_JWT_ISSUER, "
+                "LOOM_JWT_TRUSTED_ISSUERS)"
+            )
         # `user:<id>` names one person per org, so one issuer alone signs for an org.
         for (a, spec_a), (b, spec_b) in itertools.combinations(issuers.items(), 2):
-            both = [(x, y) for x in spec_a.orgs for y in spec_b.orgs if _overlap(x, y)]
-            if both:
-                raise ValueError(f"end-user issuers {a!r} and {b!r} both sign for {both[0]}")
+            shared = [(x, y) for x in spec_a.orgs for y in spec_b.orgs if _overlap(x, y)]
+            if shared:
+                raise ValueError(f"end-user issuers {a!r} and {b!r} both sign for {shared[0]}")
         return self
 
     def auth_actually_required(self) -> bool:

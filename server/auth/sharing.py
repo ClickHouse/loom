@@ -223,10 +223,19 @@ async def roles(auth: AuthInfo, org: str, namespaces: list[str]) -> dict[str, Ro
     return out
 
 
+# Grant-map reads one request runs at once: each holds a ClickHouse connection.
+_GRANT_READS_AT_ONCE = 8
+
+
 async def _grant_maps(org: str, subjects: list[str]) -> list[grant_cache.GrantMap]:
-    """Each subject's grant map, read side by side: a user in many groups pays
-    one round trip after a grant change, not one per group."""
-    return list(await asyncio.gather(*(grant_cache.grant_map(org, s) for s in subjects)))
+    """Each subject's grant map, read a few side by side: a user in many groups
+    waits a few round trips after a grant change, not one per group, and leaves
+    the pool to other requests."""
+    maps: list[grant_cache.GrantMap] = []
+    for i in range(0, len(subjects), _GRANT_READS_AT_ONCE):
+        batch = subjects[i : i + _GRANT_READS_AT_ONCE]
+        maps.extend(await asyncio.gather(*(grant_cache.grant_map(org, s) for s in batch)))
+    return maps
 
 
 async def readable(auth: AuthInfo | None, org: str) -> list[str]:
