@@ -1445,8 +1445,6 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             messages_summarized=0,
             reason="nothing-to-compact",
         )
-    # An earlier summary in the window is not a new turn: it counts toward neither
-    # min_to_compact nor messages_summarized.
     # A re-run: an earlier summary sits where the turns it replaced began, so it is
     # the oldest live row and falls among the candidates. A window of nothing but
     # earlier summaries has no new turn to compact.
@@ -1456,6 +1454,8 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             messages_summarized=0,
             reason="already-compacted",
         )
+    # An earlier summary in the window is not a new turn: it counts toward neither
+    # min_to_compact nor messages_summarized.
     if is_summary.count(False) < input.min_to_compact:
         return ConversationCompactOutput(
             compacted=False,
