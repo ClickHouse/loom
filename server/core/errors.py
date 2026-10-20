@@ -70,7 +70,9 @@ class NotFoundError(LoomServerError):
 
 class PreconditionFailedError(LoomServerError):
     """409 — `if_match_sha256` mismatch. Returns the live hash so the caller
-    can retry without a separate read."""
+    can retry without a separate read. Also `memory.ask` or `code.ask` asking
+    for an answer while `LOOM_READS_LLM_FREE` is on: `current_sha256` is
+    empty, and the retrieval-only flag the message names returns the evidence."""
 
     code = "PRECONDITION_FAILED"
     status_code = 409
