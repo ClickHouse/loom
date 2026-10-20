@@ -94,8 +94,8 @@ async def test_a_failed_read_logs_on_the_callers_logger(caplog, clock: ManualClo
 
 
 async def test_a_cancelled_read_hands_over_to_the_first_queued_call(clock: ManualClock) -> None:
-    """The call that was reading goes away; the calls queued behind it do not
-    find a copy nobody read: the first one reads, the next is served it."""
+    """The call that was reading is cancelled; the first queued call reads, and
+    the next is served that read."""
     reading = asyncio.Event()
     reads = 0
 

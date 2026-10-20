@@ -612,13 +612,12 @@ def test_no_refusal_and_no_unreadable_switch_is_a_provider_failure(
 
 
 def test_a_failed_read_waits_its_turn_and_the_copy_serves_until_too_old(switch: _Switch) -> None:
-    switch.off = {"acme"}
-    assert asyncio.run(customer.switched_off("acme")) is True and switch.reads == 1
-    switch.down = True
+    # A copy with acme switched off, read just now and due again; the read fails.
     customer._switch._reset_for_tests(frozenset({"acme"}), read_age_s=0.0, due_in_s=0.0)
+    switch.down = True
     assert asyncio.run(customer.switched_off("acme")) is True  # the last copy serves
     assert asyncio.run(customer.switched_off("acme")) is True
-    assert switch.reads == 2  # the failed read is not tried again before its turn
+    assert switch.reads == 1  # the failed read is not tried again before its turn
 
 
 def test_the_refresh_must_be_shorter_than_the_stale_bound(monkeypatch) -> None:

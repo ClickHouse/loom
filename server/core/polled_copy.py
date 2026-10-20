@@ -62,7 +62,7 @@ class PolledCopy[T]:
         changes = self._changes
         try:
             value = await self._read()
-        except Exception as e:  # noqa: BLE001 — a failed read must not fail the call; the copy's age decides what is served
+        except Exception as e:  # noqa: BLE001 — a failed read must not fail the call
             self._log.warning("%s: read failed (%s)", self._name, e)
         else:
             self._value = value
