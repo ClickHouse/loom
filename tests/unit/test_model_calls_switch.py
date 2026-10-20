@@ -209,11 +209,103 @@ def test_switching_back_on_takes_effect_and_the_switch_is_read_at_most_every_int
 def test_a_copy_too_old_to_trust_refuses_every_call(switch: _Switch, monkeypatch) -> None:
     assert asyncio.run(customer.switched_off("acme")) is False
     switch.down = True
-    customer._read_at = time.monotonic() - settings.model_calls_policy_refresh_seconds - 1
+    customer._switch._read_at = time.monotonic() - settings.model_calls_policy_refresh_seconds - 1
     assert asyncio.run(customer.switched_off("acme")) is False  # still young enough
-    customer._read_at = time.monotonic() - settings.model_calls_policy_max_stale_seconds - 1
+    customer._switch._read_at = time.monotonic() - settings.model_calls_policy_max_stale_seconds - 1
     with pytest.raises(BackendUnavailableError):
         asyncio.run(customer.switched_off("beta"))
+
+
+def test_calls_made_during_a_read_wait_for_it(switch: _Switch, monkeypatch) -> None:
+    """A request's two model calls (the extraction and the digest) arrive
+    together at a process's first read, or once its copy went stale: both get
+    the copy the one read brings, neither answers SwitchUnread."""
+    plain = switch.query_all
+
+    async def slow(sql: str, **kw: Any) -> list[dict[str, Any]]:
+        await asyncio.sleep(0.05)
+        return await plain(sql, **kw)
+
+    monkeypatch.setattr(switch, "query_all", slow)
+
+    async def together() -> list[Any]:
+        return list(await asyncio.gather(*(customer.switched_off("acme") for _ in range(3))))
+
+    async def first_then_stale() -> None:
+        assert await together() == [False] * 3
+        assert switch.reads == 1
+        stale = settings.model_calls_policy_max_stale_seconds + 1
+        customer._switch._read_at, customer._switch._next_read = time.monotonic() - stale, 0.0
+        assert await together() == [False] * 3
+        assert switch.reads == 2
+
+    asyncio.run(first_then_stale())  # one loop, as a server process has
+
+
+def test_a_cancelled_read_leaves_the_next_call_to_read(switch: _Switch, monkeypatch) -> None:
+    plain = switch.query_all
+    reading = asyncio.Event()
+
+    async def hang(sql: str, **kw: Any) -> list[dict[str, Any]]:
+        reading.set()
+        await asyncio.sleep(10)
+        return []
+
+    async def cancelled_then_read() -> bool:
+        monkeypatch.setattr(switch, "query_all", hang)
+        first = asyncio.ensure_future(customer.switched_off("acme"))
+        await reading.wait()
+        first.cancel()  # the request that made the read went away
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        monkeypatch.setattr(switch, "query_all", plain)
+        return await customer.switched_off("acme")
+
+    assert asyncio.run(cancelled_then_read()) is False
+
+
+def test_a_call_made_during_a_read_is_served_the_copy_in_hand(switch: _Switch, monkeypatch) -> None:
+    """A read is due and in progress; the copy in hand is young enough and no
+    change made here waits to be read, so a second call does not wait for it."""
+    reading, release = asyncio.Event(), asyncio.Event()
+    plain = switch.query_all
+
+    async def slow(sql: str, **kw: Any) -> list[dict[str, Any]]:
+        reading.set()
+        await release.wait()
+        return await plain(sql, **kw)
+
+    async def second_call_during_the_read() -> bool:
+        customer._reset_for_tests(frozenset({"acme"}))
+        customer._switch._next_read = time.monotonic() - 1  # due, not asked for by a change
+        monkeypatch.setattr(switch, "query_all", slow)
+        first = asyncio.ensure_future(customer.switched_off("acme"))
+        await reading.wait()
+        second = await asyncio.wait_for(customer.switched_off("acme"), timeout=1.0)
+        release.set()
+        await first
+        return second
+
+    assert asyncio.run(second_call_during_the_read()) is True  # the copy in hand
+
+
+def test_a_change_made_during_a_read_is_read_again(switch: _Switch, monkeypatch) -> None:
+    plain = switch.query_all
+
+    async def write_meanwhile(sql: str, **kw: Any) -> list[dict[str, Any]]:
+        rows = await plain(sql, **kw)
+        switch.off = {"acme"}
+        customer.forget_switch()  # the write lands after this read took its rows
+        return rows
+
+    monkeypatch.setattr(switch, "query_all", write_meanwhile)
+
+    async def both() -> tuple[bool, bool]:
+        first = await customer.switched_off("acme")
+        monkeypatch.setattr(switch, "query_all", plain)
+        return first, await customer.switched_off("acme")
+
+    assert asyncio.run(both()) == (False, True)
 
 
 def test_a_switch_never_read_refuses(switch: _Switch) -> None:
@@ -527,7 +619,7 @@ def test_a_failed_read_waits_its_turn_and_the_copy_serves_until_too_old(switch: 
     switch.off = {"acme"}
     assert asyncio.run(customer.switched_off("acme")) is True and switch.reads == 1
     switch.down = True
-    customer._next_read = 0.0  # the next read is due
+    customer._switch._next_read = 0.0  # the next read is due
     assert asyncio.run(customer.switched_off("acme")) is True  # the last copy serves
     assert asyncio.run(customer.switched_off("acme")) is True
     assert switch.reads == 2  # the failed read is not tried again before its turn

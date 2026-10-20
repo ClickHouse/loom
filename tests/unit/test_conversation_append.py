@@ -5,6 +5,13 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _saved_write_leases(monkeypatch):
+    from tests.unit.claims_fake import held_leases
+
+    held_leases(monkeypatch)
+
+
 def _patch_append(monkeypatch, *, append, embed):
     from server.knowledge.app import conversations as h
     from server.knowledge.store import conversations as conversation_repo
@@ -12,8 +19,15 @@ def _patch_append(monkeypatch, *, append, embed):
     async def enabled(org, ns, **k):
         return True
 
-    async def absent(*a, **k):
-        return False
+    written = False
+
+    async def record(*a, **k):
+        nonlocal written
+        await append(*a, **k)
+        written = True
+
+    async def exists(*a, **k):
+        return written
 
     rows: list[dict] = []
 
@@ -31,8 +45,8 @@ def _patch_append(monkeypatch, *, append, embed):
             return await embed(text)
 
     monkeypatch.setattr(conversation_repo, "namespace_logging_enabled", enabled)
-    monkeypatch.setattr(conversation_repo, "message_exists", absent)
-    monkeypatch.setattr(conversation_repo, "append", append)
+    monkeypatch.setattr(conversation_repo, "message_exists", exists)
+    monkeypatch.setattr(conversation_repo, "append", record)
     monkeypatch.setattr(conversation_repo, "insert_embedding", fake_insert_embedding)
     monkeypatch.setattr(conversation_repo, "tombstone_embedding_if_message_gone", recheck)
     monkeypatch.setattr(conversation_repo, "saved_message_owner", recheck)
