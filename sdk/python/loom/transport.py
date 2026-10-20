@@ -196,7 +196,9 @@ _NEVER_RAN_CODES = frozenset({"AUTH_UNAVAILABLE"})
 # 5xx answers to a deployment's configuration, which no retry changes: the
 # operator's fix is named in the error (and in /v1/health). A model call that
 # names no customer is a server path to fix, not a passing fault.
-_CONFIGURATION_CODES = frozenset({"CODED_WIDTH_MISMATCH", "MODEL_CALL_UNATTRIBUTED"})
+_CONFIGURATION_CODES = frozenset(
+    {"CODED_WIDTH_MISMATCH", "GATEWAY_REQUIRED", "MODEL_CALL_UNATTRIBUTED"}
+)
 
 
 def _never_ran(status: int, code: str) -> bool:

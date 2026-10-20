@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from server.clients._http import get_client as _http_client
+from server.clients._http import get_model_client as _http_client
 from server.clients._http_errors import raise_for_status_with_detail as _raise_for_status
 from server.core.provider_keys import provider_key
 from server.llm import customer, gateway, traits

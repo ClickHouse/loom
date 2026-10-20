@@ -132,7 +132,7 @@ def test_chat_and_embedding_requests_carry_the_customer(metered, monkeypatch) ->
     sent.append(gemini.calls[0]["headers"])
 
     compatible = _Recorder({"data": [{"index": 0, "embedding": [0.5] * 8}]})
-    monkeypatch.setattr(compatible_mod, "get_client", lambda: compatible)
+    monkeypatch.setattr(compatible_mod, "get_model_client", lambda: compatible)
     other = compatible_mod.CompatibleEmbedder(
         model="m", dim=8, api_key="k", base_url="https://embed.example/v1"
     )

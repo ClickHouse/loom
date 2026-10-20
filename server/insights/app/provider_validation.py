@@ -13,6 +13,7 @@ from typing import Literal
 import httpx
 
 from server.clients._http_errors import provider_error_code
+from server.core.errors import GatewayRequiredError
 from server.core.llm_provider import provider_for_model
 from server.core.schema.vector_codec_ddl import codable
 from server.core.vectors import codes_state
@@ -106,6 +107,8 @@ async def _check(
                     await _probe_embedding(
                         provider, model, key, dimensions, base_url, send_dimensions
                     )
+    except GatewayRequiredError:
+        check.code = "gateway_required"
     except (TimeoutError, httpx.TimeoutException):
         check.code = "timeout"
     except httpx.HTTPStatusError as exc:

@@ -188,6 +188,38 @@ with more than one admin, registered first, in one org); its tokens are for
   LOOM_CLIENT_ID=fleet LOOM_WORKLOAD_TOKEN_FILE=/run/agent/oidc-token python agent.py
   ```
 
+  One agent can let another of the same trust read its memory, one way. The
+  control plane decides, and calls as the lending agent (with that agent's
+  token):
+
+  ```bash
+  curl -s -X POST "$LOOM_BASE_URL/v1/grants.share_agent" -H "Authorization: Bearer $A_TOKEN" \
+    -d '{"org":"acme","namespace":"fleet-a","grantee":"b","role":"viewer"}'
+  ```
+
+  Agent `b`'s next token names `fleet-a` as viewer (minted on another server,
+  within `LOOM_GRANT_CACHE_TTL_SECONDS`); `a` gets nothing of `b`'s. `role` is
+  `viewer` or `writer`. An agent shares only its own namespace, only with
+  agents of its trust, and not while the namespace is restricted (a share made
+  before stays until it is revoked)
+  ([`grants.share_agent`](../reference/operations/grants.md#grantsshare_agent)).
+  A share never lowers a grant `b` holds, nor writes over one someone else
+  made (409): to lower its own share, an agent takes it back and shares again.
+  [`grants.unshare_agent`](../reference/operations/grants.md#grantsunshare_agent)
+  with the same body (no `role`) takes back what the agent lent: `b` is
+  refused at once on that server, and within `LOOM_GRANT_CACHE_TTL_SECONDS` on
+  the others. A grant an admin made stays (409). An admin of the namespace
+  grants or revokes `sa:fleet:b` with `grants.create` and `grants.revoke`; an
+  agent's token takes any grant its subject holds in the org, as writer at
+  most. A token names lent namespaces by name while all its namespaces, its
+  own and the trust's included, fit 4,096 bytes of the token (fifteen of the
+  longest names, more of shorter ones), which keeps it under a proxy's 8 KB
+  header limit; a share that would pass that is refused, and one that only
+  raises a role the token already names is not (two shares at once can pass
+  it, and the token then names those that fit). A trust's shared namespaces,
+  with room for a 63-character agent's own, must fit those 4,096 bytes, or
+  `loom bot create` refuses it.
+
   An exact `tenant_id` keeps one trust to one tenant, so each tenant's agents
   land in their own org (a prefix of `sub` may be added as a further
   condition, never as the only one). `--jwks-uri`

@@ -12,15 +12,16 @@ from typing import Annotated
 
 from pydantic import AfterValidator
 
-from server.settings import settings
+from server.settings import is_builtin_cohere, settings
 
 BUILTIN_OPENAI = "builtin:openai"
-BUILTIN_COHERE = "builtin:cohere"
 
 
 def is_builtin(name: str) -> bool:
     """`builtin:openai` / `builtin:cohere`, optionally with `:<model>`."""
-    return any(name == b or name.startswith(b + ":") for b in (BUILTIN_OPENAI, BUILTIN_COHERE))
+    return (
+        name == BUILTIN_OPENAI or name.startswith(BUILTIN_OPENAI + ":") or is_builtin_cohere(name)
+    )
 
 
 def is_rerank_choice(name: str) -> bool:
@@ -31,6 +32,13 @@ def is_rerank_choice(name: str) -> bool:
 def check_rerank_name(value: str) -> str:
     """The stripped choice, or ValueError (a 422) listing what may be sent."""
     name = value.strip()
+    why = settings.gateway_required_by()
+    if why and is_builtin_cohere(name):
+        # Cohere's own API takes no gateway; the reranker would fail open unseen.
+        raise ValueError(
+            f"builtin:cohere is refused while {why} is set: rerank with "
+            "builtin:openai or an endpoint behind the gateway"
+        )
     if is_rerank_choice(name):
         return name
     configured = ", ".join(sorted(settings.rerank_endpoint_map())) or "none configured"

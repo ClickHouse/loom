@@ -11,7 +11,9 @@ namespace the trust did not make.
 
 from __future__ import annotations
 
+import logging
 import re
+from collections.abc import Iterable
 from typing import Any
 
 from server.auth import machines
@@ -23,6 +25,12 @@ from server.observability import metrics
 # a namespace, so it is refused, never rewritten into another agent's name.
 AGENT = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 
+# Bytes a token spends on the namespaces it names: room for a 4096-bit signature
+# under a proxy's 8 KB header limit (docs/architecture/security.md).
+TOKEN_NAMESPACE_BYTES = 4096
+
+log = logging.getLogger(__name__)
+
 
 def subject(trust: str, agent: str) -> str:
     # ':' is never in a bot's name or a person's token name (`token_name`).
@@ -33,13 +41,85 @@ def namespace(trust: str, agent: str) -> str:
     return f"{trust}-{agent}"
 
 
+def parse(subject_: str) -> tuple[str, str] | None:
+    """(trust, agent) of an agent's subject; None for any other subject."""
+    trust, _, agent = subject_.removeprefix("sa:").partition(":")
+    if not subject_.startswith("sa:") or not agent:
+        return None
+    return trust, agent
+
+
 def home_of(subject_: str) -> str:
     """The namespace of the agent whose subject is `subject_`; "" for any
     other subject."""
-    trust, _, agent = subject_.removeprefix("sa:").partition(":")
-    if not subject_.startswith("sa:") or not agent:
-        return ""
-    return namespace(trust, agent)
+    found = parse(subject_)
+    return namespace(*found) if found else ""
+
+
+async def granted(org: str, subject_: str) -> dict[str, str]:
+    """The active namespaces of `org` where `subject_` holds a live grant, with
+    the role it counts as in a token: writer at most, so an agent cannot pass
+    on admin over a namespace it was lent."""
+    from server.core.grant_cache import grant_map
+
+    ranks = (await grant_map(org, subject_)).ranks
+    held = {ns: "viewer" if rank == 1 else "writer" for ns, rank in ranks.items() if rank > 0}
+    return {ns: held[ns] for ns in sorted(await machines.active_namespaces(org, sorted(held)))}
+
+
+def lent(roles: dict[str, str], held: dict[str, str]) -> list[str]:
+    """The namespaces of `held` beyond `roles` (the agent's own and its
+    trust's), by name."""
+    return [ns for ns in held if ns not in roles]
+
+
+def names_bytes(names: Iterable[str]) -> int:
+    """What `names` cost in a token, against TOKEN_NAMESPACE_BYTES."""
+    return sum(map(token_bytes, names))
+
+
+def token_bytes(ns: str) -> int:
+    """What one name costs in a token: `"ns",` in `namespaces` and
+    `"ns":"viewer",` in `ns_roles`."""
+    return 2 * len(ns.encode()) + 15
+
+
+async def with_grants(
+    m: machines.Machine, agent: str, ns_roles: list[tuple[str, str]]
+) -> list[tuple[str, str]]:
+    """`ns_roles` and the namespaces of the trust's org the agent holds a live
+    grant on (another agent's share, an admin's grant), as `granted` counts
+    them. A grant raises a role `ns_roles` gives, and a lower or revoked one
+    caps that role at the gate (`authz.claim_cap`). Namespaces are added by
+    name until the next would take the token's namespaces, `ns_roles` included,
+    past TOKEN_NAMESPACE_BYTES, so the token stays within a proxy's header
+    limit; `grants.share_agent` checks the same budget, but two shares at once
+    can both pass it."""
+    from server.operations.base import grant_rank
+
+    held = await granted(m["org"], subject(m["name"], agent))
+    roles = dict(ns_roles)
+    extra = lent(roles, held)
+    for ns, role in held.items():
+        if ns in roles and grant_rank(role) > grant_rank(roles[ns]):
+            roles[ns] = role
+    used = names_bytes(roles)
+    kept = 0
+    for ns in extra:
+        used += token_bytes(ns)
+        if used > TOKEN_NAMESPACE_BYTES:
+            break
+        roles[ns] = held[ns]
+        kept += 1
+    left_out = len(extra) - kept
+    if left_out:
+        log.warning(
+            "agent %s of %s: %d granted namespaces left out of its token",
+            agent,
+            m["name"],
+            left_out,
+        )
+    return list(roles.items())
 
 
 TAG_PREFIX = "machine:"

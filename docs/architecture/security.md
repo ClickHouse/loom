@@ -69,6 +69,35 @@ the workers leader or a keyring command (never a replica's first boot, which wou
 mistyped secret); a process whose root does not match it reports
 `keyring_root_mismatch`, and the keyring commands and `loom mint-token` refuse there.
 
+**Model calls behind the gateway.** While the gateway is required
+(`LOOM_INFERENCE_GATEWAY_REQUIRED`, or any token exchange), model calls and the memory
+content posted to classifiers and rerankers go only to the hosts
+`LOOM_INFERENCE_GATEWAY_HOSTS` lists, matched exactly (`Settings.off_gateway`); an
+allow-list, so a cloud's own endpoint, an IP address or a look-alike name is refused as a
+provider's API is. The settings refuse to load with no hosts, or with an API root, the
+token endpoint or a rerank endpoint elsewhere, or the Gemini embedder (`gateway_refusal`),
+and with a `builtin:cohere` code-search default (`_check_code_rerank_behind_the_gateway`).
+Model calls go through their own client, `server/clients/_http.py::get_model_client`,
+whose request hook (`_on_request`) refuses every other host on every hop, redirects
+included; GitHub and an issuer's discovery document use the other client, which has no
+such hook. The rerank and classify senders, on their own clients, check each URL. Every
+check reads the host as httpx sends it (`url_host`: httpx's parser, an IDN as punycode),
+so a URL with several `@` or a backslash cannot pass the check for one host and be sent to
+another. `namespace.register` refuses a `classify_endpoint` that is not https at the
+default port of a listed host (422), and one stored before is never called: a namespace
+admin can neither send memory content off the gateway nor reach another port or service
+with it. A dashboard configuration goes through the same check: refused at save (422), and
+a stored one that fails is not applied, its serving vector settings included
+(`provider_runtime.load_active_configuration`), and `/v1/health` reports
+`model_configuration_refused`. The check reads only the embedding, so a refused one always
+differs from the one in force and the vector tables may hold that other space; it fails
+closed: every data-plane request on that server answers 503 `GATEWAY_REQUIRED` with no
+`Retry-After` (the gate's `refusal`, which the maintenance middleware reads) and readiness
+fails, until a configuration the check accepts, or a reset to the environment, replaces
+it; the transition that replaces it takes the hold over. A rolling restart stops at such a
+server until then. A refusal (`GATEWAY_REQUIRED`) is a setting to fix, and neither SDK
+retries it.
+
 **Rotation.** `loom signing-key rotate [--algorithm HS256|RS256] [--activate-in 300]`
 writes a key whose `activate_at` lies `--activate-in` seconds ahead on the ClickHouse
 server's clock; it must exceed two of the slowest process's refresh intervals (each
@@ -439,6 +468,30 @@ namespace is provisioned as an account is: its row names its one owner, the agen
 owner's grant follows; a later exchange writes the grant only if it was never written, under
 the grant's claim, so one revoked since stays revoked. A person reaches an agent's memory
 only as any namespace's: granted by its admin, or by joining.
+
+An agent's token also names every active namespace of the trust's org that its subject holds a
+live grant on (`agents.with_grants`), at the grant's role but never above writer, so an agent
+cannot pass on admin over a namespace it was lent. They are added by name until the next would
+take all the token's namespaces, its own and the trust's included, past
+`agents.TOKEN_NAMESPACE_BYTES` (4,096 bytes, each name counted as it is written in `namespaces`
+and `ns_roles`), so the token stays within a proxy's 8 KB header limit with a 4096-bit signing
+key, at the longest and the shortest names alike. An agent trust whose shared namespaces would
+not leave room for an agent's own is refused at registration. A grant reaches an agent's next
+token; a lower or revoked one caps its claim at once (`authz.claim_cap`), on other servers
+within `grant_cache_ttl_seconds`. Agents lend to each other through `grants.share_agent` and
+`grants.unshare_agent` (`server/identity/app/agent_shares.py`): the caller must be an agent,
+the namespace its own and the grantee an agent of its trust, at viewer or writer, and a
+namespace the grantee's token does not name yet within that budget (one it names already, the
+trust's or lent before, only has its role raised; two shares at once can both pass it, and the
+token then names those that fit, by name). A share gives the grantee only what the lender
+already reads, so a compromised agent gains nothing by it; which agent may read which is the
+control plane's decision, made by calling as the lending agent. A share never lowers a grant
+nor writes over one someone else made, and an unshare revokes only a grant the calling agent
+made, each checked on the row read under the grant's claim, so an agent never takes over or
+undoes an admin's grant. A share is refused while its namespace is restricted, since an agent's
+token is writer there and a restricted read needs a grant an admin chose to give; a share made
+before the namespace was restricted stays until the agent or an admin revokes it. A keyed bot's
+token names only its registered roles.
 
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn

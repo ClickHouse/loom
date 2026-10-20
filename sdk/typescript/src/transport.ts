@@ -558,7 +558,11 @@ const NEVER_RAN_CODES: ReadonlySet<string> = new Set(["AUTH_UNAVAILABLE"]);
  * operator's fix is named in the error (and in /v1/health). A model call that
  * names no customer is a server path to fix, not a passing fault.
  */
-const CONFIGURATION_CODES: ReadonlySet<string> = new Set(["CODED_WIDTH_MISMATCH", "MODEL_CALL_UNATTRIBUTED"]);
+const CONFIGURATION_CODES: ReadonlySet<string> = new Set([
+  "CODED_WIDTH_MISMATCH",
+  "GATEWAY_REQUIRED",
+  "MODEL_CALL_UNATTRIBUTED",
+]);
 
 function neverRan(status: number, code: string): boolean {
   return status === 408 || NEVER_RAN_CODES.has(code);

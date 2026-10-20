@@ -56,6 +56,7 @@ def _health_provider_fields(
     from server.core.ch import reader_user_error, reader_user_state
     from server.core.vectors import codes_state
     from server.embedding.embedder import effective_embedding_dim
+    from server.insights.app import provider_runtime
     from server.llm.client import provider_key_missing
     from server.observability import instance as _instance
     from server.observability import provider_health
@@ -95,6 +96,7 @@ def _health_provider_fields(
             oauth_signin_state_full=signin_claims.keeper_full(),
             stale_participants=provider_barrier.stale_participants(),
             carry_pinned=tuple(rmt_carry.pinned_overdue()),
+            refused_configuration=provider_runtime.refused_configuration(),
         ),
     )
     return {

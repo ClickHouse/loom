@@ -284,7 +284,7 @@ Create a shared memory workspace within an org; caller becomes admin.
 | `requires_approval` | `bool \| None` | `None` | When true, writer/admin self-joins go pending; viewer stays auto-approved. |
 | `join_policy` | `Literal['inherit', 'open', 'approval', 'closed'] \| None` | `None` | How the namespace is joined. |
 | `retrieval_defaults` | `NamespaceRetrievalDefaults \| None` | `None` | The retrieval knobs an unpinned memory.search on this namespace runs with (mode, k, auto_touch, include_tags, bodies, reinforcement_weight). |
-| `rerank_endpoint` | `str \| None` | `None` | Optional reranker for memory.search: "builtin:openai[:<model>]", "builtin:cohere[:<model>]" or the name of an endpoint in LOOM_RERANK_ENDPOINTS_JSON (a URL is refused); empty ⇒ cosine + entity_boost. |
+| `rerank_endpoint` | `str \| None` | `None` | Optional reranker for memory.search: "builtin:openai[:<model>]", "builtin:cohere[:<model>]" or the name of an endpoint in LOOM_RERANK_ENDPOINTS_JSON (a URL is refused); empty ⇒ cosine + entity_boost. builtin:cohere is refused while the… |
 | `rerank_prompt_template` | `str \| None` | `None` | Text forwarded as `prompt_template` in every call to `rerank_endpoint`. |
 | `classify_endpoint` | `str \| None` | `None` | Optional pluggable classifier for memory.set(classify=True). |
 | `classify_prompt_template` | `str \| None` | `None` | Text forwarded as `prompt_template` in every call to `classify_endpoint`. |

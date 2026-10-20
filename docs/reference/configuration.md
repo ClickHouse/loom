@@ -1071,6 +1071,8 @@ Source: `server/settings/_providers.py`
 | `LOOM_INFERENCE_WORKLOAD_TOKEN_FILE` | `str` | `''` | The workload's OIDC token, as a file its platform rotates (a projected service-account token on Kubernetes). With inference_token_url, this or inference_token_audience. |
 | `LOOM_INFERENCE_TOKEN_AUDIENCE` | `str` | `''` | With inference_token_url and no workload token: the audience of the identity token Loom signs (issuer <https public_base_url>/v1, newest RS256 key); never jwt_audience. |
 | `LOOM_INFERENCE_TOKEN_SCOPE` | `str` | `''` | The scope sent with that exchange; "" sends none. |
+| `LOOM_INFERENCE_GATEWAY_REQUIRED` | `bool` | `False` | True: model calls and memory content go only to inference_gateway_hosts; on whenever inference_token_url is set. |
+| `LOOM_INFERENCE_GATEWAY_HOSTS` | `str` | `''` | Comma-separated hostnames (exact, any case) of the gateway; required, and the only hosts sent to, while the gateway is required. |
 | `LOOM_INFERENCE_CUSTOMER_HEADER` | `str` | `''` | Header naming the customer (the org) on every model call, for a gateway that meters by it; set, a call naming no customer is refused (server/llm/customer.py). |
 | `LOOM_INFERENCE_FEATURE_HEADER` | `str` | `''` | Header naming the feature that made the call (hyde, memory.search, worker.embedding, ...), with inference_customer_header only; "" sends none. |
 | `LOOM_INFERENCE_SYSTEM_CUSTOMER` | `str` | `'loom'` | The customer named on calls made for the deployment itself (startup probe, the recalibration worker's fixed pairs, provider checks), which belong to no org. |
