@@ -438,9 +438,10 @@ within `grant_cache_ttl_seconds`. Agents lend to each other through `grants.shar
 namespace its own and the grantee an agent of its trust, at viewer or writer, and the grantee
 below `MAX_LENT` namespaces. A share gives the grantee only what the lender already reads, so a
 compromised agent gains nothing by it; which agent may read which is the control plane's
-decision, made by calling as the lending agent. A share never lowers a grant, and an unshare
-revokes only a grant the calling agent made (checked again under the grant's claim), so an
-agent never undoes an admin's grant. A restricted namespace is never shared this way: its read
+decision, made by calling as the lending agent. A share never lowers a grant nor writes over
+one someone else made, and an unshare revokes only a grant the calling agent made, each checked
+on the row read under the grant's claim, so an agent never takes over or undoes an admin's
+grant. A restricted namespace is never shared this way: its read
 needs a grant its admin gave, and an agent's token is writer on its own namespace. A keyed
 bot's token names only its registered roles.
 

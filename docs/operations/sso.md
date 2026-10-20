@@ -202,8 +202,8 @@ with more than one admin, registered first, in one org); its tokens are for
   `viewer` or `writer`. An agent shares only its own namespace, only with
   agents of its trust, and never a restricted namespace
   ([`grants.share_agent`](../reference/operations/grants.md#grantsshare_agent)).
-  A share never lowers a grant `b` holds: to lower its own share, an agent
-  takes it back and shares again.
+  A share never lowers a grant `b` holds, nor writes over one someone else
+  made (409): to lower its own share, an agent takes it back and shares again.
   [`grants.unshare_agent`](../reference/operations/grants.md#grantsunshare_agent)
   with the same body (no `role`) takes back what the agent lent: `b` is
   refused at once on that server, and within `LOOM_GRANT_CACHE_TTL_SECONDS` on

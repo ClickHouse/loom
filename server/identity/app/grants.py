@@ -137,7 +137,14 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     always active (the admin is the approver),
     so no approval step. A pending elevation the new role does not satisfy
     is carried forward; one it satisfies is answered by the grant."""
+    return await create_grant(input)
 
+
+async def create_grant(
+    input: GrantsCreateInput, may_replace: Callable[[GrantState], None] | None = None
+) -> GrantsCreateOutput:
+    """`grants.create`; `may_replace` raises for a live row this caller must
+    not write over, checked on the row read under the grant's claim."""
     await _enforce_code_ceiling(input.org, input.namespace, input.role)
     # A human's grant is written under the login handle, so one person keeps one row
     # whichever spelling the granter typed; the downgrade guard reads that same row.
@@ -146,14 +153,14 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     subject = await canonical_subject(input.org, input.subject)
 
     async def _write(_row: GrantState | None) -> datetime:
-        return await _write_grant(input, subject)
+        return await _write_grant(input, subject, may_replace)
 
     if input.replace and input.role != "admin":
         # Only `replace=true` lowers a grant (else 409): it may take admin.
         now = await _taking_admin(input, subject, _write, lowered_to=input.role)
     else:
         async with grant_change(input.org, input.namespace, subject):
-            now = await _write_grant(input, subject)
+            now = await _write_grant(input, subject, may_replace)
     if input.role == "admin":
         # A maintainer maintains every branch of the repository.
         from server.code.app.index import maintainers
@@ -168,10 +175,16 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     )
 
 
-async def _write_grant(input: GrantsCreateInput, subject: str) -> datetime:
+async def _write_grant(
+    input: GrantsCreateInput,
+    subject: str,
+    may_replace: Callable[[GrantState], None] | None = None,
+) -> datetime:
     """`grants.create`'s read of the current grant and its write, under the
     grant's claim."""
     existing = await _refuse_accidental_downgrade(input, subject)
+    if existing is not None and may_replace is not None:
+        may_replace(existing)
     if existing is not None and _active_admin(existing) and input.role != "admin":
         await _refuse_last_admin(input)
     pending_role = existing.pending_role if existing is not None else None

@@ -54,37 +54,48 @@ def home_of(subject_: str) -> str:
     return namespace(*found) if found else ""
 
 
+async def granted(org: str, subject_: str) -> dict[str, str]:
+    """The active namespaces of `org` where `subject_` holds a live grant, with
+    the role it counts as in a token: writer at most, so an agent never
+    re-shares a namespace it was only lent."""
+    from server.core.grant_cache import grant_map
+
+    ranks = (await grant_map(org, subject_)).ranks
+    held = {ns: "viewer" if rank == 1 else "writer" for ns, rank in ranks.items() if rank > 0}
+    return {ns: held[ns] for ns in sorted(await machines.active_namespaces(org, sorted(held)))}
+
+
+def lent(roles: dict[str, str], held: dict[str, str]) -> list[str]:
+    """The namespaces of `held` beyond `roles` (the agent's own and its
+    trust's), by name: those a token names, up to MAX_LENT."""
+    return [ns for ns in held if ns not in roles]
+
+
 async def with_grants(
     m: machines.Machine, agent: str, ns_roles: list[tuple[str, str]]
 ) -> list[tuple[str, str]]:
     """`ns_roles` and the namespaces of the trust's org the agent holds a live
-    grant on (another agent's share, an admin's grant). A grant counts as
-    writer at most, so an agent never re-shares a namespace it was only lent;
-    it raises a role `ns_roles` gives, and a lower or revoked one caps that
-    role at the gate (`authz.claim_cap`). At most MAX_LENT namespaces are
-    added, the first by name, so the token stays within a proxy's header limit."""
-    from server.core.grant_cache import grant_map
+    grant on (another agent's share, an admin's grant), as `granted` counts
+    them. A grant raises a role `ns_roles` gives, and a lower or revoked one
+    caps that role at the gate (`authz.claim_cap`). At most MAX_LENT
+    namespaces are added, the first by name, so the token stays within a
+    proxy's header limit."""
     from server.operations.base import grant_rank
 
-    ranks = (await grant_map(m["org"], subject(m["name"], agent))).ranks
-    lent = {ns: "viewer" if rank == 1 else "writer" for ns, rank in ranks.items() if rank > 0}
+    held = await granted(m["org"], subject(m["name"], agent))
     roles = dict(ns_roles)
-    added = left_out = 0
-    for ns in sorted(await machines.active_namespaces(m["org"], sorted(lent))):
-        if ns in roles:
-            if grant_rank(lent[ns]) > grant_rank(roles[ns]):
-                roles[ns] = lent[ns]
-        elif added < MAX_LENT:
-            roles[ns] = lent[ns]
-            added += 1
-        else:
-            left_out += 1
-    if left_out:
+    extra = lent(roles, held)
+    for ns, role in held.items():
+        if ns in roles and grant_rank(role) > grant_rank(roles[ns]):
+            roles[ns] = role
+    for ns in extra[:MAX_LENT]:
+        roles[ns] = held[ns]
+    if len(extra) > MAX_LENT:
         log.warning(
             "agent %s of %s: %d granted namespaces left out of its token",
             agent,
             m["name"],
-            left_out,
+            len(extra) - MAX_LENT,
         )
     return list(roles.items())
 

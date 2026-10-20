@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from server.auth import agents, authz
+from server.auth import agents, authz, machines
 from server.auth.context import set_current_auth
 from server.auth.jwt import AuthInfo
 from server.core import grant_cache
@@ -29,17 +29,33 @@ _NOW = datetime(2026, 10, 20, 12, 0, 0)
 
 @pytest.fixture
 def world(monkeypatch) -> dict[str, Any]:
-    """The grantee's grant ranks, the restricted namespaces, and the row an
-    unshare finds."""
-    state: dict[str, Any] = {"ranks": {}, "restricted": set(), "row": _row("sa:fleet:a")}
+    """The grantee's grant ranks, the active and the restricted namespaces,
+    the trust's shared roles, the row an unshare finds and the row a share
+    would write over."""
+    state: dict[str, Any] = {
+        "ranks": {},
+        "inactive": set(),
+        "restricted": set(),
+        "trust_roles": [],
+        "row": _row("sa:fleet:a"),
+        "existing": None,
+    }
 
     async def grant_map(org: str, subject: str) -> grant_cache.GrantMap:
         return grant_cache.GrantMap(ranks=dict(state["ranks"]))
+
+    async def active_namespaces(org: str, names: list[str]) -> set[str]:
+        return {ns for ns in names if ns not in state["inactive"]}
+
+    async def get(name: str) -> Any:
+        return {"name": name, "org": "acme", "ns_roles": state["trust_roles"]}
 
     async def may_be_restricted(org: str, namespace: str) -> bool:
         return namespace in state["restricted"]
 
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
+    monkeypatch.setattr(machines, "active_namespaces", active_namespaces)
+    monkeypatch.setattr(machines, "get", get)
     monkeypatch.setattr(authz, "may_be_restricted", may_be_restricted)
     return state
 
@@ -54,7 +70,9 @@ def _row(granted_by: str, role: str = "viewer") -> GrantState:
 def calls(monkeypatch, world) -> list[tuple[str, Any]]:
     seen: list[tuple[str, Any]] = []
 
-    async def create(input: Any) -> GrantsCreateOutput:
+    async def create(input: Any, may_replace: Any) -> GrantsCreateOutput:
+        if world["existing"] is not None:
+            may_replace(world["existing"])  # as create_grant checks it, under the claim
         seen.append(("create", input))
         return GrantsCreateOutput(
             org=input.org,
@@ -69,7 +87,7 @@ def calls(monkeypatch, world) -> list[tuple[str, Any]]:
         seen.append(("revoke", input))
         return GrantsRevokeOutput(revoked=True, revoked_at=_NOW)
 
-    monkeypatch.setattr(agent_shares, "handle_grants_create", create)
+    monkeypatch.setattr(agent_shares, "create_grant", create)
     monkeypatch.setattr(agent_shares, "revoke_grant", revoke)
     yield seen
     set_current_auth(None)
@@ -137,6 +155,35 @@ def test_a_restricted_namespace_is_shared_only_by_its_admin(calls, world) -> Non
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    "row",
+    [_row("alice@acme.com"), _row("alice@acme.com", role="writer"), _row("sa:fleet:a", "admin")],
+    ids=["an-admins-viewer", "an-admins-writer", "an-admin-role"],
+)
+def test_a_share_never_writes_over_a_grant_someone_else_made(calls, world, row) -> None:
+    # Else the lender would own the row, and could take an admin's grant back.
+    _as("sa:fleet:a")
+    world["existing"] = row
+    with pytest.raises(PreconditionFailedError):
+        _share(role="writer")
+    assert calls == []
+
+
+def test_an_agent_raises_its_own_share(calls, world) -> None:
+    _as("sa:fleet:a")
+    world["existing"] = _row("sa:fleet:a")
+    assert _share(role="writer").role == "writer"
+
+
+def test_the_limit_counts_what_the_grantees_token_would_name(calls, world) -> None:
+    _as("sa:fleet:a")
+    released = {f"gone-{i}" for i in range(agents.MAX_LENT)}
+    world["ranks"] = {ns: 1 for ns in released} | {"docs": 1}
+    world["inactive"] = released
+    world["trust_roles"] = [("docs", "viewer")]  # its trust names it already
+    assert _share().role == "viewer"
+
+
 def test_an_agent_holding_its_limit_of_namespaces_takes_no_new_one(calls, world) -> None:
     _as("sa:fleet:a")
     world["ranks"] = {f"ns-{i}": 1 for i in range(agents.MAX_LENT)} | {"fleet-b": 3}
@@ -194,3 +241,41 @@ def test_the_ops_need_only_the_agents_writer_role_on_its_namespace() -> None:
 
     for op in (ops_grants.grants_share_agent, ops_grants.grants_unshare_agent):
         assert op.required_role is Role.WRITER and op.audit
+
+
+def test_an_unshare_rechecks_the_row_under_the_grants_claim(monkeypatch) -> None:
+    # The grant read first is the agent's own; by the time the claim is held
+    # an admin has written over it, and nothing is revoked.
+    from server.identity.api.models_grants import GrantsRevokeInput
+    from server.identity.app import grants as grants_app
+
+    reads = iter([_row("sa:fleet:a"), _row("alice@acme.com")])
+    written: list[Any] = []
+
+    async def find_any_grant(org: str, namespace: str, subject: str, **kw: Any) -> GrantState:
+        return next(reads)
+
+    async def canonical(org: str, subject: str) -> str:
+        return subject
+
+    class _Claim:
+        async def __aenter__(self) -> None:
+            return None
+
+        async def __aexit__(self, *a: Any) -> None:
+            return None
+
+    async def insert_row(row: Any, **kw: Any) -> None:
+        written.append(row)
+
+    from server.auth import aliases
+
+    monkeypatch.setattr(grants_app.grants_repo, "find_any_grant", find_any_grant)
+    monkeypatch.setattr(grants_app.grants_repo, "insert_row", insert_row)
+    monkeypatch.setattr(grants_app, "grant_change", lambda *a: _Claim())
+    monkeypatch.setattr(aliases, "canonical_subject", canonical)
+    check = agent_shares._made_by("sa:fleet:a", "sa:fleet:b", "fleet-a")
+    body = GrantsRevokeInput(org="acme", namespace="fleet-a", subject="sa:fleet:b")
+    with pytest.raises(PreconditionFailedError):
+        asyncio.run(grants_app.revoke_grant(body, check))
+    assert written == []
