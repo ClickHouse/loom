@@ -52,6 +52,10 @@ class ExtractionQueueResult:
     done: list[dict[str, Any]] = field(default_factory=list)
     written_memories: int = 0
     failures: list[str] = field(default_factory=list)
+    # Claimed rows left for later: their org's model calls were switched off.
+    skipped: int = 0
+    # Requests of a switched-off org dropped after LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS.
+    dropped: int = 0
 
     @property
     def done_count(self) -> int:
@@ -98,6 +102,7 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
     """One pass; the supervisor calls it with no config, which reads the
     `extraction_queue_*` settings at pass time."""
     from server.core.ch import get_client
+    from server.llm import customer
 
     cfg = cfg or _config_from_settings()
     result = ExtractionQueueResult()
@@ -106,6 +111,13 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
     async def _replay_one(row: dict[str, Any]) -> None:
         try:
             written = await q.replay_row(row)
+        except (customer.ModelCallsDisabled, customer.SwitchUnread):
+            # Switched off after the claim, or the switch went unread: no attempt
+            # spent. The lease runs out and the row waits, unclaimed, until the
+            # org is back on or the switch is read. Not `HOLDS`: a request naming
+            # no customer never will, so it spends its attempts and fails.
+            result.skipped += 1
+            return
         except Exception as e:
             log.exception(
                 "extraction_queue replay failed for %s/%s queue_id=%s",
@@ -142,12 +154,26 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
                 await _replay_one(row)
 
     with record_pass("extraction_queue") as rec:
+        # A switched-off org's requests stay pending until it is switched back
+        # on, or until they have waited LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS
+        # since the org was switched off.
+        off = await customer.switched_off_orgs()
+        from server.settings import settings
+
+        result.dropped = await q.drop_waiting(
+            off,
+            older_than_days=settings.model_calls_off_max_wait_days,
+            ch=ch,
+            org_filter=cfg.org_filter,
+            namespace_filter=cfg.namespace_filter,
+        )
         rows = await q.claim_batch(
             limit=cfg.max_batches_per_pass,
             lease_seconds=cfg.lease_seconds,
             ch=ch,
             org_filter=cfg.org_filter,
             namespace_filter=cfg.namespace_filter,
+            exclude_orgs=off,
         )
         groups = order_within_namespace(rows)
         # A group can still raise (its mark_done / mark_error insert failing).
@@ -168,6 +194,8 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
             "done": result.done_count,
             "written_memories": result.written_memories,
             "failed": len(result.failures),
+            "skipped": result.skipped,
+            "dropped": result.dropped,
         }
 
     if result.done_count or result.failures:

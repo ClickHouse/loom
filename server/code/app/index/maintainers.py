@@ -260,7 +260,7 @@ async def _write_subject(
                     settings={"async_insert": 0, "wait_for_async_insert": 1},
                 )
             finally:
-                grant_cache.invalidate(org, [subject])
+                await grant_cache.changed(org, [subject])
     return len(wanted)
 
 

@@ -284,7 +284,9 @@ class CachedLLMClient:
         **kw: Any,
     ) -> LLMResult:
         global hits, misses, saved_usd
-        customer.require()  # a cached answer must not hide a path that names no customer
+        # A cached answer must not hide a path that names no customer, or an org
+        # whose model calls are switched off.
+        await customer.require()
         if (
             _BYPASS.get()
             or not self.org

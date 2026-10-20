@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.llm_free import reads_llm_free
+from server.llm import customer
 from server.settings import settings
 from server.tracker.api.models import (
     TrackerDuplicateCheckInput,
@@ -303,8 +304,8 @@ async def _checked(
         kept: list[Any] = []
         for inp, o in zip(inputs, outs, strict=True):
             if isinstance(o, BaseException):
-                if inp is inputs[0]:
-                    raise o
+                if inp is inputs[0] or isinstance(o, customer.HOLDS):
+                    raise o  # a held model call is the answer, from any tracker
                 logger.info(
                     "tracker.duplicate_check on %s failed inside a fan-out: %s", inp.namespace, o
                 )

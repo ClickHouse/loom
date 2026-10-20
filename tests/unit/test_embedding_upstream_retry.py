@@ -47,7 +47,7 @@ async def test_openai_embedder_survives_one_500(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr("server.clients._retry.wait_exponential", lambda **_: tenacity.wait_none())
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     emb = mod.OpenAIEmbedder(model="text-embedding-3-small", dim=3)
-    vec = await emb._embed_one_raw_inner("hello")
+    vec = await emb._embed_one_raw_inner("hello", "")
     assert vec == [0.1, 0.2, 0.3] and client.calls == 2
 
 
@@ -60,7 +60,7 @@ async def test_openai_embedder_does_not_retry_a_400(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     emb = mod.OpenAIEmbedder(model="text-embedding-3-small", dim=3)
     with pytest.raises(httpx.HTTPStatusError):
-        await emb._embed_one_raw_inner("hello")
+        await emb._embed_one_raw_inner("hello", "")
     assert client.calls == 1
 
 

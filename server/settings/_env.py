@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from pydantic import AfterValidator, BeforeValidator
 
 
-def _decode_json_or_b64(raw: str, field: str) -> object:
+def decode_json_or_b64(raw: str, field: str) -> object:
     """Parse either raw JSON or base64-encoded JSON. base64 sidesteps shell
     newline-mangling when PEM keys are stored in .env files."""
     raw = raw.strip()
@@ -36,7 +36,7 @@ def json_map_items(
     per raw value: signing and verification read it on every token. Keyed on the raw
     string, so a changed value (a test override) is decoded afresh. `strings_only`
     refuses a value that is not a string instead of converting it."""
-    parsed = _decode_json_or_b64(raw, field)
+    parsed = decode_json_or_b64(raw, field)
     if not isinstance(parsed, dict):
         raise ValueError(f"{field} must be a JSON object")
     if strings_only and not all(isinstance(v, str) for v in parsed.values()):

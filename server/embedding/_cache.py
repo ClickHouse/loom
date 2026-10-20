@@ -107,7 +107,7 @@ async def cached_embed(
     served-from-cache embedding (no upstream tokens, no cost) from a billed one
     on its telemetry span.
     """
-    customer.require()
+    await customer.require()
     org = request_org()
     if not org:
         _last_tier.set("miss")

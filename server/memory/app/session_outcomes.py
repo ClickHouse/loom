@@ -245,6 +245,7 @@ _UNLABELLED_SQL = """
     WHERE s.tombstoned_at IS NULL
       AND s.created_at > now() - INTERVAL {days:UInt16} DAY
       AND length(s.summary_text) > 0
+      AND NOT has({off:Array(String)}, s.org)
     ORDER BY s.created_at DESC
     LIMIT {lim:UInt32}
 """
@@ -253,7 +254,12 @@ _UNLABELLED_SQL = """
 async def label_sessions(ch: Any, llm: Any, cfg: DistillConfig, result: DistillResult) -> None:
     rows = await ch.query_all(
         _UNLABELLED_SQL,
-        params={"days": int(cfg.lookback_days), "lim": int(cfg.max_judged_per_pass)},
+        params={
+            "days": int(cfg.lookback_days),
+            "lim": int(cfg.max_judged_per_pass),
+            # an org whose model calls are switched off waits, and takes no slot
+            "off": sorted(await customer.switched_off_orgs()),
+        },
     )
     result.sessions_scanned = len(rows)
     out_rows: list[dict[str, Any]] = []
@@ -270,6 +276,8 @@ async def label_sessions(ch: Any, llm: Any, cfg: DistillConfig, result: DistillR
                     response_format={"type": "json_object"},
                 )
             outcome, confidence, reason = parse_judgement(getattr(res, "text", "") or "")
+        except customer.HOLDS:
+            continue  # a held call is no failure: the session is judged once the org is back
         except Exception as e:  # noqa: BLE001 — one bad judgement never stops the pass
             result.failures.append(f"judge {r.get('session_id')}: {type(e).__name__}: {e}")
             continue
@@ -317,6 +325,7 @@ _NEGATIVE_SQL = """
           AND r.user_id = s.user_id AND r.session_id = o.session_id
     WHERE o.outcome = 'negative' AND o.confidence >= {minc:Float32}
       AND o.judged_at > now() - INTERVAL {days:UInt16} DAY
+      AND NOT has({off:Array(String)}, o.org)
     ORDER BY o.judged_at DESC
     LIMIT {lim:UInt32}
 """
@@ -402,6 +411,7 @@ async def distil_contrasts(
             "minc": float(cfg.min_confidence),
             "days": int(cfg.lookback_days),
             "lim": int(cfg.max_contrasts_per_pass),
+            "off": sorted(await customer.switched_off_orgs()),
         },
     )
     result.contrast_candidates = len(negatives)
@@ -412,6 +422,8 @@ async def distil_contrasts(
             # both that org's.
             with customer.for_org(str(neg["org"])):
                 written = await _contrast_pair(ch, llm, cfg, neg, writer)
+        except customer.HOLDS:
+            continue  # a held call is no failure: the pair is distilled once the org is back
         except Exception as e:  # noqa: BLE001 — one bad pair never stops the pass
             result.failures.append(f"contrast {sid}: {type(e).__name__}: {e}")
             continue

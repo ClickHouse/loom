@@ -84,6 +84,7 @@ def test_every_literal_namespaces_insert_is_a_known_writer() -> None:
         "server/code/app/repo_admin.py",  # SELECT * new version: set_access
         "server/identity/app/conversation_logging.py",  # SELECT * new version: set_logging
         "server/identity/app/claim_release.py",  # SELECT * new version: release
+        "server/identity/app/collections.py",  # registry_row
     }
     found = set()
     for path in (ROOT / "server").rglob("*.py"):

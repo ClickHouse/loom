@@ -1809,6 +1809,73 @@ export interface CodeVerifyCitationsOutput {
   trace_run_id?: string;
 }
 
+export interface CollectionCreateInput {
+  org: string;
+  /** The collection's name, also its namespace: 'col-' then lowercase letters, digits and '-'. */
+  namespace: string;
+  /** The collection it sits in and inherits grants from; '' for a top-level one. */
+  parent?: string;
+  /** What the collection holds, shown beside its name; '' for none. */
+  description?: string;
+}
+
+export interface CollectionCreateOutput {
+  namespace: string;
+  /** The collection it sits in; '' for a top-level one. */
+  parent: string;
+  created: boolean;
+}
+
+export interface CollectionDeleteInput {
+  org: string;
+  namespace: string;
+}
+
+export interface CollectionDeleteOutput {
+  namespace: string;
+  deleted: boolean;
+  /** The erasure of what the collection held; `erasure.status` follows it. */
+  erasure_id?: string;
+  /** That erasure's outcome: `completed`, or `failed` while the recovery worker retries it. */
+  erasure_status?: string;
+}
+
+export interface CollectionListInput {
+  org: string;
+  /** Collections per page. */
+  limit?: number;
+  /** The `next_cursor` of the previous page; none for the first. */
+  cursor?: string | null;
+}
+
+export interface CollectionEntry {
+  namespace: string;
+  parent: string;
+  personal: boolean;
+  role: string;
+}
+
+export interface CollectionListOutput {
+  /** The collections the caller can read on this page, by name, with its role. */
+  collections: CollectionEntry[];
+  /** Pass as `cursor` for the next page; none on the last. */
+  next_cursor?: string | null;
+}
+
+export interface CollectionMoveInput {
+  org: string;
+  namespace: string;
+  /** The new parent collection; '' detaches it, keeping only its own grants. */
+  parent?: string;
+}
+
+export interface CollectionMoveOutput {
+  namespace: string;
+  /** The collection it now sits in; '' once detached. */
+  parent: string;
+  moved: boolean;
+}
+
 export interface ConflictsAllowlistListInput {
   org: string;
   namespace: string;
@@ -2980,6 +3047,9 @@ export interface KnowledgeAddInput {
   original_bytes_b64?: string | null;
   original_filename?: string;
   blob_content_type?: string;
+  agent?: string;
+  session_id?: string;
+  source_class?: string | null;
 }
 
 export interface KnowledgeAddOutput {
@@ -3004,6 +3074,9 @@ export interface KnowledgeBulkAddInput {
   org: string;
   namespace: string;
   entries: KnowledgeBulkEntry[];
+  agent?: string;
+  session_id?: string;
+  source_class?: string | null;
 }
 
 export interface KnowledgeBulkEntryResult {
@@ -3184,11 +3257,14 @@ export interface KnowledgeSearchInput {
   since_seconds?: number | null;
   top_k?: number;
   namespace_scope?: "this" | "all_mine";
+  namespaces?: string[];
   search_mode?: "hybrid" | "semantic" | "lexical";
   lexical_weight?: number;
   narrow_spans?: boolean;
   collapse_sections?: boolean;
   uri_prefix?: string[];
+  session_ids?: string[];
+  source_classes?: string[];
 }
 
 export interface SearchHit {
@@ -3199,6 +3275,7 @@ export interface SearchHit {
   distance: number;
   similarity: number;
   namespace?: string;
+  ingested_at?: string | null;
   section_path?: string[];
   section?: string;
   lexical_score?: number;
@@ -3209,6 +3286,9 @@ export interface SearchHit {
   span_end?: number;
   span_similarity?: number;
   siblings_folded?: number;
+  agent?: string;
+  session_id?: string;
+  source_class?: string;
 }
 
 export interface KnowledgeSearchOutput {
@@ -3270,6 +3350,9 @@ export interface KnowledgeUpsertInput {
   original_bytes_b64?: string | null;
   original_filename?: string;
   blob_content_type?: string;
+  agent?: string;
+  session_id?: string;
+  source_class?: string | null;
 }
 
 export interface KnowledgeUpsertOutput {
@@ -6770,6 +6853,27 @@ export interface OpsProjectionFailuresRetryOutput {
   resolved: number;
 }
 
+export interface OrgModelCallsInput {
+  org: string;
+}
+
+export interface OrgModelCallsOutput {
+  org: string;
+  enabled: boolean;
+  reason?: string;
+  updated_by?: string;
+  updated_at?: string | null;
+  locked?: boolean;
+  locked_by?: string;
+}
+
+export interface OrgSetModelCallsInput {
+  org: string;
+  enabled: boolean;
+  reason?: string;
+  locked?: boolean | null;
+}
+
 export interface PolicyCheckInput {
   org: string;
   namespace: string;
@@ -8473,6 +8577,10 @@ export type OpName =
   | "code.trace"
   | "code.verify"
   | "code.verify_citations"
+  | "collection.create"
+  | "collection.delete"
+  | "collection.list"
+  | "collection.move"
   | "conflicts.allowlist_list"
   | "conflicts.allowlist_remove"
   | "conflicts.list"
@@ -8644,6 +8752,8 @@ export type OpName =
   | "ops.projection_failures.list"
   | "ops.projection_failures.resolve"
   | "ops.projection_failures.retry"
+  | "org.model_calls"
+  | "org.set_model_calls"
   | "policy.check"
   | "policy.decisions"
   | "policy.delete"
@@ -8782,6 +8892,10 @@ export interface OpMap {
   "code.trace": { input: CodeTraceInput; output: CodeTraceOutput };
   "code.verify": { input: CodeVerifyInput; output: CodeVerifyOutput };
   "code.verify_citations": { input: CodeVerifyCitationsInput; output: CodeVerifyCitationsOutput };
+  "collection.create": { input: CollectionCreateInput; output: CollectionCreateOutput };
+  "collection.delete": { input: CollectionDeleteInput; output: CollectionDeleteOutput };
+  "collection.list": { input: CollectionListInput; output: CollectionListOutput };
+  "collection.move": { input: CollectionMoveInput; output: CollectionMoveOutput };
   "conflicts.allowlist_list": { input: ConflictsAllowlistListInput; output: ConflictsAllowlistListOutput };
   "conflicts.allowlist_remove": { input: ConflictsAllowlistRemoveInput; output: ConflictsAllowlistRemoveOutput };
   "conflicts.list": { input: ConflictsListInput; output: ConflictsListOutput };
@@ -8953,6 +9067,8 @@ export interface OpMap {
   "ops.projection_failures.list": { input: OpsProjectionFailuresListInput; output: OpsProjectionFailuresListOutput };
   "ops.projection_failures.resolve": { input: OpsProjectionFailuresResolveInput; output: OpsProjectionFailuresResolveOutput };
   "ops.projection_failures.retry": { input: OpsProjectionFailuresRetryInput; output: OpsProjectionFailuresRetryOutput };
+  "org.model_calls": { input: OrgModelCallsInput; output: OrgModelCallsOutput };
+  "org.set_model_calls": { input: OrgSetModelCallsInput; output: OrgModelCallsOutput };
   "policy.check": { input: PolicyCheckInput; output: PolicyCheckOutput };
   "policy.decisions": { input: PolicyDecisionsInput; output: PolicyDecisionsOutput };
   "policy.delete": { input: PolicyDeleteInput; output: PolicyDeleteOutput };
@@ -9091,6 +9207,10 @@ export const OPS: readonly OpSpec[] = [
   { name: "code.trace", group: "code", method: "trace", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "code.verify", group: "code", method: "verify", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "code.verify_citations", group: "code", method: "verifyCitations", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
+  { name: "collection.create", group: "collection", method: "create", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
+  { name: "collection.delete", group: "collection", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 2000, audit: true, readOnly: false },
+  { name: "collection.list", group: "collection", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
+  { name: "collection.move", group: "collection", method: "move", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "conflicts.allowlist_list", group: "conflicts", method: "allowlistList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "conflicts.allowlist_remove", group: "conflicts", method: "allowlistRemove", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "conflicts.list", group: "conflicts", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
@@ -9262,6 +9382,8 @@ export const OPS: readonly OpSpec[] = [
   { name: "ops.projection_failures.list", group: "ops", method: "projectionFailuresList", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: false },
   { name: "ops.projection_failures.resolve", group: "ops", method: "projectionFailuresResolve", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 500, audit: true, readOnly: false },
   { name: "ops.projection_failures.retry", group: "ops", method: "projectionFailuresRetry", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 3000, audit: true, readOnly: false },
+  { name: "org.model_calls", group: "org", method: "modelCalls", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: false },
+  { name: "org.set_model_calls", group: "org", method: "setModelCalls", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "policy.check", group: "policy", method: "check", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 500, audit: false, readOnly: true },
   { name: "policy.decisions", group: "policy", method: "decisions", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
   { name: "policy.delete", group: "policy", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
@@ -9343,4 +9465,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 306;
+export const GENERATED_OP_COUNT = 312;

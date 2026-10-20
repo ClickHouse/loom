@@ -119,6 +119,11 @@ class LocalEmbedder:
         return await self._embed(texts)
 
     async def _embed(self, texts: list[str]) -> list[list[float]]:
+        from server.llm import customer
+
+        # In-process, nothing is sent; checked as a provider is, so a switched-off
+        # org gets no vector here either, and a path naming no customer shows.
+        await customer.require()
         out = [[0.0] * self.dim for _ in texts]
         live = [i for i, t in enumerate(texts) if t and t.strip()]
         if not live:

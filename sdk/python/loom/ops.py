@@ -99,6 +99,10 @@ OpName = Literal[
     "code.trace",
     "code.verify",
     "code.verify_citations",
+    "collection.create",
+    "collection.delete",
+    "collection.list",
+    "collection.move",
     "conflicts.allowlist_list",
     "conflicts.allowlist_remove",
     "conflicts.list",
@@ -270,6 +274,8 @@ OpName = Literal[
     "ops.projection_failures.list",
     "ops.projection_failures.resolve",
     "ops.projection_failures.retry",
+    "org.model_calls",
+    "org.set_model_calls",
     "policy.check",
     "policy.decisions",
     "policy.delete",
@@ -408,6 +414,10 @@ OP_NAMES: tuple[str, ...] = (
     "code.trace",
     "code.verify",
     "code.verify_citations",
+    "collection.create",
+    "collection.delete",
+    "collection.list",
+    "collection.move",
     "conflicts.allowlist_list",
     "conflicts.allowlist_remove",
     "conflicts.list",
@@ -579,6 +589,8 @@ OP_NAMES: tuple[str, ...] = (
     "ops.projection_failures.list",
     "ops.projection_failures.resolve",
     "ops.projection_failures.retry",
+    "org.model_calls",
+    "org.set_model_calls",
     "policy.check",
     "policy.decisions",
     "policy.delete",
@@ -1376,6 +1388,54 @@ OPS: dict[str, OpSpec] = {
         1500,
         False,
         True,
+    ),
+    "collection.create": OpSpec(
+        "collection.create",
+        "CollectionCreateInput",
+        "CollectionCreateBody",
+        "CollectionCreateOutput",
+        True,
+        "viewer",
+        "experimental",
+        80,
+        True,
+        False,
+    ),
+    "collection.delete": OpSpec(
+        "collection.delete",
+        "CollectionDeleteInput",
+        "CollectionDeleteBody",
+        "CollectionDeleteOutput",
+        True,
+        "admin",
+        "experimental",
+        2000,
+        True,
+        False,
+    ),
+    "collection.list": OpSpec(
+        "collection.list",
+        "CollectionListInput",
+        "CollectionListBody",
+        "CollectionListOutput",
+        True,
+        "viewer",
+        "experimental",
+        80,
+        False,
+        True,
+    ),
+    "collection.move": OpSpec(
+        "collection.move",
+        "CollectionMoveInput",
+        "CollectionMoveBody",
+        "CollectionMoveOutput",
+        True,
+        "admin",
+        "experimental",
+        80,
+        True,
+        False,
     ),
     "conflicts.allowlist_list": OpSpec(
         "conflicts.allowlist_list",
@@ -3426,6 +3486,30 @@ OPS: dict[str, OpSpec] = {
         "org_admin",
         "experimental",
         3000,
+        True,
+        False,
+    ),
+    "org.model_calls": OpSpec(
+        "org.model_calls",
+        "OrgModelCallsInput",
+        "OrgModelCallsBody",
+        "OrgModelCallsOutput",
+        True,
+        "org_admin",
+        "experimental",
+        50,
+        False,
+        False,
+    ),
+    "org.set_model_calls": OpSpec(
+        "org.set_model_calls",
+        "OrgSetModelCallsInput",
+        "OrgSetModelCallsBody",
+        "OrgModelCallsOutput",
+        True,
+        "org_admin",
+        "experimental",
+        100,
         True,
         False,
     ),
@@ -7055,6 +7139,101 @@ class CodeVerifyCitationsOutput(TypedDict, total=False):
     trace_run_id: NotRequired[str]
 
 
+class CollectionCreateInput(TypedDict, total=False):
+    "Create a collection: a namespace read and written only through grants."
+
+    org: Required[str]
+    namespace: Required[str]
+    parent: NotRequired[str]
+    description: NotRequired[str]
+
+
+class CollectionCreateBody(TypedDict, total=False):
+    "Create a collection: a namespace read and written only through grants."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    parent: NotRequired[str]
+    description: NotRequired[str]
+
+
+class CollectionCreateOutput(TypedDict, total=False):
+    namespace: Required[str]
+    parent: Required[str]
+    created: Required[bool]
+
+
+class CollectionDeleteInput(TypedDict, total=False):
+    "Delete a collection with what it holds: a purging erasure of the"
+
+    org: Required[str]
+    namespace: Required[str]
+
+
+class CollectionDeleteBody(TypedDict, total=False):
+    "Delete a collection with what it holds: a purging erasure of the"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class CollectionDeleteOutput(TypedDict, total=False):
+    namespace: Required[str]
+    deleted: Required[bool]
+    erasure_id: NotRequired[str]
+    erasure_status: NotRequired[str]
+
+
+class CollectionListInput(TypedDict, total=False):
+    "List the collections the caller can read, by name."
+
+    org: Required[str]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+
+
+class CollectionListBody(TypedDict, total=False):
+    "List the collections the caller can read, by name."
+
+    org: NotRequired[str]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+
+
+class CollectionListOutput(TypedDict, total=False):
+    collections: Required[list["CollectionEntry"]]
+    next_cursor: NotRequired[Optional[str]]
+
+
+class CollectionEntry(TypedDict, total=False):
+    namespace: Required[str]
+    parent: Required[str]
+    personal: Required[bool]
+    role: Required[str]
+
+
+class CollectionMoveInput(TypedDict, total=False):
+    "Put a collection under another one, or detach it."
+
+    org: Required[str]
+    namespace: Required[str]
+    parent: NotRequired[str]
+
+
+class CollectionMoveBody(TypedDict, total=False):
+    "Put a collection under another one, or detach it."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    parent: NotRequired[str]
+
+
+class CollectionMoveOutput(TypedDict, total=False):
+    namespace: Required[str]
+    parent: Required[str]
+    moved: Required[bool]
+
+
 class ConflictsAllowlistListInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
@@ -8851,6 +9030,9 @@ class KnowledgeAddInput(TypedDict, total=False):
     original_bytes_b64: NotRequired[Optional[str]]
     original_filename: NotRequired[str]
     blob_content_type: NotRequired[str]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeAddBody(TypedDict, total=False):
@@ -8865,6 +9047,9 @@ class KnowledgeAddBody(TypedDict, total=False):
     original_bytes_b64: NotRequired[Optional[str]]
     original_filename: NotRequired[str]
     blob_content_type: NotRequired[str]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeAddOutput(TypedDict, total=False):
@@ -8882,6 +9067,9 @@ class KnowledgeBulkAddInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
     entries: Required[list["KnowledgeBulkEntry"]]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeBulkEntry(TypedDict, total=False):
@@ -8899,6 +9087,9 @@ class KnowledgeBulkAddBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
     entries: Required[list["KnowledgeBulkEntry"]]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeBulkAddOutput(TypedDict, total=False):
@@ -9173,11 +9364,14 @@ class KnowledgeSearchInput(TypedDict, total=False):
     since_seconds: NotRequired[Optional[int]]
     top_k: NotRequired[int]
     namespace_scope: NotRequired[Literal["this", "all_mine"]]
+    namespaces: NotRequired[list[str]]
     search_mode: NotRequired[Literal["hybrid", "semantic", "lexical"]]
     lexical_weight: NotRequired[float]
     narrow_spans: NotRequired[bool]
     collapse_sections: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
+    session_ids: NotRequired[list[str]]
+    source_classes: NotRequired[list[str]]
 
 
 class KnowledgeSearchBody(TypedDict, total=False):
@@ -9188,11 +9382,14 @@ class KnowledgeSearchBody(TypedDict, total=False):
     since_seconds: NotRequired[Optional[int]]
     top_k: NotRequired[int]
     namespace_scope: NotRequired[Literal["this", "all_mine"]]
+    namespaces: NotRequired[list[str]]
     search_mode: NotRequired[Literal["hybrid", "semantic", "lexical"]]
     lexical_weight: NotRequired[float]
     narrow_spans: NotRequired[bool]
     collapse_sections: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
+    session_ids: NotRequired[list[str]]
+    source_classes: NotRequired[list[str]]
 
 
 class KnowledgeSearchOutput(TypedDict, total=False):
@@ -9209,6 +9406,7 @@ class SearchHit(TypedDict, total=False):
     distance: Required[float]
     similarity: Required[float]
     namespace: NotRequired[str]
+    ingested_at: NotRequired[Optional[str]]
     section_path: NotRequired[list[str]]
     section: NotRequired[str]
     lexical_score: NotRequired[float]
@@ -9219,6 +9417,9 @@ class SearchHit(TypedDict, total=False):
     span_end: NotRequired[int]
     span_similarity: NotRequired[float]
     siblings_folded: NotRequired[int]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[str]
 
 
 class KnowledgeSynthesizeInput(TypedDict, total=False):
@@ -9304,6 +9505,9 @@ class KnowledgeUpsertInput(TypedDict, total=False):
     original_bytes_b64: NotRequired[Optional[str]]
     original_filename: NotRequired[str]
     blob_content_type: NotRequired[str]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeUpsertBody(TypedDict, total=False):
@@ -9320,6 +9524,9 @@ class KnowledgeUpsertBody(TypedDict, total=False):
     original_bytes_b64: NotRequired[Optional[str]]
     original_filename: NotRequired[str]
     blob_content_type: NotRequired[str]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeUpsertOutput(TypedDict, total=False):
@@ -14467,6 +14674,38 @@ class ProjectionFailureRetryRow(TypedDict, total=False):
     resolved: Required[bool]
     reason: NotRequired[str]
     error: NotRequired[str]
+
+
+class OrgModelCallsInput(TypedDict, total=False):
+    org: Required[str]
+
+
+class OrgModelCallsBody(TypedDict, total=False):
+    org: NotRequired[str]
+
+
+class OrgModelCallsOutput(TypedDict, total=False):
+    org: Required[str]
+    enabled: Required[bool]
+    reason: NotRequired[str]
+    updated_by: NotRequired[str]
+    updated_at: NotRequired[Optional[str]]
+    locked: NotRequired[bool]
+    locked_by: NotRequired[str]
+
+
+class OrgSetModelCallsInput(TypedDict, total=False):
+    org: Required[str]
+    enabled: Required[bool]
+    reason: NotRequired[str]
+    locked: NotRequired[Optional[bool]]
+
+
+class OrgSetModelCallsBody(TypedDict, total=False):
+    org: NotRequired[str]
+    enabled: Required[bool]
+    reason: NotRequired[str]
+    locked: NotRequired[Optional[bool]]
 
 
 class PolicyCheckInput(TypedDict, total=False):

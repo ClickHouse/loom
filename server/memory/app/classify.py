@@ -63,7 +63,8 @@ async def classify(
         "prompt_template": prompt_template,
         "valid_types": valid_types,
     }
-    headers = customer.headers()  # outside the fail-open: a call naming no customer is a bug
+    # Outside the fail-open: a refused call is an error, not a kept type.
+    headers = customer.headers(await customer.require())
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(endpoint, json=body, headers=headers)

@@ -328,7 +328,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "code.verify_citations": _CODE_INDEX,
     # The groups below are planes with no path to memory rows.
     "tracker.": "tracker records: issues and their sources, no user's memory",
-    "knowledge.": "namespace documents: the plane has no user or session axis",
+    "knowledge.": "namespace documents: access is the namespace's; the user column is authorship",
     "task.": "the task inbox: tasks, not memory",
     "inbox.": "inbox registrations and policies",
     "grants.": "namespace grants",
@@ -401,6 +401,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "observe.record": "a write",
     "run.begin": "a write: another user's run_id starts a new run",
     "run.complete": "a write: completes only a run inside the read scope",
+    "collection.": "collections and their places in the tree; no user's memory",
 }
 
 

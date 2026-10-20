@@ -41,6 +41,12 @@ class DocumentRow(BaseModel):
     blob_content_type: str = ""
     original_filename: str = ""
     blob_erased_at: datetime | None = None
+    # Who wrote it and what it is (provenance, erasure by user); access never reads these.
+    agent: str = "-"
+    user_id: str = "-"
+    session_id: str = "-"
+    actor: str = ""
+    source_class: str = ""
 
 
 def _hydrate(row: dict[str, Any]) -> DocumentRow:
@@ -63,6 +69,11 @@ def _hydrate(row: dict[str, Any]) -> DocumentRow:
         blob_content_type=row.get("blob_content_type") or "",
         original_filename=row.get("original_filename") or "",
         blob_erased_at=row.get("blob_erased_at"),
+        agent=row.get("agent") or "-",
+        user_id=row.get("user_id") or "-",
+        session_id=row.get("session_id") or "-",
+        actor=row.get("actor") or "",
+        source_class=row.get("source_class") or "",
     )
 
 
@@ -92,7 +103,8 @@ async def get_one(
         SELECT org, namespace, source_uri, doc_id, title, description, content,
                tags, metadata, version, superseded_at, ingested_at, blob_path, blob_size,
                toString(blob_content_type) AS blob_content_type,
-               original_filename, content_sha256, blob_erased_at
+               original_filename, content_sha256, blob_erased_at,
+               agent, user_id, session_id, actor, toString(source_class) AS source_class
         FROM loom.documents FINAL
         WHERE {" AND ".join(where)}
         LIMIT 1
@@ -141,7 +153,8 @@ async def get_many_by_uris(
         SELECT org, namespace, source_uri, doc_id, title, description, content,
                tags, metadata, version, superseded_at, ingested_at, blob_path, blob_size,
                toString(blob_content_type) AS blob_content_type,
-               original_filename, content_sha256, blob_erased_at
+               original_filename, content_sha256, blob_erased_at,
+               agent, user_id, session_id, actor, toString(source_class) AS source_class
         FROM loom.documents FINAL
         WHERE {" AND ".join(where)}
         """,
@@ -291,6 +304,11 @@ DOCUMENT_COLUMNS: tuple[str, ...] = (
     "original_filename",
     "description",
     "blob_erased_at",
+    "agent",
+    "user_id",
+    "session_id",
+    "actor",
+    "source_class",
 )
 
 _REQUIRED_DOCUMENT_COLUMNS = ("org", "namespace", "source_uri", "content", "version")
@@ -317,6 +335,11 @@ class DocumentInsertRow(TypedDict):
     original_filename: str
     description: str
     blob_erased_at: datetime | None
+    agent: str
+    user_id: str
+    session_id: str
+    actor: str
+    source_class: str
 
 
 def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) -> DocumentInsertRow:
@@ -344,6 +367,11 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
         "original_filename": "",
         "description": "",
         "blob_erased_at": None,
+        "agent": "-",
+        "user_id": "-",
+        "session_id": "-",
+        "actor": "",
+        "source_class": "",
     }
     if existing is not None:
         row.update({c: getattr(existing, c) for c in DOCUMENT_COLUMNS if c != "content_sha256"})

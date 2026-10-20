@@ -22,8 +22,10 @@ the other two pools at the same moment, when a session is distilled:
   `hint`).
 
 Everything is bounded (events per session, characters per prompt), every
-write is fail-open, and the pure parts (pairing, parsing, rendering) are
-testable without a model or a database.
+write is fail-open except for a call the switch holds (`customer.HOLDS`),
+which propagates so the caller leaves the session to distil again, and the
+pure parts (pairing, parsing, rendering) are testable without a model or a
+database.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.llm import customer
 from server.memory.api.models_crud import MemoryDeleteInput, MemorySetInput
 from server.memory.domain.transcript_rows import EVENT_SOURCE_TRACE, EVENT_TAG, FROM_OBSERVATION_TAG
 from server.observability.genai import llm_stage
@@ -421,7 +424,8 @@ async def distill_events(
 ) -> ExtrasResult:
     """One model call per transition pair → one `semantic` memory tagged
     `event`, dated at the later observation, chained to the previous event
-    with a `precedes` edge. Fail-open per pair."""
+    with a `precedes` edge. Fail-open per pair, except for a call the switch
+    holds (`customer.HOLDS`), which propagates."""
     from server.memory.app.write import handle_memory_set
 
     res = res or ExtrasResult()
@@ -491,6 +495,8 @@ async def distill_events(
                     )
                 )
             prev_key = key
+        except customer.HOLDS:
+            raise  # not this pair's failure: the session is distilled again later
         except Exception as e:  # noqa: BLE001 — one pair's failure is one pair
             res.failures.append(f"event: {type(e).__name__}: {e}")
     if edge_rows:
@@ -515,7 +521,8 @@ async def distill_notes(
     ch: Any = None,
 ) -> ExtrasResult:
     """One model call per session → a procedure (procedure plane) and a hint
-    (`semantic` memory tagged `hint`). Fail-open."""
+    (`semantic` memory tagged `hint`). Fail-open, except for a call the switch
+    holds (`customer.HOLDS`), which propagates."""
     res = res or ExtrasResult()
     useful = [o for o in observations if not o.trivial]
     # A procedure (and the session hint) is mined only from a
@@ -536,6 +543,8 @@ async def distill_notes(
             )
         res.llm_calls += 1
         notes = parse_notes(str(getattr(out, "text", "") or ""))
+    except customer.HOLDS:
+        raise
     except Exception as e:  # noqa: BLE001 — recorded in failures; nothing to write
         res.failures.append(f"notes: {type(e).__name__}: {e}")
         return res
@@ -566,6 +575,8 @@ async def distill_notes(
             res.procedures_superseded += await supersede_session_procedures(
                 session, keep_key=str(getattr(added, "memory_key", "") or ""), ch=ch
             )
+        except customer.HOLDS:
+            raise
         except Exception as e:  # noqa: BLE001 — recorded in failures; the hint still writes
             res.failures.append(f"procedure: {type(e).__name__}: {e}")
     if notes.hint:
@@ -599,6 +610,8 @@ async def distill_notes(
                 )
             )
             res.hint_written = True
+        except customer.HOLDS:
+            raise
         except Exception as e:  # noqa: BLE001 — recorded in failures
             res.failures.append(f"hint: {type(e).__name__}: {e}")
     return res

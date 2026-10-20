@@ -960,10 +960,16 @@ async def tombstone_embeddings(
 
 
 async def titler_candidates(
-    *, window_hours: int, min_turns: int, limit: int, ch: _CHClient | None = None
+    *,
+    window_hours: int,
+    min_turns: int,
+    limit: int,
+    exclude_orgs: frozenset[str] = frozenset(),
+    ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Recent threads with at least `min_turns` live messages in namespaces that
-    record conversations, untitled and not deleted, most recent first."""
+    record conversations, untitled and not deleted, most recent first; none of
+    `exclude_orgs` (orgs whose model calls are switched off)."""
     ch = ch or _default_client()
     return await ch.query_all(
         """
@@ -975,6 +981,7 @@ async def titler_candidates(
         WHERE n.active = true AND n.conversation_logging_enabled = true
           AND c.tombstoned_at IS NULL
           AND c.ts > now() - toIntervalHour({wh:UInt32})
+          AND NOT has({off:Array(String)}, c.org)
           -- Titled and deleted threads are not candidates: skipped after
           -- the LIMIT, they filled it every pass and older untitled
           -- threads were never reached.
@@ -987,7 +994,7 @@ async def titler_candidates(
         ORDER BY max(c.ts) DESC
         LIMIT {lim:UInt32}
         """,
-        params={"wh": window_hours, "mt": min_turns, "lim": limit},
+        params={"wh": window_hours, "mt": min_turns, "lim": limit, "off": sorted(exclude_orgs)},
     )
 
 

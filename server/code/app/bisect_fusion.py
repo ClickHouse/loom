@@ -11,11 +11,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import Any
 
 from server.core.background import create_deferred_task
 from server.core.llm_free import reads_llm_free
+from server.llm import customer
 from server.settings import settings
 from server.settings.budgets import llm_max_tokens
 from server.tracker.domain import bisect as bi
@@ -32,6 +34,8 @@ async def _embed(text: str) -> list[float]:
 
     try:
         return list(await get_embedder().embed(text[:4000]))
+    except customer.HOLDS:
+        raise  # the org's model calls are held: the request answers that
     except Exception as e:  # noqa: BLE001 — no vector leg, the others still rank
         logger.info("bisect fusion: embed failed: %s", e)
         return []
@@ -99,18 +103,43 @@ async def _read_window(
     """(rows by number, vector order, status): the window's PRs and the
     report's nearest among them. Status "" when read."""
     wall, floor = bounds
-    try:
-        rows, vector = await asyncio.gather(
-            source.window_prs(org, tracker_ns, versions, before=wall, after=floor),
-            _embed(text) if text.strip() else asyncio.sleep(0, result=[]),
-        )
-    except Exception as e:  # noqa: BLE001 — the scan's candidates stand
-        logger.info("bisect fusion: window read failed: %s", e)
+
+    read = await _read_and_embed(
+        "window",
+        lambda: source.window_prs(org, tracker_ns, versions, before=wall, after=floor),
+        text,
+    )
+    if read is None:  # the scan's candidates stand
         return {}, [], "window_unavailable"
+    rows, vector = read
     by_number = {int(r["pr_number"]): r for r in rows if r.get("pr_number")}
     if not by_number:
         return {}, [], "empty_window"
     return by_number, await _vector_order(org, tracker_ns, vector, list(by_number)), ""
+
+
+async def _read_and_embed(
+    window: str, read: Callable[[], Awaitable[Any]], text: str
+) -> tuple[list[dict[str, Any]], list[float]] | None:
+    """A window read and the report's embedding, both run to their end: a held
+    embed is raised even when the read failed first. None when either failed.
+    `read` is a callable because a source without `window_prs` fails on the call."""
+
+    async def rows_of() -> list[dict[str, Any]]:
+        return list(await read())
+
+    rows, vector = await asyncio.gather(
+        rows_of(),
+        _embed(text) if text.strip() else asyncio.sleep(0, result=[]),
+        return_exceptions=True,
+    )
+    if isinstance(vector, customer.HOLDS):
+        raise vector  # the org's model calls are held: the request answers that
+    for leg, failed in (("read", rows), ("embed", vector)):
+        if isinstance(failed, BaseException):
+            logger.info("bisect fusion: %s %s failed: %s", window, leg, failed)
+            return None
+    return rows, vector
 
 
 def start_prefetch(
@@ -304,6 +333,8 @@ async def rerank_stage(
         )
         body = result.text[result.text.find("{") : result.text.rfind("}") + 1]
         ranking = [x for x in json.loads(body).get("ranking", []) if isinstance(x, dict)]
+    except customer.HOLDS:
+        raise
     except Exception as e:  # noqa: BLE001 — the fused order stands
         logger.info("bisect rerank failed: %s", e)
         trigger = "weak" if weak else "asked"
@@ -361,14 +392,14 @@ async def wide_extras(
     floor = None if wide else (report_at - timedelta(days=days) if report_at else None)
     if not wide and floor is None:
         return [], {}
-    try:
-        rows, vector = await asyncio.gather(
-            source.window_prs(org, tracker_ns, wide, before=report_at, after=floor),
-            _embed(text) if text.strip() else asyncio.sleep(0, result=[]),
-        )
-    except Exception as e:  # noqa: BLE001 — the first window stands
-        logger.info("bisect wide window read failed: %s", e)
+    read = await _read_and_embed(
+        "wide window",
+        lambda: source.window_prs(org, tracker_ns, wide, before=report_at, after=floor),
+        text,
+    )
+    if read is None:  # the first window stands
         return [], {}
+    rows, vector = read
     extra = {
         int(r["pr_number"]): r
         for r in rows

@@ -9,7 +9,7 @@ import functools
 import logging
 from typing import Any
 
-from server.core.vectors.private_first import best_similarity, search_private_first
+from server.core.vectors.private_first import best_similarity, each, search_private_first
 from server.identity.app import namespace_visibility
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
@@ -191,7 +191,7 @@ async def _run_vector_legs(
         results_per_ns = await search_private_first(
             input.namespace,
             list(ctx.namespaces),
-            lambda ns: _search_one(ctx, ns),
+            each(lambda ns: _search_one(ctx, ns)),
             visibility=(
                 functools.partial(namespace_visibility.visibility_map, input.org)
                 if fan_out

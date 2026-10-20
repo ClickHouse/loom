@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.llm import customer
 from server.settings.budgets import llm_max_tokens
 from server.tracker.domain.llm_reply import clip, json_object
 
@@ -171,6 +172,8 @@ async def rerank(
                 max_tokens=llm_max_tokens("tracker_dup_rerank"),
                 response_format={"type": "json_object"},
             )
+    except customer.HOLDS:
+        raise  # the org's model calls are held: the request answers that
     except Exception as e:  # noqa: BLE001 — a rerank never breaks the answer
         log.info("dupcheck rerank failed (open, the answer stands): %s", e)
         res.error = f"{type(e).__name__}: {str(e)[:120]}"

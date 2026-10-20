@@ -118,11 +118,11 @@ def test_wildcard_token_never_resolves_restricted(world) -> None:
 def test_org_admin_rollup_excludes_restricted_by_name(world) -> None:
     set_current_auth(_flat(["*"], roles=(Role.ORG_ADMIN,)))
     f = asyncio.run(resolve_org_scope(ORG))
-    assert f.accessible and "NOT IN" in f.where and f.params == {"ns_hidden": [PRIV]}
+    assert f.accessible and "NOT IN {ns_hidden" in f.where and f.params["ns_hidden"] == [PRIV]
     world["grants"][(ORG, PRIV, "alice@x")] = Role.VIEWER
     set_current_auth(_flat([PRIV], roles=(Role.ORG_ADMIN,)))
     f = asyncio.run(resolve_org_scope(ORG))
-    assert f.accessible and f.where == "" and f.params == {}
+    assert f.accessible and "ns_hidden" not in f.params, "nothing restricted is hidden now"
 
 
 def test_org_admin_sees_nothing_when_the_directory_is_unreadable(world, monkeypatch) -> None:

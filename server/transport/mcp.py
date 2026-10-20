@@ -44,6 +44,7 @@ from server.transport.mcp_auth import (
     _echo_request_id,
     _effective_auth_mode,
     _first_method_requiring_auth,
+    _not_on_mcp,
     _reject_unauthenticated,
     _screen_tool_call,
     _token_refused,
@@ -336,6 +337,8 @@ def attach(app: FastAPI) -> None:
         mode = _effective_auth_mode()
         try:
             auth = _verify_bearer(request)
+        except PermissionError as e:
+            return _not_on_mcp(response, payload, e)
         except TokenError as e:
             if mode != "open":
                 return _token_refused(request, response, payload, e)
@@ -416,6 +419,8 @@ def attach(app: FastAPI) -> None:
         mode = _effective_auth_mode()
         try:
             auth = _verify_bearer(request)
+        except PermissionError as e:
+            return _not_on_mcp(response, None, e)
         except TokenError as e:
             if mode != "open":
                 return _token_refused(request, response, None, e)

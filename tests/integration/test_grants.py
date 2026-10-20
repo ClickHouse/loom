@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.integration._eventually import acl_change_adopted_async
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
@@ -95,6 +97,8 @@ async def test_revoke_removes_elevation(
     ) as adm:
         rv = await adm.grants.revoke("bob@x")
         assert rv["revoked"] is True
+    # Every server process refuses within one watermark poll of the revoke.
+    await acl_change_adopted_async()
     async with Agent(
         org=org, namespace=ns, agent="a", base_url=control_plane_url, api_key=viewer_tok
     ) as a:

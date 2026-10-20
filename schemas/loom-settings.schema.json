@@ -19,6 +19,18 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "acl_watermark_max_stale_seconds": {
+          "default": 10.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Oldest grant watermark a process still trusts, seconds. Past it (polls keep failing) cached grants are not served and every request reads its own."
+        },
+        "acl_watermark_poll_seconds": {
+          "default": 1.0,
+          "minimum": 0.1,
+          "type": "number",
+          "description": "Seconds between each process's reads of the per-org grant watermark (loom.acl_versions): a revoke on one replica is enforced on every other within about this long."
+        },
         "adaptive_thresholds": {
           "default": true,
           "type": "boolean",
@@ -2381,7 +2393,7 @@
         "grant_cache_ttl_seconds": {
           "default": 10.0,
           "type": "number",
-          "description": "Seconds a subject's grant rows are cached for the namespace gate, which caps a token's claim at the grant it holds there: a revoked or lowered grant takes effect on other processes within this TTL (at once on the one that wrote it)."
+          "description": "Seconds a subject's grant rows are cached for the namespace gate, which caps a token's claim at the grant it holds there. The backstop: a grant change reaches other processes through the per-org grant watermark (acl_watermark_poll_seconds), and this bounds one whose watermark row was never written."
         },
         "identity_provider": {
           "default": "",
@@ -2483,6 +2495,24 @@
           "type": "string",
           "description": "The `aud` claim stamped on minted tokens and required on every verified token."
         },
+        "jwt_end_user_issuers_json": {
+          "default": "",
+          "type": "string",
+          "description": "The services that sign a short-lived token per end user (a chat app in front of Loom): JSON (or base64 JSON) {issuer: {\"orgs\": [...], \"jwks_url\": \"https://…\", \"keys\": {kid: RS256 public PEM}}}. `orgs` lists the orgs its tokens may name (exact names, or `prefix*`); its keys come from `jwks_url` (fetched every `jwt_end_user_jwks_refresh_seconds`) and/or `keys`. A key here verifies only its own issuer's tokens, and only as an end user (`sub: user:<id>`, one listed `org`, an optional `agent: agent:<id>`), never any other token. Empty: no end-user tokens."
+        },
+        "jwt_end_user_jwks_refresh_seconds": {
+          "default": 300.0,
+          "minimum": 10.0,
+          "type": "number",
+          "description": "Seconds between fetches of each end-user issuer's `jwks_url`; a key it rotates in is honoured from the next fetch."
+        },
+        "jwt_end_user_max_ttl_seconds": {
+          "default": 300,
+          "maximum": 3600,
+          "minimum": 60,
+          "type": "integer",
+          "description": "The longest an end-user token may live, from its `iat` to its `exp`."
+        },
         "jwt_issuer": {
           "default": "loom",
           "type": "string",
@@ -2547,6 +2577,17 @@
           "exclusiveMinimum": 0,
           "type": "number",
           "description": "Seconds the repository-docs read for a brief may take."
+        },
+        "knowledge_search_fanout_kinds": {
+          "default": "memory,collection,personal",
+          "type": "string",
+          "description": "Namespace kinds an all_mine knowledge.search spans (comma list over loom.namespaces.kind): the memory fan-out's, and the caller's collections."
+        },
+        "knowledge_search_max_namespaces": {
+          "default": 10000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Namespaces an all_mine knowledge.search reads besides the addressed one, at most; the rest come back in `namespaces_skipped`. Each search leg is one statement over all of them (measured 110 ms at 10,000 collections)."
         },
         "langfuse_capture_io_level": {
           "default": "off",
@@ -3849,13 +3890,13 @@
         "memory_search_fanout_kinds": {
           "default": "memory",
           "type": "string",
-          "description": "Namespace kinds an all_mine fan-out spans (memory.search, knowledge.search, conversation.search, MCP loom_search): comma list over loom.namespaces.kind; a namespace with no kind row stays; \"\" = every kind. Code and QA indexes are reached by name or their own tools (measured sweep of 24 namespaces: 6.2 s)."
+          "description": "Namespace kinds an all_mine fan-out spans (memory.search, conversation.search, MCP loom_search; knowledge.search reads knowledge_search_fanout_kinds): comma list over loom.namespaces.kind; a namespace with no kind row stays; \"\" = every kind. Code and QA indexes are reached by name or their own tools (measured sweep of 24 namespaces: 6.2 s)."
         },
         "memory_search_fanout_max_namespaces": {
           "default": 32,
           "minimum": 1,
           "type": "integer",
-          "description": "Upper bound on how many of the caller's namespaces an all_mine fan-out reads besides the addressed one; a search names the rest in `namespaces_skipped`. Every leg issues at least one statement per namespace. A guard, not a tuning knob: set well above what one person holds, so it bounds a runaway sweep rather than trimming normal ones."
+          "description": "Upper bound on how many of the caller's namespaces an all_mine fan-out reads besides the addressed one; a search names the rest in `namespaces_skipped`. Every memory leg issues at least one statement per namespace. A guard, not a tuning knob: set well above what one person holds, so it bounds a runaway sweep rather than trimming normal ones."
         },
         "memory_search_floor_mode": {
           "default": "readmit",
@@ -4189,6 +4230,26 @@
           "default": 600,
           "type": "integer",
           "description": "Seconds a migration file waits for the mutations it started (MATERIALIZE, UPDATE, a column type change) to finish on every replica; past it the file fails unrecorded."
+        },
+        "model_calls_off_max_wait_days": {
+          "default": 7,
+          "maximum": 29,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Days a switched-off org's queued requests (the extraction queue) wait, from when the org was switched off, before they are dropped, each with a memory_drops record. 1 to 29: the queue's own 30-day TTL would otherwise remove them first, with no record."
+        },
+        "model_calls_policy_max_stale_seconds": {
+          "default": 60.0,
+          "maximum": 300,
+          "minimum": 15,
+          "type": "number",
+          "description": "Seconds a process trusts its copy of the org model-call switch when it cannot read it again; past it, every model call for an org is refused (fail closed). 15 to 300."
+        },
+        "model_calls_policy_refresh_seconds": {
+          "default": 10.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds between each process's reads of the orgs whose model calls are switched off (loom.org_model_calls); a change reaches every process within it."
         },
         "namespace_audit_index_row_scan_cap": {
           "default": 20000,

@@ -561,6 +561,50 @@ class CodeOps:
         )
 
 
+class CollectionOps:
+    """The `collection.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def create(
+        self, body: _ops.CollectionCreateBody | None = None, /, **options: Any
+    ) -> _ops.CollectionCreateOutput:
+        """`collection.create`."""
+        return cast(
+            "_ops.CollectionCreateOutput",
+            await self._agent.call("collection.create", body, **options),
+        )
+
+    async def delete(
+        self, body: _ops.CollectionDeleteBody | None = None, /, **options: Any
+    ) -> _ops.CollectionDeleteOutput:
+        """`collection.delete`."""
+        return cast(
+            "_ops.CollectionDeleteOutput",
+            await self._agent.call("collection.delete", body, **options),
+        )
+
+    async def list(
+        self, body: _ops.CollectionListBody | None = None, /, **options: Any
+    ) -> _ops.CollectionListOutput:
+        """`collection.list`."""
+        return cast(
+            "_ops.CollectionListOutput", await self._agent.call("collection.list", body, **options)
+        )
+
+    async def move(
+        self, body: _ops.CollectionMoveBody | None = None, /, **options: Any
+    ) -> _ops.CollectionMoveOutput:
+        """`collection.move`."""
+        return cast(
+            "_ops.CollectionMoveOutput", await self._agent.call("collection.move", body, **options)
+        )
+
+
 class ConflictsOps:
     """The `conflicts.*` operations."""
 
@@ -2176,6 +2220,33 @@ class OpsOps:
         )
 
 
+class OrgOps:
+    """The `org.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def model_calls(
+        self, body: _ops.OrgModelCallsBody | None = None, /, **options: Any
+    ) -> _ops.OrgModelCallsOutput:
+        """`org.model_calls`."""
+        return cast(
+            "_ops.OrgModelCallsOutput", await self._agent.call("org.model_calls", body, **options)
+        )
+
+    async def set_model_calls(
+        self, body: _ops.OrgSetModelCallsBody | None = None, /, **options: Any
+    ) -> _ops.OrgModelCallsOutput:
+        """`org.set_model_calls`."""
+        return cast(
+            "_ops.OrgModelCallsOutput",
+            await self._agent.call("org.set_model_calls", body, **options),
+        )
+
+
 class PolicyOps:
     """The `policy.*` operations."""
 
@@ -2861,6 +2932,7 @@ class OpsClient:
         self.blacklist = BlacklistOps(agent)
         self.calibration = CalibrationOps(agent)
         self.code = CodeOps(agent)
+        self.collection = CollectionOps(agent)
         self.conflicts = ConflictsOps(agent)
         self.consolidations = ConsolidationsOps(agent)
         self.context = ContextOps(agent)
@@ -2879,6 +2951,7 @@ class OpsClient:
         self.namespace = NamespaceOps(agent)
         self.observe = ObserveOps(agent)
         self.ops = OpsOps(agent)
+        self.org = OrgOps(agent)
         self.policy = PolicyOps(agent)
         self.procedure = ProcedureOps(agent)
         self.profile = ProfileOps(agent)

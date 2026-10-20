@@ -105,7 +105,8 @@ async def _exports(ch: RecordingCH, c: dict[str, Any]) -> None:
         ORG, scope_type, value, include_tombstoned=c["include_tombstoned"], limit=100, ch=ch
     )
     await erasure_exports.export_agent_events(ORG, scope_type, value, limit=100, ch=ch)
-    await erasure_exports.export_knowledge(ORG, "n", limit=100, ch=ch)
+    await erasure_exports.export_knowledge(ORG, "namespace", "n", limit=100, ch=ch)
+    await erasure_exports.export_knowledge(ORG, "user_id", "u", limit=100, ch=ch)
     await erasure_exports.export_audit_namespace(ORG, "n", limit=100, ch=ch)
     await erasure_exports.export_audit_by_subject_substring(ORG, "alice", limit=100, ch=ch)
 

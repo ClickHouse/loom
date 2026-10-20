@@ -12,6 +12,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.llm import customer
 from server.memory.app.projection_errors import record_input_projection_failure
 
 log = logging.getLogger(__name__)
@@ -248,7 +249,8 @@ def _note_truncation(input: Any, truncated_chars: int) -> None:
 
 async def _embed_chunks(embedder: Any, texts: list[str]) -> list[list[float]]:
     """One batch embed; on failure one embed per chunk, an unembeddable chunk
-    answering []."""
+    answering []. A held call (`customer.HOLDS`) raises: no chunk is
+    unembeddable then, and the caller keeps the projection to retry."""
     try:
         vectors = await embedder.embed_many(texts)
         if len(vectors) != len(texts):
@@ -257,12 +259,16 @@ async def _embed_chunks(embedder: Any, texts: list[str]) -> list[list[float]]:
                 f"{len(vectors)} vectors for {len(texts)} chunks",
             )
         return list(vectors)
+    except customer.HOLDS:
+        raise
     except Exception as e:  # noqa: BLE001 — falls back to one embed per chunk
         log.warning("memory_chunks batch embed failed; falling back serial: %s", e)
         out: list[list[float]] = []
         for i, chunk in enumerate(texts):
             try:
                 out.append(await embedder.embed(chunk))
+            except customer.HOLDS:
+                raise
             except Exception as chunk_error:  # noqa: BLE001 — this chunk stays unembedded
                 log.warning("memory_chunks embed failed for chunk %d: %s", i, chunk_error)
                 out.append([])

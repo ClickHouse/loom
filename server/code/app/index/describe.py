@@ -10,6 +10,7 @@ from typing import Any
 
 from server.code.app.index.ingest_stats import FileIngestStats
 from server.code.domain.extract.chunker import Chunk
+from server.llm import customer
 from server.observability.genai import staged
 
 logger = logging.getLogger("loom.code_index.ingest")
@@ -163,6 +164,8 @@ async def _describe_chunk(llm: Any, chunk: Chunk, *, card: str = "", hints: Any 
     try:
         res = await llm.complete(system, user, max_tokens=max_tokens)
         return describe_line(system, res.text)
+    except customer.HOLDS:
+        raise  # the org's model calls are held: the repository waits
     except Exception as e:  # noqa: BLE001 — description is best-effort
         logger.debug("code ingest: describe failed for %s: %s", chunk.scope, e)
         return ""

@@ -37,11 +37,11 @@ from server.settings import settings
 
 SCIM_JSON = "application/scim+json"
 USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
-_LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 _ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error"
 _CONFIG_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
-_MAX_RESULTS = 200
-_LAST_INDEX = 2**32 - 1
+MAX_RESULTS = 200
+LAST_INDEX = 2**32 - 1
 # A shorter bearer token is guessable: SCIM refuses to start with one.
 MIN_TOKEN_LENGTH = 32
 
@@ -95,7 +95,7 @@ def _error_response(e: ScimError) -> JSONResponse:
     return _answer(body, e.status, **headers)
 
 
-class _ScimRoute(APIRoute):
+class ScimRoute(APIRoute):
     """Every error these routes and their bearer check raise answers as an
     RFC 7644 error, a server-side one as a retryable 503."""
 
@@ -120,7 +120,7 @@ class _ScimRoute(APIRoute):
         return run
 
 
-router = APIRouter(prefix="/scim/v2", dependencies=[Depends(_authorized)], route_class=_ScimRoute)
+router = APIRouter(prefix="/scim/v2", dependencies=[Depends(_authorized)], route_class=ScimRoute)
 
 
 # ── parsing ───────────────────────────────────────────────────────────────
@@ -168,7 +168,7 @@ def parse_active(value: Any) -> bool:
 _USER_URN = USER_SCHEMA.lower() + ":"
 
 
-def _lowered(attrs: dict[str, Any]) -> dict[str, Any]:
+def lowered(attrs: dict[str, Any]) -> dict[str, Any]:
     """`attrs` with its names lower-cased (RFC 7643 §2.1: they match in any
     case). Two names that differ only in case are one attribute sent twice."""
     out = {str(k).lower(): v for k, v in attrs.items()}
@@ -182,10 +182,21 @@ def _every(attrs: dict[str, Any], name: str) -> list[Any]:
     return [v for k, v in attrs.items() if str(k).lower() == name]
 
 
+def patch_operations(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """A PatchOp's operations, each with its names lower-cased (RFC 7644: they
+    match in any case); 400 unless `Operations` is a list of objects."""
+    ops = _operations(body)
+    if not isinstance(ops, list):
+        raise ScimError(400, "a PatchOp needs Operations", "invalidSyntax")
+    if not all(isinstance(op, dict) for op in ops):
+        raise ScimError(400, "each operation must be an object", "invalidSyntax")
+    return ops
+
+
 def _operations(body: dict[str, Any]) -> Any:
-    ops = _lowered(body).get("operations")
+    ops = lowered(body).get("operations")
     return (
-        [_lowered(op) if isinstance(op, dict) else op for op in ops]
+        [lowered(op) if isinstance(op, dict) else op for op in ops]
         if isinstance(ops, list)
         else ops
     )
@@ -321,7 +332,7 @@ def _patched_emails(
         return [{**e, sub: blank} if i in picked else e for i, e in enumerate(emails)]
     if not sub and not isinstance(value, dict):
         raise ScimError(400, "an emails entry must be an object", "invalidValue")
-    changes = _lowered(value) if not sub else {sub: value}
+    changes = lowered(value) if not sub else {sub: value}
     if not picked and comparison is not None:
         # Entra writes `emails[type eq "work"].value` for an entry not there yet,
         # by add or replace; the list it leaves is checked as any other.
@@ -353,7 +364,7 @@ def _naming(named: Any) -> dict[str, str]:
     """What a remove's value says of an entry to drop: its address and/or type."""
     if not isinstance(named, dict):
         raise ScimError(400, "an emails entry must be an object", "invalidValue")
-    named = _lowered(named)
+    named = lowered(named)
     if any(not isinstance(named.get(k), str | None) for k in ("value", "type")):
         raise ScimError(400, "an email's value and type must be strings", "invalidValue")
     said = {k: named[k] for k in ("value", "type") if isinstance(named.get(k), str)}
@@ -412,7 +423,7 @@ def _entries(items: list[Any]) -> list[dict[str, Any]]:
     for e in items:
         if not isinstance(e, dict):
             raise ScimError(400, "an emails entry must be an object", "invalidValue")
-        e = _lowered(e)
+        e = lowered(e)
         value, kind = e.get("value"), e.get("type")
         if not isinstance(value, str | None) or not isinstance(kind, str | None):
             raise ScimError(400, "an email's value and type must be strings", "invalidValue")
@@ -454,7 +465,7 @@ def _matches(comparison: tuple[str, str | bool], entry: dict[str, Any]) -> bool:
     return scim.normalized(str(want)) == scim.normalized(entry[attr])
 
 
-def _int_param(request: Request, name: str, default: int) -> int:
+def int_param(request: Request, name: str, default: int) -> int:
     raw = request.query_params.get(name)
     if raw is None:
         return default
@@ -464,7 +475,7 @@ def _int_param(request: Request, name: str, default: int) -> int:
         raise ScimError(400, f"{name} must be an integer", "invalidValue") from None
 
 
-async def _body(request: Request) -> dict[str, Any]:
+async def read_body(request: Request) -> dict[str, Any]:
     try:
         body = json.loads(await request.body())
     except (ValueError, RecursionError):  # not JSON, or nested too deep to parse
@@ -498,7 +509,7 @@ def keyed_entry(emails: Any) -> dict[str, Any] | None:
 def user_name_and_email(body: dict[str, Any]) -> tuple[str, str, list[dict[str, Any]]]:
     """The userName, the email SSO sign-in will carry (the keyed `emails`
     entry's, else the userName) and the `emails` list as Loom keeps it."""
-    body = _lowered(body)
+    body = lowered(body)
     name = body.get("username")
     if not isinstance(name, str) or not name.strip():
         raise ScimError(400, "userName is required", "invalidValue")
@@ -553,7 +564,7 @@ async def service_provider_config() -> JSONResponse:
             "schemas": [_CONFIG_SCHEMA],
             "patch": {"supported": True},
             "bulk": {"supported": False, "maxOperations": 0, "maxPayloadSize": 0},
-            "filter": {"supported": True, "maxResults": _MAX_RESULTS},
+            "filter": {"supported": True, "maxResults": MAX_RESULTS},
             "changePassword": {"supported": False},
             "sort": {"supported": False},
             "etag": {"supported": False},
@@ -572,8 +583,8 @@ async def service_provider_config() -> JSONResponse:
 @router.get("/Users")
 async def list_users(request: Request) -> JSONResponse:
     # Past the end is an empty page, however far: the offset must fit its UInt32.
-    start = min(_LAST_INDEX, max(1, _int_param(request, "startIndex", 1)))
-    count = min(_MAX_RESULTS, max(0, _int_param(request, "count", 100)))
+    start = min(LAST_INDEX, max(1, int_param(request, "startIndex", 1)))
+    count = min(MAX_RESULTS, max(0, int_param(request, "count", 100)))
     text = request.query_params.get("filter")
     if text is not None:
         attribute, value = parse_filter(text)
@@ -588,27 +599,11 @@ async def list_users(request: Request) -> JSONResponse:
         total, rows = await scim.page(start, count)
     return _answer(
         {
-            "schemas": [_LIST_SCHEMA],
+            "schemas": [LIST_SCHEMA],
             "totalResults": total,
             "startIndex": start,
             "itemsPerPage": len(rows),
             "Resources": [_resource(request, r) for r in rows],
-        }
-    )
-
-
-@router.get("/Groups")
-async def list_groups(request: Request) -> JSONResponse:
-    """No groups: a provider's connection test and group sync read an empty
-    list here, where a 404 would count as a broken endpoint."""
-    start = min(_LAST_INDEX, max(1, _int_param(request, "startIndex", 1)))
-    return _answer(
-        {
-            "schemas": [_LIST_SCHEMA],
-            "totalResults": 0,
-            "startIndex": start,
-            "itemsPerPage": 0,
-            "Resources": [],
         }
     )
 
@@ -624,7 +619,7 @@ async def get_user(uid: str, request: Request) -> JSONResponse:
 @router.post("/Users")
 async def create_user(request: Request) -> JSONResponse:
     """Records the email; the Loom account comes from the person's first sign-in."""
-    body = _lowered(await _body(request))
+    body = lowered(await read_body(request))
     name, email, emails = user_name_and_email(body)
     # A null is unassigned (RFC 7643 §2.5): a new user is active.
     active = parse_active(True if body.get("active") is None else body["active"])
@@ -638,7 +633,7 @@ async def create_user(request: Request) -> JSONResponse:
 
 @router.put("/Users/{uid}")
 async def replace_user(uid: str, request: Request) -> JSONResponse:
-    body = await _body(request)
+    body = await read_body(request)
     if any(named != uid for named in _every(body, "id")):
         raise ScimError(400, "the body names another user", "invalidValue")
     # Read in every spelling: a body refused for an attribute named twice
@@ -663,7 +658,7 @@ async def replace_user(uid: str, request: Request) -> JSONResponse:
 
 @router.patch("/Users/{uid}")
 async def patch_user(uid: str, request: Request) -> JSONResponse:
-    body = await _body(request)
+    body = await read_body(request)
     try:
         active = patched_active(body)
     except ScimError:
@@ -757,9 +752,7 @@ async def unknown(rest: str, request: Request) -> Response:
         raise ScimError(
             405, f"{request.method} is not served here", headers={"Allow": ", ".join(allowed)}
         )
-    raise ScimError(
-        404, "this server serves only Users, an empty Groups list and ServiceProviderConfig"
-    )
+    raise ScimError(404, "this server serves only Users, Groups and ServiceProviderConfig")
 
 
 def scim_settings_problem(raw: str, login_provider: str, auth_required: bool) -> str:

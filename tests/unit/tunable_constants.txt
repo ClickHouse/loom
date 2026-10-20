@@ -39,7 +39,7 @@ server/auth/revocation.py::CLOCK_SKEW_S
 server/auth/revocation.py::_RECENT_S
 server/auth/scim.py::_LEASE_TTL_S
 server/auth/scim.py::_LEASE_WAIT_S
-server/auth/scim_routes.py::_MAX_RESULTS
+server/auth/scim_routes.py::MAX_RESULTS
 server/auth/self_signup.py::CLAIM_TTL_S
 server/auth/service_accounts.py::_CREATOR_CACHE_MAX
 server/boot.py::SHUTDOWN_DRAIN_BUDGET_S

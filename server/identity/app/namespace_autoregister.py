@@ -59,7 +59,14 @@ def bench_prefixes() -> tuple[str, ...]:
 
 
 def classify_kind(namespace: str) -> str:
-    """`bench` under a bench prefix, else `memory`."""
+    """`personal` / `collection` by their reserved prefixes (server/auth/sharing.py),
+    `bench` under a bench prefix, else `memory`."""
+    from server.auth.sharing import is_collection, is_personal
+
+    if is_personal(namespace):
+        return "personal"
+    if is_collection(namespace):
+        return "collection"
     return "bench" if any(namespace.startswith(p) for p in bench_prefixes()) else "memory"
 
 
@@ -132,7 +139,7 @@ async def ensure_registered(
                 namespace=namespace,
                 owner_email=subject,
                 description=f"Auto-registered on first write ({op_name}) by {subject}.",
-                kind=kind,  # type: ignore[arg-type]
+                kind=None,  # classified by name (`classify_kind`), as `kind` above
                 tags=[AUTO_REGISTER_TAG] + (["bench"] if kind == "bench" else []),
                 retention_days=0,
             ),

@@ -476,6 +476,24 @@ def test_revoking_another_token_revokes_its_jti_until_it_expires(_world) -> None
     assert timedelta(0) < _world["expiries"][0] - datetime.now(UTC) <= timedelta(seconds=61)
 
 
+def test_an_end_user_token_revokes_nothing_here(_world, monkeypatch) -> None:
+    """Its `jti` is its issuer's to pick, and the revocation list spans the
+    deployment: revoking it here could name another org's token or subject."""
+    from server.settings import settings
+    from tests import end_user_issuer
+
+    private, public = end_user_issuer.new_key()
+    monkeypatch.setattr(
+        settings, "jwt_end_user_issuers_json", end_user_issuer.issuers_setting(public)
+    )
+    token = end_user_issuer.mint("acme", "u-1", private_pem=private, jti="bob@globex.io")
+    from server.auth.jwt import verify_token
+
+    assert verify_token(token).subject == "user:u-1", "a token this deployment accepts"
+    r = _client().post("/oauth/revoke", data={"token": token, "client_id": "loom-cli"})
+    assert r.status_code == 200 and _world["revoked"] == []
+
+
 def test_revoking_garbage_is_a_quiet_200(_world) -> None:
     r = _client().post("/oauth/revoke", data={"token": "nonsense", "client_id": "loom-cli"})
     assert r.status_code == 200 and _world["revoked"] == []

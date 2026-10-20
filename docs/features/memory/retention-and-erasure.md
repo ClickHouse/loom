@@ -123,8 +123,12 @@ flowchart TD
   window; `erasure.list` reports such revivals as `reversals_count`. `purge=true` deletes
   the rows instead (a lightweight `DELETE FROM` on the wide tables).
 - **Uploaded originals** of knowledge documents: the namespace's rows of
-  `loom.document_blobs` are deleted first, and `blob_erased_at` is stamped. The census
-  counts that table.
+  `loom.document_blobs` are deleted first, and `blob_erased_at` is stamped. A user
+  erasure deletes the originals that user uploaded and no other writer's live document
+  shares, found through `loom.blob_uploads` (one row per end user's upload, since the
+  document version that named an original may have been replaced and merged away) and
+  through their documents; then their rows of `loom.blob_uploads` go. The census counts
+  both tables.
 - **Org-wide caches.** `loom.idempotency` (replayed responses) and `loom.embedding_cache`
   (query vectors, never their text) carry the org but no namespace or end user, so an
   erasure at either scope deletes all of the org's rows in both tables. The cost is cache

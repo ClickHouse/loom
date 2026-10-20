@@ -19,10 +19,12 @@ from server.identity.domain.grants import GrantState, PendingGrant
 async def insert_row(
     row: dict[str, Any],
     *,
+    announce: bool = True,
     ch: _CHClient | None = None,
 ) -> None:
     """Insert one grant row. Used by both create and revoke (revoke is
-    a new row with `revoked_at` populated + bumped version)."""
+    a new row with `revoked_at` populated + bumped version). `announce=False`
+    leaves the watermark to a caller that writes many rows and moves it once."""
     ch = ch or _default_client()
     try:
         await ch.insert(
@@ -31,7 +33,8 @@ async def insert_row(
             settings={"async_insert": 0, "wait_for_async_insert": 1},
         )
     finally:
-        _invalidate([row])  # a reply lost after the write landed still drops it
+        if announce:
+            await _changed([row])  # a reply lost after the write landed still drops it
 
 
 async def insert_rows(
@@ -52,15 +55,14 @@ async def insert_rows(
             settings={"async_insert": 0, "wait_for_async_insert": 1},
         )
     finally:
-        _invalidate(rows)
+        await _changed(rows)
 
 
-def _invalidate(rows: list[dict[str, Any]]) -> None:
-    """This server's namespace gate sees a grant change at once (its other web
-    processes through the write count `grant_cache` keeps); others within
-    `grant_cache_ttl_seconds`."""
+async def _changed(rows: list[dict[str, Any]]) -> None:
+    """This process's namespace gate sees a grant change at once; every other
+    one at its next watermark poll (`grant_cache.changed`)."""
     for org in {r["org"] for r in rows}:
-        grant_cache.invalidate(org, [r["subject"] for r in rows if r["org"] == org])
+        await grant_cache.changed(org, [r["subject"] for r in rows if r["org"] == org])
 
 
 async def pending_for_admins(
@@ -159,6 +161,57 @@ async def find_active_grant(
         params={"org": org, "ns": namespace, "sub": subject},
     )
     return None if row is None else GrantState.from_row(row)
+
+
+async def live_rows_of(
+    org: str, subject: str, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """Every live row naming `subject` in `org`, whole, for a rewrite."""
+    from server.core.ch import own_write_reads
+
+    ch = ch or _default_client()
+    with own_write_reads():
+        return await ch.query_all(
+            """
+            SELECT * FROM loom.namespace_grants FINAL
+            WHERE org = {org:String} AND subject = {sub:String} AND revoked_at IS NULL
+            """,
+            params={"org": org, "sub": subject},
+        )
+
+
+async def newest_row(
+    org: str, namespace: str, subject: str, *, ch: _CHClient | None = None
+) -> dict[str, Any] | None:
+    """The newest row of one grant, whole, for a rewrite under its claim."""
+    from server.core.ch import own_write_reads
+
+    ch = ch or _default_client()
+    with own_write_reads():
+        return await ch.query_one(
+            """
+            SELECT * FROM loom.namespace_grants FINAL
+            WHERE org = {org:String} AND namespace = {ns:String} AND subject = {sub:String}
+            """,
+            params={"org": org, "ns": namespace, "sub": subject},
+        )
+
+
+async def rows_granted_by(
+    org: str, granter: str, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """Every newest row `granter` issued in `org`, whole, for a rewrite."""
+    from server.core.ch import own_write_reads
+
+    ch = ch or _default_client()
+    with own_write_reads():
+        return await ch.query_all(
+            """
+            SELECT * FROM loom.namespace_grants FINAL
+            WHERE org = {org:String} AND granted_by = {by:String}
+            """,
+            params={"org": org, "by": granter},
+        )
 
 
 async def find_any_grant(

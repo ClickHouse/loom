@@ -123,26 +123,49 @@ def _extract_auth(request: Request) -> AuthInfo | None:
     Raises HTTPException(401) on present-but-invalid tokens, or on missing
     tokens when auth_required=True.
     """
-    auth = verify_bearer_header(request.headers.get("Authorization"))  # counts its own refusals
+    # Counts its own refusals; an end-user token is served here.
+    auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None:
         if settings.auth_actually_required():
             raise missing_bearer()
         return None
 
-    # Trusted-caller impersonation: a subject on LOOM_TRUSTED_CALLERS carrying
-    # X-Loom-On-Behalf-Of takes the header value as its effective subject.
-    trusted = {s.strip() for s in settings.trusted_callers.split(",") if s.strip()}
-    if trusted and auth.subject in trusted:
-        on_behalf_of = (request.headers.get("X-Loom-On-Behalf-Of") or "").strip()
-        if on_behalf_of:
-            import dataclasses
+    from server.auth.gateway import effective_auth
 
-            auth = dataclasses.replace(
-                auth,
-                subject=on_behalf_of,
-                impersonated_by=auth.subject,
-            )
-    return auth
+    try:
+        return effective_auth(auth, request.headers.get("X-Loom-On-Behalf-Of") or "")
+    except PermissionError as e:
+        raise _refused_assertion(e) from e
+
+
+def _refused_assertion(e: PermissionError) -> HTTPException:
+    """403 for an `X-Loom-On-Behalf-Of` the bearer may not send, counted as an auth refusal."""
+    from server.observability.metrics import record_auth_refusal
+
+    record_auth_refusal(e, transport="http")
+    return HTTPException(status_code=403, detail={"code": "AUTH_INSUFFICIENT", "message": str(e)})
+
+
+def _resolve_personal(
+    op: Operation, call: _HttpCall, payload: Any, raw_body: dict[str, Any], auth: AuthInfo | None
+) -> tuple[Any, dict[str, Any]]:
+    """`namespace: "@me"` is the asserted end user's personal collection, which
+    only the server names; any other caller is refused. The gate then
+    authorizes it as any namespace."""
+    from server.auth.gateway import personal_namespace
+    from server.auth.sharing import PERSONAL_ALIAS
+    from server.core.errors import ValidationError as RequestInvalid
+
+    if getattr(payload, "namespace", None) != PERSONAL_ALIAS:
+        return payload, raw_body
+    org = getattr(payload, "org", None) or (auth.org if auth is not None else "")
+    try:
+        namespace = personal_namespace(auth, org, PERSONAL_ALIAS)
+    except ValueError as e:
+        raise _refuse(
+            op, call, 400, error_code="VALIDATION_FAILED", e=RequestInvalid(str(e))
+        ) from e
+    return payload.model_copy(update={"namespace": namespace}), {**raw_body, "namespace": namespace}
 
 
 def server_timing_header(elapsed_ms: int) -> str:
@@ -717,6 +740,8 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         call.raw_body = raw_body = await _read_body(op, request, request_id, auth)
 
         payload = _validate_payload(op, request_id, raw_body, auth)
+        payload, raw_body = _resolve_personal(op, call, payload, raw_body, auth)
+        call.raw_body = raw_body
 
         # The token is verified: its `consumer` claim, else the body's field, else its class.
         bind_current_consumer(raw_body, auth)

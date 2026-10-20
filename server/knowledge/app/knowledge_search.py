@@ -19,6 +19,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeSearchOutput,
     _SearchHit,
 )
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -35,16 +36,31 @@ PRIVATE_HIT_THRESHOLD = 0.30
 
 
 async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearchOutput:
+    from server.auth.context import current_auth
+    from server.auth.gateway import is_end_user
     from server.observability.otel import traced
+
+    if is_end_user(current_auth()) and "namespace_scope" not in input.model_fields_set:
+        # An end user's search reads what it names (`namespaces`), not every
+        # collection the user reaches: another agent's files stay out of it.
+        input = input.model_copy(update={"namespace_scope": "this"})
 
     embedder = get_embedder()
     with traced("embed.compute.query", model=embedder.model_name):
         query_vec = await embedder.embed(input.query)
-    search_one = _namespace_search(input, embedder, query_vec)
-    namespaces, skipped = await namespaces_to_search(
-        input.org, input.namespace, input.namespace_scope
-    )
-    results_per_ns = await _search_private_first(input, namespaces, search_one)
+    search = _namespaces_search(input, embedder, query_vec)
+    skipped: list[str] = []
+    if input.namespaces:
+        namespaces = await _named_namespaces(input)
+    else:
+        namespaces, skipped = await namespaces_to_search(
+            input.org,
+            input.namespace,
+            input.namespace_scope,
+            cap=settings.knowledge_search_max_namespaces,
+            kinds=settings.knowledge_search_fanout_kinds,
+        )
+    results_per_ns = await _search_private_first(input, namespaces, search)
     all_hits = _as_search_hits(results_per_ns)
     all_hits.sort(key=lambda x: (x.score, x.similarity), reverse=True)
     if input.collapse_sections:
@@ -57,11 +73,12 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     )
 
 
-def _namespace_search(
+def _namespaces_search(
     input: KnowledgeSearchInput, embedder: Embedder, query_vec: list[float]
-) -> Callable[[str], Awaitable[tuple[str, list[ChunkHit]]]]:
-    """One namespace's search in the requested mode: the vector leg, the
-    lexical leg, or both fused."""
+) -> Callable[[list[str]], Awaitable[list[tuple[str, list[ChunkHit]]]]]:
+    """A search over several namespaces in the requested mode, one statement
+    per leg whatever their number: the vector leg, the lexical leg, or both
+    fused. The hits come back grouped per namespace."""
     from server.knowledge.app import bm25 as knowledge_bm25
     from server.knowledge.app.search import (
         HybridSearchQuery,
@@ -72,55 +89,67 @@ def _namespace_search(
 
     tokens = knowledge_bm25.tokenize(input.query) if input.search_mode != "semantic" else []
 
-    async def _search_one(ns: str) -> tuple[str, list[ChunkHit]]:
+    # Collapsing sections folds sibling chunks after the statement: ask for more,
+    # so the page still fills.
+    top_k = input.top_k * 3 if input.collapse_sections else input.top_k
+
+    async def _ranked(namespaces: list[str]) -> list[ChunkHit]:
         base = HybridSearchQuery(
             org=input.org,
-            namespace=ns,
+            namespaces=tuple(namespaces),
             embedding_model=embedder.model_name,
             query_vec=query_vec,
-            top_k=input.top_k,
+            top_k=top_k,
             tags=list(input.tags or []),
             since_seconds=input.since_seconds,
             uri_prefixes=list(input.uri_prefix or []),
+            session_ids=list(input.session_ids),
+            source_classes=list(input.source_classes),
         )
         if input.search_mode == "semantic" or not tokens:
-            return ns, await hybrid_search(base)
-        # Lexical leg needs corpus statistics; a cold namespace (no view rows,
+            return await hybrid_search(base)
+        # Lexical leg needs corpus statistics; a cold corpus (no view rows,
         # no avgdl) or a failed read degrades to the vector leg alone.
         from server.core.ch import get_client as _get_ch
 
         avgdl, idfs = await knowledge_bm25.lexical_stats(
             _get_ch(),
             org=input.org,
-            namespace=ns,
+            namespaces=namespaces,
             embedding_model=embedder.model_name,
             tokens=tokens,
         )
         lex_q = dataclasses.replace(base, tokens=tokens, idfs=idfs, avgdl=avgdl)
         if input.search_mode == "lexical":
-            return ns, await lexical_search(lex_q)
+            return await lexical_search(lex_q)
         # Fusion candidates: fetch a wider slice from each leg so the top_k of
         # the fused list is drawn from more than top_k on either side.
-        wide = dataclasses.replace(lex_q, top_k=max(input.top_k * 3, 20))
+        wide = dataclasses.replace(lex_q, top_k=max(top_k * 3, 20))
         sem, lex = await asyncio.gather(hybrid_search(wide), lexical_search(wide))
         if not lex:
-            return ns, sem[: input.top_k]
-        return ns, fuse_rrf(sem, lex, top_k=input.top_k, w_lex=input.lexical_weight)
+            return sem[:top_k]
+        return fuse_rrf(sem, lex, top_k=top_k, w_lex=input.lexical_weight)
 
-    return _search_one
+    async def _search(namespaces: list[str]) -> list[tuple[str, list[ChunkHit]]]:
+        by_ns: dict[str, list[ChunkHit]] = {}
+        for hit in await _ranked(namespaces):
+            by_ns.setdefault(hit.namespace, []).append(hit)
+        return list(by_ns.items())
+
+    return _search
 
 
 async def _search_private_first(
     input: KnowledgeSearchInput,
     namespaces: list[str],
-    search_one: Callable[[str], Awaitable[tuple[str, list[ChunkHit]]]],
+    search: Callable[[list[str]], Awaitable[list[tuple[str, list[ChunkHit]]]]],
 ) -> list[tuple[str, list[ChunkHit]]]:
     from server.observability.otel import traced
 
     return await search_private_first(
         input.namespace,
         namespaces,
-        search_one,
+        search,
         visibility=(
             functools.partial(namespace_visibility.visibility_map, input.org)
             if input.namespace_scope == "all_mine"
@@ -129,6 +158,33 @@ async def _search_private_first(
         threshold=PRIVATE_HIT_THRESHOLD,
         span=functools.partial(traced, "ch.query.chunks", top_k=input.top_k),
     )
+
+
+async def _named_namespaces(input: KnowledgeSearchInput) -> list[str]:
+    """`namespace` (the transport gated it) and the ones the request names,
+    each gated as a read of its own (`@me` is the end user's personal
+    collection): AuthInsufficientError for the first the caller may not read."""
+    from server.auth.authz import check_authorized
+    from server.auth.context import current_auth
+    from server.auth.gateway import personal_namespace
+    from server.core.errors import AuthInsufficientError, ValidationError
+    from server.operations.base import Role
+
+    auth = current_auth()
+    out = [input.namespace]
+    for name in input.namespaces:
+        try:
+            namespace = personal_namespace(auth, input.org, name)
+        except ValueError as e:
+            raise ValidationError(str(e)) from e
+        if namespace in out:
+            continue
+        try:
+            await check_authorized(auth, Role.VIEWER, org=input.org, namespace=namespace)
+        except PermissionError as e:
+            raise AuthInsufficientError(str(e)) from e
+        out.append(namespace)
+    return out
 
 
 def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_SearchHit]:
@@ -144,12 +200,16 @@ def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_S
                     distance=h.distance,
                     similarity=1.0 - h.distance,
                     namespace=ns,
+                    ingested_at=h.ingested_at,
                     section_path=list(h.section_path),
                     section=h.section,
                     lexical_score=h.lexical_score,
                     # semantic-only hits rank by similarity; fused / lexical
                     # hits carry the score their leg or the fusion assigned
                     score=h.score if h.score else (1.0 - h.distance),
+                    agent=h.agent,
+                    session_id=h.session_id,
+                    source_class=h.source_class,
                 )
             )
     return all_hits

@@ -194,7 +194,7 @@ def _callers_namespaces(monkeypatch: pytest.MonkeyPatch, mine: list[str]) -> lis
 
     reads: list[str] = []
 
-    async def _mine(org: str) -> fanout.Fanout:
+    async def _mine(org: str, *_: object) -> fanout.Fanout:
         reads.append(org)
         return fanout.Fanout(org=org, namespaces=tuple(mine), cap=32)
 
@@ -260,7 +260,7 @@ async def test_a_page_of_the_addressed_namespace_alone_reads_no_fan_out(monkeypa
     key = sp.page_blob_key(content)
     patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
 
-    async def _down(org: str) -> fanout.Fanout:
+    async def _down(org: str, *_: object) -> fanout.Fanout:
         raise AssertionError("no fan-out read for an addressed-only page")
 
     monkeypatch.setattr(fanout, "resolve_fanout", _down)
@@ -285,7 +285,7 @@ async def test_a_page_whose_fan_out_cannot_be_read_serves_the_addressed_namespac
     key = sp.page_blob_key(content)
     patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
 
-    async def _down(org: str) -> fanout.Fanout:
+    async def _down(org: str, *_: object) -> fanout.Fanout:
         raise RuntimeError("grants unreadable")
 
     monkeypatch.setattr(fanout, "resolve_fanout", _down)

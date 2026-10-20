@@ -469,6 +469,11 @@ jobs:
           tests/integration/test_provider_source_policy_live_ch.py
           tests/integration/test_provider_staging_live_ch.py
           tests/integration/test_provider_views_live_ch.py
+      # The service in front of Loom that signs a token per end user: both
+      # servers trust its fresh key (LOOM_JWT_END_USER_ISSUERS_JSON) and the
+      # tests sign with it (LOOM_TEST_END_USER_KEY).
+      - name: Test end-user issuer
+        run: python -m tests.end_user_issuer "$RUNNER_TEMP" >> "$GITHUB_ENV"
       # The image's launcher with several web processes, so state that must
       # bind every process (rate limits, budgets, schema caches) is tested.
       - name: Boot control plane

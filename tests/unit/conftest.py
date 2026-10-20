@@ -362,18 +362,31 @@ def _no_grant_rows(request: pytest.FixtureRequest) -> Iterator[None]:
     there (`authz.claim_cap`), read through the grant cache. Unit fakes answer
     statements by shape, so the cache reads no grant rows (every claim stands)
     unless a test is marked `claim_cap`."""
+    from server.auth import sharing
     from server.core import grant_cache
 
     grant_cache.clear()
     before = grant_cache._read
+    before_tree, before_groups = sharing.load_tree, sharing._load_groups
     if not request.node.get_closest_marker("claim_cap"):
 
         async def _none(org: str, subject: str) -> grant_cache.GrantMap:
             return grant_cache.GrantMap(ranks={})
 
         grant_cache._read = _none  # type: ignore[assignment]
+
+    # Likewise an org has no collections and no groups unless a test says so.
+    async def _no_tree(org: str) -> sharing.Tree:
+        return sharing.Tree()
+
+    async def _no_groups(org: str) -> dict[str, list[str]]:
+        return {}
+
+    sharing.load_tree = _no_tree  # type: ignore[assignment]
+    sharing._load_groups = _no_groups  # type: ignore[assignment]
     yield
     grant_cache._read = before  # type: ignore[assignment]
+    sharing.load_tree, sharing._load_groups = before_tree, before_groups  # type: ignore[assignment]
     grant_cache.clear()
 
 
@@ -760,24 +773,28 @@ def _vector_read_state_not_probed() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _revocation_snapshot_loaded() -> Iterator[None]:
-    """A unit test models a booted process: the revocation snapshot and the
-    signing keyring have been read just now (both empty), and no creator's account state
-    or service-account row is cached yet. Tests of the not-yet-loaded state
-    set them back to not loaded. Saved and restored by hand, not through
-    `monkeypatch`: requesting it here would set it up before
-    `_settings_left_as_found` and so tear it down after that check."""
+    """A unit test models a booted process: the revocation snapshot, the
+    signing keyring and the model-call switch have been read just now (all
+    empty), and no creator's account state or service-account row is cached
+    yet. Tests of the not-yet-loaded state set them back to not loaded. Saved
+    and restored by hand, not through `monkeypatch`: requesting it here would
+    set it up before `_settings_left_as_found` and so tear it down after that
+    check."""
     import server.auth.delegation as delegation
     import server.auth.keyring as keyring
     import server.auth.revocation as rev
     import server.auth.service_accounts as service_accounts
+    import server.llm.customer as customer
 
     saved = rev._loaded, rev._loaded_at, keyring._view
     rev._loaded, rev._loaded_at = True, rev.time.monotonic()
     keyring._view = keyring._View(read_at=keyring.time.monotonic(), loaded=True)
+    customer._reset_for_tests()
     delegation._account_active.clear()
     service_accounts._creators.clear()
     yield
     rev._loaded, rev._loaded_at, keyring._view = saved
+    customer._reset_for_tests(read=False)
 
 
 # The scalar repository the code-plane fixtures model, with its repository-shaped

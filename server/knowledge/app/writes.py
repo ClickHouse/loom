@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
 import json
 import logging
 import time
@@ -45,12 +46,71 @@ if TYPE_CHECKING:
     from server.knowledge.store.documents import DocumentInsertRow, DocumentRow
 
 
+def _authorship(input: KnowledgeAddInput | KnowledgeBulkAddInput) -> dict[str, str]:
+    """Who writes a document and what it is. The end user comes from the
+    request's identity, never its body (an end-user token's `sub`, a token's
+    `read_user_id`), so no body can make a row erasable as someone else's; the
+    agent is the one an end-user token signs in when it names one, else the
+    body's; the session (a chat, an agent run) is the body's; the class is
+    the operation's `asserted` unless the body declares a downgrade
+    (`derived`, `external`, `imported`), as `memory.set` takes it."""
+    from server.auth.context import current_auth
+    from server.memory.app.provenance import writer_actor
+    from server.memory.domain.provenance import source_class_for
+
+    auth = current_auth()
+    asserted = auth.agent_principal.removeprefix("agent:") if auth is not None else ""
+    return {
+        "agent": asserted or input.agent.strip() or "-",
+        "user_id": (auth.read_user_id if auth is not None else "") or "-",
+        "session_id": input.session_id.strip() or "-",
+        "actor": writer_actor(),
+        "source_class": source_class_for(default="asserted", requested=input.source_class),
+    }
+
+
+_AUTHOR_COLUMNS = ("agent", "user_id", "session_id", "actor", "source_class")
+
+
+def _fresh_sha(input: KnowledgeAddInput) -> str:
+    """The sha256 of the original a write uploads; '' for none (a malformed
+    one is refused when it is stored)."""
+    if not input.original_bytes_b64:
+        return ""
+    try:
+        return hashlib.sha256(base64.b64decode(input.original_bytes_b64, validate=True)).hexdigest()
+    except (binascii.Error, ValueError):
+        return ""
+
+
+def _author_for(
+    prior: DocumentRow | None, content: str, author: dict[str, str], fresh_sha: str = ""
+) -> dict[str, str]:
+    """`author`, unless the write leaves a live document as it was (a re-save,
+    a title or tag edit, with no original or the same one): then the document
+    stays whoever wrote that text and file, so the writer's erasure still
+    finds it. A new original makes its uploader the author, whatever the text."""
+    same_file = not fresh_sha or (prior is not None and fresh_sha == prior.blob_path)
+    if prior is not None and prior.superseded_at is None and prior.content == content and same_file:
+        return {c: str(getattr(prior, c)) for c in _AUTHOR_COLUMNS}
+    return author
+
+
 def _nano_version() -> int:
     return time.time_ns()
 
 
+def _original_of(prior: DocumentRow | None, author: dict[str, str]) -> DocumentRow | None:
+    """The prior row whose original a write without fresh bytes may carry:
+    not one an end user uploaded when someone else writes new text, so that
+    user's erasure finds every original of theirs."""
+    if prior is not None and prior.user_id not in ("-", author["user_id"]):
+        return None
+    return prior
+
+
 async def _resolve_blob(
-    input: KnowledgeAddInput, prior: DocumentRow | None
+    input: KnowledgeAddInput, prior: DocumentRow | None, *, uploader: str
 ) -> tuple[str, int, str, str]:
     """Resolve the blob columns for a knowledge write. Fresh bytes win (the
     prior original stays until the sweep finds no live document naming it, so a
@@ -58,7 +118,8 @@ async def _resolve_blob(
     carries forward so a metadata-only edit doesn't drop the user's download.
     Only a live, unerased prior carries: a deleted one's original is the sweep's
     and an erased one's is gone (carrying it would answer 410 or be residue).
-    Returns (blob_path, blob_size, blob_content_type, original_filename)."""
+    `uploader` is the writing user's id (`_authorship`), recorded with fresh
+    bytes. Returns (blob_path, blob_size, blob_content_type, original_filename)."""
     from server.knowledge.store.documents import serves_original
 
     blob_path = ""
@@ -75,7 +136,7 @@ async def _resolve_blob(
             raise ValidationError(f"original_bytes_b64 is not valid base64: {e}") from e
         from server.knowledge.store import blobs
 
-        blob_path = await blobs.put(input.org, input.namespace, raw)
+        blob_path = await blobs.put(input.org, input.namespace, raw, uploader=uploader)
         blob_size = len(raw)
     elif prior is not None and serves_original(prior):
         blob_path = prior.blob_path
@@ -142,6 +203,8 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     """
     from server.knowledge.store import chunks as knowledge_repo
 
+    author = _authorship(input)
+
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
     doc_id = str(uuid.uuid4())
@@ -189,12 +252,17 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         if superseded_count > 0
         else None
     )
-    blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(input, prior)
+    uploader = author["user_id"]  # the writer's, even when the document keeps its author
+    author = _author_for(prior, input.content, author, _fresh_sha(input))
+    blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
+        input, _original_of(prior, author), uploader=uploader
+    )
 
     from server.knowledge.store import documents as documents_repo
 
     await documents_repo.insert_one(
         documents_repo.build_document_row(
+            **author,
             org=input.org,
             namespace=input.namespace,
             source_uri=input.source_uri,
@@ -235,6 +303,7 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         embedding_model=embedder.model_name,
         embedding_dim=embedder.dim,
         now=now,
+        author=author,
     )
     await knowledge_repo.insert_chunks(rows)
 
@@ -261,6 +330,8 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
 async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
     from server.observability.otel import traced
 
+    author = _authorship(input)
+
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
     doc_id = str(uuid.uuid4())
@@ -280,11 +351,16 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
         input.source_uri,
         include_superseded=True,
     )
-    blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(input, prior)
+    uploader = author["user_id"]  # the writer's, even when the document keeps its author
+    author = _author_for(prior, input.content, author, _fresh_sha(input))
+    blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
+        input, _original_of(prior, author), uploader=uploader
+    )
 
     # The builder sets every loom.documents column, content_sha256 included
     # so cross-URI dedup can match.
     doc_row = _documents_repo.build_document_row(
+        **author,
         org=input.org,
         namespace=input.namespace,
         source_uri=input.source_uri,
@@ -326,6 +402,7 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
             embedding_model=embedder.model_name,
             embedding_dim=embedder.dim,
             now=now,
+            author=author,
         )
 
     # documents + chunks INSERTs are independent — run them concurrently.
@@ -491,6 +568,7 @@ async def handle_knowledge_update_metadata(
             tags=list(next_tags),
             metadata=(json.loads(existing.metadata) if existing.metadata else {}),
         )
+        # The same text: `knowledge.upsert` keeps its author (`_author_for`).
         upsert_out = await handle_knowledge_upsert(upsert_in)
         chunks_reindexed = upsert_out.chunks_superseded
 
@@ -513,6 +591,7 @@ async def handle_knowledge_bulk_add(
 ) -> KnowledgeBulkAddOutput:
     """One CH insert for documents, one for all chunks (across all entries).
     Chunking + embedding still per-doc per the configured policy."""
+    author = _authorship(input)
 
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
@@ -541,11 +620,13 @@ async def handle_knowledge_bulk_add(
         doc_id = str(uuid.uuid4())
         version = _nano_version()
         chunks = _chunk_text(entry.content)
-        prior = priors.get(entry.source_uri)
+        entry_author = _author_for(priors.get(entry.source_uri), entry.content, author)
+        prior = _original_of(priors.get(entry.source_uri), entry_author)
         prior = prior if documents_repo.serves_original(prior) else None
 
         doc_rows.append(
             documents_repo.build_document_row(
+                **entry_author,
                 org=input.org,
                 namespace=input.namespace,
                 source_uri=entry.source_uri,
@@ -587,6 +668,7 @@ async def handle_knowledge_bulk_add(
                 embedding_model=embedder.model_name,
                 embedding_dim=embedder.dim,
                 now=now,
+                author=entry_author,
             )
         )
 

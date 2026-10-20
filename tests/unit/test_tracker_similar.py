@@ -19,7 +19,7 @@ from server.code.app.symbol import trace as code_trace
 from server.operations.base import Role
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.settings import settings
-from server.tracker.api.models import TrackerSimilarInput
+from server.tracker.api.models import TrackerSimilarInput, TrackerSimilarOutput
 from server.tracker.app import similar as tsim
 from server.tracker.app import source as tsrc
 from server.tracker.domain import similar as sim
@@ -825,3 +825,77 @@ def test_query_tokens_drop_line_references() -> None:
         "mergetreedata",
         "lazy",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held", ["switched_off", "unread"])
+async def test_a_held_vector_leg_answers_the_refusal_not_a_degraded_answer(
+    monkeypatch, held
+) -> None:
+    from server.llm import customer
+
+    error = (
+        customer.ModelCallsDisabled("model calls are switched off for org 'clickhouse'")
+        if held == "switched_off"
+        else customer.SwitchUnread("the model-call switch could not be read")
+    )
+    s = _Src(item=_item())
+    monkeypatch.setattr(tsrc, "tracker_source", lambda org, ns: s)
+
+    class _Repo:
+        async def stored_vector(self, org, ns, kind, number):
+            return None  # the query text is embedded
+
+        async def namespace_stats(self, org, ns):
+            return {"live": 10, "dead": 0, "last_updated": None, "dims": []}
+
+    class _Refusing:
+        model_name, dim = "fake-ngram-8", 8
+
+        async def embed(self, text):
+            raise error
+
+    class _NoCursor:
+        async def get(self, org, ns, kind):
+            return None
+
+    monkeypatch.setattr(tsim, "_embed_repo", lambda: _Repo())
+    monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: _Refusing())
+    monkeypatch.setattr(
+        "server.tracker.app.embed_index.cursor_state", lambda code_repo=None: _NoCursor()
+    )
+    with pytest.raises(type(error)):  # 403 / 503, as memory.search answers
+        await tsim.handle_tracker_similar(
+            TrackerSimilarInput(org=ORG, namespace=NS, issue_number=117352, legs=["vector"])
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held", ["switched_off", "unread"])
+async def test_a_held_linked_tracker_answers_the_refusal_not_the_primarys_alone(
+    monkeypatch, held
+) -> None:
+    """The primary is answered from its stored vector; a linked tracker embeds the
+    item's text, and its held call is the request's answer (as a held vector leg's
+    is, above), never a tracker quietly left out of the fan-out."""
+    from server.llm import customer
+    from server.tracker.app import common
+
+    error = (
+        customer.ModelCallsDisabled("model calls are switched off for org 'clickhouse'")
+        if held == "switched_off"
+        else customer.SwitchUnread("the model-call switch could not be read")
+    )
+
+    async def linked(org, ns):
+        return [NS, "tracker-helpdesk"]
+
+    async def one(input):
+        if input.namespace == "tracker-helpdesk":
+            raise error
+        return TrackerSimilarOutput(items=[{"number": 1, "score": 0.5}])
+
+    monkeypatch.setattr(common, "linked_trackers", linked)
+    monkeypatch.setattr(tsim, "_similar_one", one)
+    with pytest.raises(type(error)):
+        await tsim.handle_tracker_similar(TrackerSimilarInput(org=ORG, namespace=NS, text="crash"))

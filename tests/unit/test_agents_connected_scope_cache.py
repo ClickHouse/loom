@@ -54,7 +54,7 @@ def _scope(role: Role) -> context.OrgScopeFilter:
 
 def test_exclusion_and_inclusion_with_equal_lists_bind_different_params() -> None:
     admin, member = _scope(Role.ORG_ADMIN), _scope(Role.VIEWER)
-    assert admin.params == {"ns_hidden": [RESTRICTED]}
+    assert admin.params["ns_hidden"] == [RESTRICTED]
     assert member.params == {"ns_list": [RESTRICTED]}
     assert "NOT IN {ns_hidden:Array(String)}" in admin.where
     assert " IN {ns_list:Array(String)}" in member.where and "NOT IN" not in member.where

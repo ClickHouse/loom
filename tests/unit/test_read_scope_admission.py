@@ -257,6 +257,11 @@ def test_a_write_under_an_unresolved_scope_is_refused() -> None:
 _ACTS_AS_A_USER = [
     "cost.record_turns",
     "cost.summary",
+    # A document records the session it was written in: under a session ceiling
+    # with no session named, it would be written outside what the token reads.
+    "knowledge.add",
+    "knowledge.bulk_add",
+    "knowledge.upsert",
     "memory.bulk_set",
     "memory.delete",
     "memory.lock",

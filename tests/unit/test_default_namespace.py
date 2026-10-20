@@ -199,6 +199,7 @@ class _FakeCH:
         self.probe_calls = 0
         self.warn_calls = 0
         self.inserted: list[tuple[str, list[dict]]] = []
+        self.watermarks: list[dict] = []  # loom.acl_versions, the grant writes' announcements
 
     async def query_one(self, sql, params=None):  # type: ignore[no-untyped-def]
         if self.fail:
@@ -210,6 +211,9 @@ class _FakeCH:
         return {"active": self.active} if self.exists else None
 
     async def insert(self, table, rows, settings=None):  # type: ignore[no-untyped-def]
+        if table == "loom.acl_versions":
+            self.watermarks += rows
+            return
         self.inserted.append((table, rows))
 
 

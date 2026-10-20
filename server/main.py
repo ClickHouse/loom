@@ -155,6 +155,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         )
     await boot.require_keeper(ch)
     await boot.warn_newer_schema()
+    await boot.warn_collection_named_namespaces()
     # Nothing here writes a column a migration just added while another process
     # still carries its version writes by the older column lists.
     from server.core import rmt_carry
@@ -442,6 +443,7 @@ from server.auth import scim_routes as _scim_routes  # noqa: E402
 from server.auth import self_signup as _self_signup  # noqa: E402
 from server.identity.app import claim_release as _claim_release  # noqa: E402
 from server.identity.app import password_link as _password_link  # noqa: E402
+from server.identity.app import scim_groups as _scim_groups  # noqa: E402
 
 _self_signup.attach(app)
 _login.attach(app)
@@ -449,6 +451,9 @@ _claim_release.attach(app)
 # Sign-in (device grant, SSO) wherever auth is on; MCP connect only with LOOM_OAUTH_ENABLED.
 _oauth.attach(app)
 _password_link.attach(app)
+# SCIM Groups, pushed per org with an org admin's token; ahead of the Users
+# routes, whose catch-all would answer its paths.
+_scim_groups.attach(app)
 # SCIM provisioning (deactivating people from the IdP) only with LOOM_SCIM_TOKEN.
 _scim_routes.attach(app)
 

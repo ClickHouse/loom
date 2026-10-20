@@ -40,6 +40,11 @@ def grant_rank(role: str | None) -> int:
     return _GRANT_RANK.get(role or "", 0)
 
 
+def rank_role(rank: int) -> Role | None:
+    """The role a grant of `rank` gives; None for 0 or any other value."""
+    return Role[GRANT_ROLES[rank - 1].upper()] if 1 <= rank <= len(GRANT_ROLES) else None
+
+
 # A handler takes its own operation's input model, which the transports
 # validate before the call. Callable parameters are contravariant, so no
 # single model type can name "the op's input" across a mixed registry.

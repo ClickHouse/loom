@@ -485,6 +485,27 @@
             ]
           }
         },
+        "collection": {
+          "class": "CollectionOps",
+          "methods": {
+            "create": [
+              "body",
+              "options"
+            ],
+            "delete": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "move": [
+              "body",
+              "options"
+            ]
+          }
+        },
         "conflicts": {
           "class": "ConflictsOps",
           "methods": {
@@ -1254,6 +1275,19 @@
               "options"
             ],
             "projection_failures_retry": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "org": {
+          "class": "OrgOps",
+          "methods": {
+            "model_calls": [
+              "body",
+              "options"
+            ],
+            "set_model_calls": [
               "body",
               "options"
             ]

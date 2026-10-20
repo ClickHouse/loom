@@ -9,6 +9,7 @@ import json
 import logging
 from typing import Any
 
+from server.llm import customer
 from server.llm.client import LLMResult, get_llm_client
 from server.llm.json_text import strip_code_fence
 from server.memory.app.extract.models import ExtractedFact
@@ -54,6 +55,8 @@ async def _judge_facts(
             user=user_prompt,
             max_tokens=max_tokens,
         )
+    except customer.HOLDS:
+        raise  # a held call is no verdict to keep every fact on: the extract waits
     except Exception as e:  # noqa: BLE001 — a failed judge call means no verdicts, not a failed extract
         log.warning("extraction judge call failed (every fact kept): %s", e)
         return {}, None

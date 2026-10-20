@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from typing import Any
 
-from server.auth.grant_claims import admins_change, grant_change
-from server.core.errors import GrantBusyError
+from server.auth.grant_claims import admins_change, grant_change, group_change
+from server.core import grant_cache
+from server.core.errors import GrantBusyError, ValidationError
 from server.identity.api.models_grants import (
     GrantsApproveInput,
     GrantsApproveOutput,
@@ -44,9 +47,14 @@ async def adopt_namespace(
 ) -> datetime | None:
     """Install `new_admin` as admin on a namespace with no active admin grant
     (the recovery path for an orphaned namespace). Returns the grant time, or
-    None, writing nothing, when the namespace still has an active admin."""
+    None, writing nothing, when the namespace still has an active admin. A
+    collection is never adopted: only grants open one, and a platform admin
+    already reaches it."""
+    from server.auth.sharing import is_collection
     from server.core.ch import get_client
 
+    if is_collection(namespace):
+        raise ValidationError("a collection is not adopted; a platform admin can grant on it")
     ch = get_client()
     if await grants_repo.count_active_admins(org, namespace, ch=ch) > 0:
         return None
@@ -74,7 +82,6 @@ async def _enforce_code_ceiling(org: str, namespace: str, role: str) -> None:
     may be granted or approved by anyone the transport's ADMIN gate let through: an org
     admin or a current maintainer of that repository."""
     from server.core.ch import get_client
-    from server.core.errors import ValidationError
     from server.identity.domain import join_policy as _jp
 
     if role == _jp.CODE_MEMBER_ROLE:
@@ -139,6 +146,40 @@ def _refuse_approval_below(current: str, target: str, input: GrantsApproveInput)
     )
 
 
+def _enforce_principal_target(namespace: str, subject: str) -> None:
+    """A personal collection keeps its one grant; a group, an agent or
+    `everyone` holds grants only on collections; a `user:`/`group:`/`agent:`
+    subject needs a well-formed id."""
+    from server.auth import sharing
+    from server.core.principals import AGENT, EVERYONE, GROUP, is_principal, is_reserved_subject
+
+    if sharing.is_personal(namespace):
+        raise ValidationError("a personal collection is shared by copying an item out of it")
+    if is_reserved_subject(subject) and not is_principal(subject):
+        raise ValidationError(f"{subject!r} is not a well-formed principal (prefix:id, lowercase)")
+    collection_only = subject.startswith((GROUP, AGENT)) or subject == EVERYONE
+    if collection_only and not sharing.is_collection(namespace):
+        raise ValidationError("groups, agents and everyone hold grants on collections only")
+
+
+@asynccontextmanager
+async def _group_held(org: str, subject: str) -> AsyncIterator[None]:
+    """For a grant to a group, the group's claim from the check that it exists
+    to the grant's write, so a SCIM delete cannot pass between them and leave
+    the grant to a group made later under its id. Nothing for anyone else."""
+    from server.core.principals import GROUP, principal_id
+    from server.identity.app.scim_groups import fetch_group
+
+    group_id = principal_id(subject, GROUP)
+    if not group_id:
+        yield
+        return
+    async with group_change(org, group_id):
+        if await fetch_group(org, group_id) is None:
+            raise ValidationError(f"no group {group_id!r} in {org}")
+        yield
+
+
 async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     """Insert or raise a grant; lower one only on `replace=true`. Admin-issued grants are
     always active (the admin is the approver),
@@ -153,6 +194,22 @@ async def create_grant(
     """`grants.create`; `may_replace` raises for a live row this caller must
     not write over, checked on the row read under the grant's claim."""
     await _enforce_code_ceiling(input.org, input.namespace, input.role)
+    _enforce_principal_target(input.namespace, input.subject)
+    async with _group_held(input.org, input.subject):
+        now = await _create_grant(input, may_replace)
+    return GrantsCreateOutput(
+        org=input.org,
+        namespace=input.namespace,
+        subject=input.subject,
+        role=input.role,
+        granted_at=now,
+    )
+
+
+async def _create_grant(
+    input: GrantsCreateInput, may_replace: Callable[[GrantState], None] | None
+) -> datetime:
+    """`grants.create`'s write and what follows it; returns when it was granted."""
     # A human's grant is written under the login handle, so one person keeps one row
     # whichever spelling the granter typed; the downgrade guard reads that same row.
     from server.auth.aliases import canonical_subject
@@ -173,13 +230,7 @@ async def create_grant(
         from server.code.app.index import maintainers
 
         await maintainers.sync_quietly(input.org, input.namespace)
-    return GrantsCreateOutput(
-        org=input.org,
-        namespace=input.namespace,
-        subject=input.subject,
-        role=input.role,
-        granted_at=now,
-    )
+    return now
 
 
 async def _write_grant(
@@ -436,6 +487,7 @@ async def _write_revoke(input: GrantsRevokeInput, subject: str, row: GrantState)
 
 async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutput:
     """Approve or reject a pending grant. No-op if it doesn't exist."""
+    _enforce_principal_target(input.namespace, input.subject)
     async with grant_change(input.org, input.namespace, input.subject):
         out = await _decide_request(input)
     if out.decision == "approve" and out.role == "admin":
@@ -546,3 +598,87 @@ async def _decide_request(input: GrantsApproveInput) -> GrantsApproveOutput:
         role=target_role,
         decided_at=now,
     )
+
+
+async def revoke_subject(org: str, subject: str, *, actor: str) -> int:
+    """Revoke every live grant naming `subject` in `org` (a deleted group, an
+    erased user), each under its grant's claim and audited as `grants.revoke`,
+    from the row read under that claim and versioned above it whatever this
+    host's clock says. Reads again until none is live: a grant written
+    meanwhile is revoked too, and one that still stands fails the call (503)
+    for its caller to retry. Moves the watermark once. Returns how many."""
+    from server.core.errors import BackendUnavailableError
+    from server.observability import audit
+
+    revoked = 0
+    attempted = False  # a write that landed but whose reply was lost still announces
+    try:
+        for _ in range(_REVOKE_TRIES):
+            listed = await grants_repo.live_rows_of(org, subject)
+            if not listed:
+                return revoked
+            for namespace in sorted({str(r["namespace"]) for r in listed}):
+                async with grant_change(org, namespace, subject):
+                    row = await grants_repo.newest_row(org, namespace, subject)
+                    if row is None or row["revoked_at"] is not None:
+                        continue  # revoked meanwhile
+                    attempted = True
+                    try:
+                        await grants_repo.insert_row(
+                            {**row, "revoked_at": _now(), "version": _above(row)}, announce=False
+                        )
+                    finally:
+                        # Audited even when the reply is lost: the row may have
+                        # landed, and the retry would find nothing to audit.
+                        await audit.emit(
+                            "grants.revoke",
+                            org=org,
+                            namespace=namespace,
+                            actor=actor,
+                            subject={"subject": subject},
+                        )
+                revoked += 1
+        if not await grants_repo.live_rows_of(org, subject):
+            return revoked  # the last pass revoked the last of them
+        raise BackendUnavailableError(
+            f"grants of {subject!r} are still live after their revoke; retry",
+            operation="grants.revoke",
+        )
+    finally:
+        if attempted:
+            await grant_cache.changed(org, [subject])
+
+
+async def forget_granter(org: str, granter: str) -> int:
+    """Blank `granter` as the issuer of the grants it gave others (an erased
+    user), each under its grant's claim from the row read there (a revoke or a
+    downgrade that landed meanwhile is kept) and versioned above it. The grants
+    themselves stay: they are the grantees'. Moves the watermark once. Returns
+    how many rows it rewrote."""
+    rewritten = 0
+    attempted: set[str] = set()  # announced even when a write's reply was lost
+    try:
+        for listed in await grants_repo.rows_granted_by(org, granter):
+            namespace, subject = str(listed["namespace"]), str(listed["subject"])
+            async with grant_change(org, namespace, subject):
+                row = await grants_repo.newest_row(org, namespace, subject)
+                if row is None or row["granted_by"] != granter:
+                    continue  # rewritten meanwhile by someone else's grant
+                attempted.add(subject)
+                await grants_repo.insert_row(
+                    {**row, "granted_by": "", "version": _above(row)}, announce=False
+                )
+            rewritten += 1
+    finally:
+        if attempted:
+            await grant_cache.changed(org, sorted(attempted))
+    return rewritten
+
+
+def _now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _above(row: dict[str, Any]) -> int:
+    """A version above `row`'s whatever this host's clock says."""
+    return max(_version(), int(row["version"]) + 1)

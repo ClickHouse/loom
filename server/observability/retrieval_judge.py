@@ -361,7 +361,7 @@ async def _judge_one(item: dict[str, Any]) -> None:
     cost_accumulator.begin_op()
     try:
         # The prompt is the org's query and memory text, so the call is the org's,
-        # metered to it.
+        # metered to it and refused while its model calls are off.
         with llm_stage("retrieval_judge"), customer.for_org(item["org"]):
             out = await client.complete(
                 _JUDGE_SYSTEM,
@@ -369,6 +369,8 @@ async def _judge_one(item: dict[str, Any]) -> None:
                 max_tokens=llm_max_tokens("retrieval_judge"),
                 response_format={"type": "json_object"},
             )
+    except customer.HOLDS:
+        return  # a sample, not owed work: an org off, or maybe off, sends none of its text
     finally:
         from server.workers.cost_event import emit_worker_cost_event_for
 

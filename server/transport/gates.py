@@ -45,6 +45,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("server.transport.gates")
 
+# The org-level ops an end user may call (server/auth/gateway.py):
+# make and list collections, and read their own standing.
+END_USER_ORG_OPS = frozenset(
+    {"collection.create", "collection.list", "namespace.list_mine", "grants.pending_for_me"}
+)
+
 # The code a role / namespace refusal carries on both transports: the one the
 # SDKs map (`AuthInsufficient`) and docs/reference/errors.md lists.
 ROLE_REFUSAL_CODE = "AUTH_INSUFFICIENT"
@@ -112,20 +118,35 @@ async def authorize(
 ) -> None:
     """The role + namespace gate for an authenticated call, fail closed, then
     what an admitted call leaves (restricted-access audit, first-write
-    registration). No-op without a principal (auth off)."""
+    registration). No-op without a principal (auth off), but for `@me`."""
+    from server.auth.sharing import PERSONAL_ALIAS
+
+    # HTTP maps `@me` to the end user's personal collection before this gate;
+    # anywhere else it names nothing, and is never a namespace of its own.
+    if target.named_namespace == PERSONAL_ALIAS:
+        raise PermissionError(f"{PERSONAL_ALIAS!r} names an end user's personal collection")
     if auth is None:
         _note_admitted(target)
         return
     from server.auth.authz import scope_flags
+    from server.auth.gateway import is_end_user
     from server.auth.personal_namespace import ensure_personal_namespace_cached
     from server.code.app.member_writes import authorize_op
 
     # First contact for a federated subject that never ran self-signup.
     # Idempotent and process-cached; after impersonation, so a trusted caller
-    # provisions for the effective user.
-    await ensure_personal_namespace_cached(
-        org=auth.org, subject=auth.subject, is_service_account=auth.is_service_account
-    )
+    # provisions for the effective user. An end user gets a personal
+    # collection instead, the first time a request addresses `@me`.
+    if is_end_user(auth):
+        # Of the ops no namespace gates, an end user may call only those in
+        # END_USER_ORG_OPS: no directory self-service (register, join, browse).
+        org_level = op.skip_namespace_authz or op.deployment_scoped
+        if org_level and op.name not in END_USER_ORG_OPS:
+            raise PermissionError(f"{op.name} is not open to an end user")
+    else:
+        await ensure_personal_namespace_cached(
+            org=auth.org, subject=auth.subject, is_service_account=auth.is_service_account
+        )
     await authorize_op(auth, op, org=target.org, namespace=target.namespace, **scope_flags(op))
     _note_admitted(target)
     await _admitted(op, auth, target, transport=transport)
