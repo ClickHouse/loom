@@ -7,6 +7,7 @@ or page through recent threads.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from typing import Any, NotRequired, TypedDict, cast
 
@@ -51,6 +52,8 @@ class MessageInsert(BaseModel):
     run_id: str = "-"
     metadata: str = "{}"
     tokens: int = 0
+    # Set by conversation.save_message: the user picked this turn for search.
+    is_saved: bool = False
     ts: datetime | None = None  # CH supplies now() when None
 
 
@@ -101,6 +104,7 @@ class ConversationEmbeddingRow(TypedDict):
     embed_attempts: int
     embed_last_error: str
     embed_failed_at: datetime | None
+    is_saved: bool
     ts: datetime
 
 
@@ -125,9 +129,17 @@ def _hydrate(row: dict[str, Any]) -> MessageRow:
 async def append(
     msg: MessageInsert,
     *,
+    once_per_identity: bool = False,
     ch: _CHClient | None = None,
 ) -> None:
-    """Append one message. ts defaults to now() at the CH side."""
+    """Append one message. ts defaults to now() at the CH side.
+
+    `once_per_identity` derives the insert's deduplication token from the
+    message's identity, so concurrent writers of one (thread_id, msg_id) land
+    one row: the table's deduplication window keeps the first block and drops
+    the rest. Only within a month's partition, and only while the first block's
+    token is still in the window; a block whose rows were since deleted still
+    drops a new one, which the caller re-reads to detect."""
     ch = ch or _default_client()
     row: dict[str, Any] = {
         "org": msg.org,
@@ -142,14 +154,17 @@ async def append(
         "run_id": msg.run_id,
         "metadata": msg.metadata,
         "tokens": int(msg.tokens),
+        "is_saved": msg.is_saved,
     }
     if msg.ts is not None:
         row["ts"] = msg.ts
-    await ch.insert(
-        "loom.conversations",
-        [row],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
-    )
+    settings: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
+    if once_per_identity:
+        identity = "\x1f".join((msg.org, msg.namespace, msg.agent, msg.thread_id, msg.msg_id))
+        settings["insert_deduplication_token"] = (
+            "conversation-turn:" + hashlib.sha256(identity.encode()).hexdigest()
+        )
+    await ch.insert("loom.conversations", [row], settings=settings)
 
 
 async def message_exists(
@@ -186,6 +201,208 @@ async def message_exists(
         },
     )
     return bool(row and row.get("ok"))
+
+
+class StoredMessage(BaseModel):
+    """What conversation.save_message judges a stored (thread_id, msg_id) by,
+    over every row it has (a racing append can leave two)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    role: str
+    content: str
+    run_id: str
+    ts: datetime
+    # Every distinct owner on the rows; '-' is an unowned transcript turn.
+    owners: tuple[str, ...]
+    tombstoned: bool
+    # Rows not yet saved for `user_id` (unflagged, or owned by '-').
+    unsaved: int
+
+
+async def message_state(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    user_id: str,
+    ch: _CHClient | None = None,
+) -> StoredMessage | None:
+    """The stored rows of (thread_id, msg_id) folded into one verdict, or None
+    when no row exists. Matches the rows `message_exists` dedupes on, so
+    save_message decides on the same rows an append would skip over."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        """
+        SELECT count() AS n,
+               argMax(role, ts) AS role,
+               argMax(content, ts) AS content,
+               argMax(run_id, ts) AS run_id,
+               max(ts) AS last_ts,
+               groupUniqArray(user_id) AS owners,
+               countIf(tombstoned_at IS NOT NULL) > 0 AS tombstoned,
+               countIf(NOT is_saved OR user_id != {uid:String}) AS unsaved
+        FROM loom.conversations
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND agent = {agent:String} AND thread_id = {tid:String}
+          AND msg_id = {mid:String}
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "tid": thread_id,
+            "mid": msg_id,
+            "uid": user_id,
+        },
+    )
+    if not row or not int(row["n"]):
+        return None
+    return StoredMessage(
+        role=str(row["role"]),
+        content=str(row["content"]),
+        run_id=str(row["run_id"]),
+        ts=row["last_ts"],
+        owners=tuple(sorted(str(o) for o in row["owners"])),
+        tombstoned=bool(row["tombstoned"]),
+        unsaved=int(row["unsaved"]),
+    )
+
+
+class StoredEmbedding(BaseModel):
+    """The live embedding rows of one message, as save_message repairs them."""
+
+    model_config = ConfigDict(frozen=True)
+
+    # Rows under the embedder the saved search ranks with that hold a vector; a
+    # failed embed's placeholder (embedding_dim 0) is not one.
+    current: int
+    # Rows of any model not yet saved for `user_id`.
+    unsaved: int
+    # Rows another user owns, which a save for `user_id` must not take over.
+    foreign: int
+
+
+async def embedding_state(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    user_id: str,
+    embedding_model: str,
+    ch: _CHClient | None = None,
+) -> StoredEmbedding:
+    """Whether the message has an embedding row under `embedding_model`, and how
+    many of its live rows still lack the saved flag or the owner."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        """
+        SELECT countIf(embedding_model = {model:String} AND embedding_dim > 0) AS current,
+               countIf(NOT is_saved OR user_id != {uid:String}) AS unsaved,
+               countIf(user_id NOT IN ('-', '', {uid:String})) AS foreign
+        FROM loom.conversation_embeddings
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND agent = {agent:String} AND thread_id = {tid:String}
+          AND msg_id = {mid:String} AND tombstoned_at IS NULL
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "tid": thread_id,
+            "mid": msg_id,
+            "uid": user_id,
+            "model": embedding_model,
+        },
+    )
+    if not row:
+        return StoredEmbedding(current=0, unsaved=0, foreign=0)
+    return StoredEmbedding(
+        current=int(row["current"]), unsaved=int(row["unsaved"]), foreign=int(row["foreign"])
+    )
+
+
+async def saved_message_owner(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> str | None:
+    """The owner of a live, saved row of (thread_id, msg_id), or None. A
+    transcript append asks after its embedding row landed: a save that ran
+    while the append was embedding marked the rows it could see, not this one."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        """
+        SELECT user_id FROM loom.conversations
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND agent = {agent:String} AND thread_id = {tid:String}
+          AND msg_id = {mid:String} AND is_saved AND tombstoned_at IS NULL
+        LIMIT 1
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "tid": thread_id,
+            "mid": msg_id,
+        },
+    )
+    return str(row["user_id"]) if row else None
+
+
+SAVED_MESSAGE_TABLES = ("loom.conversations", "loom.conversation_embeddings")
+
+
+async def mark_message_saved(
+    table: str,
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    user_id: str,
+    ch: _CHClient | None = None,
+) -> None:
+    """Flag the live rows of a stored turn in `table` (one of
+    SAVED_MESSAGE_TABLES) as saved by `user_id`, leaving every other column —
+    run_id included — as written. A synchronous mutation, so the next
+    saved-message search sees it; rows already saved for the user are skipped.
+
+    Only rows nobody owns ('-') or `user_id` owns are claimed, in the mutation
+    itself: mutations on a table apply in order, so of two saves claiming one
+    unowned turn the first takes it and the second matches nothing."""
+    if table not in SAVED_MESSAGE_TABLES:
+        raise ValueError(f"not a saved-message table: {table}")
+    ch = ch or _default_client()
+    await ch.execute(
+        f"""
+        ALTER TABLE {table}
+        UPDATE is_saved = true, user_id = {{uid:String}}
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND agent = {{agent:String}} AND thread_id = {{tid:String}}
+          AND msg_id = {{mid:String}} AND tombstoned_at IS NULL
+          AND user_id IN ('-', '', {{uid:String}})
+          AND (NOT is_saved OR user_id != {{uid:String}})
+        SETTINGS mutations_sync = 2
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "tid": thread_id,
+            "mid": msg_id,
+            "uid": user_id,
+        },
+    )
 
 
 async def namespace_logging_enabled(
@@ -398,6 +615,8 @@ async def search_substring(
     thread_id: str | None = None,
     role: str | None = None,
     run_id: str | None = None,
+    user_id: str | None = None,
+    saved_only: bool = False,
     limit: int = 50,
     ch: _CHClient | None = None,
 ) -> list[MessageRow]:
@@ -434,6 +653,11 @@ async def search_substring(
     if run_id is not None:
         where.append("run_id = {run_id:String}")
         params["run_id"] = run_id
+    if user_id is not None:
+        where.append("user_id = {user_id:String}")
+        params["user_id"] = user_id
+    if saved_only:
+        where.append("is_saved")
 
     columns = """org, namespace, agent, thread_id, msg_id, role, content,
                reasoning, user_id, run_id, metadata, tokens, ts"""
