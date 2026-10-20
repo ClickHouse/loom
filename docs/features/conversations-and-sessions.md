@@ -50,14 +50,20 @@ up front.
 
 A chat client can let a user save one message for later search without recording the
 namespace's transcripts. `conversation.save_message` (writer) is that opt-in, and
-`conversation.search_saved_messages` (viewer) is its search. They differ from
-`conversation.append` and `conversation.search` in six ways:
+`conversation.search_saved_messages` (viewer) is its search.
+
+Clients save messages only when every replica preserves saved state during
+compaction. See the
+[rolling-upgrade rules](../architecture/rolling-upgrades.md#the-rules).
+
+They differ from `conversation.append` and `conversation.search` in six ways:
 
 - **The logging switch does not apply.** The save is stored even when
   `conversation.set_logging` is off, and it does not turn logging on.
 - **The message is flagged, not re-labelled.** The transcript row and its embedding row
-  carry `is_saved`. A message the transcript already holds is flagged in place: its
-  `run_id` and content stay as recorded.
+  carry `is_saved` and `saved_at`, the time the user saved the message. A message the
+  transcript already holds is flagged in place: its `run_id` and content stay as
+  recorded.
 - **The search is per user.** `conversation.search_saved_messages` returns only flagged
   messages owned by `user_id`, in the one namespace named. `conversation.search` ranks
   every recorded turn and fans out over the caller's namespaces by default.
@@ -80,6 +86,10 @@ namespace's transcripts. `conversation.save_message` (writer) is that opt-in, an
   which is never embedded, answers `reason: "unsupported_role"`. The checks also apply
   to a message that is already saved.
 
+Save and unsave share a renewable thread lease with append embedding writes,
+compaction retirement and thread deletion. Append and compaction finish provider
+work before taking the lease.
+
 The transcript row decides who owns a saved message. A save claims only rows that no
 user owns or that the caller owns, in the mutation itself, so of two users saving one
 unowned message the first claims it and the second is answered `owner_mismatch`. The
@@ -96,15 +106,19 @@ row.
 
 `conversation.list_saved_messages` (viewer) pages through one user's saved messages with
 no query, most recently saved first (`limit` up to 200, an opaque `cursor`, and an
-optional `conversation_id`). It is the first view of a "Saved" panel; the search narrows
-it once the user types. `conversation.saved_status` (viewer) takes one `conversation_id`
-and up to 500 `message_ids` and answers which of them this user has saved, so a client
-draws every message's saved state when it opens a conversation in one call.
+optional `conversation_id`). Its `ts` is when the user saved the message, independent
+of the transcript's message time. Rows written without a save timestamp use their
+message timestamp. It is the first view of a "Saved" panel; the search
+narrows it once the user types. `conversation.saved_status` (viewer) takes one
+`conversation_id` and up to 500 `message_ids` and answers which of them this user has
+saved, so a client draws every message's saved state when it opens a conversation in
+one call.
 
 `conversation.unsave_message` (writer) withdraws a saved message from its owner's
 search. Where the namespace records transcripts, the turn stays in the transcript with
 the flag cleared, because the owner chose to record it. Where it does not, the turn is
-tombstoned too, because it existed only because of the save (`removed: true`). A message
+removed with a lightweight delete, because it existed only because of the save
+(`removed: true`). A message
 the caller's user never saved, or one another user saved, answers `found: false`; it
 never says which. Unsaving is idempotent, and saving again restores the message. Erasure
 by user removes saved messages with the rest of that user's conversation rows.

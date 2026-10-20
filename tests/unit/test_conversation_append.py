@@ -5,6 +5,13 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _saved_write_leases(monkeypatch):
+    from tests.unit.claims_fake import held_leases
+
+    held_leases(monkeypatch)
+
+
 def _patch_append(monkeypatch, *, append, embed):
     from server.knowledge.app import conversations as h
     from server.knowledge.store import conversations as conversation_repo

@@ -14,6 +14,8 @@ from typing import Any
 
 import pytest
 
+from tests.integration._resources import unique_org
+
 pytestmark = pytest.mark.skipif(
     not os.environ.get("LOOM_CH_HOST"),
     reason="LOOM_CH_HOST not set — integration tests require a live CH",
@@ -178,3 +180,69 @@ async def test_erasure_by_user_removes_their_saved_messages(
     assert await _saved_ids(org, namespace, user_id="u-erase") == []
     for table in ("loom.conversations", "loom.conversation_embeddings"):
         assert await _live_rows(ch, org, namespace, table) == []
+
+
+@pytest.mark.asyncio
+async def test_unsave_keeps_the_shared_vector_for_another_agents_live_copy(
+    ch: Any, namespace: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.datetimes import naive_utc_now
+    from server.knowledge.api.models_conversations import ConversationSearchInput
+    from server.knowledge.app.conversations import handle_conversation_search
+    from server.knowledge.store import conversations as repo
+
+    org = unique_org("unsave-peer")
+    _recording(monkeypatch, False)
+    await _save(org, namespace)
+    await repo.append(
+        repo.MessageInsert(
+            org=org,
+            namespace=namespace,
+            agent="recorded-peer",
+            user_id="peer-user",
+            thread_id="c-1",
+            msg_id="m-1",
+            role="user",
+            content=_CONTENT,
+            run_id="peer-run",
+            ts=naive_utc_now(),
+        )
+    )
+    before = await ch.query_one(
+        "SELECT ts FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String}",
+        params={"org": org, "ns": namespace},
+    )
+    assert before is not None
+
+    assert (await _unsave(org, namespace)).removed
+    assert await _saved_ids(org, namespace) == []
+    result = await handle_conversation_search(
+        ConversationSearchInput(
+            org=org,
+            namespace=namespace,
+            agent="recorded-peer",
+            user_id="peer-user",
+            role="user",
+            query=_CONTENT,
+            namespace_scope="this",
+        )
+    )
+    assert [hit.msg_id for hit in result.hits] == ["m-1"]
+    rows = await ch.query_all(
+        "SELECT agent, user_id, role, run_id, ts, is_saved, saved_at "
+        "FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL",
+        params={"org": org, "ns": namespace},
+    )
+    assert rows == [
+        {
+            "agent": "recorded-peer",
+            "user_id": "peer-user",
+            "role": "user",
+            "run_id": "peer-run",
+            "ts": before["ts"],
+            "is_saved": False,
+            "saved_at": None,
+        }
+    ]

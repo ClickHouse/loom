@@ -26,7 +26,6 @@ deployment call that names none is never switched off.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import contextvars
 import logging
@@ -35,6 +34,7 @@ from collections.abc import Iterable, Iterator
 from urllib.parse import quote
 
 from server.core.errors import BackendUnavailableError, LoomServerError
+from server.core.polled_copy import PolledCopy
 from server.observability import genai
 from server.settings import settings
 
@@ -80,13 +80,21 @@ class SwitchUnread(BackendUnavailableError):
 HOLDS: tuple[type[LoomServerError], ...] = (Unattributed, ModelCallsDisabled, SwitchUnread)
 
 
-# The orgs switched off, as this process last read them, when (monotonic; 0.0 =
-# never read), and when the next read is due (a failed read waits its turn too,
-# so the waiters do not each query in turn).
-_off: frozenset[str] = frozenset()
-_read_at = 0.0
-_next_read = 0.0
-_lock = asyncio.Lock()
+async def _read() -> frozenset[str]:
+    from server.core.ch import get_client, own_write_reads
+
+    # Every org switched off, one row each: never cut short, which would fail open.
+    # Sequentially consistent: the read after `forget_switch` must see the change
+    # just written, and every process's read the newest change on any replica.
+    with own_write_reads():
+        rows = await get_client().query_all(
+            "SELECT org FROM loom.org_model_calls FINAL WHERE enabled = 0"
+        )
+    return frozenset(str(r["org"]) for r in rows)
+
+
+# The orgs switched off, as this process last read them.
+_switch: PolledCopy[frozenset[str]] = PolledCopy("model-call switch", frozenset(), _read, log)
 
 
 @contextlib.contextmanager
@@ -221,43 +229,20 @@ async def switched_off(org: str) -> bool:
 async def switched_off_orgs() -> frozenset[str]:
     """The orgs whose model calls are switched off, for a job to pass over;
     raises SwitchUnread when this process's copy is too old."""
-    if time.monotonic() >= _next_read:
-        async with _lock:
-            if time.monotonic() >= _next_read:
-                await _read()
-    if not _read_at or time.monotonic() - _read_at > settings.model_calls_policy_max_stale_seconds:
+    off = await _switch.get(
+        refresh_s=settings.model_calls_policy_refresh_seconds,
+        max_stale_s=settings.model_calls_policy_max_stale_seconds,
+    )
+    if off is None:
         raise SwitchUnread("the model-call switch could not be read; model calls wait until it is")
-    return _off
-
-
-async def _read() -> None:
-    global _off, _read_at, _next_read
-    from server.core.ch import get_client, own_write_reads
-
-    _next_read = time.monotonic() + settings.model_calls_policy_refresh_seconds
-    try:
-        # Every org switched off, one row each: never cut short, which would fail open.
-        # Sequentially consistent: the read after `forget_switch` must see the change
-        # just written, and every process's read the newest change on any replica.
-        with own_write_reads():
-            rows = await get_client().query_all(
-                "SELECT org FROM loom.org_model_calls FINAL WHERE enabled = 0"
-            )
-    except Exception as e:  # noqa: BLE001 — the last copy serves until it is too old
-        log.warning("model-call switch: read failed (%s); serving the last copy", e)
-        return
-    _off, _read_at = frozenset(str(r["org"]) for r in rows), time.monotonic()
+    return off
 
 
 def forget_switch() -> None:
     """Make the next call read the switch again, for a change just made here.
     The copy in hand keeps its age, so a failed read serves it as before."""
-    global _next_read
-    _next_read = 0.0
+    _switch.forget()
 
 
 def _reset_for_tests(off: frozenset[str] = frozenset(), *, read: bool = True) -> None:
-    global _off, _read_at, _next_read
-    now = time.monotonic()
-    _off, _read_at = off, (now if read else 0.0)
-    _next_read = now + settings.model_calls_policy_refresh_seconds if read else 0.0
+    _switch._reset_for_tests(off, read=read, refresh_s=settings.model_calls_policy_refresh_seconds)

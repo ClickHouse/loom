@@ -20,6 +20,14 @@ from server.knowledge.api.models_conversations import (
 )
 from server.knowledge.store.conversations import StoredEmbedding, StoredMessage
 
+
+@pytest.fixture(autouse=True)
+def _saved_write_leases(monkeypatch):
+    from tests.unit.claims_fake import held_leases
+
+    held_leases(monkeypatch)
+
+
 _TS = datetime(2026, 1, 1)
 
 
@@ -451,6 +459,58 @@ def test_fusion_with_no_lexical_weight_keeps_the_semantic_order() -> None:
 
     fused = _fuse_saved([_hit("a"), _hit("b")], [_hit("b"), _hit("z")], top_k=3, w_lex=0.0)
     assert [h.message_id for h in fused][:2] == ["a", "b"]
+
+
+def test_fusion_ties_keep_the_semantic_order() -> None:
+    from server.knowledge.app.conversations import _fuse_saved
+
+    fused = _fuse_saved([_hit("a"), _hit("b")], [_hit("b"), _hit("a")], top_k=2, w_lex=1.0)
+    assert [h.message_id for h in fused] == ["a", "b"]
+
+
+@pytest.mark.parametrize("top_k", [1, 200])
+async def test_hybrid_search_ranks_agreement_below_each_legs_first_hit(
+    monkeypatch: pytest.MonkeyPatch,
+    top_k: int,
+) -> None:
+    from server.knowledge.api.models_conversations import _ConversationHit
+    from server.knowledge.app import conversations
+    from server.knowledge.store import conversations as conversation_repo
+
+    async def semantic(request: Any, *, saved_only: bool) -> ConversationSearchOutput:
+        return ConversationSearchOutput(
+            hits=[
+                _ConversationHit(
+                    thread_id="c",
+                    msg_id=mid,
+                    role="user",
+                    content_excerpt=mid,
+                    ts=datetime(2026, 1, 1),
+                )
+                for mid in [*[f"semantic-{i}" for i in range(top_k)], "agreement"][: request.top_k]
+            ]
+        )
+
+    async def lexical(*args: Any, **kw: Any) -> list[dict[str, Any]]:
+        return [
+            dict(thread_id="c", msg_id=mid, role="user", content=mid, saved_at=datetime(2026, 1, 1))
+            for mid in [*[f"lexical-{i}" for i in range(top_k)], "agreement"][: kw["limit"]]
+        ]
+
+    monkeypatch.setattr(conversations, "_search_conversations", semantic)
+    monkeypatch.setattr(conversation_repo, "lexical_saved_messages", lexical)
+    out = await conversations.handle_conversation_search_saved_messages(
+        ConversationSearchSavedMessagesInput(
+            org="o",
+            namespace="n",
+            agent="a",
+            user_id="u",
+            query="term",
+            top_k=top_k,
+        )
+    )
+    assert "agreement" in [h.message_id for h in out.hits]
+    assert len(out.hits) == top_k
 
 
 def test_snippet_centres_a_deep_match_and_keeps_an_early_one_at_the_start() -> None:
