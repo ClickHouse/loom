@@ -744,6 +744,21 @@ async def test_a_named_users_rewrite_in_its_own_session_is_owed_nothing(
     assert [r["mark"] for r in rows] == [None]
 
 
+async def test_the_anonymous_users_two_spellings_are_one_subject(ch, wired, monkeypatch) -> None:
+    """One agent's rows under user '-' and under a user_id sent empty are one subject:
+    each is the other's peer in the cluster."""
+    from server.memory.store import conflict_resolver as queue
+
+    org, _ = wired
+    await _set(org, "s1", "office_city", "The office is in Paris", user="-")
+    await _set(org, "s1", "office_location", "The office moved to Rome", user="")
+    await _place(ch, org, "s1", "office_city", _vec((90, 1.0)), owed=False, user="-")
+    await _place(ch, org, "s1", "office_location", _vec((90, 0.8), (91, 0.6)), owed=True, user="")
+    (row,) = [r for r in await queue.owed_rows(limit=50) if r["org"] == org]
+    cluster = await queue.cluster_peers(row, floor=0.7, limit=8, ch=ch)
+    assert [(p["memory_key"], p["user_id"]) for p in cluster.peers] == [("office_city", "-")]
+
+
 async def test_a_point_write_of_a_key_another_session_holds_is_owed(ch, wired, monkeypatch) -> None:
     """memory.set and memory.update_by_id from s2 of a key s1 holds live are owed a
     judgement under auto_reinforce, though no peer sits near them."""

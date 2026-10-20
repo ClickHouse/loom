@@ -24,6 +24,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
+from server.core.naming import SENTINEL, is_anonymous_user
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.store.embeddings import live_embedding_rows_for_key, reemit_rows
 
@@ -226,7 +227,7 @@ _LIVE_VECTORS = """
                cosineDistance(embedding, {emb:Array(Float32)}) AS dist
         FROM loom.memory_embeddings FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
-          AND user_id = {u:String} AND (user_id NOT IN ('-', '') OR agent = {a:String})
+          AND user_id IN {users:Array(String)} AND ({anon:UInt8} = 0 OR agent = {a:String})
           AND NOT (agent = {a:String} AND session_id = {s:String} AND memory_key = {k:String})
           AND scope = 'private' AND tombstoned_at IS NULL
           AND status IN ('active', 'conflicted') AND memory_type = {mt:String}
@@ -264,7 +265,7 @@ _PEER_ROWS_SQL = """
         PREWHERE org = {org:String} AND namespace = {ns:String}
           AND (agent, user_id, session_id, memory_key)
               IN {ids:Array(Tuple(String, String, String, String))}
-        WHERE user_id = {u:String} AND (user_id NOT IN ('-', '') OR agent = {a:String})
+        WHERE user_id IN {users:Array(String)} AND ({anon:UInt8} = 0 OR agent = {a:String})
           AND memory_type = {mt:String}
           AND tombstoned_at IS NULL
           AND NOT pinned
@@ -316,6 +317,14 @@ def key_identity(r: Any) -> tuple[str, str, str, str]:
     return tuple(str(getattr(r, c)) for c in cols)  # type: ignore[return-value]
 
 
+def _subject_params(user_id: str) -> dict[str, Any]:
+    """The cluster reads' subject: a named user's rows, or for the anonymous user (either
+    spelling, '-' or a user_id sent empty) the rows of the same agent."""
+    if is_anonymous_user(user_id):
+        return {"users": [SENTINEL, ""], "anon": 1}
+    return {"users": [user_id], "anon": 0}
+
+
 class Cluster(NamedTuple):
     """A row's peers for one call, and its flagged peers that could join but did not fit."""
 
@@ -347,6 +356,7 @@ async def cluster_peers(
         "s": str(row["session_id"]),
         "k": str(row["memory_key"]),
         "mt": str(row["memory_type"]),
+        **_subject_params(str(row["user_id"])),
         "emb": emb,
         "model": str(row["embedding_model"]),
         "dim": len(emb),

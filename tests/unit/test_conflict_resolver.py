@@ -109,13 +109,16 @@ def test_cross_session_is_another_session_of_a_subject_with_no_user() -> None:
     assert not resolver._cross_session(blank, {"agent": "a", "session_id": "s2"})
 
 
-def test_the_anonymous_user_is_the_set_the_cluster_sql_names() -> None:
-    """The cluster reads name the anonymous user inline; Python must mean the same set."""
-    from server.core.naming import SENTINEL, is_anonymous_user
-
-    for sql in (queue._LIVE_VECTORS, queue._PEER_ROWS_SQL):
-        assert f"user_id NOT IN ('{SENTINEL}', '')" in sql
-    assert {u for u in (SENTINEL, "", " ", "u1") if is_anonymous_user(u)} == {SENTINEL, ""}
+@pytest.mark.parametrize(
+    ("user_id", "users", "anon"),
+    [("-", ["-", ""], 1), ("", ["-", ""], 1), (" ", [" "], 0), ("u1", ["u1"], 0)],
+)
+def test_the_cluster_subject_of_the_anonymous_user_takes_both_spellings(
+    user_id: str, users: list[str], anon: int
+) -> None:
+    """The anonymous user's rows, '-' or sent empty, are one subject per agent; a named
+    user's are that user's, whatever the agent."""
+    assert queue._subject_params(user_id) == {"users": users, "anon": anon}
 
 
 def test_each_note_shows_when_it_holds_and_its_session() -> None:
@@ -343,7 +346,8 @@ async def test_the_cluster_keeps_the_floor_the_cap_and_the_rows_flags() -> None:
     assert [p["memory_id"] for p in peers] == ["m1", "m2", "m8"]
     sql, params = ch.calls[0]
     assert "NOT (agent = {a:String} AND session_id = {s:String} AND memory_key = {k:String})" in sql
-    assert "user_id = {u:String} AND (user_id NOT IN ('-', '') OR agent = {a:String})" in sql
+    assert "user_id IN {users:Array(String)} AND ({anon:UInt8} = 0 OR agent = {a:String})" in sql
+    assert params["users"] == [str(_q()["user_id"])] and params["anon"] == 0
     assert params["org"] == "o" and params["ns"] == "ns" and params["lim"] == 12
     # The type, the embedding model and the expiry are applied before the vector LIMIT.
     assert "memory_type = {mt:String}" in sql and "expires_at > now()" in sql
@@ -2140,7 +2144,7 @@ async def test_at_most_half_the_places_go_to_rows_of_the_key_in_other_sessions()
     [
         "org = {org:String}",
         "namespace = {ns:String}",
-        "user_id = {u:String} AND (user_id NOT IN ('-', '') OR agent = {a:String})",
+        "user_id IN {users:Array(String)} AND ({anon:UInt8} = 0 OR agent = {a:String})",
     ],
 )
 def test_every_cluster_read_keeps_to_the_tenant_and_the_subject(predicate: str) -> None:
