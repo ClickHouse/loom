@@ -955,6 +955,29 @@ async def test_an_error_in_one_webhooks_turn_stops_every_post_and_keeps_the_fini
 
 
 @pytest.mark.asyncio
+async def test_a_pass_cancelled_from_outside_still_records_what_it_sent(
+    fake: FakeStore,
+) -> None:
+    _two_webhooks(fake)
+    b_is_out = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers["host"] == "b.example":
+            b_is_out.set()
+            await asyncio.sleep(5)
+        return httpx.Response(204)
+
+    task = asyncio.create_task(_pass(handler))
+    await asyncio.wait_for(b_is_out.wait(), 2)
+    await asyncio.sleep(0.05)  # a-1's answer is in; b-0's is not
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert fake.last("a-1")["status"] == "delivered"
+    assert fake.last("b-0")["status"] == "leased"
+
+
+@pytest.mark.asyncio
 async def test_a_pass_cut_at_its_budget_still_records_what_it_sent(
     fake: FakeStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1023,14 +1046,17 @@ async def test_the_erasure_step_takes_a_namespace_list_and_deletes_attempts_in_b
     ch.install(monkeypatch)
     mutations: list[tuple[str, str, Any]] = []
 
-    async def mutate(
-        table: str, *, mutation: str, where: str, params: Any, tag_part: str = "", **_: Any
-    ) -> None:
-        mutations.append((table, tag_part, params.get("ids")))
+    async def submitted(table: str, *, tag: str, params: Any, **_: Any) -> None:
+        mutations.append((table, tag, params.get("ids")))
 
-    monkeypatch.setattr(steps_ledgers.erasure_mutations, "run_mutation", mutate)
-    await steps_ledgers.delete_memory_webhook_outbox_by_namespace("acme", ["a", "b"], ch=ch)
-    (read,) = ch.statements("SELECT DISTINCT event_id")
+    monkeypatch.setattr(steps_ledgers.erasure_mutations, "_submit_and_wait", submitted)
+
+    async def run() -> None:
+        with steps_ledgers.erasure_mutations.saga_scope("er-1"):
+            await steps_ledgers.delete_memory_webhook_outbox_by_namespace("acme", ["a", "b"], ch=ch)
+
+    await run()
+    read = ch.statements("SELECT DISTINCT event_id")[0]
     assert "namespace IN {ns:Array(String)}" in read.sql and read.params["ns"] == ["a", "b"]
     assert [m[0] for m in mutations] == [
         "loom.memory_webhook_outbox",
@@ -1038,8 +1064,12 @@ async def test_the_erasure_step_takes_a_namespace_list_and_deletes_attempts_in_b
         "loom.memory_webhook_attempts",
     ]
     assert [m[2] for m in mutations[1:]] == [["e0", "e1"], ["e2"]]
-    # Each batch names itself, so each gets its own mutation tag.
-    assert mutations[1][1] != mutations[2][1]
+    # Each batch has its own mutation tag, the same one when the step runs again.
+    tags = [m[1] for m in mutations]
+    assert len(set(tags)) == 3 and all(t.startswith("erasure:er-1:") for t in tags)
+    mutations.clear()
+    await run()
+    assert [m[1] for m in mutations] == tags
 
 
 @pytest.mark.asyncio

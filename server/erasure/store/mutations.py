@@ -210,6 +210,7 @@ async def run_lightweight_delete(
     params: dict[str, Any],
     ch: _CHClient | None = None,
     wait_s: float | None = None,
+    tag_part: str = "",
 ) -> MutationRow | None:
     """`DELETE FROM {table} WHERE {where}` with the same per-submission tag
     and the same system.mutations poll as `run_mutation`: ClickHouse runs a
@@ -217,7 +218,7 @@ async def run_lightweight_delete(
     carries the WHERE text verbatim, tag included."""
     return await _submit_and_wait(
         table,
-        tag=mutation_tag(table, "LIGHTWEIGHT DELETE", where),
+        tag=mutation_tag(table, "LIGHTWEIGHT DELETE", where, tag_part),
         statement=f"""
         DELETE FROM {table}
         WHERE ({where})
@@ -383,7 +384,9 @@ async def count_then_mutate(
     if set_now_param in mutation and set_now_param not in mutation_params:
         mutation_params[set_now_param] = _now_naive()
     if mutation == "DELETE" and (purge_mode() or lightweight) and table in LIGHTWEIGHT_PURGE_TABLES:
-        await run_lightweight_delete(table, where=mutation_where, params=mutation_params, ch=ch)
+        await run_lightweight_delete(
+            table, where=mutation_where, params=mutation_params, ch=ch, tag_part=tag_part
+        )
     else:
         await run_mutation(
             table,

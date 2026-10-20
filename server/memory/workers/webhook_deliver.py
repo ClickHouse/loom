@@ -94,7 +94,7 @@ def _cooling_until(webhook_id: str) -> datetime | None:
 
 
 def _note_post(webhook_id: str, ok: bool) -> None:
-    """A POST's outcome on the webhook's health; a cooldown runs on the wall clock."""
+    """A POST's outcome on the webhook's health."""
     if ok:
         _health.pop(webhook_id, None)
         return
@@ -127,8 +127,7 @@ def _attempt_row(
     last_status: int = 0,
     last_error: str = "",
 ) -> dict[str, Any]:
-    """An attempt row stamped now: when the event finished, not when the pass began.
-    `next_attempt_at` defaults to now (a settled event)."""
+    """An attempt row recorded now; next_attempt_at defaults to now (a settled event)."""
     now = naive_utc_now()
     return {
         "event_id": event_id,
@@ -233,9 +232,9 @@ async def _send(
     secrets: Mapping[store.Hook, bytes],
 ) -> list[tuple[dict[str, Any], bool]]:
     """POST the leased `due` events: CONCURRENCY at a time, one at a time per
-    webhook, within POST_BUDGET_SECONDS. Each (attempt row, whether it is a
-    POST's outcome) as it finished, so a pass cut at its budget or by an error
-    still records what it sent."""
+    webhook, within POST_BUDGET_SECONDS. Returns each finished event's (attempt
+    row, whether a POST produced it), recorded as it finished, so a pass cut at
+    its budget or by an error still records what it sent."""
     slots = asyncio.Semaphore(CONCURRENCY)
     finished: list[tuple[dict[str, Any], bool]] = []
 
