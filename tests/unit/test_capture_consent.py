@@ -276,6 +276,7 @@ def test_content_legs_need_an_explicit_opt_in(
     for stage in (
         "inline_rerank",  # retrieved memory snippets
         "iterative_judge",  # retrieved memory excerpts
+        "retrieval_judge",  # the query and the excerpts it returned
         "extract",  # conversation messages
         "judge_facts",
         "session_summary",  # conversation turns

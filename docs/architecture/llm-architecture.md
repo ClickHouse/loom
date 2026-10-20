@@ -263,8 +263,9 @@ the shared HTTP client also carries non-model calls, which name no customer.
   with `--org` is scoped to it. A worker's own identity never counts, since a pass stamps the
   org of the row it last worked on and the next row's call must not inherit it. The
   deployment's own calls (the startup embedder probe, the recalibration worker's fixed
-  pairs, the provider checks, the sampled retrieval judge) run under `customer.system()`
-  and name `LOOM_INFERENCE_SYSTEM_CUSTOMER`.
+  pairs, the provider checks) run under `customer.system()` and name
+  `LOOM_INFERENCE_SYSTEM_CUSTOMER`. The sampled retrieval judge sends the judged org's query
+  and memory text, so it names that org.
 - **One customer per call.** A job that batches several orgs' rows (the embedding worker,
   `loom reembed`, a model rebuild) splits its batches by org before calling.
 - **The gateway's names.** `LOOM_INFERENCE_CUSTOMER_FORMAT` turns an org id into the gateway's
