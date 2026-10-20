@@ -13,6 +13,7 @@ waits, rather than run without its policy.
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -43,7 +44,9 @@ async def _read() -> dict[tuple[str, str], str]:
 
 
 # Every live policy by (org, namespace), namespace "" for the org's own.
-_policies: PolledCopy[dict[tuple[str, str], str]] = PolledCopy("extraction policy", {}, _read)
+_policies: PolledCopy[dict[tuple[str, str], str]] = PolledCopy(
+    "extraction policy", {}, _read, logging.getLogger(__name__)
+)
 
 
 async def effective(org: str, namespace: str) -> str:
@@ -73,7 +76,7 @@ def forget() -> None:
 def _reset_for_tests(
     policies: dict[tuple[str, str], str] | None = None, *, read: bool = True
 ) -> None:
-    _policies.reset_for_tests(
+    _policies._reset_for_tests(
         dict(policies or {}), read=read, refresh_s=settings.model_calls_policy_refresh_seconds
     )
 
