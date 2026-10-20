@@ -188,6 +188,25 @@ with more than one admin, registered first, in one org); its tokens are for
   LOOM_CLIENT_ID=fleet LOOM_WORKLOAD_TOKEN_FILE=/run/agent/oidc-token python agent.py
   ```
 
+  One agent can let another of the same trust read its memory, one way. The
+  control plane decides, and calls as the lending agent (with that agent's
+  token):
+
+  ```bash
+  curl -s -X POST "$LOOM_BASE_URL/v1/grants.share_agent" -H "Authorization: Bearer $A_TOKEN" \
+    -d '{"org":"acme","namespace":"fleet-a","agent":"b","role":"viewer"}'
+  ```
+
+  Agent `b`'s next token names `fleet-a` as viewer; `a` gets nothing of `b`'s.
+  `role` is `viewer` or `writer`. An agent shares only its own namespace and
+  only with agents of its trust
+  ([`grants.share_agent`](../reference/operations/grants.md#grantsshare_agent)).
+  [`grants.unshare_agent`](../reference/operations/grants.md#grantsunshare_agent) with the same body
+  (no `role`) takes it back: `b` is refused at once on that server, and within
+  `LOOM_GRANT_CACHE_TTL_SECONDS` on the others. An admin of the
+  namespace can also grant `sa:fleet:b` with `grants.create`; an agent's token
+  takes any grant its subject holds in the org, as writer at most.
+
   An exact `tenant_id` keeps one trust to one tenant, so each tenant's agents
   land in their own org (a prefix of `sub` may be added as a further
   condition, never as the only one). `--jwks-uri`

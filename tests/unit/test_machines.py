@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from server.auth import agents, machines, oauth, oidc, revocation
+from server.core import grant_cache
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
 pytestmark = pytest.mark.filterwarnings("default")
@@ -86,8 +87,19 @@ def bots(monkeypatch) -> dict[str, Any]:
     async def live_roles(m: machines.Machine) -> list[tuple[str, str]]:
         return [(ns, role) for ns, role in m["ns_roles"] if ns in active]
 
+    # Each subject's grant ranks, as `grant_cache.grant_map` reads them.
+    grants: dict[str, dict[str, int]] = {}
+
+    async def grant_map(org: str, subject: str) -> grant_cache.GrantMap:
+        return grant_cache.GrantMap(ranks=dict(grants.get(subject, {})))
+
+    async def active_namespaces(org: str, names: list[str]) -> set[str]:
+        return {ns for ns in names if ns in active}
+
     monkeypatch.setattr(machines, "get", get)
     monkeypatch.setattr(machines, "live_roles", live_roles)
+    monkeypatch.setattr(machines, "active_namespaces", active_namespaces)
+    monkeypatch.setattr(grant_cache, "grant_map", grant_map)
     monkeypatch.setattr(agents, "ensure_namespace", ensure_namespace)
     monkeypatch.setattr(machines, "_jwks_uri", jwks_uri)
     monkeypatch.setattr(oidc, "signing_key", lambda uri, token: ci_key.public_key())
@@ -99,6 +111,7 @@ def bots(monkeypatch) -> dict[str, Any]:
         "registered": registered,
         "active": active,
         "made": made,
+        "grants": grants,
     }
 
 
@@ -461,6 +474,46 @@ def test_each_agent_gets_its_own_subject_and_namespace(bots) -> None:
     assert claims["ns_roles"] == {"fleet-a1": "writer", "docs": "viewer"}  # its own, then shared
     assert claims["parent_subjects"] == ["sa:fleet"]  # disabling the trust ends it
     assert bots["made"] == [("fleet", "a1")]
+
+
+def _agent_roles(bots: dict[str, Any], agent: str = "a1") -> dict[str, str]:
+    token = _ci_token(bots, agent_id=agent)
+    r = _exchange(TestClient(oauth_app()), token, client_id="fleet")
+    assert r.status_code == 200
+    return pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})["ns_roles"]
+
+
+def test_an_agent_reads_what_another_agent_lent_it_and_no_more(bots) -> None:
+    bots["active"].update({"fleet-a1", "fleet-a2"})
+    bots["grants"]["sa:fleet:a2"] = {"fleet-a1": 1, "fleet-a2": 3}  # a1 lent a2 its namespace
+    bots["grants"]["sa:fleet:a1"] = {"fleet-a1": 3}  # only its owner grant
+    assert _agent_roles(bots, "a2") == {
+        "fleet-a2": "writer",
+        "docs": "viewer",
+        "fleet-a1": "viewer",
+    }
+    assert _agent_roles(bots, "a1") == {"fleet-a1": "writer", "docs": "viewer"}
+
+
+def test_a_grant_counts_as_writer_at_most_and_raises_a_shared_role(bots) -> None:
+    bots["active"].update({"fleet-a1", "ops"})
+    bots["grants"]["sa:fleet:a1"] = {"ops": 3, "docs": 2}
+    roles = _agent_roles(bots)
+    assert roles["ops"] == "writer"  # an admin's grant: never re-shared by the agent
+    assert roles["docs"] == "writer"  # above the trust's viewer
+
+
+def test_a_revoked_grant_or_a_released_namespace_lends_nothing(bots) -> None:
+    bots["active"].add("fleet-a1")
+    bots["grants"]["sa:fleet:a1"] = {"fleet-a2": 0, "gone": 1}  # revoked; not active
+    assert _agent_roles(bots) == {"fleet-a1": "writer", "docs": "viewer"}
+
+
+def test_a_keyed_bot_takes_only_its_registered_roles(bots) -> None:
+    bots["grants"]["sa:triage"] = {"deploys": 2}
+    r = _with_key(TestClient(oauth_app()), _assertion(bots["key"]))
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert claims["namespaces"] == ["triage", "docs"]
 
 
 @pytest.mark.parametrize("agent", [None, "", "A1", "a/b", "-a", "a" * 64])

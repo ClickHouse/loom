@@ -1511,7 +1511,9 @@ async def _machine_tokens(
     namespace, good until `ends` (epoch seconds). `since` was taken before `m`
     was read, so a disable the read missed has a later cutoff, and revokes
     this token. An agent's token names the trust as its parent: disabling the
-    trust ends every agent's."""
+    trust ends every agent's. It also names what the agent was granted
+    (`agents.with_grants`); a revoked grant caps the claim at once
+    (`authz.claim_cap`)."""
     from server.auth.revocation import subjects_revoked
 
     trust = machines.subject(m["name"])
@@ -1519,6 +1521,8 @@ async def _machine_tokens(
     if await subjects_revoked([trust, subject], issued_at=since):
         raise OAuthError("invalid_client", 401, description="this bot is revoked")
     ns_roles = ([(own, "writer")] if own else []) + await machines.live_roles(m)
+    if agent:
+        ns_roles = await agents.with_grants(m, agent, ns_roles)
     if not ns_roles:
         raise OAuthError(
             "invalid_client", 401, description="none of this bot's namespaces is active"

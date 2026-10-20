@@ -138,3 +138,55 @@ async def test_two_overlapping_trusts_registered_at_once_save_one(ch: Any) -> No
     assert len(refused) == 1, outcomes
     saved = [n for n in (a, b) if await machines.get(n) is not None]
     assert len(saved) == 1
+
+
+async def test_an_agent_reads_what_another_lent_it_until_it_is_taken_back(ch: Any) -> None:
+    # One way: a2 reads a1's namespace once a1 shares it, a1 never reads a2's,
+    # and a1's unshare ends a2's claim at once, before its token runs out.
+    from server.auth.authz import check_authorized
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.identity.api.models_grants import GrantsShareAgentInput, GrantsUnshareAgentInput
+    from server.identity.app import agent_shares
+    from server.operations.base import Role
+
+    m = _trust()
+    a1 = await agents.ensure_namespace(m, "a1")
+    a2 = await agents.ensure_namespace(m, "a2")
+
+    def token(agent: str, ns_roles: list[tuple[str, str]]) -> AuthInfo:
+        return AuthInfo(
+            subject=agents.subject(m["name"], agent),
+            org=m["org"],
+            namespaces=tuple(ns for ns, _ in ns_roles),
+            roles=(),
+            is_service_account=True,
+            ns_roles=tuple(ns_roles),
+        )
+
+    async def roles(agent: str) -> dict[str, str]:
+        own = agents.namespace(m["name"], agent)
+        with own_write_reads():
+            return dict(await agents.with_grants(m, agent, [(own, "writer")]))
+
+    try:
+        set_current_auth(token("a1", [(a1, "writer")]))
+        await agent_shares.handle_grants_share_agent(
+            GrantsShareAgentInput(org=m["org"], namespace=a1, agent="a2")
+        )
+        assert await roles("a2") == {a2: "writer", a1: "viewer"}
+        assert await roles("a1") == {a1: "writer"}
+
+        reader = token("a2", list((await roles("a2")).items()))
+        await check_authorized(reader, Role.VIEWER, m["org"], a1)
+        with pytest.raises(PermissionError):
+            await check_authorized(reader, Role.WRITER, m["org"], a1)
+
+        await agent_shares.handle_grants_unshare_agent(
+            GrantsUnshareAgentInput(org=m["org"], namespace=a1, agent="a2")
+        )
+        with pytest.raises(PermissionError):
+            await check_authorized(reader, Role.VIEWER, m["org"], a1)
+        assert await roles("a2") == {a2: "writer"}
+    finally:
+        set_current_auth(None)

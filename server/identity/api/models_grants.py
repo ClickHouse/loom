@@ -8,9 +8,12 @@ models the wire ops for managing the grants themselves:
   - `grants.list`    — show grants in a namespace
   - `grants.revoke`  — drop a grant
   - `grants.approve` — approve a pending elevation request
+  - `grants.share_agent` / `grants.unshare_agent` — an agent lends its own
+    namespace to another agent of its trust, or takes it back
 
-All four are ADMIN-role + audited — only existing admins on an org
-can elevate other principals.
+The first four are ADMIN-role + audited — only existing admins on an org
+can elevate other principals. The agent ops are WRITER-role + audited, and
+reach only the caller's own namespace and its trust's agents.
 """
 
 from __future__ import annotations
@@ -160,3 +163,38 @@ class GrantsApproveOutput(BaseModel):
     role: GrantRoleStr | None = None
     # When the decision was written (UTC).
     decided_at: datetime
+
+
+class GrantsShareAgentInput(BaseModel):
+    org: str
+    # The calling agent's own namespace, the only one it may share.
+    namespace: str
+    # The agent of the same trust to share it with, as its control plane names it.
+    agent: str
+    # What that agent may do there: `viewer` reads, `writer` also writes.
+    role: Literal["viewer", "writer"] = "viewer"
+
+
+class GrantsShareAgentOutput(BaseModel):
+    namespace: str
+    # The subject the grant is stored under, `sa:<trust>:<agent>`.
+    subject: str
+    # The role now active for that agent.
+    role: GrantRoleStr
+    # When the grant row was written (UTC).
+    granted_at: datetime
+
+
+class GrantsUnshareAgentInput(BaseModel):
+    org: str
+    # The calling agent's own namespace.
+    namespace: str
+    # The agent of the same trust whose grant there to revoke.
+    agent: str
+
+
+class GrantsUnshareAgentOutput(BaseModel):
+    # True when the agent held a grant and it was revoked.
+    revoked: bool
+    # When the revoke was written (UTC); None when nothing was revoked.
+    revoked_at: datetime | None = None

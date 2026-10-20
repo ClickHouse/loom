@@ -428,6 +428,17 @@ owner's grant follows; a later exchange writes the grant only if it was never wr
 the grant's claim, so one revoked since stays revoked. A person reaches an agent's memory
 only as any namespace's: granted by its admin, or by joining.
 
+An agent's token also names every active namespace of the trust's org that its subject holds a
+live grant on (`agents.with_grants`), at the grant's role but never above writer, so an agent
+cannot pass on admin over a namespace it was lent. A grant reaches an agent's next token; a
+revoked one caps its claim at once (`authz.claim_cap`), on other servers within
+`grant_cache_ttl_seconds`. Agents lend to each other through `grants.share_agent` and
+`grants.unshare_agent` (`server/identity/app/agent_shares.py`): the caller must be an agent, the
+namespace its own and the grantee an agent of its trust, at viewer or writer. A share gives the
+grantee only what the lender already reads, so a compromised agent gains nothing by it; which
+agent may read which is the control plane's decision, made by calling as the lending agent.
+A keyed bot's token names only its registered roles.
+
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn
 replaces with the `X-Forwarded-For` client only when the peer is in

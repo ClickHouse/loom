@@ -13,6 +13,14 @@ from server.identity.api.models_grants import (
     GrantsPendingForMeOutput,
     GrantsRevokeInput,
     GrantsRevokeOutput,
+    GrantsShareAgentInput,
+    GrantsShareAgentOutput,
+    GrantsUnshareAgentInput,
+    GrantsUnshareAgentOutput,
+)
+from server.identity.app.agent_shares import (
+    handle_grants_share_agent,
+    handle_grants_unshare_agent,
 )
 from server.identity.app.grants import (
     handle_grants_approve,
@@ -89,6 +97,32 @@ grants_approve = Operation(
     audit=True,
 )
 
+# The calling agent's own namespace only, where its token is writer; the
+# handler refuses any caller that is not that namespace's agent.
+grants_share_agent = Operation(
+    name="grants.share_agent",
+    maturity="experimental",
+    input_model=GrantsShareAgentInput,
+    output_model=GrantsShareAgentOutput,
+    handler=handle_grants_share_agent,
+    idempotent=True,
+    budget_p99_ms=50,
+    required_role=Role.WRITER,
+    audit=True,
+)
+
+grants_unshare_agent = Operation(
+    name="grants.unshare_agent",
+    maturity="experimental",
+    input_model=GrantsUnshareAgentInput,
+    output_model=GrantsUnshareAgentOutput,
+    handler=handle_grants_unshare_agent,
+    idempotent=True,
+    budget_p99_ms=80,
+    required_role=Role.WRITER,
+    audit=True,
+)
+
 
 OPERATIONS: list[Operation] = [
     grants_create,
@@ -96,4 +130,6 @@ OPERATIONS: list[Operation] = [
     grants_pending_for_me,
     grants_revoke,
     grants_approve,
+    grants_share_agent,
+    grants_unshare_agent,
 ]

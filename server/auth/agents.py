@@ -32,13 +32,38 @@ def namespace(trust: str, agent: str) -> str:
     return f"{trust}-{agent}"
 
 
+def parse(subject_: str) -> tuple[str, str] | None:
+    """(trust, agent) of an agent's subject; None for any other subject."""
+    trust, _, agent = subject_.removeprefix("sa:").partition(":")
+    if not subject_.startswith("sa:") or not agent:
+        return None
+    return trust, agent
+
+
 def home_of(subject_: str) -> str:
     """The namespace of the agent whose subject is `subject_`; "" for any
     other subject."""
-    trust, _, agent = subject_.removeprefix("sa:").partition(":")
-    if not subject_.startswith("sa:") or not agent:
-        return ""
-    return namespace(trust, agent)
+    found = parse(subject_)
+    return namespace(*found) if found else ""
+
+
+async def with_grants(
+    m: machines.Machine, agent: str, ns_roles: list[tuple[str, str]]
+) -> list[tuple[str, str]]:
+    """`ns_roles` and the namespaces of the trust's org the agent holds a live
+    grant on (another agent's share, an admin's grant), each at the higher of
+    the two. A grant counts as writer at most: an agent never re-shares a
+    namespace it was only lent."""
+    from server.core.grant_cache import grant_map
+    from server.operations.base import grant_rank
+
+    ranks = (await grant_map(m["org"], subject(m["name"], agent))).ranks
+    lent = {ns: "viewer" if rank == 1 else "writer" for ns, rank in ranks.items() if rank > 0}
+    roles = dict(ns_roles)
+    for ns in await machines.active_namespaces(m["org"], sorted(lent)):
+        if grant_rank(lent[ns]) > grant_rank(roles.get(ns)):
+            roles[ns] = lent[ns]
+    return list(roles.items())
 
 
 TAG_PREFIX = "machine:"

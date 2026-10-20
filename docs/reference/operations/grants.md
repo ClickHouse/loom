@@ -102,4 +102,41 @@ Remove a subject's grant on a namespace.
 | `revoked` | `bool` | True when a grant row was found and revoked; false when the subject had none. |
 | `revoked_at` | `datetime \| None` | When the revoke was written (UTC); None when nothing was revoked. |
 
+## `grants.share_agent`
+
+Grant the agent `input.role` on the caller's namespace.
+
+`POST /v1/grants.share_agent` · MCP `loom_grants_share_agent` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The calling agent's own namespace, the only one it may share. |
+| `agent` | `str` | required | The agent of the same trust to share it with, as its control plane names it. |
+| `role` | `Literal['viewer', 'writer']` | `'viewer'` | What that agent may do there: `viewer` reads, `writer` also writes. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `namespace` | `str` | The namespace the op reads or writes. |
+| `subject` | `str` | The subject the grant is stored under, `sa:<trust>:<agent>`. |
+| `role` | `Literal['viewer', 'writer', 'admin']` | The role now active for that agent. |
+| `granted_at` | `datetime` | When the grant row was written (UTC). |
+
+## `grants.unshare_agent`
+
+Revoke the agent's grant on the caller's namespace; idempotent.
+
+`POST /v1/grants.unshare_agent` · MCP `loom_grants_unshare_agent` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The calling agent's own namespace. |
+| `agent` | `str` | required | The agent of the same trust whose grant there to revoke. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `revoked` | `bool` | True when the agent held a grant and it was revoked. |
+| `revoked_at` | `datetime \| None` | When the revoke was written (UTC); None when nothing was revoked. |
+
 <!-- prettier-ignore-end -->
