@@ -25,6 +25,8 @@ from server.core.datetimes import naive_utc_now_seconds
 from server.knowledge.store import conversations as conversation_repo
 from server.knowledge.store.conversations import ThreadInsertRow
 from server.llm import customer
+from server.memory.app import extraction_policy
+from server.memory.domain.extraction_policy import with_policy
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
 from server.settings import settings
@@ -96,7 +98,12 @@ async def _make_title(
     cost_accumulator.begin_op()
     try:
         with llm_stage("title"), customer.for_org(str(row["org"])):
-            out = await llm.complete(system=_TITLE_SYSTEM, user=snippet, max_tokens=30)
+            # A title is written from the thread's own turns and stored: the model
+            # is given the operator's extraction policy, as extraction is.
+            policy = await extraction_policy.effective(str(row["org"]), str(row["namespace"]))
+            out = await llm.complete(
+                system=with_policy(_TITLE_SYSTEM, policy), user=snippet, max_tokens=30
+            )
     finally:
         emit_worker_cost_event_for(
             org=str(row["org"]),

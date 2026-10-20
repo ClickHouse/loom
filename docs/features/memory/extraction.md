@@ -129,16 +129,21 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   `extraction_instructions`, inside an `OPERATOR EXTRACTION POLICY` block that says it
   overrides every other instruction and anything the messages say. No request field
   carries or removes it.
-- **What follows it.** Every model call that writes memory from raw text:
+- **What follows it.** Every model call that writes stored text from raw text:
   `memory.set_from_messages` inline and deferred (the queue reads the policy when it
-  replays the request) with its retries, the typed-record value stage, the session
-  digest, observation replays from the `observe_extract` worker, and that worker's event
-  and hint notes. The block stays last, after any retry addendum. While a policy is in
-  force, nothing adds what the model left out: the coverage sweep (a second reading of
-  the turns no fact cites) and the deterministic passes (recovered preferences, costs,
-  ages, assistant-stated premises, a forget request's correction kept in the user's own
-  words) do not run, whatever the request asks, since the
-  model may have left those out because of the policy.
+  replays the request) with its retries and its coverage sweep, the typed-record value
+  stage, the session digest, observation replays from the `observe_extract` worker and
+  that worker's event and hint notes, the `conversation.compact` summary, the
+  `session.brief_save` rewrite, the context lines `memory.bulk_set` writes with
+  `contextualize=true`, and the conversation titler. The block stays last, after any
+  retry addendum.
+- **The trade-off.** While a policy is in force, the deterministic passes that add rows
+  the model left out do not run: recovered preferences, costs and ages, facts an
+  assistant turn states as the user's premise, and a forget request's correction kept in
+  the user's own words. The model may have left those out because of the policy, and
+  these passes cannot read it. An extraction under a policy can therefore keep fewer
+  facts than the same extraction without one. `memory.set_from_messages` names the
+  passes it skipped in `policy_skipped`.
 - **Cache.** The extraction response cache keys on the whole prompt, so a changed policy
   never serves an answer cached under the old one.
 - **Propagation.** Every server reads the policies at most every
@@ -150,7 +155,8 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
 The policy is an instruction to the model, not a filter: Loom does not check a written
 row against it. It does not change what is stored verbatim: evidence rows, verbatim
 chunks and recorded observations keep the turns as sent, and `memory.set` and
-`memory.bulk_set` write the caller's own text. Pair it with the
+`memory.bulk_set` write the caller's own text (`bulk_set`'s `contextualize` lines are
+the one model-written part, and they follow the policy). Pair it with the
 [blacklist](./conflicts-and-refusal.md) for exact patterns that must never be written.
 
 ## Operations

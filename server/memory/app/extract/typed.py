@@ -355,7 +355,7 @@ async def extract_typed_record_iterative(
         + detection_note,
     )
     # The value stage writes what is stored, so it ends with the operator's policy.
-    if operator_policy.strip():
+    if operator_policy:
         value_system = with_policy(
             value_system + "\n\nA field whose value the operator policy below excludes "
             "takes the schema's unknown/empty value.",

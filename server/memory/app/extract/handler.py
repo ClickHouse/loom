@@ -39,6 +39,7 @@ from server.memory.app.chunk_projection import write_memory_chunks
 from server.memory.app.projection_errors import (
     record_input_projection_failure,
 )
+from server.memory.domain.extraction_policy import SKIPPED_UNDER_POLICY
 from server.observability import degradations as _degradations
 from server.observability import provider_health
 from server.observability.otel import traced
@@ -642,6 +643,7 @@ async def handle_memory_set_from_messages(
         value_updates_linked=last_value_updates_linked.get(),
         stage_ms={**dict(state.stage_ms), **dict(_ing_work.get("stage_ms", {}))},
         observation_date_source=observation_date_source,
+        policy_skipped=list(SKIPPED_UNDER_POLICY) if operator_policy else [],
         **_extract_cache_fields(state),
     )
 

@@ -23,6 +23,7 @@ from server.memory.app.extract.keys import _sanitize_key
 from server.memory.app.extract.models import ExtractedFact, ExtractionError
 from server.memory.app.extract.parse import _parse_fact_list
 from server.memory.app.extract.turns import _format_indexed_turns
+from server.memory.domain.extraction_policy import with_policy
 from server.observability.genai import generation_attrs, llm_stage
 from server.settings import settings
 
@@ -227,6 +228,7 @@ async def _coverage_sweep(
     max_turns: int,
     gate_reason: str = "",
     client: Any | None = None,
+    operator_policy: str = "",
 ) -> tuple[list[ExtractedFact], LLMResult | None, int]:
     """One more extraction call over the turns the first pass
     cited nowhere. With `memory_extract_coverage_sweep_batch_items` > 0 the listed items are
@@ -257,7 +259,8 @@ async def _coverage_sweep(
     batch_items = int(settings.memory_extract_coverage_sweep_batch_items)
     groups = sweep_batches(idxs, sent_map, batch_items)
     client = client if client is not None else get_llm_client()
-    system = slim_sweep_system_prompt(system_prompt)
+    # `system_prompt` comes without the operator's policy, which ends this one.
+    system = with_policy(slim_sweep_system_prompt(system_prompt), operator_policy)
     sem = asyncio.Semaphore(4)
 
     async def _one(g_idxs: list[int], g_sents: dict[int, list[str]]) -> LLMResult | None:

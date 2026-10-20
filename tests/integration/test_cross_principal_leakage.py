@@ -1430,44 +1430,45 @@ def test_an_org_admin_neither_reads_nor_sets_another_orgs_model_calls(
     assert (read["enabled"], read["reason"], read["updated_by"]) == (False, "AI off", "ann")
 
 
+@pytest.mark.parametrize("who", ["writer", "ns admin", "other org admin", "end user"])
 def test_only_the_orgs_admin_sets_reads_or_clears_its_extraction_policy(
-    control_plane_url, mint_test_token
+    control_plane_url, mint_test_token, who: str
 ) -> None:
     """A writer, a namespace admin, an end user and another org's admin are each
-    refused the policy of org A's chat namespace, every way, and it is as A's
-    admin left it."""
+    refused the policy of org A and of its chat namespace, every way, and it is
+    as A's admin left it."""
     from tests import end_user_issuer
 
+    if who == "end user" and not end_user_issuer.configured():
+        pytest.skip("no test end-user issuer: run `python -m tests.end_user_issuer <dir>`")
     org, other = unique_org("xpol-a"), unique_org("xpol-b")
     ns = f"chat-{uuid.uuid4().hex[:6]}"
     policy = "Never store payment card data."
     admin = mint_test_token(org=org, namespaces=["*"], roles=["org_admin"], subject="ann")
     body = {"org": org, "scope": "org", "policy": policy}
     r = _post(control_plane_url, admin, "extraction_policy.set", body)
-    assert r.status_code == 200 and r.json()["effective"] == policy, r.text[:300]
-    refused = {
-        "writer": mint_test_token(org=org, namespaces=[ns], roles=["writer"], subject="app"),
-        "ns admin": mint_test_token(
-            org=org, namespaces=[ns], roles=["admin", "writer"], subject="lead"
-        ),
-        "other org admin": mint_test_token(
-            org=other, namespaces=["*"], roles=["org_admin"], subject="ben"
-        ),
-    }
-    if end_user_issuer.configured():
-        refused["end user"] = end_user_issuer.mint(org, "u1")
+    assert r.status_code == 200, r.text[:300]
+    assert r.json()["effective"] == policy
+    if who == "writer":
+        token = mint_test_token(org=org, namespaces=[ns], roles=["writer"], subject="app")
+    elif who == "ns admin":
+        token = mint_test_token(org=org, namespaces=[ns], roles=["admin", "writer"], subject="l")
+    elif who == "other org admin":
+        token = mint_test_token(org=other, namespaces=["*"], roles=["org_admin"], subject="ben")
+    else:
+        token = end_user_issuer.mint(org, "u1")
     for scope in (
         {"org": org, "scope": "org"},
         {"org": org, "scope": "namespace", "namespace": ns},
     ):
-        for who, token in refused.items():
-            for op, extra in (
-                ("extraction_policy.set", {"policy": "Store everything."}),
-                ("extraction_policy.clear", {}),
-                ("extraction_policy.get", {}),
-            ):
-                r = _post(control_plane_url, token, op, {**scope, **extra})
-                assert r.status_code == 403 and policy not in r.text, (who, op, r.text[:300])
+        for op, extra in (
+            ("extraction_policy.set", {"policy": "Store everything."}),
+            ("extraction_policy.clear", {}),
+            ("extraction_policy.get", {}),
+        ):
+            r = _post(control_plane_url, token, op, {**scope, **extra})
+            assert r.status_code == 403, (op, scope, r.text[:300])
+            assert policy not in r.text
     body = {"org": org, "scope": "namespace", "namespace": ns}
     r = _post(control_plane_url, admin, "extraction_policy.get", body)
     assert r.status_code == 200, r.text[:300]
@@ -1510,13 +1511,10 @@ def test_an_end_users_at_me_extraction_runs_under_the_policy_of_the_collection_i
     body = {**target, "policy": "Never store home addresses."}
     r = _post(control_plane_url, admin, "extraction_policy.set", body)
     assert r.status_code == 200, r.text[:300]
-    policy_change_adopted()
-    ruled = key()
-    assert ruled != bare
+    policy_change_adopted(key, lambda k: k != bare)
     r = _post(control_plane_url, admin, "extraction_policy.clear", target)
     assert r.status_code == 200, r.text[:300]
-    policy_change_adopted()
-    assert key() == bare
+    policy_change_adopted(key, lambda k: k == bare)
 
 
 # ── knowledge sharing (docs/architecture/sharing.md) ─────────────────────────

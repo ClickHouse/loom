@@ -432,6 +432,8 @@ async def distill_events(
 
     res = res or ExtrasResult()
     pairs = transition_pairs(observations, max_pairs=max_events, only_after=only_after)
+    if not pairs:
+        return res
     system = with_policy(
         _EVENT_SYSTEM, await extraction_policy.effective(session["org"], session["namespace"])
     )

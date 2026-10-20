@@ -6,31 +6,14 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from server.core.errors import AuthInsufficientError, ValidationError
+from server.core.errors import AuthInsufficientError
 from server.identity.api.models_model_calls import (
     OrgModelCallsInput,
     OrgModelCallsOutput,
     OrgSetModelCallsInput,
 )
+from server.identity.app.org_admin import caller, one_org
 from server.identity.store import model_calls as repo
-
-
-def _one_org(org: str) -> None:
-    # "", "-" and "*" name no org (the identity tuple's none, a wildcard).
-    if org.strip() in ("", "-", "*") or org != org.strip():
-        raise ValidationError(f"org must name one org, got {org!r}")
-
-
-def _caller() -> tuple[str, bool]:
-    """(the caller's subject, whether it is a platform admin). With auth off
-    (development) there is no caller, and nothing to lock against."""
-    from server.auth.context import current_auth
-    from server.operations.base import Role
-
-    auth = current_auth()
-    if auth is None:
-        return "admin", True
-    return auth.subject or "admin", auth.has_role(Role.PLATFORM_ADMIN)
 
 
 async def handle_org_set_model_calls(input: OrgSetModelCallsInput) -> OrgModelCallsOutput:
@@ -39,8 +22,8 @@ async def handle_org_set_model_calls(input: OrgSetModelCallsInput) -> OrgModelCa
     switch it off but not back on. A platform admin's change keeps the lock
     unless it sends `locked`.
     Every process sees a change within `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`."""
-    _one_org(input.org)
-    by, platform = _caller()
+    one_org(input.org)
+    by, platform = caller()
     if input.locked is not None and not platform:
         raise AuthInsufficientError("only a platform admin locks or unlocks model calls")
     return await _set(input.org, input.enabled, input.reason, by, input.locked, platform)
@@ -88,7 +71,7 @@ async def handle_org_model_calls(input: OrgModelCallsInput) -> OrgModelCallsOutp
     """The org's current setting; enabled and unlocked when it was never set."""
     from server.core.ch import own_write_reads
 
-    _one_org(input.org)
+    one_org(input.org)
     with own_write_reads():  # an admin reads right after setting it, on any replica
         row = await repo.get(input.org)
     if row is None:

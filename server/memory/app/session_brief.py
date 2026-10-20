@@ -33,6 +33,7 @@ from server.memory.api.models_session_brief import (
 )
 from server.memory.domain import session_brief as sb
 from server.memory.domain import session_brief_render as sb_render
+from server.memory.domain.extraction_policy import with_policy
 from server.memory.store import session_briefs as repo
 from server.observability.budget_shape import note_budget_shape
 from server.observability.genai import staged
@@ -123,6 +124,7 @@ async def _revise_window(
     total: int,
     budget: int,
     context_line: str,
+    operator_policy: str = "",
 ) -> tuple[sb.BriefSections, int, int, int, bool]:
     """One window through the model. Returns (merged sections, dropped,
     tokens_in, tokens_out, used_model). A failed or unparseable call falls
@@ -130,7 +132,7 @@ async def _revise_window(
     condensed, _stats = sb.condense_events(events, budget)
     try:
         result = await client.complete(
-            system=sb.SYSTEM_PROMPT,
+            system=with_policy(sb.SYSTEM_PROMPT, operator_policy),
             user=sb.user_prompt(
                 prev, condensed, window=index, windows=total, context_line=context_line
             ),
@@ -187,9 +189,21 @@ async def _revise_from_events(inp: Any, prev: sb.BriefSections | None) -> _Revis
     cur = prev
     any_model = False
     ctx = _context_line(inp)
+    # The brief is written from the session's own events: the model is given the
+    # operator's extraction policy, and an unreadable one refuses the save.
+    from server.memory.app import extraction_policy
+
+    policy = await extraction_policy.effective(inp.org, inp.namespace)
     for i, w in enumerate(windows, 1):
         cur, dropped, t_in, t_out, used = await _revise_window(
-            client, cur, w, index=i, total=len(windows), budget=budget, context_line=ctx
+            client,
+            cur,
+            w,
+            index=i,
+            total=len(windows),
+            budget=budget,
+            context_line=ctx,
+            operator_policy=policy,
         )
         rev.dropped += dropped
         rev.tokens_in += t_in

@@ -485,6 +485,7 @@ async def _bulk_contextualize(
                 _cx_settings.memory_bulk_contextualize_max_entries
             ):
                 from server.llm.client import get_llm_client
+                from server.memory.app import extraction_policy
                 from server.memory.app.chunk_context import contextualize_chunks, prefixed
 
                 document = "\n\n".join(excerpt for _, _, excerpt, _ in pending)
@@ -493,6 +494,8 @@ async def _bulk_contextualize(
                     document,
                     [excerpt for _, _, excerpt, _ in pending],
                     concurrency=int(_cx_settings.memory_bulk_contextualize_concurrency),
+                    # An unreadable policy lands in the fail-open below: no context.
+                    operator_policy=await extraction_policy.effective(input.org, input.namespace),
                 )
                 contextualized = [
                     (idx, prefixed(cx, embed_text), prefixed(cx, excerpt), key_text)

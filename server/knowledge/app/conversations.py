@@ -1092,6 +1092,14 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         "promises or commitments. Drop pleasantries and filler. "
         "Target 200-400 words. No markdown headers. No bullet lists."
     )
+    # The summary replaces the turns it covers in search, so it follows the
+    # operator's extraction policy as extraction does.
+    from server.memory.app import extraction_policy
+    from server.memory.domain.extraction_policy import with_policy
+
+    system_prompt = with_policy(
+        system_prompt, await extraction_policy.effective(input.org, input.namespace)
+    )
     result = await llm.complete(
         system=system_prompt,
         user=f"Conversation excerpt:\n\n{transcript}",

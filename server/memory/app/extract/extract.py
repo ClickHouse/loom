@@ -468,8 +468,8 @@ async def extract_from_messages(
 
     `operator_policy` is the operator's extraction policy for the namespace
     (`extraction_policy.effective`): it ends the system prompt of every call,
-    retries included, above `custom_instructions`. While it is set neither the
-    coverage sweep nor the row recovery adds what the model left out.
+    retries and the coverage sweep included, above `custom_instructions`. While
+    it is set, no row is recovered from the turns past the model.
 
     `judge` enables the LLM-judge gate. After extraction, a second
     LLM call grades each fact CORRECT/UNCERTAIN/WRONG against the
@@ -558,23 +558,18 @@ async def extract_from_messages(
     # result — "per_call" / "namespace" (the caller's or the namespace's
     # switch), "list:<n>" (the density
     # gate, n dense turns) — so the fire rate can be read per rule.
-    # Not under an operator policy, whatever asks for it: the sweep reads the
-    # turns the first pass left without a fact, which the policy may have kept out.
-    swept_off = bool(operator_policy.strip())
-    coverage_sweep_reason, _uncovered_fires = (
-        ("", False)
-        if swept_off
-        else _coverage_sweep_reason(coverage_sweep, coverage_sweep_source, messages, facts)
+    coverage_sweep_reason, _uncovered_fires = _coverage_sweep_reason(
+        coverage_sweep, coverage_sweep_source, messages, facts
     )
     if (
-        not swept_off
-        and (_sweep_effective(coverage_sweep, settings, messages) or _uncovered_fires)
-        and _is_nontrivial(messages)
-    ):
+        _sweep_effective(coverage_sweep, settings, messages) or _uncovered_fires
+    ) and _is_nontrivial(messages):
+        # The sweep is a model call too: its own slim prompt ends with the policy.
         facts, _cs_result, coverage_swept = await _coverage_sweep(
             messages,
             facts,
-            system_prompt=system_prompt,
+            system_prompt=base_prompt,
+            operator_policy=operator_policy,
             observation_date=observation_date,
             last_messages=last_messages,
             max_tokens=max_tokens,
@@ -604,7 +599,7 @@ async def extract_from_messages(
         observation_date=observation_date,
         existing_memories=existing_memories,
         speaker_attribution=speaker_attribution,
-        recover_rows=not operator_policy.strip(),
+        recover_rows=not operator_policy,
     )
 
     # Judge gate: drop WRONG, keep CORRECT/UNCERTAIN. observation_date

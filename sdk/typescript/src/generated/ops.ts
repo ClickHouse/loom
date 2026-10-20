@@ -5803,6 +5803,7 @@ export interface MemorySetFromMessagesOutput {
   deferred_by?: string;
   stage_ms?: Record<string, number>;
   observation_date_source?: string;
+  policy_skipped?: string[];
   extract_prompt_keys?: string[];
   llm_cache_hits?: number;
   llm_cache_misses?: number;

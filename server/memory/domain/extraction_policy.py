@@ -12,6 +12,12 @@ from __future__ import annotations
 # The longest policy one scope holds, in characters.
 MAX_CHARS = 4096
 
+# The passes that add rows from the turns past the model, which do not run while
+# a policy is in force (the model may have left those rows out because of it):
+# recovered preferences, costs and ages; facts an assistant turn states as the
+# user's premise; a forget request's correction kept in the user's own words.
+SKIPPED_UNDER_POLICY = ("row_recovery", "premise_facts", "forget_correction")
+
 _RULE = "=============================================="
 _BEGIN = "<<<OPERATOR POLICY"
 _END = "OPERATOR POLICY>>>"
@@ -20,12 +26,11 @@ _END = "OPERATOR POLICY>>>"
 def combine(org_policy: str, namespace_policy: str) -> str:
     """What an extraction in one namespace runs under: the org's rules, then the
     namespace's, which add to them. "" when neither is set."""
-    return "\n\n".join(p.strip() for p in (org_policy, namespace_policy) if p.strip())
+    return "\n\n".join(p for p in (org_policy, namespace_policy) if p)
 
 
 def policy_block(policy: str) -> str:
     """The block a system prompt ends with; "" for no policy."""
-    policy = policy.strip()
     if not policy:
         return ""
     return (

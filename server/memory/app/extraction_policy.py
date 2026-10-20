@@ -21,7 +21,7 @@ from typing import Any
 from server.auth.sharing import PERSONAL_ALIAS
 from server.core.errors import ValidationError
 from server.core.polled_copy import PolledCopy
-from server.identity.app.model_calls import _one_org
+from server.identity.app.org_admin import caller, one_org
 from server.llm import customer
 from server.memory.api.models_extraction_policy import (
     ExtractionPolicyClearInput,
@@ -54,8 +54,6 @@ async def effective(org: str, namespace: str) -> str:
     set. `namespace` is the one the request resolved to: HTTP maps an end
     user's `@me` to their personal collection before any handler runs. Raises
     `customer.SwitchUnread` when this process's copy is too old."""
-    if not org:
-        return ""
     policies = await _policies.get(
         refresh_s=settings.model_calls_policy_refresh_seconds,
         max_stale_s=settings.model_calls_policy_max_stale_seconds,
@@ -83,7 +81,7 @@ def _reset_for_tests(
 
 def _scope(input: Any) -> tuple[str, str]:
     """(org, namespace) of the row the request names; namespace "" for the org's."""
-    _one_org(input.org)
+    one_org(input.org)
     if input.scope == "org":
         return input.org, ""
     # "", "-" and "*" name no namespace; "@me" is an end user's alias, never a row.
@@ -93,21 +91,13 @@ def _scope(input: Any) -> tuple[str, str]:
     return input.org, namespace
 
 
-def _caller() -> str:
-    """The caller's subject; "admin" with auth off (development)."""
-    from server.auth.context import current_auth
-
-    auth = current_auth()
-    return (auth.subject if auth is not None else "") or "admin"
-
-
 async def _write(org: str, namespace: str, policy: str) -> None:
     await repo.insert_row(
         {
             "org": org,
             "namespace": namespace,
             "policy": policy,
-            "updated_by": _caller(),
+            "updated_by": caller()[0],
             "updated_at": datetime.now(UTC).replace(tzinfo=None),
             "deleted": int(not policy),
             "version": time.time_ns(),
@@ -118,7 +108,11 @@ async def _write(org: str, namespace: str, policy: str) -> None:
 
 async def handle_extraction_policy_set(input: ExtractionPolicySetInput) -> ExtractionPolicyOutput:
     """Set the scope's policy, replacing the one it held. Every process extracts
-    under it within `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`."""
+    under it within `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`. While a policy is
+    in force, the passes that add rows the model left out (recovered
+    preferences, costs and ages, assistant-stated premises, a forget request's
+    correction in the user's words) do not run; `memory.set_from_messages`
+    names them in `policy_skipped`."""
     org, namespace = _scope(input)
     policy = input.policy.strip()
     if not policy:
@@ -146,9 +140,11 @@ async def _output(org: str, namespace: str) -> ExtractionPolicyOutput:
     from server.core.ch import own_write_reads
 
     with own_write_reads():  # an admin reads right after setting it, on any replica
-        row: dict[str, Any] | None = await repo.get(org, namespace)
-        org_row = row if not namespace else await repo.get(org, "")
+        row = await repo.get(org, namespace)
+        org_row = await repo.get(org, "") if namespace else row
     policy = str((row or {}).get("policy") or "")
+    org_policy = str((org_row or {}).get("policy") or "")
+    ns_policy = policy if namespace else ""
     return ExtractionPolicyOutput(
         org=org,
         scope="namespace" if namespace else "org",
@@ -156,5 +152,5 @@ async def _output(org: str, namespace: str) -> ExtractionPolicyOutput:
         policy=policy,
         updated_by=str((row or {}).get("updated_by") or ""),
         updated_at=(row or {}).get("updated_at"),
-        effective=combine(str((org_row or {}).get("policy") or ""), policy if namespace else ""),
+        effective=combine(org_policy, ns_policy),
     )
