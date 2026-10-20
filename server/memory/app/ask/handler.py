@@ -592,14 +592,18 @@ _ASK_SHAPE_EXCLUDE = frozenset({"query", "org", "namespace", "run_id", "preceden
 _ASK_SHAPE_SETTINGS = ("memory_ask_", "memory_search_", "memory_rrf_")
 
 
+# Names of the settings that bound how long a call waits or retries, not what it answers.
+_OPERATIONAL_SUFFIXES = ("_timeout_s", "_timeout_ms", "_bound_s", "_bound_retries", "_wall_ms")
+
+
 def _shape_settings(settings: Any) -> dict[str, Any]:
     shape = {}
     for name, field in type(settings).model_fields.items():
         if not name.startswith(_ASK_SHAPE_SETTINGS) or name.startswith("memory_ask_precedent"):
             continue
-        # A timeout or a cache lifetime changes no answer a precedent holds: a call that
-        # timed out already changes the window the precedent is checked against.
-        if name.endswith(("_timeout_s", "_timeout_ms")) or "_ttl" in name:
+        # A timeout, a wait bound or a cache lifetime changes no answer a precedent holds:
+        # a call cut short already changes the window the precedent is checked against.
+        if name.endswith(_OPERATIONAL_SUFFIXES) or "_ttl" in name:
             continue
         value = getattr(settings, name)
         if value != field.get_default(call_default_factory=True):

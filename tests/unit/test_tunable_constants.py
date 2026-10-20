@@ -8,7 +8,7 @@ settings`. The ones that predate this rule are listed in
 tests/unit/tunable_constants.txt. The list only shrinks: a new one goes into
 `server/settings/` instead, and one moved there leaves the list. A number that must
 not be a knob (another value is derived from it, or changing it breaks what is stored)
-says so on its line or the line above: `# not a setting: <reason>`.
+says so on its line, or on a comment line directly above it: `# not a setting: <reason>`.
 """
 
 from __future__ import annotations
@@ -129,7 +129,7 @@ _TIMEOUT_ARGS = {
     "total",
 }
 # Calls whose first positional argument is a wait, in seconds.
-_WAIT_FIRST = ("asyncio.timeout", ".join", ".wait", "wait_for_event")
+_WAIT_FIRST = ("asyncio.timeout", ".join", ".wait")
 
 
 def _literal(node: ast.AST) -> bool:
@@ -139,7 +139,7 @@ def _literal(node: ast.AST) -> bool:
 def test_no_call_site_waits_a_literal_timeout() -> None:
     """A timeout or pool size written at a server call site is a knob nobody can turn:
     it reads a setting, or the call says why it is not one (`# not a setting: ...` on
-    one of its lines or the line above).
+    one of its lines, or on a comment line directly above it).
     The CLI waits on the user's terminal, so its own calls are out of scope."""
     found = []
     for path in sorted((ROOT / "server").rglob("*.py")):

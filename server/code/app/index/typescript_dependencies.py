@@ -50,7 +50,7 @@ def _dependency_state(checkout: Path) -> tuple[Path, str]:
         ["git", "-C", str(checkout), "ls-files", "--stage", "-z", "--", *patterns],
         check=True,
         capture_output=True,
-        timeout=30,  # not a setting: a local metadata read of the checkout
+        timeout=settings.code_git_timeout_s,
         env=auth_env(),
     ).stdout
     metadata = subprocess.run(
@@ -58,7 +58,7 @@ def _dependency_state(checkout: Path) -> tuple[Path, str]:
         check=True,
         capture_output=True,
         text=True,
-        timeout=30,  # not a setting: a local metadata read of the checkout
+        timeout=settings.code_git_timeout_s,
         env=auth_env(),
     ).stdout.strip()
     marker = Path(metadata)

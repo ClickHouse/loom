@@ -736,6 +736,9 @@ def test_a_timeout_or_cache_lifetime_leaves_the_shape_as_it_was() -> None:
         ("memory_search_rerank_timeout_s", 30.0),
         ("memory_search_hyde_timeout_s", 30.0),
         ("memory_search_page_ttl_s", 60),
+        ("memory_search_embed_bound_s", 9.0),
+        ("memory_search_embed_bound_retries", 3),
+        ("memory_search_fallback_max_wall_ms", 9000),
     ):
         changed = base.model_copy(update={name: value})
         assert ask_shape_sha256(_input(), changed) == ask_shape_sha256(_input(), base), name

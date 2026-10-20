@@ -1415,6 +1415,7 @@ Embedding and LLM providers.
 | `LOOM_INFERENCE_TOKEN_AUDIENCE` | `str` | `''` |  | With inference_token_url and no workload token: the audience of the identity token Loom signs (issuer <https public_base_url>/v1, newest RS256 key); never jwt_audience. |
 | `LOOM_INFERENCE_TOKEN_SCOPE` | `str` | `''` |  | The scope sent with the inference gateway token exchange; "" sends none. |
 | `LOOM_INFERENCE_TOKEN_EXCHANGE_TIMEOUT_S` | `float` | `10.0` |  | Seconds one token exchange with the inference gateway may take. |
+| `LOOM_PROVIDER_CHECK_TIMEOUT_S` | `float` | `30.0` | live | Seconds a provider check (the dashboard's Models & keys validate and save) waits for its probe call before it reports `timeout`. |
 | `LOOM_INFERENCE_GATEWAY_REQUIRED` | `bool` | `False` |  | True: model calls and memory content go only to inference_gateway_hosts; on whenever inference_token_url is set. |
 | `LOOM_INFERENCE_GATEWAY_HOSTS` | `str` | `''` |  | Comma-separated hostnames (exact, any case) of the gateway; required, and the only hosts sent to, while the gateway is required. |
 | `LOOM_INFERENCE_CUSTOMER_HEADER` | `str` | `''` |  | Header naming the customer (the org) on every model call, for a gateway that meters by it; set, a call naming no customer is refused (server/llm/customer.py). |
@@ -1424,7 +1425,6 @@ Embedding and LLM providers.
 | `LOOM_INFERENCE_CUSTOMER_FORMAT` | `str` | `'{org}'` |  | How the customer header names an org, as the gateway knows it: `{org}` is the org id, around it letters, digits and . _ ~ : @ - only ("{org}" = the id as is). |
 | `LOOM_INFERENCE_FEATURE_MAP_JSON` | `str` | `''` |  | JSON object from Loom's feature names (hyde, memory.search, worker.embedding, ...) to the gateway's (letters, digits, . _ ~ : @ -); "*" for any other; "" = Loom's. |
 | `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` | `float` | `10.0` |  | Seconds between each process's reads of the orgs whose model calls are switched off (loom.org_model_calls); a change reaches every process within it. |
-| `LOOM_PROVIDER_CHECK_TIMEOUT_S` | `float` | `30.0` | live | Seconds a provider check (a model or key saved on the dashboard's Models & keys page) waits for its probe call before it reports the provider unreachable. |
 | `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` | `float` | `60.0` |  | Seconds a process trusts its copy of the org model-call switch when it cannot read it again; past it, every model call for an org is refused (fail closed). 15 to 300. |
 | `LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS` | `int` | `7` |  | Days a switched-off org's queued requests (the extraction queue) wait, from when the org was switched off, before they are dropped, each with a memory_drops record. 1 to 29: the queue's own 30-day TTL would otherwise remove them first, with no record. |
 | `LOOM_MODEL_CALLS_OFF_DROP_PER_PASS` | `int` | `500` |  | Waiting requests of a switched-off org one extraction-queue pass drops; the rest go on the next pass. |
@@ -1503,7 +1503,7 @@ Process shape, deployment, event stream and cost budgets.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_HTTP_CLIENT_TIMEOUT_S` | `float` | `20.0` |  | Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, rerank and classify endpoints, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients. |
+| `LOOM_HTTP_CLIENT_TIMEOUT_S` | `float` | `20.0` |  | Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, GitHub, issuer discovery, the coverage source, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients. |
 | `LOOM_HTTP_CLIENT_CONNECT_TIMEOUT_S` | `float` | `5.0` |  | Seconds the shared outbound HTTP clients wait to open a connection. |
 | `LOOM_HTTP_CLIENT_MAX_CONNECTIONS` | `int` | `100` |  | Connections each shared outbound HTTP client keeps open at most, so one misbehaving downstream cannot exhaust the process's sockets. |
 | `LOOM_HTTP_CLIENT_MAX_KEEPALIVE_CONNECTIONS` | `int` | `20` |  | Idle connections each shared outbound HTTP client keeps for reuse. |
@@ -1624,7 +1624,7 @@ The tracker plane: records, duplicate checks, bisect.
 | --- | --- | --- | --- | --- |
 | `LOOM_TRACKER_SOURCES_JSON` | `str` | `''` |  | Every tracker source and the namespaces that read them: {"sources": {"<name>": {"host": "x.clickhouse.cloud", "port": 8443, "secure": true, "database": "loom_tracker"}}, "namespaces": {"qa-<team>": {"source": "<name>", "repos": ["Org/repo"], "restricted": false}}}. A namespace naming an unknown source does not serve (one error line, never a guess). |
 | `LOOM_TRACKER_SOURCE_CHECK_TIMEOUT_S` | `float` | `8.0` | live | Seconds tracker.source_check waits for a source's contract check. |
-| `LOOM_TRACKER_SOURCE_CONNECT_TIMEOUT_S` | `float` | `5.0` | live | Seconds Loom waits to connect to a tracker source's ClickHouse. |
+| `LOOM_TRACKER_SOURCE_CONNECT_TIMEOUT_S` | `float` | `5.0` |  | Seconds Loom waits to connect to a tracker source's ClickHouse. Read when a source's client is built, which is kept per credential. |
 | `LOOM_TRACKER_RESTRICTED_REPOS_JSON` | `str` | `''` |  | The repositories whose numbers name a restricted namespace's escalations and core incidents, as `Org/repo`: {"escalation": "Org/escalations", "incident": "Org/incidents"}. `escalation_context` / `incident_context` read the record `Org/repo#<number>`; a kind with no repository here reads no record by number. |
 | `LOOM_TRACKER_CREDENTIALS_JSON` | `str` | *(unset)* |  | Credentials per tracker source, kept apart from `tracker_sources_json`: {"<name>": {"user": "...", "password": "..."}}. |
 | `LOOM_TRACKER_CONTRACT_TTL_S` | `float` | `3600.0` |  | A source serves only while its schema meets the record contract (docs/features/tracker/record-contract.md), checked through its own credential once per this many seconds (at least 1 s); a failed check retries after 60 s. |

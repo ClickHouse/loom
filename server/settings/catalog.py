@@ -548,7 +548,7 @@ class ClickHouseSettings(BaseModel):
     # Fresh connections a statement tries after a replica-bound error (a replica that
     # lost its Keeper session, a replica's read-only table). Behind a load balancer one
     # reconnect can land on the replica that just failed, so a single retry is not enough.
-    ch_replica_bound_retries: int = Field(default=2, ge=1)
+    ch_replica_bound_retries: int = Field(default=2, ge=1, le=5)
     # Ceilings for the reads a caller shapes (code.grep, code.search with a
     # pattern or globs, memory.aggregate, memory.record.query). A ceiling only
     # lowers the statement's own value, so no request can widen it; 0 = none.
@@ -3570,6 +3570,9 @@ class ProviderSettings(ModelSettings):
     inference_token_scope: str = ""
     # Seconds one token exchange with the inference gateway may take.
     inference_token_exchange_timeout_s: float = Field(default=10.0, gt=0)
+    # Seconds a provider check (the dashboard's Models & keys validate and save) waits for
+    # its probe call before it reports `timeout`.
+    provider_check_timeout_s: Annotated[float, LIVE] = Field(default=30.0, gt=0)
     # True: model calls and memory content go only to inference_gateway_hosts;
     # on whenever inference_token_url is set.
     inference_gateway_required: bool = False
@@ -3597,9 +3600,6 @@ class ProviderSettings(ModelSettings):
     # Seconds between each process's reads of the orgs whose model calls are
     # switched off (loom.org_model_calls); a change reaches every process within it.
     model_calls_policy_refresh_seconds: float = Field(10.0, gt=0)
-    # Seconds a provider check (a model or key saved on the dashboard's Models & keys page)
-    # waits for its probe call before it reports the provider unreachable.
-    provider_check_timeout_s: Annotated[float, LIVE] = Field(default=30.0, gt=0)
     # Seconds a process trusts its copy of the org model-call switch when it cannot
     # read it again; past it, every model call for an org is refused (fail closed).
     # 15 to 300.
@@ -4135,8 +4135,8 @@ class RuntimeSettings(BaseModel):
 
     # ---- outbound HTTP ----
     # Seconds the shared outbound HTTP clients (server/clients/_http.py: model and
-    # embedding APIs, rerank and classify endpoints, provider checks) wait on a call that
-    # sets no timeout of its own. Read when a process builds the clients.
+    # embedding APIs, GitHub, issuer discovery, the coverage source, provider checks) wait
+    # on a call that sets no timeout of its own. Read when a process builds the clients.
     http_client_timeout_s: float = Field(default=20.0, gt=0)
     # Seconds the shared outbound HTTP clients wait to open a connection.
     http_client_connect_timeout_s: float = Field(default=5.0, gt=0)
@@ -4330,8 +4330,9 @@ class TrackerSettings(BaseModel):
     tracker_sources_json: Annotated[str, JsonObject] = ""
     # Seconds tracker.source_check waits for a source's contract check.
     tracker_source_check_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
-    # Seconds Loom waits to connect to a tracker source's ClickHouse.
-    tracker_source_connect_timeout_s: Annotated[float, LIVE] = Field(default=5.0, gt=0)
+    # Seconds Loom waits to connect to a tracker source's ClickHouse. Read when a source's
+    # client is built, which is kept per credential.
+    tracker_source_connect_timeout_s: float = Field(default=5.0, gt=0)
     # The repositories whose numbers name a restricted namespace's escalations and core
     # incidents, as `Org/repo`: {"escalation": "Org/escalations", "incident":
     # "Org/incidents"}. `escalation_context` / `incident_context` read the record

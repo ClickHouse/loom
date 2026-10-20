@@ -287,7 +287,6 @@
  "tracker_patch_line_timeout_s",
  "tracker_snapshot_ttl_s",
  "tracker_source_check_timeout_s",
- "tracker_source_connect_timeout_s",
  "tracker_test_candidates_timeout_s",
  "worker_backoff_base_s",
  "worker_backoff_cap_s",

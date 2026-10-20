@@ -261,6 +261,7 @@
         },
         "ch_replica_bound_retries": {
           "default": 2,
+          "maximum": 5,
           "minimum": 1,
           "type": "integer",
           "description": "Fresh connections a statement tries after a replica-bound error (a replica that lost its Keeper session, a replica's read-only table). Behind a load balancer one reconnect can land on the replica that just failed, so a single retry is not enough."
@@ -2427,7 +2428,7 @@
           "default": 20.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, rerank and classify endpoints, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients."
+          "description": "Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, GitHub, issuer discovery, the coverage source, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients."
         },
         "identity_provider": {
           "default": "",
@@ -4719,7 +4720,7 @@
           "default": 30.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds a provider check (a model or key saved on the dashboard's Models & keys page) waits for its probe call before it reports the provider unreachable."
+          "description": "Seconds a provider check (the dashboard's Models & keys validate and save) waits for its probe call before it reports `timeout`."
         },
         "public_base_url": {
           "default": "",
@@ -5510,7 +5511,7 @@
           "default": 5.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds Loom waits to connect to a tracker source's ClickHouse."
+          "description": "Seconds Loom waits to connect to a tracker source's ClickHouse. Read when a source's client is built, which is kept per credential."
         },
         "tracker_sources_json": {
           "default": "",

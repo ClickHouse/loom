@@ -270,6 +270,70 @@ async def test_an_end_user_issuers_jwks_fetch_waits_the_identity_provider_settin
     assert seen == [4.0]
 
 
+@pytest.mark.asyncio
+async def test_a_provider_check_waits_its_setting_then_reports_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import contextlib
+
+    from server.insights.app import provider_validation
+
+    seen: list[float] = []
+
+    @contextlib.asynccontextmanager
+    async def _timeout(delay: float) -> Any:
+        seen.append(delay)
+        raise TimeoutError
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(settings, "provider_check_timeout_s", 12.0)
+    monkeypatch.setattr(provider_validation.asyncio, "timeout", _timeout)
+    check = await provider_validation._check("llm", "openai", "gpt-x", "sk-test", 0)
+    assert (seen, check.code) == ([12.0], "timeout")
+
+
+@pytest.mark.asyncio
+async def test_a_tracker_source_connects_within_its_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import clickhouse_connect
+
+    from server.tracker.store.source import qa_intel
+
+    seen: dict[str, Any] = {}
+
+    async def _client(**kw: Any) -> Any:
+        seen.update(kw)
+        return object()
+
+    monkeypatch.setattr(settings, "tracker_source_connect_timeout_s", 2.5)
+    monkeypatch.setattr(clickhouse_connect, "get_async_client", _client)
+    await qa_intel.connect(
+        "tracker.example",
+        address="",
+        port=8443,
+        secure=True,
+        database="default",
+        user="u",
+        password="p",
+        client_name="loom",
+        send_receive_timeout=30,
+    )
+    assert seen["connect_timeout"] == 2.5
+
+
+def test_the_coverage_source_connects_within_the_shared_clients_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.clients.coverage_source import HttpCoverageSource
+
+    monkeypatch.setattr(settings, "http_client_connect_timeout_s", 1.25)
+    source = HttpCoverageSource(
+        "https://coverage.example", user="", password="", database="default", timeout_s=40.0
+    )
+    assert (source._timeout.read, source._timeout.connect) == (40.0, 1.25)
+
+
 _NEVER_ZERO = [
     # a work cap of 0 would starve or break its path
     "memory_durability_verifier_max_facts_per_call",
