@@ -79,7 +79,9 @@ async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
     from server.transport import mcp_runs
 
     with contextlib.suppress(TimeoutError):
-        await asyncio.wait_for(mcp_runs.drain_ledger_writes(), 5.0)
+        await asyncio.wait_for(
+            mcp_runs.drain_ledger_writes(), 5.0
+        )  # not a setting: one shutdown step
     await boot.drain_writes()
     # The judge emits a cost event and posts scores: it stops before the
     # emitter and the score queue drain, and both before the HTTP clients close.

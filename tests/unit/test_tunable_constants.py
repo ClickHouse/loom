@@ -1,13 +1,14 @@
 """A tunable number is a setting, not a module constant.
 
 A module-level constant whose name says it bounds or paces something (a TTL, a
-timeout, an interval, a limit, a batch, a budget) and whose value is a number is
+timeout, an interval, a limit, a batch, a budget, a retry count, a concurrency, a page
+or a threshold) and whose value is a number is
 an operator's knob hidden from the configuration reference and from `loom
 settings`. The ones that predate this rule are listed in
 tests/unit/tunable_constants.txt. The list only shrinks: a new one goes into
 `server/settings/` instead, and one moved there leaves the list. A number that must
 not be a knob (another value is derived from it, or changing it breaks what is stored)
-says so on its line: `# not a setting: <reason>`.
+says so on its line or the line above: `# not a setting: <reason>`.
 """
 
 from __future__ import annotations
@@ -19,7 +20,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 ALLOWED = Path(__file__).parent / "tunable_constants.txt"
 _TUNABLE = re.compile(
-    r"(TTL|TIMEOUT|INTERVAL|LIMIT|BATCH|BUDGET|_CAP\b|WINDOW|_S$|_MS$|SECONDS|_MAX\b|^MAX_|_MAX_)"
+    r"(TTL|TIMEOUT|INTERVAL|LIMIT|BATCH|BUDGET|_CAP\b|WINDOW|_S$|_MS$|SECONDS|_MAX\b|^MAX_|_MAX_"
+    r"|ATTEMPTS|RETRIES|RETRY|PER_PASS|AT_ONCE|CONCURRENCY|PARALLEL|WORKERS\b|_DELAY|_WAIT"
+    r"|BACKOFF|_DAYS\b|_HOURS\b|_MINUTES\b|_SIZE\b|_ROWS\b|_PAGE\b|_TOP_K\b|_THRESHOLD\b|_EVERY)"
 )
 
 
@@ -33,10 +36,17 @@ def _numeric(node: ast.AST) -> bool:
     return False
 
 
+def _marked(lines: list[str], node: ast.AST) -> bool:
+    """`# not a setting: <reason>` on one of the node's lines, or on the line above it."""
+    first = node.lineno - 1  # type: ignore[attr-defined]
+    last = getattr(node, "end_lineno", None) or first + 1
+    return any("# not a setting: " in line for line in lines[max(0, first - 1) : last])
+
+
 def _constants(tree: ast.Module, lines: list[str]) -> list[str]:
     out = []
     for stmt in tree.body:
-        if "# not a setting: " in lines[stmt.lineno - 1]:
+        if _marked(lines, stmt):
             continue
         targets: list[ast.expr] = []
         if isinstance(stmt, ast.Assign):
@@ -92,3 +102,50 @@ def test_the_walk_sees_a_tunable_number() -> None:
         "B_TTL = 9  # not a setting: tokens issued under it read it back\n"
     )
     assert _constants(ast.parse(src), src.splitlines()) == ["A_TTL", "_FETCH_TIMEOUT_S", "MAX_ROWS"]
+
+
+# Keyword arguments that bound a call's wait or its connection pool.
+_TIMEOUT_ARGS = {
+    "timeout",
+    "connect",
+    "read",
+    "write",
+    "pool",
+    "connect_timeout",
+    "send_receive_timeout",
+    "max_connections",
+    "max_keepalive_connections",
+}
+
+
+def _literal(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and _numeric(node)
+
+
+def test_no_call_site_waits_a_literal_timeout() -> None:
+    """A timeout or pool size written at a server call site is a knob nobody can turn:
+    it reads a setting, or the call says why it is not one (`# not a setting: ...` on
+    one of its lines or the line above).
+    The CLI waits on the user's terminal, so its own calls are out of scope."""
+    found = []
+    for path in sorted((ROOT / "server").rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        if rel.startswith(("server/settings/", "server/cli/")):
+            continue
+        src = path.read_text(encoding="utf-8")
+        lines = src.splitlines()
+        for node in ast.walk(ast.parse(src)):
+            if not isinstance(node, ast.Call):
+                continue
+            func = ast.unparse(node.func)
+            spots = [k.value for k in node.keywords if k.arg in _TIMEOUT_ARGS and _literal(k.value)]
+            if func.endswith("Timeout") and node.args and _literal(node.args[0]):
+                spots.append(node.args[0])
+            if func.endswith("wait_for") and len(node.args) > 1 and _literal(node.args[1]):
+                spots.append(node.args[1])
+            if spots and not _marked(lines, node):
+                found.append(f"{rel}:{node.lineno}: {func}")
+    assert not found, (
+        "read the timeout from server/settings/catalog.py, or say on the line why it is "
+        f"not a setting (`# not a setting: <reason>`): {found}"
+    )

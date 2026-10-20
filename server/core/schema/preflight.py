@@ -175,8 +175,8 @@ def connect() -> Client:
     try:
         return clickhouse_connect.get_client(
             **connection_kwargs(database=""),
-            connect_timeout=10,
-            send_receive_timeout=60,
+            connect_timeout=10,  # not a setting: the preflight's own probe, before any pool
+            send_receive_timeout=60,  # not a setting: the preflight's own probe, before any pool
             settings={"log_comment": "ch.preflight"},
         )
     except Exception as e:  # noqa: BLE001 — every connect failure becomes one line

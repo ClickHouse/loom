@@ -235,7 +235,7 @@ async def connect(
         password=password,
         database=database,
         secure=bool(secure),
-        connect_timeout=5,
+        connect_timeout=5,  # not a setting: a connect; the read bound is the caller's
         send_receive_timeout=send_receive_timeout,
         compress=True,
         client_name=client_name,

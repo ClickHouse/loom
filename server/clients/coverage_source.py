@@ -49,7 +49,9 @@ class HttpCoverageSource:
         self._url = url.rstrip("/") + "/"
         self._auth = httpx.BasicAuth(user, password) if user else None
         self._database = database
-        self._timeout = httpx.Timeout(timeout_s, connect=10.0)
+        self._timeout = httpx.Timeout(
+            timeout_s, connect=10.0
+        )  # not a setting: a connect; the read bound is the caller's
 
     async def rows(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         query: dict[str, str] = {"database": self._database, "default_format": "JSONEachRow"}

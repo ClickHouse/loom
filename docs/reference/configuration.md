@@ -798,8 +798,8 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_KNOWLEDGE_SEARCH_MAX_NAMESPACES` | `int` | `10000` |  | Namespaces an all_mine knowledge.search reads besides the addressed one, at most; the rest come back in `namespaces_skipped`. Each search leg is one statement over all of them (measured 110 ms at 10,000 collections). |
-| `LOOM_KNOWLEDGE_SEARCH_FANOUT_KINDS` | `str` | `'memory,collection,personal'` |  | Namespace kinds an all_mine knowledge.search spans (comma list over loom.namespaces.kind): the memory fan-out's, and the caller's collections. |
+| `LOOM_KNOWLEDGE_SEARCH_MAX_NAMESPACES` | `int` | `10000` | live | Namespaces an all_mine knowledge.search reads besides the addressed one, at most; the rest come back in `namespaces_skipped`. Each search leg is one statement over all of them (measured 110 ms at 10,000 collections). |
+| `LOOM_KNOWLEDGE_SEARCH_FANOUT_KINDS` | `str` | `'memory,collection,personal'` | live | Namespace kinds an all_mine knowledge.search spans (comma list over loom.namespaces.kind): the memory fan-out's, and the caller's collections. |
 
 ### Chunking
 
@@ -969,6 +969,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_EXPIRY_SWEEP_BATCH_SIZE` | `int` | `500` |  | Expired rows one sweep pass applies. |
 | `LOOM_MEMORY_EXPIRY_DEMOTE_FACTOR` | `float` | `0.5` |  | `demote` multiplies confidence by this factor, never below `memory_expiry_demote_floor`. |
 | `LOOM_MEMORY_EXPIRY_DEMOTE_FLOOR` | `float` | `0.05` |  | Lowest confidence a `demote` (expiry or run.complete) leaves on a row. |
+| `LOOM_MEMORY_CLASSIFY_TIMEOUT_S` | `float` | `8.0` | live | Seconds a namespace's classify_endpoint may take to answer a write's classification; past it the write goes on unclassified. |
 
 ### Delete-version checks
 
@@ -1172,6 +1173,7 @@ memory.search: legs, fusion, ranking and gates.
 | `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE` | `'this' \| 'all_mine'` | `'this'` | live | Default `namespace_scope` when a request leaves it unset. "this" reads the addressed namespace only; "all_mine" also reads the caller's own namespaces (the MCP loom_search asks for it by name), see docs/concepts/identities-and-namespaces.md#reading-several-namespaces. |
 | `LOOM_MEMORY_SEARCH_FANOUT_KINDS` | `str` | `'memory'` | live | Namespace kinds an all_mine fan-out spans (memory.search, conversation.search, MCP loom_search; knowledge.search reads knowledge_search_fanout_kinds): comma list over loom.namespaces.kind; a namespace with no kind row stays; "" = every kind. Code and QA indexes are reached by name or their own tools (measured sweep of 24 namespaces: 6.2 s). |
 | `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` | `int` | `32` | live | Upper bound on how many of the caller's namespaces an all_mine fan-out reads besides the addressed one; a search names the rest in `namespaces_skipped`. Every memory leg issues at least one statement per namespace. A guard, not a tuning knob: set well above what one person holds, so it bounds a runaway sweep rather than trimming normal ones. |
+| `LOOM_MEMORY_SEARCH_RERANK_TIMEOUT_S` | `float` | `8.0` | live | Seconds memory.search's reranker (a namespace's rerank_endpoint, a builtin or a named endpoint) may take to answer; past it the search keeps its input order and says so in `degraded`. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS` | `'auto' \| 'on' \| 'off'` | `'auto'` | live | Key-embedding axis on the fact leg: "on" scores least(value_dist, key_dist) and reads both vector columns (measured 399 vs 203 MB/query on a 30k-row namespace); "off" reads the value vector only; "auto" turns it on per namespace when its key-reuse share is at or above memory_search_key_axis_auto_reuse_share (cached for memory_search_key_axis_auto_ttl_seconds; a failed probe reads as off). A per-request `key_axis` wins. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS_AUTO_REUSE_SHARE` | `float` | `0.05` | live | "auto" key-axis threshold: share of a namespace's keys written more than once. 0.05 sits between product namespaces and chat namespaces. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS_AUTO_TTL_SECONDS` | `int` | `600` | live | Seconds a namespace's "auto" key-axis probe result is cached before it is re-read. |
@@ -1418,6 +1420,7 @@ Embedding and LLM providers.
 | `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` | `float` | `10.0` |  | Seconds between each process's reads of the orgs whose model calls are switched off (loom.org_model_calls); a change reaches every process within it. |
 | `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` | `float` | `60.0` |  | Seconds a process trusts its copy of the org model-call switch when it cannot read it again; past it, every model call for an org is refused (fail closed). 15 to 300. |
 | `LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS` | `int` | `7` |  | Days a switched-off org's queued requests (the extraction queue) wait, from when the org was switched off, before they are dropped, each with a memory_drops record. 1 to 29: the queue's own 30-day TTL would otherwise remove them first, with no record. |
+| `LOOM_MODEL_CALLS_OFF_DROP_PER_PASS` | `int` | `500` |  | Waiting requests of a switched-off org one extraction-queue pass drops; the rest go on the next pass. |
 | `LOOM_EMBEDDING_CACHE_SHARED` | `bool` | `True` |  | Shared query-embedding cache in loom.embedding_cache behind the per-process LRU, rows keyed (model, sha1(org, model, version salt, normalised text)); a call outside a request skips both tiers. Only single-text (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use it. Off = process cache only. |
 | `LOOM_EMBEDDING_CACHE_SHARED_MAX_CHARS` | `int` | `2000` |  | Longest query text, characters, that uses the shared cache; 0 = no cap. |
 | `LOOM_EMBEDDING_CACHE_SIZE` | `int` | `10000` |  | Entries the per-process query-embedding LRU holds; 0 = cache nothing. |
@@ -1468,6 +1471,15 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_TRAFFIC_CLASS_REGISTRY_TTL_SECONDS` | `int` | `300` |  | How long a namespace's registry class is kept in the process cache. |
 | `LOOM_DEFAULT_DAILY_COST_CAP_USD` | `float` | `1.0` |  | Daily LLM spend cap per namespace, USD: extraction workers skip a namespace whose rolling 24 h cost reached it. Overridden per namespace by loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers. |
 | `LOOM_READS_LLM_FREE` | `bool` | `False` |  | True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion embeddings, and rerank only as named, since a reranker is a model call. |
+
+### Outbound HTTP
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_HTTP_CLIENT_TIMEOUT_S` | `float` | `20.0` |  | Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, webhooks, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients. |
+| `LOOM_HTTP_CLIENT_CONNECT_TIMEOUT_S` | `float` | `5.0` |  | Seconds those clients wait to open a connection. |
+| `LOOM_HTTP_CLIENT_MAX_CONNECTIONS` | `int` | `100` |  | Connections each shared outbound HTTP client keeps open at most, so one misbehaving downstream cannot exhaust the process's sockets. |
+| `LOOM_HTTP_CLIENT_MAX_KEEPALIVE_CONNECTIONS` | `int` | `20` |  | Idle connections each shared outbound HTTP client keeps for reuse. |
 | `LOOM_REPLICA_COUNT` | `int` | `1` |  | The rate limiter divides every cap by the deployment's replica count so the replicas' sum matches the target (approximate, not cluster-strict). The count is the hosts with a live serving loom.instances row; this is its floor, and the count while those rows cannot be read. |
 | `LOOM_SERVES_TRAFFIC` | `bool` | `True` |  | False for a process no load balancer routes to (a workers-only container): its instance row does not count as a replica. |
 | `LOOM_INSTANCE_HEARTBEAT_SECONDS` | `float` | `10.0` |  | Seconds between this process's loom.instances heartbeats, each of which also compares it with the deployment's published configuration. A row not renewed for three intervals is not live. |

@@ -200,7 +200,10 @@ def _probe() -> bool:
         return False
     try:
         help_text = subprocess.run(
-            [bwrap, "--help"], capture_output=True, text=True, timeout=10
+            [bwrap, "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,  # not a setting: a local binary's help
         ).stdout
         _disable_userns = "--disable-userns" in help_text
         done = _probe_job()
@@ -231,7 +234,11 @@ def _probe_job() -> subprocess.CompletedProcess[bytes]:
         try:
             argv = _bwrap_argv(["true"], scratch=scratch, binds=[], fd=fd)
             return subprocess.run(
-                argv, pass_fds=(fd,), capture_output=True, timeout=10, env={"PATH": os.defpath}
+                argv,
+                pass_fds=(fd,),
+                capture_output=True,
+                timeout=10,  # not a setting: a probe that runs `true`
+                env={"PATH": os.defpath},
             )
         finally:
             os.close(fd)

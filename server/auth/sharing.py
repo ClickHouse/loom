@@ -227,6 +227,7 @@ async def roles(auth: AuthInfo, org: str, namespaces: list[str]) -> dict[str, Ro
 
 
 # Grant-map reads one request runs at once: each holds a ClickHouse connection.
+# not a setting: one request's fan-out; the ClickHouse pool bounds the total
 _GRANT_READS_AT_ONCE = 8
 
 

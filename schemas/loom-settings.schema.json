@@ -2057,6 +2057,7 @@
         },
         "delete_version_check_batch_size": {
           "default": 200,
+          "minimum": 1,
           "type": "integer",
           "description": "Delete-version checks one delete_version_check pass runs."
         },
@@ -2067,16 +2068,19 @@
         },
         "delete_version_check_grace_seconds": {
           "default": 60,
+          "minimum": 0,
           "type": "integer",
           "description": "Seconds a delete-version check is left to the delete that owes it before a pass runs it."
         },
         "delete_version_check_idle_interval_seconds": {
           "default": 300,
+          "exclusiveMinimum": 0,
           "type": "integer",
           "description": "Seconds between delete_version_check passes that found none."
         },
         "delete_version_check_interval_seconds": {
           "default": 60,
+          "exclusiveMinimum": 0,
           "type": "integer",
           "description": "Seconds between delete_version_check passes while checks are owed."
         },
@@ -2394,6 +2398,30 @@
           "default": 10.0,
           "type": "number",
           "description": "Seconds a subject's grant rows are cached for the namespace gate, which caps a token's claim at the grant it holds there. The backstop: a grant change reaches other processes through the per-org grant watermark (acl_watermark_poll_seconds), and this bounds one whose watermark row was never written."
+        },
+        "http_client_connect_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds those clients wait to open a connection."
+        },
+        "http_client_max_connections": {
+          "default": 100,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Connections each shared outbound HTTP client keeps open at most, so one misbehaving downstream cannot exhaust the process's sockets."
+        },
+        "http_client_max_keepalive_connections": {
+          "default": 20,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Idle connections each shared outbound HTTP client keeps for reuse."
+        },
+        "http_client_timeout_s": {
+          "default": 20.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, webhooks, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients."
         },
         "identity_provider": {
           "default": "",
@@ -3341,6 +3369,12 @@
           "type": "integer",
           "description": "Max ~800-char verbatim chunks one set_from_messages call writes (512 ≈ 400K chars; agent transcripts run ~190K chars a session at the median). Text past the cap is recorded in loom.memory_drops as chunk.split/truncated."
         },
+        "memory_classify_timeout_s": {
+          "default": 8.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a namespace's classify_endpoint may take to answer a write's classification; past it the write goes on unclassified."
+        },
         "memory_code_links_batch": {
           "default": 500,
           "minimum": 1,
@@ -4073,6 +4107,12 @@
           "type": "number",
           "description": "Weight of the decayed-reinforcement rank term (recalls and positive memory.outcome signals, fading with time since last reinforcement). 0 disables; the term is capped below relevance."
         },
+        "memory_search_rerank_timeout_s": {
+          "default": 8.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds memory.search's reranker (a namespace's rerank_endpoint, a builtin or a named endpoint) may take to answer; past it the search keeps its input order and says so in `degraded`."
+        },
         "memory_search_sensitivity_demote": {
           "default": 0.1,
           "type": "number",
@@ -4230,6 +4270,12 @@
           "default": 600,
           "type": "integer",
           "description": "Seconds a migration file waits for the mutations it started (MATERIALIZE, UPDATE, a column type change) to finish on every replica; past it the file fails unrecorded."
+        },
+        "model_calls_off_drop_per_pass": {
+          "default": 500,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Waiting requests of a switched-off org one extraction-queue pass drops; the rest go on the next pass."
         },
         "model_calls_off_max_wait_days": {
           "default": 7,

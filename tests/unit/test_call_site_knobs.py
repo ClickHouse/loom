@@ -172,6 +172,65 @@ async def test_a_hyde_call_slower_than_its_setting_falls_back_to_the_query(
     assert vec and "HyDE generation failed" in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_the_shared_http_clients_take_their_timeout_and_pool_from_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.clients import _http
+
+    monkeypatch.setattr(settings, "http_client_timeout_s", 7.0)
+    monkeypatch.setattr(settings, "http_client_connect_timeout_s", 1.5)
+    monkeypatch.setattr(settings, "http_client_max_connections", 9)
+    monkeypatch.setattr(settings, "http_client_max_keepalive_connections", 3)
+    client = _http._build()
+    try:
+        assert (client.timeout.read, client.timeout.connect) == (7.0, 1.5)
+        pool = client._transport._pool  # type: ignore[attr-defined]
+        assert (pool._max_connections, pool._max_keepalive_connections) == (9, 3)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize(
+    ("module", "setting"),
+    [
+        ("server.memory.app.rerank", "memory_search_rerank_timeout_s"),
+        ("server.memory.app.classify", "memory_classify_timeout_s"),
+    ],
+)
+def test_a_rerank_or_classify_endpoint_waits_its_setting(
+    monkeypatch: pytest.MonkeyPatch, module: str, setting: str
+) -> None:
+    import importlib
+
+    monkeypatch.setattr(settings, setting, 3.5)
+    assert importlib.import_module(module)._timeout().read == 3.5
+
+
+@pytest.mark.asyncio
+async def test_an_end_user_issuers_jwks_fetch_waits_the_identity_provider_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import end_user_keys
+
+    seen: list[Any] = []
+
+    class _Client:
+        def __init__(self, **kw: Any) -> None:
+            seen.append(kw["timeout"])
+
+        async def __aenter__(self) -> _Client:
+            raise _Stop
+
+        async def __aexit__(self, *a: Any) -> None:
+            return None
+
+    monkeypatch.setattr(settings, "identity_provider_timeout_s", 4.0)
+    monkeypatch.setattr(end_user_keys.httpx, "AsyncClient", _Client)
+    await end_user_keys._fetch("issuer", "https://issuer.example/jwks")  # a failed fetch is logged
+    assert seen == [4.0]
+
+
 _NEVER_ZERO = [
     # a work cap of 0 would starve or break its path
     "memory_durability_verifier_max_facts_per_call",
@@ -189,7 +248,12 @@ _NEVER_ZERO = [
     "code_blame_max_graph_commits",
     "namespace_audit_index_row_scan_cap",
     "audit_verify_max_rows_per_pass",
+    "delete_version_check_batch_size",
+    "model_calls_off_drop_per_pass",
+    "http_client_max_connections",
     # an interval or backoff of 0 would spin
+    "delete_version_check_interval_seconds",
+    "delete_version_check_idle_interval_seconds",
     "memory_code_links_sweep_interval_s",
     "code_bootstrap_backoff_max_s",
     "code_bootstrap_embed_breaker_hold_s",

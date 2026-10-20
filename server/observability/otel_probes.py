@@ -813,7 +813,7 @@ def _git_lag(git_dir: str, since: str, until: str) -> tuple[int, float]:
             ["git", "-C", git_dir, "log", "--first-parent", "--format=%ct", f"{since}..{until}"],
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=20,  # not a setting: a health probe answers quickly or says unknown
             check=True,
         ).stdout.split()
         # newest first: the last line is the first commit the watermark has not reached
@@ -830,7 +830,7 @@ def _git_tip(git_dir: str, branch: str) -> str:
             ["git", "-C", git_dir, "rev-parse", f"refs/heads/{branch}"],
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=20,  # not a setting: a health probe answers quickly or says unknown
             check=True,
         ).stdout.strip()
     except Exception:  # noqa: BLE001 — an unreadable repo exports no lag point

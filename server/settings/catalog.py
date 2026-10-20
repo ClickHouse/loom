@@ -1872,10 +1872,10 @@ class KnowledgeSettings(BaseModel):
     # Namespaces an all_mine knowledge.search reads besides the addressed one,
     # at most; the rest come back in `namespaces_skipped`. Each search leg is
     # one statement over all of them (measured 110 ms at 10,000 collections).
-    knowledge_search_max_namespaces: int = Field(default=10_000, ge=1)
+    knowledge_search_max_namespaces: Annotated[int, LIVE] = Field(default=10_000, ge=1)
     # Namespace kinds an all_mine knowledge.search spans (comma list over
     # loom.namespaces.kind): the memory fan-out's, and the caller's collections.
-    knowledge_search_fanout_kinds: str = "memory,collection,personal"
+    knowledge_search_fanout_kinds: Annotated[str, LIVE] = "memory,collection,personal"
 
     # ---- chunking ----
     # Sliding-window chunking on knowledge.add/upsert, in characters.
@@ -2221,18 +2221,22 @@ class MemorySettings(BaseModel):
     # Lowest confidence a `demote` (expiry or run.complete) leaves on a row.
     memory_expiry_demote_floor: float = 0.05
 
+    # Seconds a namespace's classify_endpoint may take to answer a write's
+    # classification; past it the write goes on unclassified.
+    memory_classify_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
+
     # ---- delete-version checks ----
     # Run the delete_version_check worker, which finishes the memory.delete_version checks a
     # 503 left owed (False: only a retry of the delete finishes them).
     delete_version_check_enabled: bool = True
     # Seconds between delete_version_check passes while checks are owed.
-    delete_version_check_interval_seconds: int = 60
+    delete_version_check_interval_seconds: int = Field(default=60, gt=0)
     # Seconds between delete_version_check passes that found none.
-    delete_version_check_idle_interval_seconds: int = 300
+    delete_version_check_idle_interval_seconds: int = Field(default=300, gt=0)
     # Seconds a delete-version check is left to the delete that owes it before a pass runs it.
-    delete_version_check_grace_seconds: int = 60
+    delete_version_check_grace_seconds: int = Field(default=60, ge=0)
     # Delete-version checks one delete_version_check pass runs.
-    delete_version_check_batch_size: int = 200
+    delete_version_check_batch_size: int = Field(default=200, ge=1)
 
     # ---- namespace health, knowledge graph, communities ----
     # Seconds a namespace's health summary is cached per process (a failed lookup at
@@ -2759,6 +2763,10 @@ class MemorySearchSettings(BaseModel):
     # namespace. A guard, not a tuning knob: set well above what one person
     # holds, so it bounds a runaway sweep rather than trimming normal ones.
     memory_search_fanout_max_namespaces: Annotated[int, LIVE] = Field(default=32, ge=1)
+    # Seconds memory.search's reranker (a namespace's rerank_endpoint, a builtin or a
+    # named endpoint) may take to answer; past it the search keeps its input order and
+    # says so in `degraded`.
+    memory_search_rerank_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
     # Key-embedding axis on the fact leg: "on" scores least(value_dist,
     # key_dist) and reads both vector columns (measured 399 vs 203 MB/query on
     # a 30k-row namespace); "off" reads the value vector only; "auto" turns it
@@ -3592,6 +3600,9 @@ class ProviderSettings(ModelSettings):
     # memory_drops record. 1 to 29: the queue's own 30-day TTL would otherwise
     # remove them first, with no record.
     model_calls_off_max_wait_days: int = Field(7, ge=1, le=29)
+    # Waiting requests of a switched-off org one extraction-queue pass drops; the rest
+    # go on the next pass.
+    model_calls_off_drop_per_pass: int = Field(default=500, ge=1)
     # Shared query-embedding cache in loom.embedding_cache behind the per-process LRU,
     # rows keyed (model, sha1(org, model, version salt, normalised text)); a call outside
     # a request skips both tiers. Only single-text (query) embeds up to
@@ -3655,6 +3666,18 @@ class ProviderSettings(ModelSettings):
         if not raw:
             return {}
         return dict(json_map_items(raw, "LOOM_INFERENCE_FEATURE_MAP_JSON", strings_only=True))
+
+    @model_validator(mode="after")
+    def _check_model_calls_refresh(self) -> ProviderSettings:
+        """A process refuses every model call once its copy of the model-call
+        switch is older than its stale bound: reading it less often would refuse
+        between reads, with nothing wrong."""
+        if self.model_calls_policy_refresh_seconds >= self.model_calls_policy_max_stale_seconds:
+            raise ValueError(
+                "LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS must be below "
+                "LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS"
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_customer_headers(self) -> ProviderSettings:
@@ -4007,6 +4030,19 @@ class RuntimeSettings(BaseModel):
     # True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion
     # embeddings, and rerank only as named, since a reranker is a model call.
     reads_llm_free: bool = False
+
+    # ---- outbound HTTP ----
+    # Seconds the shared outbound HTTP clients (server/clients/_http.py: model and
+    # embedding APIs, webhooks, provider checks) wait on a call that sets no timeout of
+    # its own. Read when a process builds the clients.
+    http_client_timeout_s: float = Field(default=20.0, gt=0)
+    # Seconds those clients wait to open a connection.
+    http_client_connect_timeout_s: float = Field(default=5.0, gt=0)
+    # Connections each shared outbound HTTP client keeps open at most, so one
+    # misbehaving downstream cannot exhaust the process's sockets.
+    http_client_max_connections: int = Field(default=100, ge=1)
+    # Idle connections each shared outbound HTTP client keeps for reuse.
+    http_client_max_keepalive_connections: int = Field(default=20, ge=0)
 
     # The rate limiter divides every cap by the deployment's replica count so
     # the replicas' sum matches the target (approximate, not cluster-strict).
