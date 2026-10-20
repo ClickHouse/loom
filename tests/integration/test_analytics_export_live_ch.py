@@ -1,5 +1,6 @@
 """The analytics export's statements on a live ClickHouse: one UTC day of the
-ledger summed per operation, the namespace snapshot, and Parquet output.
+ledger summed per operation, the namespace snapshot, the exact columns that
+leave Loom, hashed names, and Parquet output.
 
 Skips cleanly when LOOM_CH_HOST is unset.
 """
@@ -15,7 +16,14 @@ from typing import Any
 import pytest
 
 from server.core.ch import CHClient, get_client
-from server.insights.store.analytics_export import NAMESPACES_SQL, USAGE_SQL, parquet
+from server.insights.app.analytics_export import name_hash_key
+from server.insights.store.analytics_export import (
+    ENTITIES,
+    NAMESPACES_SQL,
+    USAGE_SQL,
+    _hashed,
+    parquet,
+)
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.skipif(
@@ -24,6 +32,22 @@ pytestmark = pytest.mark.skipif(
 )
 
 DAY = date(2026, 1, 2)
+KEY = name_hash_key("test-key")
+
+# Every column that leaves Loom. A column added to a statement fails here until
+# it is added to this list, on purpose: the list is the export's allowlist.
+COLUMNS = {
+    "usage": [
+        "org", "namespace", "agent", "operation", "kind", "transport", "traffic_class", "day",
+        "ops", "errors", "server_errors", "slow", "input_tokens", "output_tokens",
+        "embedding_tokens", "llm_calls", "cost_usd", "bytes_written", "latency_p50_ms",
+        "latency_p95_ms", "latency_p99_ms", "users", "sessions", "snapshot_at",
+    ],
+    "namespaces": [
+        "org", "namespace", "registered", "kind", "visibility", "active", "created_at",
+        "live_memories", "last_memory_at", "day", "snapshot_at",
+    ],
+}  # fmt: skip
 
 
 @pytest.fixture
@@ -45,6 +69,7 @@ def _event(org: str, ts: str, **kw: Any) -> dict[str, Any]:
         "user_id": "u1",
         "session_id": "s1",
         "operation": "memory.set",
+        "kind": "request",
         "request_id": ts,
         "latency_ms": 10,
         "success": True,
@@ -87,7 +112,36 @@ async def test_usage_sums_one_utc_day_per_operation(ch: CHClient) -> None:
     assert (s["users"], s["sessions"]) == (2, 1)
     assert (s["input_tokens"], s["cost_usd"]) == (7, Decimal("0.25"))
     assert (s["namespace"], s["agent"], s["transport"], s["day"]) == ("ns", "a", "http", DAY)
+    assert s["kind"] == "request"
     assert by_op["memory.get"]["ops"] == 1
+
+
+async def test_hashed_names_are_the_keyed_hash_of_the_stored_names(ch: CHClient) -> None:
+    org = unique_org("analytics")
+    await ch.insert("loom.agent_events", [_event(org, "2026-01-02 06:00:00")])
+    params = {"day": DAY, "k0": KEY[0], "k1": KEY[1]}
+    want = await ch.query_one(
+        "SELECT lower(hex(sipHash128Keyed(({k0:UInt64}, {k1:UInt64}), {org:String}))) AS h, "
+        "lower(hex(sipHash128Keyed(({k0:UInt64}, {k1:UInt64}), 'ns'))) AS ns, "
+        "lower(hex(sipHash128Keyed(({k0:UInt64}, {k1:UInt64}), 'a'))) AS a",
+        {**params, "org": org},
+    )
+    rows = await ch.query_all(
+        f"SELECT * FROM ({_hashed('usage')}) WHERE org = {{h:String}}", {**params, "h": want["h"]}
+    )
+    assert [(r["namespace"], r["agent"], r["ops"]) for r in rows] == [(want["ns"], want["a"], 1)]
+    body = await parquet("usage", DAY, key=KEY, ch=ch)
+    assert org.encode() not in body
+
+
+@pytest.mark.parametrize("entity", sorted(ENTITIES))
+async def test_the_columns_that_leave_loom_are_exactly_the_allowlist(
+    ch: CHClient, entity: str
+) -> None:
+    params = {"day": DAY, "k0": KEY[0], "k1": KEY[1]}
+    for sql in (ENTITIES[entity], _hashed(entity)):
+        rows = await ch.query_all(f"DESCRIBE TABLE ({sql})", params)
+        assert [r["name"] for r in rows] == COLUMNS[entity]
 
 
 async def test_namespaces_lists_registered_and_unregistered_with_live_counts(
@@ -127,7 +181,10 @@ async def test_namespaces_lists_registered_and_unregistered_with_live_counts(
     assert loose["live_memories"] == 1
 
 
-@pytest.mark.parametrize("entity", ["usage", "namespaces"])
-async def test_each_entity_is_a_parquet_file(ch: CHClient, entity: str) -> None:
-    body = await parquet(entity, DAY, ch=ch)
+@pytest.mark.parametrize("entity", sorted(ENTITIES))
+@pytest.mark.parametrize("key", [None, KEY])
+async def test_each_entity_is_a_parquet_file(
+    ch: CHClient, entity: str, key: tuple[int, int] | None
+) -> None:
+    body = await parquet(entity, DAY, key=key, ch=ch)
     assert body[:4] == b"PAR1" and body[-4:] == b"PAR1"

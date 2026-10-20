@@ -741,10 +741,12 @@ hashing are engineering primitives, not a compliance guarantee.
 The [analytics export](../operations/analytics-export.md) is the one path that copies rows
 to a store erasure does not reach (an S3 bucket a warehouse loads). It is therefore an
 allowlist of aggregate and registry columns with no memory content and no person: users
-and sessions leave as distinct counts only, and `tests/unit/test_analytics_export.py`
-fails when a statement names a content or identity column. The bucket's write role is
-bound to the export's own Kubernetes ServiceAccount, not to the web pods, and the upload
-never replaces an object.
+and sessions leave as distinct counts only, and
+`tests/integration/test_analytics_export_live_ch.py` pins each entity's exact column list.
+Org, namespace and agent names leave as a keyed SipHash by default, because self-signup
+builds names from OS usernames; raw names are an operator's choice, refused while
+self-signup is open. The bucket's write role is bound to the export's own Kubernetes
+ServiceAccount, not to the web pods, and the upload never replaces an object.
 
 ## Secrets
 

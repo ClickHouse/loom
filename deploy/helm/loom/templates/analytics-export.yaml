@@ -6,6 +6,12 @@ run of a day keeps the first run's files, so a retry is safe. */}}
 {{- if not .bucket }}
 {{- fail "analyticsExport.enabled needs analyticsExport.bucket" }}
 {{- end }}
+{{- if not (kindIs "string" .expectedBucketOwner) }}
+{{- fail "analyticsExport.expectedBucketOwner must be a quoted string: an unquoted account id renders as a float" }}
+{{- end }}
+{{- if not (has .names (list "hashed" "raw")) }}
+{{- fail "analyticsExport.names must be hashed or raw" }}
+{{- end }}
 {{- $name := include "loom.suffixed" (dict "root" $ "suffix" "analytics-export") }}
 apiVersion: v1
 kind: ServiceAccount
@@ -42,9 +48,21 @@ spec:
           labels:
             {{- include "loom.labels" $ | nindent 12 }}
             app.kubernetes.io/component: analytics-export
+            {{- with $.Values.podLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $.Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
         spec:
           restartPolicy: Never
           {{- include "loom.podCommon" (dict "root" $ "leads" false "serviceAccount" $name) | nindent 10 }}
+          {{- with $.Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- include "loom.waitForDevClickhouse" $ | nindent 10 }}
           containers:
             - name: analytics-export
               image: {{ include "loom.image" $ }}
@@ -52,18 +70,19 @@ spec:
               command:
                 - loom
                 - export-analytics
-                - --bucket={{ .bucket }}
+                - {{ printf "--bucket=%s" .bucket | quote }}
+                - {{ printf "--names=%s" .names | quote }}
                 {{- with .prefix }}
-                - --prefix={{ . }}
+                - {{ printf "--prefix=%s" . | quote }}
                 {{- end }}
                 {{- with .roleArn }}
-                - --role-arn={{ . }}
+                - {{ printf "--role-arn=%s" . | quote }}
                 {{- end }}
                 {{- with .region }}
-                - --region={{ . }}
+                - {{ printf "--region=%s" . | quote }}
                 {{- end }}
                 {{- with .expectedBucketOwner }}
-                - --expected-bucket-owner={{ . }}
+                - {{ printf "--expected-bucket-owner=%s" . | quote }}
                 {{- end }}
               envFrom:
                 - secretRef:
@@ -94,6 +113,9 @@ spec:
                   mountPath: /tmp
                 - name: cache
                   mountPath: /app/var
+                {{- with $.Values.extraVolumeMounts }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
           volumes:
             - name: tmp
               emptyDir:
@@ -101,5 +123,8 @@ spec:
             - name: cache
               emptyDir:
                 sizeLimit: 1Gi
+            {{- with $.Values.extraVolumes }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
 {{- end }}
 {{- end }}

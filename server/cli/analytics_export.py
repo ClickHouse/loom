@@ -4,11 +4,10 @@ Parquet files in an S3 bucket (docs/operations/analytics-export.md)."""
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
-
-from server.cli._ch import run_connected
 
 
 def _day(value: str) -> date:
@@ -18,28 +17,50 @@ def _day(value: str) -> date:
         raise argparse.ArgumentTypeError(f"not a YYYY-MM-DD date: {value!r}") from None
 
 
-def _cmd_export(args: argparse.Namespace) -> int:
-    from server.insights.app.analytics_export import export_day, s3_client, s3_put
+def _refusal(args: argparse.Namespace, today: date) -> str:
+    """Why the export must not run, or ''."""
+    from server.settings import settings
 
-    day = args.day or datetime.now(UTC).date() - timedelta(days=1)
-    if day >= datetime.now(UTC).date():
-        print(f"  ✗ {day} has not ended yet (UTC): export a past day", file=sys.stderr)
-        return 2
+    if args.day >= today:
+        return f"{args.day} has not ended yet (UTC): export a past day"
+    if args.names == "hashed" and not settings.analytics_export_name_key:
+        return "--names hashed needs LOOM_ANALYTICS_EXPORT_NAME_KEY"
+    if args.names == "raw" and settings.self_signup == "open":
+        return (
+            "--names raw is refused while LOOM_SELF_SIGNUP=open: self-signup names carry usernames"
+        )
     try:
         import boto3  # noqa: F401
     except ImportError:
-        print(
-            "  ✗ export-analytics needs boto3: pip install 'clickhouse-loom-server[aws]'",
-            file=sys.stderr,
-        )
+        return "export-analytics needs boto3: pip install 'clickhouse-loom-server[aws]'"
+    return ""
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    from server.core.ch import get_client
+    from server.insights.app.analytics_export import export_day, name_hash_key, s3_client, s3_put
+    from server.settings import settings
+
+    today = datetime.now(UTC).date()
+    args.day = args.day or today - timedelta(days=1)
+    if refusal := _refusal(args, today):
+        print(f"  ✗ {refusal}", file=sys.stderr)
         return 2
+    key = name_hash_key(settings.analytics_export_name_key) if args.names == "hashed" else None
     s3 = s3_client(role_arn=args.role_arn, region=args.region)
     put = s3_put(s3, args.bucket, expected_owner=args.expected_bucket_owner)
 
-    async def _go(ch: Any) -> list[Any]:
-        return await export_day(day, prefix=args.prefix, put=put, ch=ch)
+    # No model calls and no writes to ClickHouse: a plain connection, outside
+    # the provider barrier that `run_connected` enters.
+    async def _go() -> list[Any]:
+        ch = get_client()
+        await ch.connect()
+        try:
+            return await export_day(args.day, prefix=args.prefix, put=put, key=key, ch=ch)
+        finally:
+            await ch.disconnect()
 
-    for e in run_connected(_go):
+    for e in asyncio.run(_go()):
         state = "wrote" if e.written else "already there, kept"
         print(f"  ✓ {e.entity}: s3://{args.bucket}/{e.key} ({e.size} bytes, {state})")
     return 0
@@ -58,6 +79,14 @@ def register_analytics_export_cli(sub: Any) -> None:
         type=_day,
         default=None,
         help="The UTC day to export, YYYY-MM-DD (default: yesterday)",
+    )
+    p.add_argument(
+        "--names",
+        choices=("hashed", "raw"),
+        default="hashed",
+        help="hashed (default): org, namespace and agent as a keyed hash under "
+        "LOOM_ANALYTICS_EXPORT_NAME_KEY; raw: as stored, for a deployment whose "
+        "names are opaque ids (refused while self-signup is open)",
     )
     p.add_argument(
         "--role-arn",

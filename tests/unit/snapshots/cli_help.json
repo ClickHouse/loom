@@ -203,8 +203,8 @@
   "options: -h, --help show this help message and exit --holder HOLDER The holder the lock names (`holder` in loom._migration_lock, name = 'provider_configuration')"
  ],
  "loom export-analytics": [
-  "usage: loom export-analytics [-h] --bucket BUCKET [--prefix PREFIX] [--day DAY] [--role-arn ROLE_ARN] [--region REGION] [--expected-bucket-owner EXPECTED_BUCKET_OWNER]",
-  "options: -h, --help show this help message and exit --bucket BUCKET The S3 bucket to write to --prefix PREFIX A key prefix inside the bucket --day DAY The UTC day to export, YYYY-MM-DD (default: yesterday) --role-arn ROLE_ARN An IAM role to assume with the default credentials before writing --region REGION The bucket's AWS region (default: from AWS_REGION) --expected-bucket-owner EXPECTED_BUCKET_OWNER The AWS account id that must own the bucket; a write to any other is refused"
+  "usage: loom export-analytics [-h] --bucket BUCKET [--prefix PREFIX] [--day DAY] [--names {hashed,raw}] [--role-arn ROLE_ARN] [--region REGION] [--expected-bucket-owner EXPECTED_BUCKET_OWNER]",
+  "options: -h, --help show this help message and exit --bucket BUCKET The S3 bucket to write to --prefix PREFIX A key prefix inside the bucket --day DAY The UTC day to export, YYYY-MM-DD (default: yesterday) --names {hashed,raw} hashed (default): org, namespace and agent as a keyed hash under LOOM_ANALYTICS_EXPORT_NAME_KEY; raw: as stored, for a deployment whose names are opaque ids (refused while self-signup is open) --role-arn ROLE_ARN An IAM role to assume with the default credentials before writing --region REGION The bucket's AWS region (default: from AWS_REGION) --expected-bucket-owner EXPECTED_BUCKET_OWNER The AWS account id that must own the bucket; a write to any other is refused"
  ],
  "loom reembed": [
   "usage: loom reembed [-h] [--org ORG] [--namespace NAMESPACE] [--batch-size BATCH_SIZE] [--in-database NAMED_COLLECTION] [--dry-run] [--delete-old] [--key-only] [--resume RESUME]",

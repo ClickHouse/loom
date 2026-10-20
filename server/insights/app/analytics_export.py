@@ -9,16 +9,22 @@ already there, and a run can be retried or repeated safely."""
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from server.core.ch import CHClient, query_tag
+from server.core.ch import CHClient, query_tag, statement_timeout
 from server.insights.store.analytics_export import ENTITIES, parquet
 
 # put(key, body) -> True once written, False when the key already exists.
 Put = Callable[[str, bytes], bool]
+
+# Each statement reads a month partition of the ledger or every live memory
+# row: far past the request read deadline on a large deployment, and inside
+# the CronJob's one-hour deadline.
+STATEMENT_TIMEOUT_S = 1200
 
 
 @dataclass(frozen=True)
@@ -35,16 +41,23 @@ def object_key(prefix: str, entity: str, day: date) -> str:
     return f"{prefix.strip('/')}/{path}" if prefix.strip("/") else path
 
 
+def name_hash_key(secret: str) -> tuple[int, int]:
+    """The two 64-bit SipHash key words for `secret`."""
+    digest = hashlib.sha256(secret.encode()).digest()
+    return int.from_bytes(digest[:8], "little"), int.from_bytes(digest[8:16], "little")
+
+
 async def export_day(
-    day: date, *, prefix: str, put: Put, entities: tuple[str, ...] = tuple(ENTITIES), ch: CHClient
+    day: date, *, prefix: str, put: Put, key: tuple[int, int] | None, ch: CHClient
 ) -> list[Exported]:
-    """Read and upload each entity of `day` in turn."""
+    """Read and upload each entity of `day` in turn, names hashed under `key`
+    (None: as stored)."""
     out: list[Exported] = []
-    with query_tag("cli.export-analytics"):
-        for entity in entities:
-            body = await parquet(entity, day, ch=ch)
-            key = object_key(prefix, entity, day)
-            out.append(Exported(entity, key, len(body), put(key, body)))
+    with query_tag("cli.export-analytics"), statement_timeout(STATEMENT_TIMEOUT_S):
+        for entity in ENTITIES:
+            body = await parquet(entity, day, key=key, ch=ch)
+            path = object_key(prefix, entity, day)
+            out.append(Exported(entity, path, len(body), put(path, body)))
     return out
 
 

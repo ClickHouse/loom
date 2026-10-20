@@ -4,19 +4,21 @@ snapshot of the namespaces, each read as one Parquet file.
 The columns are an allowlist. A file leaves Loom for a warehouse that erasure
 never reaches, so nothing here carries memory content (keys, values, the
 `args` map) or names a person (`user_id`, `session_id`, `subject`,
-`owner_email`): users and sessions go out as counts only."""
+`owner_email`): users and sessions go out as counts only. Org, namespace and
+agent names can name a person too (self-signup builds them from a username),
+so by default they leave as a keyed hash."""
 
 from __future__ import annotations
 
 from datetime import date
 
-from server.core.ch import CHClient, get_client
+from server.core.ch import CHClient
 
 # One row per (org, namespace, agent, operation, kind, transport, traffic
-# class) of UTC day {day:Date}. `kind` is '' for a request and 'worker' for a
-# worker pass; `users` and `sessions` leave out the '-' of a call that named
-# none. The `ts` bounds prune to the day's monthly partition, which a daily
-# batch reads once (the ledger is a plain MergeTree: no FINAL).
+# class) of UTC day {day:Date}. `kind` is 'request' or 'worker' (a worker
+# pass); `users` and `sessions` leave out the '-' of a call that named none.
+# The `ts` bounds prune to the day's monthly partition, which a daily batch
+# reads once (the ledger is a plain MergeTree: no FINAL).
 USAGE_SQL = """
 SELECT
     org, namespace, agent, operation, kind, transport, traffic_class,
@@ -47,7 +49,8 @@ ORDER BY org, namespace, agent, operation, kind, transport, traffic_class
 # One row per (org, namespace) that is registered or holds a live memory row:
 # the registry's description of it and its live memory count, as of
 # `snapshot_at` whatever {day:Date} is. An unregistered namespace has
-# `registered = false` and NULL registry columns.
+# `registered = false` and NULL registry columns. The defaults the FULL JOIN
+# fills in (false, 0) are what the `if`s read, so `join_use_nulls` is pinned.
 NAMESPACES_SQL = """
 SELECT
     org, namespace,
@@ -69,12 +72,29 @@ FULL OUTER JOIN (SELECT org, namespace, count() AS live_memories,
                  GROUP BY org, namespace) AS m
   USING (org, namespace)
 ORDER BY org, namespace
+SETTINGS join_use_nulls = 0
 """
 
 ENTITIES = {"usage": USAGE_SQL, "namespaces": NAMESPACES_SQL}
 
+# The columns of each entity that hold a name, hashed unless the export is raw.
+NAME_COLUMNS = {"usage": ("org", "namespace", "agent"), "namespaces": ("org", "namespace")}
 
-async def parquet(entity: str, day: date, *, ch: CHClient | None = None) -> bytes:
-    """`entity`'s rows for UTC day `day`, as one Parquet file."""
-    ch = ch or get_client()
-    return await ch.raw_bytes(f"{ENTITIES[entity]}FORMAT Parquet", {"day": day})
+
+def _hashed(entity: str) -> str:
+    """`entity`'s statement with each name column replaced by the lowercase
+    hex of its 128-bit SipHash under the key {k0:UInt64}, {k1:UInt64}."""
+    replace = ", ".join(
+        f"lower(hex(sipHash128Keyed(({{k0:UInt64}}, {{k1:UInt64}}), {c}))) AS {c}"
+        for c in NAME_COLUMNS[entity]
+    )
+    return f"SELECT * REPLACE ({replace}) FROM ({ENTITIES[entity]})"
+
+
+async def parquet(entity: str, day: date, *, key: tuple[int, int] | None, ch: CHClient) -> bytes:
+    """`entity`'s rows for UTC day `day`, as one Parquet file: names hashed
+    under `key`, or as stored when `key` is None."""
+    if key is None:
+        return await ch.raw_bytes(f"{ENTITIES[entity]}FORMAT Parquet", {"day": day})
+    params = {"day": day, "k0": key[0], "k1": key[1]}
+    return await ch.raw_bytes(f"{_hashed(entity)} FORMAT Parquet", params)

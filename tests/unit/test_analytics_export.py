@@ -13,8 +13,9 @@ import pytest
 from botocore.stub import Stubber
 
 from server.cli import analytics_export as cli
-from server.insights.app.analytics_export import export_day, object_key, s3_put
-from server.insights.store.analytics_export import ENTITIES
+from server.insights.app.analytics_export import export_day, name_hash_key, object_key, s3_put
+from server.insights.store.analytics_export import ENTITIES, NAME_COLUMNS, _hashed
+from server.settings import settings
 
 
 def test_object_keys_are_one_per_entity_and_day() -> None:
@@ -41,11 +42,28 @@ async def test_export_day_reads_and_uploads_each_entity() -> None:
         seen.append((key, body))
         return key.startswith("p/usage")
 
-    out = await export_day(date(2026, 10, 9), prefix="p", put=put, ch=ch)  # type: ignore[arg-type]
+    day = date(2026, 10, 9)
+    out = await export_day(day, prefix="p", put=put, key=None, ch=ch)  # type: ignore[arg-type]
     assert [(e.entity, e.written) for e in out] == [("usage", True), ("namespaces", False)]
     assert all(sql.endswith("FORMAT Parquet") for sql, _ in ch.calls)
-    assert all(params == {"day": date(2026, 10, 9)} for _, params in ch.calls)
+    assert all(params == {"day": day} for _, params in ch.calls)
     assert [k for k, _ in seen] == [e.key for e in out]
+
+
+async def test_a_hashed_export_hashes_every_name_column_under_the_key() -> None:
+    ch = _Ch()
+    key = name_hash_key("secret")
+    await export_day(date(2026, 10, 9), prefix="", put=lambda k, b: True, key=key, ch=ch)  # type: ignore[arg-type]
+    for (sql, params), entity in zip(ch.calls, ENTITIES, strict=True):
+        assert sql == f"{_hashed(entity)} FORMAT Parquet"
+        assert (params["k0"], params["k1"]) == key
+        for column in NAME_COLUMNS[entity]:
+            assert f"{{k1:UInt64}}), {column}))) AS {column}" in sql
+
+
+def test_the_hash_key_is_stable_and_depends_on_the_secret() -> None:
+    assert name_hash_key("a") == name_hash_key("a") != name_hash_key("b")
+    assert all(0 <= w < 2**64 for w in name_hash_key("a"))
 
 
 def _stubbed() -> tuple[Any, Stubber]:
@@ -100,6 +118,7 @@ def test_statements_export_no_content_and_no_person(entity: str) -> None:
 def _args(**kw: Any) -> argparse.Namespace:
     base = {
         "day": None,
+        "names": "hashed",
         "bucket": "b",
         "prefix": "",
         "role_arn": "",
@@ -112,6 +131,24 @@ def _args(**kw: Any) -> argparse.Namespace:
 def test_a_day_that_has_not_ended_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli._cmd_export(_args(day=date(2999, 1, 1))) == 2
     assert "has not ended" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("names", "key", "signup", "refused"),
+    [
+        ("hashed", "", "off", "needs LOOM_ANALYTICS_EXPORT_NAME_KEY"),
+        ("hashed", "k", "open", ""),
+        ("raw", "", "open", "refused while LOOM_SELF_SIGNUP=open"),
+        ("raw", "", "off", ""),
+    ],
+)
+def test_names_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, names: str, key: str, signup: str, refused: str
+) -> None:
+    monkeypatch.setattr(settings, "analytics_export_name_key", key)
+    monkeypatch.setattr(settings, "self_signup", signup)
+    got = cli._refusal(_args(names=names, day=date(2000, 1, 1)), date(2000, 1, 2))
+    assert (refused in got) if refused else got == ""
 
 
 def test_day_must_be_iso() -> None:

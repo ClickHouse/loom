@@ -275,10 +275,14 @@ analyticsExport:
   schedule: "30 0 * * *"
   bucket: ""
   prefix: ""
+  # hashed: org, namespace and agent leave as a keyed hash; the key is
+  # LOOM_ANALYTICS_EXPORT_NAME_KEY in the release's Secret (secrets.extra or
+  # existingSecret). raw: as stored, only where every name is an opaque id.
+  names: hashed
   # A writer role to assume (in the bucket's account) with the pod's credentials.
   roleArn: ""
   region: ""
-  # The account id that must own the bucket; a write to any other is refused.
+  # The account id that must own the bucket, quoted; a write to any other is refused.
   expectedBucketOwner: ""
   serviceAccount:
     # IRSA (eks.amazonaws.com/role-arn): a role that may only assume roleArn.

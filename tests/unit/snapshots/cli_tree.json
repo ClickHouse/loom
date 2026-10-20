@@ -5303,6 +5303,7 @@
         "bucket",
         "prefix",
         "day",
+        "names",
         "role_arn",
         "region",
         "expected_bucket_owner"
@@ -5370,6 +5371,24 @@
        "type": "server.cli.analytics_export:_day",
        "required": false,
        "help": "The UTC day to export, YYYY-MM-DD (default: yesterday)",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--names"
+       ],
+       "dest": "names",
+       "action": "_StoreAction",
+       "default": "hashed",
+       "const": null,
+       "choices": [
+        "hashed",
+        "raw"
+       ],
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "hashed (default): org, namespace and agent as a keyed hash under LOOM_ANALYTICS_EXPORT_NAME_KEY; raw: as stored, for a deployment whose names are opaque ids (refused while self-signup is open)",
        "metavar": null
       },
       {
