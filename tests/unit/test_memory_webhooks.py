@@ -38,6 +38,7 @@ from server.memory.workers import webhook_deliver as worker
 from server.settings import settings
 from server.workers import pass_context
 from tests.unit.ch_fake import RecordingCH
+from tests.unit.clock_fake import ManualClock
 from tests.unit.schema_ddl import column_names
 
 NOW = datetime(2026, 9, 20, 12, 0)
@@ -562,14 +563,18 @@ class FakeStore:
     async def due_events(
         self, now: datetime, *, since: datetime, hooks: list[Any], per_webhook: int, limit: int
     ) -> list[dict[str, Any]]:
-        due, taken = [], {}
+        turns: dict[str, int] = {}
+        due = []
         for o in self._of(hooks):
             a = self.latest(o["event_id"])
             if a is None or (a["status"] in ("pending", "leased") and a["next_attempt_at"] <= now):
-                if taken.get(o["webhook_id"], 0) < per_webhook:
-                    taken[o["webhook_id"]] = taken.get(o["webhook_id"], 0) + 1
-                    due.append({**o, "attempts": a["attempts"] if a else 0})
-        return due[:limit]
+                turns[o["webhook_id"]] = turns.get(o["webhook_id"], 0) + 1
+                if turns[o["webhook_id"]] <= per_webhook:
+                    due.append(
+                        (turns[o["webhook_id"]], {**o, "attempts": a["attempts"] if a else 0})
+                    )
+        due.sort(key=lambda t: (t[0], t[1]["occurred_at"]))
+        return [row for _turn, row in due][:limit]
 
     async def mark_dead(
         self, now: datetime, *, since: Any, hooks: list[Any], reason: str, version: int, before=None
@@ -593,7 +598,7 @@ class FakeStore:
     async def live_webhooks(self) -> list[dict[str, Any]]:
         return [dict(h) for h in self.hooks]
 
-    async def removed_webhooks(self) -> list[tuple[str, str, str]]:
+    async def removed_webhooks(self, since: datetime) -> list[tuple[str, str, str]]:
         return list(self.removed)
 
     async def insert_attempts(self, rows: list[dict[str, Any]]) -> None:
@@ -703,9 +708,16 @@ async def test_a_malformed_secret_is_not_usable_and_is_not_logged(
     fake: FakeStore, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.WARNING)
+    signed._warned_unusable.discard(REF)
     bad = "whsec_not*base64!"
     assert signed.read_secret("acme", REF, {REF: bad}) is None
+    assert signed.read_secret("acme", REF, {REF: bad}) is None
     assert REF in caplog.text and bad not in caplog.text
+    assert sum("not usable" in r.message for r in caplog.records) == 1
+    # A trailing newline (a secret file read into the variable) is not part of the key.
+    assert signed.read_secret("acme", REF, {REF: SECRET + "\n"}) == base64.b64decode(
+        SECRET.removeprefix("whsec_")
+    )
     result = await _pass(lambda r: httpx.Response(204), env={REF: bad})
     assert result.waiting == 1 and result.total == 0
 
@@ -783,10 +795,78 @@ async def test_one_webhooks_backlog_never_delays_another_namespaces_event(
 
     first = await _pass(handler)
     assert fake.last("ok-1")["status"] == "delivered"
-    assert first.delivered == 1 and first.failed == worker.PER_WEBHOOK
-    # wh-down failed ten POSTs: it waits out a cooldown instead of taking the pass.
+    # wh-down failed five POSTs in a row: its other events wait out the cooldown.
+    assert first.delivered == 1 and first.failed == worker.FAILURES_BEFORE_COOLDOWN
     second = await _pass(handler, now=NOW + timedelta(seconds=10))
     assert second.total == 0 and second.waiting == 2
+
+
+@pytest.mark.asyncio
+async def test_turns_go_round_every_webhook_and_a_slow_one_holds_one_slot(
+    fake: FakeStore,
+) -> None:
+    """Five healthy webhooks with deep backlogs and one slow receiver: the fresh
+    event of another org goes out in the first pass, and the slow receiver never
+    has more than one POST in flight."""
+    names = [f"wh-{i}" for i in range(5)] + ["wh-slow"]
+    fake.hooks = [_registration(w, namespace=w) for w in names]
+    fake.hooks.append(
+        _registration(
+            "wh-fresh",
+            namespace="fresh",
+            org="globex",
+            secret_ref="LOOM_WEBHOOK_SECRET_GLOBEX__CHAT",
+        )
+    )
+    fake.outbox = [
+        _outbox_row(
+            webhook_id=w, namespace=w, event_id=f"{w}-{i}", occurred_at=NOW - timedelta(hours=1)
+        )
+        for w in names
+        for i in range(30)
+    ]
+    fake.outbox.append(
+        _outbox_row(webhook_id="wh-fresh", namespace="fresh", org="globex", event_id="fresh-1")
+    )
+    fake.history = {(org, ns, *KEY[2:]) for org in ("acme", "globex") for ns in names + ["fresh"]}
+    in_flight = {"now": 0, "most": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers["host"] == "wh-slow.example":
+            in_flight["now"] += 1
+            in_flight["most"] = max(in_flight["most"], in_flight["now"])
+            await asyncio.sleep(0.01)
+            in_flight["now"] -= 1
+        return httpx.Response(204)
+
+    env = {REF: SECRET, "LOOM_WEBHOOK_SECRET_GLOBEX__CHAT": SECRET}
+    result = await _pass(handler, env=env)
+    assert fake.last("fresh-1")["status"] == "delivered"
+    assert result.delivered == worker.MAX_POSTS_PER_PASS
+    assert in_flight["most"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_erasure_step_reads_the_ids_once_then_deletes_events_and_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.erasure.store import steps_ledgers
+
+    ch = (
+        RecordingCH(strict=False)
+        .on("SELECT DISTINCT event_id FROM loom.memory_webhook_outbox", [{"event_id": "e1"}])
+        .on("SELECT count()", [{"n": 1}])
+    )
+    ch.install(monkeypatch)
+    order: list[tuple[str, Any]] = []
+
+    async def mutate(table: str, *, mutation: str, where: str, params: Any, **_: Any) -> None:
+        order.append((table, params.get("ids")))
+
+    monkeypatch.setattr(steps_ledgers.erasure_mutations, "run_mutation", mutate)
+    await steps_ledgers.delete_memory_webhook_outbox_by_user("acme", "u1", ch=ch)
+    assert len(ch.statements("SELECT DISTINCT event_id")) == 1
+    assert order == [("loom.memory_webhook_outbox", None), ("loom.memory_webhook_attempts", ["e1"])]
 
 
 @pytest.mark.asyncio
@@ -987,7 +1067,17 @@ async def test_register_refuses_a_secret_ref_of_another_org() -> None:
 
 
 @pytest.fixture
-def registered(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+def clock(monkeypatch: pytest.MonkeyPatch) -> ManualClock:
+    """The app's clock seam (`naive_utc_now`) on a manual clock."""
+    clock = ManualClock(t=NOW.replace(tzinfo=UTC).timestamp())
+    monkeypatch.setattr(
+        app, "naive_utc_now", lambda: datetime.fromtimestamp(clock(), UTC).replace(tzinfo=None)
+    )
+    return clock
+
+
+@pytest.fixture
+def registered(monkeypatch: pytest.MonkeyPatch, clock: ManualClock) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
 
     async def listed(org: str, namespace: str) -> list[dict[str, Any]]:
@@ -1027,7 +1117,7 @@ async def test_a_namespace_holds_ten_webhooks_and_a_url_again_replaces_its_own(
 
 @pytest.mark.asyncio
 async def test_a_url_registered_again_after_a_remove_gets_a_new_id(
-    registered: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+    registered: list[dict[str, Any]], clock: ManualClock
 ) -> None:
     from server.memory.api.models_webhook import WebhookRemoveInput
 
@@ -1035,8 +1125,7 @@ async def test_a_url_registered_again_after_a_remove_gets_a_new_id(
     await app.handle_webhook_remove(
         WebhookRemoveInput(org="acme", namespace="chat", webhook_id=first.webhook_id)
     )
-    later = datetime.now(UTC) + timedelta(seconds=1)
-    monkeypatch.setattr(app, "datetime", SimpleNamespace(now=lambda tz=None: later))
+    clock.advance(1)
     second = await _register("https://chat.example/h")
     assert second.webhook_id != first.webhook_id
 

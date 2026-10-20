@@ -27,11 +27,12 @@ import logging
 import os
 import time
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
 from server.core import webhooks as signed
+from server.core.datetimes import naive_utc_now
 from server.core.errors import ValidationError
 from server.core.logging_config import request_id_var
 from server.memory.api.models_webhook import (
@@ -96,6 +97,7 @@ async def _read() -> None:
     try:
         rows = await store.live_webhooks()
     except Exception as e:  # noqa: BLE001 — the last copy serves until a read lands
+        degradations.note("memory.webhook", "registry_unread", e)
         log.warning("memory webhooks: registry read failed (%s); serving the last copy", e)
         return
     hooks: dict[tuple[str, str], list[tuple[str, frozenset[str]]]] = {}
@@ -153,15 +155,15 @@ def _outbox_row(
         "webhook_id": webhook_id,
         "event_id": event_id(webhook_id, event, change),
         "event_type": event,
-        "agent": str(change.get("agent") or "-"),
-        "user_id": str(change.get("user_id") or "-"),
-        "session_id": str(change.get("session_id") or "-"),
-        "memory_key": str(change.get("memory_key") or ""),
-        "memory_id": str(change.get("memory_id") or ""),
-        "memory_version": int(change.get("version") or 0),
+        "agent": str(change["agent"]),
+        "user_id": str(change["user_id"]),
+        "session_id": str(change["session_id"]),
+        "memory_key": str(change["memory_key"]),
+        "memory_id": str(change["memory_id"]),
+        "memory_version": int(change["version"]),
         "actor": actor,
         "request_id": request_id_var.get() or "",
-        "erasure_id": str(change.get("erasure_id") or ""),
+        "erasure_id": str(change.get("erasure_id", "")),
         "occurred_at": now,
     }
 
@@ -181,7 +183,7 @@ async def announce(event: EventType, changes: Sequence[Mapping[str, Any]]) -> No
     if not changes:
         return
     try:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = naive_utc_now()
         actor = _actor()
         rows = [
             _outbox_row(event, wid, c, actor=actor, now=now)
@@ -217,7 +219,20 @@ async def announce_erasure(org: str, namespaces: Sequence[str] | None, erasure_i
         namespaces = await namespaces_with_hooks(org)
     await announce(
         "memory.erased",
-        [{"org": org, "namespace": ns, "erasure_id": erasure_id} for ns in namespaces],
+        [
+            {
+                "org": org,
+                "namespace": ns,
+                "agent": "-",
+                "user_id": "-",
+                "session_id": "-",
+                "memory_key": "",
+                "memory_id": "",
+                "version": 0,
+                "erasure_id": erasure_id,
+            }
+            for ns in namespaces
+        ],
     )
 
 
@@ -251,16 +266,22 @@ async def handle_webhook_register(input: WebhookRegisterInput) -> WebhookRegiste
             f"{signed.webhook_secret_org_prefix(input.org)}<letters and digits>, "
             "the name of an environment variable this org owns"
         )
-    refusal = await url_refusal(input.url)
+    try:
+        async with asyncio.timeout(signed.ACK_TIMEOUT_SECONDS):
+            refusal = await url_refusal(input.url)
+    except TimeoutError:
+        refusal = "the host did not resolve in time"
     if refusal:
         raise ValidationError(f"url refused: {refusal}")
     existing = await store.namespace_webhooks(input.org, input.namespace)
+    # Read, then written: two registrations of one new URL at once can both pass, and
+    # make two webhooks (one more than the cap at most); webhook.remove takes either.
     same_url = next((r for r in existing if r["url"] == input.url), None)
     if same_url is None and len(existing) >= MAX_PER_NAMESPACE:
         raise ValidationError(
             f"a namespace holds at most {MAX_PER_NAMESPACE} webhooks; remove one first"
         )
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = naive_utc_now()
     # The URL registered again keeps its id and replaces its secret_ref and events.
     kept = same_url or {
         "webhook_id": _new_webhook_id(input.org, input.namespace, input.url, now),
@@ -303,7 +324,7 @@ async def handle_webhook_deliveries(input: WebhookDeliveriesInput) -> WebhookDel
     rows = await store.namespace_deliveries(
         input.org,
         input.namespace,
-        since=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=store.KEEP_DAYS),
+        since=naive_utc_now() - timedelta(days=store.KEEP_DAYS),
         webhook_id=input.webhook_id,
         status=input.status or "",
         limit=input.limit,

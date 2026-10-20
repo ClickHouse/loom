@@ -1398,7 +1398,7 @@ Source: `server/settings/_webhooks.py`
 | `LOOM_MEMORY_WEBHOOK_DELIVER_ENABLED` | `bool` | `True` | Deliver the signed memory-change events of loom.memory_webhook_outbox to each namespace's registered webhooks (the memory_webhook_deliver worker). |
 | `LOOM_MEMORY_WEBHOOK_DELIVER_INTERVAL_SECONDS` | `int` | `5` | Seconds between passes while events are going out. |
 | `LOOM_MEMORY_WEBHOOK_DELIVER_IDLE_INTERVAL_SECONDS` | `int` | `30` | Seconds between passes that found nothing due. |
-| `LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS` | `int` | `8` | Delivery attempts per event before it is marked dead (listed by webhook.deliveries). |
+| `LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS` | `int` | `60` | POSTs per event before it is marked dead (listed by webhook.deliveries). Retries back off to one an hour, so 60 span about 2.3 days of the outbox's 3-day keep; 70 is the most that fit inside it. |
 | `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS` | `float` | `10.0` | Seconds between each process's reads of the registered webhooks; a webhook registered or removed on another process applies to writes here within it. |
 | `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` | `bool` | `False` | True lets a memory webhook use plain http (a local receiver in development); false: https only. |
 | `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` | `str` | `''` | Comma-separated hostnames or IP literals (exact, any case) a memory webhook may reach although they resolve to a private, loopback or link-local address; "" = none. |

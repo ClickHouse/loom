@@ -59,16 +59,23 @@ def webhook_secret_ref_ok(org: str, ref: str) -> bool:
     return name != ref and bool(re.fullmatch(r"[A-Za-z0-9]+", name))
 
 
+# Secret refs already reported as not usable: said once each, not on every pass.
+_warned_unusable: set[str] = set()
+
+
 def read_secret(org: str, ref: str, env: Mapping[str, str]) -> bytes | None:
-    """The signing key `ref` names in `env`, or None when the name is not one of
-    `org`'s own, the variable is unset, or its `whsec_` value is not base64."""
-    raw = env.get(ref, "") if webhook_secret_ref_ok(org, ref) else ""
+    """The signing key `ref` names in `env` (surrounding whitespace, such as a
+    trailing newline, dropped), or None when the name is not one of `org`'s own,
+    the variable is unset, or its `whsec_` value is not base64."""
+    raw = env.get(ref, "").strip() if webhook_secret_ref_ok(org, ref) else ""
     if not raw:
         return None
     try:
         return secret_bytes(raw)
     except binascii.Error:
-        log.warning("webhook: the secret in %s is not usable: whsec_ must be base64", ref)
+        if ref not in _warned_unusable:
+            _warned_unusable.add(ref)
+            log.warning("webhook: the secret in %s is not usable: whsec_ must be base64", ref)
         return None
 
 
@@ -159,9 +166,11 @@ async def post(
 
     One deadline, ACK_TIMEOUT_SECONDS, covers the whole delivery: the DNS lookup,
     the connection and the response's status line. The body of the answer is
-    never read. Each delivery has its own client: a pooled connection is keyed by
-    the pinned address, so a second registration on the same address would reuse
-    a TLS session verified for another name."""
+    never read. A lookup cut by the deadline leaves its resolver thread to finish
+    on its own (Python cannot stop it); the delivery does not wait for it. Each
+    delivery has its own client: a pooled connection is keyed by the pinned
+    address, so a second registration on the same address would reuse a TLS
+    session verified for another name."""
     host = urlsplit(url).hostname or ""
     try:
         async with asyncio.timeout(ACK_TIMEOUT_SECONDS):

@@ -13,8 +13,10 @@ class WebhookSettings(BaseModel):
     memory_webhook_deliver_interval_seconds: int = 5
     # Seconds between passes that found nothing due.
     memory_webhook_deliver_idle_interval_seconds: int = 30
-    # Delivery attempts per event before it is marked dead (listed by webhook.deliveries).
-    memory_webhook_max_attempts: int = Field(8, ge=1, le=50)
+    # POSTs per event before it is marked dead (listed by webhook.deliveries). Retries back
+    # off to one an hour, so 60 span about 2.3 days of the outbox's 3-day keep; 70 is the most
+    # that fit inside it.
+    memory_webhook_max_attempts: int = Field(60, ge=1, le=70)
     # Seconds between each process's reads of the registered webhooks; a webhook
     # registered or removed on another process applies to writes here within it.
     memory_webhook_refresh_seconds: float = Field(10.0, gt=0)

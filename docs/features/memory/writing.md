@@ -310,12 +310,12 @@ entity backfills, typed records (`memory.record.*`) and saved chat messages
 identity: a namespace erasure goes to that namespace's webhooks, a user's erasure to
 every webhook of the org that takes the event.
 
-| Operation            | Role  | What it does                                                                                                            |
-| -------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------- |
-| `webhook.register`   | admin | Registers `url`, `secret_ref` and `events` (default all six); the same URL again replaces it. At most 10 per namespace. |
-| `webhook.list`       | admin | The namespace's webhooks, with `secret_present` (whether the server holds the secret).                                  |
-| `webhook.remove`     | admin | Removes one by `webhook_id`; its pending events are not sent.                                                           |
-| `webhook.deliveries` | admin | The last 3 days of events by state: `pending`, `delivered`, `dead`, with the last HTTP status or error.                 |
+| Operation            | Role  | What it does                                                                                                                                                                                                                        |
+| -------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `webhook.register`   | admin | Registers `url`, `secret_ref` and `events` (default all six); the same URL again replaces it. At most 10 per namespace: two registrations of one new URL at the same moment can make two webhooks, one past the cap; remove either. |
+| `webhook.list`       | admin | The namespace's webhooks, with `secret_present` (whether the server holds the secret).                                                                                                                                              |
+| `webhook.remove`     | admin | Removes one by `webhook_id`; its pending events are not sent.                                                                                                                                                                       |
+| `webhook.deliveries` | admin | The last 3 days of events by state: `pending`, `delivered`, `dead`, with the last HTTP status or error.                                                                                                                             |
 
 **Signing.** Each request carries the Standard Webhooks headers the task inbox webhook
 uses: `webhook-id` (the event id; drop a repeat), `webhook-timestamp` (unix seconds;
@@ -336,22 +336,27 @@ connects to the address it checked and follows no redirect.
 worker sends it. Any 2xx within 10 s acknowledges it; the 10 s cover the name lookup, the
 connection and the status line, and the answer's body is never read. Anything else is
 retried after 5 s, 30 s, 2 min, 10 min, 30 min and then hourly, until
-`LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS` attempts mark it `dead`. `actor` is the principal that
+`LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS` attempts (60 by default, about 2.3 days of retries)
+mark it `dead`. `actor` is the principal that
 made the change, or `worker:<name>` for a change a background pass made (the expiry
 sweep, the `delete_version` check).
 
-- **Fairness.** A pass sends at most 40 events, at most 10 of one webhook, 4 at a time.
-  A webhook whose last 5 POSTs failed is passed over for a cooldown that starts at a
-  minute and doubles up to an hour; a 2xx ends it. The cooldown is kept per server
-  process, so a restart or a new worker leader starts it afresh. One webhook's backlog
-  never holds back another's events. With fast receivers the ceiling is about 40 events
-  per pass, a pass every 5 s while there is work: some 8 events a second per deployment.
+- **Fairness.** A pass takes events in turns: every webhook's oldest due event, then
+  every webhook's second, at most 10 of one webhook and 40 in all. It sends 4 at a time
+  and one at a time per webhook, so a slow receiver holds at most one of the 4. A webhook
+  whose last 5 POSTs failed is passed over for a cooldown that starts at a minute and
+  doubles up to an hour, checked before each POST; a 2xx ends it. The cooldown is kept
+  per server process, so a restart or a new worker leader starts it afresh. A webhook
+  with a due event therefore gets at least one POST in every pass while fewer than 40
+  webhooks have work. With fast receivers the ceiling is about 40 events per pass, a pass
+  every 5 s while there is work: some 8 events a second per deployment.
 - **Waiting and dead events.** While the variable `secret_ref` names is unset or not
   usable (a `whsec_` value that is not base64), the webhook's events wait, and the wait
   counts as no attempt; after 2.5 days they are marked `dead` with "secret never set".
   The events of a removed webhook are marked `dead` at once; registering the same URL
   again creates a new webhook that does not inherit them. An event whose memory was
-  erased before it went out is marked `dead` and not sent.
+  erased before it went out is marked `dead` and not sent: the key's history is read just
+  before each POST, so only an erasure that lands during that POST can let one out.
 - **Repeats.** Delivery is at least once and unordered: order events by `version`, and
   read the row back rather than trusting the event's age. A repeat shares its
   `webhook-id`: a retry, two overlapping passes, and the same version of a memory

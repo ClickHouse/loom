@@ -240,27 +240,40 @@ async def delete_delete_version_checks_by_user(
     )
 
 
+# Attempt rows deleted per statement, by event id.
+_ATTEMPT_ID_BATCH = 10_000
+
+
 async def _delete_webhook_events(
     org: str, scope_where: str, params: dict[str, Any], ch: _CHClient | None
 ) -> int:
-    """Memory webhook events name a row's identity, key and id: their attempt rows
-    (event ids and counters) go first, by the events' ids, then the events."""
-    events = (
-        "SELECT event_id FROM loom.memory_webhook_outbox "
-        f"WHERE org = {{org:String}} AND {scope_where}"
-    )
-    await erasure_mutations.count_then_mutate(
-        "loom.memory_webhook_attempts",
-        count_where=f"event_id IN ({events})",
-        mutation="DELETE",
-        mutation_where=f"event_id IN ({events})",
+    """Memory webhook events name a row's identity, key and id. Their ids are read
+    once; the events go, then their attempt rows (event ids and counters) by
+    that list."""
+    where = scope_where
+    if isinstance(params.get("ns"), (list, tuple)):
+        where = scope_where.replace(NS_EQ, NS_IN)
+        params = {**params, "ns": [str(x) for x in params["ns"]]}
+    rows = await (ch or _default_client()).query_all(
+        "SELECT DISTINCT event_id FROM loom.memory_webhook_outbox "
+        f"WHERE org = {{org:String}} AND {where}",
         params={"org": org, **params},
-        final=False,
-        ch=ch,
     )
-    return await delete_scoped(
+    deleted = await delete_scoped(
         "loom.memory_webhook_outbox", org=org, scope_where=scope_where, params=params, ch=ch
     )
+    ids = [str(r["event_id"]) for r in rows]
+    for i in range(0, len(ids), _ATTEMPT_ID_BATCH):
+        await erasure_mutations.count_then_mutate(
+            "loom.memory_webhook_attempts",
+            count_where="event_id IN {ids:Array(String)}",
+            mutation="DELETE",
+            mutation_where="event_id IN {ids:Array(String)}",
+            params={"ids": ids[i : i + _ATTEMPT_ID_BATCH]},
+            final=False,
+            ch=ch,
+        )
+    return deleted
 
 
 async def delete_memory_webhook_outbox_by_namespace(

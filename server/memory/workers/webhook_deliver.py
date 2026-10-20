@@ -6,14 +6,17 @@ The write paths leave one loom.memory_webhook_outbox row per (event, webhook)
 - marks dead, in one statement each, the events of removed webhooks and the
   events that waited `SECRET_DEADLINE` for a secret that was never set;
 - takes the due events of the webhooks it can send to (registered, with a
-  usable secret, not cooling down), at most `PER_WEBHOOK` of each, so one
-  webhook's backlog never holds back another's events;
+  usable secret, not cooling down) in turns: every webhook's oldest first, then
+  every webhook's second, at most `PER_WEBHOOK` of each and
+  `MAX_POSTS_PER_PASS` in all;
 - leases them (an attempt row whose `next_attempt_at` is the lease's end, so an
-  overlapping copy of the pass passes over them), POSTs `CONCURRENCY` at a
-  time, each signed as the task webhooks are (`server.core.webhooks`), and
-  appends each outcome to loom.memory_webhook_attempts: `delivered` on a 2xx,
-  else `pending` with backoff until `memory_webhook_max_attempts` marks it
-  `dead`.
+  overlapping copy of the pass passes over them), then POSTs them, `CONCURRENCY`
+  at a time and one at a time per webhook, so a slow receiver holds one slot.
+  Before each POST it checks the webhook's cooldown and the key's history.
+  Each body is signed as the task webhooks' are (`server.core.webhooks`);
+- appends every outcome to loom.memory_webhook_attempts in one insert:
+  `delivered` on a 2xx, else `pending` with backoff until
+  `memory_webhook_max_attempts` marks it `dead`.
 
 An attempt row holds the event id and counters only, so an erasure that
 deletes an event's outbox row while a pass is in flight leaves nothing a later
@@ -32,12 +35,13 @@ import os
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
 
 from server.core import webhooks as signed
+from server.core.datetimes import naive_utc_now
 from server.memory.app.webhooks import url_schemes
 from server.memory.domain.webhook_events import backoff_seconds, event_body
 from server.memory.store import webhooks as store
@@ -80,9 +84,9 @@ class _Health:
 _health: dict[str, _Health] = {}
 
 
-def _cooling(webhook_id: str, now: datetime) -> bool:
+def _cooling_until(webhook_id: str, now: datetime) -> datetime | None:
     h = _health.get(webhook_id)
-    return h is not None and h.until is not None and now < h.until
+    return h.until if h is not None and h.until is not None and now < h.until else None
 
 
 def _note_post(webhook_id: str, ok: bool, now: datetime) -> None:
@@ -186,6 +190,20 @@ def _hook(row: Mapping[str, Any]) -> store.Hook:
     return (str(row["org"]), str(row["namespace"]), str(row["webhook_id"]))
 
 
+def _wait_row(
+    row: Mapping[str, Any], *, until: datetime, now: datetime, why: str
+) -> dict[str, Any]:
+    """An event passed over, its attempts uncounted, until `until`."""
+    return _attempt_row(
+        str(row["event_id"]),
+        status="pending",
+        attempts=int(row["attempts"]),
+        next_attempt_at=until,
+        now=now,
+        last_error=why,
+    )
+
+
 async def deliver_once(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
@@ -196,7 +214,7 @@ async def deliver_once(
 ) -> DeliverResult:
     """One pass over the due events. `transport` replaces the network and
     `org` / `namespace` narrow the pass (tests); `now` is naive UTC."""
-    now = now or datetime.now(UTC).replace(tzinfo=None)
+    now = now or naive_utc_now()
     env = os.environ if env is None else env
     since = now - timedelta(days=store.KEEP_DAYS)
 
@@ -208,9 +226,9 @@ async def deliver_once(
     urls = {_hook(h): str(h["url"]) for h in live}
     usable = {k: s for k, s in secrets.items() if s is not None}
     unsecured = [k for k in secrets if k not in usable]
-    sendable = [k for k in usable if not _cooling(k[2], now)]
+    sendable = [k for k in usable if _cooling_until(k[2], now) is None]
 
-    removed = [h for h in await store.removed_webhooks() if mine(h)]
+    removed = [h for h in await store.removed_webhooks(since) if mine(h)]
     await store.mark_dead(
         now, since=since, hooks=removed, reason="the webhook was removed", version=next_version()
     )
@@ -243,13 +261,18 @@ async def deliver_once(
             for r in due
         ]
     )
-    # memory.erased names no key; every other event names the memory it is about.
-    kept = await store.keys_with_history(sorted({_key(r) for r in due if r["memory_key"]}))
-    limit = asyncio.Semaphore(CONCURRENCY)
+    slots = asyncio.Semaphore(CONCURRENCY)
 
-    async def one(row: Mapping[str, Any]) -> str:
-        if row["memory_key"] and _key(row) not in kept:
-            out = _attempt_row(
+    async def one(row: Mapping[str, Any]) -> dict[str, Any]:
+        """One event: checked, then POSTed or passed over."""
+        hook = _hook(row)
+        until = _cooling_until(hook[2], now)
+        if until is not None:  # failed its last POSTs earlier in this pass
+            return _wait_row(row, until=until, now=now, why="the webhook is cooling down")
+        # memory.erased names no key; any other event names the memory it is about. Read
+        # just before the POST: an erasure landing after it can still let this one out.
+        if row["memory_key"] and not await store.keys_with_history([_key(row)]):
+            return _attempt_row(
                 str(row["event_id"]),
                 status="dead",
                 attempts=int(row["attempts"]),
@@ -257,19 +280,31 @@ async def deliver_once(
                 now=now,
                 last_error="the memory was erased",
             )
-        else:
-            hook = _hook(row)
-            async with limit:
-                delivery = await _post(transport, row, urls[hook], usable[hook])
-            _note_post(hook[2], delivery.ok, now)
-            out = _outcome(row, delivery, now=now)
-        await store.insert_attempts([out])
-        return str(out["status"])
+        async with slots:
+            delivery = await _post(transport, row, urls[hook], usable[hook])
+        _note_post(hook[2], delivery.ok, now)
+        return _outcome(row, delivery, now=now)
 
-    statuses = await asyncio.gather(*(one(r) for r in due))
+    async def in_turn(rows: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        """A webhook's events one after another: one POST in flight per webhook."""
+        return [await one(r) for r in rows]
+
+    by_hook: dict[store.Hook, list[Mapping[str, Any]]] = {}
+    for row in due:
+        by_hook.setdefault(_hook(row), []).append(row)
+    outcomes = [o for rows in await asyncio.gather(*map(in_turn, by_hook.values())) for o in rows]
+    # One insert per pass: a pass cut before it leaves its leases to expire, and the
+    # re-send carries the same event ids, which the receivers drop.
+    await store.insert_attempts(outcomes)
+    statuses = [str(o["status"]) for o in outcomes]
+    # A failure is a POST that went out and was not acknowledged; an event passed
+    # over for a cooldown keeps its attempt count.
+    sent = {str(r["event_id"]): int(r["attempts"]) for r in due}
     return DeliverResult(
         delivered=statuses.count("delivered"),
-        failed=statuses.count("pending"),
+        failed=sum(
+            1 for o in outcomes if o["status"] == "pending" and o["attempts"] > sent[o["event_id"]]
+        ),
         dead=statuses.count("dead"),
         waiting=waiting,
     )

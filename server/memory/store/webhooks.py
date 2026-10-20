@@ -23,6 +23,9 @@ ATTEMPTS = "loom.memory_webhook_attempts"
 
 # Days an outbox row and an attempt row are kept (the tables' TTL).
 KEEP_DAYS = 3
+# The most registrations a registry read returns: far above any deployment's count
+# (10 per namespace), a bound on a read nothing else bounds.
+REGISTRY_LIMIT = 100_000
 
 WEBHOOK_COLS: tuple[str, ...] = (
     "org",
@@ -129,16 +132,20 @@ async def live_webhooks(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
     ch = ch or _default_client()
     with own_write_reads():
         return await ch.query_all(
-            f"SELECT {', '.join(WEBHOOK_COLS)} FROM {WEBHOOKS} FINAL WHERE is_deleted = 0"
+            f"SELECT {', '.join(WEBHOOK_COLS)} FROM {WEBHOOKS} FINAL WHERE is_deleted = 0 "
+            "LIMIT {limit:UInt32}",
+            params={"limit": REGISTRY_LIMIT},
         )
 
 
-async def removed_webhooks(*, ch: _CHClient | None = None) -> list[Hook]:
-    """Every removed registration."""
+async def removed_webhooks(since: datetime, *, ch: _CHClient | None = None) -> list[Hook]:
+    """The registrations removed since `since`: older ones have no event left."""
     ch = ch or _default_client()
     with own_write_reads():
         rows = await ch.query_all(
-            f"SELECT org, namespace, webhook_id FROM {WEBHOOKS} FINAL WHERE is_deleted = 1"
+            f"SELECT org, namespace, webhook_id FROM {WEBHOOKS} FINAL WHERE is_deleted = 1 "
+            "AND version >= toUnixTimestamp64Nano({since:DateTime64(3)}) LIMIT {limit:UInt32}",
+            params={"since": since, "limit": REGISTRY_LIMIT},
         )
     return [(str(r["org"]), str(r["namespace"]), str(r["webhook_id"])) for r in rows]
 
@@ -168,25 +175,29 @@ async def due_events(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Events of `hooks` since `since` with no attempt yet, or whose newest
-    attempt is pending (or a lease) and due: oldest first, at most `per_webhook`
-    of each webhook and `limit` in all, each with its `attempts` so far.
+    attempt is pending (or a lease) and due, each with its `attempts` so far.
+    Round robin: every webhook's oldest due event first, then every webhook's
+    second, and so on, at most `per_webhook` of each and `limit` in all.
 
     Two statements: the events not settled or waiting (a set of ids, not a join
     of every attempt), then the attempt counts of the few chosen."""
     if not hooks:
         return []
     ch = ch or _default_client()
+    cols = ", ".join(OUTBOX_COLS)
     with own_write_reads():  # a lease just written must be seen
         rows = await ch.query_all(
-            f"SELECT {', '.join(OUTBOX_COLS)} FROM {OUTBOX} "
-            f"WHERE (org, namespace, webhook_id) IN {_HOOKS} "
+            f"SELECT {cols} FROM ("
+            f"SELECT {cols}, row_number() OVER "
+            "(PARTITION BY org, namespace, webhook_id ORDER BY occurred_at, event_id) AS turn "
+            f"FROM {OUTBOX} WHERE (org, namespace, webhook_id) IN {_HOOKS} "
             "AND occurred_at >= {since:DateTime64(3)} "
             f"AND event_id NOT IN (SELECT event_id FROM {ATTEMPTS} "
             "WHERE recorded_at >= {since:DateTime64(3)} GROUP BY event_id "
             "HAVING argMax(status, version) IN ('delivered', 'dead') "
-            "OR argMax(next_attempt_at, version) > {now:DateTime64(3)}) "
-            "ORDER BY occurred_at "
-            "LIMIT {per:UInt32} BY webhook_id LIMIT {limit:UInt32}",
+            "OR argMax(next_attempt_at, version) > {now:DateTime64(3)})"
+            ") WHERE turn <= {per:UInt32} "
+            "ORDER BY turn, occurred_at, event_id LIMIT {limit:UInt32}",
             params={
                 "now": now,
                 "since": since,

@@ -250,6 +250,29 @@ async def test_nothing_new_makes_no_request(fake: FakeRepo) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_secret_with_a_trailing_newline_signs_with_the_secret(fake: FakeRepo) -> None:
+    """A secret read from a file into the variable ends in a newline: it is not
+    part of the key."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(204)
+
+    env = {"LOOM_WEBHOOK_SECRET_ACME__PRIVATEBOT": SECRET + "\n"}
+    async with _client(handler) as client:
+        r = await wd.deliver_once(transport=client, now=NOW, env=env)
+    assert r.delivered == 1
+    req = seen[0]
+    assert req.headers["webhook-signature"] == webhooks.sign(
+        webhooks.secret_bytes(SECRET),
+        msg_id=req.headers["webhook-id"],
+        timestamp=int(req.headers["webhook-timestamp"]),
+        body=req.content,
+    )
+
+
+@pytest.mark.asyncio
 async def test_an_undecodable_secret_holds_its_inbox_and_not_the_next(fake: FakeRepo) -> None:
     fake.inboxes[:] = [
         {**fake.inboxes[0], "webhook_secret_ref": "LOOM_WEBHOOK_SECRET_ACME__BAD"},
