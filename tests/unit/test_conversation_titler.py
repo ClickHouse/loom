@@ -249,7 +249,7 @@ async def test_a_title_that_reads_as_a_credential_is_not_stored_or_asked_again(
 async def test_a_thread_whose_turns_all_hold_a_key_is_marked_and_skipped(monkeypatch) -> None:
     """Left unmarked, such a thread took a scan slot on every pass and starved older
     untitled threads."""
-    turns = [{"role": "user", "content": f"my key is {OPENAI_KEY}"}]
+    turns = [{"role": "user", "content": f"my key is {OPENAI_KEY}"}] * 8
     ch = StubCH([_CAND], turns, None)
     _patch(monkeypatch, ch)
     prompts: list[str] = []
@@ -278,3 +278,22 @@ async def test_a_thread_whose_turns_all_hold_a_key_is_marked_and_skipped(monkeyp
     monkeypatch.setattr(llmmod, "get_llm_client", lambda: _Recording())
     res = await run_pass()
     assert (res.skipped_titled, prompts, len(writes)) == (1, [], 1)
+
+
+@pytest.mark.asyncio
+async def test_a_thread_with_fewer_opening_turns_stays_unmarked_until_a_plain_turn_arrives(
+    monkeypatch,
+) -> None:
+    """The opening window is not full yet, so a later plain turn can still title it."""
+    turns = [{"role": "user", "content": f"my key is {OPENAI_KEY}"}]
+    _patch(monkeypatch, StubCH([_CAND], turns, None))
+    writes = _capture(monkeypatch)
+    res = await run_pass()
+    assert (res.titled, writes) == (0, [])
+
+    _patch(monkeypatch, StubCH([_CAND], [*turns, *_TURNS], None))
+    res = await run_pass()
+    assert res.titled == 1
+    [written] = writes
+    assert written["title"] == "ClickHouse engine for an event log"
+    assert json.loads(written["metadata"]) == {}

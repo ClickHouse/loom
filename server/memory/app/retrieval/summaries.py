@@ -189,7 +189,8 @@ async def fetch_session_summaries(
     """
     # With an explicit agent the table key (org, namespace, agent, user_id,
     # session_id, embedding_model) is one row per session under FINAL, so
-    # there is nothing to dedup and the shortlist is exactly n rows. Only the
+    # there is nothing to dedup and the shortlist is n rows plus HELD_MARGIN
+    # spare ones for a digest held back below. Only the
     # wildcard can fold several agents' digests of one session — over-fetch
     # there. The shortlist's exact re-read is per granule, so a larger LIMIT
     # costs whole granules of vectors: measured 7.2 MiB at 5 rows, 13.3 MiB at

@@ -43,6 +43,8 @@ _TITLE_SYSTEM = (
     "characters, capturing the topic. No quotes, no trailing punctuation, no "
     "preamble. Output only the title."
 )
+# The opening turns the title is written from.
+_OPENING_TURNS = 8  # not a setting: the shape of the title prompt
 
 
 @dataclass
@@ -82,7 +84,7 @@ async def _make_title(
     existing: ThreadInsertRow | None = None,
 ) -> bool:
     turns = await conversation_repo.opening_turns(
-        str(row["org"]), str(row["namespace"]), str(row["thread_id"])
+        str(row["org"]), str(row["namespace"]), str(row["thread_id"]), limit=_OPENING_TURNS
     )
     # A turn that reads as a credential never reaches the model: the title is listed to
     # every reader of the namespace.
@@ -93,9 +95,10 @@ async def _make_title(
         if not reads_high(str(r["content"]))
     )
     if not snippet:
-        if spoken:
-            # Every opening turn reads as a credential. The thread is marked, so it stops
-            # taking one of the scan's slots on every pass.
+        if spoken and len(turns) >= _OPENING_TURNS:
+            # Every opening turn reads as a credential and no later turn can join them.
+            # The thread is marked, so it stops taking one of the scan's slots on every
+            # pass. With fewer turns it stays unmarked: a plain turn may still arrive.
             await _store_title(row, existing, "", refused=True)
         return False
 

@@ -756,9 +756,11 @@ the reads that serve passages check their text too:
   `memory.outline` lists a session digest whose summary reads as a credential with an
   empty `headline`. The conversation titler never sends a turn that reads as a credential
   to its model and never stores a title that reads as one: it marks the thread
-  `title_refused` in its metadata instead, as it does a thread whose opening turns all
-  read as a credential, and later passes skip it. `conversation.update` with new
-  `metadata` and `conversation.create` on the same thread keep the mark.
+  `title_refused` in its metadata instead, as it does a thread whose first eight user
+  and assistant turns all read as a credential, and later passes skip it. A thread with
+  fewer such turns stays unmarked, so a plain turn that arrives later gets it titled.
+  `conversation.update` with new `metadata` and `conversation.create` on the same thread
+  keep the mark.
 - Read by key and audited: `memory.get` on the `chunk:` key of a chunk that reads as a
   credential serves it and writes a `memory.sensitive_read` row.
 - `memory.export_evidence` leaves out the chunks and digests linked to a key with any `high`
