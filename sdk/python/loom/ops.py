@@ -118,7 +118,9 @@ OpName = Literal[
     "conversation.delete",
     "conversation.get",
     "conversation.list",
+    "conversation.save_message",
     "conversation.search",
+    "conversation.search_saved_messages",
     "conversation.set_logging",
     "conversation.threads",
     "conversation.update",
@@ -437,7 +439,9 @@ OP_NAMES: tuple[str, ...] = (
     "conversation.delete",
     "conversation.get",
     "conversation.list",
+    "conversation.save_message",
     "conversation.search",
+    "conversation.search_saved_messages",
     "conversation.set_logging",
     "conversation.threads",
     "conversation.update",
@@ -1625,6 +1629,18 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
+    "conversation.save_message": OpSpec(
+        "conversation.save_message",
+        "ConversationSaveMessageInput",
+        "ConversationSaveMessageBody",
+        "ConversationSaveMessageOutput",
+        True,
+        "writer",
+        "experimental",
+        250,
+        False,
+        False,
+    ),
     "conversation.search": OpSpec(
         "conversation.search",
         "ConversationSearchInput",
@@ -1634,6 +1650,18 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "experimental",
         120,
+        False,
+        True,
+    ),
+    "conversation.search_saved_messages": OpSpec(
+        "conversation.search_saved_messages",
+        "ConversationSearchSavedMessagesInput",
+        "ConversationSearchSavedMessagesBody",
+        "ConversationSearchSavedMessagesOutput",
+        True,
+        "viewer",
+        "experimental",
+        200,
         False,
         True,
     ),
@@ -7893,6 +7921,42 @@ class ConversationListOutput(TypedDict, total=False):
     next_cursor: NotRequired[Optional[str]]
 
 
+class ConversationSaveMessageInput(TypedDict, total=False):
+    "Save one chat message a user picked for search, whether or not the"
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    conversation_id: Required[str]
+    message_id: Required[str]
+    role: Required[Literal["user", "assistant"]]
+    content: Required[str]
+    user_id: Required[str]
+
+
+class ConversationSaveMessageBody(TypedDict, total=False):
+    "Save one chat message a user picked for search, whether or not the"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    conversation_id: Required[str]
+    message_id: Required[str]
+    role: Required[Literal["user", "assistant"]]
+    content: Required[str]
+    user_id: NotRequired[str]
+
+
+class ConversationSaveMessageOutput(TypedDict, total=False):
+    conversation_id: Required[str]
+    message_id: Required[str]
+    indexed: Required[bool]
+    reason: NotRequired[
+        Literal["", "duplicate", "owner_mismatch", "deleted", "unsupported_role", "embed_failed"]
+    ]
+    ts: Required[str]  # date-time as ISO-8601 text
+
+
 class ConversationSearchInput(TypedDict, total=False):
     "Rank conversation messages by embedding similarity to `query`."
 
@@ -7903,6 +7967,7 @@ class ConversationSearchInput(TypedDict, total=False):
     thread_id: NotRequired[Optional[str]]
     run_id: NotRequired[Optional[str]]
     role: NotRequired[Optional[Literal["user", "assistant", "system", "tool"]]]
+    user_id: NotRequired[Optional[str]]
     top_k: NotRequired[int]
     namespace_scope: NotRequired[Literal["this", "all_mine"]]
 
@@ -7917,6 +7982,7 @@ class ConversationSearchBody(TypedDict, total=False):
     thread_id: NotRequired[Optional[str]]
     run_id: NotRequired[Optional[str]]
     role: NotRequired[Optional[Literal["user", "assistant", "system", "tool"]]]
+    user_id: NotRequired[Optional[str]]
     top_k: NotRequired[int]
     namespace_scope: NotRequired[Literal["this", "all_mine"]]
 
@@ -7933,6 +7999,44 @@ class ConversationHit(TypedDict, total=False):
     content_excerpt: Required[str]
     ts: Required[str]  # date-time as ISO-8601 text
     namespace: NotRequired[str]
+
+
+class ConversationSearchSavedMessagesInput(TypedDict, total=False):
+    "Semantic search over only the messages one user saved with"
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: Required[str]
+    query: Required[str]
+    conversation_id: NotRequired[Optional[str]]
+    role: NotRequired[Optional[Literal["user", "assistant"]]]
+    top_k: NotRequired[int]
+
+
+class ConversationSearchSavedMessagesBody(TypedDict, total=False):
+    "Semantic search over only the messages one user saved with"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    query: Required[str]
+    conversation_id: NotRequired[Optional[str]]
+    role: NotRequired[Optional[Literal["user", "assistant"]]]
+    top_k: NotRequired[int]
+
+
+class ConversationSearchSavedMessagesOutput(TypedDict, total=False):
+    hits: Required[list["SavedMessageHit"]]
+
+
+class SavedMessageHit(TypedDict, total=False):
+    conversation_id: Required[str]
+    message_id: Required[str]
+    role: Required[Literal["user", "assistant"]]
+    content_excerpt: Required[str]
+    ts: Required[str]  # date-time as ISO-8601 text
 
 
 class ConversationSetLoggingInput(TypedDict, total=False):

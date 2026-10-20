@@ -463,7 +463,11 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
         ch=ch,
     )
     await R.count_thread_msgs(ORG, NS, AGENT, "t1", ch=ch)
+    await R.search_substring(ORG, NS, AGENT, "deploy", user_id="u1", saved_only=f, ch=ch)
     await R.message_exists(ORG, NS, AGENT, "t1", "m1", ch=ch)
+    await R.message_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", ch=ch)
+    await R.embedding_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", embedding_model="m", ch=ch)
+    await R.saved_message_owner(ORG, NS, AGENT, "t1", "m1", ch=ch)
     await R.namespace_logging_enabled(ORG, NS, ch=ch)
     await R.tombstone_thread(ORG, NS, AGENT, "t1", when=_DT, ch=ch)
     await R.tombstone_messages(ORG, NS, AGENT, "t1", ["m1"], when=_DT, ch=ch)
@@ -478,6 +482,49 @@ _CONVERSATION_ROWS = rows_by_substring(
         "SELECT DISTINCT embedding_model, msg_id": [{"embedding_model": "m", "msg_id": "m1"}],
     }
 )
+
+
+# A transcript turn already stored, unsaved and unowned, whose embedding row is
+# unflagged (`embedded`) or never landed: saving it flags the message row and
+# either flags the embedding row or writes it.
+def _logged_turn_rows(embedded: bool):
+    return rows_by_substring(
+        {
+            "groupUniqArray(user_id)": [
+                {
+                    "n": 1,
+                    "role": "assistant",
+                    "content": "the logged answer",
+                    "run_id": "r1",
+                    "last_ts": _DT,
+                    "owners": ["-"],
+                    "tombstoned": False,
+                    "unsaved": 1,
+                }
+            ],
+            "countIf(embedding_model": [
+                {"current": 1 if embedded else 0, "unsaved": 1 if embedded else 0, "foreign": 0}
+            ],
+        }
+    )
+
+
+async def _save_logged_turn(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.knowledge.api.models_conversations import ConversationSaveMessageInput
+    from server.knowledge.app.conversations import handle_conversation_save_message
+
+    await handle_conversation_save_message(
+        ConversationSaveMessageInput(
+            org=ORG,
+            namespace=NS,
+            agent=AGENT,
+            conversation_id="t1",
+            message_id="m1",
+            role="assistant",
+            content="the saved answer",
+            user_id="u1",
+        )
+    )
 
 
 async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -765,6 +812,18 @@ def cases() -> list[Case]:
             _conversations,
             {"filters": (False, True)},
             rows=_CONVERSATION_ROWS,
+        ),
+        Case(
+            "conversation_save_logged_turn",
+            "server.knowledge.app.conversations",
+            _save_logged_turn,
+            rows=_logged_turn_rows(embedded=True),
+        ),
+        Case(
+            "conversation_save_unembedded_turn",
+            "server.knowledge.app.conversations",
+            _save_logged_turn,
+            rows=_logged_turn_rows(embedded=False),
         ),
         Case(
             "knowledge_repos",
