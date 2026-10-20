@@ -196,7 +196,7 @@ async def create_grant(
     await _enforce_code_ceiling(input.org, input.namespace, input.role)
     _enforce_principal_target(input.namespace, input.subject)
     async with _group_held(input.org, input.subject):
-        now = await _create_grant(input)
+        now = await _create_grant(input, may_replace)
     return GrantsCreateOutput(
         org=input.org,
         namespace=input.namespace,
@@ -206,7 +206,9 @@ async def create_grant(
     )
 
 
-async def _create_grant(input: GrantsCreateInput) -> datetime:
+async def _create_grant(
+    input: GrantsCreateInput, may_replace: Callable[[GrantState], None] | None
+) -> datetime:
     """`grants.create`'s write and what follows it; returns when it was granted."""
     # A human's grant is written under the login handle, so one person keeps one row
     # whichever spelling the granter typed; the downgrade guard reads that same row.
