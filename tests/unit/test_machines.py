@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from server.auth import agents, attempts, machines, oauth, oidc, revocation
+from server.core.errors import BackendUnavailableError
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
 pytestmark = pytest.mark.filterwarnings("default")
@@ -802,8 +803,8 @@ def test_overlapping_exchanges_refused_at_the_recount_spend_none_of_the_trusts(
 
     async def overlapping() -> list[Any]:
         # Three renewals of a1: each first count is read before any of them
-        # records, and each recount after all three have, so all three find
-        # room, all three record, and every recount finds a1 over its limit.
+        # records, so all three find room, all three record, and each recount
+        # runs after all three have recorded.
         together, calls = asyncio.Barrier(3), 0
 
         async def held(sql: str, params: Any = None) -> list[dict[str, Any]]:
@@ -824,9 +825,9 @@ def test_overlapping_exchanges_refused_at_the_recount_spend_none_of_the_trusts(
         finally:
             monkeypatch.setattr(auth_attempts, "query_all", count)
 
-    answers = [getattr(e, "status_code", 200) for e in asyncio.run(overlapping())]
-    # Every recount found a1 over; each one refused releases its rows, so the
-    # last to recount finds room. The refused ones are charged to no gate.
+    answers = [200 if r is None else r.status_code for r in asyncio.run(overlapping())]
+    # The first two recounts find a1 over and release their rows, so the last
+    # finds room. The refused ones are charged to no gate.
     assert answers == [429, 429, 200]
 
     def admitted(agent: str) -> bool:
@@ -839,3 +840,43 @@ def test_overlapping_exchanges_refused_at_the_recount_spend_none_of_the_trusts(
 
     # The trust's budget, less a1's one admitted renewal, is left for the others.
     assert [admitted(a) for a in ("a2", "a3", "a4")] == [True, True, False]
+
+
+def test_a_release_that_fails_leaves_the_exchange_charged(auth_attempts, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_agent", 1)
+    count, insert = auth_attempts.query_all, auth_attempts.insert
+    # Another replica's renewal of a1, recorded between this one's two counts,
+    # nearly out of the window.
+    other = {
+        "kind": "oauth.exchange.agent",
+        "key_sha256": attempts._digest("fleet:a1"),
+        "at": datetime.fromtimestamp(auth_attempts.now - 590, UTC).replace(tzinfo=None),
+    }
+    asyncio.run(insert("loom.auth_attempts", [other]))
+    first = True
+
+    async def racing(sql: str, params: Any = None) -> list[dict[str, Any]]:
+        nonlocal first
+        if first:  # read before the other replica's row landed
+            first = False
+            return []
+        return await count(sql, params)
+
+    async def no_release(table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        if any(r["kind"].endswith(".ok") for r in rows):
+            raise BackendUnavailableError("ClickHouse away")
+        await insert(table, rows, settings)
+
+    monkeypatch.setattr(auth_attempts, "query_all", racing)
+    monkeypatch.setattr(auth_attempts, "insert", no_release)
+    with pytest.raises(BackendUnavailableError):  # refused at its recount, then unreleased
+        asyncio.run(oauth._admit_exchange("fleet", "a1"))
+    monkeypatch.setattr(auth_attempts, "insert", insert)
+    # Once the other replica's row is out of the window, only this exchange's
+    # unreleased row is left, and it still counts: a1's next one is refused.
+    auth_attempts.now += 20
+    with pytest.raises(oauth.OAuthError) as refused:
+        asyncio.run(oauth._admit_exchange("fleet", "a1"))
+    assert refused.value.status_code == 429

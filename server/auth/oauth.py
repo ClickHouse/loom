@@ -1526,7 +1526,7 @@ async def _admit_exchange(trust: str, agent: str) -> None:
         gates.append((per_agent, f"{trust}:{agent}"))
     # Counted as `admit` counts a sign-in, never released once admitted: one
     # refused at its recount (renewals of one agent racing) is released under
-    # both gates, so it spends none of the trust's room.
+    # every gate it was counted under, so it spends none of the trust's room.
     try:
         async with slot():
             admitted = await admit(gates) is not None

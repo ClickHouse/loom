@@ -412,8 +412,8 @@ Past a limit the exchange is refused with 429 `temporarily_unavailable` and
 fails verification counts nowhere, so a caller without the issuer's key cannot spend a
 trust's budget, and an agent's loop cannot spend the trust's beyond its own limit: an
 exchange refused at the first count is not recorded, and one recorded then refused at its
-recount (renewals of one agent racing, on any replica) is released under both gates with
-an `.ok` row, as a sign-in is.
+recount (renewals of one agent racing, on any replica) is released under every gate it was
+counted under with an `.ok` row, as a sign-in is.
 Disabling a bot refuses later proofs and revokes its tokens; no refresh token exists to
 outlive it. The cutoffs an operator action writes (a bot replaced or disabled, an account
 adopted) sit in their own revocation row beside the subject's, so an outright revocation
