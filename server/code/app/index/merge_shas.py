@@ -15,15 +15,13 @@ from typing import Any
 
 from server.code.app.index import gitrepo
 from server.code.domain.index.blame_range import landed_pr_of, sha_text
+from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.merge_shas")
 
 SOURCE_STORED = "stored"
 SOURCE_MIRROR = "mirror"
 
-# The mirror search: one call, bounded by time and by the commits it prints
-LOG_TIMEOUT_S = 8.0
-MAX_LOG_COMMITS = 5000
 # Slack before the oldest candidate's merge time, for a ledger clock that drifts from the
 # committer time
 SINCE_SLACK_S = 7 * 86400
@@ -65,13 +63,13 @@ async def mirror_landed(
         "--format=%H%x09%s",
         "-E",
         f"--grep={grep_pattern(sorted(wanted))}",
-        f"--max-count={MAX_LOG_COMMITS}",
+        f"--max-count={settings.code_merge_shas_max_log_commits}",
     ]
     if since_unix > SINCE_SLACK_S:
         args.append(f"--since={since_unix - SINCE_SLACK_S}")
     args += [ref, "--"]
     try:
-        text = await gitrepo.run(git_dir, *args, timeout_s=LOG_TIMEOUT_S)
+        text = await gitrepo.run(git_dir, *args, timeout_s=settings.code_merge_shas_log_timeout_s)
     except gitrepo.GitError as e:
         logger.info("merge shas: mirror search failed (%s)", e)
         return {}

@@ -44,7 +44,6 @@ profile_set = Operation(
     output_model=ProfileMutationOutput,
     handler=handle_profile_set,
     idempotent=True,  # idempotent on (identity, label)
-    budget_p99_ms=30,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -57,7 +56,6 @@ profile_append = Operation(
     handler=handle_profile_append,
     # Not idempotent: a retry appends the addition twice.
     idempotent=False,
-    budget_p99_ms=80,  # 2-3 round-trips under contention
     required_role=Role.WRITER,
     audit=False,
 )
@@ -72,7 +70,6 @@ profile_replace = Operation(
     # the post-replace section is a no-op (old isn't there anymore →
     # SUBSTRING_NOT_FOUND, caller treats as "already done").
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -83,7 +80,6 @@ profile_render = Operation(
     output_model=ProfileRenderOutput,
     handler=handle_profile_render,
     idempotent=True,  # pure read
-    budget_p99_ms=60,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -94,7 +90,6 @@ profile_activity = Operation(
     output_model=ProfileActivityOutput,
     handler=handle_profile_activity,
     idempotent=True,  # pure read
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -106,7 +101,6 @@ profile_schema_set = Operation(
     output_model=ProfileSchemaOutput,
     handler=handle_profile_schema_set,
     idempotent=True,  # the same schema again changes nothing a reader sees
-    budget_p99_ms=100,  # one synchronous insert
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -118,7 +112,6 @@ profile_schema_get = Operation(
     output_model=ProfileSchemaOutput,
     handler=handle_profile_schema_get,
     idempotent=True,  # pure read
-    budget_p99_ms=50,  # one point read by (org, namespace)
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -130,7 +123,6 @@ profile_schema_clear = Operation(
     output_model=ProfileSchemaOutput,
     handler=handle_profile_schema_clear,
     idempotent=True,
-    budget_p99_ms=100,  # a point read, then one synchronous insert
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -142,7 +134,6 @@ profile_structured = Operation(
     output_model=ProfileStructuredOutput,
     handler=handle_profile_structured,
     idempotent=True,  # pure read, no model call
-    budget_p99_ms=60,  # the schema, the profile row and one user's digest aggregate
     required_role=Role.VIEWER,
     audit=False,
 )

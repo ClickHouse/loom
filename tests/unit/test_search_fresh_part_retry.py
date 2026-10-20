@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 from server.memory.app.retrieval import retry as M
+from server.settings import settings
 
 
 class _FreshPart(Exception):
@@ -21,7 +22,7 @@ class _FreshPart(Exception):
 async def test_side_leg_retries_the_empty_block_shape_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(M, "_EMPTY_BLOCK_RETRY_SLEEP_S", 0.0)
+    monkeypatch.setattr(settings, "memory_retrieval_empty_block_retry_sleep_s", 0.0)
     calls = {"n": 0}
 
     async def leg() -> list:
@@ -36,7 +37,7 @@ async def test_side_leg_retries_the_empty_block_shape_then_succeeds(
 
 @pytest.mark.asyncio
 async def test_side_leg_gives_up_after_the_retry_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(M, "_EMPTY_BLOCK_RETRY_SLEEP_S", 0.0)
+    monkeypatch.setattr(settings, "memory_retrieval_empty_block_retry_sleep_s", 0.0)
 
     async def leg() -> list:
         raise _FreshPart()
@@ -83,7 +84,7 @@ async def test_the_chunk_leg_retries_a_fresh_part_error_instead_of_dropping_the_
     from server.memory.app.retrieval.chunks import _search_memory_chunks
     from tests.unit.test_memory_search_service import StubCH, _q
 
-    monkeypatch.setattr(M, "_EMPTY_BLOCK_RETRY_SLEEP_S", 0.0)
+    monkeypatch.setattr(settings, "memory_retrieval_empty_block_retry_sleep_s", 0.0)
 
     class _FlakyCH(StubCH):
         n = 0
@@ -167,7 +168,7 @@ async def test_the_side_legs_retry_a_fresh_part_error_instead_of_dropping_the_le
     re-read and the leg still answers."""
     from tests.unit.test_memory_search_service import StubCH
 
-    monkeypatch.setattr(M, "_EMPTY_BLOCK_RETRY_SLEEP_S", 0.0)
+    monkeypatch.setattr(settings, "memory_retrieval_empty_block_retry_sleep_s", 0.0)
 
     class _FlakyCH(StubCH):
         n = 0
@@ -192,14 +193,14 @@ async def test_the_side_legs_retry_a_fresh_part_error_instead_of_dropping_the_le
     "make_error,calls",
     [
         (lambda: RuntimeError("Code: 241. DB::Exception: Memory limit exceeded"), 1),
-        (_FreshPart, 1 + M._EMPTY_BLOCK_RETRY_MAX),
+        (_FreshPart, 1 + settings.memory_retrieval_empty_block_retries),
     ],
     ids=["other_error", "exhausted_retries"],
 )
 async def test_the_side_legs_still_fail_open(
     monkeypatch: pytest.MonkeyPatch, leg, make_error, calls
 ) -> None:
-    monkeypatch.setattr(M, "_EMPTY_BLOCK_RETRY_SLEEP_S", 0.0)
+    monkeypatch.setattr(settings, "memory_retrieval_empty_block_retry_sleep_s", 0.0)
 
     class _BrokenCH:
         n = 0

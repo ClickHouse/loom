@@ -34,7 +34,7 @@ from server.memory.store.rows import next_version
 from server.settings import settings
 
 # A profile of 64 long properties is longer than a free-text section's default cap.
-STRUCTURED_CHAR_LIMIT = 32768
+STRUCTURED_CHAR_LIMIT = 32768  # not a setting: row bound, above what the output cap writes
 
 
 async def handle_profile_schema_set(input: ProfileSchemaSetInput) -> ProfileSchemaOutput:

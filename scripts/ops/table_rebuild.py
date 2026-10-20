@@ -97,7 +97,8 @@ DISK_HEADROOM = 1.1  # a second copy plus the parts merges write meanwhile
 _FREE_SPACE_SQL = (
     "SELECT sum(toFloat64(free_space)) FROM system.disks WHERE name IN ("
     "SELECT arrayJoin(disks) FROM system.storage_policies WHERE policy_name = ("
-    "SELECT storage_policy FROM system.tables WHERE database = 'loom' AND name = {t:String}))"
+    "SELECT storage_policy FROM system.tables "
+    "WHERE database = currentDatabase() AND name = {t:String}))"
 )
 
 
@@ -237,7 +238,8 @@ class Rebuild:
         return {
             str(r[0])
             for r in self.q(
-                "SELECT name FROM system.parts WHERE database = 'loom' AND table = {t:String} "
+                "SELECT name FROM system.parts "
+                "WHERE database = currentDatabase() AND table = {t:String} "
                 "AND active AND startsWith(name, 'patch')",
                 t=self.t,
             )
@@ -248,7 +250,7 @@ class Rebuild:
         cond = "create_time >= {s:DateTime}" if since is not None else "NOT is_done"
         return int(
             self.q(
-                "SELECT count() FROM system.mutations WHERE database = 'loom' "
+                "SELECT count() FROM system.mutations WHERE database = currentDatabase() "
                 f"AND table = {{t:String}} AND {cond}",
                 t=self.t,
                 **({"s": since} if since is not None else {}),
@@ -306,7 +308,7 @@ class Rebuild:
         size = int(
             self.q(
                 "SELECT sum(bytes_on_disk) FROM system.parts "
-                "WHERE database = 'loom' AND table = {t:String} AND active",
+                "WHERE database = currentDatabase() AND table = {t:String} AND active",
                 t=self.t,
             )[0][0]
             or 0

@@ -30,7 +30,6 @@ run_begin = Operation(
     handler=handle_run_begin,
     # Re-sending the same run_id replaces the row (RMT), never duplicates.
     idempotent=True,
-    budget_p99_ms=150,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -42,7 +41,6 @@ run_complete = Operation(
     handler=handle_run_complete,
     # Re-completing appends usage events again; callers complete once.
     idempotent=False,
-    budget_p99_ms=800,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -53,7 +51,6 @@ run_get = Operation(
     output_model=RunGetOutput,
     handler=handle_run_get,
     idempotent=True,
-    budget_p99_ms=300,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -64,7 +61,6 @@ run_list = Operation(
     output_model=RunListOutput,
     handler=handle_run_list,
     idempotent=True,
-    budget_p99_ms=200,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -77,7 +73,6 @@ run_grade = Operation(
     handler=handle_run_grade,
     # A regrade with the same verdict and source changes nothing.
     idempotent=True,
-    budget_p99_ms=800,
     required_role=Role.WRITER,
     audit=True,
 )

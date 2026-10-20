@@ -533,12 +533,14 @@ def test_a_conflict_verdict_names_only_peers_inside_the_scope() -> None:
 def test_two_asks_filtered_to_different_users_never_share_a_precedent() -> None:
     from server.memory.api.models_ask import MemoryAskInput
     from server.memory.app.ask.handler import ask_shape_sha256
+    from server.settings import settings
 
     set_current_auth(None)
 
     def shape(**kw: Any) -> str:
         return ask_shape_sha256(
-            MemoryAskInput(org="o", namespace="n", agent="a", query="who holds the key?", **kw)
+            MemoryAskInput(org="o", namespace="n", agent="a", query="who holds the key?", **kw),
+            settings,
         )
 
     assert shape(user_id="u1") != shape(user_id="u2")

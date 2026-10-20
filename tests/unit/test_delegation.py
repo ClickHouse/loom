@@ -679,7 +679,7 @@ async def test_ttl_days_rounds_up(world) -> None:
 def test_the_revocation_stale_limit_must_exceed_the_refresh_interval() -> None:
     from pydantic import ValidationError
 
-    from server.settings._auth import AuthSettings
+    from server.settings.catalog import AuthSettings
 
     with pytest.raises(ValidationError, match="MAX_STALE"):
         AuthSettings(jwt_revocation_cache_ttl_seconds=60, jwt_revocation_max_stale_seconds=60)

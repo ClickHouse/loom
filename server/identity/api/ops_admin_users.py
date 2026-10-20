@@ -16,7 +16,6 @@ admin_users = Operation(
     output_model=AdminUsersOutput,
     handler=handle_admin_users,
     idempotent=True,
-    budget_p99_ms=300,
     required_role=Role.ORG_ADMIN,
     audit=False,
     # Caller is platform/org admin — namespace-level grants don't apply.

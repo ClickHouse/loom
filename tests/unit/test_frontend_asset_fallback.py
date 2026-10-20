@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from server.core.ch import current_query_tag
+from server.settings import settings
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("LOOM_SKIP_APP_IMPORT") == "1", reason="app import disabled"
@@ -191,7 +192,7 @@ async def test_a_failed_first_round_is_retried_before_the_warm_up_completes(
     from server.storage import frontend_assets
 
     (tmp_path / "a-11111111.js").write_bytes(b"a")
-    monkeypatch.setattr(frontend_assets, "_RETRY_S", 0.01)
+    monkeypatch.setattr(settings, "storage_frontend_assets_retry_s", 0.01)
     rounds: list[int | None] = [None, None, 1]
 
     async def _publish(assets_dir: Path, **_: Any) -> int | None:

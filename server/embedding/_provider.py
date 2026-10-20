@@ -39,8 +39,13 @@ def vector(values: Iterable[Any], width: int | None) -> list[float]:
 
 
 def retrying() -> AsyncRetrying:
-    """Three attempts, backoff capped at 10 s."""
-    return _retry.retrying(attempts=3, max_wait_s=10)
+    """`embedding_retry_attempts` attempts, backoff capped at `embedding_retry_max_wait_s`."""
+    from server.settings import settings
+
+    return _retry.retrying(
+        attempts=settings.embedding_retry_attempts,
+        max_wait_s=settings.embedding_retry_max_wait_s,
+    )
 
 
 class _TokenEncoder(Protocol):

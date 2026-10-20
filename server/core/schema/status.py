@@ -7,7 +7,7 @@ the leader step). `schema.ledger_only` — ledger entries no file in this build
 carries: the code is behind the service, or a file was renamed.
 
 One `SELECT filename FROM loom._migrations FINAL` per process per
-`TTL_SECONDS`; the health probe runs every few seconds and the answer
+`schema_status_ttl_s`; the health probe runs every few seconds and the answer
 changes at a deploy. Never raises: an unreadable ledger reports `error`.
 """
 
@@ -25,8 +25,7 @@ from server.core.schema.journal import (
     created_objects,
     sorted_migrations,
 )
-
-TTL_SECONDS = 60.0
+from server.settings import settings
 
 _cache: dict[str, Any] = {"at": 0.0, "value": None}
 
@@ -56,9 +55,11 @@ def compare(
     }
 
 
-async def schema_status(*, ttl_s: float = TTL_SECONDS, now: float | None = None) -> dict[str, Any]:
+async def schema_status(*, ttl_s: float | None = None, now: float | None = None) -> dict[str, Any]:
     """{pending, ledger_only, applied} (+ `error` when the ledger is
     unreadable), cached per process for `ttl_s`."""
+    if ttl_s is None:
+        ttl_s = settings.schema_status_ttl_s
     t = time.monotonic() if now is None else now
     cached = _cache["value"]
     if cached is not None and t - float(_cache["at"]) < ttl_s:

@@ -561,6 +561,8 @@ async def test_grounding_hop_tags_code_search_and_code_symbol_as_memory_ask(
         memory_ask_code_org="",
         code_org="o",
         memory_ask_code_hop_symbols=0,
+        memory_ask_code_symbol_token_budget=400,
+        memory_ask_code_search_token_budget=1400,
     )
     await g._inject_code_context("what does FooBar do", inp, st)
     assert g.GROUNDING_CONSUMER == "memory.ask"

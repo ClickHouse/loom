@@ -29,16 +29,14 @@ from server.core.errors import ValidationError
 from server.memory.domain import record_constraints
 from server.memory.domain.record_values import FIELD_RE, coerce_record_value
 
-# The field cap memory_schema.register puts on a typed record.
-MAX_PROPERTIES = 64
-MAX_SCHEMA_BYTES = 16384
-MAX_DESCRIPTION_CHARS = 500
-MAX_ENUM_VALUES = 64
+MAX_PROPERTIES = 64  # not a setting: wire bound, matches memory_schema.register's field cap
+MAX_SCHEMA_BYTES = 16384  # not a setting: wire bound on profile_schema.set's input
+MAX_DESCRIPTION_CHARS = 500  # not a setting: schema bound, each description is prompt text
+MAX_ENUM_VALUES = 64  # not a setting: schema bound, each value is prompt text
 # An array property holds at most this many items unless it says fewer.
-MAX_ITEMS = 50
+MAX_ITEMS = 50  # not a setting: schema bound on a stored profile's arrays
 SCALAR_TYPES = ("string", "number", "integer", "boolean")
-# The integers a profile stores: what a JSON reader takes for an exact integer.
-MAX_SAFE_INTEGER = 2**53 - 1
+MAX_SAFE_INTEGER = 2**53 - 1  # not a setting: JSON's exact-integer range
 
 _SCHEMA_KEYS = {"type", "properties", "title", "description", "additionalProperties"}
 # The keywords of an array's items, and with `description` of a scalar property. `title`

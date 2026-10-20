@@ -84,7 +84,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
         users = [u for u in _USERS if u not in kw["skip"] and u not in kw["refused"]]
         return [Behind(u, "d1", 0) for u in users[: kw["limit"]]]
 
-    async def build(schema: w.ActiveSchema, user_id: str, cfg: Any) -> int | None:
+    async def build(schema: w.ActiveSchema, user_id: str) -> int | None:
         key = (schema.org, schema.namespace, user_id)
         if key in state["fail"]:
             raise ValueError("the profile model's answer is not a JSON object")
@@ -97,6 +97,12 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     monkeypatch.setattr(profile_schemas, "list_active", list_active)
     monkeypatch.setattr(profile_sources, "users_behind", users_behind)
     monkeypatch.setattr(w, "build_profile", build)
+    # Registered so the test's own value (set by `_cfg`) is undone after it.
+    monkeypatch.setattr(
+        settings,
+        "structured_profile_max_users_per_pass",
+        settings.structured_profile_max_users_per_pass,
+    )
     yield state
     w._backoff.clear()
     w._namespace_backoff.clear()
@@ -106,7 +112,9 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
 
 
 def _cfg(budget: int, only: tuple[str, str] | None = None) -> w.StructuredProfileConfig:
-    return w.StructuredProfileConfig(max_users_per_pass=budget, only=only)
+    """A pass of `budget` users; the `world` fixture restores the setting."""
+    settings.structured_profile_max_users_per_pass = budget
+    return w.StructuredProfileConfig(only=only)
 
 
 def _spaces_built(built: list[tuple[str, str, str]]) -> list[tuple[str, str]]:
@@ -169,8 +177,8 @@ async def test_a_pass_stopped_between_users_builds_no_more(
     ctx = pass_context.begin("structured_profile")
     real_build = w.build_profile
 
-    async def build_then_stop(schema: w.ActiveSchema, user_id: str, cfg: Any) -> int | None:
-        out = await real_build(schema, user_id, cfg)
+    async def build_then_stop(schema: w.ActiveSchema, user_id: str) -> int | None:
+        out = await real_build(schema, user_id)
         ctx.stopped.set()  # the supervisor stops the pass after this build
         return out
 
@@ -310,7 +318,7 @@ async def test_a_fact_erased_while_the_model_ran_stops_the_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     written = _one_user(monkeypatch, {"m1"})  # m2 erased during the model call
-    assert await w.build_profile(_ONE, "u1", w.StructuredProfileConfig()) is None
+    assert await w.build_profile(_ONE, "u1") is None
     assert written == []
 
 
@@ -327,7 +335,7 @@ async def test_a_build_writes_its_label_tags_and_sources(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(schema_app, "write_section", write_section)
     monkeypatch.setattr(settings, "structured_profile_label", "my_profile")
-    assert await w.build_profile(_ONE, "u1", w.StructuredProfileConfig()) == 0
+    assert await w.build_profile(_ONE, "u1") == 0
     (mset,) = sections
     assert (mset.memory_key, mset.memory_type, mset.agent, mset.value) == (
         "my_profile",
@@ -351,7 +359,7 @@ async def test_a_profile_already_current_is_not_built_again(
         "tags": ["profile_schema:" + "h" * 16, "profile_sources:d1", "profile_count:2"],
     }
     written = _one_user(monkeypatch, {"m1", "m2"}, existing=current)
-    assert await w.build_profile(_ONE, "u1", w.StructuredProfileConfig()) is None
+    assert await w.build_profile(_ONE, "u1") is None
     assert written == []
 
 
@@ -367,7 +375,7 @@ async def test_a_pinned_profile_is_refused_before_the_model_call(
 
     monkeypatch.setattr(w, "_ask", no_call)
     with pytest.raises(w.Refused) as e:
-        await w.build_profile(_ONE, "u1", w.StructuredProfileConfig())
+        await w.build_profile(_ONE, "u1")
     assert (e.value.digest, e.value.profile_version) == ("d1", 7) and written == []
 
 
@@ -382,7 +390,7 @@ async def test_a_write_the_row_refuses_is_a_refusal_carrying_the_digest(
 
     monkeypatch.setattr(schema_app, "write_structured_profile", refuse)
     with pytest.raises(w.Refused) as e:
-        await w.build_profile(_ONE, "u1", w.StructuredProfileConfig())
+        await w.build_profile(_ONE, "u1")
     assert (e.value.digest, e.value.profile_version) == ("d1", 0)
 
 
@@ -413,9 +421,7 @@ async def test_the_configured_model_answers(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(w.llm_client, "get_llm_client_for_model", for_model)
     monkeypatch.setattr(w, "emit_worker_cost_event_for", lambda **kw: None)
     with customer.for_org("o"):
-        answer = await w._ask(
-            "o", "n", _PROPS, "- [2026-01-01] My tz is UTC.", w.StructuredProfileConfig()
-        )
+        answer = await w._ask("o", "n", _PROPS, "- [2026-01-01] My tz is UTC.")
     assert asked == ["profile-model"] and answer == {"tz": "My tz is UTC"}
 
 
@@ -441,7 +447,7 @@ async def test_what_the_write_answers_decides_refusal_or_failure(
 
     monkeypatch.setattr(schema_app, "write_structured_profile", answer)
     with pytest.raises(w.Refused if refused else HTTPException):
-        await w.build_profile(_ONE, "u1", w.StructuredProfileConfig())
+        await w.build_profile(_ONE, "u1")
 
 
 @pytest.mark.asyncio

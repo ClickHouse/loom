@@ -723,7 +723,7 @@ async def test_an_edit_waits_out_the_configured_cooldown(
 
     built_users: list[str] = []
 
-    async def build(schema: Any, user_id: str, cfg: Any) -> int:
+    async def build(schema: Any, user_id: str) -> int:
         built_users.append(user_id)
         return 0
 
@@ -753,7 +753,7 @@ async def test_a_build_reads_at_most_the_configured_number_of_facts(
     monkeypatch.setattr(settings, "structured_profile_memory_limit", 1)
     read: list[str] = []
 
-    async def ask(org: str, ns: str, props: Any, facts: str, cfg: Any) -> dict[str, Any]:
+    async def ask(org: str, ns: str, props: Any, facts: str) -> dict[str, Any]:
         read.append(facts)
         return {}
 
@@ -763,7 +763,7 @@ async def test_a_build_reads_at_most_the_configured_number_of_facts(
     monkeypatch.setattr(w, "_ask", ask)
     monkeypatch.setattr(schema_app, "write_structured_profile", write)
     schema = w.ActiveSchema("o", "n", ps.parse(_schema(tz=_TZ)), _SHA)
-    assert await w.build_profile(schema, "u1", w.StructuredProfileConfig()) == 0
+    assert await w.build_profile(schema, "u1") == 0
     assert read == ["- [2026-01-03] My timezone is Tokyo."]  # _DAY2
 
 
@@ -811,7 +811,7 @@ async def test_the_scan_runs_under_the_configured_memory_cap(
     monkeypatch.setattr(settings, "structured_profile_scan_max_memory_bytes", 1024)
     w._namespace_backoff.clear()
     result = w.StructuredProfileResult()
-    assert await w._scan(_active(), w.StructuredProfileConfig(), result, 1) is None
+    assert await w._scan(_active(), result, 1) is None
     # Past the cap the scan fails, is counted, and the namespace backs off.
     assert result.errors == 1 and ("o", "n", _SHA) in w.namespaces_waiting()
     w._namespace_backoff.clear()
@@ -834,7 +834,7 @@ async def test_the_scan_runs_under_the_configured_timeout(monkeypatch: pytest.Mo
     monkeypatch.setattr(src, "_default_client", lambda: _Timed())
     monkeypatch.setattr(settings, "structured_profile_scan_timeout_seconds", 7)
     w._scans.pop(("o", "n"), None)
-    await w._scan(_active(), w.StructuredProfileConfig(), w.StructuredProfileResult(), 1)
+    await w._scan(_active(), w.StructuredProfileResult(), 1)
     w._scans.pop(("o", "n"), None)
     assert seen == [7]
 
@@ -853,7 +853,6 @@ async def test_the_scan_runs_under_the_configured_timeout(monkeypatch: pytest.Mo
         {"structured_profile_backoff_cap_seconds": 0},
         {"structured_profile_refusal_retry_seconds": 0},
         {"structured_profile_scan_max_age_seconds": 0},
-        {"structured_profile_max_tokens": 0},
     ],
 )
 def test_a_structured_profile_setting_below_its_floor_is_refused(
@@ -861,7 +860,7 @@ def test_a_structured_profile_setting_below_its_floor_is_refused(
 ) -> None:
     from pydantic import ValidationError as PydanticError
 
-    from server.settings._memory import MemorySettings
+    from server.settings.catalog import MemorySettings
 
     with pytest.raises(PydanticError):
         MemorySettings(**below_floor)

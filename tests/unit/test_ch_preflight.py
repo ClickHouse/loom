@@ -571,11 +571,11 @@ def test_a_user_who_may_not_create_the_reader_gets_the_admin_sql(
 
 def test_the_doctor_fails_where_boot_could_not_create_the_database() -> None:
     class NoCreate(FakeCH):
-        def command(self, sql: str) -> Any:
+        def command(self, sql: str, **kwargs: Any) -> Any:
             if sql.startswith("CHECK GRANT CREATE DATABASE"):
                 self.ran.append(sql)
                 return 0
-            return super().command(sql)
+            return super().command(sql, **kwargs)
 
     with pytest.raises(preflight.PreflightError) as e:
         preflight.check(NoCreate(database=False), need="server", create_database=False)
@@ -584,13 +584,13 @@ def test_the_doctor_fails_where_boot_could_not_create_the_database() -> None:
 
 def test_a_database_another_worker_created_meanwhile_is_not_a_failure() -> None:
     class Raced(FakeCH):
-        def command(self, sql: str) -> Any:
+        def command(self, sql: str, **kwargs: Any) -> Any:
             if sql.startswith("CREATE DATABASE"):
                 self.database = True  # the other worker won
                 raise RuntimeError(
                     "Code: 341. DB::Exception: Database loom was created by another replica"
                 )
-            return super().command(sql)
+            return super().command(sql, **kwargs)
 
     preflight.check(Raced(database=False), need="server")
 

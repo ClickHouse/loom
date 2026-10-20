@@ -21,6 +21,8 @@ dependencies = [
   "uvicorn[standard]>=0.30",
   "pydantic>=2.9",
   "pydantic-settings>=2.5",
+  # The YAML settings file (server/settings/_file.py); uvicorn[standard] pulls it in too.
+  "pyyaml>=6.0",
   "clickhouse-connect>=1.7", # older ones drop milliseconds (<1.2) or bind a naive datetime as local time
   "aiohttp>=3.10",           # clickhouse-connect's async client requires it
   "httpx[http2]>=0.27",

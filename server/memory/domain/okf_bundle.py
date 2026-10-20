@@ -74,7 +74,7 @@ _WINDOWS_DEVICES = frozenset(
 )
 _RESERVED_NAMES = frozenset(f.casefold() for f in RESERVED_FILES)
 # The longest file or directory name slug: a filesystem refuses a name over 255 bytes.
-_MAX_SLUG_BYTES = 160
+_MAX_SLUG_BYTES = 160  # not a setting: a bundle's file names must fit every filesystem
 # Directory names a bundle reader skips or treats as something other than concepts: the
 # evidence and digest planes (okf_evidence.EVIDENCE_DIRS), the lint's staging area, and
 # tooling directories. A memory type that slugs to one of them is written under `type-<slug>`.

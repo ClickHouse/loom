@@ -31,7 +31,6 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-LINK_TTL = 86400
 _MIN_LENGTH, _MAX_LENGTH = 8, 256  # as self-signup asks
 
 # The SSO accounts (no password) naming an email, active, in one org.
@@ -64,7 +63,7 @@ async def make_link(email: str, accounts: list[dict[str, Any]], *, by: str) -> s
             "namespaces": namespaces,
             "by": by,
         },
-        ttl=LINK_TTL,
+        ttl=settings.password_link_ttl_seconds,
     )
     await audit.emit(
         "auth.password_link_made",

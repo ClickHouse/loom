@@ -62,7 +62,7 @@ async def verify(model: str, dimensions: int) -> None:
     assert code["width"] == dimensions and code["content"] == "def greet(): return 42"
     assert code["start_line"] == 1
     copies = await client.query_one(
-        "SELECT count() AS n FROM system.tables WHERE database='loom' "
+        "SELECT count() AS n FROM system.tables WHERE database = currentDatabase() "
         "AND startsWith(name, '_provider_rebuild_')"
     )
     assert copies is not None and copies["n"] == 0, copies

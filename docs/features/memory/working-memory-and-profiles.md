@@ -193,7 +193,8 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   behind (fewer than it asked for) is not repeated before then once drained, so a
   namespace is scanned at most once per that age while nobody else is behind. A user
   whose build failed (a model error, an answer that is not a JSON object, including one
-  cut off at `LOOM_STRUCTURED_PROFILE_MAX_TOKENS`, 2048) is skipped for
+  cut off at its 2048-token cap, the `structured_profile` entry of
+  `LOOM_LLM_MAX_TOKENS_OVERRIDES`) is skipped for
   `LOOM_STRUCTURED_PROFILE_BACKOFF_BASE_SECONDS` (300), doubling up to
   `LOOM_STRUCTURED_PROFILE_BACKOFF_CAP_SECONDS` (21600), and tried again after. A
   namespace whose scan or stored schema fails is counted and backs off the same way until
@@ -203,8 +204,7 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   unpin, an unlock), or `LOOM_STRUCTURED_PROFILE_REFUSAL_RETRY_SECONDS` (21600) pass, so
   a lock that lapses on its own is retried. Both waits are kept by the worker's process
   and start over when another process takes the worker lease. A pass that finds nothing
-  to build
-  waits `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` (600) before the next.
+  to build waits `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` (600) before the next.
 - **Erasure.** A build writes nothing when a fact it read is no longer current once the
   model has answered (erased or deleted while it ran). That narrows the window in which a
   profile could land above an erasure; one that does is a live row the erasure saga's

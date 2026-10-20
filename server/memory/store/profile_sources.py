@@ -259,8 +259,8 @@ async def users_behind(
         "refused": sorted(refused),
         "label": label,
         "schema_tag": schema_tag(schema_sha256),
-        "cool": max(0, cooldown_seconds),
-        "lim": max(1, limit) + len(refused),
+        "cool": cooldown_seconds,
+        "lim": limit + len(refused),
     }
     # join_use_nulls = 0: a user missing from one side reads '' / 0 / [], so
     # `NOT has(p.tags, ...)` is true for a user with no profile, never NULL.
@@ -301,4 +301,4 @@ async def users_behind(
     # A refused user comes back once their digest or their profile row moved on
     # (an unpin, an unlock, an edit).
     behind = [b for b in behind if refused.get(b.user_id) != (b.digest, b.profile_version)]
-    return behind[: max(1, limit)]
+    return behind[:limit]

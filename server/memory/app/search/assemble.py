@@ -82,7 +82,7 @@ def _ledger_key_axis(ctx: Any, input: Any, settings_obj: Any) -> None:
         ka_mode = settings_obj.memory_search_key_axis
         if ka_mode == "auto":
             first_ns = str(list(ctx.namespaces)[0]) if ctx.namespaces else ""
-            decided = key_axis_auto_cached(input.org, first_ns)
+            decided = key_axis_auto_cached(input.org, first_ns, settings_obj)
             if decided is not None:
                 ctx.actual_work["key_axis"] = "on" if decided[0] else "off"
                 ctx.actual_work["key_axis_reused_share"] = round(float(decided[1]), 3)

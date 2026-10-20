@@ -31,7 +31,7 @@ import logging
 import math
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
@@ -54,6 +54,7 @@ from server.memory.store.profile_sources import Behind
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 from server.workers import pass_context
 from server.workers.cost_event import emit_worker_cost_event_for
 from server.workers.status import record_pass
@@ -132,22 +133,6 @@ class Refused(Exception):
 
 @dataclass
 class StructuredProfileConfig:
-    # Read when the config is built (each pass), not when this module is imported.
-    max_users_per_pass: int = field(
-        default_factory=lambda: settings.structured_profile_max_users_per_pass
-    )
-    memory_limit: int = field(default_factory=lambda: settings.structured_profile_memory_limit)
-    cooldown_seconds: int = field(
-        default_factory=lambda: settings.structured_profile_cooldown_seconds
-    )
-    scan_timeout_seconds: int = field(
-        default_factory=lambda: settings.structured_profile_scan_timeout_seconds
-    )
-    scan_max_memory_bytes: int = field(
-        default_factory=lambda: settings.structured_profile_scan_max_memory_bytes
-    )
-    label: str = field(default_factory=lambda: settings.structured_profile_label)
-    model: str = field(default_factory=lambda: settings.structured_profile_model)
     # (org, namespace): build only there (a test's own namespace); None reaches every one.
     only: tuple[str, str] | None = None
 
@@ -288,14 +273,13 @@ def _cursor() -> tuple[str, str] | None:
 async def _build_users(
     schema: ActiveSchema,
     users: list[str],
-    cfg: StructuredProfileConfig,
     result: StructuredProfileResult,
 ) -> None:
     for user_id in users:
         pass_context.check_stop()
         key = (schema.org, schema.namespace, user_id)
         try:
-            dropped = await build_profile(schema, user_id, cfg)
+            dropped = await build_profile(schema, user_id)
         except customer.HOLDS:
             continue  # a held call is no failure: the user is built once the org is back
         except Refused as e:
@@ -344,7 +328,6 @@ def _take(schema: ActiveSchema, limit: int) -> list[str] | None:
 
 async def _scan(
     schema: ActiveSchema,
-    cfg: StructuredProfileConfig,
     result: StructuredProfileResult,
     limit: int,
 ) -> list[str] | None:
@@ -360,14 +343,14 @@ async def _scan(
         behind = await profile_sources.users_behind(
             org=schema.org,
             namespace=schema.namespace,
-            label=cfg.label,
+            label=settings.structured_profile_label,
             schema_sha256=schema.sha256,
-            cooldown_seconds=cfg.cooldown_seconds,
+            cooldown_seconds=settings.structured_profile_cooldown_seconds,
             limit=asked,
             skip=backing_off(schema.org, schema.namespace),
             refused=refused_at(schema.org, schema.namespace),
-            timeout_seconds=cfg.scan_timeout_seconds,
-            max_memory_bytes=cfg.scan_max_memory_bytes,
+            timeout_seconds=settings.structured_profile_scan_timeout_seconds,
+            max_memory_bytes=settings.structured_profile_scan_max_memory_bytes,
         )
     except Exception as e:  # one namespace's scan must not stop the pass
         result.errors += 1
@@ -401,7 +384,7 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
     with record_pass("structured_profile") as rec:
         _prune()
         off = sorted(await customer.switched_off_orgs())
-        budget = max(1, cfg.max_users_per_pass)
+        budget = settings.structured_profile_max_users_per_pass
         # Every namespace reached can build at least once, so a pass reaches at most `budget`.
         # A namespace backing off (its scan or its schema failed) waits like a user does,
         # left out in SQL so the limit counts only namespaces this pass can run.
@@ -427,20 +410,20 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
             # is tried again when the rotation comes back to it, never on every pass.
             pass_context.set_cursor(json.dumps([schema.org, schema.namespace]))
             limit = min(share, budget)
-            users = await _scan(schema, cfg, result, limit)
+            users = await _scan(schema, result, limit)
             if users is None:
                 continue
             budget -= len(users)
             if len(users) == limit:
                 hungry.append(schema)
-            await _build_users(schema, users, cfg, result)
+            await _build_users(schema, users, result)
         for schema in hungry:
             if budget <= 0:
                 break
             pass_context.check_stop()
             users = _take(schema, budget) or []
             budget -= len(users)
-            await _build_users(schema, users, cfg, result)
+            await _build_users(schema, users, result)
         if not result.profiles_written and not result.errors:
             pass_context.mark_idle()
         rec.outcome = dataclasses.asdict(result)
@@ -455,9 +438,7 @@ def _refuses_a_write(row: dict[str, Any] | None) -> bool:
     return bool(row.get("pinned")) or "value" in lock.REFUSES.get(mode, frozenset())
 
 
-async def build_profile(
-    schema: ActiveSchema, user_id: str, cfg: StructuredProfileConfig
-) -> int | None:
+async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
     """Build and write one user's profile; returns how many of the model's values
     broke the schema and were stored as null, or None when nothing was written: the
     profile was already current, or a fact the build read stopped being a current
@@ -471,7 +452,11 @@ async def build_profile(
         org=org, namespace=ns, user_id=user_id, scope=WHOLE_NAMESPACE
     )
     existing = await profile_sources.profile_row(
-        org=org, namespace=ns, user_id=user_id, label=cfg.label, scope=WHOLE_NAMESPACE
+        org=org,
+        namespace=ns,
+        user_id=user_id,
+        label=settings.structured_profile_label,
+        scope=WHOLE_NAMESPACE,
     )
     profile_version = int(existing["version"]) if existing else 0
     if existing and profile_sources.is_current(existing["tags"], schema.sha256, digest):
@@ -483,7 +468,7 @@ async def build_profile(
         namespace=ns,
         user_id=user_id,
         types=profile_sources.STRUCTURED_TYPES,
-        limit=cfg.memory_limit,
+        limit=settings.structured_profile_memory_limit,
         scope=WHOLE_NAMESPACE,
     )
     # An unlabelled row holding a credential is never sent to the model either.
@@ -493,7 +478,7 @@ async def build_profile(
     answer: Any = {}
     with customer.for_org(org), pipeline_actor(WORKER_ACTOR):
         if facts:
-            answer = await _ask(org, ns, schema.props, facts, cfg)
+            answer = await _ask(org, ns, schema.props, facts)
         # A fact the model read that is no longer current (erased or deleted while it
         # ran) stops the write: this narrows the window in which a profile could land
         # above an erasure, and the erasure saga's census fails closed on one that does.
@@ -509,7 +494,7 @@ async def build_profile(
                 org=org,
                 namespace=ns,
                 user_id=user_id,
-                label=cfg.label,
+                label=settings.structured_profile_label,
                 value=profile,
                 schema_sha256=schema.sha256,
                 sources_digest=digest,
@@ -533,23 +518,21 @@ async def _ask(
     ns: str,
     props: list[profile_schema.ProfileProperty],
     facts: str,
-    cfg: StructuredProfileConfig,
 ) -> Any:
     started = time.monotonic()
     # Bind an accumulator so this worker's spend is visible.
     cost_accumulator.begin_op()
     try:
         with llm_stage("structured_profile"):
+            model = settings.structured_profile_model
             client = (
-                llm_client.get_llm_client_for_model(cfg.model)
-                if cfg.model
-                else llm_client.get_llm_client()
+                llm_client.get_llm_client_for_model(model) if model else llm_client.get_llm_client()
             )
             out = await client.complete(
                 system=system_prompt(props),
                 # The facts are what agents wrote: data, never instructions.
                 user=fence("facts", facts, new_nonce(facts)),
-                max_tokens=settings.structured_profile_max_tokens,
+                max_tokens=llm_max_tokens("structured_profile"),
                 response_format={"type": "json_object"},
             )
     finally:

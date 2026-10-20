@@ -168,7 +168,7 @@ async def test_a_failed_warm_up_listing_is_retried(monkeypatch) -> None:
         mirrors._LISTED.set()
 
     monkeypatch.setattr(mirrors, "warm_up", _warm_up)
-    monkeypatch.setattr(mirrors, "_WARMUP_RETRY_S", 0.0)
+    monkeypatch.setattr(settings, "code_mirror_warmup_retry_s", 0.0)
     monkeypatch.setattr(settings, "code_mirror_warmup", True)
     monkeypatch.setattr(settings, "code_mirror_fetch_interval_s", 0.0)
     await mirrors._run()

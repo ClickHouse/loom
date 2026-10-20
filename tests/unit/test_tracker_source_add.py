@@ -609,3 +609,20 @@ async def test_a_later_version_row_keeps_the_registration_time(_cfg, monkeypatch
     assert after["user"] == "loom_ro2"
     assert after["created_at"] == registered
     assert after["updated_at"] == later
+
+
+@pytest.mark.asyncio
+async def test_a_check_slower_than_its_timeout_says_unreachable(monkeypatch) -> None:
+    import asyncio
+
+    from server.settings import settings
+
+    async def _slow(sql, params=None, *, credential="qa", **kw):
+        await asyncio.sleep(5)
+        return []
+
+    monkeypatch.setattr(qi, "query_rows", _slow)
+    monkeypatch.setattr(settings, "tracker_source_check_timeout_s", 0.05)
+    reports.reset_for_tests()
+    out = await handle_tracker_source_check(TrackerSourceCheckInput(org=ORG, name="qa"))
+    assert not out.reachable and out.contract["ok"] is None

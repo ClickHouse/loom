@@ -88,6 +88,20 @@ def test_a_link_sets_the_password_once_and_links_the_account(world) -> None:
     assert len(world["rows"]) == 1
 
 
+def test_a_link_lives_for_the_configured_time(world, monkeypatch) -> None:
+    ttls: list[int] = []
+    save = oauth.store.save_pending
+
+    async def _save(key: str, value: dict[str, Any], *, ttl: int) -> None:
+        ttls.append(ttl)
+        await save(key, value, ttl=ttl)
+
+    monkeypatch.setattr(oauth.store, "save_pending", _save)
+    monkeypatch.setattr(oauth.settings, "password_link_ttl_seconds", 600)
+    _code()
+    assert ttls == [600]
+
+
 def test_a_short_or_mistyped_password_keeps_the_link(world) -> None:
     c, code = TestClient(oauth_app()), _code()
     assert _set(c, code, "short").status_code == 400
@@ -174,3 +188,14 @@ def test_a_spend_that_fails_after_the_write_keeps_the_sso_link_and_its_audit(
     assert _set(c, code, "correct horse").status_code == 400
     assert len(world["rows"]) == 1
     assert [e for e, _ in world["events"]].count("auth.password_set") == 1
+
+
+def test_the_cli_says_how_long_a_link_lives() -> None:
+    from server.cli.sso import _duration
+
+    assert [_duration(s) for s in (86400, 7 * 86400, 21600, 2700)] == [
+        "1 day",
+        "7 days",
+        "6 h",
+        "45 min",
+    ]

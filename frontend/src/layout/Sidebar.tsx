@@ -4,10 +4,10 @@ import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "../components/IconButton";
 import { Tip } from "../components/ui/Tooltip";
 import { useStore, viewHref, type View } from "../lib/state";
-import { countConflicts, countNewAgents } from "../api";
+import { countConflicts, countNewAgents, type WhoAmI } from "../api";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
 import { sharedBudgetStatus } from "../lib/sharedReads";
-import { hasOrgAdminClaim, isNamespaceAdmin } from "../lib/role";
+import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../lib/role";
 import { roleOnNamespace } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
 import { isMemoryNamespace } from "../lib/namespace";
@@ -51,10 +51,10 @@ export interface NavItem {
   id: View;
   label: string;
   icon: IconName;
-  /** What the page is scoped by — the namespace picked in the header, or the whole org
-   *  (Repositories, Tasks). Read out in the item's tooltip so a namespace switch never
-   *  surprises. */
-  scope?: "namespace" | "org";
+  /** What the page is scoped by — the namespace picked in the header, the whole org
+   *  (Repositories, Tasks), or the whole deployment (Deployment settings). Read out in the
+   *  item's tooltip so a namespace switch never surprises. */
+  scope?: "namespace" | "org" | "deployment";
   badge?: number;
   // Tone steers the dot's color so a warning (over-cap) reads
   // differently from a neutral count (review queue). Number >= 999
@@ -155,24 +155,43 @@ export const ADMIN_BASE: NavItem[] = ADMIN_GROUPS.flatMap((g) => g.items);
  * filed there under a stable non-prefixed id (Flow). The drawer opens on a deep link to
  *  any of them. */
 export function isDrawerView(v: View): boolean {
-  return v.startsWith("admin:") || ADMIN_BASE.some((i) => i.id === v) || ADMIN_OPERATOR_ONLY.some((i) => i.id === v);
+  return (
+    v.startsWith("admin:") ||
+    ADMIN_BASE.some((i) => i.id === v) ||
+    [...ADMIN_OPERATOR_ONLY, ...ADMIN_PLATFORM_ONLY].some((i) => i.id === v)
+  );
 }
 
 // Operator-only items — shown only when the caller's JWT carries
 // PLATFORM_ADMIN / ORG_ADMIN. The Users view is the most-load-bearing
 // of these (you can't manage who has access without seeing the list).
 export const ADMIN_OPERATOR_ONLY: NavItem[] = [{ id: "admin:users", label: "Users", icon: "users", scope: "org" }];
+/** Platform-admin-only items: the deployment's own settings, which apply to every org and
+ *  which `/v1/admin/settings.*` serves to a platform admin alone. */
+export const ADMIN_PLATFORM_ONLY: NavItem[] = [
+  { id: "admin:settings", label: "Deployment settings", icon: "settings", scope: "deployment" },
+];
 /** The drawer's Access group: operator entries, shown to platform / org admins. */
 const ACCESS_GROUP: NavGroup = { label: "Access", items: ADMIN_OPERATOR_ONLY };
+const DEPLOYMENT_GROUP: NavGroup = { label: "Deployment", items: ADMIN_PLATFORM_ONLY };
+
+/** The operator entries the caller's claims open: Users for an org or platform admin,
+ *  Deployment settings for a platform admin. */
+export function operatorItems(whoami: WhoAmI | null): NavItem[] {
+  return [
+    ...(hasOrgAdminClaim(whoami) ? ADMIN_OPERATOR_ONLY : []),
+    ...(hasPlatformAdminClaim(whoami) ? ADMIN_PLATFORM_ONLY : []),
+  ];
+}
 
 /** The drawer items a caller may see, in their groups — Review queue leads Review while
- *  there is something to review; the operator-only Access group only for platform / org
- *  admins. */
+ *  there is something to review; the Access group only for platform / org admins, the
+ *  Deployment group only for platform admins. */
 export function groupAdminItems(visible: NavItem[]): NavGroup[] {
   const byId = new Map(visible.map((i) => [i.id, i] as const));
   const out: NavGroup[] = [];
   const review = byId.get("admin:review_queue");
-  for (const g of [...ADMIN_GROUPS, ACCESS_GROUP]) {
+  for (const g of [...ADMIN_GROUPS, ACCESS_GROUP, DEPLOYMENT_GROUP]) {
     const items = g.items.map((i) => byId.get(i.id)).filter((i): i is NavItem => !!i);
     if (g.label === "Review" && review) items.unshift(review);
     if (items.length > 0) out.push({ label: g.label, items });
@@ -200,7 +219,7 @@ export function Sidebar() {
   // Operator-only items (Users, which reads admin.users) get appended for an ORG_ADMIN /
   // PLATFORM_ADMIN claim. Auth-disabled dev mode shows them too (the operator IS the user).
   const whoami = useStore((s) => s.whoami);
-  const adminBase = hasOrgAdminClaim(whoami) ? [...ADMIN_BASE, ...ADMIN_OPERATOR_ONLY] : ADMIN_BASE;
+  const adminBase = [...ADMIN_BASE, ...operatorItems(whoami)];
   // The drawer is for admins of the current namespace (an admin grant from list_mine, or
   // an admin claim), so a viewer never sees an entry with a 403 behind it.
   const myNamespaces = useStore((s) => s.myNamespaces);
@@ -500,6 +519,7 @@ function GroupLabel({ children }: { children: string | null }) {
 /** The scope read-out for an item's tooltip / title. */
 export function scopeHint(item: NavItem): string {
   if (item.scope === "org") return "across every namespace";
+  if (item.scope === "deployment") return "for every org on this Loom";
   if (item.scope === "namespace") return "in the namespace picked above";
   return "";
 }
