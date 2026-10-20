@@ -140,27 +140,18 @@ async def _make_title(
             "tombstoned_at": None,
         }
     if refused:
-        new_row["metadata"] = _with_title_refused(str(new_row["metadata"]))
+        new_row["metadata"] = json.dumps({**_metadata(new_row["metadata"]), "title_refused": True})
     await conversation_repo.insert_thread(new_row)
     return not refused
 
 
-def _with_title_refused(metadata: str) -> str:
-    """The thread's metadata with `title_refused` set, which `titler_candidates` and the
-    pass's own re-check skip."""
+def _metadata(raw: object) -> dict[str, Any]:
+    """A thread's metadata JSON as a dict; `{}` when it is empty or not a JSON object."""
     try:
-        meta = json.loads(metadata or "{}")
+        meta = json.loads(str(raw or "{}"))
     except ValueError:
-        meta = {}
-    return json.dumps({**(meta if isinstance(meta, dict) else {}), "title_refused": True})
-
-
-def _title_refused(stored: ThreadInsertRow) -> bool:
-    try:
-        meta = json.loads(str(stored.get("metadata") or "{}"))
-    except ValueError:
-        return False
-    return isinstance(meta, dict) and meta.get("title_refused") is True
+        return {}
+    return meta if isinstance(meta, dict) else {}
 
 
 async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationTitlerResult:
@@ -202,7 +193,8 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
                     result.skipped_deleted += 1
                     continue
                 if existing is not None and (
-                    str(existing.get("title") or "").strip() or _title_refused(existing)
+                    str(existing.get("title") or "").strip()
+                    or _metadata(existing.get("metadata")).get("title_refused") is True
                 ):
                     result.skipped_titled += 1
                     continue

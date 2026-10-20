@@ -47,16 +47,12 @@ def _wait(predicate: Callable[[], bool], *, timeout: float = 20.0) -> None:
     wait_until(predicate, max_wait=timeout, interval=0.5)
 
 
-@pytest.fixture(scope="module")
-def token() -> str:
-    from server.auth.jwt import mint_token
-
-    return mint_token(
-        subject="raw-evidence",
+@pytest.fixture
+def token(mint_test_token) -> str:
+    return mint_test_token(
         org=ORG,
         namespaces=[NS_CHUNKS, NS_LEGACY, NS_DIGEST, NS_TURNS, NS_SAVED, NS_TIE, NS_CUT],
         roles=["admin", "writer"],  # admin: conversation.set_logging
-        ttl_seconds=600,
     )
 
 
