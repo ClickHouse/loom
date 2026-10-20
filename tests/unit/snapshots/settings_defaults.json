@@ -896,6 +896,7 @@
  "sensitivity_sweep_enabled": true,
  "sensitivity_sweep_interval_seconds": 86400,
  "sensitivity_sweep_max_rows_per_pass": 500,
+ "sensitivity_sweep_pages_per_pass": 10,
  "sensitivity_sweep_shapes": "credential,email",
  "sensitivity_sweep_window_days": 2,
  "serves_traffic": true,

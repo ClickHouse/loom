@@ -215,7 +215,7 @@ async def scan(
     namespace: str | None = None,
     since_days: int | None = None,
     limit: int = 20000,
-    pages: int | None = 1,
+    pages: int | None,
     only_shapes: Iterable[str] | None = None,
     ch: _CHClient | None = None,
 ) -> SweepReport:

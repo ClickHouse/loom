@@ -169,12 +169,12 @@ async def test_scan_labels_exactly_as_the_write_path_would() -> None:
             _mem("4", "the secret of a good stew is time"),  # coarse hit, detector says ''
         ]
     )
-    report = await sweep.scan(org="clickhouse", namespace="demo-full", since_days=2, ch=ch)
+    report = await sweep.scan(org="clickhouse", namespace="demo-full", since_days=2, pages=1, ch=ch)
     assert report.scanned == 4 and len(report.candidates) == 3 and not report.truncated
     assert report.by_level == {"high": 1, "medium": 2}
     assert report.by_shape == {"credential": 1, "email": 1, "phone": 1}
     assert report.by_namespace()[("clickhouse", "demo-full")] == {"high": 1, "medium": 2}
-    narrowed = await sweep.scan(only_shapes=["credential", "email"], ch=ch)
+    narrowed = await sweep.scan(only_shapes=["credential", "email"], pages=1, ch=ch)
     assert narrowed.by_shape == {"credential": 1, "email": 1}  # the phone-only row is skipped
     sql, params = ch.calls[0]
     assert "sensitivity = ''" in sql and "match(value, {shape:String})" in sql
@@ -340,7 +340,7 @@ async def test_a_pass_pages_past_selected_rows_it_leaves_unlabelled(monkeypatch)
     from server.settings import settings
 
     ch = _local_memory(_spin_rows_then_a_pin(5))
-    one_page = await sweep.scan(since_days=2, limit=2, ch=ch)  # type: ignore[arg-type]
+    one_page = await sweep.scan(since_days=2, limit=2, pages=1, ch=ch)  # type: ignore[arg-type]
     assert one_page.truncated and one_page.candidates == []
     applied: list[Any] = []
 
