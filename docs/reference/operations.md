@@ -333,6 +333,8 @@ Fields for every `grants` op: [operations/grants.md](operations/grants.md).
 | [`grants.list`](operations/grants.md#grantslist) | List active grants on a namespace — who has access, at which role. | viewer | read | yes |  |
 | [`grants.pending_for_me`](operations/grants.md#grantspending_for_me) | Every pending request in the namespaces the caller administers, in one statement. | viewer | read | no |  |
 | [`grants.revoke`](operations/grants.md#grantsrevoke) | Remove a subject's grant on a namespace. | admin | idempotent | no | yes |
+| [`grants.share_agent`](operations/grants.md#grantsshare_agent) | Let another agent of the caller's trust read, or write, the caller's own namespace. | writer | idempotent | no | yes |
+| [`grants.unshare_agent`](operations/grants.md#grantsunshare_agent) | Take back what the caller lent another agent of its trust. | writer | idempotent | no | yes |
 
 ### inbox
 

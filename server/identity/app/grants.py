@@ -92,15 +92,22 @@ async def _enforce_code_ceiling(org: str, namespace: str, role: str) -> None:
         raise ValidationError(ceiling, code="ROLE_CEILING")
 
 
-async def _refuse_accidental_downgrade(input: GrantsCreateInput, subject: str) -> GrantState | None:
+async def _refuse_accidental_downgrade(
+    input: GrantsCreateInput,
+    subject: str,
+    may_replace: Callable[[GrantState], None] | None = None,
+) -> GrantState | None:
     """The grants table replaces on (org, namespace, subject), so a `viewer` create for a
     current `admin` would lower them silently; this guard refuses that. Returns the
     subject's current active row (or None) so the write can carry
     its pending request forward; raises 409 when the requested role is below
-    the current one and the caller did not say `replace=true`."""
+    the current one and the caller did not say `replace=true`. `may_replace`
+    runs on that row first, so its refusal is the one a caller sees."""
     existing = await grants_repo.find_active_grant(input.org, input.namespace, subject)
     if existing is None:
         return None
+    if may_replace is not None:
+        may_replace(existing)
     current = existing.role
     if grant_rank(current) > grant_rank(input.role) and not input.replace:
         from server.core.errors import GrantWouldDowngradeError
@@ -137,7 +144,14 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     always active (the admin is the approver),
     so no approval step. A pending elevation the new role does not satisfy
     is carried forward; one it satisfies is answered by the grant."""
+    return await create_grant(input)
 
+
+async def create_grant(
+    input: GrantsCreateInput, may_replace: Callable[[GrantState], None] | None = None
+) -> GrantsCreateOutput:
+    """`grants.create`; `may_replace` raises for a live row this caller must
+    not write over, checked on the row read under the grant's claim."""
     await _enforce_code_ceiling(input.org, input.namespace, input.role)
     # A human's grant is written under the login handle, so one person keeps one row
     # whichever spelling the granter typed; the downgrade guard reads that same row.
@@ -146,14 +160,14 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     subject = await canonical_subject(input.org, input.subject)
 
     async def _write(_row: GrantState | None) -> datetime:
-        return await _write_grant(input, subject)
+        return await _write_grant(input, subject, may_replace)
 
     if input.replace and input.role != "admin":
         # Only `replace=true` lowers a grant (else 409): it may take admin.
         now = await _taking_admin(input, subject, _write, lowered_to=input.role)
     else:
         async with grant_change(input.org, input.namespace, subject):
-            now = await _write_grant(input, subject)
+            now = await _write_grant(input, subject, may_replace)
     if input.role == "admin":
         # A maintainer maintains every branch of the repository.
         from server.code.app.index import maintainers
@@ -168,10 +182,14 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     )
 
 
-async def _write_grant(input: GrantsCreateInput, subject: str) -> datetime:
+async def _write_grant(
+    input: GrantsCreateInput,
+    subject: str,
+    may_replace: Callable[[GrantState], None] | None = None,
+) -> datetime:
     """`grants.create`'s read of the current grant and its write, under the
     grant's claim."""
-    existing = await _refuse_accidental_downgrade(input, subject)
+    existing = await _refuse_accidental_downgrade(input, subject, may_replace)
     if existing is not None and _active_admin(existing) and input.role != "admin":
         await _refuse_last_admin(input)
     pending_role = existing.pending_role if existing is not None else None
@@ -287,13 +305,27 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     Refuses to revoke a namespace's last active admin — that would leave it
     ownerless; promote a replacement first.
     """
+    return await revoke_grant(input)
 
+
+async def revoke_grant(
+    input: GrantsRevokeInput, may_take: Callable[[GrantState], None] | None = None
+) -> GrantsRevokeOutput:
+    """`grants.revoke`; `may_take` raises for a row this caller must not
+    revoke, checked before any change and again on the row read under the
+    grant's claim."""
     subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
     if row is None:
         return GrantsRevokeOutput(revoked=False)
+    if may_take is not None:
+        may_take(row)
 
     async def _write(row: GrantState | None) -> tuple[GrantState, datetime] | None:
-        return None if row is None else (row, await _write_revoke(input, subject, row))
+        if row is None:
+            return None
+        if may_take is not None:
+            may_take(row)
+        return row, await _write_revoke(input, subject, row)
 
     done = None
     if not _active_admin(row):
