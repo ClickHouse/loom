@@ -62,7 +62,7 @@ Approve or reject a pending learning.
 | --- | --- | --- |
 | `candidate_id` | `str` | The candidate, echoed. |
 | `new_status` | `Literal['pending', 'promoted', 'rejected']` | The status the candidate holds after this call. |
-| `promoted_to_shared` | `bool` | True when this call wrote the memory destination: `loom.shared` for a supporters candidate, a namespace memory row for a seeder one. |
+| `promoted_to_shared` | `bool` | True when this call wrote the memory destination: `loom.shared` for a supporters candidate, a namespace memory row for a seeder one, the agent's memory for every user (`user_id` '-') for an `assistant_turn` one. |
 | `promoted_to_knowledge` | `bool` | True when this call upserted the candidate as a knowledge document. |
 | `knowledge_source_uri` | `str` | source_uri the knowledge doc was upserted under (for later knowledge.delete). |
 | `decided_at` | `datetime` | When this call ran (UTC), also on a repeat that changed nothing. |

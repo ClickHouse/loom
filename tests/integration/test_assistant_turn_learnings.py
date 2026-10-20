@@ -341,3 +341,79 @@ async def test_erasing_the_only_supporter_of_a_rejected_rule_keeps_the_rejection
     # The same rule stated again does not come back as pending.
     _converse(base_url, tok, org, ns, "dave", "s2")
     assert _listed(base_url, tok, org, ns) == []
+
+
+@pytest.mark.asyncio
+async def test_a_user_erasure_saga_runs_the_learnings_step_and_reopens_it_from_residue(
+    base_url: str, token: tuple[str, str], ch: Any
+) -> None:
+    """The whole user saga: the learnings step runs among the user steps and is
+    checkpointed, the census is clean, and a resumed saga whose last census found
+    learnings residue runs that step again though it was checkpointed."""
+    import json
+
+    from server.erasure.api.erasure import ErasureRequestInput
+    from server.erasure.app.saga import begin_erasure, run_saga
+    from server.erasure.app.saga_steps import USER_STEPS
+
+    org, tok = token
+    ns = f"bot-{uuid.uuid4().hex[:8]}"
+    _converse(base_url, tok, org, ns, "alice", "s1")
+    _converse(base_url, tok, org, ns, "bob", "s2")
+
+    request = ErasureRequestInput(
+        org=org, scope_type="user_id", scope_value="alice", requester="it"
+    )
+    request, row, erasure_id, now = await begin_erasure(request)
+    out = await run_saga(
+        input=request, row=row, erasure_id=erasure_id, requested_at=now, previously_completed=set()
+    )
+    assert out.status == "completed" and out.residue_count == 0, out.residue
+    ran = [s.step for s in out.steps]
+    assert ran.index("memory.tombstone") < ran.index("learnings_queue.delete")
+    assert ran.index("learnings_queue.delete") < ran.index("verify.residue")
+    assert "learnings_queue.delete" in out.steps_completed
+    assert [name for name, _ in USER_STEPS].count("learnings_queue.delete") == 1
+    (cand,) = _listed(base_url, tok, org, ns)
+    assert cand["rationale"] == _rationale("bob")
+    assert await _raw(ch, "loom.learnings_supporters", org, "user_id = 'alice'") == []
+
+    # Residue the checkpointed step left (a candidate nobody backs still holding
+    # its rule): the resumed saga reopens exactly the steps that own it.
+    stray = str(uuid.uuid4())
+    await ch.insert(
+        "loom.learnings_queue",
+        [
+            {
+                "candidate_id": stray,
+                "org": org,
+                "namespace": ns,
+                "agent": _AGENT,
+                "memory_key": "assistant_rule_stray",
+                "memory_type": "semantic",
+                "proposed_value": json.dumps("The assistant does a stray thing."),
+                "supporter_count": 0,
+                "confidence_avg": 1.0,
+                "supporters": [],
+                "rationale": "",
+                "source_kind": "assistant_turn",
+                "status": "pending",
+                "version": 1,
+            }
+        ],
+        settings={"async_insert": 0, "wait_for_async_insert": 1},
+    )
+    again = await run_saga(
+        input=request,
+        row=row,
+        erasure_id=erasure_id,
+        requested_at=now,
+        previously_completed=set(out.steps_completed),
+        residue={"loom.learnings_queue": 1},
+    )
+    assert again.status == "completed" and again.residue_count == 0, again.residue
+    by_step = {s.step: s for s in again.steps}
+    assert "skipped" not in by_step["learnings_queue.delete"].notes
+    assert "skipped" in by_step["memory.tombstone"].notes
+    stray_rows = await _raw(ch, "loom.learnings_queue", org, "candidate_id = {cid:UUID}", cid=stray)
+    assert stray_rows == []
