@@ -76,8 +76,11 @@ class _TTLCache:
             if not failed:
                 self._value = v
             # Stamped on failure too, so a down CH is re-probed at the TTL
-            # cadence — not with a new thread on every 3s export.
-            self._fetched_at = time.monotonic()
+            # cadence — not with a new thread on every 3s export. A census
+            # skipped off the lease took no reading: the next read on the lease
+            # refreshes at once (reads off it start no refresh).
+            skipped = v is None and not failed
+            self._fetched_at = 0.0 if skipped else time.monotonic()
             self._refreshing = False
 
     def get(self) -> Any:

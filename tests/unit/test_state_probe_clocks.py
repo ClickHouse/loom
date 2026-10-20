@@ -243,6 +243,50 @@ def test_a_handoff_stops_the_old_holders_series_at_once(monkeypatch: pytest.Monk
     assert not cache._refreshing
 
 
+def test_a_refresh_skipped_off_the_lease_leaves_the_next_census_due(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.workers import leader
+
+    calls: list[float] = []
+    now = [1000.0]
+    monkeypatch.setattr(metrics_gauges.time, "monotonic", lambda: now[0])
+
+    def probe() -> Any:
+        calls.append(now[0])
+        return {"agent_trust_agents": [(3.0, {})]}
+
+    cache = _census_cache(monkeypatch, probe)
+    cache._refresh()  # the holder's census at t=1000
+    # A refresh started on the lease runs after it is lost; no read sees that state.
+    monkeypatch.setattr(leader, "_CURRENT", _lease(False))
+    now[0] = 1301.0
+    cache._refresh()
+    # The lease comes back: the census is taken at once, not at t=1601.
+    monkeypatch.setattr(leader, "_CURRENT", _lease(True))
+    now[0] = 1320.0
+    cache.get()
+    _drain(cache)
+    assert calls == [1000.0, 1320.0]
+    assert _observed(cache, "agent_trust_agents") == [3.0]
+
+
+def test_a_failed_census_waits_out_the_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[float] = []
+    now = [1000.0]
+    monkeypatch.setattr(metrics_gauges.time, "monotonic", lambda: now[0])
+
+    def probe() -> Any:
+        calls.append(now[0])
+        raise RuntimeError("ClickHouse away")
+
+    cache = _census_cache(monkeypatch, probe)
+    cache._refresh()
+    now[0] = 1010.0
+    cache.get()
+    assert not cache._refreshing and calls == [1000.0]
+
+
 def test_a_process_back_on_the_lease_takes_its_census_at_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
