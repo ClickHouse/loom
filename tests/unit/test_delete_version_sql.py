@@ -1242,8 +1242,10 @@ async def test_a_delete_that_cannot_record_its_check_deletes_nothing(
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
 
+    from server.core.errors import BackendUnavailableError
+
     monkeypatch.setattr(memory_repo, "record_delete_check", _times_out)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(BackendUnavailableError):
         await hm.handle_memory_delete_version(
             MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
         )
@@ -1607,14 +1609,17 @@ async def test_a_check_whose_tombstone_is_missing_finishes_the_delete(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["the tombstone insert", "the check after it"])
+@pytest.mark.parametrize(
+    "failure", ["the check record", "the tombstone insert", "the check after it", "a retry"]
+)
 async def test_a_503_writes_its_audit_row_and_the_worker_none(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    # The transport audits only a call that succeeds. A call that answers 503 writes its
-    # own row, outcome `deferred`, as the transport would name it; the worker that later
-    # finishes the delete writes none, so the call has exactly one.
-    from server.auth import context as auth_context
+    # The transport audits only a call that succeeds. A call that answers the deferred 503
+    # writes its own row, outcome `deferred`, as the transport would name it; a retry that
+    # answers it again is its own call with its own row. The worker that later finishes
+    # the delete writes none.
+    from server.core.errors import BackendUnavailableError
     from server.core.logging_config import request_id_var
     from server.memory.workers import delete_version_check
     from server.observability import audit
@@ -1627,25 +1632,43 @@ async def test_a_503_writes_its_audit_row_and_the_worker_none(
         return ""
 
     monkeypatch.setattr(audit, "emit", record)
-    monkeypatch.setattr(auth_context, "current_auth", lambda: SimpleNamespace(subject="okf"))
+    monkeypatch.setattr(hm, "current_auth", lambda: SimpleNamespace(subject="okf"))
     rid = request_id_var.set("rid-1")
     try:
-        if failure == "the tombstone insert":
+        if failure == "the check record":
+            head = time.time_ns() - 10_000_000_000
+            await ch.insert("loom.memory", [_row("Tuesdays", head)])
+            with monkeypatch.context() as m:
+                m.setattr(memory_repo, "record_delete_check", _times_out)
+                with pytest.raises(BackendUnavailableError):
+                    await hm.handle_memory_delete_version(
+                        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+                    )
+        elif failure == "the tombstone insert":
             head, _commit_late = await _tombstone_held_back(ch, monkeypatch)
         else:
             head = await _owed_after_a_failed_check(ch, monkeypatch)
+        if failure == "a retry":
+            with monkeypatch.context() as m:
+                m.setattr(hm, "_key_moved_on", _times_out)
+                with pytest.raises(BackendUnavailableError):
+                    await hm.handle_memory_delete_version(
+                        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+                    )
     finally:
         request_id_var.reset(rid)
-    ((event, row),) = emitted
-    assert event == "memory.delete_version"
-    assert (row["actor"], row["request_id"]) == ("okf", "rid-1")
+    calls = 2 if failure == "a retry" else 1
+    assert len(emitted) == calls
     expected = MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head).model_dump(
         mode="json"
     )
-    assert row["subject"] == {**expected, "outcome": "deferred"}
+    for event, row in emitted:
+        assert event == "memory.delete_version"
+        assert (row["actor"], row["request_id"]) == ("okf", "rid-1")
+        assert row["subject"] == {**expected, "outcome": "deferred"}
     monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
-    assert await delete_version_check.run_pass() == 1
-    assert len(emitted) == 1
+    await delete_version_check.run_pass()
+    assert len(emitted) == calls
 
 
 @pytest.mark.asyncio

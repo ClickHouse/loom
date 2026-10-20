@@ -632,73 +632,88 @@ async def handle_memory_delete_version(
         user_id=input.user_id,
         session_id=input.session_id,
     )
-    async with key_write_lock.key_write_locks.hold(
-        input.org,
-        input.namespace,
-        input.agent,
-        input.user_id,
-        input.session_id,
-        input.memory_key,
-    ):
-        existing = await memory_repo.get_by_key(
-            identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
+    try:
+        async with key_write_lock.key_write_locks.hold(
+            input.org,
+            input.namespace,
+            input.agent,
+            input.user_id,
+            input.session_id,
+            input.memory_key,
+        ):
+            return await _delete_version_locked(input, identity)
+    except _DeleteDeferred:
+        # Written once the key lock is released: the insert may wait out the same outage.
+        await _audit_deferred(input)
+        raise
+
+
+async def _delete_version_locked(
+    input: MemoryDeleteVersionInput, identity: Any
+) -> MemoryDeleteVersionOutput:
+    """`handle_memory_delete_version` under the key lock."""
+    import server.memory.store as memory_repo
+
+    existing = await memory_repo.get_by_key(
+        identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
+    )
+    if existing is None:
+        # A retry of a delete of this version whose check is owed (it answered 503)
+        # runs the check now and answers as the delete would have.
+        check = await memory_repo.find_delete_check(
+            input.org,
+            input.namespace,
+            input.agent,
+            input.user_id,
+            input.session_id,
+            input.memory_key,
+            checked=int(input.version),
         )
-        if existing is None:
-            # A retry of a delete of this version whose check is owed (it answered 503)
-            # runs the check now and answers as the delete would have.
-            check = await memory_repo.find_delete_check(
-                input.org,
-                input.namespace,
-                input.agent,
-                input.user_id,
-                input.session_id,
-                input.memory_key,
-                checked=int(input.version),
-            )
-            if check is not None and not check["done"]:
-                try:
-                    answer = await rerun_delete_check(check)
-                except Exception as e:  # still owed: the next retry or the worker runs it
-                    await _audit_deferred(input)
-                    raise _check_deferred(e) from e
-                if answer is not None:
-                    return answer
-            return MemoryDeleteVersionOutput(tombstoned=False, found=False)
-        if existing.version != input.version:
-            return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
-        _lock.assert_unlocked(existing, "delete", op="memory.delete_version")
-        assert_own_row(existing, op="memory.delete_version")
-        version = next_version()
-        # The check this delete owes after its tombstone, recorded first: when the check
-        # cannot run now, a retry or the delete_version_check worker runs it, so a write it
-        # would have found is never left under the tombstone. A failure here deletes nothing.
-        check = {
-            "org": existing.org,
-            "namespace": existing.namespace,
-            "agent": existing.agent,
-            "user_id": existing.user_id,
-            "session_id": existing.session_id,
-            "memory_key": existing.memory_key,
-            "checked": int(input.version),
-            "tombstone": version,
-        }
+        if check is not None and not check["done"]:
+            try:
+                answer = await rerun_delete_check(check)
+            except Exception as e:  # still owed: the next retry or the worker runs it
+                raise _check_deferred(e) from e
+            if answer is not None:
+                return answer
+        return MemoryDeleteVersionOutput(tombstoned=False, found=False)
+    if existing.version != input.version:
+        return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
+    _lock.assert_unlocked(existing, "delete", op="memory.delete_version")
+    assert_own_row(existing, op="memory.delete_version")
+    version = next_version()
+    # The check this delete owes after its tombstone, recorded first: when the check
+    # cannot run now, a retry or the delete_version_check worker runs it, so a write it
+    # would have found is never left under the tombstone. A record whose insert failed
+    # leaves nothing to run, but one that timed out can still commit: it answers the
+    # same 503, and a retry or the worker finishes that delete.
+    check = {
+        "org": existing.org,
+        "namespace": existing.namespace,
+        "agent": existing.agent,
+        "user_id": existing.user_id,
+        "session_id": existing.session_id,
+        "memory_key": existing.memory_key,
+        "checked": int(input.version),
+        "tombstone": version,
+    }
+    try:
         await memory_repo.record_delete_check(check, done=False)
-        try:
-            await _write_tombstone_row(
-                existing, version=version, trace=delete_version_trace(input.version)
-            )
-            return await finish_delete_check(existing, check)
-        except Exception as e:  # the check is recorded: a retry or the worker runs it
-            await _audit_deferred(input)
-            raise _check_deferred(e) from e
+        await _write_tombstone_row(
+            existing, version=version, trace=delete_version_trace(input.version)
+        )
+        return await finish_delete_check(existing, check)
+    except Exception as e:  # a retry or the worker runs the recorded check
+        raise _check_deferred(e) from e
 
 
 async def _audit_deferred(input: MemoryDeleteVersionInput) -> None:
-    """The op's audit row for a call that answers 503. The transport writes one only for a
-    call that succeeds, and the delete may stand once a retry or the worker runs its check:
-    the row names the call as the transport would, its outcome `deferred`. The worker that
-    finishes it writes none, so each call has one row. Never raises."""
-    from server.auth.context import current_auth
+    """The op's audit row for a call that answers the deferred 503. The transport writes one
+    only for a call that succeeds, and the delete may stand once a retry or the worker runs
+    its check: the row names the call as the transport would, its outcome `deferred`. The
+    worker that finishes it writes none; a retry is its own call with its own row. Best
+    effort, as every audit row is (it goes to the ClickHouse that just failed). Never
+    raises."""
     from server.core.logging_config import request_id_var
     from server.observability import audit
 
@@ -707,18 +722,22 @@ async def _audit_deferred(input: MemoryDeleteVersionInput) -> None:
         "memory.delete_version",
         org=input.org,
         namespace=input.namespace,
-        actor=str(getattr(auth, "subject", "") or "anonymous"),  # the transport's actor
+        actor=auth.subject if auth is not None else "anonymous",
         subject={**input.model_dump(mode="json"), "outcome": "deferred"},
         request_id=request_id_var.get() or "",
     )
 
 
-def _check_deferred(e: Exception) -> BackendUnavailableError:
+class _DeleteDeferred(BackendUnavailableError):
+    """The 503 of a delete that did not finish; its recorded check stays owed."""
+
+
+def _check_deferred(e: Exception) -> _DeleteDeferred:
     """The 503 of a delete that did not finish (its tombstone or the check after it
     failed); the recorded check stays owed."""
     degradations.note("memory.delete_version", "check_deferred", e)
     log.warning("memory.delete_version: the delete did not finish: %s", e)
-    return BackendUnavailableError(
+    return _DeleteDeferred(
         "the delete did not finish; its check is recorded, and a retry or the background "
         "worker finishes it"
     )

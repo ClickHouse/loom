@@ -367,25 +367,28 @@ afterwards to retire them once more if a delete or a write landed in between. A
 it, as two racing `memory.delete` calls can. Between the tombstone and a write back, the
 key reads as deleted, and a `memory.delete` in that window answers `found=false`. Before
 its tombstone the delete records the check it owes in `loom.delete_version_checks`, and
-marks it done once the check has run; if the record fails, nothing is deleted. If the
-tombstone's insert or the read after it fails, the delete answers 503 and retires nothing;
-the transport audits only a call that succeeds, so the 503 writes the op's audit row
-itself, outcome `deferred`, and the retry or worker that finishes it writes none for it. A
-check whose tombstone is not in the key's history (its insert failed) runs against a
-retry's tombstone of the same version when one committed, or writes one first when nothing
-came after the removed version, at a new version so the namespace's watermark moves, and
-then runs as after any tombstone: the delete finishes. When the key moved on, it writes
-nothing and answers `version_changed` (a live row) or `found=false` (another remover's
-tombstone). An insert that timed out can still commit late: every tombstone aimed at the
-same version (a late or retried insert, or a copy written back) is this same delete, so
-the check judges the newest version other than those, writes a live one back above all of
-them, and copies another remover's tombstone on top unless the newest of them already
-carries that row in the same sense. A retry of the same delete runs the owed check and
-answers as the delete would have (when the tombstone's insert is what failed, the retry
-finds the row live and deletes it again); otherwise the `delete_version_check` worker runs
-it under the key lock (`memory/workers/delete_version_check.py`), by default within about
-six minutes (a 60-second grace, then a pass at most 300 seconds later). Until the check
-runs, `memory.get` and the list ops read the key as deleted (as live, when the tombstone's
+marks it done once the check has run; if its insert fails, the call answers the same 503
+as below: nothing is deleted unless the insert committed anyway, and then a retry or the
+worker finishes the delete. If the tombstone's insert or the read after it fails, the
+delete answers 503 and retires nothing. The transport audits only a call that succeeds, so
+a 503 writes the op's audit row itself, outcome `deferred`, after the key lock is released
+and best effort like every audit row; the worker that finishes the delete writes none, and
+a retry is its own call with its own row. A check whose tombstone is not in the key's
+history (its insert failed) runs against a retry's tombstone of the same version when one
+committed, or writes one first when nothing came after the removed version, at a new
+version so the namespace's watermark moves, and then runs as after any tombstone: the
+delete finishes. When the key moved on, it writes nothing and answers `version_changed` (a
+live row) or `found=false` (another remover's tombstone). An insert that timed out can
+still commit late: every tombstone aimed at the same version (a late or retried insert, or
+a copy written back) is this same delete, so the check judges the newest version other
+than those, writes a live one back above all of them, and copies another remover's
+tombstone on top unless the newest of them already carries that row in the same sense. A
+retry of the same delete runs the owed check and answers as the delete would have (when
+the tombstone's insert is what failed, the retry finds the row live and deletes it again);
+otherwise the `delete_version_check` worker runs it under the key lock
+(`memory/workers/delete_version_check.py`), by default within about six minutes (a
+60-second grace, then a pass at most 300 seconds later). Until the check runs,
+`memory.get` and the list ops read the key as deleted (as live, when the tombstone's
 insert failed), search can still return the removed value from its vectors and chunks, and
 a write the tombstone hid is not served; it comes back when the check runs. A write that
 lands under such a tombstone, aimed at an older version, writes itself again above it.
