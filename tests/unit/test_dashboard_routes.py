@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.security_headers import assert_security_headers
+
 pytestmark = pytest.mark.skipif(
     os.environ.get("LOOM_SKIP_APP_IMPORT") == "1", reason="app import disabled"
 )
@@ -139,7 +141,8 @@ def test_page_paths_serve_the_dashboard(client, path: str) -> None:
     assert r.status_code == 200
     assert _PAGE_MARK in r.text and "window.__LOOM_AUTH_DISABLED" in r.text
     assert r.headers["cache-control"] == "no-store"
-    assert "nonce-" in r.headers["content-security-policy"]
+    [csp] = r.headers.get_list("content-security-policy")
+    assert "nonce-" in csp
 
 
 def test_assets_are_served_immutable(client) -> None:
@@ -165,3 +168,19 @@ def test_a_missing_build_answers_503_on_pages(client, tmp_path, monkeypatch) -> 
     monkeypatch.setattr(_assets_mount(app).app, "all_directories", [tmp_path / "absent/assets"])
     assert client.get("/memories").status_code == 503
     assert client.get("/assets/index-deadbeef.js").status_code == 404
+
+
+@pytest.mark.parametrize("path", ["/v1/whoami", "/", "/assets/index-deadbeef.js"])
+def test_api_page_and_asset_answers_carry_the_browser_security_headers(client, path: str) -> None:
+    r = client.get(path)
+    assert r.status_code == 200
+    assert_security_headers(r)
+
+
+def test_hsts_max_age_zero_sends_no_hsts(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "hsts_max_age_seconds", 0)
+    r = client.get("/v1/whoami")
+    assert "strict-transport-security" not in r.headers
+    assert r.headers["x-frame-options"] == "DENY"
