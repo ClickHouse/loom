@@ -60,10 +60,9 @@ _IDLE_POLL_S = 0.5
 async def _running(tables: list[str], database: str, client: _CHClient) -> int:
     queries = await client.query_one(
         "SELECT count() AS running FROM system.processes WHERE query_id != currentQueryID() "
-        "AND current_database = {database:String} "
         "AND arrayExists(name -> match(query, concat('(^|[^A-Za-z0-9_])', name, "
         "'([^A-Za-z0-9_]|$)')), {tables:Array(String)})",
-        {"tables": tables, "database": database},
+        {"tables": tables},
     )
     mutations = await client.query_one(
         "SELECT count() AS running FROM system.mutations WHERE database = {database:String} "

@@ -148,9 +148,16 @@ def test_carried_writers_are_this_schemas_alone(monkeypatch: pytest.MonkeyPatch)
     assert params["db"] == "acme-loom"
 
 
-@pytest.mark.parametrize("env", [{"ch_database": "default"}, {"ch_telemetry_database": "system"}])
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"ch_database": "default", "ch_telemetry_database": "x_telemetry"},
+        {"ch_database": "INFORMATION_SCHEMA", "ch_telemetry_database": "x_telemetry"},
+        {"ch_telemetry_database": "system"},
+    ],
+)
 def test_a_shared_database_is_refused(env: dict[str, str]) -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="must not be"):
         Settings(**env)
 
 

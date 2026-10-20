@@ -73,7 +73,7 @@ from typing import Any
 if (_ROOT := str(Path(__file__).resolve().parents[2])) not in sys.path:  # run as a file
     sys.path.insert(0, _ROOT)
 
-from server.core.ch_names import unqualify
+from server.core.ch_names import database, unqualify
 from server.core.schema import table_rebuild as tr
 from server.core.schema.table_rebuild import (
     ABORTED,
@@ -374,7 +374,8 @@ class VectorRebuild:
             return f"every replica must run one ClickHouse 26.7+; found {sorted(vers)}"
         self.q("SELECT 1", enable_quantized_codec=1)
         ro = self.q(
-            f"SELECT hostName(), is_readonly FROM {self.replicas('replicas')} WHERE database = currentDatabase() AND table='{self.t}'",
+            f"SELECT hostName(), is_readonly FROM {self.replicas('replicas')} "
+            f"WHERE database = '{database()}' AND table='{self.t}'",
             skip_unavailable_shards=1,
         )
         if any(r[1] for r in ro):
@@ -541,7 +542,8 @@ class VectorRebuild:
         while not stop.wait(60):
             try:
                 rep = mc.query(
-                    f"SELECT hostName(), is_readonly, is_session_expired FROM {self.replicas('replicas')} WHERE database = currentDatabase() AND table IN ('{self.t}','{self.twin}')",
+                    f"SELECT hostName(), is_readonly, is_session_expired FROM {self.replicas('replicas')} "
+                    f"WHERE database = '{database()}' AND table IN ('{self.t}','{self.twin}')",
                     settings={"skip_unavailable_shards": 1},
                 ).result_rows
                 prog = mc.query(

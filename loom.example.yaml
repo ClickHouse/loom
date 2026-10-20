@@ -43,7 +43,7 @@ settings:
   # paths move with it. Set it before the first migration: while a schema is in `loom`,
   # a name that does not exist, or holds tables but no Loom ledger, refuses to start
   # (create it empty to start a second schema). Letters, digits, `_` and `-`; never
-  # `default` or `system`. Read once at startup. [restart]
+  # `default`, `system` or `information_schema`. Read once at startup. [restart]
   # ch_database: "loom"
 
   # The database the telemetry Loom derives from its own tables lives in (`sli_minute`),

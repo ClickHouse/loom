@@ -272,7 +272,7 @@ so while a Loom schema exists in `loom`, a process refuses to start when the nam
 database does not exist or holds tables but no Loom ledger. To start a second schema on
 purpose, create its database empty first. A renamed schema names its own
 `LOOM_CH_TELEMETRY_DATABASE`. Names are letters, digits, `_` and `-`, and never
-`default` or `system`.
+`default`, `system` or `information_schema`.
 
 ### Identity and authentication
 

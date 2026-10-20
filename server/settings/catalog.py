@@ -517,7 +517,7 @@ class ClickHouseSettings(BaseModel):
     # KeeperMap paths move with it. Set it before the first migration: while a schema is
     # in `loom`, a name that does not exist, or holds tables but no Loom ledger, refuses
     # to start (create it empty to start a second schema). Letters, digits, `_` and `-`;
-    # never `default` or `system`. Read once at startup.
+    # never `default`, `system` or `information_schema`. Read once at startup.
     ch_database: Annotated[str, Field(pattern=_DATABASE_NAME)] = "loom"
     # The database the telemetry Loom derives from its own tables lives in
     # (`sli_minute`), outside the schema so a reader can be granted it alone. A schema
@@ -647,8 +647,10 @@ class ClickHouseSettings(BaseModel):
 
     @model_validator(mode="after")
     def _check_databases(self) -> ClickHouseSettings:
-        """Statements name `loom` and `loom_telemetry` and are mapped to these two;
-        a database named after the other alias would be mapped twice."""
+        """Statements name `loom` and `loom_telemetry` and are mapped to these two:
+        neither is a database the server or another application owns, they differ, a
+        database named after the other alias would be mapped twice, and a schema outside
+        `loom` names its own telemetry database."""
         for field in ("ch_database", "ch_telemetry_database"):
             if getattr(self, field).lower() in _SHARED_DATABASES:
                 raise ValueError(
