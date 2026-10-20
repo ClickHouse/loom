@@ -86,9 +86,11 @@ async def handle_grants_share_agent(input: GrantsShareAgentInput) -> GrantsShare
     m = await machines.get(trust)
     roles = {agents.home_of(subject): "writer", **dict(m["ns_roles"] if m else [])}
     extra = agents.lent(roles, await agents.granted(input.org, subject))
-    if input.namespace not in extra and len(extra) >= agents.MAX_LENT:
+    if input.namespace not in extra and (
+        agents.name_bytes([*extra, input.namespace]) > agents.LENT_NAME_BYTES
+    ):
         raise PreconditionFailedError(
-            f"agent {input.agent} holds {agents.MAX_LENT} namespaces already; "
+            f"agent {input.agent} holds as many lent namespaces as its token names; "
             "a namespace must be taken back first"
         )
     # Never lowering and never over someone else's grant: an agent lowers its

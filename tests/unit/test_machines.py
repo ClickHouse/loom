@@ -525,13 +525,26 @@ def test_a_lower_grant_leaves_the_trusts_role_for_the_gate_to_cap(bots) -> None:
     assert _agent_roles(bots)["docs"] == "writer"  # authz.claim_cap reads it as viewer
 
 
-def test_an_agents_token_names_at_most_its_limit_of_lent_namespaces(bots) -> None:
-    lent = [f"ns-{i:03}" for i in range(agents.MAX_LENT + 5)]
+def test_an_agents_token_names_lent_namespaces_while_their_names_fit(bots) -> None:
+    lent = [f"ns-{i:03}-" + "x" * 57 for i in range(30)]  # 64 bytes each
     bots["active"].update({"fleet-a1", *lent})
     bots["grants"]["sa:fleet:a1"] = {ns: 1 for ns in lent} | {"docs": 2}
     roles = _agent_roles(bots)
-    assert [ns for ns in roles if ns.startswith("ns-")] == lent[: agents.MAX_LENT]  # first by name
+    fit = agents.LENT_NAME_BYTES // 64
+    assert [ns for ns in roles if ns.startswith("ns-")] == lent[:fit]  # first by name
     assert roles["docs"] == "writer"  # a raised role is never left out
+
+
+def test_an_agents_token_stays_under_a_proxys_header_limit(bots) -> None:
+    # The longest names a namespace may have, as many as the budget takes.
+    lent = [f"{i:03}" + "x" * 125 for i in range(30)]
+    bots["active"].update({"fleet-a1", *lent})
+    bots["grants"]["sa:fleet:a1"] = {ns: 2 for ns in lent}
+    r = _exchange(TestClient(oauth_app()), _ci_token(bots, agent_id="a1"), client_id="fleet")
+    token = r.json()["access_token"]
+    claims = pyjwt.decode(token, options={"verify_signature": False})
+    assert len([ns for ns in claims["namespaces"] if ns in lent]) == agents.LENT_NAME_BYTES // 128
+    assert len(f"Authorization: Bearer {token}") < 8192 - 1024  # room for the other headers
 
 
 @pytest.mark.parametrize("agent", [None, "", "A1", "a/b", "-a", "a" * 64])

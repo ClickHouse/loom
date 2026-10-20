@@ -200,7 +200,8 @@ with more than one admin, registered first, in one org); its tokens are for
   Agent `b`'s next token names `fleet-a` as viewer (minted on another server,
   within `LOOM_GRANT_CACHE_TTL_SECONDS`); `a` gets nothing of `b`'s. `role` is
   `viewer` or `writer`. An agent shares only its own namespace, only with
-  agents of its trust, and never a restricted namespace
+  agents of its trust, and not while the namespace is restricted (a share made
+  before stays until it is revoked)
   ([`grants.share_agent`](../reference/operations/grants.md#grantsshare_agent)).
   A share never lowers a grant `b` holds, nor writes over one someone else
   made (409): to lower its own share, an agent takes it back and shares again.
@@ -210,8 +211,10 @@ with more than one admin, registered first, in one org); its tokens are for
   the others. A grant an admin made stays (409). An admin of the namespace
   grants or revokes `sa:fleet:b` with `grants.create` and `grants.revoke`; an
   agent's token takes any grant its subject holds in the org, as writer at
-  most, and names at most 50 namespaces besides its own and the trust's (two
-  shares at once can pass 50; the token then names the first 50 by name).
+  most. Beyond its own and the trust's namespaces, a token names lent ones by
+  name while their names total 1,536 bytes, which keeps it under a proxy's
+  8 KB header limit; a share past that is refused (two shares at once can
+  pass it, and the token then names those that fit).
 
   An exact `tenant_id` keeps one trust to one tenant, so each tenant's agents
   land in their own org (a prefix of `sub` may be added as a further
