@@ -48,6 +48,7 @@ from typing import Any
 import httpx
 
 from server.clients._http import refuse_off_gateway
+from server.core.llm_free import reads_llm_free
 from server.llm import customer
 from server.llm.json_text import strip_code_fence
 from server.memory.app.log_once import LogOnce
@@ -141,6 +142,8 @@ async def rerank(
         return candidates
 
     if endpoint.startswith(BUILTIN_OPENAI):
+        if reads_llm_free():
+            return candidates  # an LLM reranker; LLM-free reads keep the fused order
         return await _rerank_with_builtin_openai(
             endpoint,
             query,

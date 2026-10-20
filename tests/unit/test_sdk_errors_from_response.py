@@ -117,6 +117,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "RESOURCE_NOT_FOUND": NotFound,
     "PRECONDITION_FAILED": PreconditionFailed,
     "GRANT_WOULD_DOWNGRADE": PreconditionFailed,
+    "READS_LLM_FREE": PreconditionFailed,
     "OVERLOADED": Overloaded,
     "RATE_LIMITED": RateLimited,
     "BACKEND_UNAVAILABLE": BackendUnavailable,

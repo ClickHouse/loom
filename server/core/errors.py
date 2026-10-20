@@ -79,6 +79,15 @@ class PreconditionFailedError(LoomServerError):
         super().__init__(message, current_sha256=current_sha256)
 
 
+class ReadsLlmFreeError(LoomServerError):
+    """409 — `memory.ask` or `code.ask` asked for a model's answer while
+    `LOOM_READS_LLM_FREE` is on. Resending the same request never succeeds;
+    the retrieval-only flag the message names returns the recalled evidence."""
+
+    code = "READS_LLM_FREE"
+    status_code = 409
+
+
 class GrantWouldDowngradeError(LoomServerError):
     """409 — `grants.create` asked for a role below the subject's current
     active grant on that namespace. The grants table is a

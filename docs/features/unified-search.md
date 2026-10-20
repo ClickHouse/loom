@@ -165,6 +165,10 @@ the same bytes for every question until working memory, profile or pins change.
 - `stable_sections`, `stable_prefix_chars` and `stable_hash` describe that prefix. Put a prompt-cache breakpoint at
   `stable_prefix_chars`; compare the hash to see whether the prefix moved. The Python SDK splits it as
   `pack.stable_prefix` and `pack.volatile_suffix`.
+- A pack makes no LLM call in any mode; it costs embeddings and ClickHouse reads. Its memory search keeps the mode's
+  recipe (`balanced` for `task` and `handoff`, `quality` for `debug`, `fast` for `startup`) for its planes and pool
+  width, but runs none of the recipe's LLM steps (HyDE, graph triples, the retry judge, an LLM count intent or verb
+  synonyms, a `builtin:openai` reranker). A caller that wants those steps calls `memory.search` with the recipe.
 - `tokens_estimate` and `fill_ratio` report budget pressure.
 - A section that fails is empty; the pack still answers.
 - `mentor` and `namespace_health` render only when they have something to say
