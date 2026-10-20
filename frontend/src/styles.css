@@ -103,9 +103,10 @@
      inverse scale to `--canvas-scale` and `.graph-svg text` multiplies. */
   --canvas-label-min: 12px;
 
-  /* Surfaces — the ClickHouse Cloud layout: white page, white panes set off
-     by a 1 px stroke (not a fill), slate-50 for hover, selected and header
-     rows, the stroke grey for the deepest fill (skeletons, tracks). */
+  /* Surfaces — the ClickHouse Cloud layout: panes on the page's own
+     background, set off by a 1 px stroke (not a fill), the muted background
+     for hover, selected and header rows, the stroke colour for the deepest
+     fill (skeletons, tracks). */
   --color-bg: var(--global-color-background-default);
   --color-surface: var(--global-color-background-default);
   --color-surface-2: var(--global-color-background-muted);
@@ -169,7 +170,7 @@
   --color-cat-5: var(--global-color-chart-default-fuchsia);
   --color-cat-6: var(--global-color-chart-default-green);
   --color-cat-7: var(--global-color-chart-default-red);
-  --color-cat-8: var(--global-color-text-link-hover);
+  --color-cat-8: var(--global-color-chart-default-babyblue);
 }
 
 /* ============================================================
@@ -292,8 +293,8 @@ body {
 }
 
 /* ============================================================
-   Tables — Click UI's table: a slate-50 header row, 1 px row strokes,
-   a faint blue row hover. Utilities on a table still win.
+   Tables — Click UI's table: its header row, 1 px row strokes and row
+   hover. Utilities on a table still win.
    ============================================================ */
 @layer base {
   thead th {
@@ -522,7 +523,7 @@ body {
      outline-color, which would fade the ring in from the text colour. */
   transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
 }
-/* A text field shows focus the Click UI way, a dark border on the field, not a
+/* A text field shows focus the Click UI way, its active border on the field, not a
    ring inside it. */
 input:not([type="checkbox"]):not([type="radio"]):focus-visible,
 textarea:focus-visible {
@@ -592,7 +593,7 @@ textarea[aria-invalid="true"]:focus-visible {
 }
 
 /* ============================================================
-   Selection — the primary-button slate, white text
+   Selection — the primary button's background and text
    ============================================================ */
 ::selection {
   background: var(--color-accent);
@@ -884,10 +885,6 @@ textarea[aria-invalid="true"]:focus-visible {
     color: var(--color-text-muted);
     white-space: nowrap;
   }
-  /* On the current item's background the muted grey is under 4.5:1: the count takes the item's text. */
-  .tq-inbox[aria-current="true"] .cnt {
-    color: inherit;
-  }
   .tq-inbox .cnt b {
     color: var(--color-text);
     font-weight: 500;
@@ -981,7 +978,7 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-row:hover {
     background: var(--click-card-horizontal-default-color-background-hover);
   }
-  /* The tint alone is 1.03:1 against the other rows: a bar marks the row whose panel is open. */
+  /* The tint alone barely sets the row off from the others: a bar marks the row whose panel is open. */
   .tq-row[aria-selected="true"] {
     box-shadow: inset 3px 0 0 var(--color-text);
     background: var(--click-table-row-color-background-active);
@@ -1539,7 +1536,7 @@ textarea[aria-invalid="true"]:focus-visible {
 }
 
 /* A table row being acted on (the review queue's current conflict) carries aria-current on
-   its key; Table's active tint alone is 1.03:1, so a bar marks it. */
+   its key; Table's active tint alone barely sets it off, so a bar marks it. */
 @layer components {
   tbody tr:has([aria-current="true"]) > td:first-child {
     box-shadow: inset 3px 0 0 var(--color-text);
@@ -1617,7 +1614,7 @@ textarea[aria-invalid="true"]:focus-visible {
     white-space: nowrap;
   }
   /* Recall Lab: a score cell's bar is Click UI's table bar chart, its width the score
-     against the top ranked hit; it darkens with the row's hover. A 4 px bar 2 px under the
+     against the top ranked hit; it takes Click UI's hover bar colour with the row's hover. A 4 px bar 2 px under the
      score: measured hand sizes. */
   .recall-bar {
     display: block;
